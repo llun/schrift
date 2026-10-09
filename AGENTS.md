@@ -257,8 +257,9 @@ Guidelines:
   crease with `.includeInactive`: flat unfolded, the Duo reports it inactive and
   the default query returns nothing. Don't size the split view's sidebar to the
   crease — of the ~867pt left beside the side rail, that leaves ~411pt of detail,
-  too little for `NavigationSplitView` to tile, so it hides or overlays the sidebar; keep the system width and use
-  `foldClearance()` to keep detail content on one side.
+  too little for `NavigationSplitView` to tile, so it hides or overlays the
+  sidebar; keep the system width and use `foldClearance()` to keep detail
+  content on one side.
 - All build configuration (bundle ids, deployment target, `SWIFT_VERSION`,
   `INFOPLIST_KEY_*`) lives in `project.yml`. The Info.plist is generated
   (`GENERATE_INFOPLIST_FILE: true`) — set plist values via `INFOPLIST_KEY_*`

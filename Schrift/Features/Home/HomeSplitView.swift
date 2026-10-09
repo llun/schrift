@@ -61,7 +61,7 @@ struct HomeSplitView: View {
                     onCreatedDocument: { self.selectedRoute = DocumentEditorRoute(createdDocument: $0) }
                 )
                 .id(selectedDocument.id)
-                // Unfolded, the iPhone Duo's crease crosses the detail whether or not the sidebar shows.
+                // Unfolded, the iPhone Duo's crease can cross the detail even with the sidebar shown.
                 .foldClearance()
             } else {
                 ContentUnavailableView {
