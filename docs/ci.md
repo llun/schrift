@@ -42,9 +42,9 @@ the push run is the post-merge verification of the real `main` history
    instead of preceding it.
 6. `xcrun simctl bootstatus <udid> -b`, which blocks until the boot finishes,
    so no test lands on a half-booted device.
-7. `xcodebuild test-without-building -project Schrift.xcodeproj -scheme Schrift` on that
-   simulator (by UDID, so it is the device step 4 booted, and with the step 5 products) — the same suite as
-   the documented local test command, including
+7. `xcodebuild test-without-building -project Schrift.xcodeproj -scheme Schrift`
+   on that simulator (by UDID, so it is the device step 4 booted) with the
+   step 5 products — the same suite as the documented local test command, including
    unit/rendering tests and `SchriftChecklistUITests`. The UI bundle launches
    `SchriftChecklistTestHost`, a test-only app compiling the actual production
    rows with a separate entry point and isolated stores; no login, network
@@ -72,8 +72,9 @@ the push run is the post-merge verification of the real `main` history
    waits for the switch's frame to hold still across two reads first (`waitForStableFrame`,
    in `SchriftUITests/Features/ElementSettling.swift`), on the hypothesis that a cold first
    launch at an accessibility text size is still laying out when the switch first reads as
-   hittable; that is a plausible cause, not a confirmed one. `ChecklistHitTests`, which aims
-   taps at offsets from frames read once, waits the same way before reading them.
+   hittable; that is a plausible cause, not a confirmed one. The Edit/Done mode press waits
+   the same way, and so does `ChecklistHitTests`, which aims taps at offsets from frames
+   read once, before reading them.
    Checklist mode swaps likewise use one 200ms stationary press and require
    the old toolbar action to disappear and the new action to appear before
    checking content or restored scroll position. Offline editor toolbar tests
@@ -85,7 +86,7 @@ the push run is the post-merge verification of the real `main` history
    ad-hoc entitlements and fail with `errSecMissingEntitlement (-34018)` in a
    fully unsigned host.
 
-On failure the `TestResults.xcresult` bundle is uploaded as a run artifact
+On a test failure the `TestResults.xcresult` bundle is uploaded as a run artifact
 (7-day retention) for debugging.
 
 Runs are per-PR concurrency-cancelled: a new push cancels the in-flight run

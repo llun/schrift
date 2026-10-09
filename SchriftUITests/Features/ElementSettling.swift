@@ -16,9 +16,11 @@ extension XCUIElement {
     /// it never retries the gesture.
     func waitForStableFrame(timeout: TimeInterval = 5, interval: TimeInterval = 0.25) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
+        guard exists else { return false }
         var previous = frame
         while Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(interval))
+            guard exists else { return false }
             let current = frame
             if current == previous, !current.isEmpty { return true }
             previous = current
