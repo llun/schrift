@@ -52,6 +52,55 @@ final class ConnectivityMonitorTests: XCTestCase {
         await waitUntil { monitor.isReachable == false }
     }
 
+    /// Transport evidence is display-only: it flips `appearsOffline` but leaves
+    /// `isReachable` and `revision` (what gates controls and invalidates tokens) alone.
+    func testTransportEvidenceMakesTheMonitorAppearOfflineWithoutTouchingReachability() async {
+        let monitor = ConnectivityMonitor(monitoring: makeMonitoring(FakePath()))
+        let revision = monitor.revision
+
+        monitor.report(.unreachable)
+        await waitUntil { monitor.serverUnreachable }
+
+        XCTAssertTrue(monitor.appearsOffline)
+        XCTAssertTrue(monitor.isReachable)
+        XCTAssertEqual(monitor.revision, revision)
+
+        monitor.report(.reachedServer)
+        await waitUntil { !monitor.serverUnreachable }
+        XCTAssertFalse(monitor.appearsOffline)
+        XCTAssertEqual(monitor.revision, revision)
+    }
+
+    func testAPathChangeClearsTransportEvidence() async {
+        let fake = FakePath()
+        let monitor = ConnectivityMonitor(monitoring: makeMonitoring(fake))
+
+        monitor.report(.unreachable)
+        await waitUntil { monitor.serverUnreachable }
+
+        fake.onChange?(false)
+        await waitUntil { !monitor.isReachable }
+        XCTAssertFalse(monitor.serverUnreachable, "a new path deserves a fresh judgment")
+        XCTAssertTrue(monitor.appearsOffline, "the path itself is down")
+
+        fake.onChange?(true)
+        await waitUntil { monitor.isReachable }
+        XCTAssertFalse(monitor.appearsOffline)
+    }
+
+    /// Reports share the path stream's ordering: back-to-back reports settle on the last.
+    func testBufferedTransportReportsApplyInOrder() async {
+        let monitor = ConnectivityMonitor(monitoring: makeMonitoring(FakePath()))
+
+        monitor.report(.unreachable)
+        monitor.report(.reachedServer)
+        await waitAndConfirmNever { monitor.serverUnreachable }
+
+        monitor.report(.reachedServer)
+        monitor.report(.unreachable)
+        await waitUntil { monitor.serverUnreachable }
+    }
+
     func testCancelsMonitoringOnDeinit() {
         let fake = FakePath()
         var monitor: ConnectivityMonitor? = ConnectivityMonitor(monitoring: makeMonitoring(fake))

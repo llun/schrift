@@ -29,6 +29,58 @@ final class DocsAPIClientTests: XCTestCase {
         XCTAssertEqual(config, Config(theme: "indigo"))
     }
 
+    /// Collects `onTransportOutcome` calls. The hook is `@Sendable` and runs on the client
+    /// actor, so the box is lock-guarded.
+    private final class OutcomeBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: [TransportOutcome] = []
+        func record(_ outcome: TransportOutcome) { lock.withLock { stored.append(outcome) } }
+        var outcomes: [TransportOutcome] { lock.withLock { stored } }
+    }
+
+    func testAnyHTTPResponseReportsReachedServer() async {
+        struct Config: Decodable {}
+        let box = OutcomeBox()
+        let client = DocsAPIClient(
+            baseURL: baseURL,
+            session: MockURLProtocol.makeSession(),
+            cookieProvider: { [] },
+            onTransportOutcome: { box.record($0) }
+        )
+
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil) }
+        let _: Config? = try? await client.get("config/")
+        XCTAssertEqual(box.outcomes, [.reachedServer])
+
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        let _: Config? = try? await client.get("config/")
+        XCTAssertEqual(box.outcomes, [.reachedServer, .reachedServer], "a 500 still proves the server answered")
+    }
+
+    func testConnectivityFailureReportsUnreachableAndStillThrowsNetwork() async {
+        struct Config: Decodable {}
+        let box = OutcomeBox()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let client = DocsAPIClient(
+            baseURL: baseURL,
+            session: MockURLProtocol.makeSession(),
+            cookieProvider: { [] },
+            onTransportOutcome: { box.record($0) }
+        )
+
+        do {
+            let _: Config = try await client.get("config/")
+            XCTFail("Expected error to be thrown")
+        } catch let error as DocsAPIError {
+            guard case .network = error else { return XCTFail("Expected .network, got \(error)") }
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
+        XCTAssertEqual(box.outcomes, [.unreachable])
+    }
+
     func testUnauthorizedResponseThrowsSessionExpired() async {
         struct Config: Decodable {}
         MockURLProtocol.stubHandler = { _ in

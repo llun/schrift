@@ -29,6 +29,13 @@ final class OnlineAvailability {
         return userDefaults.bool(forKey: "schrift.workOffline") || connectivity?.isReachable == false
     }
 
+    /// Whether status chrome should read as offline: `isOffline` plus transport evidence
+    /// that the server cannot be reached despite a satisfied path (Wi-Fi without
+    /// internet). For status display only (banner, save status, sync caption) — never
+    /// for gating controls or `permitsResponse`, since a control disabled on failure
+    /// evidence would make no request and could never recover.
+    var showsOfflineStatus: Bool { isOffline || connectivity?.serverUnreachable == true }
+
     var token: Token {
         Token(
             pathRevision: connectivity?.revision ?? 0, preferenceRevision: preferenceRevision,

@@ -51,16 +51,39 @@ final class SaveStatusDisplayTests: XCTestCase {
     /// that genuinely reached the server.
     func testAConflictWithNothingUnsavedDoesNotDowngradeASyncedSave() {
         XCTAssertEqual(
-            saveStatusDisplay(saveState: .saved, hasConflict: true, hasUnsavedLocalContent: false),
+            saveStatusDisplay(
+                saveState: .saved, hasConflict: true, hasUnsavedLocalContent: false, isOffline: false),
             .saved)
+    }
+
+    // MARK: - Offline
+
+    /// A save "in flight" on a dead connection (plane Wi-Fi) hangs until the request times
+    /// out, so claiming "Saving…" is the bug: the draft is on disk and nothing is being sent.
+    /// Everything else keeps its meaning — `.dirty` is not on disk yet, `.failed` is a retry.
+    func testOfflineReadsASaveInFlightAsSavedOnDevice() {
+        XCTAssertEqual(display(.saving, isOffline: true), .savedOnDevice)
+        XCTAssertEqual(display(.dirty, isOffline: true), .save)
+        XCTAssertEqual(display(.failed("nope"), isOffline: true), .retry)
+        XCTAssertEqual(display(.saved, isOffline: true), .saved)
+        XCTAssertEqual(display(.idle, isOffline: true), .none)
+        XCTAssertEqual(display(.pendingSync, isOffline: true), .savedOnDevice)
+    }
+
+    func testConflictPrecedenceIsUnchangedWhileOffline() {
+        XCTAssertEqual(display(.saved, hasConflict: true, isOffline: true), .savedOnDevice)
+        XCTAssertEqual(display(.dirty, hasConflict: true, isOffline: true), .save)
+        XCTAssertEqual(display(.failed("nope"), hasConflict: true, isOffline: true), .savedOnDevice)
     }
 
     // MARK: - Helper
 
     private func display(
         _ state: EditorViewModel.SaveState,
-        hasConflict: Bool = false
+        hasConflict: Bool = false,
+        isOffline: Bool = false
     ) -> SaveStatusDisplay {
-        saveStatusDisplay(saveState: state, hasConflict: hasConflict, hasUnsavedLocalContent: true)
+        saveStatusDisplay(
+            saveState: state, hasConflict: hasConflict, hasUnsavedLocalContent: true, isOffline: isOffline)
     }
 }

@@ -72,6 +72,32 @@ final class OnlineAvailabilityTests: XCTestCase {
         XCTAssertTrue(availability.permitsResponse(for: availability.token), "issued after reconnecting")
     }
 
+    /// Transport failure evidence (Wi-Fi without internet) is for status chrome only: it must
+    /// not disable controls or refuse responses, or nothing would ever retry and recover.
+    func testTransportEvidenceShowsOfflineStatusWithoutGatingControls() async {
+        let token = availability.token
+        XCTAssertFalse(availability.showsOfflineStatus)
+
+        connectivity.report(.unreachable)
+        await waitUntil { self.availability.showsOfflineStatus }
+
+        XCTAssertFalse(availability.isOffline)
+        XCTAssertTrue(availability.permitsResponse(for: token))
+
+        connectivity.report(.reachedServer)
+        await waitUntil { !self.availability.showsOfflineStatus }
+    }
+
+    func testWorkOfflineAndAPathOutageShowOfflineStatus() async {
+        setWorkOffline(true)
+        XCTAssertTrue(availability.showsOfflineStatus)
+        setWorkOffline(false)
+        XCTAssertFalse(availability.showsOfflineStatus)
+
+        path.update?(false)
+        await waitUntil { self.availability.showsOfflineStatus }
+    }
+
     func testWorkOfflineRefusesResponsesEvenOnALivePath() {
         let token = availability.token
 

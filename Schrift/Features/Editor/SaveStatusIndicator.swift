@@ -38,10 +38,17 @@ enum SaveStatusDisplay: Equatable, CaseIterable {
 /// `.dirty` keeps its funnel even under a conflict: the newest keystrokes are **not** on
 /// disk yet (the draft is written by the flush), so "Saved on this device" would be a lie
 /// there, and tapping Save is exactly what puts them there.
+///
+/// **Offline** (`isOffline`, the status-display signal that includes transport evidence)
+/// turns `.saving` into `.savedOnDevice`: the write-ahead draft is already on disk and
+/// nothing will reach the server, so "Saving…" would claim a sync that is not happening
+/// (each autosave flashed it for the whole 60s request timeout). `.dirty` stays `.save`
+/// (the newest keystrokes are not on disk until the flush) and `.failed` stays `.retry`.
 func saveStatusDisplay(
     saveState: EditorViewModel.SaveState,
     hasConflict: Bool,
-    hasUnsavedLocalContent: Bool
+    hasUnsavedLocalContent: Bool,
+    isOffline: Bool
 ) -> SaveStatusDisplay {
     if hasConflict, hasUnsavedLocalContent {
         if case .dirty = saveState { return .save }
@@ -50,7 +57,7 @@ func saveStatusDisplay(
     switch saveState {
     case .idle: return .none
     case .dirty: return .save
-    case .saving: return .saving
+    case .saving: return isOffline ? .savedOnDevice : .saving
     case .saved: return .saved
     case .pendingSync: return .savedOnDevice
     case .failed: return .retry

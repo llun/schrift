@@ -3264,6 +3264,12 @@ markdown write endpoint**. Understand this before touching the save path:
   paths; they never disable controls by pretending the network is offline.
   Home may report a transport load failure through its own offline banner, but
   this historical fetch outcome is not the control-availability signal.
+  `OnlineAvailability.showsOfflineStatus` adds transport evidence (connectivity-class
+  `URLError`s reported by `DocsAPIClient`, cleared by any HTTP response or a path change)
+  for **status display only** — the editor's offline banner, sync caption and
+  `saveStatusDisplay`; controls and `permitsResponse` keep `isOffline`, since a control
+  disabled on failure evidence would make no request and never recover. The reconnect
+  sync fires on `ConnectivityMonitor.appearsOffline`'s true→false edge.
   Cache/draft restoration precedes the editor's read guard. Uncached offline
   content explains that it must first be opened online; never show Empty document
   or Start writing without `hasLoadedContent`. A cached empty body is valid content.

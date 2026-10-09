@@ -2845,6 +2845,15 @@ delete / 404 / 403 ──▶ remove cache entry        sign-out ──▶ remove
   error, and it never presents Empty document or Start writing. A genuinely empty
   cached document still has loaded content and remains editable. A transport
   failure on a still-reachable path offers Retry, since no reconnect edge need occur.
+- **A satisfied path with no internet (plane Wi-Fi, captive portal) is invisible to
+  `NWPath`.** `DocsAPIClient` reports `TransportOutcome`s to `ConnectivityMonitor.report`:
+  a connectivity-class `URLError` sets `serverUnreachable`; any HTTP response (even a 500)
+  or a path change clears it. `OnlineAvailability.showsOfflineStatus` adds it to
+  `isOffline` for **status display only** — the offline banner, the sync caption, and
+  `saveStatusDisplay`, which reads a `.saving` state as "Saved on this device" while offline
+  instead of "Saving…" for the whole request timeout. Controls and response tokens keep
+  `isOffline` (a control disabled on failure evidence would send nothing and never
+  recover). The reconnect sync fires on `appearsOffline`'s true→false edge.
 - `EditorViewModel.load` restores drafts/cache before withholding unavailable
   reads. Reconnect revalidates the same model without reinstalling a disk copy
   over editing or clearing unrelated action/save errors. Physical disconnect or

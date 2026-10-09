@@ -13,6 +13,11 @@ actor DocsAPIClient {
     /// Called synchronously, so a caller's `catch` can quote it. Production
     /// default is a no-op.
     private let onRequestFailure: @Sendable (RequestFailure) -> Void
+    /// Fired when a request proves the server reachable (any HTTP response, whatever
+    /// its status) or proves it unreachable (a connectivity-class `URLError`). Feeds
+    /// `ConnectivityMonitor`'s display-only "server unreachable" evidence. Production
+    /// default is a no-op.
+    private let onTransportOutcome: @Sendable (TransportOutcome) -> Void
     /// Set once a server has proved it has no `formatted-content/` route *and* that
     /// `content/` answers, so every later content load skips the detection instead of paying
     /// for it per document. Both halves matter: pinning this to a route that cannot answer
@@ -29,13 +34,15 @@ actor DocsAPIClient {
         session: URLSession = .shared,
         cookieProvider: (@Sendable () -> [HTTPCookie])? = nil,
         onSessionExpired: @escaping @Sendable () -> Void = {},
-        onRequestFailure: @escaping @Sendable (RequestFailure) -> Void = { _ in }
+        onRequestFailure: @escaping @Sendable (RequestFailure) -> Void = { _ in },
+        onTransportOutcome: @escaping @Sendable (TransportOutcome) -> Void = { _ in }
     ) {
         self.baseURL = baseURL
         self.session = session
         self.cookieProvider = cookieProvider ?? { HTTPCookieStorage.shared.cookies(for: baseURL) ?? [] }
         self.onSessionExpired = onSessionExpired
         self.onRequestFailure = onRequestFailure
+        self.onTransportOutcome = onTransportOutcome
     }
 
     /// The bare site origin (scheme + host [+ port]) derived from `baseURL`, used
@@ -132,12 +139,17 @@ actor DocsAPIClient {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
+            if isConnectivityFailure(error) {
+                onTransportOutcome(.unreachable)
+            }
             throw DocsAPIError.network(error.localizedDescription)
         }
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw DocsAPIError.network("Response was not an HTTP response")
         }
+        // Any status proves the server answered; only the status handling below differs.
+        onTransportOutcome(.reachedServer)
 
         guard (200..<300).contains(httpResponse.statusCode) else {
             onRequestFailure(

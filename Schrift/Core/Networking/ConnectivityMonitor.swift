@@ -29,13 +29,37 @@ struct NetworkPathMonitoring: Sendable {
 /// controls. A satisfied path does not establish server health: HTTP errors and
 /// save decisions still come from their actual requests. Reachability starts
 /// optimistic until the first OS callback; changes arrive on the main actor in order.
+///
+/// Path status cannot see "connected to Wi-Fi without internet" (plane Wi-Fi without a
+/// purchase, a captive portal): the path stays `.satisfied` while every request hangs.
+/// `DocsAPIClient` therefore reports transport evidence through `report(_:)`, which
+/// drives `serverUnreachable` / `appearsOffline`. That evidence is **display-only**:
+/// `isReachable` (and so `OnlineAvailability.isOffline`, which gates controls and
+/// response tokens) is unchanged, because a control disabled on failure evidence would
+/// make no request and so could never observe the server coming back. Path updates and
+/// transport reports share one ordered stream, so they apply in the order they arrived.
 @MainActor
 @Observable
 final class ConnectivityMonitor {
     private(set) var isReachable = true
+    /// True after a connectivity-class transport failure, until any HTTP response
+    /// arrives or the path changes. Display evidence only; never a control gate.
+    private(set) var serverUnreachable = false
+    /// What status chrome (banner, save status, sync caption) should treat as offline.
+    var appearsOffline: Bool { !isReachable || serverUnreachable }
     /// Invalidates requests across a disconnect/reconnect, even when the final path
-    /// is reachable again by the time their old response arrives.
+    /// is reachable again by the time their old response arrives. Transport reports
+    /// never bump it.
     private(set) var revision = 0
+
+    private enum Event: Sendable {
+        case path(Bool)
+        case transport(TransportOutcome)
+    }
+
+    // `Continuation` is Sendable, so `report(_:)` may yield from any isolation (the
+    // API client is an actor). A `let` is not tracked by `@Observable`.
+    private nonisolated let continuation: AsyncStream<Event>.Continuation
     // The cancel closure lives in a box whose own `deinit` fires it. The box is
     // initialized at declaration (before the `[weak self]` capture below), which
     // both satisfies definite-initialization and keeps the teardown off
@@ -50,9 +74,10 @@ final class ConnectivityMonitor {
         // stale value on a link that is actually up. Funnel the ordered callbacks
         // through an AsyncStream drained by a single Task, so the main-actor updates
         // stay in order.
-        let (stream, continuation) = AsyncStream<Bool>.makeStream()
+        let (stream, continuation) = AsyncStream<Event>.makeStream()
+        self.continuation = continuation
         let stopMonitoring = monitoring.start { reachable in
-            continuation.yield(reachable)
+            continuation.yield(.path(reachable))
         }
         // The box's deinit ends both the OS monitor and the drain loop when the
         // owner is released.
@@ -61,14 +86,28 @@ final class ConnectivityMonitor {
             continuation.finish()
         }
         Task { [weak self] in
-            for await reachable in stream {
+            for await event in stream {
                 guard let self else { return }
-                if self.isReachable != reachable {
-                    self.isReachable = reachable
-                    self.revision += 1
+                switch event {
+                case .path(let reachable):
+                    if self.isReachable != reachable {
+                        self.isReachable = reachable
+                        self.revision += 1
+                        // A new path deserves a fresh judgment of the server.
+                        if self.serverUnreachable { self.serverUnreachable = false }
+                    }
+                case .transport(let outcome):
+                    let unreachable = outcome == .unreachable
+                    if self.serverUnreachable != unreachable { self.serverUnreachable = unreachable }
                 }
             }
         }
+    }
+
+    /// Records what a request learned about the server. Callable from any isolation;
+    /// ordered with path updates through the same stream.
+    nonisolated func report(_ outcome: TransportOutcome) {
+        continuation.yield(.transport(outcome))
     }
 }
 

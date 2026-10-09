@@ -210,6 +210,9 @@ struct EditorView: View {
     var initialIsFavorite: Bool = false
     private var offlineOverride: Bool = false
     private var isOffline: Bool { offlineOverride || viewModel.availability.isOffline }
+    /// Offline for *status display* only (banner, save status, sync caption): adds the
+    /// transport evidence a satisfied-but-dead path produces. Controls keep `isOffline`.
+    private var showsOfflineStatus: Bool { offlineOverride || viewModel.availability.showsOfflineStatus }
     var onDeleted: (() -> Void)? = nil
     var onOpenDocument: ((Document) -> Void)? = nil
     var onCreatedDocument: ((Document) -> Void)? = nil
@@ -624,7 +627,7 @@ struct EditorView: View {
     private var mainContent: some View {
         VStack(spacing: 0) {
 
-            if isOffline, viewModel.hasLocalCopy {
+            if showsOfflineStatus, viewModel.hasLocalCopy {
                 OfflineBanner(note: loc[.editor_offline_local_copy])
             }
 
@@ -840,7 +843,8 @@ struct EditorView: View {
         let display = saveStatusDisplay(
             saveState: viewModel.saveState,
             hasConflict: viewModel.syncConflict != nil,
-            hasUnsavedLocalContent: viewModel.hasUnsavedLocalContent)
+            hasUnsavedLocalContent: viewModel.hasUnsavedLocalContent,
+            isOffline: showsOfflineStatus)
         if display == .none {
             syncCaptionLabel
         } else {
@@ -1311,7 +1315,7 @@ struct EditorView: View {
         syncCaption(
             hasUnsavedLocalContent: viewModel.hasUnsavedLocalContent,
             hasConflict: viewModel.syncConflict != nil,
-            isOffline: isOffline,
+            isOffline: showsOfflineStatus,
             saveState: viewModel.saveState,
             lastSyncedAt: viewModel.lastSyncedAt,
             now: now,

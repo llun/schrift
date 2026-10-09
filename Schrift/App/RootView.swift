@@ -56,7 +56,8 @@ private struct AuthenticatedHomeContainer: View {
         let client = DocsAPIClient(
             baseURL: serverURL.appendingPathComponent("api/v1.0/"),
             onSessionExpired: { Task { @MainActor in sessionStore.noteSessionExpired() } },
-            onRequestFailure: { failure in diagnostics.record(failure) }
+            onRequestFailure: { failure in diagnostics.record(failure) },
+            onTransportOutcome: { outcome in connectivity.report(outcome) }
         )
         let origin = siteOrigin(for: serverURL) ?? ""
         _viewModel = State(
@@ -149,8 +150,12 @@ private struct AuthenticatedHomeContainer: View {
         // triggers both see, so they can both ask — two from here, three if a pull-to-refresh
         // joins them, and latest-wins on the loads that follow. See
         // `refreshSignedInUserIfUnknown`.
-        .onChange(of: connectivity.isReachable) { wasReachable, isReachable in
-            guard shouldSyncOnReachabilityChange(wasReachable: wasReachable, isReachable: isReachable) else { return }
+        //
+        // The edge is `appearsOffline`'s true→false, not the path's: a server answering again
+        // after transport failures (Wi-Fi gained internet, the plane landed) is a reconnect
+        // too, though the path never went down.
+        .onChange(of: connectivity.appearsOffline) { wasOffline, isOffline in
+            guard shouldSyncOnReachabilityChange(wasReachable: !wasOffline, isReachable: !isOffline) else { return }
             collaboration.reconnect()
             let homeViewModel = viewModel
             Task { await homeViewModel.syncPendingDrafts() }
