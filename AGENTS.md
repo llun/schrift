@@ -57,8 +57,9 @@ and delegates each step to sub-agents, choosing model and effort explicitly
    - `Core/Yjs`: the golden hex tests must pass **unchanged** — if you think
      the bytes must change, stop and get human sign-off first.
    - Design system: update the component's `#Preview` catalog. Token values are
-     visual and are not unit-tested; a new color token is covered by the
-     invariant tests (`DocsColorTokenInvariantTests`: contrast, dark counterpart).
+     visual and are not unit-tested; a new color token must be added to the
+     relevant hand-listed invariant in `DocsColorTokenInvariantTests` (contrast
+     pair, light-vs-dark relationship); the suite does not discover tokens itself.
    - Any change that alters the design: update the Sketch component library
      too ([Sketch source of truth](#sketch-source-of-truth)).
    - Networking: assert method, path (trailing slash, lowercase UUID), and
@@ -616,7 +617,8 @@ gate's parser, itself tested by `FormatSpecifiersTests`; `AsyncTestHelpers.swift
 — `bodyData(from:)`, which drains `httpBodyStream` because `URLSession` moves
 bodies there; `TestImages.swift` — `testPNGData`/`testPixelSize`/`testImageProperties`/
 `testJPEGDataWithGPSMetadata`, CoreGraphics fixtures so image tests need no bundle
-asset). Follow the directory mirror when adding files.
+asset); `ColorContrast.swift` — `relativeLuminance`/`contrastRatio`, the WCAG
+helpers behind the contrast invariants). Follow the directory mirror when adding files.
 
 ## Coding standards
 
@@ -1049,9 +1051,10 @@ new code reads like the surrounding code.
   directly as a SwiftUI `Color` — hues consumed only by style resolvers (the
   accent palette, the `-650` feedback foregrounds, parts of the gray ramp) stay
   hex-only. Token values are visual, so no test restates them (they are checked
-  in the `#Preview` catalogs and the Sketch library); a new token is covered by
-  `DocsColorTokenInvariantTests` instead — ink-on-fill contrast in light and
-  dark, and the documented light/dark relationships.
+  in the `#Preview` catalogs and the Sketch library); a new token must be added to
+  the relevant hand-listed invariant in `DocsColorTokenInvariantTests` — an
+  ink-on-fill contrast pair (light and dark) or a documented light/dark
+  relationship; the suite does not discover tokens itself.
 - **Personal themes preserve semantic token identity.** `ThemeStore` persists only
   `schrift.theme`, independently of Appearance, with White as the fallback for both
   new and existing installs. Initialization is read-only; unchanged selection does
@@ -3822,6 +3825,11 @@ markdown write endpoint**. Understand this before touching the save path:
 - **XCTest only** — never Swift Testing (no `import Testing` / `@Test` / `#expect`).
   `final class <Type>Tests: XCTestCase`, `@testable import Schrift`, mirroring the
   source tree. Add `@MainActor` to test classes whose subject is `@MainActor`.
+- **Splitting a test class across files** uses a shared base: a non-final
+  `@MainActor class <Name>TestCase: XCTestCase` in its own file holds the shared
+  `setUp`/`tearDown` and helpers (`internal`, not `private`, and no `test…`
+  methods), and each file is a `final class <Concern>Tests: <Name>TestCase`. Never
+  inherit test methods from another test class (XCTest would run them twice).
 - Fake HTTP with **`MockURLProtocol`** (`makeSession()` + `stubHandler`; inspect
   `lastRequest` for single-request tests). Call **`MockURLProtocol.reset()`** in
   `tearDown` — not just `stubHandler = nil`. It also drains deferred deliveries:

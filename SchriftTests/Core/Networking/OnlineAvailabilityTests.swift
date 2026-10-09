@@ -114,10 +114,19 @@ final class OnlineAvailabilityTests: XCTestCase {
 
     func testWithoutAConnectivityMonitorOnlyThePreferenceMatters() {
         let standalone = OnlineAvailability(connectivity: nil, userDefaults: defaults)
-        let token = standalone.token
+        let onlineToken = standalone.token
 
         XCTAssertFalse(standalone.isOffline)
-        XCTAssertEqual(token.pathRevision, 0)
-        XCTAssertTrue(standalone.permitsResponse(for: token))
+        XCTAssertTrue(standalone.permitsResponse(for: onlineToken))
+
+        defaults.set(true, forKey: "schrift.workOffline")
+
+        XCTAssertTrue(standalone.isOffline)
+        XCTAssertFalse(standalone.permitsResponse(for: onlineToken))
+        XCTAssertFalse(standalone.permitsResponse(for: standalone.token), "offline refuses even a fresh token")
+
+        defaults.set(false, forKey: "schrift.workOffline")
+
+        XCTAssertFalse(standalone.isOffline)
     }
 }

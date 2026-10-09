@@ -68,4 +68,14 @@ final class AvatarTests: XCTestCase {
         XCTAssertEqual(avatarColorHexPair(for: "Camille Moreau").light, avatarColorPalette[6].light)
         XCTAssertEqual(avatarColorHexPair(for: "Camille Moreau").dark, avatarColorPalette[6].dark)
     }
+
+    /// Regression: the brand-fill slot is the palette entry whose dark hex differs from its light hex, so
+    /// it must carry the brand fill's own dark counterpart rather than reusing the light hex in dark mode.
+    func testTheBrandFillSlotUsesTheBrandFillDarkCounterpart() {
+        let slots = avatarColorPalette.filter { $0.light == DocsColorHex.brandFill }
+        XCTAssertFalse(slots.isEmpty, "the palette must keep a brand-fill slot")
+        for slot in slots {
+            XCTAssertEqual(slot.dark, DocsColorHexDark.brandFill)
+        }
+    }
 }

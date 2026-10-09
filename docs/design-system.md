@@ -707,8 +707,8 @@ struct BadgeStyleHex: Equatable {
 The resolver fills both from `DocsPalette(theme:isDark:)` using the explicit theme;
 the view renders `Color(lightHex:darkHex:)`. This keeps the convention — resolver
 returns `Equatable` raw values, view converts to `Color` at render — and stays
-unit-testable without SwiftUI. Existing resolver tests extend to assert the dark
-fields too.
+unit-testable without SwiftUI. Resolver tests assert invariants over both the
+light and dark fields (see §4.5), not per-variant hex mirrors.
 
 `InlineTextStyle` (editor link color) and `listRowTitleColorHex` (ListRow
 destructive/primary) also resolve raw hex → route them through adaptive tokens /
@@ -955,8 +955,10 @@ no split-view route cleanup is needed beyond the shared injection.
 
 ### 6.1 Tests (Part 3)
 
-- `ProfileScreen` option-model tests (pure): appearance options + icons; language
-  options; checkmark selection logic.
+- `ProfileScreen` option-model tests (pure): language options and checkmark
+  selection logic. Appearance option labels/icons are visual lookup tables and are
+  not unit-tested; the persisted selection and `colorScheme` mapping are covered
+  by `AppearanceStoreTests`.
 - Snapshot-free assertions on the picker view models / pure helpers (no UI
   snapshotting — consistent with the repo).
 

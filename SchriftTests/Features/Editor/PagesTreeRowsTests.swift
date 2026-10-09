@@ -128,4 +128,10 @@ final class PagesTreeLayoutTests: XCTestCase {
         XCTAssertLessThan(narrow, 320)
         XCTAssertEqual(narrow, 320 * PagesTreeLayout.maxWidthFraction, accuracy: 0.001)
     }
+
+    /// On a screen wide enough that the fractional cap exceeds the panel, the panel's own width wins.
+    func testPanelKeepsItsOwnWidthOnAWideScreen() {
+        let available = (PagesTreeLayout.panelWidth / PagesTreeLayout.maxWidthFraction) * 2
+        XCTAssertEqual(PagesTreeLayout.width(availableWidth: available), PagesTreeLayout.panelWidth, accuracy: 0.001)
+    }
 }

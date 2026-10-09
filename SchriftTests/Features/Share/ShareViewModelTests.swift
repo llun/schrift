@@ -261,9 +261,8 @@ final class ShareViewModelTests: XCTestCase {
         await viewModel.search()
 
         XCTAssertEqual(viewModel.searchResults.map(\.email), ["cam@example.com"])
-        let url = MockURLProtocol.lastRequest?.url?.absoluteString ?? ""
-        XCTAssertTrue(url.contains("q=cam"), url)
-        XCTAssertTrue(url.contains("document_id=11111111-1111-4111-8111-111111111111"), url)
+        XCTAssertEqual(
+            MockURLProtocol.lastRequest?.url?.query, "q=cam&document_id=11111111-1111-4111-8111-111111111111")
     }
 
     func testSearchFailureSetsTheSearchError() async {

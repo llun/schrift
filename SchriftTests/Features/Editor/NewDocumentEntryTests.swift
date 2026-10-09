@@ -463,12 +463,11 @@ final class NewDocumentEntryTests: XCTestCase {
         XCTAssertFalse(intent.consume())
     }
 
-    func testIntentsAreIndependentButEachEqualsItself() {
+    func testIntentsAreIndependentOfEachOther() {
         let first = NewDocumentEntryIntent()
         let second = NewDocumentEntryIntent()
         XCTAssertTrue(first.consume())
         XCTAssertTrue(second.consume(), "consuming one intent leaves another untouched")
-        XCTAssertEqual(first, first)
         XCTAssertNotEqual(first, second)
     }
 
