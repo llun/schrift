@@ -201,12 +201,6 @@ enum TextStyleFormat: String, FormattingBarChoice {
     }
 }
 
-/// Whether a text style's button is disabled: a link also needs a block that renders
-/// inline markdown (`canEditLink`); the markers only need a focused block.
-func isTextStyleDisabled(_ style: TextStyleFormat, hasTarget: Bool, canEditLink: Bool) -> Bool {
-    style == .link ? !canEditLink : !hasTarget
-}
-
 // MARK: - Scroll-edge fade
 
 /// Which edges of the scrolling bar row have content hidden past them.

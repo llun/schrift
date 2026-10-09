@@ -1270,9 +1270,10 @@ new code reads like the surrounding code.
   floor; text controls may grow with Dynamic Type. Native system controls keep
   their platform metrics, and checklist adornments retain first-line alignment.
   A hard minimum does not compress. The formatting bar's square actions (five, or
-  seven on a list item, which adds Outdent and Indent) still overflow a narrow
-  phone, so `EditorFormattingBar` scrolls horizontally inside the editor's offered
-  width, preserving 44pt squares and screen geometry. It fades a ~24pt gradient
+  seven on a list item, which adds Outdent and Indent) fit every iPhone column
+  (seven is about 332pt against 343pt on a 375pt device); `EditorFormattingBar`
+  still scrolls horizontally inside the editor's offered width for narrow iPad Slide
+  Over / ⅓ splits and larger text, preserving 44pt squares and screen geometry. It fades a ~24pt gradient
   (`mask`) at whichever edge has hidden content so the scrolling is visible
   (`scrollFadeEdges`, fed by `onScrollGeometryChange`; none when the row fits).
   `EditorFormattingBarTests` covers both the width containment and row height.
@@ -1281,10 +1282,11 @@ new code reads like the surrounding code.
   (`QuoteFormat`)**, in the order add, text style, list, [outdent, indent], quote/code,
   attach. All three are `FormattingBarChoice`s; the list and quote ones are also
   `FormattingBarFormat`s (block kinds). A text-style tap applies the default (bold
-  `**`, italic `_`, or the link editor); link is disabled where `canEditLink` is
-  false (`isTextStyleDisabled`). A tap applies
-  the family's remembered default (`schrift.editor.defaultTextStyle` /
-  `…defaultListFormat` / `…defaultQuoteFormat`, local preferences), toggling a block already of that
+  `**`, italic `_`, or the link editor) and the whole family, button and choices, is
+  disabled exactly when `canEditLink` is false, the one case none of its members can
+  act (as `canOfferAttach` does for attach); the default is remembered in
+  `schrift.editor.defaultTextStyle`. A list or quote tap applies
+  the family's remembered default (`…defaultListFormat` / `…defaultQuoteFormat`, local preferences), toggling a block already of that
   kind — checked or not, any code language — back to a paragraph
   (`blockKindAfterTapping`), and a long press (`IconButton.longPressAction`, also
   exposed as a named VoiceOver action) swaps the row in place for Close + the

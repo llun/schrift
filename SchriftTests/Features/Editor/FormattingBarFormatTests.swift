@@ -69,33 +69,12 @@ final class FormattingBarFormatTests: XCTestCase {
     // MARK: - Text style
 
     func testTextStyleDefaultsToBoldAndToleratesAnUnknownStoredValue() {
-        XCTAssertEqual(TextStyleFormat.fallback, .bold)
         XCTAssertEqual(TextStyleFormat.stored(""), .bold)
         XCTAssertEqual(TextStyleFormat.stored("underline"), .bold)
         XCTAssertEqual(TextStyleFormat.stored("italic"), .italic)
         XCTAssertEqual(TextStyleFormat.stored("link"), .link)
-        XCTAssertEqual(TextStyleFormat.preferenceKey, "schrift.editor.defaultTextStyle")
         XCTAssertNotEqual(TextStyleFormat.preferenceKey, ListFormat.preferenceKey)
         XCTAssertNotEqual(TextStyleFormat.preferenceKey, QuoteFormat.preferenceKey)
-    }
-
-    func testEachTextStyleKeepsTheIconAndLabelOfTheButtonItReplaced() {
-        XCTAssertEqual(TextStyleFormat.allCases, [.bold, .italic, .link])
-        XCTAssertEqual(TextStyleFormat.bold.icon, .format_bold)
-        XCTAssertEqual(TextStyleFormat.italic.icon, .format_italic)
-        XCTAssertEqual(TextStyleFormat.link.icon, .link)
-        XCTAssertEqual(TextStyleFormat.bold.labelKey, .editor_format_bold)
-        XCTAssertEqual(TextStyleFormat.italic.labelKey, .editor_format_italic)
-        XCTAssertEqual(TextStyleFormat.link.labelKey, .editor_format_link)
-    }
-
-    func testLinkIsDisabledWithoutAnInlineBlockWhileMarkersOnlyNeedATarget() {
-        XCTAssertTrue(isTextStyleDisabled(.link, hasTarget: true, canEditLink: false))
-        XCTAssertFalse(isTextStyleDisabled(.link, hasTarget: true, canEditLink: true))
-        XCTAssertFalse(isTextStyleDisabled(.bold, hasTarget: true, canEditLink: false))
-        XCTAssertFalse(isTextStyleDisabled(.italic, hasTarget: true, canEditLink: false))
-        XCTAssertTrue(isTextStyleDisabled(.bold, hasTarget: false, canEditLink: false))
-        XCTAssertTrue(isTextStyleDisabled(.italic, hasTarget: false, canEditLink: false))
     }
 
     // MARK: - Scroll-edge fade

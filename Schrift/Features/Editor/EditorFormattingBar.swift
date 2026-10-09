@@ -84,7 +84,7 @@ struct EditorFormattingBar: View {
             case .textStyle:
                 choices(
                     current: defaultTextStyle,
-                    isDisabled: { isTextStyleDisabled($0, hasTarget: hasTarget, canEditLink: viewModel.canEditLink) }
+                    isDisabled: { _ in !viewModel.canEditLink }
                 ) {
                     viewModel.applyTextStyle($0)
                     defaultTextStyleRaw = $0.rawValue
@@ -201,12 +201,11 @@ struct EditorFormattingBar: View {
                 viewModel.insertBlock(after: viewModel.focusedBlockID, kind: .paragraph)
             }
             // One text-style button: a tap applies the default style (bold, italic or
-            // link), a long press offers all three. A default of link is disabled where
-            // a link can't be written (see `isTextStyleDisabled`).
+            // link), a long press offers all three. Every style acts only on blocks that
+            // render inline markdown, so the whole family is disabled on `!canEditLink`.
             barButton(
                 icon: defaultTextStyle.icon, label: loc[defaultTextStyle.labelKey],
-                disabled: isTextStyleDisabled(
-                    defaultTextStyle, hasTarget: hasTarget, canEditLink: viewModel.canEditLink),
+                disabled: !viewModel.canEditLink,
                 longPressLabel: loc[.editor_format_change_text_style],
                 longPressAction: { choosingFamily = .textStyle }
             ) {

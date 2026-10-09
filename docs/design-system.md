@@ -4,10 +4,12 @@
 > Bold, italic and link share one formatting-bar button on the list/quote terms: a tap
 > applies the remembered default (bold at first; local preference
 > `schrift.editor.defaultTextStyle`), a long press swaps the row for Close, Bold,
-> Italic and Link, the default in the brand colour. Link is disabled where a link can't
-> be written. The bar is now add, text style, list, quote/code, attach — five buttons,
-> seven on a list item (Outdent and Indent) — and, since that still overflows a phone,
-> a ~24pt gradient fades whichever edge has hidden content (none when the row fits).
+> Italic and Link, the default in the brand colour. The whole family is disabled where
+> inline markdown isn't rendered (code blocks, images, attachments). The bar is now add,
+> text style, list, quote/code, attach — five buttons, seven on a list item (Outdent
+> and Indent) — which fit every iPhone column (about 332pt against 343pt on a 375pt
+> device); in a narrower container (iPad Slide Over, a ⅓ split, larger text) a ~24pt
+> gradient fades whichever edge has hidden content (none when the row fits).
 >
 > **Revised: 2026-10-08 — One Attach button in the formatting bar.** The bar's last
 > slot is now **Attach** (`attach_file`, U+E226, bringing the bundled subset to 80
@@ -106,9 +108,9 @@
 > family's default kind on tap; a long press swaps the row for Close plus the
 > family's members (bold/italic/link, bulleted/numbered/checklist, or quote/code), the remembered
 > default drawn in the brand colour, and a pick becomes the new default.
-> The formatting accessory's seven actions fit the narrowest phone column; it still
-> scrolls horizontally, as a safeguard, rather than compressing an eighth action or
-> widening the editor. The Sketch component library
+> The formatting accessory's five actions (seven on a list item) fit the narrowest
+> phone column; it still scrolls horizontally in narrower containers rather than
+> compressing the buttons or widening the editor. The Sketch component library
 > (`Schrijft/Schrijft.sketch` in the `llun/sketch` repo) uses the same control
 > dimensions and shapes.
 
