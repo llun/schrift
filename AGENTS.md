@@ -3260,7 +3260,9 @@ markdown write endpoint**. Understand this before touching the save path:
   and the document header's `PresenceBar`, via `headerPeers`/`presentedPeerCount`
   — that was the Options button's presence *badge* until the shared header gave
   both surfaces a bar, and note the gate now reaches the reading surface too)
-  plus the one POST-only affordance above that still reads it (File).
+  plus the POST-only File affordance, and the Home `+` and editor Add-subpage
+  create paths, which read `availability.isOffline` only to skip straight to the
+  local mint they would fall back to anyway (durability is unchanged).
   Nothing about whether an edit is kept, queued, or replayed reads it.
   **Availability for editor/Home search controls uses one injected
   `OnlineAvailability`**, reading Work Offline and the live `ConnectivityMonitor`

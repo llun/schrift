@@ -355,13 +355,13 @@ final class PagesTreeViewModel {
             .isEmpty
     }
 
-    /// Creates a child of `parent` and slots it into the open tree, so the new
-    /// page appears where it belongs instead of only after a reload.
     /// True while `addPage` is running; the "New page" button is disabled and a second call
     /// returns nil without a request. This view model has no `OnlineAvailability`, so unlike
     /// Home and the editor it still POSTs first on a path that is down.
     private(set) var isAddingPage = false
 
+    /// Creates a child of `parent` and slots it into the open tree, so the new
+    /// page appears where it belongs instead of only after a reload.
     func addPage(under parent: UUID) async -> Document? {
         guard !isAddingPage else { return nil }
         isAddingPage = true

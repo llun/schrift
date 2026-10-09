@@ -214,9 +214,9 @@ final class HomeViewModelCreateTests: HomeViewModelTestCase {
 
         let document = await viewModel.createDocument()
 
+        guard let document else { return XCTFail("the offline create should mint a document locally") }
         XCTAssertEqual(log.methods.count, 0)
-        XCTAssertNotNil(document)
-        XCTAssertTrue(viewModel.saveCoordinator.isPendingCreate(documentID: document!.id))
+        XCTAssertTrue(viewModel.saveCoordinator.isPendingCreate(documentID: document.id))
         XCTAssertNil(viewModel.errorKey)
     }
 }

@@ -666,8 +666,8 @@ final class EditorViewModelChildrenTests: XCTestCase {
 
         let child = await viewModel.addSubpage()
 
+        guard let child else { return XCTFail("the offline add should mint a child locally") }
         XCTAssertEqual(log.methods.count, 0)
-        XCTAssertNotNil(child)
-        XCTAssertTrue(viewModel.saveCoordinator.isPendingCreate(documentID: child!.id))
+        XCTAssertTrue(viewModel.saveCoordinator.isPendingCreate(documentID: child.id))
     }
 }
