@@ -253,7 +253,12 @@ Guidelines:
   `#if canImport(SwiftUI, _version: 8.0.85)` (the 27.1 SDK's SwiftUI) **and**
   `#available(iOS 27.1, *)`, because CI builds with an older Xcode and the
   deployment floor is 26 — see `Schrift/App/FoldLayout.swift`, and
-  [`docs/architecture.md`](docs/architecture.md) for the layout rules.
+  [`docs/architecture.md`](docs/architecture.md) for the layout rules. Query the
+  crease with `.includeInactive`: flat unfolded, the Duo reports it inactive and
+  the default query returns nothing. Don't size the split view's sidebar to the
+  crease — `NavigationSplitView` won't tile beside the ~411pt detail that leaves
+  and hides or overlays the sidebar; keep the system width and use
+  `foldClearance()` to keep detail content on one side.
 - All build configuration (bundle ids, deployment target, `SWIFT_VERSION`,
   `INFOPLIST_KEY_*`) lives in `project.yml`. The Info.plist is generated
   (`GENERATE_INFOPLIST_FILE: true`) — set plist values via `INFOPLIST_KEY_*`
