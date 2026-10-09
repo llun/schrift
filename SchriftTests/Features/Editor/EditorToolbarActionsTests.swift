@@ -14,9 +14,9 @@ final class EditorToolbarActionsTests: XCTestCase {
     /// document (one that exists only on this device) has no share URL and no accesses to list, so Share
     /// would open a sheet over a link nobody else can open; it keeps editing and Options (for Delete).
     ///
-    /// The resolver takes no connectivity: offline editing queues through the write-ahead draft pipeline,
-    /// so "offline drops Edit" — the old read-only rule — is gone, and a dead parameter would only invite
-    /// the gate's reintroduction. Edit's safety on an unloaded document is `startEditing`'s
+    /// Connectivity never removes Edit/Done or Options: offline editing queues through the write-ahead draft
+    /// pipeline, so "offline drops Edit" — the old read-only rule — is gone. Offline drops only Share (covered
+    /// in `OfflineAvailabilityTests`). Edit's safety on an unloaded document is `startEditing`'s
     /// `hasLoadedContent` guard.
     func testActionsFollowTheModeAndDropShareForALocalDocument() {
         XCTAssertEqual(editorToolbarActions(isEditing: false), [.edit, .share, .options])
