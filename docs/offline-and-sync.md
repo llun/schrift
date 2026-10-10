@@ -478,18 +478,32 @@ canonicalizes (`*`→`-`, blank-line collapsing, renumbering), which would give
 every non-byte-round-tripping document an unfixable do-nothing "Updated" banner
 on every open.
 
-`canonicalMarkdown` is also **leaf-nesting insensitive**. It parses, sets every
-nested image, attachment or link-line leaf back to indent 0, re-runs
-`normalizedListIndents` and serializes. That reproduces what the server's export
-does to such a document: BlockNote prints a nested leaf at column zero and pulls the
-item's later siblings up with it. So a draft or cached body that the app wrote with
-nested leaves (`- a\n  ![p](u)\n- b`) compares equal to the flat export of the same
-content. Without that, every save of a nested leaf would read back as a server change
-(an "Updated" banner, or a flat reinstall over the nested screen) and every replayed
-draft as a conflict. The cost is that a change that *only* nests or un-nests a leaf
-is invisible to these comparisons. That is acceptable while the server cannot
-represent the difference in markdown at all; the JSON read overlay (not yet built)
-is what will restore nesting on a read.
+`canonicalMarkdown` is also **leaf-nesting insensitive**. It parses, runs the
+blocks through `flattenedLikeServerExport` and serializes. That function models what
+the server's export does to such a document: BlockNote prints a nested leaf at column
+zero and restarts the interrupted list at the top level, keeping the depth of the
+items after the break relative to the first of them. So a draft or cached body that
+the app wrote with nested leaves (`- a\n  ![p](u)\n- b`) compares equal to the flat
+export of the same content. (Just zeroing leaf indents and renormalizing would
+re-attach a second sibling after the leaf, so `T{img, Sub, Sub2}` would read as
+changed.) Without that, every save of a nested leaf would read back as a server
+change (an "Updated" banner, or a flat reinstall over the nested screen) and every
+replayed draft as a conflict. The cost is that a change that *only* nests or
+un-nests a leaf is invisible to these comparisons.
+
+Nesting comes back on a read through the **JSON read overlay**
+(`EditorViewModel.recoveringLeafNesting`, see `docs/architecture.md`): when the
+fetched markdown could hide nesting, the editor also reads the document's BlockNote
+tree and, if it matches all-or-nothing, installs the markdown with the nesting
+restored. Every fetched body passes through it before the outcome is classified,
+so the "server changed" test, the cache write-through, the baseline and
+`draftSyncDecision` all see the same body. Any failure installs the flat export.
+Because the comparisons cannot see nesting, one clean-branch rule is added: a fetch
+whose only difference from the screen is that it *adds* leaf nesting is installed on
+a clean screen outside an editing session (`fetchedMarkdownRevealsLeafNesting`), so
+a body cached flat shows its structure on the first revalidation instead of the next
+open. It never goes the other way. A flat fetch (a failed overlay) leaves a nested
+screen alone, though the cache write-through stores it flat.
 
 #### Revalidation phase (awaited tail of `load()`/`refresh()`, for sources 1–3 and after 4)
 

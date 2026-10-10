@@ -560,7 +560,8 @@ final class EditorViewModel {
             // Snapshot before issuing: only the coordinator's state at *issue*
             // time can tell us whether the response might predate our own save.
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
-            let formatted = try await client.formattedContent(documentID: documentID)
+            let fetched = try await client.formattedContent(documentID: documentID)
+            let formatted = await recoveringLeafNesting(fetched, availabilityToken: availabilityToken)
             guard generation == revalidationGeneration, !Task.isCancelled,
                 availability.permitsResponse(for: availabilityToken)
             else { return }
@@ -666,7 +667,8 @@ final class EditorViewModel {
         let diagnosticsMarker = diagnostics?.marker()
         do {
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
-            let formatted = try await client.formattedContent(documentID: documentID)
+            let fetched = try await client.formattedContent(documentID: documentID)
+            let formatted = await recoveringLeafNesting(fetched, availabilityToken: availabilityToken)
             guard generation == revalidationGeneration, !Task.isCancelled,
                 availability.permitsResponse(for: availabilityToken)
             else { return }
@@ -709,6 +711,40 @@ final class EditorViewModel {
         guard isUnavailable, hasLoadedContent else { return }
         isUnavailable = false
         clearError()
+    }
+
+    /// The fetched body with the leaf nesting the server's markdown export flattened put back
+    /// from the document's BlockNote tree (`markdownRecoveringLeafNesting`) — or `formatted`
+    /// unchanged, which is exactly today's flat rendering.
+    ///
+    /// Every content read that installs or compares a server body goes through this, *before*
+    /// `apply`/`installFetched` see it, so everything downstream — the "server changed" test,
+    /// the cache write-through, the baseline, draft reconciliation — works on one body. (They
+    /// would agree anyway: `canonicalMarkdown` is leaf-nesting insensitive, so the overlay can
+    /// never make a body read as changed or diverged.)
+    ///
+    /// Strictly best-effort and strictly a read: the second request is made only when the
+    /// markdown has the shape the export's flattening produces (`markdownMayHideLeafNesting`)
+    /// and the read is still permitted (`availability`), and any failure — a transport error,
+    /// a server without the JSON format, a tree that does not match, a tree from a different
+    /// write than the markdown (`updated_at`) — returns the markdown as fetched. It never
+    /// throws, so it can never turn a successful read into a failed one or reach a catch that
+    /// tears the screen down. It awaits, so every caller re-checks its generation, task and
+    /// availability *after* it, as it already does after the content fetch; the save marker
+    /// was snapshotted before both requests, so `mayPredateSave` covers the pair.
+    private func recoveringLeafNesting(
+        _ formatted: FormattedDocumentContent, availabilityToken: OnlineAvailability.Token
+    ) async -> FormattedDocumentContent {
+        guard let markdown = formatted.content, markdownMayHideLeafNesting(markdown),
+            availability.permitsResponse(for: availabilityToken)
+        else { return formatted }
+        guard let tree = try? await client.formattedContentTree(documentID: documentID),
+            tree.updatedAt.map({ $0 == formatted.updatedAt }) ?? true,
+            let recovered = markdownRecoveringLeafNesting(markdown, tree: tree.content, serverOrigin: serverOrigin)
+        else { return formatted }
+        return FormattedDocumentContent(
+            id: formatted.id, title: formatted.title, content: recovered,
+            createdAt: formatted.createdAt, updatedAt: formatted.updatedAt)
     }
 
     /// The terminal 404/403 copy. Mentions the draft only when one exists, so it
@@ -1177,6 +1213,17 @@ final class EditorViewModel {
                 updateAvailable = false
                 pendingFreshContent = nil
             }
+        } else if !isEditing, fetchedMarkdownRevealsLeafNesting(fetched, over: displayedSourceMarkdown) {
+            // Same content, but the fetch restored leaf nesting the screen shows flat (a body
+            // cached before the overlay, or while it could not run). Nothing local exists to
+            // protect — this branch has no draft, no pending save, no dirt — and outside an
+            // editing session no caret either, so show the structure now rather than on the
+            // next open. Mid-edit it waits: a nesting-only change is not worth a banner.
+            install(markdown: fetched, title: nil, syncedAt: now)
+            serverBaseline = DraftBaseline(
+                serverUpdatedAt: formatted.updatedAt, markdown: fetched, title: formatted.title)
+            updateAvailable = false
+            pendingFreshContent = nil
         } else {
             // Raw may differ only cosmetically — converge the comparison
             // basis on the fetched raw so future comparisons settle.
@@ -3208,7 +3255,8 @@ final class EditorViewModel {
         let discardedSave = saveCoordinator.pendingSave(documentID: documentID)
         do {
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
-            let formatted = try await client.formattedContent(documentID: documentID)
+            let fetched = try await client.formattedContent(documentID: documentID)
+            let formatted = await recoveringLeafNesting(fetched, availabilityToken: availability.token)
             guard generation == revalidationGeneration, !Task.isCancelled else { return }
             // A body that may predate one of our own saves must never be installed (it
             // would resurrect what that save replaced, and the next full-overwrite save

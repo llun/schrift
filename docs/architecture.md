@@ -1153,19 +1153,61 @@ lazy continuation of the item's text; only the app's own parser ever reads it.)
 (`YjsEncoderTests.testListItemLeafChildrenGoInANestedBlockGroup`, generated with
 `@blocknote/core@0.51.4` and yjs 13.6.33).
 
-**The server's export flattens it.** BlockNote 0.51.4's `blocksToMarkdownLossy`
-prints a nested leaf at column zero after a blank line, and pulls every later
-sibling of it up to the top level too: `* a` with children `[image, * b]` exports
-as `* a`, the image, `* b`, all flat. So a read through `formatted-content/`
-always arrives flat, and the parser keeps it flat. The nested spelling exists only
-in markdown the app itself wrote (drafts and the content cache). Saving from it
-writes real BlockNote children, but reopening from the server shows them flat
-again until a JSON read overlay, which is the next stage and **not yet built**,
-restores the structure. `canonicalMarkdown` is leaf-nesting insensitive for the
-same reason (see `docs/offline-and-sync.md`). On a Docs 6 server a list item with
-nested children projects opaque, so `BlockNoteAlignment` never anchors it: it and
-its leaves are rebuilt on every save, which resets web-only media props (an image's
-`caption`, `previewWidth`, `textAlignment`; a file's `caption`) to their defaults.
+**The server's export flattens it; the block tree restores it.** BlockNote 0.51.4's
+`blocksToMarkdownLossy` prints a nested leaf at column zero after a blank line and
+restarts the list it interrupted at the top level: `* a` with children
+`[image, * b]` exports as `* a`, the image, `* b`, all flat. Items after the break
+keep their depth relative to the first of them (`T{img, Sub{SubSub}}` exports `Sub`
+flat and `SubSub` one level under it), and an item shallower than that shift
+re-anchors it. `flattenedLikeServerExport` (`LeafNestingOverlay.swift`) is that
+model, checked against `@blocknote/server-util` on every shape in
+`LeafNestingOverlayTests`, and `canonicalMarkdown` runs both sides through it, so the
+app's nested spelling and the server's flat export of the same body compare equal
+(see `docs/offline-and-sync.md`).
+
+The markdown read therefore carries a nested leaf flat, but the document's BlockNote
+tree does not: `GET documents/{id}/formatted-content/?content_format=json` answers
+the same envelope with `content` the block array, children included. The editor's
+three content-fetch sites (open/revalidate, pull-to-refresh, "keep the server
+version") pass each fetched body through `EditorViewModel.recoveringLeafNesting`
+before `apply`/`installFetched`:
+
+1. Only when the markdown could hide nesting (`markdownMayHideLeafNesting`: a leaf
+   directly after a list item, the one shape the flattening produces) and the read
+   is still permitted does it issue the second request
+   (`DocsAPIClient.formattedContentTree`, decoded into a minimal, depth-capped
+   `BlockNoteTreeNode`).
+2. A tree whose `updated_at` differs from the markdown's describes another write and
+   is ignored.
+3. `markdownRecoveringLeafNesting` overlays it, all or nothing. List items (by
+   kind), images (by url) and attachments (by url) are anchors; the markdown's
+   anchors in block order and the tree's in pre-order must be the same sequence,
+   every tree anchor must have only list items above it, and each anchored block
+   takes its tree depth: the flattened leaves and the list items pulled up after
+   them alike. `normalizedListIndents` must keep every target depth (a file
+   caption, which exports as a paragraph between two children, makes it fail), the
+   result must equal the markdown under `canonicalMarkdown`, which proves the tree
+   explains the markdown rather than contradicting it, and it must round-trip
+   through the parser. Media that export nothing (a docs `pdf` with the default
+   preview, an empty placeholder) are not anchors; a `video` exports image syntax and
+   anchors as an image.
+4. Any failure, at any step, installs the flat export, which is the behaviour before
+   the overlay existed. The helper never throws, so it cannot turn a successful read
+   into a teardown, and every caller still re-checks its generation and availability
+   after the extra await. The save marker taken before the first request covers
+   both.
+
+The overlaid body is what everything downstream sees: the install, the content
+cache, the baseline and draft reconciliation. A body cached flat compares equal to
+its restored revalidation, so `reconcileClean` installs a fetch that adds leaf
+nesting on a clean screen outside an editing session
+(`fetchedMarkdownRevealsLeafNesting`). That is one-way: a flat fetch, which is also
+what a failed overlay produces, never un-nests the screen, although it does rewrite
+the cache flat. Saving a nested document writes real BlockNote children. On a
+Docs 6 server a list item with nested children projects opaque, so
+`BlockNoteAlignment` never anchors it: it and its leaves are rebuilt on every save,
+which resets web-only media props (an image's `caption`, `previewWidth`,
+`textAlignment`; a file's `caption`) to their defaults.
 
 This is the part with no direct backend support, so it's called out explicitly:
 

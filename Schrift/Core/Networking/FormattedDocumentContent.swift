@@ -8,6 +8,96 @@ struct FormattedDocumentContent: Codable, Equatable, Sendable {
     let updatedAt: Date
 }
 
+/// One block of a document's BlockNote tree, as `formatted-content/?content_format=json`
+/// returns it — reduced to the little the editor reads from it: the block's `type`, the two
+/// props that identify a media leaf (`url`, and `showPreview`, which decides whether a docs
+/// `pdf` block exports to markdown at all), and its `children`.
+///
+/// It exists for one reason: the markdown export flattens a photo or file nested under a list
+/// item (`markdownRecoveringLeafNesting`), and this tree is where the nesting survives. It is
+/// **read-only structure, never content** — nothing here is ever written back or rendered.
+///
+/// Decoded defensively, because the shape is a third-party library's and every field is
+/// optional in practice: unknown fields (inline `content`, every other prop) are ignored, a
+/// missing or mistyped `type`/`url`/`showPreview` decodes as absent, and missing `children`
+/// as `[]`. Only a `children` that is present but not an array fails the whole decode, which
+/// callers read as "no tree".
+///
+/// **Nesting is bounded** (`maxNestingDepth`). `children` nest arbitrarily, the decoder
+/// recurses once per level, and the depth is whatever the server — or anything in front of
+/// it — sends: the `Lib0Decoder.readAny` lesson, where depth is input, not structure. A deeper
+/// tree throws instead (`.decoding` once `DocsAPIClient.send` wraps it); real documents nest a
+/// few levels, and the editor itself never draws deeper than `maxListIndent`.
+struct BlockNoteTreeNode: Decodable, Equatable, Sendable {
+    /// The deepest `children` level decoded before the decode is refused.
+    static let maxNestingDepth = 64
+
+    let type: String
+    let url: String?
+    let showPreview: Bool?
+    let children: [BlockNoteTreeNode]
+
+    init(type: String, url: String? = nil, showPreview: Bool? = nil, children: [BlockNoteTreeNode] = []) {
+        self.type = type
+        self.url = url
+        self.showPreview = showPreview
+        self.children = children
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type, props, children
+    }
+
+    private enum PropKeys: String, CodingKey {
+        case url, showPreview
+    }
+
+    init(from decoder: Decoder) throws {
+        // Depth is counted from the coding path rather than threaded through `userInfo`, so
+        // the shared `JSONDecoder.docsAPI` needs no per-call configuration: every level of
+        // nesting adds exactly one `children` key to the path.
+        let depth = decoder.codingPath.filter { $0.stringValue == CodingKeys.children.stringValue }.count
+        guard depth < Self.maxNestingDepth else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "BlockNote tree nested deeper than \(Self.maxNestingDepth) levels"))
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = (try? container.decodeIfPresent(String.self, forKey: .type)) ?? ""
+        let props = try? container.nestedContainer(keyedBy: PropKeys.self, forKey: .props)
+        url = try? props?.decodeIfPresent(String.self, forKey: .url)
+        showPreview = try? props?.decodeIfPresent(Bool.self, forKey: .showPreview)
+        children = try container.decodeIfPresent([BlockNoteTreeNode].self, forKey: .children) ?? []
+    }
+}
+
+/// `formatted-content/?content_format=json`: the same envelope as the markdown read, with
+/// `content` the document's top-level BlockNote blocks instead of a string.
+struct FormattedDocumentTree: Decodable, Equatable, Sendable {
+    /// The server's `updated_at` for this read, when it carries one — lets a caller tell
+    /// whether the tree and a markdown read it pairs with describe the same write.
+    let updatedAt: Date?
+    let content: [BlockNoteTreeNode]
+
+    init(updatedAt: Date?, content: [BlockNoteTreeNode]) {
+        self.updatedAt = updatedAt
+        self.content = content
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case updatedAt, content
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        updatedAt = try? container.decodeIfPresent(Date.self, forKey: .updatedAt)
+        // An empty document may answer `null`; a *string* here (a server that ignored the
+        // format and sent markdown) is not a tree and fails the decode.
+        content = try container.decodeIfPresent([BlockNoteTreeNode].self, forKey: .content) ?? []
+    }
+}
+
 extension DocsAPIClient {
     /// Reads a document's content in `format` (markdown), tolerating both backend shapes.
     ///
@@ -69,6 +159,21 @@ extension DocsAPIClient {
             // the flag alone. Pinning it to a route that cannot answer would break every
             // content read for the rest of the client's life, with no way back but a relaunch.
         }
+    }
+
+    /// Reads a document's BlockNote block tree (`content_format=json`) — the structure the
+    /// markdown export loses when it flattens a leaf nested under a list item.
+    ///
+    /// Best-effort by contract: the only caller (`EditorViewModel`'s leaf-nesting overlay)
+    /// treats every failure as "no tree" and installs the markdown as it is. So this has none
+    /// of `formattedContent`'s route detection. A server already known to lack
+    /// `formatted-content/` (`prefersLegacyContentRoute`) answers `.routeNotFound` without a
+    /// request rather than asking a route it has proven absent; the legacy `content/` route is
+    /// never tried, because whether it speaks `content_format=json` is unknown and a guess
+    /// costs nothing but the overlay.
+    func formattedContentTree(documentID: UUID) async throws -> FormattedDocumentTree {
+        if prefersLegacyContentRoute { throw DocsAPIError.routeNotFound }
+        return try await get(formattedContentPath(documentID.uuidString.lowercased(), "json"))
     }
 
     private func formattedContentPath(_ id: String, _ format: String) -> String {

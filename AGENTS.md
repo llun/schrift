@@ -584,6 +584,7 @@ Schrift/
 │                        documents deleted on-device (PendingDocumentDeleteStore + runDeletePass,
 │                        strikethrough rows + PendingDeleteUndo),
 │                        photo insert (ImagePreparation),
+│                        leaf nesting restored from the block tree (LeafNestingOverlay),
 │                        in-app document links (DocumentLink),
 │                        inline rendering (BlockTextView glyph suppression, HiddenSyntaxSelection,
 │                        InlineTextStyle) + link authoring (MarkdownLinkEditing, LinkEditorSheet),
@@ -1010,6 +1011,17 @@ new code reads like the surrounding code.
   `application/xhtml+xml` will not trigger the fallback and will report its
   documents as deleted. Django's default 404 page is `text/html`, and that is what
   the one legacy server this was tested against returns.
+- **The block tree is a best-effort second read, never a content source.**
+  `formattedContentTree(documentID:)` GETs
+  `documents/{id}/formatted-content/?content_format=json` (same envelope, `content`
+  the BlockNote block array) into `FormattedDocumentTree`/`BlockNoteTreeNode` — only
+  `type`, `props.url`, `props.showPreview` and `children` are kept, decoded
+  defensively, nesting capped at 64. It has no route detection of its own: on a
+  server `formattedContent` has already proven legacy (`prefersLegacyContentRoute`)
+  it throws `.routeNotFound` without a request, and it never tries `content/`. Its
+  one caller treats every failure as "no tree", so nothing here may ever reach a
+  teardown catch or put tree data on screen; it only re-levels blocks the markdown
+  already has (see the leaf-nesting bullet under [Editor](#editor--the-on-device-save-coreyjs)).
 - **Favorites routes are versioned.** Docs **5.7.0** renamed
   `documents/favorite_list/` to `documents/favorites/` (upstream #2540).
   `favoriteDocuments()` checks `config/`'s `RELEASE_VERSION` with a numeric
@@ -1829,24 +1841,55 @@ that are easy to violate and expensive to discover:
   nested `blockGroup` as opaque), so `markDirty` sets `hasUnmodelableLocalEdit` and
   takes the classic path while any block is nested (`nestsBlocks`, keyed on
   `indent > 0`, so a nested leaf latches it too) — keep that if you touch it.
-- **The server's markdown export flattens nested leaves; restoring them is a
-  pending read overlay.** BlockNote 0.51.4's `blocksToMarkdownLossy` prints a photo
+- **The server's markdown export flattens nested leaves; a JSON read overlay
+  restores them.** BlockNote 0.51.4's `blocksToMarkdownLossy` prints a photo
   or file nested under a list item as a column-zero line after a blank one — and
-  pulls every later sibling of it up to the top level too (`* a` with children
-  `[image, * b]` exports as `* a`, the image, `* b`, all flat). So on a read through
-  `formatted-content/` a nested leaf **always arrives flat**, and the parser keeps
-  that shape flat. The nested spelling the parser reads (`parseNestedLeaf`) exists
-  only in markdown the app itself wrote — drafts and the content cache — via
-  `serializeMarkdown`: tight, at the parent's content column, no blank line
-  (`- [ ] Task\n  ![photo.png](url)\n  [report.pdf](url)\n- [ ] Next\n`). Saving
-  from that writes the leaves as BlockNote children, but reopening the document
-  from the server shows them flat again until a JSON read overlay (the next stage,
-  **not yet built**) restores the nesting from the document's stored structure.
-  Because the two spellings differ, `canonicalMarkdown` is **leaf-nesting
-  insensitive** (it flattens nested leaves and renormalizes before serializing,
-  which reproduces the export's sibling flattening), so a draft holding nested
-  leaves never reads as diverged from the server's flat export of the body it
-  pushed — no false conflicts, no "server changed" churn.
+  restarts the list it interrupted at the top level (`* a` with children
+  `[image, * b]` exports as `* a`, the image, `* b`, all flat; the items after the
+  break keep their depth *relative to the first one*, so `T{img, Sub{SubSub}}`
+  exports `* Sub` flat and `  * SubSub` one level under it). So the markdown from
+  `formatted-content/` carries a nested leaf **flat**, and the parser keeps that
+  shape flat. The nested spelling the parser reads (`parseNestedLeaf`) is the app's
+  own, written by `serializeMarkdown`: tight, at the parent's content column, no
+  blank line (`- [ ] Task\n  ![photo.png](url)\n  [report.pdf](url)\n- [ ] Next\n`).
+  **The editor's content reads put the nesting back** from the document's BlockNote
+  tree (`DocsAPIClient.formattedContentTree` → `formatted-content/?content_format=json`,
+  whose `content` is the block array with `children`): `EditorViewModel
+  .recoveringLeafNesting` runs between the content fetch and `apply`/`installFetched`
+  at all three fetch sites (open/revalidate, pull-to-refresh, keep-the-server), so
+  install, cache, baseline and every comparison see one body. It asks only when
+  `markdownMayHideLeafNesting` (a leaf directly after a list item — the only shape the
+  flattening produces) and the read is still permitted, and every failure — transport,
+  decode, a tree whose `updated_at` differs from the markdown's, a tree that does not
+  fit — installs the flat export exactly as before; it never throws. The overlay
+  (`markdownRecoveringLeafNesting`, `LeafNestingOverlay.swift`) is pure and
+  **all-or-nothing**: list items (by kind), images and attachments are *anchors*,
+  both sides list theirs in document order (the tree pre-order, with depth), and the
+  sequences must match exactly; every anchor must sit under list items only in the
+  tree; each anchored block takes its tree depth (list items the export pulled up
+  included), `normalizedListIndents` must keep every one of them, and the result must
+  read back as the markdown under the export's flattening and round-trip through the
+  parser — else nil, and the flat body is installed. Media nodes that export nothing
+  (a docs `pdf` with the default `showPreview`, a url-less placeholder) are not
+  anchors; a `video` anchors as an image (it exports image syntax); a link-only
+  paragraph and an off-origin file are not anchors, so a tree `file` whose url is not
+  this server's declines the whole overlay. The tree decode is minimal, defensive and
+  **depth-capped** (`BlockNoteTreeNode.maxNestingDepth`, 64 → `.decoding`), the
+  `Lib0Decoder` lesson. Because a body cached flat compares equal to its restored
+  revalidation, `reconcileClean` installs a fetch that *adds* leaf nesting
+  (`fetchedMarkdownRevealsLeafNesting`) on a clean, non-editing screen even though
+  `serverChanged` says no — one-way: a flat fetch (also what a failed overlay yields)
+  never un-nests the screen. Because the two spellings differ, `canonicalMarkdown` is
+  **leaf-nesting insensitive**: it runs both sides through `flattenedLikeServerExport`,
+  the model of exactly what the export does (verified against
+  `@blocknote/server-util` on every shape in `LeafNestingOverlayTests`; zeroing leaf
+  indents and renormalizing instead re-attaches a *second* sibling after the leaf,
+  which the export does not), so a draft holding nested leaves never reads as
+  diverged from the server's flat export of the body it pushed — no false conflicts,
+  no "server changed" churn. The cost is that a change that only nests or un-nests a
+  leaf is invisible to those comparisons; and when the overlay fails on a revalidation
+  the cache is rewritten with the flat body, so the next open shows it flat until an
+  overlay succeeds again.
 - **Only leaf blocks are draggable in edit mode.** A long press on a divider,
   image or attachment (`blockIsReorderable`) picks it up; on a text row the same
   press belongs to `UITextView`, so don't extend the gesture there without a
