@@ -9,7 +9,7 @@ import Foundation
 ///
 /// Instances carry the live session credential in `value`. NEVER log, print,
 /// or serialize them anywhere other than the Keychain.
-struct StoredCookie: Codable, Equatable, Sendable {
+struct StoredCookie: Codable, Hashable, Sendable {
     let name: String
     let value: String
     let domain: String

@@ -98,4 +98,82 @@ final class SessionStoreStateTests: SessionStoreTestCase {
 
         XCTAssertFalse(store.needsReauthentication)
     }
+
+    // MARK: - Silent re-authentication
+
+    func testAnExpiryRecoversSilentlyBeforeShowingTheSheet() throws {
+        let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
+        try store.signIn(serverURL: serverURL)
+
+        store.noteSessionExpired()
+
+        XCTAssertTrue(store.isSilentlyReauthenticating)
+        XCTAssertFalse(store.presentsReauthenticationSheet)
+    }
+
+    func testAFurther401DuringASilentAttemptDoesNotRaiseTheSheet() throws {
+        let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
+        try store.signIn(serverURL: serverURL)
+        store.noteSessionExpired()
+
+        store.noteSessionExpired()
+
+        XCTAssertTrue(store.isSilentlyReauthenticating)
+        XCTAssertFalse(store.presentsReauthenticationSheet)
+    }
+
+    func testEscalatingASilentAttemptPresentsTheSheet() throws {
+        let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
+        try store.signIn(serverURL: serverURL)
+        store.noteSessionExpired()
+
+        store.escalateReauthentication()
+
+        XCTAssertTrue(store.presentsReauthenticationSheet)
+        XCTAssertFalse(store.isSilentlyReauthenticating)
+        XCTAssertTrue(store.needsReauthentication)
+    }
+
+    /// A late timeout must not re-open a sheet the user already answered or dismissed.
+    func testEscalatingWithNoSilentAttemptRunningDoesNothing() throws {
+        let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
+        try store.signIn(serverURL: serverURL)
+
+        store.escalateReauthentication()
+        XCTAssertFalse(store.needsReauthentication)
+
+        store.noteSessionExpired()
+        try store.signIn(serverURL: serverURL)
+        store.escalateReauthentication()
+        XCTAssertFalse(store.needsReauthentication)
+        XCTAssertFalse(store.presentsReauthenticationSheet)
+    }
+
+    /// Once a silent attempt has failed, a later expiry (after the user dismissed the sheet)
+    /// asks the user directly rather than spinning up a hidden login known not to complete.
+    func testAnExpiryAfterAFailedSilentAttemptGoesStraightToTheSheet() throws {
+        let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
+        try store.signIn(serverURL: serverURL)
+        store.noteSessionExpired()
+        store.escalateReauthentication()
+        store.cancelReauthentication()
+
+        store.noteSessionExpired()
+
+        XCTAssertTrue(store.presentsReauthenticationSheet)
+        XCTAssertFalse(store.isSilentlyReauthenticating)
+    }
+
+    func testSigningInAgainRestoresTheSilentAttempt() throws {
+        let store = SessionStore(userDefaults: userDefaults, keychain: FakeKeychainStore())
+        try store.signIn(serverURL: serverURL)
+        store.noteSessionExpired()
+        store.escalateReauthentication()
+        try store.signIn(serverURL: serverURL)
+
+        store.noteSessionExpired()
+
+        XCTAssertTrue(store.isSilentlyReauthenticating)
+        XCTAssertFalse(store.presentsReauthenticationSheet)
+    }
 }

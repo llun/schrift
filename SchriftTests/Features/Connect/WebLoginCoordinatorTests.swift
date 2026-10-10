@@ -15,11 +15,13 @@ import XCTest
 final class WebLoginCoordinatorTests: XCTestCase {
     private func makeCoordinator(
         serverHost: String = "docs.llun.dev",
+        onStoppedBeforeLogin: (@MainActor () -> Void)? = nil,
         onLoginComplete: @escaping @MainActor () -> Void
     ) -> WebLoginView.Coordinator {
         WebLoginView.Coordinator(
             serverHost: serverHost,
             onLoginComplete: onLoginComplete,
+            onStoppedBeforeLogin: onStoppedBeforeLogin,
             // Skip the live WebKit cookie store; just run the completion.
             captureCookies: { completion in Task { @MainActor in completion() } }
         )
@@ -90,5 +92,40 @@ final class WebLoginCoordinatorTests: XCTestCase {
         await waitUntil { completionCount >= 1 }
         await waitAndConfirmNever { completionCount > 1 }
         XCTAssertEqual(completionCount, 1)
+    }
+
+    // MARK: - Stopping before login (the silent re-login's cue to hand over to the sheet)
+
+    func testAPageFinishingOnTheIdentityProviderReportsStopped() async {
+        var stopped = false
+        let coordinator = makeCoordinator(onStoppedBeforeLogin: { stopped = true }) {}
+
+        coordinator.handleFinishedNavigation(to: URL(string: "https://idp.example.org/login"))
+
+        await waitUntil { stopped }
+    }
+
+    func testAPageFinishingBackOnTheServerCompletesAndDoesNotReportStopped() async {
+        var stopped = false
+        var completed = false
+        let coordinator = makeCoordinator(onStoppedBeforeLogin: { stopped = true }) { completed = true }
+
+        coordinator.handleFinishedNavigation(to: URL(string: "https://docs.llun.dev/home/"))
+
+        await waitUntil { completed }
+        await waitAndConfirmNever { stopped }
+    }
+
+    /// The signed-in SPA can go on to load other hosts' pages; that is not a stopped login.
+    func testNothingIsReportedStoppedAfterCompletion() async {
+        var stopped = false
+        var completed = false
+        let coordinator = makeCoordinator(onStoppedBeforeLogin: { stopped = true }) { completed = true }
+        coordinator.handleFinishedNavigation(to: URL(string: "https://docs.llun.dev/"))
+        await waitUntil { completed }
+
+        coordinator.handleFinishedNavigation(to: URL(string: "https://idp.example.org/logout"))
+
+        await waitAndConfirmNever { stopped }
     }
 }

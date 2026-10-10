@@ -20,6 +20,11 @@ struct WebLoginView: UIViewRepresentable {
     let url: URL
     let serverHost: String
     let onLoginComplete: @MainActor () -> Void
+    /// The web view came to rest somewhere other than the signed-in app — a page on the IdP
+    /// finished loading (its login form) or a load failed. The interactive sheet ignores it;
+    /// the silent re-login uses it to stop waiting and hand over to the sheet, since a hidden
+    /// login form can never be filled in.
+    var onStoppedBeforeLogin: (@MainActor () -> Void)? = nil
 
     func makeUIView(context: Context) -> WKWebView {
         let webView = WKWebView()
@@ -31,12 +36,14 @@ struct WebLoginView: UIViewRepresentable {
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(serverHost: serverHost, onLoginComplete: onLoginComplete)
+        Coordinator(
+            serverHost: serverHost, onLoginComplete: onLoginComplete, onStoppedBeforeLogin: onStoppedBeforeLogin)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         private let serverHost: String
         private let onLoginComplete: @MainActor () -> Void
+        private let onStoppedBeforeLogin: (@MainActor () -> Void)?
         /// Syncs the web view's cookies into `HTTPCookieStorage.shared` (so the
         /// native API client inherits the freshly authenticated session), then
         /// runs `completion` on the main actor. Injected as a seam so tests can
@@ -51,6 +58,7 @@ struct WebLoginView: UIViewRepresentable {
         init(
             serverHost: String,
             onLoginComplete: @escaping @MainActor () -> Void,
+            onStoppedBeforeLogin: (@MainActor () -> Void)? = nil,
             captureCookies: @escaping (_ completion: @escaping @MainActor () -> Void) -> Void = { completion in
                 WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
                     syncCookies(cookies, into: HTTPCookieStorage.shared)
@@ -60,6 +68,7 @@ struct WebLoginView: UIViewRepresentable {
         ) {
             self.serverHost = serverHost
             self.onLoginComplete = onLoginComplete
+            self.onStoppedBeforeLogin = onStoppedBeforeLogin
             self.captureCookies = captureCookies
         }
 
@@ -68,7 +77,33 @@ struct WebLoginView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            handleNavigation(to: webView.url)
+            handleFinishedNavigation(to: webView.url)
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            reportStoppedBeforeLogin()
+        }
+
+        func webView(
+            _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error
+        ) {
+            reportStoppedBeforeLogin()
+        }
+
+        /// A page finished loading. On the server host this is the same completion check as
+        /// `didCommit`; anywhere else the chain has come to rest on a page of its own — an OIDC
+        /// redirect chain is server-side 302s, which finish only at their destination — so it
+        /// is reported as stopped. (A `form_post` IdP page that submits itself also finishes
+        /// first; the silent re-login gives such a page a short grace before acting on this.)
+        func handleFinishedNavigation(to url: URL?) {
+            handleNavigation(to: url)
+            guard let url, url.host?.caseInsensitiveCompare(serverHost) != .orderedSame else { return }
+            reportStoppedBeforeLogin()
+        }
+
+        private func reportStoppedBeforeLogin() {
+            guard !didComplete, let onStoppedBeforeLogin else { return }
+            Task { @MainActor in onStoppedBeforeLogin() }
         }
 
         /// Shared completion core for every observed navigation event. Completes

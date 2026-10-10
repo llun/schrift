@@ -558,7 +558,8 @@ Schrift/
 ├── Features/
 │   ├── Connect/         server URL entry + WKWebView OIDC login + the session-expiry
 │   │                    re-login sheet (ReauthenticationSheetView +
-│   │                    ReauthenticationViewModel), RecentServersStore
+│   │                    ReauthenticationViewModel, tried first invisibly by
+│   │                    SilentReauthenticationView), RecentServersStore
 │   ├── Documents/       DocumentActions — the one delete/pin/move ladder, shared by the
 │   │                    Options sheet and every swipe surface — plus the move destination
 │   │                    picker (MoveDocumentViewModel + MoveDocumentSheetView)
@@ -3941,10 +3942,26 @@ markdown write endpoint**. Understand this before touching the save path:
   `…WhenUnlockedThisDeviceOnly` (a live session stays on the device that got it;
   the cost is one re-login after a device migration), re-applied on every
   delete-then-add `save` and back-filled onto pre-existing items by
-  `SessionStore.init` via `KeychainStore.upgradeAccessibility`. **If a Keychain
-  read or write ever moves onto a background-task path** (none today) this must
-  become `…AfterFirstUnlockThisDeviceOnly`, or a background launch reads nil and
-  silently signs the user out.
+  `SessionStore.init` via `KeychainStore.upgradeAccessibility`.
+  The snapshot is **re-taken on every move to the background**
+  (`refreshPersistedSessionCookies`, from RootView's `scenePhase` observer): the
+  server rotates/extends its cookies mid-session, and a sign-in-only snapshot
+  restored stale ones so every cold launch 401'd. It is skipped while
+  `needsReauthentication` (cookies then are refused, or another account's
+  awaiting confirmation — only `signIn` persists those) and never writes an
+  empty set. That write runs as the scene backgrounds, while the device is
+  still unlocked; a failure is swallowed and only costs the old behaviour.
+  **If a Keychain read or write ever moves onto a background-task path** (none
+  today) this must become `…AfterFirstUnlockThisDeviceOnly`, or a background
+  launch reads nil and silently signs the user out.
+- **A 401 is recovered silently first.** `noteSessionExpired` starts a hidden
+  web login (`SilentReauthenticationView`, mounted invisibly by RootView while
+  `isSilentlyReauthenticating`); the visible sheet is bound to
+  `presentsReauthenticationSheet`, not `needsReauthentication`, and appears only
+  via `escalateReauthentication` (stopped on the IdP, load failure, failed
+  confirmation, or the 15 s timeout). Escalation is a no-op unless a silent
+  attempt is running, so a late timer can't reopen an answered sheet; after one
+  failed silent attempt later expiries go straight to the sheet until `signIn`.
 - `DocumentContentCacheStore` is the one **file-based** store (full document
   bodies are too large for UserDefaults): stateless over its directory,
   `isExcludedFromBackup`, cleared on sign-out, never logged. Its eviction
