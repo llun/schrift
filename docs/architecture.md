@@ -1226,13 +1226,16 @@ The overlaid body is what everything downstream sees: the install, the content
 cache, the baseline and draft reconciliation. A body cached flat compares equal to
 its restored revalidation, so `reconcileClean` installs a fetch that adds leaf
 nesting on a clean screen outside an editing session
-(`fetchedMarkdownRevealsLeafNesting`). The reverse takes positive evidence: only a
+(`fetchedMarkdownRevealsLeafNesting`, compared against the blocks on screen, so a
+reveal deferred by an editing session still applies on the first read after Done).
+The reverse takes positive evidence: only a
 `.confirmedFlat` read installs a flat body over a screen that nests a leaf (a
 co-author un-nested it on the web), likewise only clean and outside an editing
 session. An `.unknown` flat read, which is what every failure produces, never
 un-nests the screen, and `serverCopyKeepingLeafNesting` keeps the nested spelling of
-the same content in the cache and the baseline as well, so a failed tree read can no
-longer rewrite a nested cached copy flat for the next offline open. Saving a nested document writes real BlockNote children. On a
+the same content in the cache and the baseline as well (including the body "Keep the
+server version" installs), so a failed tree read can no longer rewrite a nested cached
+copy flat for the next offline open. Saving a nested document writes real BlockNote children. On a
 Docs 6 server a list item with nested children projects opaque, so
 `BlockNoteAlignment` never anchors it: it and its leaves are rebuilt on every save,
 which resets web-only media props (an image's `caption`, `previewWidth`,

@@ -210,4 +210,85 @@ final class EditorViewModelLeafNestingTests: EditorViewModelTestCase {
         XCTAssertTrue(blocksContentEqual(viewModel.blocks, nestedBlocks), "\(viewModel.blocks)")
         XCTAssertFalse(viewModel.isDirty)
     }
+
+    /// A reveal that lands mid-edit waits — but it must not be *lost*. The fetch's nested
+    /// spelling becomes the comparison basis while the blocks stay flat, so a reveal check
+    /// against that basis short-circuited on every later fetch: the nesting was never shown,
+    /// and the next edit's save un-nested it on the server. After Done, the next read installs it.
+    func testARevealDeferredByEditingAppliesOnTheNextRefresh() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(offlineCachedEntry(markdown: flatExport))
+        let log = RequestRecorder()
+        stubOffline(log: log)
+        await viewModel.load()
+        viewModel.startEditing()
+        stubExportAndTree(log: log)
+
+        await viewModel.load()
+
+        XCTAssertTrue(viewModel.isEditing)
+        XCTAssertTrue(blocksContentEqual(viewModel.blocks, flatBlocks), "mid-edit the reveal waits")
+
+        viewModel.finishEditing()
+        await viewModel.refresh()
+
+        XCTAssertTrue(blocksContentEqual(viewModel.blocks, nestedBlocks), "\(viewModel.blocks)")
+        XCTAssertEqual(viewModel.rawMarkdown, nestedMarkdown)
+        XCTAssertEqual(contentCache.content(for: documentID)?.markdown, nestedMarkdown)
+        XCTAssertFalse(viewModel.isDirty, "showing the server's structure is not an edit")
+        XCTAssertFalse(viewModel.updateAvailable)
+        XCTAssertEqual(savesInFlight(log), 0)
+    }
+
+    /// The deferred reveal survives a follow-up read whose tree fails: that read cannot vouch
+    /// for nesting either way, but the nested spelling the earlier read established is the
+    /// better-informed one, and the clean screen shows it.
+    func testARevealDeferredByEditingAppliesEvenWhenTheNextTreeReadFails() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(offlineCachedEntry(markdown: flatExport))
+        let log = RequestRecorder()
+        stubOffline(log: log)
+        await viewModel.load()
+        viewModel.startEditing()
+        stubExportAndTree(log: log)
+        await viewModel.load()
+        XCTAssertTrue(blocksContentEqual(viewModel.blocks, flatBlocks), "mid-edit the reveal waits")
+
+        viewModel.finishEditing()
+        stubExportAndTree(log: log, treeStatus: 500)
+        await viewModel.refresh()
+
+        XCTAssertTrue(blocksContentEqual(viewModel.blocks, nestedBlocks), "\(viewModel.blocks)")
+        XCTAssertEqual(contentCache.content(for: documentID)?.markdown, nestedMarkdown)
+        XCTAssertFalse(viewModel.isDirty)
+    }
+
+    /// "Keep the server version" installs what the server holds — and when the tree read fails
+    /// (`.unknown`), a nested cached copy of the same content is that body's better-informed
+    /// spelling. Installing the flat export instead overwrote the cached nesting, so the
+    /// document showed flat from then on.
+    func testKeepingTheServerVersionKeepsTheCachedNestingWhenTheTreeReadFails() async {
+        let (viewModel, _, draftStore, contentCache) = makeEnvironment()
+        contentCache.save(offlineCachedEntry(markdown: nestedMarkdown))
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: "Doc", markdown: "# Mine", updatedAt: Date(),
+                baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1_700_000_000), markdown: "# Base")
+            )
+        )
+        let log = RequestRecorder()
+        stubExportAndTree(log: log, treeStatus: 500)
+        await viewModel.load()
+        XCTAssertNotNil(viewModel.syncConflict)
+        XCTAssertEqual(contentCache.content(for: documentID)?.markdown, nestedMarkdown)
+
+        await viewModel.resolveConflictKeepingServer()
+
+        XCTAssertNil(viewModel.syncConflict)
+        XCTAssertNil(draftStore.draft(for: documentID))
+        XCTAssertTrue(blocksContentEqual(viewModel.blocks, nestedBlocks), "\(viewModel.blocks)")
+        XCTAssertEqual(viewModel.rawMarkdown, nestedMarkdown)
+        XCTAssertEqual(contentCache.content(for: documentID)?.markdown, nestedMarkdown)
+        XCTAssertEqual(savesInFlight(log), 0, "keep-server never pushes")
+    }
 }

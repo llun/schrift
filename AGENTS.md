@@ -1901,15 +1901,23 @@ that are easy to violate and expensive to discover:
   `Lib0Decoder` lesson. Because a body cached flat compares equal to its restored
   revalidation, `reconcileClean` installs a fetch that *adds* leaf nesting
   (`fetchedMarkdownRevealsLeafNesting`) on a clean, non-editing screen even though
-  `serverChanged` says no. The reverse needs **positive evidence**: only
+  `serverChanged` says no. That check compares against **`serializeMarkdown(blocks)`,
+  never `displayedSourceMarkdown`**: a reveal that lands mid-edit is deferred, but the
+  clean branch's fallthrough still converges the comparison basis on the nested
+  spelling while the blocks stay flat, so a basis-keyed check short-circuited on every
+  later fetch — the nesting was never shown and the next edit's save un-nested it on the
+  server. Keyed on the blocks, the first read after Done installs it (and it reveals
+  `serverCopy`, so a follow-up read whose tree fails still carries it). The reverse
+  needs **positive evidence**: only
   `.confirmedFlat` installs a flat body over a screen that nests a leaf (a co-author
   un-nested it on the web), again only clean and outside an editing session. An
   `.unknown` flat read is *not* evidence — it is what a transient failure, a server
   without the JSON format and a stale pairing all produce — so it never un-nests the
   screen, and `serverCopyKeepingLeafNesting` keeps the nested spelling of the same
-  content in the cache and the baseline too (`reconcileClean`, `cacheServerCopy`);
-  without that, one failed tree read rewrote the cached nesting flat and the next
-  (offline) open showed it flat. Because the two spellings differ, `canonicalMarkdown` is
+  content in the cache and the baseline too (`reconcileClean`, `cacheServerCopy`, and
+  `installFetched` against the cached copy — which is what "Keep the server version" and
+  a legacy draft's discard install through); without that, one failed tree read rewrote
+  the cached nesting flat and the next (offline) open showed it flat. Because the two spellings differ, `canonicalMarkdown` is
   **leaf-nesting insensitive**: it runs both sides through `flattenedLikeServerExport`,
   the model of exactly what the export does (verified against
   `@blocknote/server-util` on every shape in `LeafNestingOverlayTests`; zeroing leaf

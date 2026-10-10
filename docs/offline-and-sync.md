@@ -502,12 +502,16 @@ Because the comparisons cannot see nesting, one clean-branch rule is added: a fe
 whose only difference from the screen is that it *adds* leaf nesting is installed on
 a clean screen outside an editing session (`fetchedMarkdownRevealsLeafNesting`), so
 a body cached flat shows its structure on the first revalidation instead of the next
-open. The other way takes positive evidence: the overlay answers `.recovered`,
+open. It compares against the blocks on screen, not the last fetched body: a reveal
+that lands mid-edit waits, and the first read after Done installs it (comparing
+against the fetched basis lost it for good, and the next edit's save un-nested the
+server). The other way takes positive evidence: the overlay answers `.recovered`,
 `.confirmedFlat` or `.unknown`, and only `.confirmedFlat` (the tree was read and
 nests no leaf) installs a flat body over a nested screen, again only clean and
 outside an editing session. An `.unknown` flat read (any failure) leaves a nested
 screen alone, and `serverCopyKeepingLeafNesting` keeps the nested spelling of the
-same content in the cache write-through and the baseline too, so a failed tree read
+same content in the cache write-through and the baseline too — and in the body "Keep
+the server version" installs, checked against the cached copy — so a failed tree read
 never strands the next offline open with a flat copy.
 
 #### Revalidation phase (awaited tail of `load()`/`refresh()`, for sources 1–3 and after 4)

@@ -949,7 +949,7 @@ final class EditorViewModel {
             displaySource = .clean
             reconcileClean(formatted, leafNesting: leafNesting)
         case .none:
-            installFetched(formatted)
+            installFetched(formatted, leafNesting: leafNesting)
         }
     }
 
@@ -1130,7 +1130,7 @@ final class EditorViewModel {
             }
             // The local work is gone, so no conflict record may outlive it (the lifecycle rule).
             saveCoordinator.clearResolvedConflict(documentID: documentID)
-            installFetched(formatted)
+            installFetched(formatted, leafNesting: leafNesting)
         }
     }
 
@@ -1244,15 +1244,24 @@ final class EditorViewModel {
                 updateAvailable = false
                 pendingFreshContent = nil
             }
-        } else if !isEditing, fetchedMarkdownRevealsLeafNesting(fetched, over: displayedSourceMarkdown) {
+        } else if !isEditing, fetchedMarkdownRevealsLeafNesting(serverCopy, over: serializeMarkdown(blocks)) {
             // Same content, but the fetch restored leaf nesting the screen shows flat (a body
             // cached before the overlay, or while it could not run). Nothing local exists to
             // protect — this branch has no draft, no pending save, no dirt — and outside an
             // editing session no caret either, so show the structure now rather than on the
             // next open. Mid-edit it waits: a nesting-only change is not worth a banner.
-            install(markdown: fetched, title: nil, syncedAt: now)
+            //
+            // **Compared against the blocks, never `displayedSourceMarkdown`.** A reveal that
+            // arrives mid-edit falls to the final branch, which converges the comparison basis
+            // on the nested spelling while the blocks stay flat — so a check against that basis
+            // short-circuits on every later fetch (`fetched == displayed`), the nesting is never
+            // installed, and the next edit's save un-nests it on the server. The blocks are what
+            // the screen shows, and with no local work (the only way here) they are the source.
+            // And `serverCopy`, not `fetched`: a later read whose tree fails (`.unknown`) still
+            // carries the nested spelling that deferred reveal established, so it applies too.
+            install(markdown: serverCopy, title: nil, syncedAt: now)
             serverBaseline = DraftBaseline(
-                serverUpdatedAt: formatted.updatedAt, markdown: fetched, title: formatted.title)
+                serverUpdatedAt: formatted.updatedAt, markdown: serverCopy, title: formatted.title)
             updateAvailable = false
             pendingFreshContent = nil
         } else if !isEditing, leafNesting == .confirmedFlat,
@@ -1264,8 +1273,9 @@ final class EditorViewModel {
             // read is also what every failed tree read produces, and that one keeps the
             // screen's nesting (the branch below). Nothing local exists to protect here,
             // and outside an editing session no caret either. Mid-edit it waits, as the
-            // reveal above does, and the next revalidation after Done applies it — the cost
-            // being that a save made during that session pushes the nesting back.
+            // reveal above does, and the next revalidation after Done applies it (this check
+            // reads the blocks, so the deferral cannot be lost) — the cost being that a save
+            // made during that session pushes the nesting back.
             install(markdown: fetched, title: nil, syncedAt: now)
             serverBaseline = DraftBaseline(
                 serverUpdatedAt: formatted.updatedAt, markdown: fetched, title: formatted.title)
@@ -1389,11 +1399,20 @@ final class EditorViewModel {
     }
 
     /// Installs the fetched server copy and records it in the content cache.
-    private func installFetched(_ formatted: FormattedDocumentContent) {
+    ///
+    /// `leafNesting` is the overlay's verdict on that body: a flat read the block tree could not
+    /// vouch for (`.unknown`) keeps a cached copy that nests leaves when it is the same content
+    /// (`serverCopyKeepingLeafNesting`), exactly as revalidation's `reconcileClean` and
+    /// `cacheServerCopy` do — otherwise "Keep the server version" (or a legacy draft's discard)
+    /// after a failed tree read overwrote the nested cached copy with the flat export.
+    private func installFetched(_ formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay) {
         let now = Date()
-        install(markdown: formatted.content ?? "", title: formatted.title, syncedAt: now)
+        let markdown = serverCopyKeepingLeafNesting(
+            fetched: formatted.content ?? "", overlay: leafNesting,
+            known: contentCache.content(for: documentID)?.markdown)
+        install(markdown: markdown, title: formatted.title, syncedAt: now)
         serverBaseline = DraftBaseline(
-            serverUpdatedAt: formatted.updatedAt, markdown: formatted.content ?? "", title: formatted.title)
+            serverUpdatedAt: formatted.updatedAt, markdown: markdown, title: formatted.title)
         // …and record its title, because **not every install comes through `apply`**:
         // `resolveConflictKeepingServer` fetches and installs directly, and it is the one path
         // that also drops the draft — so `adoptQueuedTitleIfUnseen` would fall all the way
@@ -1410,7 +1429,7 @@ final class EditorViewModel {
             CachedDocumentContent(
                 documentID: documentID,
                 title: title,
-                markdown: formatted.content ?? "",
+                markdown: markdown,
                 syncedAt: now,
                 serverUpdatedAt: formatted.updatedAt
             ))
@@ -3335,7 +3354,8 @@ final class EditorViewModel {
         do {
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
             let fetched = try await client.formattedContent(documentID: documentID)
-            let (formatted, _) = await recoveringLeafNesting(fetched, availabilityToken: availability.token)
+            let (formatted, leafNesting) = await recoveringLeafNesting(
+                fetched, availabilityToken: availability.token)
             guard generation == revalidationGeneration, !Task.isCancelled else { return }
             // A body that may predate one of our own saves must never be installed (it
             // would resurrect what that save replaced, and the next full-overwrite save
@@ -3358,7 +3378,7 @@ final class EditorViewModel {
             else { return }
             // The winning body is in hand: now it is safe to cost the user their draft.
             saveCoordinator.resolveConflictKeepingServer(documentID: documentID)
-            installFetched(formatted)
+            installFetched(formatted, leafNesting: leafNesting)
             markAvailableAgain()
             await loadChildren()
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
