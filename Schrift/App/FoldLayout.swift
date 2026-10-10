@@ -6,9 +6,6 @@ import SwiftUI
 /// there is none; unfolded, a vertical strip runs down the middle of the inner screen.
 /// Pure geometry so it is unit-testable on any SDK — only `foldAware` touches 27.1 API.
 enum FoldLayout {
-    /// The narrowest sidebar worth aligning to the fold; nearer the edge, the system width stays.
-    static let minimumSidebarWidth: CGFloat = 280
-
     /// A crease as seen by one view: its horizontal span, and the view's width it was measured in.
     struct Fold: Equatable {
         var span: ClosedRange<CGFloat>
@@ -21,14 +18,6 @@ enum FoldLayout {
         regions
             .first { $0.height > $0.width && $0.maxX > 0 && $0.minX < width }
             .map { max($0.minX, 0)...min($0.maxX, width) }
-    }
-
-    /// A sidebar that ends exactly at the fold, so list and document each get one panel.
-    /// Nil when the fold is too near either edge to make two usable columns.
-    static func sidebarWidth(fold: ClosedRange<CGFloat>, width: CGFloat) -> CGFloat? {
-        let leading = fold.lowerBound
-        guard leading >= minimumSidebarWidth, width - fold.upperBound >= minimumSidebarWidth else { return nil }
-        return leading
     }
 
     /// Padding that moves content entirely onto the wider side of the fold, so no line of
@@ -47,11 +36,12 @@ extension View {
     /// SDKs before iOS 27.1 (CI's Xcode) and on devices that do not fold.
     func foldAware(_ action: @escaping (FoldLayout.Fold?) -> Void) -> some View {
         #if canImport(SwiftUI, _version: 8.0.85)
-            // shortcut: reads the first active division only; a device with two creases would need more.
+            // shortcut: reads the first division (active or not) only; a device with two creases would need more.
             return onGeometryChange(for: FoldLayout.Fold?.self) { proxy in
                 guard #available(iOS 27.1, *) else { return nil }
                 let width = proxy.size.width
-                let regions = proxy.reservedRegions(kind: .division).map(\.frame)
+                // A flat-unfolded Duo reports its crease inactive, and the default query drops inactive regions.
+                let regions = proxy.reservedRegions(kind: .division, options: .includeInactive).map(\.frame)
                 return FoldLayout.verticalFold(in: regions, width: width).map { .init(span: $0, width: width) }
             } action: {
                 action($0)

@@ -33,20 +33,6 @@ final class FoldLayoutTests: XCTestCase {
         XCTAssertEqual(FoldLayout.verticalFold(in: [horizontal, crease], width: width), 473...479)
     }
 
-    func testSidebarEndsAtTheCrease() {
-        XCTAssertEqual(FoldLayout.sidebarWidth(fold: 473...479, width: width), 473)
-    }
-
-    func testSidebarAcceptsExactlyTheMinimumOnEitherSide() {
-        XCTAssertEqual(FoldLayout.sidebarWidth(fold: 280...286, width: width), 280)
-        XCTAssertEqual(FoldLayout.sidebarWidth(fold: 665...671, width: width), 665)
-    }
-
-    func testSidebarKeepsTheSystemWidthWhenTheCreaseHugsAnEdge() {
-        XCTAssertNil(FoldLayout.sidebarWidth(fold: 200...206, width: width))
-        XCTAssertNil(FoldLayout.sidebarWidth(fold: 700...706, width: width))
-    }
-
     func testClearanceMovesContentToTheWiderSide() {
         XCTAssertEqual(
             FoldLayout.clearance(fold: 473...479, width: width),
