@@ -111,6 +111,8 @@ struct WebLoginView: UIViewRepresentable {
         /// redirect chain is server-side 302s, which finish only at their destination — so it
         /// is reported as stopped. (A `form_post` IdP page that submits itself also finishes
         /// first; the silent re-login gives such a page a short grace before acting on this.)
+        /// A server-host page that is not a completion — an `/api/v1.0/` error page — reports
+        /// nothing, and is left to the silent re-login's timeout.
         func handleFinishedNavigation(to url: URL?) {
             handleNavigation(to: url)
             guard let url, url.host?.caseInsensitiveCompare(serverHost) != .orderedSame else { return }

@@ -55,7 +55,9 @@ private struct AuthenticatedHomeContainer: View {
         let diagnostics = APIDiagnosticsLog()
         let client = DocsAPIClient(
             baseURL: serverURL.appendingPathComponent("api/v1.0/"),
-            onSessionExpired: { Task { @MainActor in sessionStore.noteSessionExpired() } },
+            onSessionExpired: { startedAt in
+                Task { @MainActor in sessionStore.noteSessionExpired(requestStartedAt: startedAt) }
+            },
             onRequestFailure: { failure in diagnostics.record(failure) },
             onTransportOutcome: { outcome, startedAt in connectivity.report(outcome, startedAt: startedAt) }
         )
@@ -123,7 +125,7 @@ private struct AuthenticatedHomeContainer: View {
         .background {
             if sessionStore.isSilentlyReauthenticating {
                 SilentReauthenticationView(
-                    serverURL: serverURL, sessionStore: sessionStore, onAuthenticated: reauthenticated
+                    serverURL: serverURL, sessionStore: sessionStore, onAuthenticated: { reauthenticated() }
                 )
                 .id(sessionStore.reauthenticationAttempt)
             }
@@ -139,7 +141,7 @@ private struct AuthenticatedHomeContainer: View {
             ReauthenticationSheetView(
                 serverURL: serverURL,
                 sessionStore: sessionStore,
-                onAuthenticated: reauthenticated,
+                onAuthenticated: { reauthenticated() },
                 onCancel: { sessionStore.cancelReauthentication() }
             )
         }

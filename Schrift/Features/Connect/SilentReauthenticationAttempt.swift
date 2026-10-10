@@ -51,6 +51,16 @@ final class SilentReauthenticationAttempt {
         }
     }
 
+    /// The app came back to the foreground. The timeout's clock kept running while it was
+    /// suspended, and so was the web view, so the time spent away is not the login stalling:
+    /// give it a fresh timeout.
+    func restartTimeout() {
+        guard !didEscalate, !hasReachedServer else { return }
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        start()
+    }
+
     func handle(_ progress: WebLoginProgress) {
         switch progress {
         case .navigating:

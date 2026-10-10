@@ -101,7 +101,9 @@ final class SessionStoreStateTests: SessionStoreTestCase {
 
     // MARK: - Silent re-authentication
 
-    private func makeSignedInStore(now: @escaping () -> Date = Date.init) throws -> SessionStore {
+    private func makeSignedInStore(
+        now: @escaping () -> ContinuousClock.Instant = { ContinuousClock.now }
+    ) throws -> SessionStore {
         let store = SessionStore(
             userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage(), now: now)
         try store.signIn(serverURL: serverURL)
@@ -157,12 +159,12 @@ final class SessionStoreStateTests: SessionStoreTestCase {
 
     /// A timer left over from an earlier attempt must not escalate the one now running.
     func testAnEarlierAttemptCannotEscalateALaterOne() throws {
-        var clock = Date(timeIntervalSince1970: 1_000)
+        var clock = ContinuousClock.now
         let store = try makeSignedInStore(now: { clock })
         store.noteSessionExpired()
         let first = store.reauthenticationAttempt
         try store.signIn(serverURL: serverURL)
-        clock += silentReauthenticationCooldown + 1
+        clock = clock.advanced(by: silentReauthenticationCooldown + .seconds(1))
         store.noteSessionExpired()
 
         store.escalateReauthentication(attempt: first)
@@ -200,11 +202,11 @@ final class SessionStoreStateTests: SessionStoreTestCase {
     /// A session refused again right after a silent sign-in would otherwise loop: every 401
     /// starting another hidden login, each one forgetting and re-learning the account.
     func testA401SoonAfterASilentSignInGoesToTheSheet() throws {
-        var clock = Date(timeIntervalSince1970: 1_000)
+        var clock = ContinuousClock.now
         let store = try makeSignedInStore(now: { clock })
         store.noteSessionExpired()
         try store.signIn(serverURL: serverURL)
-        clock += silentReauthenticationCooldown - 1
+        clock = clock.advanced(by: silentReauthenticationCooldown - .seconds(1))
 
         store.noteSessionExpired()
 
@@ -212,13 +214,38 @@ final class SessionStoreStateTests: SessionStoreTestCase {
     }
 
     func testA401LongAfterASilentSignInRecoversSilentlyAgain() throws {
-        var clock = Date(timeIntervalSince1970: 1_000)
+        var clock = ContinuousClock.now
         let store = try makeSignedInStore(now: { clock })
         store.noteSessionExpired()
         try store.signIn(serverURL: serverURL)
-        clock += silentReauthenticationCooldown + 1
+        clock = clock.advanced(by: silentReauthenticationCooldown + .seconds(1))
 
         store.noteSessionExpired()
+
+        XCTAssertTrue(store.isSilentlyReauthenticating)
+    }
+
+    /// A request issued before a silent sign-in and refused on the cookies it replaced says
+    /// nothing about the new session; it must not raise the sheet the silent attempt avoided.
+    func testA401ForARequestIssuedBeforeTheLastSignInIsIgnored() throws {
+        var clock = ContinuousClock.now
+        let store = try makeSignedInStore(now: { clock })
+        let issuedEarlier = clock
+        clock = clock.advanced(by: .seconds(1))
+        store.noteSessionExpired()
+        try store.signIn(serverURL: serverURL)
+
+        store.noteSessionExpired(requestStartedAt: issuedEarlier)
+
+        XCTAssertFalse(store.needsReauthentication)
+    }
+
+    func testA401ForARequestIssuedAfterTheLastSignInCounts() throws {
+        var clock = ContinuousClock.now
+        let store = try makeSignedInStore(now: { clock })
+        clock = clock.advanced(by: silentReauthenticationCooldown + .seconds(1))
+
+        store.noteSessionExpired(requestStartedAt: clock)
 
         XCTAssertTrue(store.isSilentlyReauthenticating)
     }

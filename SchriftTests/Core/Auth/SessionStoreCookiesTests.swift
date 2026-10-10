@@ -274,4 +274,24 @@ final class SessionStoreCookiesTests: SessionStoreTestCase {
         let stored = try JSONDecoder().decode([StoredCookie].self, from: data)
         XCTAssertEqual(stored.map(\.value), ["fake-sign-in-session"])
     }
+
+    /// The confirming `signIn` must re-enable the refresh, or the snapshot would freeze again
+    /// and every cold launch would go back to logging in.
+    func testSigningInAfterAHandoverReenablesTheRefresh() throws {
+        let keychain = FakeKeychainStore()
+        let cookieStorage = FakeCookieStorage()
+        cookieStorage.setCookie(makeCookie(value: "fake-sign-in-session"))
+        let store = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: cookieStorage)
+        try store.signIn(serverURL: serverURL)
+        store.noteSessionExpired()
+        store.noteSessionCookiesReplaced()
+        try store.signIn(serverURL: serverURL)
+        cookieStorage.setCookie(makeCookie(value: "fake-rotated-session"))
+
+        store.refreshPersistedSessionCookies()
+
+        let data = try XCTUnwrap(try keychain.load(forKey: cookiesKeychainKey))
+        let stored = try JSONDecoder().decode([StoredCookie].self, from: data)
+        XCTAssertEqual(stored.map(\.value), ["fake-rotated-session"])
+    }
 }

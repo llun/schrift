@@ -17,6 +17,7 @@ import SwiftUI
 struct SilentReauthenticationView: View {
     @State private var viewModel: ReauthenticationViewModel
     @State private var attempt: SilentReauthenticationAttempt
+    @Environment(\.scenePhase) private var scenePhase
     let onAuthenticated: () -> Void
 
     init(serverURL: URL, sessionStore: SessionStore, onAuthenticated: @escaping () -> Void) {
@@ -52,5 +53,8 @@ struct SilentReauthenticationView: View {
         .accessibilityHidden(true)
         .onAppear { attempt.start() }
         .onDisappear { attempt.cancel() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { attempt.restartTimeout() }
+        }
     }
 }

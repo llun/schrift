@@ -112,4 +112,17 @@ final class SilentReauthenticationAttemptTests: XCTestCase {
 
         await waitAndConfirmNever { self.escalations > 0 }
     }
+
+    /// Time spent suspended in the background is not the login stalling.
+    func testRestartingTheTimeoutPostponesIt() async {
+        let attempt = makeAttempt(timeout: .seconds(1))
+        attempt.start()
+        try? await Task.sleep(for: .milliseconds(300))
+
+        attempt.restartTimeout()
+
+        // Past the original deadline, short of the restarted one.
+        await waitAndConfirmNever(timeout: 0.75) { self.escalations > 0 }
+        await waitUntil { self.escalations == 1 }
+    }
 }

@@ -3971,7 +3971,9 @@ markdown write endpoint**. Understand this before touching the save path:
   attempt. After one failed silent attempt, or a 401 within
   `silentReauthenticationCooldown` (60 s) of a silent sign-in, expiries go
   straight to the sheet — the latter stops a refused-again session looping
-  through hidden logins. Keep the hidden web view transparent, never
+  through hidden logins. `onSessionExpired` carries the refused request's
+  start instant, and a 401 for a request issued before the last `signIn` is
+  ignored (it was refused on the replaced cookies). Keep the hidden web view transparent, never
   `isHidden`: WebKit throttles hidden views.
 - `DocumentContentCacheStore` is the one **file-based** store (full document
   bodies are too large for UserDefaults): stateless over its directory,
