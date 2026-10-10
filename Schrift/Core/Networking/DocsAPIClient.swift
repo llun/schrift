@@ -7,7 +7,9 @@ actor DocsAPIClient {
     /// Fired on every real 401 (before `.sessionExpired` is thrown) so the app
     /// can raise its re-login flow. Consumers must be idempotent — concurrent
     /// requests can all 401 at once. Production default is a no-op.
-    private let onSessionExpired: @Sendable () -> Void
+    /// Given the instant the refused request was *issued*, so a 401 for a request that
+    /// predates a re-login can be told apart from the new session being refused.
+    private let onSessionExpired: @Sendable (ContinuousClock.Instant) -> Void
     /// Fired on every non-2xx response (before the mapped error is thrown) with
     /// the status and the server's own explanation, which `DocsAPIError` drops.
     /// Called synchronously, so a caller's `catch` can quote it. Production
@@ -41,7 +43,7 @@ actor DocsAPIClient {
         baseURL: URL,
         session: URLSession = .shared,
         cookieProvider: (@Sendable () -> [HTTPCookie])? = nil,
-        onSessionExpired: @escaping @Sendable () -> Void = {},
+        onSessionExpired: @escaping @Sendable (ContinuousClock.Instant) -> Void = { _ in },
         onRequestFailure: @escaping @Sendable (RequestFailure) -> Void = { _ in },
         onTransportOutcome: @escaping @Sendable (TransportOutcome, ContinuousClock.Instant) -> Void = { _, _ in }
     ) {
@@ -182,7 +184,7 @@ actor DocsAPIClient {
             }
             let error = DocsAPIErrorMapper.map(statusCode: httpResponse.statusCode, headers: headers)
             if error == .sessionExpired {
-                onSessionExpired()
+                onSessionExpired(startedAt)
             }
             throw error
         }

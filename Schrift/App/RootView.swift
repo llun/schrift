@@ -55,7 +55,9 @@ private struct AuthenticatedHomeContainer: View {
         let diagnostics = APIDiagnosticsLog()
         let client = DocsAPIClient(
             baseURL: serverURL.appendingPathComponent("api/v1.0/"),
-            onSessionExpired: { Task { @MainActor in sessionStore.noteSessionExpired() } },
+            onSessionExpired: { startedAt in
+                Task { @MainActor in sessionStore.noteSessionExpired(requestStartedAt: startedAt) }
+            },
             onRequestFailure: { failure in diagnostics.record(failure) },
             onTransportOutcome: { outcome, startedAt in connectivity.report(outcome, startedAt: startedAt) }
         )
@@ -116,9 +118,21 @@ private struct AuthenticatedHomeContainer: View {
             viewModel.availability.preferencesChanged()
             if !isOffline { Task { await viewModel.saveCoordinator.syncPendingPins() } }
         }
+        // A dead session is first recovered out of sight: when the identity provider still
+        // remembers the user, the OIDC round trip needs no input, and showing it as a sheet
+        // was the login popup that flashed up and closed itself at launch. Only an attempt
+        // that cannot finish alone escalates to the sheet below. See `SilentReauthenticationView`.
+        .background {
+            if sessionStore.isSilentlyReauthenticating {
+                SilentReauthenticationView(
+                    serverURL: serverURL, sessionStore: sessionStore, onAuthenticated: { reauthenticated() }
+                )
+                .id(sessionStore.reauthenticationAttempt)
+            }
+        }
         .sheet(
             isPresented: Binding(
-                get: { sessionStore.needsReauthentication },
+                get: { sessionStore.presentsReauthenticationSheet },
                 // Swipe-dismiss = cancel: keep showing cached data; the next
                 // failing request re-presents the sheet.
                 set: { if !$0 { sessionStore.cancelReauthentication() } }
@@ -127,17 +141,7 @@ private struct AuthenticatedHomeContainer: View {
             ReauthenticationSheetView(
                 serverURL: serverURL,
                 sessionStore: sessionStore,
-                onAuthenticated: {
-                    let homeViewModel = viewModel
-                    Task {
-                        // The sheet can be answered by a *different* account, so re-learn who
-                        // this session belongs to before anything reads it. A stale id would
-                        // list the previous user's unsynced documents to the new one.
-                        await homeViewModel.refreshSignedInUser()
-                        await homeViewModel.saveCoordinator.syncPendingPins()
-                        await homeViewModel.load()
-                    }
-                },
+                onAuthenticated: { reauthenticated() },
                 onCancel: { sessionStore.cancelReauthentication() }
             )
         }
@@ -167,6 +171,10 @@ private struct AuthenticatedHomeContainer: View {
             Task { await homeViewModel.syncPendingDrafts() }
         }
         .onChange(of: scenePhase) { _, phase in
+            // The server may have rotated or extended its cookies since sign-in; snapshot them
+            // before iOS can terminate the process, or the next launch restores stale ones and
+            // its first request 401s on a session that was still alive.
+            if phase == .background { sessionStore.refreshPersistedSessionCookies() }
             // Live sockets follow the scene: closed on real background, rebuilt on
             // return; a transient `.inactive` blip is ignored. (No-op while the
             // manager holds no sessions.)
@@ -197,6 +205,19 @@ private struct AuthenticatedHomeContainer: View {
             // view model, not here: a view does no networking or persistence of its own.
             async let identity: Void = viewModel.refreshSignedInUser()
             _ = await (support, awareness, identity)
+        }
+    }
+
+    /// After either re-login — the sheet or the silent one — has signed the session back in.
+    private func reauthenticated() {
+        let homeViewModel = viewModel
+        Task {
+            // A re-login can be answered by a *different* account, so re-learn who this
+            // session belongs to before anything reads it. A stale id would list the
+            // previous user's unsynced documents to the new one.
+            await homeViewModel.refreshSignedInUser()
+            await homeViewModel.saveCoordinator.syncPendingPins()
+            await homeViewModel.load()
         }
     }
 }

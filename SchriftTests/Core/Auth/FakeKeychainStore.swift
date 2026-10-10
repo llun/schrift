@@ -8,10 +8,13 @@ final class FakeKeychainStore: KeychainStoring {
     /// Keys passed to `upgradeAccessibility`, in call order — lets a test assert
     /// the launch-time migration fires for exactly the right keys.
     private(set) var upgradedKeys: [String] = []
+    /// Successful `save` calls per key — lets a test assert a write was skipped.
+    private(set) var saveCounts: [String: Int] = [:]
 
     func save(_ data: Data, forKey key: String) throws {
         if failingSaveKeys.contains(key) { throw NSError(domain: "FakeKeychain", code: 1) }
         storage[key] = data
+        saveCounts[key, default: 0] += 1
     }
 
     func load(forKey key: String) throws -> Data? {
