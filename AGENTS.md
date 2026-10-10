@@ -3947,9 +3947,11 @@ markdown write endpoint**. Understand this before touching the save path:
   (`refreshPersistedSessionCookies`, from RootView's `scenePhase` observer): the
   server rotates/extends its cookies mid-session, and a sign-in-only snapshot
   restored stale ones so every cold launch 401'd. It is skipped while
-  `needsReauthentication` (cookies then are refused, or another account's
-  awaiting confirmation — only `signIn` persists those) and never writes an
-  empty set. That write runs as the scene backgrounds, while the device is
+  `needsReauthentication` (the cookies are refused) and while a web login's
+  cookies await confirmation (`cookiesAwaitingConfirmation`, set by
+  `noteSessionCookiesReplaced`, cleared only by `signIn`/`signOut` — it must
+  outlive a cancelled sheet, since they may be another account's and only
+  `signIn` persists those), and never writes an empty set. That write runs as the scene backgrounds, while the device is
   still unlocked; a failure is swallowed and only costs the old behaviour.
   **If a Keychain read or write ever moves onto a background-task path** (none
   today) this must become `…AfterFirstUnlockThisDeviceOnly`, or a background
@@ -3958,10 +3960,19 @@ markdown write endpoint**. Understand this before touching the save path:
   web login (`SilentReauthenticationView`, mounted invisibly by RootView while
   `isSilentlyReauthenticating`); the visible sheet is bound to
   `presentsReauthenticationSheet`, not `needsReauthentication`, and appears only
-  via `escalateReauthentication` (stopped on the IdP, load failure, failed
-  confirmation, or the 15 s timeout). Escalation is a no-op unless a silent
-  attempt is running, so a late timer can't reopen an answered sheet; after one
-  failed silent attempt later expiries go straight to the sheet until `signIn`.
+  via `escalateReauthentication(attempt:)`. *When* to escalate is
+  `SilentReauthenticationAttempt` (tested, durations injected), fed by
+  `WebLoginView`'s `WebLoginProgress`: stopped off the server for a 2 s grace
+  that any new load cancels (superseded loads — `NSURLErrorCancelled`, WebKit
+  102 — are not stops), a failed confirmation, or the 15 s timeout;
+  `.reachedServer` (reported before the cookie hand-off) disarms both timers.
+  Escalation names the attempt and is a no-op unless that silent attempt is
+  running, so a late timer can't reopen an answered sheet or escalate a later
+  attempt. After one failed silent attempt, or a 401 within
+  `silentReauthenticationCooldown` (60 s) of a silent sign-in, expiries go
+  straight to the sheet — the latter stops a refused-again session looping
+  through hidden logins. Keep the hidden web view transparent, never
+  `isHidden`: WebKit throttles hidden views.
 - `DocumentContentCacheStore` is the one **file-based** store (full document
   bodies are too large for UserDefaults): stateless over its directory,
   `isExcludedFromBackup`, cleared on sign-out, never logged. Its eviction

@@ -20,11 +20,10 @@ struct WebLoginView: UIViewRepresentable {
     let url: URL
     let serverHost: String
     let onLoginComplete: @MainActor () -> Void
-    /// The web view came to rest somewhere other than the signed-in app — a page on the IdP
-    /// finished loading (its login form) or a load failed. The interactive sheet ignores it;
-    /// the silent re-login uses it to stop waiting and hand over to the sheet, since a hidden
-    /// login form can never be filled in.
-    var onStoppedBeforeLogin: (@MainActor () -> Void)? = nil
+    /// Where the login has got to (`WebLoginProgress`). The interactive sheet ignores it; the
+    /// silent re-login uses it to decide when to stop waiting and hand over to the sheet, since
+    /// a hidden login form can never be filled in.
+    var onProgress: (@MainActor (WebLoginProgress) -> Void)? = nil
 
     func makeUIView(context: Context) -> WKWebView {
         let webView = WKWebView()
@@ -36,14 +35,14 @@ struct WebLoginView: UIViewRepresentable {
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(
-            serverHost: serverHost, onLoginComplete: onLoginComplete, onStoppedBeforeLogin: onStoppedBeforeLogin)
+        Coordinator(serverHost: serverHost, onLoginComplete: onLoginComplete, onProgress: onProgress)
     }
 
+    @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate {
         private let serverHost: String
         private let onLoginComplete: @MainActor () -> Void
-        private let onStoppedBeforeLogin: (@MainActor () -> Void)?
+        private let onProgress: (@MainActor (WebLoginProgress) -> Void)?
         /// Syncs the web view's cookies into `HTTPCookieStorage.shared` (so the
         /// native API client inherits the freshly authenticated session), then
         /// runs `completion` on the main actor. Injected as a seam so tests can
@@ -58,7 +57,7 @@ struct WebLoginView: UIViewRepresentable {
         init(
             serverHost: String,
             onLoginComplete: @escaping @MainActor () -> Void,
-            onStoppedBeforeLogin: (@MainActor () -> Void)? = nil,
+            onProgress: (@MainActor (WebLoginProgress) -> Void)? = nil,
             captureCookies: @escaping (_ completion: @escaping @MainActor () -> Void) -> Void = { completion in
                 WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
                     syncCookies(cookies, into: HTTPCookieStorage.shared)
@@ -68,8 +67,12 @@ struct WebLoginView: UIViewRepresentable {
         ) {
             self.serverHost = serverHost
             self.onLoginComplete = onLoginComplete
-            self.onStoppedBeforeLogin = onStoppedBeforeLogin
+            self.onProgress = onProgress
             self.captureCookies = captureCookies
+        }
+
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            handleNavigationStarted()
         }
 
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
@@ -81,13 +84,26 @@ struct WebLoginView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            reportStoppedBeforeLogin()
+            handleFailedNavigation(error: error)
         }
 
         func webView(
             _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error
         ) {
-            reportStoppedBeforeLogin()
+            handleFailedNavigation(error: error)
+        }
+
+        /// A new load began — a redirect target, a self-submitting form, the SPA moving on — so
+        /// whatever page last looked stopped was not the end of the chain.
+        func handleNavigationStarted() {
+            report(.navigating)
+        }
+
+        /// A load failed. One navigation merely *superseded* by the next (cancelled, or a frame
+        /// load interrupted by a policy change) is not a stop: the chain is still moving.
+        func handleFailedNavigation(error: Error) {
+            guard !isSupersededNavigationError(error) else { return }
+            report(.stopped)
         }
 
         /// A page finished loading. On the server host this is the same completion check as
@@ -98,12 +114,14 @@ struct WebLoginView: UIViewRepresentable {
         func handleFinishedNavigation(to url: URL?) {
             handleNavigation(to: url)
             guard let url, url.host?.caseInsensitiveCompare(serverHost) != .orderedSame else { return }
-            reportStoppedBeforeLogin()
+            report(.stopped)
         }
 
-        private func reportStoppedBeforeLogin() {
-            guard !didComplete, let onStoppedBeforeLogin else { return }
-            Task { @MainActor in onStoppedBeforeLogin() }
+        /// Nothing is reported once the login has reached the server: what the signed-in web app
+        /// does next is not part of the login.
+        private func report(_ progress: WebLoginProgress) {
+            guard !didComplete else { return }
+            onProgress?(progress)
         }
 
         /// Shared completion core for every observed navigation event. Completes
@@ -114,6 +132,9 @@ struct WebLoginView: UIViewRepresentable {
                 let url,
                 isLoginNavigationComplete(url: url, serverHost: serverHost)
             else { return }
+            // Reported before the asynchronous cookie capture, so nothing waiting on this login
+            // can give up on it in the gap between arriving and confirming.
+            onProgress?(.reachedServer)
             didComplete = true
 
             captureCookies { [onLoginComplete] in
@@ -121,4 +142,24 @@ struct WebLoginView: UIViewRepresentable {
             }
         }
     }
+}
+
+/// How far a `WebLoginView` login has got, for a caller that cannot watch the page.
+enum WebLoginProgress: Equatable, Sendable {
+    /// A load began; any earlier stop was not the end of the chain.
+    case navigating
+    /// The chain came to rest short of the signed-in app: a page off the server host finished
+    /// loading (an IdP login form, or a `form_post` page about to submit itself), or a load failed.
+    case stopped
+    /// The web view is back on the server, signed in. The cookie hand-off and the completion
+    /// callback follow.
+    case reachedServer
+}
+
+/// A navigation that failed only because another replaced it: `NSURLErrorCancelled`, or WebKit's
+/// "frame load interrupted" (102) — what a redirect or a download-policy decision produces.
+func isSupersededNavigationError(_ error: Error) -> Bool {
+    let error = error as NSError
+    if error.domain == NSURLErrorDomain, error.code == NSURLErrorCancelled { return true }
+    return error.domain == "WebKitErrorDomain" && error.code == 102
 }

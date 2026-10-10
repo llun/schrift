@@ -123,7 +123,9 @@ private struct AuthenticatedHomeContainer: View {
         .background {
             if sessionStore.isSilentlyReauthenticating {
                 SilentReauthenticationView(
-                    serverURL: serverURL, sessionStore: sessionStore, onAuthenticated: reauthenticated)
+                    serverURL: serverURL, sessionStore: sessionStore, onAuthenticated: reauthenticated
+                )
+                .id(sessionStore.reauthenticationAttempt)
             }
         }
         .sheet(

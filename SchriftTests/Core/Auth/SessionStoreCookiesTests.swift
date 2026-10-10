@@ -253,4 +253,25 @@ final class SessionStoreCookiesTests: SessionStoreTestCase {
 
         XCTAssertNil(try keychain.load(forKey: cookiesKeychainKey))
     }
+
+    /// A web login whose confirmation failed leaves possibly another account's cookies live,
+    /// and dismissing the sheet then clears `needsReauthentication` — the refresh must still
+    /// leave them out of the Keychain, which only `signIn` may write them to.
+    func testRefreshSkipsUnconfirmedCookiesEvenAfterTheSheetIsDismissed() throws {
+        let keychain = FakeKeychainStore()
+        let cookieStorage = FakeCookieStorage()
+        cookieStorage.setCookie(makeCookie(value: "fake-sign-in-session"))
+        let store = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: cookieStorage)
+        try store.signIn(serverURL: serverURL)
+        store.noteSessionExpired()
+        cookieStorage.setCookie(makeCookie(value: "fake-unconfirmed-session"))
+        store.noteSessionCookiesReplaced()
+        store.cancelReauthentication()
+
+        store.refreshPersistedSessionCookies()
+
+        let data = try XCTUnwrap(try keychain.load(forKey: cookiesKeychainKey))
+        let stored = try JSONDecoder().decode([StoredCookie].self, from: data)
+        XCTAssertEqual(stored.map(\.value), ["fake-sign-in-session"])
+    }
 }

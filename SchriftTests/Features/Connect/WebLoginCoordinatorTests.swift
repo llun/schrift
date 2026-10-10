@@ -15,13 +15,13 @@ import XCTest
 final class WebLoginCoordinatorTests: XCTestCase {
     private func makeCoordinator(
         serverHost: String = "docs.llun.dev",
-        onStoppedBeforeLogin: (@MainActor () -> Void)? = nil,
+        onProgress: (@MainActor (WebLoginProgress) -> Void)? = nil,
         onLoginComplete: @escaping @MainActor () -> Void
     ) -> WebLoginView.Coordinator {
         WebLoginView.Coordinator(
             serverHost: serverHost,
             onLoginComplete: onLoginComplete,
-            onStoppedBeforeLogin: onStoppedBeforeLogin,
+            onProgress: onProgress,
             // Skip the live WebKit cookie store; just run the completion.
             captureCookies: { completion in Task { @MainActor in completion() } }
         )
@@ -94,38 +94,73 @@ final class WebLoginCoordinatorTests: XCTestCase {
         XCTAssertEqual(completionCount, 1)
     }
 
-    // MARK: - Stopping before login (the silent re-login's cue to hand over to the sheet)
+    // MARK: - Progress (what the silent re-login decides on)
 
-    func testAPageFinishingOnTheIdentityProviderReportsStopped() async {
-        var stopped = false
-        let coordinator = makeCoordinator(onStoppedBeforeLogin: { stopped = true }) {}
+    func testAPageFinishingOnTheIdentityProviderReportsStopped() {
+        var progress: [WebLoginProgress] = []
+        let coordinator = makeCoordinator(onProgress: { progress.append($0) }) {}
 
         coordinator.handleFinishedNavigation(to: URL(string: "https://idp.example.org/login"))
 
-        await waitUntil { stopped }
+        XCTAssertEqual(progress, [.stopped])
     }
 
-    func testAPageFinishingBackOnTheServerCompletesAndDoesNotReportStopped() async {
-        var stopped = false
-        var completed = false
-        let coordinator = makeCoordinator(onStoppedBeforeLogin: { stopped = true }) { completed = true }
+    /// Reported synchronously and before the asynchronous cookie capture, so a waiting timer
+    /// cannot give up on a login that has already arrived.
+    func testReachingTheServerIsReportedBeforeCompletion() async {
+        var progress: [WebLoginProgress] = []
+        var progressAtCompletion: [WebLoginProgress]?
+        let coordinator = makeCoordinator(onProgress: { progress.append($0) }) { progressAtCompletion = progress }
 
         coordinator.handleFinishedNavigation(to: URL(string: "https://docs.llun.dev/home/"))
 
-        await waitUntil { completed }
-        await waitAndConfirmNever { stopped }
+        XCTAssertEqual(progress, [.reachedServer])
+        await waitUntil { progressAtCompletion != nil }
+        XCTAssertEqual(progressAtCompletion, [.reachedServer])
     }
 
-    /// The signed-in SPA can go on to load other hosts' pages; that is not a stopped login.
-    func testNothingIsReportedStoppedAfterCompletion() async {
-        var stopped = false
+    func testANewLoadReportsNavigating() {
+        var progress: [WebLoginProgress] = []
+        let coordinator = makeCoordinator(onProgress: { progress.append($0) }) {}
+
+        coordinator.handleNavigationStarted()
+
+        XCTAssertEqual(progress, [.navigating])
+    }
+
+    func testAFailedLoadReportsStopped() {
+        var progress: [WebLoginProgress] = []
+        let coordinator = makeCoordinator(onProgress: { progress.append($0) }) {}
+
+        coordinator.handleFailedNavigation(error: URLError(.notConnectedToInternet))
+
+        XCTAssertEqual(progress, [.stopped])
+    }
+
+    /// A redirect or a self-submitting form cancels the load it replaces; that is the chain
+    /// moving on, not stopping.
+    func testALoadSupersededByAnotherIsNotAStop() {
+        var progress: [WebLoginProgress] = []
+        let coordinator = makeCoordinator(onProgress: { progress.append($0) }) {}
+
+        coordinator.handleFailedNavigation(error: URLError(.cancelled))
+        coordinator.handleFailedNavigation(error: NSError(domain: "WebKitErrorDomain", code: 102))
+
+        XCTAssertEqual(progress, [])
+    }
+
+    /// The signed-in SPA can go on to load other hosts' pages; that is not part of the login.
+    func testNothingIsReportedAfterReachingTheServer() async {
+        var progress: [WebLoginProgress] = []
         var completed = false
-        let coordinator = makeCoordinator(onStoppedBeforeLogin: { stopped = true }) { completed = true }
+        let coordinator = makeCoordinator(onProgress: { progress.append($0) }) { completed = true }
         coordinator.handleFinishedNavigation(to: URL(string: "https://docs.llun.dev/"))
         await waitUntil { completed }
 
+        coordinator.handleNavigationStarted()
         coordinator.handleFinishedNavigation(to: URL(string: "https://idp.example.org/logout"))
+        coordinator.handleFailedNavigation(error: URLError(.timedOut))
 
-        await waitAndConfirmNever { stopped }
+        XCTAssertEqual(progress, [.reachedServer])
     }
 }
