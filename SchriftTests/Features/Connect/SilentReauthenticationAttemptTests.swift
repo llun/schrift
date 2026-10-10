@@ -148,7 +148,7 @@ final class SilentReauthenticationAttemptTests: XCTestCase {
 
         attempt.resume()
 
-        await waitUntil(timeout: 1) { self.escalations == 1 }
+        await waitUntil { self.escalations == 1 }
     }
 
     /// A page that finishes just as the app leaves must not start a grace that runs while the
@@ -162,7 +162,7 @@ final class SilentReauthenticationAttemptTests: XCTestCase {
 
         await waitAndConfirmNever { self.escalations > 0 }
         attempt.resume()
-        await waitUntil(timeout: 1) { self.escalations == 1 }
+        await waitUntil { self.escalations == 1 }
     }
 
     func testAnAttemptPausedBeforeItStartsDoesNotTimeOut() async {
