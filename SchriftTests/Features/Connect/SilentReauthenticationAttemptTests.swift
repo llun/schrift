@@ -137,4 +137,40 @@ final class SilentReauthenticationAttemptTests: XCTestCase {
         await waitAndConfirmNever(timeout: 0.8) { self.escalations > 0 }
         await waitUntil { self.escalations == 1 }
     }
+
+    /// A login form the app left on is still a stop when it comes back, and nothing will report
+    /// it again — the grace, not the whole timeout, must decide.
+    func testResumingRearmsTheGraceForALoginLeftAtRest() async {
+        let attempt = makeAttempt(stopGrace: .milliseconds(50))
+        attempt.start()
+        attempt.handle(.stopped)
+        attempt.pause()
+
+        attempt.resume()
+
+        await waitUntil(timeout: 1) { self.escalations == 1 }
+    }
+
+    /// A page that finishes just as the app leaves must not start a grace that runs while the
+    /// web view is asleep.
+    func testAStopReportedWhilePausedWaitsForResume() async {
+        let attempt = makeAttempt(stopGrace: .milliseconds(50))
+        attempt.start()
+        attempt.pause()
+
+        attempt.handle(.stopped)
+
+        await waitAndConfirmNever { self.escalations > 0 }
+        attempt.resume()
+        await waitUntil(timeout: 1) { self.escalations == 1 }
+    }
+
+    func testAnAttemptPausedBeforeItStartsDoesNotTimeOut() async {
+        let attempt = makeAttempt(timeout: .milliseconds(50))
+        attempt.pause()
+
+        attempt.start()
+
+        await waitAndConfirmNever { self.escalations > 0 }
+    }
 }

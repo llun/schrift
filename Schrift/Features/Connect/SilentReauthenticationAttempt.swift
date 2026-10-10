@@ -29,6 +29,11 @@ final class SilentReauthenticationAttempt {
     private let escalate: @MainActor () -> Void
     private var timeoutTask: Task<Void, Never>?
     private var graceTask: Task<Void, Never>?
+    /// The scene is out of the foreground; no timer runs until `resume()`.
+    private var isPaused = false
+    /// The latest progress left the login at rest (`.stopped`) rather than moving on — so a
+    /// `resume()` re-arms the grace, since nothing will report the same stop a second time.
+    private var isStopped = false
 
     init(
         timeout: Duration = silentReauthenticationTimeout,
@@ -42,7 +47,7 @@ final class SilentReauthenticationAttempt {
 
     /// Starts the overall timeout. Idempotent.
     func start() {
-        guard timeoutTask == nil, !didEscalate else { return }
+        guard timeoutTask == nil, !didEscalate, !isPaused else { return }
         let timeout = timeout
         timeoutTask = Task { [weak self] in
             try? await Task.sleep(for: timeout)
@@ -55,35 +60,45 @@ final class SilentReauthenticationAttempt {
     /// `Task.sleep`'s clock keeps running — so the timers stop here, or the user would come back
     /// to a sheet raised over a login that was merely asleep.
     func pause() {
-        guard !didEscalate, !hasReachedServer else { return }
+        isPaused = true
         cancelTimers()
     }
 
-    /// The app is back in the foreground: a fresh timeout for the time the login has left.
+    /// The app is back in the foreground: a fresh timeout, and the grace again if the login was
+    /// left at rest.
     func resume() {
+        isPaused = false
         guard !didEscalate, !hasReachedServer else { return }
         timeoutTask?.cancel()
         timeoutTask = nil
         start()
+        if isStopped { startGrace() }
     }
 
     func handle(_ progress: WebLoginProgress) {
         switch progress {
         case .navigating:
+            isStopped = false
             graceTask?.cancel()
             graceTask = nil
         case .stopped:
-            guard !hasReachedServer, !didEscalate else { return }
-            graceTask?.cancel()
-            let grace = stopGrace
-            graceTask = Task { [weak self] in
-                try? await Task.sleep(for: grace)
-                guard !Task.isCancelled else { return }
-                self?.escalateUnlessArrived()
-            }
+            isStopped = true
+            startGrace()
         case .reachedServer:
             hasReachedServer = true
+            isStopped = false
             cancelTimers()
+        }
+    }
+
+    private func startGrace() {
+        guard !hasReachedServer, !didEscalate, !isPaused else { return }
+        graceTask?.cancel()
+        let grace = stopGrace
+        graceTask = Task { [weak self] in
+            try? await Task.sleep(for: grace)
+            guard !Task.isCancelled else { return }
+            self?.escalateUnlessArrived()
         }
     }
 

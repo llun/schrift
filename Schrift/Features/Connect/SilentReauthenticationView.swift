@@ -51,9 +51,10 @@ struct SilentReauthenticationView: View {
         .opacity(0)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
-        .onAppear { attempt.start() }
         .onDisappear { attempt.cancel() }
-        .onChange(of: scenePhase) { _, phase in
+        // `initial`: an attempt that begins while the scene is already backgrounded (a 401
+        // landing as the app leaves) starts paused instead of timing out while suspended.
+        .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active { attempt.resume() } else { attempt.pause() }
         }
     }
