@@ -561,12 +561,12 @@ final class EditorViewModel {
             // time can tell us whether the response might predate our own save.
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
             let fetched = try await client.formattedContent(documentID: documentID)
-            let formatted = await recoveringLeafNesting(fetched, availabilityToken: availabilityToken)
+            let (formatted, leafNesting) = await recoveringLeafNesting(fetched, availabilityToken: availabilityToken)
             guard generation == revalidationGeneration, !Task.isCancelled,
                 availability.permitsResponse(for: availabilityToken)
             else { return }
             apply(
-                formatted: formatted,
+                formatted: formatted, leafNesting: leafNesting,
                 mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker)
             )
             markAvailableAgain()
@@ -668,12 +668,12 @@ final class EditorViewModel {
         do {
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
             let fetched = try await client.formattedContent(documentID: documentID)
-            let formatted = await recoveringLeafNesting(fetched, availabilityToken: availabilityToken)
+            let (formatted, leafNesting) = await recoveringLeafNesting(fetched, availabilityToken: availabilityToken)
             guard generation == revalidationGeneration, !Task.isCancelled,
                 availability.permitsResponse(for: availabilityToken)
             else { return }
             apply(
-                formatted: formatted,
+                formatted: formatted, leafNesting: leafNesting,
                 mayPredateLocalSave: saveCoordinator.mayPredateSave(saveMarker)
             )
             // Unreachable while `isUnavailable` — that implies `!hasLoadedContent`, so
@@ -732,19 +732,27 @@ final class EditorViewModel {
     /// tears the screen down. It awaits, so every caller re-checks its generation, task and
     /// availability *after* it, as it already does after the content fetch; the save marker
     /// was snapshotted before both requests, so `mayPredateSave` covers the pair.
+    ///
+    /// It also returns the overlay's verdict (`LeafNestingOverlay`), because a flat body means
+    /// two different things: `.confirmedFlat` (the tree was read and nothing is nested — a
+    /// co-author may have un-nested what this screen shows nested) and `.unknown` (no evidence
+    /// either way — which must never un-nest the screen or overwrite a nested cached copy;
+    /// see `reconcileClean` and `cacheServerCopy`). Every early return here is `.unknown`.
     private func recoveringLeafNesting(
         _ formatted: FormattedDocumentContent, availabilityToken: OnlineAvailability.Token
-    ) async -> FormattedDocumentContent {
+    ) async -> (content: FormattedDocumentContent, leafNesting: LeafNestingOverlay) {
         guard let markdown = formatted.content, markdownMayHideLeafNesting(markdown),
             availability.permitsResponse(for: availabilityToken)
-        else { return formatted }
+        else { return (formatted, .unknown) }
         guard let tree = try? await client.formattedContentTree(documentID: documentID),
-            tree.updatedAt.map({ $0 == formatted.updatedAt }) ?? true,
-            let recovered = markdownRecoveringLeafNesting(markdown, tree: tree.content, serverOrigin: serverOrigin)
-        else { return formatted }
-        return FormattedDocumentContent(
+            tree.updatedAt.map({ $0 == formatted.updatedAt }) ?? true
+        else { return (formatted, .unknown) }
+        let overlay = leafNestingOverlay(markdown, tree: tree.content, serverOrigin: serverOrigin)
+        guard case .recovered(let recovered) = overlay else { return (formatted, overlay) }
+        let content = FormattedDocumentContent(
             id: formatted.id, title: formatted.title, content: recovered,
             createdAt: formatted.createdAt, updatedAt: formatted.updatedAt)
+        return (content, overlay)
     }
 
     /// The terminal 404/403 copy. Mentions the draft only when one exists, so it
@@ -807,7 +815,12 @@ final class EditorViewModel {
     /// `mayPredateLocalSave` is the coordinator's verdict, taken when the fetch
     /// was *issued*, on whether this response could have been served from the
     /// server's pre-save state (see `DocumentSaveCoordinator.mayPredateSave`).
-    private func apply(formatted: FormattedDocumentContent, mayPredateLocalSave: Bool) {
+    /// `leafNesting` is what the document's block tree said about the body's leaf
+    /// nesting (`recoveringLeafNesting`); it only ever decides which spelling of the
+    /// same content is kept, never whether content changed.
+    private func apply(
+        formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay, mayPredateLocalSave: Bool
+    ) {
         // This fetch raced one of our own saves, so its body may be the one that
         // save just replaced. Take nothing from it — not the body, not the cache
         // entry, and not the server baseline (the early return leaves
@@ -909,7 +922,7 @@ final class EditorViewModel {
                     adoptServerTitle(pushTitle)
                 }
             }
-            cacheServerCopy(formatted)
+            cacheServerCopy(formatted, leafNesting: leafNesting)
             return
         }
         // A draft outliving its save (the save failed) is unsaved work no matter
@@ -919,7 +932,7 @@ final class EditorViewModel {
         // replace it.
         if let draft = saveCoordinator.storedDraft(documentID: documentID) {
             displaySource = .draft
-            reconcileDraft(formatted, draft: draft)
+            reconcileDraft(formatted, draft: draft, leafNesting: leafNesting)
             return
         }
         switch displaySource {
@@ -934,7 +947,7 @@ final class EditorViewModel {
             // clean copy. Leaving the source pinned would strand it forever: every
             // later revalidation *and* every pull-to-refresh would no-op in silence.
             displaySource = .clean
-            reconcileClean(formatted)
+            reconcileClean(formatted, leafNesting: leafNesting)
         case .none:
             installFetched(formatted)
         }
@@ -955,7 +968,9 @@ final class EditorViewModel {
     /// An unsaved draft owns the screen. It only loses to a server copy written
     /// meaningfully later than the draft itself — never to the user's own
     /// refresh, because the draft is work that hasn't reached the server yet.
-    private func reconcileDraft(_ formatted: FormattedDocumentContent, draft: PendingDraft) {
+    private func reconcileDraft(
+        _ formatted: FormattedDocumentContent, draft: PendingDraft, leafNesting: LeafNestingOverlay
+    ) {
         // The on-screen content is the draft, so it descends from the draft's own
         // recorded baseline. The server-wins install below routes through
         // `installFetched`, which overrides this with the server state it actually
@@ -1023,7 +1038,7 @@ final class EditorViewModel {
                 // title the document actually has now.
                 adoptServerTitle(pushTitle)
             }
-            cacheServerCopy(formatted)
+            cacheServerCopy(formatted, leafNesting: leafNesting)
             return
         default:
             break
@@ -1047,7 +1062,7 @@ final class EditorViewModel {
             // is not proof the conflict is gone — releasing on that basis would push a full
             // overwrite over the co-author with no prompt. Keep the hold and re-record.
             guard releaseConflictIfProven(evidence, serverUpdatedAt: formatted.updatedAt) else {
-                cacheServerCopy(formatted)
+                cacheServerCopy(formatted, leafNesting: leafNesting)
                 return
             }
             // `pushTitle`, never `draft.title`: the replay PATCHes a title too, and pushing the
@@ -1063,7 +1078,7 @@ final class EditorViewModel {
             // needs `isDirty`, `recoverDrafts` runs once). Hand it back whichever screen
             // is looking. No storm: `enqueue` makes `pendingSave` non-nil, so `apply`
             // short-circuits before `reconcileDraft` on every later fetch.
-            cacheServerCopy(formatted)
+            cacheServerCopy(formatted, leafNesting: leafNesting)
             // A save **on the wire** is the only thing that blocks detection (a conflict may
             // only be recorded with no save in flight). Note that this is *not* the same as
             // `pendingSave != nil`: a save sitting in `queued` with nothing in flight can only
@@ -1090,7 +1105,7 @@ final class EditorViewModel {
             // any autosave push until the user resolves it. `markAvailableAgain` is
             // unaffected — this never installs, so `isUnavailable` gating is untouched.
             saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
-            cacheServerCopy(formatted)
+            cacheServerCopy(formatted, leafNesting: leafNesting)
         case .discardServerWins:
             // **Never discard a draft the user is being asked about.** `runSyncPass` refuses to
             // touch a draft under a recorded conflict; this path had no such guard, and the
@@ -1101,7 +1116,7 @@ final class EditorViewModel {
             // the conflict is exactly what `runSyncPass` records for this state.
             if saveCoordinator.conflict(for: documentID) != nil {
                 saveCoordinator.recordConflict(documentID: documentID, serverUpdatedAt: formatted.updatedAt)
-                cacheServerCopy(formatted)
+                cacheServerCopy(formatted, leafNesting: leafNesting)
                 return
             }
             // Legacy (baseline-less) stranded draft the server has moved past — server
@@ -1110,7 +1125,7 @@ final class EditorViewModel {
             // on disk that isn't on screen — the state every rule here exists to prevent.
             saveCoordinator.discardStoredDraft(draft)
             guard saveCoordinator.storedDraft(documentID: documentID) == nil else {
-                cacheServerCopy(formatted)
+                cacheServerCopy(formatted, leafNesting: leafNesting)
                 return
             }
             // The local work is gone, so no conflict record may outlive it (the lifecycle rule).
@@ -1141,17 +1156,24 @@ final class EditorViewModel {
 
     /// Silent cache update while local edits own the screen — next open (or
     /// the coordinator's own conflict handling) deals with freshness.
-    private func cacheServerCopy(_ formatted: FormattedDocumentContent) {
+    private func cacheServerCopy(_ formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay) {
         // The cache entry records the fresh server body and its `updated_at`, so a
         // later open can build a baseline from it. The in-memory `serverBaseline` is
         // deliberately *not* advanced here: the on-screen edits do not descend from
         // this just-observed server body, and moving the baseline forward would let
         // a queued push sail past the conflict check over a web edit we just saw.
+        //
+        // A flat read the tree could not vouch for (`.unknown`) keeps a cached copy
+        // that nests leaves, when it is the same content: it is the better-informed
+        // spelling of exactly what the server holds (`serverCopyKeepingLeafNesting`).
+        let markdown = serverCopyKeepingLeafNesting(
+            fetched: formatted.content ?? "", overlay: leafNesting,
+            known: contentCache.content(for: documentID)?.markdown)
         contentCache.save(
             CachedDocumentContent(
                 documentID: documentID,
                 title: formatted.title,
-                markdown: formatted.content ?? "",
+                markdown: markdown,
                 syncedAt: Date(),
                 serverUpdatedAt: formatted.updatedAt
             ))
@@ -1168,7 +1190,7 @@ final class EditorViewModel {
     /// the "Updated" banner, which surfaces once editing ends. (A dirty session
     /// never reaches here — `apply` returns early — and `startEditing`/
     /// `markDirty` drop the stash, so local work always wins.)
-    private func reconcileClean(_ formatted: FormattedDocumentContent) {
+    private func reconcileClean(_ formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay) {
         // `apply` only reaches here with **no pending save, no stored draft, and not dirty** —
         // i.e. no local work exists at all. A conflict record therefore has nothing left to
         // protect and cannot be a live one, so release it. Nothing else would: every other
@@ -1184,11 +1206,20 @@ final class EditorViewModel {
             title = fetchedTitle
             savedTitle = fetchedTitle
         }
+        // What this read establishes the server holds. Normally the fetched body; but a flat
+        // read the block tree could not vouch for (`.unknown` — a failed tree read, a server
+        // without the JSON format, a stale pairing) is no evidence the screen's nesting is
+        // gone, so a nested screen holding the same content keeps its spelling — on screen,
+        // in the cache, and in the baseline (`serverCopyKeepingLeafNesting`). Without that,
+        // one failed tree read wrote the flat export over the nested cached copy, and the
+        // next open (offline, or with the tree read failing again) showed it flat.
+        let serverCopy = serverCopyKeepingLeafNesting(
+            fetched: fetched, overlay: leafNesting, known: displayedSourceMarkdown)
         contentCache.save(
             CachedDocumentContent(
                 documentID: documentID,
                 title: title,
-                markdown: fetched,
+                markdown: serverCopy,
                 syncedAt: now,
                 serverUpdatedAt: formatted.updatedAt
             ))
@@ -1224,16 +1255,34 @@ final class EditorViewModel {
                 serverUpdatedAt: formatted.updatedAt, markdown: fetched, title: formatted.title)
             updateAvailable = false
             pendingFreshContent = nil
+        } else if !isEditing, leafNesting == .confirmedFlat,
+            blocks.contains(where: { $0.indent > 0 && blockNestsAsLeaf($0) })
+        {
+            // The reverse: same content, but the screen nests a leaf the server's block tree
+            // positively says is not nested — a co-author un-nested it on the web (or the
+            // nesting was only ever this device's). Only `.confirmedFlat` may do this: a flat
+            // read is also what every failed tree read produces, and that one keeps the
+            // screen's nesting (the branch below). Nothing local exists to protect here,
+            // and outside an editing session no caret either. Mid-edit it waits, as the
+            // reveal above does, and the next revalidation after Done applies it — the cost
+            // being that a save made during that session pushes the nesting back.
+            install(markdown: fetched, title: nil, syncedAt: now)
+            serverBaseline = DraftBaseline(
+                serverUpdatedAt: formatted.updatedAt, markdown: fetched, title: formatted.title)
+            updateAvailable = false
+            pendingFreshContent = nil
         } else {
             // Raw may differ only cosmetically — converge the comparison
-            // basis on the fetched raw so future comparisons settle.
-            displayedSourceMarkdown = fetched
+            // basis on the fetched raw so future comparisons settle (or, for a
+            // flat read that cannot vouch for nesting, on the nested spelling the
+            // screen already shows — see `serverCopy` above).
+            displayedSourceMarkdown = serverCopy
             lastSyncedAt = now
             // The server holds what's on screen, so advance the baseline's server
             // timestamp; and any body stashed by an earlier fetch (server since
             // reverted) has nothing left to offer.
             serverBaseline = DraftBaseline(
-                serverUpdatedAt: formatted.updatedAt, markdown: fetched, title: formatted.title)
+                serverUpdatedAt: formatted.updatedAt, markdown: serverCopy, title: formatted.title)
             updateAvailable = false
             pendingFreshContent = nil
         }
@@ -1931,6 +1980,7 @@ final class EditorViewModel {
         if isMarked {
             if blocks[index].text != text {
                 blocks[index].text = text
+                detachBlocksThatNoLongerNest([blockID])
                 markDirty()
             }
         } else {
@@ -1954,13 +2004,17 @@ final class EditorViewModel {
             let caretBefore = selection?.location ?? (text as NSString).length
             let caret = min(max(0, caretBefore - prefixLength), (match.remainderText as NSString).length)
             focusBlock(blockID, cursorAt: caret)
+            detachBlocksThatNoLongerNest([blockID])
             markDirty()
             return
         }
 
         blocks[index].text = text
         slashQueryText = focusedBlockID == blockID ? slashQuery(text: text, kind: blocks[index].kind) : nil
-        if charactersChanged { markDirty() }
+        if charactersChanged {
+            detachBlocksThatNoLongerNest([blockID])
+            markDirty()
+        }
     }
 
     /// A Return or prefix shortcut can move the caret before UIKit realizes that
@@ -2064,6 +2118,7 @@ final class EditorViewModel {
                 cursorRequest = CursorRequest(blockID: blockID, offset: start, length: end - start)
                 selection = NSRange(location: start, length: end - start)
             }
+            detachBlocksThatNoLongerNest([blockID])
             markDirty()
         }
         return true
@@ -2110,14 +2165,20 @@ final class EditorViewModel {
         let text = block.text as NSString
         let splitOffset = min(max(0, offset), text.length)
         blocks[index].text = text.substring(to: splitOffset)
-        // A new list item keeps its level; anything else starts at the top.
+        // A new list item keeps its level, and so does whatever a nested leaf (a link line under
+        // an item) splits into; anything else starts at the top.
+        let splitsNestedLeaf = block.indent > 0 && blockNestsAsLeaf(block)
         let newBlock = EditorBlock(
             kind: continuationKind(after: block.kind),
             text: text.substring(from: splitOffset),
-            indent: isListKind(block.kind) ? block.indent : 0
+            indent: isListKind(block.kind) || splitsNestedLeaf ? block.indent : 0
         )
         transferInputRow(from: blockID, to: newBlock.id)
         blocks.insert(newBlock, at: index + 1)
+        // A half that is still a link line stays where it was nested; a half that no longer is
+        // (an empty line, a link cut in two) steps out past the item's nested children rather
+        // than ending the list under them and flattening every nested sibling after it.
+        if splitsNestedLeaf { detachBlocksThatNoLongerNest([blockID, newBlock.id]) }
         focusBlock(newBlock.id, cursorAt: 0)
         markDirty()
     }
@@ -2131,6 +2192,15 @@ final class EditorViewModel {
         // it deletes anything.
         if block.indent > 0, let shifted = shiftingListItem(at: index, by: -1, in: blocks) {
             blocks = shifted
+            focusBlock(block.id, cursorAt: 0)
+            markDirty()
+            return
+        }
+
+        // So does a nested link line: it steps out a level (past any siblings it would
+        // otherwise orphan — `outdentingLeaf`) before it merges into anything.
+        if block.indent > 0, blockNestsAsLeaf(block), let outdented = outdentingLeaf(at: index, in: blocks) {
+            blocks = outdented
             focusBlock(block.id, cursorAt: 0)
             markDirty()
             return
@@ -2168,6 +2238,8 @@ final class EditorViewModel {
             blocks[index - 1].text += block.text
             transferInputRow(from: blockID, to: previous.id)
             blocks.remove(at: index)
+            // Merging prose into a nested link line leaves a line that can no longer nest.
+            detachBlocksThatNoLongerNest([previous.id])
             focusBlock(previous.id, cursorAt: caret)
             markDirty()
         }
@@ -2187,6 +2259,7 @@ final class EditorViewModel {
         // converting would silently destroy it, so leaves are never converted.
         if case .image = blocks[index].kind { return }
         if case .attachment = blocks[index].kind { return }
+        let wasNestedLeaf = blocks[index].indent > 0 && blockNestsAsLeaf(blocks[index])
         if blocks[index].kind == kind {
             blocks[index].kind = .paragraph
         } else {
@@ -2195,6 +2268,9 @@ final class EditorViewModel {
                 blocks[index].text = ""
             }
         }
+        // A nested link line converted to a kind that cannot nest (a heading, a quote) steps
+        // out past its siblings instead of flattening them; a list kind keeps its level.
+        if wasNestedLeaf { detachBlocksThatNoLongerNest([blockID]) }
         markDirty()
     }
 
@@ -2336,6 +2412,7 @@ final class EditorViewModel {
         cursorRequest = CursorRequest(
             blockID: focusedBlockID, offset: result.selection.location, length: result.selection.length)
         selection = result.selection
+        detachBlocksThatNoLongerNest([focusedBlockID])
         markDirty()
     }
 
@@ -2449,6 +2526,7 @@ final class EditorViewModel {
         blocks[index].text = edit.text
         cursorRequest = CursorRequest(blockID: request.blockID, offset: edit.selection.location)
         selection = edit.selection
+        detachBlocksThatNoLongerNest([request.blockID])
         markDirty()
         return true
     }
@@ -2462,6 +2540,7 @@ final class EditorViewModel {
         blocks[index].text = edit.text
         cursorRequest = CursorRequest(blockID: blockID, offset: edit.selection.location)
         selection = edit.selection
+        detachBlocksThatNoLongerNest([blockID])
         markDirty()
     }
 
@@ -3256,7 +3335,7 @@ final class EditorViewModel {
         do {
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
             let fetched = try await client.formattedContent(documentID: documentID)
-            let formatted = await recoveringLeafNesting(fetched, availabilityToken: availability.token)
+            let (formatted, _) = await recoveringLeafNesting(fetched, availabilityToken: availability.token)
             guard generation == revalidationGeneration, !Task.isCancelled else { return }
             // A body that may predate one of our own saves must never be installed (it
             // would resurrect what that save replaced, and the next full-overwrite save
@@ -3363,6 +3442,19 @@ final class EditorViewModel {
     /// document downgrade out of live editing — which is where a document
     /// holding a `file` node belongs anyway, since the read side already refuses
     /// to engage on one.
+    /// After an edit to the text or kind of `ids`: a nested link line the edit left unable to
+    /// nest (prose now, or a heading) steps out past its nested siblings instead of being zeroed
+    /// in place by `markDirty`'s normalization — which would end the list there and flatten
+    /// every nested sibling after it (`detachingUnnestableBlocks`). An edit that keeps a link
+    /// line a link line, or touches no nested block, changes nothing here. Written only when it
+    /// moves something, so an ordinary keystroke doesn't rewrite the array.
+    private func detachBlocksThatNoLongerNest(_ ids: [UUID]) {
+        let detached = detachingUnnestableBlocks(Set(ids), in: blocks)
+        if detached.map(\.id) != blocks.map(\.id) || detached.map(\.indent) != blocks.map(\.indent) {
+            blocks = detached
+        }
+    }
+
     private func markDirty(forcesClassicPath: Bool = false) {
         // Every edit funnels here, so this is where a stranded indent (a parent
         // deleted, converted or moved away) is put right. Written only when it

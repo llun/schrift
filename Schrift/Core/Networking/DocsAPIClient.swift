@@ -27,6 +27,14 @@ actor DocsAPIClient {
     /// a relaunch. See `formattedContent(documentID:format:)`.
     var prefersLegacyContentRoute = false
 
+    /// Set once this server has answered the BlockNote tree read (`formattedContentTree`) with
+    /// a missing route or a `400` — a server whose `formatted-content/` does not speak
+    /// `content_format=json` — so every later content read skips a second request that can
+    /// only fail the same way. Safe to pin, unlike a content route: the tree is best-effort,
+    /// and its absence costs only the leaf-nesting overlay, never a read. Scoped to this
+    /// client, so an upgraded server is asked again after the next sign-in or launch.
+    var contentTreeUnsupported = false
+
     /// A favorites route that returned a decoded page. Scoped to this server/client;
     /// discarded on a later 404 so a server upgrade can be detected without signing out.
     var favoriteListPath: String?

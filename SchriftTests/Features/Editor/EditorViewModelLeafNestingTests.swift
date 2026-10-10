@@ -130,8 +130,11 @@ final class EditorViewModelLeafNestingTests: EditorViewModelTestCase {
         XCTAssertFalse(viewModel.updateAvailable, "same content: no banner")
     }
 
-    /// One-way: a flat read — which is also what a transiently failed overlay produces — never
-    /// un-nests a screen that shows the restored structure.
+    /// A flat read the tree could not vouch for — a failed tree read is what a transient
+    /// error, a server without the JSON format and a stale pairing all produce — never un-nests
+    /// a screen that shows the restored structure, **and never overwrites the nested cached
+    /// copy with the flat export**: otherwise the next open (offline, or with the tree read
+    /// failing again) shows the document flat.
     func testAFlatRevalidationKeepsTheRestoredNesting() async {
         let (viewModel, _, _, contentCache) = makeEnvironment()
         contentCache.save(offlineCachedEntry(markdown: nestedMarkdown))
@@ -142,5 +145,69 @@ final class EditorViewModelLeafNestingTests: EditorViewModelTestCase {
 
         XCTAssertTrue(blocksContentEqual(viewModel.blocks, nestedBlocks), "\(viewModel.blocks)")
         XCTAssertFalse(viewModel.updateAvailable)
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "content_format=json"), 1)
+        XCTAssertEqual(contentCache.content(for: documentID)?.markdown, nestedMarkdown)
+        XCTAssertFalse(viewModel.isDirty)
+
+        // And a second failed read changes nothing: the screen's spelling is what the cache
+        // keeps, and the next open still finds the nesting.
+        await viewModel.refresh()
+        XCTAssertTrue(blocksContentEqual(viewModel.blocks, nestedBlocks), "\(viewModel.blocks)")
+        XCTAssertEqual(contentCache.content(for: documentID)?.markdown, nestedMarkdown)
+    }
+
+    /// The tree's top-level image — the photo is no longer nested on the server.
+    private var flatTreeBody: Data {
+        Data(
+            """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": [
+              {"id": "a", "type": "checkListItem", "props": {"checked": false},
+               "content": [{"type": "text", "text": "Task", "styles": {}}], "children": []},
+              {"id": "b", "type": "image",
+               "props": {"name": "photo.png", "url": "\(photoURL)", "caption": "", "showPreview": true},
+               "children": []},
+              {"id": "d", "type": "checkListItem", "props": {"checked": false},
+               "content": [{"type": "text", "text": "Next", "styles": {}}], "children": []}],
+             "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
+            """.utf8)
+    }
+
+    /// A co-author un-nested the photo on the web. The markdown export reads exactly as it did
+    /// when the photo was nested, so only the tree can say so — and when it positively does
+    /// (`.confirmedFlat`), a clean, non-editing screen shows the flat structure, and the cache
+    /// follows it.
+    func testACoAuthorsUnNestingInstallsTheFlatStructure() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(offlineCachedEntry(markdown: nestedMarkdown))
+        let log = RequestRecorder()
+        stubExportAndTree(log: log, treeBody: flatTreeBody)
+
+        await viewModel.load()
+
+        XCTAssertTrue(blocksContentEqual(viewModel.blocks, flatBlocks), "\(viewModel.blocks)")
+        XCTAssertEqual(viewModel.rawMarkdown, flatExport)
+        XCTAssertEqual(contentCache.content(for: documentID)?.markdown, flatExport)
+        XCTAssertEqual(viewModel.displaySource, .clean)
+        XCTAssertFalse(viewModel.updateAvailable, "same content: no banner")
+        XCTAssertFalse(viewModel.isDirty, "adopting the server's structure is not an edit")
+    }
+
+    /// Mid-edit the confirmation waits, as the reveal does: nothing swaps the blocks under
+    /// the caret over a structure-only change.
+    func testAnUnNestingWaitsWhileEditing() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(offlineCachedEntry(markdown: nestedMarkdown))
+        let log = RequestRecorder()
+        stubOffline(log: log)
+        await viewModel.load()
+        viewModel.startEditing()
+        stubExportAndTree(log: log, treeBody: flatTreeBody)
+
+        await viewModel.load()
+
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "content_format=json"), 1)
+        XCTAssertTrue(viewModel.isEditing)
+        XCTAssertTrue(blocksContentEqual(viewModel.blocks, nestedBlocks), "\(viewModel.blocks)")
+        XCTAssertFalse(viewModel.isDirty)
     }
 }

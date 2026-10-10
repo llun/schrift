@@ -7,7 +7,9 @@ import Foundation
 // The document's BlockNote tree (`formatted-content/?content_format=json`) still has the
 // nesting. This file holds the pure halves of putting it back: a model of what the export
 // does (`flattenedLikeServerExport`, which `canonicalMarkdown` also uses), a cheap gate for
-// whether a markdown body could be hiding nesting at all, and the overlay itself.
+// whether a markdown body could be hiding nesting at all, the overlay itself (whose answer is
+// three-way: restored, confirmed absent, or unknown), and which body to keep when a read
+// cannot tell.
 
 // MARK: - The export's flattening
 
@@ -154,10 +156,30 @@ private func anchoredTreeNodes(_ nodes: [BlockNoteTreeNode]) -> [(anchor: LeafNe
     return result
 }
 
-/// `markdown` — the server's markdown export of a document — with the leaf nesting its
-/// BlockNote `tree` holds put back, as the editor's own nested spelling; or nil when the tree
-/// cannot be applied with certainty, or would change nothing. **All or nothing**: nil means
-/// "install `markdown` as it is", which is exactly the flat rendering the app has always had.
+/// What a document's BlockNote tree says about the leaf nesting of its markdown export
+/// (`leafNestingOverlay`). Three answers, because the editor acts on two of them differently:
+/// a tree that *restores* nesting and a tree that *confirms there is none* are both positive
+/// evidence, while everything else — no tree, a tree that does not match, a tree from another
+/// write — is the absence of evidence, and must never be read as either.
+enum LeafNestingOverlay: Equatable, Sendable {
+    /// The tree puts back nesting the export flattened: `markdown` is the export with it
+    /// restored, in the editor's own nested spelling.
+    case recovered(markdown: String)
+    /// The tree was read, matches the export block for block, and nests nothing but list items,
+    /// each at the level the export already shows: no leaf is nested on the server, so the
+    /// export's own structure is the whole story. This is what lets a co-author's un-nesting
+    /// reach a screen that shows a nested copy.
+    case confirmedFlat
+    /// Nothing can be concluded: no tree was asked for or read, the two reads disagree, or the
+    /// tree holds structure the editor cannot spell. The flat export is all there is, and it is
+    /// **not** evidence that nothing is nested — it is also what every failure produces.
+    case unknown
+}
+
+/// The tree's verdict on `markdown` — the server's markdown export of a document — and, when
+/// it restores leaf nesting, the restored body (`LeafNestingOverlay`). **All or nothing**:
+/// `.recovered` only when the whole tree applies with certainty, and `.unknown` (install
+/// `markdown` as it is, exactly the flat rendering the app has always had) whenever it does not.
 ///
 /// Every list item, image and attachment is an *anchor*. Both sides list theirs in document
 /// order — the markdown's parsed blocks, the tree's pre-order walk with each node's depth —
@@ -166,7 +188,7 @@ private func anchoredTreeNodes(_ nodes: [BlockNoteTreeNode]) -> [(anchor: LeafNe
 /// export flattened, and also the list items it pulled up after them (`* a` with children
 /// `[image, * b]` exports `* b` at the top level too).
 ///
-/// It declines when:
+/// It answers `.unknown` when:
 /// - the markdown does not survive the editor's own round trip (`markdownSurvivesRoundTrip`);
 /// - the anchor sequences differ (a url, a kind, a block one side has and the other lacks —
 ///   including a tree and a markdown read from either side of a co-author's write);
@@ -178,19 +200,31 @@ private func anchoredTreeNodes(_ nodes: [BlockNoteTreeNode]) -> [(anchor: LeafNe
 ///   (`canonicalMarkdown`, which is `flattenedLikeServerExport` underneath) — the proof that
 ///   the tree's structure *explains* the markdown rather than contradicting it, e.g. a tree
 ///   that un-nests a list item the markdown shows nested;
-/// - the result does not round-trip through the parser to the same blocks.
+/// - the result does not round-trip through the parser to the same blocks;
+/// - every anchor already sits at its tree depth but the tree nests something that is not a
+///   list item — a paragraph under an item (a link line the editor nested: not an anchor,
+///   because the tree reader does not read inline content), a preview `pdf` that exports
+///   nothing. The export cannot show that nesting and the overlay cannot restore it, so it
+///   is neither recovered nor confirmed absent.
+///
+/// It answers `.confirmedFlat` when every anchor already sits at its tree depth and nothing
+/// but list items is nested in the tree.
 ///
 /// Blocks that are not anchors (paragraphs, headings, a caption) keep their parsed level,
 /// which for anything but a list item or leaf is the top.
-func markdownRecoveringLeafNesting(_ markdown: String, tree: [BlockNoteTreeNode], serverOrigin: String) -> String? {
-    guard markdownSurvivesRoundTrip(markdown, serverOrigin: serverOrigin) else { return nil }
+func leafNestingOverlay(_ markdown: String, tree: [BlockNoteTreeNode], serverOrigin: String) -> LeafNestingOverlay {
+    guard markdownSurvivesRoundTrip(markdown, serverOrigin: serverOrigin) else { return .unknown }
     let parsed = parseEditorBlocks(markdown, serverOrigin: serverOrigin)
     let markdownAnchors: [(index: Int, anchor: LeafNestingAnchor)] = parsed.indices.compactMap { index in
         markdownAnchor(parsed[index]).map { (index: index, anchor: $0) }
     }
     guard let treeAnchors = anchoredTreeNodes(tree), treeAnchors.count == markdownAnchors.count,
         zip(markdownAnchors, treeAnchors).allSatisfy({ $0.anchor == $1.anchor })
-    else { return nil }
+    else { return .unknown }
+
+    if zip(markdownAnchors, treeAnchors).allSatisfy({ parsed[$0.index].indent == $1.depth }) {
+        return treeNestsOnlyListItems(tree) ? .confirmedFlat : .unknown
+    }
 
     var restored = parsed
     for (markdownSide, treeSide) in zip(markdownAnchors, treeAnchors) {
@@ -199,14 +233,60 @@ func markdownRecoveringLeafNesting(_ markdown: String, tree: [BlockNoteTreeNode]
     let normalized = normalizedListIndents(restored)
     guard zip(markdownAnchors, treeAnchors).allSatisfy({ normalized[$0.index].indent == $1.depth }),
         normalized.map(\.indent) != parsed.map(\.indent)
-    else { return nil }
+    else { return .unknown }
 
     let recovered = serializeMarkdown(normalized)
     guard canonicalMarkdown(recovered) == canonicalMarkdown(markdown),
         markdownSurvivesRoundTrip(recovered, serverOrigin: serverOrigin),
         blocksContentEqual(parseEditorBlocks(recovered, serverOrigin: serverOrigin), normalized)
+    else { return .unknown }
+    return .recovered(markdown: recovered)
+}
+
+/// `markdown` with the leaf nesting its BlockNote `tree` holds put back, or nil when the tree
+/// does not restore any (`leafNestingOverlay` answering anything but `.recovered`).
+func markdownRecoveringLeafNesting(_ markdown: String, tree: [BlockNoteTreeNode], serverOrigin: String) -> String? {
+    guard case .recovered(let recovered) = leafNestingOverlay(markdown, tree: tree, serverOrigin: serverOrigin)
     else { return nil }
     return recovered
+}
+
+/// Whether nothing but list items is nested anywhere in `nodes` — every other block at the top.
+/// Iterative, like `anchoredTreeNodes`.
+private func treeNestsOnlyListItems(_ nodes: [BlockNoteTreeNode]) -> Bool {
+    var stack: [(node: BlockNoteTreeNode, depth: Int)] = nodes.map { (node: $0, depth: 0) }
+    while let entry = stack.popLast() {
+        if entry.depth > 0, !treeNodeIsListItem(entry.node) { return false }
+        stack.append(contentsOf: entry.node.children.map { (node: $0, depth: entry.depth + 1) })
+    }
+    return true
+}
+
+/// The body to keep as the server's copy of a document after a read whose overlay answered
+/// `overlay` — `fetched`, except in the one case where the read is *less* informed than what
+/// the app already holds.
+///
+/// A flat read whose overlay is `.unknown` says nothing about nesting: a transiently failed tree
+/// read, a server without the JSON format and a stale pairing all produce it. When `known` (the
+/// body on screen, or the cached one) nests a leaf and is the same document under the export's
+/// flattening (`canonicalMarkdown`), it is the better-informed spelling of exactly what the
+/// server holds, so it is kept — otherwise one failed tree read overwrites the cached nesting
+/// with the flat export, and the next (possibly offline) open shows the document flat.
+///
+/// Anything else returns `fetched`: a recovered or confirmed-flat read is positive evidence and
+/// always wins, a read that nests a leaf itself spells its own structure, and a body that
+/// differs in content is a real change the flat read must deliver.
+func serverCopyKeepingLeafNesting(fetched: String, overlay: LeafNestingOverlay, known: String?) -> String {
+    guard overlay == .unknown, let known, known != fetched, markdownNestsALeaf(known), !markdownNestsALeaf(fetched),
+        canonicalMarkdown(known) == canonicalMarkdown(fetched)
+    else { return fetched }
+    return known
+}
+
+/// Whether `markdown` parses with a leaf nested under a list item. Parsed without an origin —
+/// an attachment is then a link-line paragraph, which nests exactly alike.
+func markdownNestsALeaf(_ markdown: String) -> Bool {
+    parseEditorBlocks(markdown).contains { $0.indent > 0 && blockNestsAsLeaf($0) }
 }
 
 /// Whether `fetched` should replace `displayed` on a clean screen although the two compare
@@ -216,8 +296,9 @@ func markdownRecoveringLeafNesting(_ markdown: String, tree: [BlockNoteTreeNode]
 /// The case it exists for is a body cached flat (before the overlay, or while it could not
 /// run) whose revalidation comes back with its nesting restored: same content, so the
 /// ordinary "server changed" test says no, and the nesting would only appear on the next
-/// open. Deliberately one-way — a *flat* fetch never replaces a nested screen, because a flat
-/// read is also what a transiently failed overlay produces.
+/// open. Deliberately one-way — a *flat* fetch is never judged here, because a flat read is
+/// also what a transiently failed overlay produces. Only the tree's positive answer
+/// (`LeafNestingOverlay.confirmedFlat`) may un-nest a screen, and the caller checks that itself.
 func fetchedMarkdownRevealsLeafNesting(_ fetched: String, over displayed: String) -> Bool {
     guard fetched != displayed else { return false }
     let fetchedBlocks = parseEditorBlocks(fetched)

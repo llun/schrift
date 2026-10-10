@@ -298,6 +298,42 @@ func movedLeafIndent(at index: Int, in blocks: [EditorBlock], originalIndent: In
     return min(max(preferred, range.lowerBound), range.upperBound)
 }
 
+/// The blocks with each of `ids` that sits nested (`indent > 0`) but can no
+/// longer nest — a link line an edit turned into prose, an empty paragraph a
+/// Return split off one — moved to the top level, just past the nested run
+/// that follows it. Every other block is left exactly where and as it is.
+///
+/// Only list items and leaves hold a level (`normalizedListIndents` zeroes
+/// anything else), and zeroing such a block *in place* ends the list there:
+/// every nested sibling after it — a photo under the same item — would lose
+/// its parent and be flattened with it. Moving it past them keeps the siblings
+/// attached and loses no content. The block keeps its id, so its row and its
+/// focus follow it; adjacent such blocks move together, in order. The caller
+/// still funnels through `markDirty`, whose normalization settles the rest.
+func detachingUnnestableBlocks(_ ids: Set<UUID>, in blocks: [EditorBlock]) -> [EditorBlock] {
+    func detaches(_ block: EditorBlock) -> Bool {
+        ids.contains(block.id) && block.indent > 0 && !blockIsListItem(block.kind) && !blockNestsAsLeaf(block)
+    }
+    var result = blocks
+    var index = 0
+    while index < result.count {
+        guard detaches(result[index]) else {
+            index += 1
+            continue
+        }
+        var groupEnd = index + 1
+        while groupEnd < result.count, detaches(result[groupEnd]) { groupEnd += 1 }
+        var runEnd = groupEnd
+        while runEnd < result.count, isNestedListChild(result[runEnd]) { runEnd += 1 }
+        var group = Array(result[index..<groupEnd])
+        for position in group.indices { group[position].indent = 0 }
+        result.removeSubrange(index..<groupEnd)
+        result.insert(contentsOf: group, at: runEnd - group.count)
+        index = runEnd
+    }
+    return result
+}
+
 /// Whether a block's text is read as inline markdown — styled while editing,
 /// with its syntax hidden — or kept verbatim.
 ///

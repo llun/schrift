@@ -1138,6 +1138,17 @@ allows (`movedLeafIndent`), and `numberedIndex` skips nested leaves so a photo u
 item 1 does not restart the numbering of item 2. Reading and editing inset leaf rows
 by the same `listIndentInset`.
 
+A nested link line is the one leaf whose nestability its own text decides, so an
+edit can take it away: typing past the link, Return inside it, merging prose into
+it, an inline marker, removing the link, converting it to a heading. Zeroing such a
+block in place would end the list there and flatten every nested sibling after it,
+so the editor moves it to the top level just past the nested run that follows
+(`detachingUnnestableBlocks`, applied before `markDirty` normalizes). An edit that
+keeps it a link line keeps its level; Return at its end lands the new empty line past
+the run (a nested paragraph has no markdown spelling); backspace at its start
+outdents it first (`outdentingLeaf`), the way a nested list item steps out before it
+merges. No content moves out of the document and no sibling loses its parent.
+
 The app writes a nested leaf tight, at its parent's content column
 (`- [ ] Task\n  ![photo.png](url)\n  [report.pdf](url)\n- [ ] Next\n`), and
 `parseNestedLeaf` reads exactly that back: spaces only, the column must equal one of
@@ -1148,11 +1159,21 @@ nested list line, or a line that classifies on its own. Prose after the run woul
 otherwise be a lazy continuation of the same paragraph, so in that case every line
 of the run stays verbatim. (CommonMark itself would read the app's spelling as a
 lazy continuation of the item's text; only the app's own parser ever reads it.)
+Because the server's export never writes an image or link line at a list item's
+content column directly under the item (it prints a nested leaf at column zero after
+a blank line, on every shape in `LeafNestingOverlayTests`), only the app's own
+spelling classifies here: server-authored content parses, and re-saves, to exactly
+the bytes it did before nesting existed. The queued-photo rewriter and remover
+(`markdownRewritingPendingAttachment`/`markdownRemovingPendingAttachment`) ask the
+parser which lines are the record's image blocks (`pendingAttachmentImageLines`), so
+they touch a nested placeholder line and no other indented one.
 `MarkdownYjs.blockNoteBlocks` folds the leaves into the item's
 `BlockNoteBlock.children`, and the encoder needed no change, since a nested
 `blockGroup` of leaves is just a nested group
 (`YjsEncoderTests.testListItemLeafChildrenGoInANestedBlockGroup`, generated with
-`@blocknote/core@0.51.4` and yjs 13.6.33).
+`@blocknote/server-util@0.51.4` and yjs 13.6.33 rather than the pinned 13.6.31; that
+the patch releases share the v1 encoding is an assumption, corroborated by the
+13.6.31 goldens covering the same nested-group and media-prop paths).
 
 **The server's export flattens it; the block tree restores it.** BlockNote 0.51.4's
 `blocksToMarkdownLossy` prints a nested leaf at column zero after a blank line and
@@ -1177,10 +1198,13 @@ before `apply`/`installFetched`:
    directly after a list item, the one shape the flattening produces) and the read
    is still permitted does it issue the second request
    (`DocsAPIClient.formattedContentTree`, decoded into a minimal, depth-capped
-   `BlockNoteTreeNode`).
+   `BlockNoteTreeNode`). A server that answers it with a missing route or a `400`
+   is memoized per client (`contentTreeUnsupported`) and never asked again.
 2. A tree whose `updated_at` differs from the markdown's describes another write and
    is ignored.
-3. `markdownRecoveringLeafNesting` overlays it, all or nothing. List items (by
+3. `leafNestingOverlay` overlays it, all or nothing, and answers three ways:
+   `.recovered(markdown:)`, `.confirmedFlat` (the tree matches and nests nothing but
+   list items the export already shows) or `.unknown`. List items (by
    kind), images (by url) and attachments (by url) are anchors; the markdown's
    anchors in block order and the tree's in pre-order must be the same sequence,
    every tree anchor must have only list items above it, and each anchored block
@@ -1192,8 +1216,8 @@ before `apply`/`installFetched`:
    through the parser. Media that export nothing (a docs `pdf` with the default
    preview, an empty placeholder) are not anchors; a `video` exports image syntax and
    anchors as an image.
-4. Any failure, at any step, installs the flat export, which is the behaviour before
-   the overlay existed. The helper never throws, so it cannot turn a successful read
+4. Any failure, at any step, is `.unknown` and installs the flat export, which is
+   the behaviour before the overlay existed. The helper never throws, so it cannot turn a successful read
    into a teardown, and every caller still re-checks its generation and availability
    after the extra await. The save marker taken before the first request covers
    both.
@@ -1202,9 +1226,13 @@ The overlaid body is what everything downstream sees: the install, the content
 cache, the baseline and draft reconciliation. A body cached flat compares equal to
 its restored revalidation, so `reconcileClean` installs a fetch that adds leaf
 nesting on a clean screen outside an editing session
-(`fetchedMarkdownRevealsLeafNesting`). That is one-way: a flat fetch, which is also
-what a failed overlay produces, never un-nests the screen, although it does rewrite
-the cache flat. Saving a nested document writes real BlockNote children. On a
+(`fetchedMarkdownRevealsLeafNesting`). The reverse takes positive evidence: only a
+`.confirmedFlat` read installs a flat body over a screen that nests a leaf (a
+co-author un-nested it on the web), likewise only clean and outside an editing
+session. An `.unknown` flat read, which is what every failure produces, never
+un-nests the screen, and `serverCopyKeepingLeafNesting` keeps the nested spelling of
+the same content in the cache and the baseline as well, so a failed tree read can no
+longer rewrite a nested cached copy flat for the next offline open. Saving a nested document writes real BlockNote children. On a
 Docs 6 server a list item with nested children projects opaque, so
 `BlockNoteAlignment` never anchors it: it and its leaves are rebuilt on every save,
 which resets web-only media props (an image's `caption`, `previewWidth`,

@@ -255,4 +255,41 @@ final class NestedLeafParsingTests: XCTestCase {
         XCTAssertEqual(
             markdownRemovingPendingAttachment(source, localID: placeholderID), "- [ ] Task\n- [ ] Next")
     }
+
+    /// The rewriter and the remover touch an indented placeholder line only where the parser
+    /// nests it — exactly at an open list item's content column. Anywhere else the line is
+    /// verbatim text (indented code, a line under prose, a wrong column, a line after a blank
+    /// one): the hold does not count it, so rewriting or removing it would change text the
+    /// user wrote while releasing nothing.
+    func testAnIndentedPlaceholderOutsideAContentColumnIsLeftAlone() {
+        let placeholder = pendingAttachmentPlaceholderURL(for: placeholderID)
+        for source in [
+            "    ![](\(placeholder))",
+            "Intro\n  ![](\(placeholder))",
+            "- [ ] Task\n   ![](\(placeholder))",
+            "- [ ] Task\n\n  ![](\(placeholder))",
+            "1. One\n  ![](\(placeholder))",
+        ] {
+            XCTAssertFalse(markdownReferencesPendingAttachment(source), "not held: \(source.debugDescription)")
+            XCTAssertEqual(
+                markdownRewritingPendingAttachment(source, localID: placeholderID, resolvedURL: image), source,
+                "not rewritten: \(source.debugDescription)")
+            XCTAssertEqual(
+                markdownRemovingPendingAttachment(source, localID: placeholderID), source,
+                "not removed: \(source.debugDescription)")
+        }
+    }
+
+    /// Under a numbered item the content column is three, and a CRLF document splits into the
+    /// same lines the parser reads — the nested line is found and only it changes.
+    func testANestedPlaceholderUnderANumberedItemIsRewrittenByteForByte() {
+        let placeholder = pendingAttachmentPlaceholderURL(for: placeholderID)
+        let source = "1. One\r\n   ![a](\(placeholder))\r\n2. Two\r\n"
+        XCTAssertTrue(markdownReferencesPendingAttachment(source, localID: placeholderID))
+
+        XCTAssertEqual(
+            markdownRewritingPendingAttachment(source, localID: placeholderID, resolvedURL: image),
+            "1. One\r\n   ![a](\(image))\r\n2. Two\r\n")
+        XCTAssertEqual(markdownRemovingPendingAttachment(source, localID: placeholderID), "1. One\r\n2. Two\r\n")
+    }
 }

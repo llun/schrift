@@ -58,9 +58,22 @@ import Foundation
 /// kind: `.attachment` with one, `.paragraph` carrying the same link without.
 /// Both nest alike (`blockNestsAsLeaf`) and serialize to the same line.
 func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [EditorBlock] {
-    var blocks: [EditorBlock] = []
+    parseEditorBlocksTracingLines(markdownLines(markdown), serverOrigin: serverOrigin).map(\.block)
+}
+
+/// `parseEditorBlocks` over lines already split by `markdownLines`, with the index of the line
+/// each block starts on.
+///
+/// The line index is what lets a targeted rewrite of the source (the queued-photo rewriter and
+/// remover below) touch **exactly** the lines the parser classified — never a second, hand-kept
+/// copy of its rules, which would drift: an indented image line is an image block only at an
+/// open list item's content column with a safe run after it (`parseNestedLeaf`), and verbatim
+/// text (indented code, say) everywhere else.
+private func parseEditorBlocksTracingLines(
+    _ lines: [String], serverOrigin: String
+) -> [(block: EditorBlock, line: Int)] {
+    var blocks: [(block: EditorBlock, line: Int)] = []
     var pendingLines: [String] = []
-    let lines = markdownLines(markdown)
     var index = 0
     // Content columns of the open list items, outermost first: what a nested
     // item's indentation is measured against. Empty whenever the previous line
@@ -71,15 +84,18 @@ func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [Editor
     func flushPending() {
         guard !pendingLines.isEmpty else { return }
         defer { pendingLines = [] }
+        // Every pending line was consumed one by one, so the run started this many lines back.
+        let start = index - pendingLines.count
         if pendingLines.count == 1, isPlainParagraphLine(pendingLines[0]) {
             let text = pendingLines[0].trimmingCharacters(in: .whitespaces)
             if let attachment = parseAttachmentLink(text, serverOrigin: serverOrigin) {
-                blocks.append(EditorBlock(kind: .attachment(name: attachment.name, url: attachment.urlString)))
+                blocks.append(
+                    (EditorBlock(kind: .attachment(name: attachment.name, url: attachment.urlString)), start))
             } else {
-                blocks.append(EditorBlock(kind: .paragraph, text: text))
+                blocks.append((EditorBlock(kind: .paragraph, text: text), start))
             }
         } else {
-            blocks.append(EditorBlock(kind: .unknown, text: pendingLines.joined(separator: "\n")))
+            blocks.append((EditorBlock(kind: .unknown, text: pendingLines.joined(separator: "\n")), start))
         }
     }
 
@@ -95,7 +111,7 @@ func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [Editor
         }
 
         if pendingLines.isEmpty, let nested = parseNestedListItem(line, contentColumns: &listContentColumns) {
-            blocks.append(nested)
+            blocks.append((nested, index))
             index += 1
             continue
         }
@@ -104,7 +120,7 @@ func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [Editor
             let leaf = parseNestedLeaf(line, contentColumns: listContentColumns, serverOrigin: serverOrigin),
             nestedLeafRunEndsSafely(lines, after: index, contentColumns: Array(listContentColumns.prefix(leaf.indent)))
         {
-            blocks.append(leaf)
+            blocks.append((leaf, index))
             // A leaf opens no level of its own: what follows nests at most
             // beside it, under the same parent.
             listContentColumns = Array(listContentColumns.prefix(leaf.indent))
@@ -115,6 +131,7 @@ func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [Editor
         if let fence = parseCodeFenceOpening(line) {
             flushPending()
             listContentColumns = []
+            let start = index
             index += 1
             var content: [String] = []
             while index < lines.count, !closesCodeFence(lines[index], openingLength: fence.length) {
@@ -125,14 +142,14 @@ func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [Editor
                 index += 1
             }
             blocks.append(
-                EditorBlock(kind: .codeBlock(language: fence.language), text: content.joined(separator: "\n")))
+                (EditorBlock(kind: .codeBlock(language: fence.language), text: content.joined(separator: "\n")), start))
             continue
         }
 
         if isDividerLine(trimmed), line.first != " ", line.first != "\t" {
             flushPending()
             listContentColumns = []
-            blocks.append(EditorBlock(kind: .divider))
+            blocks.append((EditorBlock(kind: .divider), index))
             index += 1
             continue
         }
@@ -140,7 +157,7 @@ func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [Editor
         if let block = parseClassifiedLine(line) {
             flushPending()
             listContentColumns = blockIsListItem(block.kind) ? [listMarkerWidth(of: line)] : []
-            blocks.append(block)
+            blocks.append((block, index))
             index += 1
             continue
         }
@@ -449,25 +466,14 @@ func markdownRewritingPendingAttachment(
 ) -> String {
     guard markdown.range(of: pendingAttachmentURLPrefix, options: .caseInsensitive) != nil else { return markdown }
     var lines = markdownLinesWithTerminators(markdown)
-    var openFenceLength: Int?
 
-    for index in lines.indices {
+    // The lines the parser itself reads as this record's image block — so a column-zero image
+    // line, and an indented one exactly where the parser nests it under a list item, and
+    // nothing else: not one inside a code fence, and not an indented code line that merely
+    // spells one (a rewrite there would change verbatim text the hold never counted).
+    for index in pendingAttachmentImageLines(lines.map(\.content), localID: localID) {
         let line = lines[index].content
-
-        if let length = openFenceLength {
-            if closesCodeFence(line, openingLength: length) { openFenceLength = nil }
-            continue
-        }
-        if let fence = parseCodeFenceOpening(line) {
-            openFenceLength = fence.length
-            continue
-        }
-        // Leading spaces are stripped first: a queued photo nested under a list
-        // item is an indented image line, and a rewriter that missed it would
-        // leave the save hold engaged on a placeholder it can never release.
-        guard let image = parseImageLine(String(line.drop { $0 == " " })),
-            pendingAttachmentID(fromPlaceholderURL: image.url) == localID
-        else { continue }
+        guard let image = parseImageLine(String(line.drop { $0 == " " })) else { continue }
         // Replace the destination as it is actually spelled on the line, searching backwards so
         // an alt text that happens to spell the same placeholder is left alone — the destination
         // is the last occurrence by construction.
@@ -489,32 +495,27 @@ func markdownRewritingPendingAttachment(
 /// Takes the line's terminator with it so removal doesn't leave a stray blank line behind.
 func markdownRemovingPendingAttachment(_ markdown: String, localID: UUID) -> String {
     guard markdown.range(of: pendingAttachmentURLPrefix, options: .caseInsensitive) != nil else { return markdown }
-    var lines = markdownLinesWithTerminators(markdown)
-    var openFenceLength: Int?
-    var kept: [(content: String, terminator: String)] = []
+    let lines = markdownLinesWithTerminators(markdown)
+    // Exactly the lines the parser reads as this record's image block — see the rewriter above.
+    let removed = pendingAttachmentImageLines(lines.map(\.content), localID: localID)
+    return lines.indices.filter { !removed.contains($0) }.map { lines[$0].content + lines[$0].terminator }.joined()
+}
 
-    for line in lines {
-        if let length = openFenceLength {
-            if closesCodeFence(line.content, openingLength: length) { openFenceLength = nil }
-            kept.append(line)
-            continue
-        }
-        if let fence = parseCodeFenceOpening(line.content) {
-            openFenceLength = fence.length
-            kept.append(line)
-            continue
-        }
-        // Nested (indented) image lines too — see the rewriter above.
-        if let image = parseImageLine(String(line.content.drop { $0 == " " })),
-            pendingAttachmentID(fromPlaceholderURL: image.url) == localID
-        {
-            continue
-        }
-        kept.append(line)
-    }
-
-    lines = kept
-    return lines.map { $0.content + $0.terminator }.joined()
+/// The indices of the lines `parseEditorBlocks` reads as an image block naming `localID`.
+///
+/// Asked of the parser rather than re-derived, because the hold predicate
+/// (`markdownReferencesPendingAttachment`) *is* the parser: whatever it counts as this record's
+/// image, the rewriter must rewrite and the remover must remove, and nothing else. A column-zero
+/// image line, or an indented one at an open list item's content column (a photo nested under
+/// an item); never a line inside a code fence, and never an indented line the parser keeps
+/// verbatim — indented code, or an image line under prose.
+private func pendingAttachmentImageLines(_ lines: [String], localID: UUID) -> Set<Int> {
+    Set(
+        parseEditorBlocksTracingLines(lines, serverOrigin: "").compactMap { entry in
+            guard case .image(_, let url) = entry.block.kind, pendingAttachmentID(fromPlaceholderURL: url) == localID
+            else { return nil }
+            return entry.line
+        })
 }
 
 /// Splits into (content, terminator) pairs, so rejoining reproduces the input byte for byte.

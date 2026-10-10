@@ -210,6 +210,154 @@ final class LeafNestingTests: XCTestCase {
         XCTAssertEqual(viewModel.blocks.map(\.indent), [0, 1])
     }
 
+    // MARK: - Editing a nested link line
+
+    private let linkURL = "https://x/r.pdf"
+
+    private func link(_ text: String? = nil, _ indent: Int = 1) -> EditorBlock {
+        EditorBlock(kind: .paragraph, text: text ?? "[r](\(linkURL))", indent: indent)
+    }
+
+    /// Whatever the editor holds must read back as the same blocks: nothing lost, nothing
+    /// nested that the markdown cannot spell. (An empty paragraph serializes to nothing, so
+    /// it is left out of the comparison.)
+    private func assertRoundTrips(_ viewModel: EditorViewModel, file: StaticString = #filePath, line: UInt = #line) {
+        let markdown = viewModel.currentMarkdown()
+        let written = viewModel.blocks.filter { $0.kind != .paragraph || !$0.text.isEmpty }
+        XCTAssertTrue(
+            blocksContentEqual(parseEditorBlocks(markdown), written),
+            "\(markdown.debugDescription) vs \(viewModel.blocks.map { "\($0.kind)@\($0.indent)" })",
+            file: file, line: line)
+    }
+
+    func testDetachingMovesOnlyTheListedUnnestableBlocksPastTheirNestedRun() {
+        let a = item("a")
+        let first = link("prose", 1)
+        let second = link("", 1)
+        let p = photo("p", 1)
+        let b = item("b")
+        let blocks = [a, first, second, p, b]
+
+        let result = detachingUnnestableBlocks([first.id, second.id], in: blocks)
+        XCTAssertEqual(result.map(\.id), [a.id, p.id, first.id, second.id, b.id], "moved together, in order")
+        XCTAssertEqual(result.map(\.indent), [0, 1, 0, 0, 0])
+
+        XCTAssertEqual(
+            detachingUnnestableBlocks([first.id], in: [a, link(nil, 1), p]).map(\.indent), [0, 1, 1],
+            "an unlisted block is not touched")
+        let stillALink = link(nil, 1)
+        XCTAssertEqual(
+            detachingUnnestableBlocks([stillALink.id], in: [a, stillALink, p]).map(\.id), [a.id, stillALink.id, p.id],
+            "a link line still nests")
+    }
+
+    func testAnEditThatKeepsALinkLineKeepsItsLevel() {
+        let r = link()
+        let p = photo("p", 1)
+        let viewModel = makeViewModel(blocks: [item("a"), r, p, item("b")])
+
+        viewModel.updateText(blockID: r.id, text: "[report](\(linkURL))")
+
+        XCTAssertEqual(viewModel.blocks.map(\.id)[1], r.id)
+        XCTAssertEqual(viewModel.blocks.map(\.indent), [0, 1, 1, 0])
+        XCTAssertTrue(viewModel.isDirty)
+        assertRoundTrips(viewModel)
+    }
+
+    /// Typing past the link makes the line prose, which cannot nest. It steps out past the
+    /// photo nested after it instead of ending the list above the photo and flattening it.
+    func testAnEditThatBreaksTheLinkStepsOutWithoutOrphaningItsSiblings() {
+        let a = item("a")
+        let r = link()
+        let p = photo("p", 1)
+        let b = item("b")
+        let viewModel = makeViewModel(blocks: [a, r, p, b])
+
+        viewModel.updateText(blockID: r.id, text: "[r](\(linkURL)) and more")
+
+        XCTAssertEqual(viewModel.blocks.map(\.id), [a.id, p.id, r.id, b.id])
+        XCTAssertEqual(viewModel.blocks.map(\.indent), [0, 1, 0, 0], "the photo is still under its item")
+        XCTAssertEqual(viewModel.blocks[2].text, "[r](\(linkURL)) and more")
+        assertRoundTrips(viewModel)
+    }
+
+    func testReturnAtTheEndOfANestedLinkLineKeepsItAndItsSiblingsNested() {
+        let a = item("a")
+        let r = link()
+        let p = photo("p", 1)
+        let b = item("b")
+        let viewModel = makeViewModel(blocks: [a, r, p, b])
+
+        viewModel.splitBlock(blockID: r.id, at: (r.text as NSString).length)
+
+        XCTAssertEqual(viewModel.blocks.count, 5)
+        XCTAssertEqual(viewModel.blocks.map(\.id).prefix(3), [a.id, r.id, p.id])
+        XCTAssertEqual(viewModel.blocks.map(\.indent), [0, 1, 1, 0, 0])
+        XCTAssertEqual(viewModel.blocks[3].kind, .paragraph)
+        XCTAssertEqual(viewModel.blocks[3].text, "", "the new line lands past the nested run")
+        XCTAssertEqual(viewModel.focusedBlockID, viewModel.blocks[3].id)
+        assertRoundTrips(viewModel)
+    }
+
+    func testReturnAtTheStartOfANestedLinkLineKeepsTheLinkNested() {
+        let a = item("a")
+        let r = link()
+        let p = photo("p", 1)
+        let viewModel = makeViewModel(blocks: [a, r, p, item("b")])
+
+        viewModel.splitBlock(blockID: r.id, at: 0)
+
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["a", "[r](\(linkURL))", "", "", "b"])
+        XCTAssertEqual(viewModel.blocks.map(\.indent), [0, 1, 1, 0, 0])
+        XCTAssertEqual(viewModel.blocks[2].id, p.id)
+        XCTAssertEqual(viewModel.focusedBlockID, viewModel.blocks[1].id, "the caret stays on the link")
+        assertRoundTrips(viewModel)
+    }
+
+    /// Return inside the link cuts it into two pieces of prose: both step out together, in
+    /// order, and every character survives.
+    func testReturnInsideANestedLinkLineLosesNothingAndOrphansNothing() {
+        let a = item("a")
+        let r = link()
+        let p = photo("p", 1)
+        let viewModel = makeViewModel(blocks: [a, r, p, item("b")])
+
+        viewModel.splitBlock(blockID: r.id, at: 3)
+
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["a", "", "[r]", "(\(linkURL))", "b"])
+        XCTAssertEqual(viewModel.blocks.map(\.indent), [0, 1, 0, 0, 0])
+        XCTAssertEqual(viewModel.blocks[1].id, p.id, "the photo keeps its item")
+        assertRoundTrips(viewModel)
+    }
+
+    /// Backspace undoes structure before it deletes anything: a nested link line steps out a
+    /// level — past the siblings it would otherwise orphan — rather than merging into its item.
+    func testBackspaceAtTheStartOfANestedLinkLineOutdentsIt() {
+        let a = item("a")
+        let r = link()
+        let p = photo("p", 1)
+        let viewModel = makeViewModel(blocks: [a, r, p])
+
+        viewModel.mergeBlockWithPrevious(blockID: r.id)
+
+        XCTAssertEqual(viewModel.blocks.map(\.id), [a.id, p.id, r.id])
+        XCTAssertEqual(viewModel.blocks.map(\.indent), [0, 1, 0])
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["a", "", "[r](\(linkURL))"])
+    }
+
+    func testConvertingANestedLinkLineToAHeadingStepsItOut() {
+        let a = item("a")
+        let r = link()
+        let p = photo("p", 1)
+        let viewModel = makeViewModel(blocks: [a, r, p])
+
+        viewModel.convertBlock(blockID: r.id, to: .heading(level: 2))
+
+        XCTAssertEqual(viewModel.blocks.map(\.id), [a.id, p.id, r.id])
+        XCTAssertEqual(viewModel.blocks.map(\.indent), [0, 1, 0])
+        assertRoundTrips(viewModel)
+    }
+
     // MARK: - Live editing
 
     /// The live path diffs a flat list, so nesting a leaf takes the classic save

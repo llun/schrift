@@ -1019,7 +1019,12 @@ new code reads like the surrounding code.
   `type`, `props.url`, `props.showPreview` and `children` are kept, decoded
   defensively, nesting capped at 64. It has no route detection of its own: on a
   server `formattedContent` has already proven legacy (`prefersLegacyContentRoute`)
-  it throws `.routeNotFound` without a request, and it never tries `content/`. Its
+  it throws `.routeNotFound` without a request, and it never tries `content/`. A
+  server that answers the tree read itself with `.routeNotFound` or a `400` (a
+  `formatted-content/` without the `json` format) is memoized per client
+  (`contentTreeUnsupported`) and never asked again — the tree is best-effort, so
+  pinning its absence costs only the overlay; a JSON 404, a 403, a 5xx or a transport
+  failure memoizes nothing. Its
   one caller treats every failure as "no tree", so nothing here may ever reach a
   teardown catch or put tree data on screen; it only re-levels blocks the markdown
   already has (see the leaf-nesting bullet under [Editor](#editor--the-on-device-save-coreyjs)).
@@ -1842,6 +1847,18 @@ that are easy to violate and expensive to discover:
   nested `blockGroup` as opaque), so `markDirty` sets `hasUnmodelableLocalEdit` and
   takes the classic path while any block is nested (`nestsBlocks`, keyed on
   `indent > 0`, so a nested leaf latches it too) — keep that if you touch it.
+  **A nested link line that an edit leaves unable to nest steps out *past* its
+  nested siblings** (`detachingUnnestableBlocks`, via the editor's
+  `detachBlocksThatNoLongerNest` before `markDirty`): typing past the link, cutting
+  it with Return, merging prose into it, an inline marker, removing the link, or
+  converting it to a heading. Normalization would otherwise zero it *in place*, end
+  the list there and flatten every nested sibling after it — a photo under the same
+  item. An edit that keeps it a link line keeps its level; Return at its end puts the
+  new empty line past the nested run (a nested paragraph has no markdown spelling);
+  backspace at its start outdents it (`outdentingLeaf`) before it merges into
+  anything, the way a nested list item steps out first. `convertBlock` detaches only
+  a block that *was* a nested leaf — a nested list item converted to a paragraph
+  keeps its old in-place behaviour.
 - **The server's markdown export flattens nested leaves; a JSON read overlay
   restores them.** BlockNote 0.51.4's `blocksToMarkdownLossy` prints a photo
   or file nested under a list item as a column-zero line after a blank one — and
@@ -1863,14 +1880,19 @@ that are easy to violate and expensive to discover:
   flattening produces) and the read is still permitted, and every failure — transport,
   decode, a tree whose `updated_at` differs from the markdown's, a tree that does not
   fit — installs the flat export exactly as before; it never throws. The overlay
-  (`markdownRecoveringLeafNesting`, `LeafNestingOverlay.swift`) is pure and
+  (`leafNestingOverlay`, `LeafNestingOverlay.swift`) is pure and answers **three
+  ways**: `.recovered(markdown:)` (the tree restores nesting), `.confirmedFlat` (the
+  tree was read, matches, and nests nothing but the list items the export already
+  shows) and `.unknown` (everything else — every failure above included). It is
   **all-or-nothing**: list items (by kind), images and attachments are *anchors*,
   both sides list theirs in document order (the tree pre-order, with depth), and the
   sequences must match exactly; every anchor must sit under list items only in the
   tree; each anchored block takes its tree depth (list items the export pulled up
   included), `normalizedListIndents` must keep every one of them, and the result must
   read back as the markdown under the export's flattening and round-trip through the
-  parser — else nil, and the flat body is installed. Media nodes that export nothing
+  parser — else `.unknown`, and the flat body is installed. A tree that nests
+  something the export cannot show and the overlay cannot restore (a paragraph or a
+  preview `pdf` under an item) is `.unknown`, never `.confirmedFlat`. Media nodes that export nothing
   (a docs `pdf` with the default `showPreview`, a url-less placeholder) are not
   anchors; a `video` anchors as an image (it exports image syntax); a link-only
   paragraph and an off-origin file are not anchors, so a tree `file` whose url is not
@@ -1879,8 +1901,15 @@ that are easy to violate and expensive to discover:
   `Lib0Decoder` lesson. Because a body cached flat compares equal to its restored
   revalidation, `reconcileClean` installs a fetch that *adds* leaf nesting
   (`fetchedMarkdownRevealsLeafNesting`) on a clean, non-editing screen even though
-  `serverChanged` says no — one-way: a flat fetch (also what a failed overlay yields)
-  never un-nests the screen. Because the two spellings differ, `canonicalMarkdown` is
+  `serverChanged` says no. The reverse needs **positive evidence**: only
+  `.confirmedFlat` installs a flat body over a screen that nests a leaf (a co-author
+  un-nested it on the web), again only clean and outside an editing session. An
+  `.unknown` flat read is *not* evidence — it is what a transient failure, a server
+  without the JSON format and a stale pairing all produce — so it never un-nests the
+  screen, and `serverCopyKeepingLeafNesting` keeps the nested spelling of the same
+  content in the cache and the baseline too (`reconcileClean`, `cacheServerCopy`);
+  without that, one failed tree read rewrote the cached nesting flat and the next
+  (offline) open showed it flat. Because the two spellings differ, `canonicalMarkdown` is
   **leaf-nesting insensitive**: it runs both sides through `flattenedLikeServerExport`,
   the model of exactly what the export does (verified against
   `@blocknote/server-util` on every shape in `LeafNestingOverlayTests`; zeroing leaf
@@ -1888,9 +1917,9 @@ that are easy to violate and expensive to discover:
   which the export does not), so a draft holding nested leaves never reads as
   diverged from the server's flat export of the body it pushed — no false conflicts,
   no "server changed" churn. The cost is that a change that only nests or un-nests a
-  leaf is invisible to those comparisons; and when the overlay fails on a revalidation
-  the cache is rewritten with the flat body, so the next open shows it flat until an
-  overlay succeeds again.
+  leaf is invisible to those comparisons, which is why only the tree's verdict moves
+  it. A first open with no cached copy and an `.unknown` read still shows the flat
+  export, exactly as before the overlay.
 - **Only leaf blocks are draggable in edit mode.** A long press on a divider,
   image or attachment (`blockIsReorderable`) picks it up; on a text row the same
   press belongs to `UITextView`, so don't extend the gesture there without a
@@ -1905,7 +1934,8 @@ that are easy to violate and expensive to discover:
   **The drag has a horizontal component for images and attachments only** (a
   divider never nests — `blockNestsAsLeaf`): the recognizer reports a `CGSize`
   (window-space, like the vertical), `leafDragIndentSteps` turns the width into
-  whole levels of `EditorBlockMetrics.listIndentStep` (flipped under right-to-left),
+  whole levels of `EditorBlockMetrics.listIndentStep` (flipped under right-to-left —
+  unit-tested only; the RTL drag still needs on-device verification),
   and `leafDragPreviewIndent` adds them to the level a plain move to the *live*
   destination gives (`movedLeafIndent`), clamped into `leafIndentRange` **evaluated
   in the array after the move** — never the range where the leaf stood. The row
@@ -2184,9 +2214,19 @@ markdown write endpoint**. Understand this before touching the save path:
   non-list block after one gets a blank line (or it would read back as a lazy
   continuation), and `canonicalizeLine` strips an indented leaf-shaped line's
   indentation on both sides of the round-trip gate. The queued-photo rewriter and
-  remover (`markdownRewritingPendingAttachment`/`markdownRemovingPendingAttachment`)
-  strip leading spaces before `parseImageLine`, or a nested queued photo would be
-  held by the save hold but never rewritable — a permanent wedge.
+  remover (`markdownRewritingPendingAttachment`/`markdownRemovingPendingAttachment`) ask the
+  parser which lines are this record's image blocks (`pendingAttachmentImageLines`,
+  over `parseEditorBlocksTracingLines`), so they touch a nested queued photo — or a
+  nested photo would be held by the save hold but never rewritable, a permanent
+  wedge — and **only** an indented line the parser nests: an indented placeholder
+  anywhere else (indented code, under prose, a wrong column, after a blank line) is
+  verbatim text the hold never counted, and is left byte-for-byte alone.
+  **Saved bytes of server-authored content do not move.** The server's export never
+  writes an image or link line at a list item's content column directly under the
+  item — it prints a nested leaf at column zero after a blank line (verified against
+  `@blocknote/server-util` 0.51.4 on the shapes in `LeafNestingOverlayTests`) — so
+  only the app's own nested spelling classifies as a nested leaf, and every document
+  the server authored parses, and re-saves, exactly as it did before.
 - A standalone `![alt](url)` line with an **absolute http(s) URL** is a
   first-class `BlockKind.image(alt:url:)` block (classified in the parser's
   `parseClassifiedLine` chain via `parseImageLine`, so classification and

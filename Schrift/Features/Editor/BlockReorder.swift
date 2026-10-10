@@ -67,6 +67,13 @@ struct BlockReorderDrag: Equatable {
 ///
 /// In a right-to-left layout the indent grows leftwards, so the same finger
 /// movement means the opposite number of levels.
+///
+/// The right-to-left flip is pinned by unit tests only and still needs
+/// on-device verification: it assumes the recognizer's window-space
+/// translation is *not* already mirrored under RTL, while the row's indent
+/// inset is (SwiftUI flips leading padding). If UIKit ever reports a mirrored
+/// translation here, the two flips cancel and a drag towards the indent would
+/// outdent. Check on a device with an RTL language before relying on it.
 func leafDragIndentSteps(translationX: CGFloat, step: CGFloat, layoutDirection: LayoutDirection) -> Int {
     guard step > 0, translationX.isFinite else { return 0 }
     // Bounded before the conversion: `Int(_:)` traps on a value it can't hold.

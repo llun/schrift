@@ -179,4 +179,64 @@ final class FormattedDocumentTreeClientTests: XCTestCase {
         }
         XCTAssertEqual(log.count(ofMethod: "GET"), before, "no request at all")
     }
+
+    /// A server that answered the tree read itself with a missing route or a 400 (a
+    /// `formatted-content/` without the `json` format) is not asked again by this client.
+    func testAServerThatRefusesTheJSONFormatIsAskedOnlyOnce() async {
+        let refusals: [(status: Int, headers: [String: String], expected: DocsAPIError)] = [
+            (404, ["Content-Type": "text/html"], .routeNotFound),
+            (400, ["Content-Type": "application/json"], .server(statusCode: 400)),
+        ]
+        for refusal in refusals {
+            let log = RequestRecorder()
+            MockURLProtocol.stubHandler = { request in
+                log.record(request)
+                return .init(
+                    statusCode: refusal.status, headers: refusal.headers, body: Data(#"{"detail": "no"}"#.utf8),
+                    error: nil)
+            }
+            let client = makeClient()
+
+            for attempt in 0..<3 {
+                do {
+                    _ = try await client.formattedContentTree(documentID: documentID)
+                    XCTFail("Expected a refusal")
+                } catch let error as DocsAPIError {
+                    // The first answer is the server's own; later ones are the memoized refusal.
+                    XCTAssertEqual(error, attempt == 0 ? refusal.expected : .routeNotFound, "\(refusal.status)")
+                } catch {
+                    XCTFail("Expected DocsAPIError, got \(error)")
+                }
+            }
+            XCTAssertEqual(log.count(ofMethod: "GET"), 1, "\(refusal.status): asked once, then never again")
+            MockURLProtocol.reset()
+        }
+    }
+
+    /// Nothing but a format refusal is memoized: a transient failure, or a 404 about the
+    /// document itself, is asked again next time.
+    func testOtherFailuresAreAskedAgain() async {
+        let failures: [(status: Int, headers: [String: String])] = [
+            (500, [:]),
+            (503, [:]),
+            (403, ["Content-Type": "application/json"]),
+            (404, ["Content-Type": "application/json"]),
+        ]
+        for failure in failures {
+            let log = RequestRecorder()
+            MockURLProtocol.stubHandler = { request in
+                log.record(request)
+                return .init(
+                    statusCode: failure.status, headers: failure.headers, body: Data(#"{"detail": "x"}"#.utf8),
+                    error: nil)
+            }
+            let client = makeClient()
+
+            for _ in 0..<2 {
+                _ = try? await client.formattedContentTree(documentID: documentID)
+            }
+            XCTAssertEqual(log.count(ofMethod: "GET"), 2, "\(failure.status) is asked again")
+            MockURLProtocol.reset()
+        }
+    }
 }

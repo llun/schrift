@@ -194,6 +194,77 @@ final class LeafNestingOverlayTests: XCTestCase {
         XCTAssertNil(recover(items.joined(separator: "\n") + "\n\n\(photo)\n", [tree]))
     }
 
+    // MARK: - Three answers: restored, confirmed absent, unknown
+
+    private func overlay(_ markdown: String, _ tree: [BlockNoteTreeNode]) -> LeafNestingOverlay {
+        leafNestingOverlay(markdown, tree: tree, serverOrigin: origin)
+    }
+
+    /// A tree that was read, matches, and nests nothing the export does not already show is
+    /// positive evidence that no leaf is nested — distinct from every way the overlay fails.
+    func testATreeThatMatchesTheFlatExportConfirmsItFlat() {
+        let flat = "* [ ] Task\n\n\(photo)\n\n* [ ] Next\n"
+        XCTAssertEqual(overlay(flat, [check(), image, check()]), .confirmedFlat)
+        // Nested list items the export already shows are confirmed too: only leaves are at stake.
+        XCTAssertEqual(
+            overlay(
+                "* a\n  * b\n\n\(photo)\n",
+                [
+                    BlockNoteTreeNode(
+                        type: "bulletListItem",
+                        children: [
+                            BlockNoteTreeNode(type: "bulletListItem")
+                        ]), image,
+                ]),
+            .confirmedFlat)
+        XCTAssertEqual(
+            overlay(flat, [check([image]), check()]), .recovered(markdown: "- [ ] Task\n  \(photo)\n- [ ] Next\n"))
+    }
+
+    /// Every doubt is `.unknown`, never `.confirmedFlat` — a flat export is also what every
+    /// failure produces, and only a confirmation may un-nest a screen.
+    func testEveryDoubtIsUnknownRatherThanConfirmedFlat() {
+        let flat = "* [ ] Task\n\n\(photo)\n\n* [ ] Next\n"
+        XCTAssertEqual(overlay(flat, [check(), check()]), .unknown, "a mismatch")
+        XCTAssertEqual(overlay(flat, []), .unknown, "an empty tree")
+        XCTAssertEqual(
+            overlay(
+                "Para\n\n\(photo)\n\n* [ ] Next\n", [BlockNoteTreeNode(type: "paragraph", children: [image]), check()]),
+            .unknown, "a leaf under a non-list parent")
+        // A paragraph nested under an item — a link line the editor nested, which the tree
+        // reader does not anchor — is structure the export hides and the overlay cannot restore.
+        XCTAssertEqual(
+            overlay(flat, [check([BlockNoteTreeNode(type: "paragraph")]), image, check()]), .unknown,
+            "a nested paragraph")
+        // So is a preview pdf, which exports nothing at all.
+        XCTAssertEqual(
+            overlay(flat, [check([BlockNoteTreeNode(type: "pdf", url: fileURL)]), image, check()]), .unknown,
+            "a nested preview pdf")
+    }
+
+    // MARK: - Which body a read keeps
+
+    /// A flat read the tree could not vouch for keeps the nested spelling of the same content.
+    func testAnUnknownFlatReadKeepsTheNestedCopyOfTheSameContent() {
+        let flat = "* [ ] Task\n\n\(photo)\n\n* [ ] Next\n"
+        let nested = "- [ ] Task\n  \(photo)\n- [ ] Next\n"
+        XCTAssertEqual(serverCopyKeepingLeafNesting(fetched: flat, overlay: .unknown, known: nested), nested)
+    }
+
+    /// Positive evidence, a real content change, or nothing nested to keep: the read wins.
+    func testEveryOtherReadKeepsTheFetchedBody() {
+        let flat = "* [ ] Task\n\n\(photo)\n\n* [ ] Next\n"
+        let nested = "- [ ] Task\n  \(photo)\n- [ ] Next\n"
+        XCTAssertEqual(serverCopyKeepingLeafNesting(fetched: flat, overlay: .confirmedFlat, known: nested), flat)
+        XCTAssertEqual(
+            serverCopyKeepingLeafNesting(fetched: nested, overlay: .recovered(markdown: nested), known: flat), nested)
+        let changed = flat + "\nMore\n"
+        XCTAssertEqual(serverCopyKeepingLeafNesting(fetched: changed, overlay: .unknown, known: nested), changed)
+        let otherFlat = "- [ ] Task\n\n\(photo)\n\n- [ ] Next\n"
+        XCTAssertEqual(serverCopyKeepingLeafNesting(fetched: flat, overlay: .unknown, known: otherFlat), flat)
+        XCTAssertEqual(serverCopyKeepingLeafNesting(fetched: flat, overlay: .unknown, known: nil), flat)
+    }
+
     // MARK: - The gate
 
     func testOnlyALeafDirectlyAfterAListItemMayHideNesting() {

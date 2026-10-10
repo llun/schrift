@@ -171,9 +171,24 @@ extension DocsAPIClient {
     /// request rather than asking a route it has proven absent; the legacy `content/` route is
     /// never tried, because whether it speaks `content_format=json` is unknown and a guess
     /// costs nothing but the overlay.
+    ///
+    /// The same goes for a server that has answered *this* read with a missing route
+    /// (`.routeNotFound`) or a `400` (a release whose `formatted-content/` validates
+    /// `content_format` and has no `json`): `contentTreeUnsupported` is memoized, and every
+    /// later call answers `.routeNotFound` without a request, so such a server does not pay a
+    /// failing request on every content read. Nothing else memoizes — a JSON 404 is about the
+    /// document, and a transport error, a 5xx or a `403` say nothing about the format.
     func formattedContentTree(documentID: UUID) async throws -> FormattedDocumentTree {
-        if prefersLegacyContentRoute { throw DocsAPIError.routeNotFound }
-        return try await get(formattedContentPath(documentID.uuidString.lowercased(), "json"))
+        if prefersLegacyContentRoute || contentTreeUnsupported { throw DocsAPIError.routeNotFound }
+        do {
+            return try await get(formattedContentPath(documentID.uuidString.lowercased(), "json"))
+        } catch DocsAPIError.routeNotFound {
+            contentTreeUnsupported = true
+            throw DocsAPIError.routeNotFound
+        } catch DocsAPIError.server(statusCode: 400) {
+            contentTreeUnsupported = true
+            throw DocsAPIError.server(statusCode: 400)
+        }
     }
 
     private func formattedContentPath(_ id: String, _ format: String) -> String {

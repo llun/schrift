@@ -260,13 +260,23 @@ final class YjsEncoderTests: XCTestCase {
     /// `file` nodes keep their own prop sets and stay childless — followed by a
     /// sibling item back at the top level.
     ///
-    /// Captured like `testFileBlockIsLeafWithProps`, with yjs 13.6.33 (a patch
-    /// release on the same v1 update format as 13.6.31): real
+    /// Captured like `testFileBlockIsLeafWithProps` — real
     /// `@blocknote/server-util@0.51.4` `blocksToYXmlFragment(blocks, fragment)`
     /// into a `Y.Doc` whose clientID was pinned to 0xDEADBEEF before any content
-    /// existed, then `Y.encodeStateAsUpdate`. No byte was edited by hand. The props
-    /// are the ones `MarkdownYjs` emits, in its order, which BlockNote's prop
-    /// schemas produce too.
+    /// existed, then `Y.encodeStateAsUpdate` — but with **yjs 13.6.33**, not the
+    /// 13.6.31 the docs frontend pins and every other fixture here was captured
+    /// with. No byte was edited by hand. The props are the ones `MarkdownYjs`
+    /// emits, in its order, which BlockNote's prop schemas produce too.
+    ///
+    /// Provenance, stated honestly: that 13.6.32–13.6.33 leave the v1 update
+    /// encoding (struct, item and delete-set writers, lib0 `writeAny`) unchanged
+    /// is an assumption, not something checked against the yjs changelog. What
+    /// corroborates it is that every encoding path these bytes exercise is also
+    /// pinned by a 13.6.31-era golden — the nested `blockGroup`
+    /// (`testNestedListChildrenGoInANestedBlockGroup`), the image and file prop
+    /// sets (`testImageBlockIsLeafWithProps`, `testFileBlockIsLeafWithProps`) —
+    /// and one encoder reproduces all of them byte for byte. Re-capture with
+    /// 13.6.31 if this fixture is ever regenerated.
     func testListItemLeafChildrenGoInANestedBlockGroup() {
         let media = "https://docs.example.test/media/11111111-1111-4111-8111-111111111111/attachments/"
         let image = BlockNoteBlock(
