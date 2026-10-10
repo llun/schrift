@@ -54,7 +54,7 @@ struct SilentReauthenticationView: View {
         .onAppear { attempt.start() }
         .onDisappear { attempt.cancel() }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { attempt.restartTimeout() }
+            if phase == .active { attempt.resume() } else { attempt.pause() }
         }
     }
 }

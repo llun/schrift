@@ -51,10 +51,16 @@ final class SilentReauthenticationAttempt {
         }
     }
 
-    /// The app came back to the foreground. The timeout's clock kept running while it was
-    /// suspended, and so was the web view, so the time spent away is not the login stalling:
-    /// give it a fresh timeout.
-    func restartTimeout() {
+    /// The app left the foreground. The web view is throttled and then suspended, while
+    /// `Task.sleep`'s clock keeps running — so the timers stop here, or the user would come back
+    /// to a sheet raised over a login that was merely asleep.
+    func pause() {
+        guard !didEscalate, !hasReachedServer else { return }
+        cancelTimers()
+    }
+
+    /// The app is back in the foreground: a fresh timeout for the time the login has left.
+    func resume() {
         guard !didEscalate, !hasReachedServer else { return }
         timeoutTask?.cancel()
         timeoutTask = nil
