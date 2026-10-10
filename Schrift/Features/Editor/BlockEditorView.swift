@@ -166,8 +166,8 @@ extension BlockEditorView {
             outdentLabel: loc[.editor_format_outdent],
             onMoveUp: { viewModel.moveBlock(blockID: block.id, to: index - 1) },
             onMoveDown: { viewModel.moveBlock(blockID: block.id, to: index + 1) },
-            onIndent: { viewModel.indentLeaf(blockID: block.id) },
-            onOutdent: { viewModel.outdentLeaf(blockID: block.id) },
+            onIndent: { _ = viewModel.indentLeaf(blockID: block.id) },
+            onOutdent: { _ = viewModel.outdentLeaf(blockID: block.id) },
             gesture: BlockReorderGesture(
                 onBegan: {
                     guard let frame = blockFrames[block.id] else { return }
