@@ -1073,6 +1073,20 @@ the block keeps its id, the full-overwrite save serializes the new order (no new
 markdown or Yjs shape), and the live write path sends it as `BlockNoteWrite`'s
 coarse delete + re-insert.
 
+The same drag also nests. Sliding an **image or attachment** sideways (a divider
+never nests, `blockNestsAsLeaf`) shifts its level by `round(dx / listIndentStep)`
+(`leafDragIndentSteps`, sign-flipped in right-to-left layouts, where the indent
+grows leftwards). The preview level is `leafDragPreviewIndent`: the level a plain
+move to the **live** destination would give it (`movedLeafIndent`) plus those
+steps, clamped into `leafIndentRange` evaluated in the array *after* the move
+(`leafDragIndentRange`) — so a leaf can only nest under a list item that would
+actually be above it, and can't orphan the nested siblings after it. The row
+slides by the difference from its current level with a selection tick per level;
+on release `moveBlock(blockID:to:indent:)` lands both (a slide with no new
+position moves to the same index at the new level). VoiceOver gets Indent / Outdent
+actions beside Move up / down (`indentLeaf` / `outdentLeaf`, the formatting bar's
+labels), offered only where `canIndentLeaf` / `canOutdentLeaf` hold.
+
 **Nested list items.** Bullet, numbered and checklist items nest. The editor keeps
 its flat `[EditorBlock]`; nesting is `EditorBlock.indent`, read against the blocks
 before it — an item is a child of the nearest earlier list item one level shallower,

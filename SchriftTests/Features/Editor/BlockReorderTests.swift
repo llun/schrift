@@ -69,7 +69,106 @@ final class BlockReorderTests: XCTestCase {
 
     func testDragCentreFollowsTheTranslation() {
         var drag = BlockReorderDrag(blockID: a, startMidY: 20)
-        drag.translation = 55
-        XCTAssertEqual(drag.centerY, 75)
+        drag.translation = CGSize(width: 90, height: 55)
+        XCTAssertEqual(drag.centerY, 75, "only the vertical component moves the centre")
+    }
+
+    // MARK: - Horizontal steps
+
+    func testHorizontalDragRoundsToTheNearestLevel() {
+        let step: CGFloat = 16
+        func steps(_ dx: CGFloat) -> Int {
+            leafDragIndentSteps(translationX: dx, step: step, layoutDirection: .leftToRight)
+        }
+        XCTAssertEqual(steps(0), 0)
+        XCTAssertEqual(steps(7), 0)
+        XCTAssertEqual(steps(9), 1)
+        XCTAssertEqual(steps(25), 2)
+        XCTAssertEqual(steps(-9), -1)
+        XCTAssertEqual(steps(-25), -2)
+    }
+
+    func testRightToLeftFlipsTheSlideDirection() {
+        for dx: CGFloat in [-40, -9, 0, 7, 9, 40] {
+            XCTAssertEqual(
+                leafDragIndentSteps(translationX: dx, step: 16, layoutDirection: .rightToLeft),
+                -leafDragIndentSteps(translationX: dx, step: 16, layoutDirection: .leftToRight))
+        }
+        XCTAssertEqual(leafDragIndentSteps(translationX: 20, step: 16, layoutDirection: .rightToLeft), -1)
+    }
+
+    func testDegenerateHorizontalInputNeverTraps() {
+        XCTAssertEqual(leafDragIndentSteps(translationX: 50, step: 0, layoutDirection: .leftToRight), 0)
+        XCTAssertEqual(leafDragIndentSteps(translationX: .nan, step: 16, layoutDirection: .leftToRight), 0)
+        XCTAssertEqual(leafDragIndentSteps(translationX: .infinity, step: 16, layoutDirection: .leftToRight), 0)
+        XCTAssertLessThanOrEqual(
+            leafDragIndentSteps(translationX: 1e30, step: 16, layoutDirection: .leftToRight), 1_000)
+    }
+
+    // MARK: - Indent preview and range at a destination
+
+    private func item(_ indent: Int = 0) -> EditorBlock { EditorBlock(kind: .bulletItem, text: "i", indent: indent) }
+    private func photo(_ indent: Int = 0) -> EditorBlock {
+        EditorBlock(kind: .image(alt: "", url: "https://docs.example.org/a.jpg"), indent: indent)
+    }
+
+    func testRangeIsEvaluatedAtTheDestinationNotWhereTheLeafStands() {
+        let blocks = [item(), photo(), item()]
+        let id = blocks[1].id
+        XCTAssertEqual(leafDragIndentRange(blocks: blocks, blockID: id, destination: nil), 0...1)
+        // Moved to the end it sits under the second item; to the top, under nothing.
+        XCTAssertEqual(leafDragIndentRange(blocks: blocks, blockID: id, destination: 2), 0...1)
+        XCTAssertEqual(leafDragIndentRange(blocks: blocks, blockID: id, destination: 0), 0...0)
+        XCTAssertEqual(leafDragIndentRange(blocks: blocks, blockID: id, destination: 99), 0...1)
+    }
+
+    func testRangeBehindAParagraphAllowsNoNesting() {
+        let blocks = [EditorBlock(kind: .paragraph, text: "p"), photo()]
+        XCTAssertEqual(leafDragIndentRange(blocks: blocks, blockID: blocks[1].id, destination: nil), 0...0)
+    }
+
+    func testSlidingDeeperNestsUnderTheItemAboveAndClampsThere() {
+        let blocks = [item(), photo(), item()]
+        let id = blocks[1].id
+        XCTAssertEqual(leafDragPreviewIndent(blocks: blocks, blockID: id, destination: nil, steps: 0), 0)
+        XCTAssertEqual(leafDragPreviewIndent(blocks: blocks, blockID: id, destination: nil, steps: 1), 1)
+        XCTAssertEqual(leafDragPreviewIndent(blocks: blocks, blockID: id, destination: nil, steps: 5), 1)
+        XCTAssertEqual(leafDragPreviewIndent(blocks: blocks, blockID: id, destination: nil, steps: -3), 0)
+    }
+
+    func testPreviewFollowsTheLiveDestination() {
+        let blocks = [item(), photo(), item()]
+        let id = blocks[1].id
+        // Dragged to the very top there is no item to nest under, however far it slides.
+        XCTAssertEqual(leafDragPreviewIndent(blocks: blocks, blockID: id, destination: 0, steps: 3), 0)
+        // Dragged below the last item it can nest under that one.
+        XCTAssertEqual(leafDragPreviewIndent(blocks: blocks, blockID: id, destination: 2, steps: 1), 1)
+        XCTAssertEqual(leafDragPreviewIndent(blocks: blocks, blockID: id, destination: 2, steps: 0), 0)
+    }
+
+    func testSlidingOutCannotOrphanTheSiblingsAfterIt() {
+        // The nested item after the photo pins the photo to its level.
+        let blocks = [item(), photo(1), item(1)]
+        let id = blocks[1].id
+        XCTAssertEqual(leafDragIndentRange(blocks: blocks, blockID: id, destination: nil), 1...1)
+        XCTAssertEqual(leafDragPreviewIndent(blocks: blocks, blockID: id, destination: nil, steps: -1), 1)
+    }
+
+    func testANestedLeafKeepsItsLevelWhereTheItemAboveAllowsIt() {
+        let blocks = [item(), photo(1), item(), item()]
+        let id = blocks[1].id
+        // Moved under the second item it keeps the level it had, now as that item's child.
+        XCTAssertEqual(leafDragPreviewIndent(blocks: blocks, blockID: id, destination: 2, steps: 0), 1)
+    }
+
+    func testADividerNeverGetsAnIndent() {
+        let blocks = [item(), EditorBlock(kind: .divider)]
+        XCTAssertNil(leafDragIndentRange(blocks: blocks, blockID: blocks[1].id, destination: nil))
+        XCTAssertNil(leafDragPreviewIndent(blocks: blocks, blockID: blocks[1].id, destination: nil, steps: 1))
+    }
+
+    func testAnUnknownDraggedBlockHasNoPreview() {
+        XCTAssertNil(leafDragPreviewIndent(blocks: [item()], blockID: UUID(), destination: nil, steps: 1))
+        XCTAssertNil(leafDragIndentRange(blocks: [item()], blockID: UUID(), destination: nil))
     }
 }

@@ -1858,6 +1858,18 @@ that are easy to violate and expensive to discover:
   drop math reads the dragged row's centre once, at `.began`, and skips that row
   when counting: its recorded frame *does* follow the drag offset, so reading
   `blockFrames[draggedID]` at drop time would count the translation twice.
+  **The drag has a horizontal component for images and attachments only** (a
+  divider never nests — `blockNestsAsLeaf`): the recognizer reports a `CGSize`
+  (window-space, like the vertical), `leafDragIndentSteps` turns the width into
+  whole levels of `EditorBlockMetrics.listIndentStep` (flipped under right-to-left),
+  and `leafDragPreviewIndent` adds them to the level a plain move to the *live*
+  destination gives (`movedLeafIndent`), clamped into `leafIndentRange` **evaluated
+  in the array after the move** — never the range where the leaf stood. The row
+  previews the level with an x offset and a `.selection` tick; drop calls
+  `moveBlock(blockID:to:indent:)` (a slide alone moves to the same index). Keep
+  the clamp: an unclamped level strands the leaf or orphans its later siblings.
+  VoiceOver reaches the same edit through Indent / Outdent actions on the row
+  (`indentLeaf` / `outdentLeaf`, gated by `canIndentLeaf` / `canOutdentLeaf`).
 - **The editor draws every document twice, and `EditorBlockStyle` is the only
   thing keeping the two drawings the same.** The reading surface is SwiftUI
   `Text` (`MarkdownBlockView`) and the editing surface a UIKit `UITextView`
