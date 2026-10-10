@@ -133,7 +133,7 @@ final class DocumentFavoritesRouteTests: DocumentEndpointsClientTestCase {
         }
         let client = DocsAPIClient(
             baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] },
-            onSessionExpired: { _ = expired.next() })
+            onSessionExpired: { _ in _ = expired.next() })
 
         do {
             _ = try await client.favoriteDocuments()

@@ -176,4 +176,122 @@ final class SessionStoreCookiesTests: SessionStoreTestCase {
         XCTAssertNil(try keychain.load(forKey: cookiesKeychainKey))
         XCTAssertTrue(cookieStorage.storedCookies.isEmpty)
     }
+
+    // MARK: - Refreshing the snapshot
+
+    /// The server rotates or extends its cookies during a session; a snapshot taken only at
+    /// sign-in restored the stale ones at the next launch and its first request 401'd.
+    func testRefreshPersistsCookiesTheServerChangedSinceSignIn() throws {
+        let keychain = FakeKeychainStore()
+        let cookieStorage = FakeCookieStorage()
+        cookieStorage.setCookie(makeCookie(value: "fake-sign-in-session"))
+        let store = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: cookieStorage)
+        try store.signIn(serverURL: serverURL)
+        cookieStorage.setCookie(makeCookie(value: "fake-rotated-session"))
+
+        store.refreshPersistedSessionCookies()
+
+        let data = try XCTUnwrap(try keychain.load(forKey: cookiesKeychainKey))
+        let stored = try JSONDecoder().decode([StoredCookie].self, from: data)
+        XCTAssertEqual(stored.map(\.value), ["fake-rotated-session"])
+    }
+
+    func testRefreshWritesNothingWhenTheCookiesAreUnchanged() throws {
+        let keychain = FakeKeychainStore()
+        let cookieStorage = FakeCookieStorage()
+        cookieStorage.setCookie(makeCookie())
+        let store = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: cookieStorage)
+        try store.signIn(serverURL: serverURL)
+        let savesAfterSignIn = keychain.saveCounts[cookiesKeychainKey]
+
+        store.refreshPersistedSessionCookies()
+
+        XCTAssertEqual(keychain.saveCounts[cookiesKeychainKey], savesAfterSignIn)
+    }
+
+    /// While a re-login is pending the cookies on hand are the ones the server refused — or
+    /// another account's, between a web login's cookie handover and its confirmation.
+    func testRefreshIsSkippedWhileReauthenticationIsPending() throws {
+        let keychain = FakeKeychainStore()
+        let cookieStorage = FakeCookieStorage()
+        cookieStorage.setCookie(makeCookie(value: "fake-sign-in-session"))
+        let store = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: cookieStorage)
+        try store.signIn(serverURL: serverURL)
+        store.noteSessionExpired()
+        cookieStorage.setCookie(makeCookie(value: "fake-unconfirmed-session"))
+
+        store.refreshPersistedSessionCookies()
+
+        let data = try XCTUnwrap(try keychain.load(forKey: cookiesKeychainKey))
+        let stored = try JSONDecoder().decode([StoredCookie].self, from: data)
+        XCTAssertEqual(stored.map(\.value), ["fake-sign-in-session"])
+    }
+
+    func testRefreshNeverReplacesTheSnapshotWithNothing() throws {
+        let keychain = FakeKeychainStore()
+        let cookieStorage = FakeCookieStorage()
+        let cookie = makeCookie()
+        cookieStorage.setCookie(cookie)
+        let store = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: cookieStorage)
+        try store.signIn(serverURL: serverURL)
+        cookieStorage.deleteCookie(cookie)
+
+        store.refreshPersistedSessionCookies()
+
+        let data = try XCTUnwrap(try keychain.load(forKey: cookiesKeychainKey))
+        let stored = try JSONDecoder().decode([StoredCookie].self, from: data)
+        XCTAssertEqual(stored.map(\.name), ["docs_sessionid"])
+    }
+
+    func testRefreshDoesNothingWhenSignedOut() {
+        let keychain = FakeKeychainStore()
+        let cookieStorage = FakeCookieStorage()
+        cookieStorage.setCookie(makeCookie())
+        let store = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: cookieStorage)
+
+        store.refreshPersistedSessionCookies()
+
+        XCTAssertNil(try keychain.load(forKey: cookiesKeychainKey))
+    }
+
+    /// A web login whose confirmation failed leaves possibly another account's cookies live,
+    /// and dismissing the sheet then clears `needsReauthentication` — the refresh must still
+    /// leave them out of the Keychain, which only `signIn` may write them to.
+    func testRefreshSkipsUnconfirmedCookiesEvenAfterTheSheetIsDismissed() throws {
+        let keychain = FakeKeychainStore()
+        let cookieStorage = FakeCookieStorage()
+        cookieStorage.setCookie(makeCookie(value: "fake-sign-in-session"))
+        let store = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: cookieStorage)
+        try store.signIn(serverURL: serverURL)
+        store.noteSessionExpired()
+        cookieStorage.setCookie(makeCookie(value: "fake-unconfirmed-session"))
+        store.noteSessionCookiesReplaced()
+        store.cancelReauthentication()
+
+        store.refreshPersistedSessionCookies()
+
+        let data = try XCTUnwrap(try keychain.load(forKey: cookiesKeychainKey))
+        let stored = try JSONDecoder().decode([StoredCookie].self, from: data)
+        XCTAssertEqual(stored.map(\.value), ["fake-sign-in-session"])
+    }
+
+    /// The confirming `signIn` must re-enable the refresh, or the snapshot would freeze again
+    /// and every cold launch would go back to logging in.
+    func testSigningInAfterAHandoverReenablesTheRefresh() throws {
+        let keychain = FakeKeychainStore()
+        let cookieStorage = FakeCookieStorage()
+        cookieStorage.setCookie(makeCookie(value: "fake-sign-in-session"))
+        let store = SessionStore(userDefaults: userDefaults, keychain: keychain, cookieStorage: cookieStorage)
+        try store.signIn(serverURL: serverURL)
+        store.noteSessionExpired()
+        store.noteSessionCookiesReplaced()
+        try store.signIn(serverURL: serverURL)
+        cookieStorage.setCookie(makeCookie(value: "fake-rotated-session"))
+
+        store.refreshPersistedSessionCookies()
+
+        let data = try XCTUnwrap(try keychain.load(forKey: cookiesKeychainKey))
+        let stored = try JSONDecoder().decode([StoredCookie].self, from: data)
+        XCTAssertEqual(stored.map(\.value), ["fake-rotated-session"])
+    }
 }

@@ -1,5 +1,9 @@
 import Foundation
 
+/// How soon after a silent re-login a further 401 — from a request issued *after* it — is taken
+/// as the fresh session being refused too, and sent to the sheet rather than retried silently.
+let silentReauthenticationCooldown: Duration = .seconds(60)
+
 /// Persists the signed-in state across launches: the chosen server URL
 /// (UserDefaults), an authenticated flag, and — because the Django `sessionid`
 /// is a session-only cookie that `HTTPCookieStorage` drops when iOS terminates
@@ -34,6 +38,36 @@ final class SessionStore {
     /// re-login sheet from it) but never persisted: a fresh launch re-derives
     /// it from the first failing request.
     private(set) var needsReauthentication = false
+    /// Whether the dead session is being recovered **in front of the user** (the re-login
+    /// sheet) rather than silently. A 401 first tries a hidden web login
+    /// (`isSilentlyReauthenticating`): the IdP usually still holds its own session in
+    /// `WKWebsiteDataStore.default()`, so the OIDC round trip completes with no typing — and
+    /// presenting that as a sheet is exactly what made a login popup flash up and vanish on
+    /// its own at launch. Only when the silent attempt cannot finish (the IdP wants a password,
+    /// a 2FA code, or never answers) does `escalateReauthentication()` turn this on.
+    private(set) var isReauthenticationInteractive = false
+    /// Set once a silent attempt has failed in this process, so a later 401 — after the user
+    /// dismissed the sheet, say — goes straight to the sheet instead of spinning up another
+    /// hidden login that is known not to complete. Cleared by `signIn`/`signOut`.
+    private var silentReauthenticationExhausted = false
+    /// Identifies the current re-authentication attempt; bumped by every `noteSessionExpired`
+    /// that starts one. `escalateReauthentication(attempt:)` must name it, so a timer or task
+    /// left over from an earlier attempt can never escalate a later one.
+    private(set) var reauthenticationAttempt = 0
+    /// When a silent re-login last signed the session back in. A further 401 soon after means
+    /// the fresh session is being refused anyway (one endpoint rejecting a session `/users/me/`
+    /// accepts, say) — retrying silently would loop, each round forgetting and re-learning the
+    /// account with nobody in the loop, so that 401 goes to the sheet instead.
+    private var lastSilentSignIn: ContinuousClock.Instant?
+    /// When `signIn` last ran. A 401 for a request issued before it was answered for the
+    /// session that sign-in replaced, so it says nothing about the current one.
+    private var lastSignIn: ContinuousClock.Instant?
+    /// A web login has put cookies in the shared storage that no confirmation has accepted yet —
+    /// possibly another account's. Only `signIn` may persist those, so the background refresh
+    /// stays off until it (or `signOut`) runs; `needsReauthentication` alone is not enough,
+    /// because cancelling the sheet clears it while those cookies are still live.
+    private var cookiesAwaitingConfirmation = false
+    private let now: () -> ContinuousClock.Instant
     /// Bumped by `signIn` and by `noteSessionCookiesReplaced` — the two moments the session
     /// underneath a live screen can become a different account's — so a screen already on
     /// display can tell that the session it was
@@ -55,9 +89,11 @@ final class SessionStore {
         keychain: KeychainStoring = KeychainStore(),
         cookieStorage: CookieStoring = HTTPCookieStorage.shared,
         signedInUser: SignedInUserStore? = nil,
-        clearImageCache: @escaping () -> Void = { ImageCacheStore().removeAll() }
+        clearImageCache: @escaping () -> Void = { ImageCacheStore().removeAll() },
+        now: @escaping () -> ContinuousClock.Instant = { ContinuousClock.now }
     ) {
         self.clearImageCache = clearImageCache
+        self.now = now
         self.userDefaults = userDefaults
         self.keychain = keychain
         self.cookieStorage = cookieStorage
@@ -95,8 +131,13 @@ final class SessionStore {
         let cookiesPersisted = persistSessionCookies(for: serverURL)
         self.serverURL = serverURL
         self.isAuthenticated = true
-        // Serves both a fresh login and a completed re-login sheet.
-        self.needsReauthentication = false
+        // Serves a fresh login, a completed re-login sheet and a completed silent re-login.
+        let signedInAt = now()
+        lastSignIn = signedInAt
+        lastSilentSignIn = isSilentlyReauthenticating ? signedInAt : nil
+        endReauthentication()
+        silentReauthenticationExhausted = false
+        cookiesAwaitingConfirmation = false
         // **Forget who was signed in, here rather than at expiry.** This is the moment a
         // possibly-different account takes over the session, which is exactly when a kept id
         // becomes a disclosure: it would list the previous user's unsynced documents to the
@@ -158,6 +199,7 @@ final class SessionStore {
     /// that *completed* a login and then failed its confirmation: cookies did change hands, so
     /// the cached profile goes with them, and that is the point rather than a side effect.
     func noteSessionCookiesReplaced() {
+        cookiesAwaitingConfirmation = true
         forgetSignedInIdentity()
         // The identity may have changed under screens that survived the sheet, exactly as at
         // `signIn` — clearing the stores is only half of scoping the account row to the session.
@@ -188,7 +230,11 @@ final class SessionStore {
         try keychain.delete(forKey: Self.authenticatedKeychainKey)
         try? keychain.delete(forKey: Self.sessionCookiesKeychainKey)
         deleteServerCookies()
-        needsReauthentication = false
+        endReauthentication()
+        silentReauthenticationExhausted = false
+        lastSilentSignIn = nil
+        lastSignIn = nil
+        cookiesAwaitingConfirmation = false
         isAuthenticated = false
         imageCacheSessionID = nil
         userDefaults.removeObject(forKey: Self.imageCacheSessionKey)
@@ -196,16 +242,76 @@ final class SessionStore {
 
     /// Called (via the API client's `onSessionExpired` hook) whenever any
     /// request 401s. Idempotent, so concurrent 401s from several view models
-    /// present the re-login sheet exactly once.
-    func noteSessionExpired() {
-        guard isAuthenticated else { return }
+    /// start re-authentication exactly once.
+    ///
+    /// An expiry recovers **silently** (see `isReauthenticationInteractive`) unless a silent
+    /// attempt has already failed in this process, or one signed in less than
+    /// `silentReauthenticationCooldown` ago — then it goes straight to the sheet. A 401 that
+    /// lands while a recovery is already under way changes nothing — in particular it never
+    /// turns a silent attempt into a sheet. A 401 for a request issued before the last sign-in
+    /// (`requestStartedAt`) is ignored outright: it was refused on the cookies that sign-in
+    /// replaced — a slow request in flight across a silent re-login, say — and reading it as
+    /// the new session failing would put up the very sheet the silent attempt just avoided.
+    func noteSessionExpired(requestStartedAt: ContinuousClock.Instant? = nil) {
+        guard isAuthenticated, !needsReauthentication else { return }
+        if let requestStartedAt, let lastSignIn, requestStartedAt < lastSignIn { return }
+        let silentJustSucceeded = lastSilentSignIn.map { now() - $0 < silentReauthenticationCooldown }
+        reauthenticationAttempt += 1
         needsReauthentication = true
+        isReauthenticationInteractive = silentReauthenticationExhausted || silentJustSucceeded == true
+    }
+
+    /// A hidden web login is recovering the session; RootView mounts it invisibly.
+    var isSilentlyReauthenticating: Bool { needsReauthentication && !isReauthenticationInteractive }
+
+    /// The re-login sheet is up. RootView's sheet binding reads this, not `needsReauthentication`.
+    var presentsReauthenticationSheet: Bool { needsReauthentication && isReauthenticationInteractive }
+
+    /// The silent attempt could not finish on its own — it stopped on the IdP's login page, its
+    /// confirmation failed, or it ran out of time — so ask the user. A no-op unless a silent
+    /// attempt is actually running, so a late timeout can neither re-open a sheet the user just
+    /// answered nor raise one after a successful silent sign-in.
+    func escalateReauthentication(attempt: Int) {
+        guard isSilentlyReauthenticating, attempt == reauthenticationAttempt else { return }
+        silentReauthenticationExhausted = true
+        isReauthenticationInteractive = true
     }
 
     /// User dismissed the re-login sheet without signing in. Cached data keeps
     /// showing; the next failing request re-raises the flag.
     func cancelReauthentication() {
+        endReauthentication()
+    }
+
+    private func endReauthentication() {
         needsReauthentication = false
+        isReauthenticationInteractive = false
+    }
+
+    /// Re-snapshots the server's cookies into the Keychain when they differ from the stored
+    /// copy. Called when the app goes to the background — the last moment before iOS may
+    /// terminate the process and `HTTPCookieStorage` drops the session-only `sessionid`.
+    ///
+    /// Without it the snapshot only ever held what the server set at sign-in. Every
+    /// `Set-Cookie` the server sent afterwards — a rotated session key, or Django pushing a
+    /// session cookie's `Expires` forward as the session is used — lived only in memory, so a
+    /// relaunch restored the **sign-in-time** cookie: an expiry long past (`validStoredCookies`
+    /// drops it) or a value the server had replaced. The first request then 401'd on a session
+    /// that was perfectly alive, and the app had to log in again at every cold launch.
+    ///
+    /// Skipped while a re-authentication is pending (the cookies on hand are the ones the server
+    /// just refused) and while a web login's cookies await confirmation — they may be another
+    /// account's, which only `signIn` may persist (it also pairs them with a fresh image-cache
+    /// namespace); that state outlives a cancelled sheet. An empty cookie set never overwrites a
+    /// stored one.
+    func refreshPersistedSessionCookies() {
+        guard isAuthenticated, !needsReauthentication, !cookiesAwaitingConfirmation, let serverURL else { return }
+        let cookies = (cookieStorage.cookies(for: serverURL) ?? []).map(StoredCookie.init)
+        guard !cookies.isEmpty else { return }
+        let stored = (try? keychain.load(forKey: Self.sessionCookiesKeychainKey))
+            .flatMap { try? JSONDecoder().decode([StoredCookie].self, from: $0) }
+        guard stored.map(Set.init) != Set(cookies) else { return }
+        _ = persistSessionCookies(for: serverURL)
     }
 
     // MARK: - Session cookie persistence

@@ -5,11 +5,12 @@ import Foundation
 /// `sessionid` under `SESSION_EXPIRE_AT_BROWSER_CLOSE`) — exactly the kind
 /// `HTTPCookieStorage.shared` drops when iOS terminates the process, and the
 /// reason this type exists: the app snapshots the server's cookies into the
-/// Keychain at sign-in and restores them on launch so the session survives.
+/// Keychain at sign-in (and again whenever the app backgrounds) and restores
+/// them on launch so the session survives.
 ///
 /// Instances carry the live session credential in `value`. NEVER log, print,
 /// or serialize them anywhere other than the Keychain.
-struct StoredCookie: Codable, Equatable, Sendable {
+struct StoredCookie: Codable, Hashable, Sendable {
     let name: String
     let value: String
     let domain: String

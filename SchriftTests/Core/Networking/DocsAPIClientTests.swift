@@ -133,7 +133,7 @@ final class DocsAPIClientTests: XCTestCase {
             baseURL: baseURL,
             session: MockURLProtocol.makeSession(),
             cookieProvider: { [] },
-            onSessionExpired: { fired.set() }
+            onSessionExpired: { _ in fired.set() }
         )
         do {
             let _: Config = try await client.get("users/me/")
@@ -159,7 +159,7 @@ final class DocsAPIClientTests: XCTestCase {
             baseURL: baseURL,
             session: MockURLProtocol.makeSession(),
             cookieProvider: { [] },
-            onSessionExpired: { fired.set() }
+            onSessionExpired: { _ in fired.set() }
         )
 
         MockURLProtocol.stubHandler = { _ in
