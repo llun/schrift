@@ -17,7 +17,11 @@ import Foundation
 /// be configured with `YHUB_JWT_PRIVATE_KEY`, without which `updated_at` stops following
 /// editor edits. Only anchored blocks survive untouched (unchanged non-opaque blocks, plus
 /// `unknownNode:*` and document-link blocks); an untouched opaque block (a table, parsed as
-/// `.unknown`) or nested list is still rewritten from markdown, as in the classic save.
+/// `.unknown`) or nested list is still rewritten from markdown, as in the classic save. That
+/// includes a list item with a photo or file nested under it: the parent projects opaque, so
+/// it and its nested media are rebuilt on every save, which resets anything the web set on
+/// that media and the markdown does not carry (an image's `caption`, `previewWidth` and
+/// `textAlignment`; a file's `caption`) to the defaults.
 ///
 /// The result's *content* is exactly `new` — the same overwrite semantics as the classic
 /// full-overwrite save. Only the ids change, and only in two ways:

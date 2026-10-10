@@ -97,9 +97,11 @@ enum EditorBlockMetrics {
     /// parent's text, the way a nested list reads on the web.
     static let listIndentStep = DocsSpacing.spaceMD
 
-    /// The leading inset for a list item nested `indent` levels deep. Both
-    /// surfaces apply it, always — zero at the top level — so a row's
-    /// structure never changes when an item is indented or outdented.
+    /// The leading inset for a block nested `indent` levels deep — a list item,
+    /// or an image, attachment or link line nested under one. Both surfaces
+    /// apply it to every such row, always — zero at the top level — so a row's
+    /// structure never changes when it is indented or outdented, and a leaf
+    /// sits exactly where a list item at its depth would.
     static func listIndentInset(_ indent: Int) -> CGFloat {
         CGFloat(max(0, indent)) * listIndentStep
     }

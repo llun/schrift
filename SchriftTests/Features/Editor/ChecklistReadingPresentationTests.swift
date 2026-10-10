@@ -158,4 +158,58 @@ final class ChecklistReadingPresentationTests: XCTestCase {
             ChecklistReadingPresentation(blocks: blocks, hidingCompleted: false).rows.map(\.sourceIndex),
             Array(blocks.indices))
     }
+
+    // MARK: - Nested leaves
+
+    private func photo(_ name: String, _ indent: Int = 0) -> EditorBlock {
+        EditorBlock(kind: .image(alt: name, url: "https://docs.llun.dev/media/\(name).jpg"), indent: indent)
+    }
+
+    /// A photo or file nested under a completed item is part of it, like a nested
+    /// item, and hides with it. The count stays completed items only.
+    func testACompletedItemHidesTheLeavesNestedUnderIt() {
+        let blocks = [
+            EditorBlock(kind: .checklistItem(checked: true), text: "done"),
+            photo("one", 1),
+            EditorBlock(kind: .attachment(name: "a.pdf", url: "https://docs.llun.dev/media/a.pdf"), indent: 1),
+            EditorBlock(kind: .paragraph, text: "[site](https://example.com)", indent: 1),
+            EditorBlock(kind: .checklistItem(checked: false), text: "open"),
+        ]
+        let filtered = ChecklistReadingPresentation(blocks: blocks, hidingCompleted: true)
+        XCTAssertEqual(filtered.rows.map(\.sourceIndex), [4])
+        XCTAssertEqual(filtered.hiddenCount, 1)
+    }
+
+    /// A queued photo keeps its Retry/Remove card reachable even inside a hidden
+    /// subtree — and the subtree goes on hiding around it.
+    func testAQueuedPhotoInsideAHiddenSubtreeStaysVisible() {
+        let placeholder = "schrift-attachment://11111111-1111-4111-8111-111111111111"
+        let blocks = [
+            EditorBlock(kind: .checklistItem(checked: true), text: "done"),
+            photo("one", 1),
+            EditorBlock(kind: .image(alt: "", url: placeholder), indent: 1),
+            photo("two", 1),
+            EditorBlock(kind: .checklistItem(checked: true), text: "sub-done", indent: 1),
+            EditorBlock(kind: .checklistItem(checked: false), text: "open"),
+        ]
+        let filtered = ChecklistReadingPresentation(blocks: blocks, hidingCompleted: true)
+        XCTAssertEqual(filtered.rows.map(\.sourceIndex), [2, 5])
+        XCTAssertEqual(filtered.hiddenCount, 2)
+    }
+
+    /// A nested leaf after a hidden nested item is that item's *sibling*, under an
+    /// open parent, and stays. Flat media after it is still read as the item's own
+    /// — the server's export flattens a nested photo to exactly that shape.
+    func testOnlyFlatMediaAfterAHiddenItemIsHiddenWithIt() {
+        let blocks = [
+            EditorBlock(kind: .checklistItem(checked: false), text: "open"),
+            EditorBlock(kind: .checklistItem(checked: true), text: "done", indent: 1),
+            photo("sibling", 1),
+            EditorBlock(kind: .checklistItem(checked: true), text: "done too", indent: 1),
+            photo("flat"),
+            EditorBlock(kind: .checklistItem(checked: false), text: "next"),
+        ]
+        XCTAssertEqual(
+            ChecklistReadingPresentation(blocks: blocks, hidingCompleted: true).rows.map(\.sourceIndex), [0, 2, 5])
+    }
 }

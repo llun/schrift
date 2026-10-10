@@ -2157,12 +2157,27 @@ final class EditorViewModel {
     /// A move is an ordinary edit: the full-overwrite save serializes the new
     /// order, and the live write path sends it as `BlockNoteWrite`'s coarse
     /// delete + re-insert.
-    func moveBlock(blockID: UUID, to destination: Int) {
+    ///
+    /// A nestable leaf (`blockNestsAsLeaf`) also picks its level where it lands
+    /// (`movedLeafIndent`): dropped among a list item's nested children it joins
+    /// them, and it otherwise keeps the level it had wherever the block above
+    /// still allows it — so a flat photo moved within flat content stays flat.
+    /// `indent` overrides that choice (for a drop that states its own level),
+    /// clamped into what the landing position allows.
+    func moveBlock(blockID: UUID, to destination: Int, indent: Int? = nil) {
         guard let index = blockIndex(blockID), !blocks.isEmpty else { return }
         let target = min(max(destination, 0), blocks.count - 1)
-        guard target != index else { return }
-        let block = blocks.remove(at: index)
-        blocks.insert(block, at: target)
+        let originalIndent = blocks[index].indent
+        var moved = blocks
+        if target != index {
+            let block = moved.remove(at: index)
+            moved.insert(block, at: target)
+        }
+        if let landed = movedLeafIndent(at: target, in: moved, originalIndent: originalIndent, requested: indent) {
+            moved[target].indent = landed
+        }
+        guard target != index || moved[target].indent != blocks[index].indent else { return }
+        blocks = moved
         markDirty()
     }
 
@@ -2226,6 +2241,31 @@ final class EditorViewModel {
     private func shiftListItem(blockID: UUID, by delta: Int) -> Bool {
         guard let index = blockIndex(blockID), isListKind(blocks[index].kind) else { return false }
         guard let shifted = shiftingListItem(at: index, by: delta, in: blocks) else { return true }
+        blocks = shifted
+        markDirty()
+        return true
+    }
+
+    /// Nests an image, attachment or link line one level under the list item
+    /// above it (`indentingLeaf`). Returns whether anything changed.
+    @discardableResult
+    func indentLeaf(blockID: UUID) -> Bool {
+        guard let index = blockIndex(blockID), let shifted = indentingLeaf(at: index, in: blocks) else {
+            return false
+        }
+        blocks = shifted
+        markDirty()
+        return true
+    }
+
+    /// Moves a nested image, attachment or link line one level out
+    /// (`outdentingLeaf`) — past its later siblings when they would otherwise
+    /// lose their parent. Returns whether anything changed.
+    @discardableResult
+    func outdentLeaf(blockID: UUID) -> Bool {
+        guard let index = blockIndex(blockID), let shifted = outdentingLeaf(at: index, in: blocks) else {
+            return false
+        }
         blocks = shifted
         markDirty()
         return true
@@ -3283,12 +3323,13 @@ final class EditorViewModel {
         if normalized.map(\.indent) != blocks.map(\.indent) {
             blocks = normalized
         }
-        // Nested items have no live-write spelling: `BlockNoteWrite` diffs a flat
-        // block list, and the projection reads a nested `blockGroup` as opaque.
-        // So a nested list takes the classic path and keeps this screen off the
+        // Nested blocks — list items, and the media leaves nested under them —
+        // have no live-write spelling: `BlockNoteWrite` diffs a flat block list,
+        // and the projection reads a nested `blockGroup` as opaque. So a document
+        // with any nesting takes the classic path and keeps this screen off the
         // live stream, exactly as an attachment does (`hasUnmodelableLocalEdit`).
-        let nestsListItems = blocks.contains { $0.indent > 0 }
-        if nestsListItems {
+        let nestsBlocks = blocks.contains { $0.indent > 0 }
+        if nestsBlocks {
             hasUnmodelableLocalEdit = true
         }
         // Live-collaboration write path (C2c). When live-write mode is engaged the bridge
@@ -3301,7 +3342,7 @@ final class EditorViewModel {
         // a malformed replica fail-safed) is the downgrade: the classic path below runs exactly
         // as today and the edit is persisted, never lost. With `liveWrite == nil` this whole
         // block is a no-op (`nil?.x == true` is false), so the classic contract is unchanged.
-        if !forcesClassicPath, !nestsListItems, liveWrite?.forwardLocalEdit() == true {
+        if !forcesClassicPath, !nestsBlocks, liveWrite?.forwardLocalEdit() == true {
             // A stash can exist here too: `canEngageLiveEditing` only guarantees no save/
             // draft/conflict was pending at *engage* time, and an A5 signal is suppressed
             // only while the bridge is actively applying live content — a pull-to-refresh
@@ -3355,9 +3396,10 @@ final class EditorViewModel {
 
     /// Latched once this screen has made an edit the shared replica cannot
     /// represent — an attachment insert, because `YBlockProjection` does not
-    /// model the BlockNote `file` node, and any edit that leaves a list item
-    /// nested, because the projection reads a nested `blockGroup` as opaque and
-    /// `BlockNoteWrite` diffs a flat list.
+    /// model the BlockNote `file` node, and any edit that leaves a block nested
+    /// (a list item, or a photo/file/link under one), because the projection
+    /// reads a nested `blockGroup` as opaque and `BlockNoteWrite` diffs a flat
+    /// list.
     ///
     /// It is a **latch, not a momentary flag**, and that is the whole point.
     /// `markDirty(forcesClassicPath:)` keeps the insert off the live path so it
@@ -3407,8 +3449,9 @@ final class EditorViewModel {
         // document and then snapshotting that over the server. See
         // `hasUnmodelableLocalEdit`.
         guard !hasUnmodelableLocalEdit else { return false }
-        // A nested list item has no place in the flat block list the live path
-        // diffs and applies (see `markDirty`), whether it was typed here or loaded.
+        // A nested block — a list item, or a leaf nested under one — has no place
+        // in the flat block list the live path diffs and applies (see
+        // `markDirty`), whether it was typed here or loaded.
         guard !blocks.contains(where: { $0.indent > 0 }) else { return false }
         guard saveCoordinator.conflict(for: documentID) == nil else { return false }
         guard saveCoordinator.storedDraft(documentID: documentID) == nil else { return false }

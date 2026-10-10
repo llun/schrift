@@ -72,6 +72,52 @@ final class DraftSyncDecisionTests: XCTestCase {
         XCTAssertEqual(decision, .push(title: "Doc", evidence: .serverHoldsOurLastPush))
     }
 
+    // MARK: - Nested leaves read flat on the server
+
+    private let leafPhoto = "![p](https://docs.example.org/media/p.jpg)"
+    private let leafFile = "[r](https://docs.example.org/media/r.pdf)"
+    private var nestedLocal: String { "- [ ] Task\n  \(leafPhoto)\n  \(leafFile)\n- [ ] Next\n" }
+    /// The server's markdown export of the same document: BlockNote 0.51.4 flattens a
+    /// leaf nested under a list item to a column-zero line after a blank one.
+    private var flatServerExport: String { "* [ ] Task\n\n\(leafPhoto)\n\n\(leafFile)\n\n* [ ] Next\n" }
+
+    func testCanonicalMarkdownIgnoresLeafNestingButNotContent() {
+        XCTAssertEqual(canonicalMarkdown(nestedLocal), canonicalMarkdown(flatServerExport))
+        XCTAssertNotEqual(
+            canonicalMarkdown(nestedLocal),
+            canonicalMarkdown(flatServerExport.replacingOccurrences(of: "p.jpg", with: "q.jpg")))
+        // A nested *list item* is still structure the server keeps, and still compares.
+        XCTAssertNotEqual(canonicalMarkdown("- a\n  - b\n"), canonicalMarkdown("- a\n- b\n"))
+    }
+
+    /// Our own push of a nested photo comes back flattened in the server's export;
+    /// that must read as "the server holds our push", never as a co-author's edit.
+    func testOurNestedPushReadBackFlatIsNotAConflict() {
+        let decision = draftSyncDecision(
+            baseline: DraftBaseline(serverUpdatedAt: base, markdown: "# Old"),
+            lastPushedMarkdown: nestedLocal,
+            localMarkdown: nestedLocal + "\nMore\n",
+            draftTitle: "Doc",
+            draftUpdatedAt: base,
+            serverTitle: "Doc",
+            serverUpdatedAt: base.addingTimeInterval(3600),
+            serverMarkdown: flatServerExport
+        )
+        XCTAssertEqual(decision, .push(title: "Doc", evidence: .serverHoldsOurLastPush))
+
+        let sameBody = draftSyncDecision(
+            baseline: DraftBaseline(serverUpdatedAt: base, markdown: "# Old"),
+            lastPushedMarkdown: nil,
+            localMarkdown: nestedLocal,
+            draftTitle: "Doc",
+            draftUpdatedAt: base,
+            serverTitle: "Doc",
+            serverUpdatedAt: base.addingTimeInterval(3600),
+            serverMarkdown: flatServerExport
+        )
+        XCTAssertEqual(sameBody, .push(title: "Doc", evidence: .serverHoldsOurBody))
+    }
+
     func testLastPushedMatchesServerOnlyCosmetically() {
         // Canonical-form comparison: our stored push and the server's export differ
         // only by list-marker normalization.

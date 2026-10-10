@@ -63,18 +63,9 @@ struct AttachmentDisplay: Equatable, Sendable {
 ///    Percent-encoding that decodes to the same path is accepted and
 ///    canonicalized — provably harmless, since every part has been validated.
 func parseAttachmentLink(_ text: String, serverOrigin: String) -> AttachmentDisplay? {
-    let trimmed = text.trimmingCharacters(in: .whitespaces)
-    guard trimmed.hasPrefix("["), trimmed.hasSuffix(")") else { return nil }
-    guard let separator = trimmed.range(of: "](") else { return nil }
-
-    let name = String(trimmed[trimmed.index(after: trimmed.startIndex)..<separator.lowerBound])
-    let urlString = String(trimmed[separator.upperBound..<trimmed.index(before: trimmed.endIndex)])
-    // A bracket in the label would mean the `](` we split on isn't the link's
-    // own separator (`[a[b](url)` is not a link at all in CommonMark).
-    guard !name.contains("]"), !name.contains("["), !urlString.isEmpty else { return nil }
-    // Two links on one line (`[a](u1)[b](u2)`) leave an unbalanced `)` in what
-    // we took for the url; a space leaves trailing prose. Either way, decline.
-    guard !urlString.contains(where: \.isWhitespace), hasBalancedAttachmentParentheses(urlString) else { return nil }
+    guard let shape = attachmentLinkShape(text.trimmingCharacters(in: .whitespaces)) else { return nil }
+    let name = shape.name
+    let urlString = shape.urlString
 
     guard !serverOrigin.isEmpty, let url = URL(string: urlString), siteOrigin(for: url) == serverOrigin else {
         return nil
@@ -89,6 +80,32 @@ func parseAttachmentLink(_ text: String, serverOrigin: String) -> AttachmentDisp
         fileUUID: parts.fileUUID,
         isUnsafeKey: parts.isUnsafeKey,
         fileExtension: parts.fileExtension)
+}
+
+/// Gate 1 of `parseAttachmentLink` on its own: whether `text` — exactly as
+/// given, not trimmed — is a single `[label](url)` link and nothing else, with
+/// the label and url it splits into.
+///
+/// **Origin-free on purpose.** The parser decides a nested leaf's *structure*
+/// (whether an indented link line under a list item becomes a child block at
+/// all) from this shape alone, and only then asks `parseAttachmentLink` whether
+/// the child is an `.attachment` or a `.paragraph` carrying the link. Structure
+/// that depended on the origin would make an origin-aware parse and an
+/// origin-less one serialize differently — the identity
+/// `testAttachmentClassificationNeverChangesSerializedMarkdown` holds.
+func attachmentLinkShape(_ text: String) -> (name: String, urlString: String)? {
+    guard text.hasPrefix("["), text.hasSuffix(")") else { return nil }
+    guard let separator = text.range(of: "](") else { return nil }
+
+    let name = String(text[text.index(after: text.startIndex)..<separator.lowerBound])
+    let urlString = String(text[separator.upperBound..<text.index(before: text.endIndex)])
+    // A bracket in the label would mean the `](` we split on isn't the link's
+    // own separator (`[a[b](url)` is not a link at all in CommonMark).
+    guard !name.contains("]"), !name.contains("["), !urlString.isEmpty else { return nil }
+    // Two links on one line (`[a](u1)[b](u2)`) leave an unbalanced `)` in what
+    // we took for the url; a space leaves trailing prose. Either way, decline.
+    guard !urlString.contains(where: \.isWhitespace), hasBalancedAttachmentParentheses(urlString) else { return nil }
+    return (name, urlString)
 }
 
 // MARK: - Derived values

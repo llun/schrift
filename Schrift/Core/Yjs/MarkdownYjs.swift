@@ -47,7 +47,8 @@ enum MarkdownYjs {
     /// write-eligible (its projection is not `isFullyModeled`), so it stays
     /// read-live and this coarseness is unreachable in the write path.
     ///
-    /// A nested list item (`indent > 0`) becomes a BlockNote child of the item it
+    /// A nested block (`indent > 0`) — a list item, or an image, attachment or
+    /// link paragraph nested under one — becomes a BlockNote child of the item it
     /// nests under, so the flat editor array is folded into the tree here.
     static func blockNoteBlocks(from blocks: [EditorBlock]) -> [BlockNoteBlock] {
         let mapped = nestedBlocks(normalizedListIndents(blocks))
@@ -57,8 +58,11 @@ enum MarkdownYjs {
 
     /// Folds normalized blocks into BlockNote's tree: each block at `depth` takes
     /// the blocks deeper than it that follow as its children. Normalization
-    /// guarantees an indented block is a list item following a list item at most
-    /// one level shallower, and that `map` returns exactly one block for it.
+    /// guarantees an indented block is a list item or a nestable leaf
+    /// (`blockNestsAsLeaf`) at most one level under the list item above it, and
+    /// that `map` returns exactly one block for it. A leaf never takes children:
+    /// the block after a nested leaf is normalized no deeper than the leaf, so
+    /// the image and `file` nodes stay childless leaves, as BlockNote writes them.
     private static func nestedBlocks(_ blocks: [EditorBlock]) -> [BlockNoteBlock] {
         var index = 0
 

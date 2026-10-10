@@ -238,4 +238,42 @@ final class BlockNoteWriteTests: XCTestCase {
         XCTAssertTrue(blocks.contains { !$0.children.isEmpty }, "the fixture must actually nest")
         try assertFromEmptyMatchesGolden(blocks, allowsNestedInserts: true)
     }
+
+    /// A photo and a file nested under a checklist item — the tree
+    /// `YjsEncoderTests.testListItemLeafChildrenGoInANestedBlockGroup` pins against yjs.
+    func testFromEmptyLeavesNestedUnderAListItemMatchGolden() throws {
+        let media = "https://docs.example.test/media/11111111-1111-4111-8111-111111111111/attachments/"
+        let image = BlockNoteBlock(
+            node: "image",
+            props: [
+                ("textAlignment", .string("left")), ("backgroundColor", .string("default")),
+                ("name", .string("photo.jpg")), ("url", .string(media + "22222222-2222-4222-8222-222222222222.jpg")),
+                ("caption", .string("")), ("showPreview", .bool(true)), ("previewWidth", .undefined),
+            ],
+            runs: [], id: U(2))
+        let file = BlockNoteBlock(
+            node: "file",
+            props: [
+                ("backgroundColor", .string("default")), ("name", .string("report.pdf")),
+                ("url", .string(media + "33333333-3333-4333-8333-333333333333.pdf")), ("caption", .string("")),
+            ],
+            runs: [], id: U(3))
+        var task = BlockNoteBlock(
+            node: "checkListItem", props: P + [("checked", .bool(false))], runs: [InlineRun("Task")], id: U(1))
+        task.children = [image, file]
+        let next = BlockNoteBlock(
+            node: "checkListItem", props: P + [("checked", .bool(false))], runs: [InlineRun("Next")], id: U(4))
+        try assertFromEmptyMatchesGolden([task, next], allowsNestedInserts: true)
+    }
+
+    /// The same, from the app's markdown spelling of nested leaves.
+    func testFromEmptyNestedLeafMarkdownMatchesGolden() throws {
+        let media = "https://docs.example.test/media/11111111-1111-4111-8111-111111111111/attachments/"
+        let markdown =
+            "- [ ] Task\n  ![photo.jpg](\(media)22222222-2222-4222-8222-222222222222.jpg)\n"
+            + "  [report.pdf](\(media)33333333-3333-4333-8333-333333333333.pdf)\n- [ ] Next\n"
+        let blocks = MarkdownYjs.blockNoteBlocks(from: markdown, serverOrigin: "https://docs.example.test")
+        XCTAssertEqual(blocks.first?.children.map(\.node), ["image", "file"], "the fixture must actually nest")
+        try assertFromEmptyMatchesGolden(blocks, allowsNestedInserts: true)
+    }
 }

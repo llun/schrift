@@ -111,6 +111,43 @@ final class BlockNoteIncrementalSaveTests: XCTestCase {
         XCTAssertEqual(after.blocks[1].fidelity, .opaque(reason: "nested children"))
     }
 
+    /// A photo and a file nested under a checklist item go in as the item's nested group, the
+    /// same way a nested list does.
+    func testLeavesNestedUnderAListItemAreWrittenAsANestedGroup() throws {
+        let state = served([paragraph("One", id: idA)])
+
+        let update = try BlockNoteIncrementalSave.update(
+            serverState: state, newBlocks: newBlocks("One\n\n" + nestedLeafMarkdown), serverOrigin: origin)
+        let after = try project(state, after: update)
+
+        XCTAssertEqual(after.blocks.count, 2)
+        XCTAssertEqual(after.blocks[0].id, idA)
+        XCTAssertEqual(after.blocks[1].fidelity, .opaque(reason: "nested children"))
+    }
+
+    /// The accepted residual: a list item with nested leaves projects opaque, so even an
+    /// unchanged one is not anchored and is rebuilt on every save (resetting web-only media
+    /// props such as an image's caption). The content still reads the same afterwards.
+    func testAnUnchangedItemWithNestedLeavesIsRebuiltEachSave() throws {
+        let stored = newBlocks(nestedLeafMarkdown)
+        let state = served(stored)
+
+        let update = try XCTUnwrap(
+            BlockNoteIncrementalSave.update(
+                serverState: state, newBlocks: newBlocks(nestedLeafMarkdown), serverOrigin: origin))
+        let after = try project(state, after: update)
+
+        XCTAssertEqual(after.blocks.count, 1)
+        XCTAssertEqual(after.blocks[0].fidelity, .opaque(reason: "nested children"))
+        XCTAssertNotEqual(after.blocks[0].id, stored[0].id, "rebuilt, not reconciled")
+    }
+
+    private var nestedLeafMarkdown: String {
+        let media = "\(origin)/media/11111111-1111-4111-8111-111111111111/attachments/"
+        return "- [ ] Task\n  ![photo.jpg](\(media)22222222-2222-4222-8222-222222222222.jpg)\n"
+            + "  [report.pdf](\(media)33333333-3333-4333-8333-333333333333.pdf)\n"
+    }
+
     /// Our items must never reuse a client id the document already holds — that would mint
     /// duplicate `(client, clock)` pairs, which is silent corruption on the server.
     func testTheUpdateNeverReusesAClientIDTheDocumentAlreadyHolds() throws {

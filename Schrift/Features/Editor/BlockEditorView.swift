@@ -249,13 +249,17 @@ struct BlockEditorRow: View {
             // An image is a non-editable leaf, like a divider: it has no text
             // view. Backspace at the start of the following block deletes it as
             // a unit (see EditorViewModel.mergeBlockWithPrevious).
+            // Inset by its nesting — unconditionally, zero when flat — exactly as
+            // the reading surface's image arm is, so the swap never moves it.
             imageLeaf(alt: alt, url: url)
+                .padding(.leading, EditorBlockMetrics.listIndentInset(block.indent))
         } else if case .attachment(let name, let url) = block.kind {
             // Same leaf contract as an image: no text view, deletes as a unit,
             // never converted, never receives inline markers. The card is the
             // same one the reading surface draws, so an attachment looks and
             // behaves identically in both modes.
             attachmentLeaf(name: name, url: url)
+                .padding(.leading, EditorBlockMetrics.listIndentInset(block.indent))
         } else {
             // Every editable kind shares one structural shape (adornment slot
             // + text view with value-varying modifiers): converting the

@@ -478,6 +478,19 @@ canonicalizes (`*`→`-`, blank-line collapsing, renumbering), which would give
 every non-byte-round-tripping document an unfixable do-nothing "Updated" banner
 on every open.
 
+`canonicalMarkdown` is also **leaf-nesting insensitive**. It parses, sets every
+nested image, attachment or link-line leaf back to indent 0, re-runs
+`normalizedListIndents` and serializes. That reproduces what the server's export
+does to such a document: BlockNote prints a nested leaf at column zero and pulls the
+item's later siblings up with it. So a draft or cached body that the app wrote with
+nested leaves (`- a\n  ![p](u)\n- b`) compares equal to the flat export of the same
+content. Without that, every save of a nested leaf would read back as a server change
+(an "Updated" banner, or a flat reinstall over the nested screen) and every replayed
+draft as a conflict. The cost is that a change that *only* nests or un-nests a leaf
+is invisible to these comparisons. That is acceptable while the server cannot
+represent the difference in markdown at all; the JSON read overlay (not yet built)
+is what will restore nesting on a read.
+
 #### Revalidation phase (awaited tail of `load()`/`refresh()`, for sources 1–3 and after 4)
 
 Fetch `formatted-content`. Classification happens **when the fetch completes**

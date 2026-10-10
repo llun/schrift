@@ -258,4 +258,37 @@ final class MarkdownYjsTests: XCTestCase {
         XCTAssertEqual(mapped.map(\.node), ["paragraph", "bulletListItem"])
         XCTAssertTrue(mapped.allSatisfy { $0.children.isEmpty })
     }
+
+    // MARK: - Nested leaves
+
+    /// The app's spelling of a photo and a file nested under a checklist item maps
+    /// to the tree BlockNote stores: leaf children of the item, a sibling after.
+    /// `YjsEncoderTests.testListItemLeafChildrenGoInANestedBlockGroup` pins the bytes.
+    func testLeavesNestedUnderAListItemBecomeItsChildren() {
+        let media = "https://docs.example.test/media/11111111-1111-4111-8111-111111111111/attachments/"
+        let image = media + "22222222-2222-4222-8222-222222222222.jpg"
+        let pdf = media + "33333333-3333-4333-8333-333333333333.pdf"
+        let blocks = MarkdownYjs.blockNoteBlocks(
+            from: "- [ ] Task\n  ![photo.jpg](\(image))\n  [report.pdf](\(pdf))\n- [ ] Next\n",
+            serverOrigin: "https://docs.example.test")
+
+        XCTAssertEqual(blocks.map(\.node), ["checkListItem", "checkListItem"])
+        XCTAssertEqual(blocks.map(\.runs), [[InlineRun("Task")], [InlineRun("Next")]])
+        XCTAssertEqual(blocks[0].children.map(\.node), ["image", "file"])
+        XCTAssertTrue(blocks[0].children.allSatisfy { $0.children.isEmpty }, "a leaf has no children")
+        XCTAssertTrue(blocks[1].children.isEmpty)
+        XCTAssertEqual(prop(blocks[0].children[0], "url"), .string(image))
+        XCTAssertEqual(prop(blocks[0].children[0], "name"), .string("photo.jpg"))
+        XCTAssertEqual(prop(blocks[0].children[1], "url"), .string(pdf))
+        XCTAssertEqual(prop(blocks[0].children[1], "name"), .string("report.pdf"))
+    }
+
+    /// The server's flattened export of the same document stays flat.
+    func testTheFlattenedExportOfNestedLeavesStaysFlat() {
+        let blocks = MarkdownYjs.blockNoteBlocks(
+            from: "* [ ] Task\n\n![p](https://docs.example.org/media/p.jpg)\n\n* [ ] Next\n",
+            serverOrigin: serverOrigin)
+        XCTAssertEqual(blocks.map(\.node), ["checkListItem", "image", "checkListItem"])
+        XCTAssertTrue(blocks.allSatisfy { $0.children.isEmpty })
+    }
 }
