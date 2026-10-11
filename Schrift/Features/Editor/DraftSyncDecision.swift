@@ -105,8 +105,19 @@ func adoptedBaseline(_ baseline: DraftBaseline?, draftTitle: String, pushingTitl
 /// editor's own `serverChanged` uses (parse → serialize), so cosmetic differences
 /// between the server's markdown export and ours (`*`→`-`, list renumbering) never
 /// read as a change.
+///
+/// **Insensitive to leaf nesting.** The server's markdown export flattens a photo
+/// or file nested under a list item to a column-zero line — and restarts the list
+/// it interrupted at the top level — while the app writes it nested
+/// (`serializeMarkdown`). Without flattening here too, a draft holding a nested
+/// leaf would never equal the server's export of the very body it pushed, and
+/// every reconcile would raise a conflict against the user's own save. So both
+/// sides go through `flattenedLikeServerExport`, the model of exactly what the
+/// export does (zeroing leaf indents alone re-attaches a second sibling after the
+/// leaf, which the export does not). Nesting a leaf therefore never counts as a
+/// body change on its own — the content and its order still do.
 func canonicalMarkdown(_ markdown: String) -> String {
-    serializeMarkdown(parseEditorBlocks(markdown))
+    serializeMarkdown(flattenedLikeServerExport(parseEditorBlocks(markdown)))
 }
 
 /// Decides how to reconcile a queued draft with the server copy fetched at sync time.

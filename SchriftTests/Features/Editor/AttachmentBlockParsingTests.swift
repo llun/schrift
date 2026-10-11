@@ -132,6 +132,18 @@ final class AttachmentBlockParsingTests: XCTestCase {
             "[f](\(url()))\n\n    indented continuation",
             "    indented continuation\n\n[f](\(url()))",
             "- item\n\n    indented\n\n[f](\(url()))",
+            // Nested under a list item: the one place a link line is classified
+            // outside `flushPending`. Its nesting is decided by shape alone, so
+            // both parses nest it and serialize it identically.
+            "- [ ] Task\n  [f](\(url()))\n- [ ] Next",
+            "- [ ] Task\n  ![a](\(url("png")))\n  [f](\(url()))",
+            "1. a\n   [f](\(url()))\n2. b",
+            "- a\n  - b\n    [f](\(url()))\n  [g](\(url("docx")))",
+            "- a\n  [f](\(url()))\n\nAfter",
+            "- a\n  [f](\(url()))\n  more prose",
+            "- a\n  [f](\(url()))\nlazy",
+            "- a\n   [f](\(url()))",
+            "- a\n  [f](\(url(origin: "https://elsewhere.example")))",
             "![a](\(url("png")))",
             "```\n[f](\(url()))\n```",
             "| [f](\(url())) |",
@@ -145,6 +157,18 @@ final class AttachmentBlockParsingTests: XCTestCase {
                 serializeMarkdown(parseEditorBlocks(markdown)),
                 "classification changed the serialized document for: \(markdown.debugDescription)")
         }
+    }
+
+    /// Structure — which blocks nest, and how deep — must not depend on the
+    /// origin either; only a nested link line's *kind* may.
+    func testNestingUnderAListItemNeverDependsOnTheOrigin() {
+        let markdown = "- [ ] Task\n  ![a](\(url("png")))\n  [f](\(url()))\n- [ ] Next"
+        let classified = parseEditorBlocks(markdown, serverOrigin: serverOrigin)
+        let plain = parseEditorBlocks(markdown)
+        XCTAssertEqual(classified.map(\.indent), [0, 1, 1, 0])
+        XCTAssertEqual(plain.map(\.indent), classified.map(\.indent))
+        XCTAssertEqual(classified[2].kind, .attachment(name: "f", url: url()))
+        XCTAssertEqual(plain[2].kind, .paragraph)
     }
 
     /// The same property stated the other way: the *canonical* form the sync

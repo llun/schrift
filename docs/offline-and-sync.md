@@ -478,6 +478,42 @@ canonicalizes (`*`→`-`, blank-line collapsing, renumbering), which would give
 every non-byte-round-tripping document an unfixable do-nothing "Updated" banner
 on every open.
 
+`canonicalMarkdown` is also **leaf-nesting insensitive**. It parses, runs the
+blocks through `flattenedLikeServerExport` and serializes. That function models what
+the server's export does to such a document: BlockNote prints a nested leaf at column
+zero and restarts the interrupted list at the top level, keeping the depth of the
+items after the break relative to the first of them. So a draft or cached body that
+the app wrote with nested leaves (`- a\n  ![p](u)\n- b`) compares equal to the flat
+export of the same content. (Just zeroing leaf indents and renormalizing would
+re-attach a second sibling after the leaf, so `T{img, Sub, Sub2}` would read as
+changed.) Without that, every save of a nested leaf would read back as a server
+change (an "Updated" banner, or a flat reinstall over the nested screen) and every
+replayed draft as a conflict. The cost is that a change that *only* nests or
+un-nests a leaf is invisible to these comparisons.
+
+Nesting comes back on a read through the **JSON read overlay**
+(`EditorViewModel.recoveringLeafNesting`, see `docs/architecture.md`): when the
+fetched markdown could hide nesting, the editor also reads the document's BlockNote
+tree and, if it matches all-or-nothing, installs the markdown with the nesting
+restored. Every fetched body passes through it before the outcome is classified,
+so the "server changed" test, the cache write-through, the baseline and
+`draftSyncDecision` all see the same body. Any failure installs the flat export.
+Because the comparisons cannot see nesting, one clean-branch rule is added: a fetch
+whose only difference from the screen is that it *adds* leaf nesting is installed on
+a clean screen outside an editing session (`fetchedMarkdownRevealsLeafNesting`), so
+a body cached flat shows its structure on the first revalidation instead of the next
+open. It compares against the blocks on screen, not the last fetched body: a reveal
+that lands mid-edit waits, and the first read after Done installs it (comparing
+against the fetched basis lost it for good, and the next edit's save un-nested the
+server). The other way takes positive evidence: the overlay answers `.recovered`,
+`.confirmedFlat` or `.unknown`, and only `.confirmedFlat` (the tree was read and
+nests no leaf) installs a flat body over a nested screen, again only clean and
+outside an editing session. An `.unknown` flat read (any failure) leaves a nested
+screen alone, and `serverCopyKeepingLeafNesting` keeps the nested spelling of the
+same content in the cache write-through and the baseline too — and in the body "Keep
+the server version" installs, checked against the cached copy — so a failed tree read
+never strands the next offline open with a flat copy.
+
 #### Revalidation phase (awaited tail of `load()`/`refresh()`, for sources 1–3 and after 4)
 
 Fetch `formatted-content`. Classification happens **when the fetch completes**

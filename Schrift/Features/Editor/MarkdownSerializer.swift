@@ -14,6 +14,13 @@ import Foundation
 /// under `- `, three under `1. ` — which is where CommonMark (and the server's
 /// own markdown export) puts a child. `parseEditorBlocks` reads the same
 /// columns back, so the nesting round-trips.
+///
+/// A nested leaf — an image, attachment or link line under a list item
+/// (`blockNestsAsLeaf`, `indent > 0`) — is written the same way, at its
+/// parent's content column with no blank line around it, which is the one
+/// spelling `parseNestedLeaf` reads back as a child:
+/// `- [ ] Task\n  ![photo.png](url)\n  [report.pdf](url)\n- [ ] Next\n`. This is
+/// the app's own spelling; the server's export flattens nested leaves instead.
 func serializeMarkdown(_ blocks: [EditorBlock]) -> String {
     let renderable = normalizedListIndents(
         blocks.filter { block in
@@ -36,6 +43,12 @@ func serializeMarkdown(_ blocks: [EditorBlock]) -> String {
         if blockIsListItem(block.kind) {
             let column = block.indent == 0 ? 0 : contentColumns[block.indent - 1]
             contentColumns = Array(contentColumns.prefix(block.indent)) + [column + listMarkerWidth(of: line)]
+            output += String(repeating: " ", count: column) + line
+        } else if isNestedLeafLike(block) {
+            // Normalization guarantees a list item (or a sibling leaf) above it,
+            // so the parent's content column is open. A leaf opens no level.
+            let column = contentColumns[block.indent - 1]
+            contentColumns = Array(contentColumns.prefix(block.indent))
             output += String(repeating: " ", count: column) + line
         } else {
             contentColumns = []
@@ -61,6 +74,17 @@ private func joinsTightly(_ first: EditorBlock, _ second: EditorBlock) -> Bool {
     if first.kind == .quote, second.kind == .quote {
         return true
     }
+    // A nested leaf binds to the list it nests in: a blank line before it would
+    // end the list, and the leaf would read back flat. After one, only another
+    // list line or nested leaf may follow tightly — anything else at column
+    // zero would read as a lazy continuation of the leaf's line, so it waits
+    // for a blank line, which `parseNestedLeaf`'s lookahead accepts.
+    if isNestedLeafLike(second) {
+        return true
+    }
+    if isNestedLeafLike(first) {
+        return blockIsListItem(second.kind)
+    }
     // Indented continuation content binds to an adjacent classified block; a
     // blank line would restructure it (e.g. turn a tight nested list loose).
     // Only classified neighbors are safe to join: a paragraph or another
@@ -72,6 +96,11 @@ private func joinsTightly(_ first: EditorBlock, _ second: EditorBlock) -> Bool {
         return true
     }
     return false
+}
+
+/// A leaf nested under a list item (`blockNestsAsLeaf` with a non-zero indent).
+private func isNestedLeafLike(_ block: EditorBlock) -> Bool {
+    block.indent > 0 && blockNestsAsLeaf(block)
 }
 
 private func isIndentedUnknown(_ block: EditorBlock) -> Bool {

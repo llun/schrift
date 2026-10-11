@@ -1074,6 +1074,20 @@ the block keeps its id, the full-overwrite save serializes the new order (no new
 markdown or Yjs shape), and the live write path sends it as `BlockNoteWrite`'s
 coarse delete + re-insert.
 
+The same drag also nests. Sliding an **image or attachment** sideways (a divider
+never nests, `blockNestsAsLeaf`) shifts its level by `round(dx / listIndentStep)`
+(`leafDragIndentSteps`, sign-flipped in right-to-left layouts, where the indent
+grows leftwards). The preview level is `leafDragPreviewIndent`: the level a plain
+move to the **live** destination would give it (`movedLeafIndent`) plus those
+steps, clamped into `leafIndentRange` evaluated in the array *after* the move
+(`leafDragIndentRange`) — so a leaf can only nest under a list item that would
+actually be above it, and can't orphan the nested siblings after it. The row
+slides by the difference from its current level with a selection tick per level;
+on release `moveBlock(blockID:to:indent:)` lands both (a slide with no new
+position moves to the same index at the new level). VoiceOver gets Indent / Outdent
+actions beside Move up / down (`indentLeaf` / `outdentLeaf`, the formatting bar's
+labels), offered only where `canIndentLeaf` / `canOutdentLeaf` hold.
+
 **Nested list items.** Bullet, numbered and checklist items nest. The editor keeps
 its flat `[EditorBlock]`; nesting is `EditorBlock.indent`, read against the blocks
 before it — an item is a child of the nearest earlier list item one level shallower,
@@ -1105,18 +1119,142 @@ diffs a flat list and `YBlockProjection` reads a nested `blockGroup` as opaque �
 a nested document stays on the classic save path: `markDirty` sets
 `hasUnmodelableLocalEdit` and never forwards an edit while any item is nested.
 
+**Media leaves nest too.** An image, a file attachment, or a paragraph that is
+exactly one `[label](url)` link (`blockNestsAsLeaf` — the attachment's origin-less
+spelling, so nesting never depends on the origin) can sit under a list item, as
+BlockNote nests any block as a child. In the flat model that is the same
+`EditorBlock.indent`: `nestingBase(of:)` says how deep the block above lets the
+next one go (a list item allows one level below itself, a nested leaf allows its
+own level, anything else allows nothing), and `normalizedListIndents` clamps list
+items and nestable leaves alike. A leaf has no subtree of its own, so a list item's
+subtree (`listSubtreeEnd`) includes the leaves nested in it and Indent/Outdent of
+the item carries them. A leaf moves with `indentingLeaf`/`outdentingLeaf`
+(`EditorViewModel.indentLeaf`/`outdentLeaf`), whose allowed range
+(`leafIndentRange`) never lets it strand the nested blocks that follow it: the
+lower bound is the next block's depth when that block is a nested list child. An
+outdent past that bound moves the leaf to the end of its parent's subtree instead.
+`moveBlock(blockID:to:indent:)` places a dropped leaf at a depth the destination
+allows (`movedLeafIndent`), and `numberedIndex` skips nested leaves so a photo under
+item 1 does not restart the numbering of item 2. Reading and editing inset leaf rows
+by the same `listIndentInset`.
+
+A nested link line is the one leaf whose nestability its own text decides, so an
+edit can take it away: typing past the link, Return inside it, merging prose into
+it, an inline marker, removing the link, converting it to a heading. Zeroing such a
+block in place would end the list there and flatten every nested sibling after it,
+so the editor moves it to the top level just past the nested run that follows
+(`detachingUnnestableBlocks`, applied before `markDirty` normalizes). An edit that
+keeps it a link line keeps its level; Return at its end lands the new empty line past
+the run (a nested paragraph has no markdown spelling); backspace at its start
+outdents it first (`outdentingLeaf`), the way a nested list item steps out before it
+merges. No content moves out of the document and no sibling loses its parent.
+
+The app writes a nested leaf tight, at its parent's content column
+(`- [ ] Task\n  ![photo.png](url)\n  [report.pdf](url)\n- [ ] Next\n`), and
+`parseNestedLeaf` reads exactly that back: spaces only, the column must equal one of
+the open items' content columns, no blank line before it, and the depth stays within
+`maxListIndent`. A conservative lookahead (`nestedLeafRunEndsSafely`) scans the run
+of sibling leaves and accepts it only when the run ends at a blank line, EOF, a
+nested list line, or a line that classifies on its own. Prose after the run would
+otherwise be a lazy continuation of the same paragraph, so in that case every line
+of the run stays verbatim. (CommonMark itself would read the app's spelling as a
+lazy continuation of the item's text; only the app's own parser ever reads it.)
+Because the server's export never writes an image or link line at a list item's
+content column directly under the item (it prints a nested leaf at column zero after
+a blank line, on every shape in `LeafNestingOverlayTests`), only the app's own
+spelling classifies here: server-authored content parses, and re-saves, to exactly
+the bytes it did before nesting existed. The queued-photo rewriter and remover
+(`markdownRewritingPendingAttachment`/`markdownRemovingPendingAttachment`) ask the
+parser which lines are the record's image blocks (`pendingAttachmentImageLines`), so
+they touch a nested placeholder line and no other indented one.
+`MarkdownYjs.blockNoteBlocks` folds the leaves into the item's
+`BlockNoteBlock.children`, and the encoder needed no change, since a nested
+`blockGroup` of leaves is just a nested group
+(`YjsEncoderTests.testListItemLeafChildrenGoInANestedBlockGroup`, generated with
+`@blocknote/server-util@0.51.4` and yjs 13.6.33 rather than the pinned 13.6.31; that
+the patch releases share the v1 encoding is an assumption, corroborated by the
+13.6.31 goldens covering the same nested-group and media-prop paths).
+
+**The server's export flattens it; the block tree restores it.** BlockNote 0.51.4's
+`blocksToMarkdownLossy` prints a nested leaf at column zero after a blank line and
+restarts the list it interrupted at the top level: `* a` with children
+`[image, * b]` exports as `* a`, the image, `* b`, all flat. Items after the break
+keep their depth relative to the first of them (`T{img, Sub{SubSub}}` exports `Sub`
+flat and `SubSub` one level under it), and an item shallower than that shift
+re-anchors it. `flattenedLikeServerExport` (`LeafNestingOverlay.swift`) is that
+model, checked against `@blocknote/server-util` on every shape in
+`LeafNestingOverlayTests`, and `canonicalMarkdown` runs both sides through it, so the
+app's nested spelling and the server's flat export of the same body compare equal
+(see `docs/offline-and-sync.md`).
+
+The markdown read therefore carries a nested leaf flat, but the document's BlockNote
+tree does not: `GET documents/{id}/formatted-content/?content_format=json` answers
+the same envelope with `content` the block array, children included. The editor's
+three content-fetch sites (open/revalidate, pull-to-refresh, "keep the server
+version") pass each fetched body through `EditorViewModel.recoveringLeafNesting`
+before `apply`/`installFetched`:
+
+1. Only when the markdown could hide nesting (`markdownMayHideLeafNesting`: a leaf
+   directly after a list item, the one shape the flattening produces) and the read
+   is still permitted does it issue the second request
+   (`DocsAPIClient.formattedContentTree`, decoded into a minimal, depth-capped
+   `BlockNoteTreeNode`). A server that answers it with a missing route or a `400`
+   is memoized per client (`contentTreeUnsupported`) and never asked again.
+2. A tree whose `updated_at` differs from the markdown's describes another write and
+   is ignored.
+3. `leafNestingOverlay` overlays it, all or nothing, and answers three ways:
+   `.recovered(markdown:)`, `.confirmedFlat` (the tree matches and nests nothing but
+   list items the export already shows) or `.unknown`. List items (by
+   kind), images (by url) and attachments (by url) are anchors; the markdown's
+   anchors in block order and the tree's in pre-order must be the same sequence,
+   every tree anchor must have only list items above it, and each anchored block
+   takes its tree depth: the flattened leaves and the list items pulled up after
+   them alike. `normalizedListIndents` must keep every target depth (a file
+   caption, which exports as a paragraph between two children, makes it fail), the
+   result must equal the markdown under `canonicalMarkdown`, which proves the tree
+   explains the markdown rather than contradicting it, and it must round-trip
+   through the parser. Media that export nothing (a docs `pdf` with the default
+   preview, an empty placeholder) are not anchors; a `video` exports image syntax and
+   anchors as an image.
+4. Any failure, at any step, is `.unknown` and installs the flat export, which is
+   the behaviour before the overlay existed. The helper never throws, so it cannot turn a successful read
+   into a teardown, and every caller still re-checks its generation and availability
+   after the extra await. The save marker taken before the first request covers
+   both.
+
+The overlaid body is what everything downstream sees: the install, the content
+cache, the baseline and draft reconciliation. A body cached flat compares equal to
+its restored revalidation, so `reconcileClean` installs a fetch that adds leaf
+nesting on a clean screen outside an editing session
+(`fetchedMarkdownRevealsLeafNesting`, compared against the blocks on screen, so a
+reveal deferred by an editing session still applies on the first read after Done).
+The reverse takes positive evidence: only a
+`.confirmedFlat` read installs a flat body over a screen that nests a leaf (a
+co-author un-nested it on the web), likewise only clean and outside an editing
+session. An `.unknown` flat read, which is what every failure produces, never
+un-nests the screen, and `serverCopyKeepingLeafNesting` keeps the nested spelling of
+the same content in the cache and the baseline as well (including the body "Keep the
+server version" installs), so a failed tree read can no longer rewrite a nested cached
+copy flat for the next offline open. Saving a nested document writes real BlockNote children. On a
+Docs 6 server a list item with nested children projects opaque, so
+`BlockNoteAlignment` never anchors it: it and its leaves are rebuilt on every save,
+which resets web-only media props (an image's `caption`, `previewWidth`,
+`textAlignment`; a file's `caption`) to their defaults.
+
 This is the part with no direct backend support, so it's called out explicitly:
 
 1. **Read**: `GET /documents/{id}/formatted-content/?content_format=markdown`. Render natively as editable rich text, mapping Markdown constructs to the design's block types (paragraph, heading, bullet list, checklist, quote).
    Reading's optional **Hide completed** preference is session-local and off by
    default. `ChecklistReadingPresentation` derives visible rows from the complete
    `[EditorBlock]`, retaining IDs and source indices; only checked checklist blocks
-   are omitted, together with the run of image/attachment leaves directly after
-   each one (the media "under" the item — only list items nest), and any list items
-   nested under a hidden item (its `indent` subtree, counted only when checked). The
-   run ends at the first non-media block, a queued photo placeholder is never
-   hidden (its card carries Retry/Remove), and the hidden count reports items
-   only. A hidden count and Show completed action remain when every checklist
+   are omitted, together with everything nested under a hidden item (its `indent`
+   subtree: list items, counted only when checked, and the photos, files and link
+   lines nested among them) and the run of indent-zero image/attachment leaves
+   directly after the item or its subtree (the server's export flattens a nested
+   photo to exactly that). A nested leaf after the subtree belongs to another parent
+   and stays. The run ends at the first block that is not flat media, a queued photo
+   placeholder is never hidden, not even inside a subtree (its card carries
+   Retry/Remove), and the hidden count reports items only. A hidden count and Show completed action remain when every checklist
    item is completed. Editing, serialization, drafts and the live replica always
    retain the full array. Preference changes never enter a dirty/save/live-write
    path, and remote updates recompute the projection instead of updating a second
@@ -1388,7 +1526,12 @@ today's behavior, and the parameter is passed only where the distinction
 matters: the encoder, and the editor.
 
 Classification happens in `flushPending`'s single-line branch, *not* in
-`parseClassifiedLine`, and that placement is the whole design. A `.attachment`
+`parseClassifiedLine`, and that placement is the whole design. (The one sanctioned
+exception is a link line nested under a list item, which `parseNestedLeaf` reads
+in the main loop. It keeps the identity below, because whether such a line nests
+depends only on its shape: it becomes `.attachment` with an origin and a `.paragraph`
+holding the same link without one, at the same indent, and both serialize back to
+the same line.) A `.attachment`
 serializes back to the identical line and joins its neighbours exactly as the
 paragraph it came from would (it is deliberately not column-zero-classified), so:
 

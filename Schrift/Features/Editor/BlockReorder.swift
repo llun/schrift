@@ -9,7 +9,9 @@ import UIKit
 /// text view, so a long press on one means nothing else; on a text row the same
 /// long press belongs to `UITextView` (caret loupe, selection), and taking it
 /// away would break text editing. Moving a leaf past text rows is what puts a
-/// photo under a checklist item, which is the case this exists for.
+/// photo under a checklist item, which is the case this exists for. Sliding an
+/// image or attachment sideways while dragging nests it under the list item
+/// above (`leafDragPreviewIndent`); a divider never nests.
 func blockIsReorderable(_ kind: BlockKind) -> Bool {
     switch kind {
     case .divider, .image, .attachment: true
@@ -50,9 +52,73 @@ struct BlockReorderDrag: Equatable {
     /// The row's centre when the drag began, in the canvas's frame space. Captured
     /// once: the row's recorded frame follows the drag offset afterwards.
     let startMidY: CGFloat
-    var translation: CGFloat = 0
+    /// Distance from where the press began, in points. The height reorders; the
+    /// width slides a nestable leaf between list levels (`leafDragIndentSteps`).
+    var translation: CGSize = .zero
 
-    var centerY: CGFloat { startMidY + translation }
+    var centerY: CGFloat { startMidY + translation.height }
+}
+
+// MARK: - Nesting while dragging
+
+/// How many list levels a horizontal drag of `translationX` points moves a leaf:
+/// the drag divided by one level's inset (`EditorBlockMetrics.listIndentStep`),
+/// rounded to the nearest level. Positive is deeper.
+///
+/// In a right-to-left layout the indent grows leftwards, so the same finger
+/// movement means the opposite number of levels.
+///
+/// The right-to-left flip is pinned by unit tests only and still needs
+/// on-device verification: it assumes the recognizer's window-space
+/// translation is *not* already mirrored under RTL, while the row's indent
+/// inset is (SwiftUI flips leading padding). If UIKit ever reports a mirrored
+/// translation here, the two flips cancel and a drag towards the indent would
+/// outdent. Check on a device with an RTL language before relying on it.
+func leafDragIndentSteps(translationX: CGFloat, step: CGFloat, layoutDirection: LayoutDirection) -> Int {
+    guard step > 0, translationX.isFinite else { return 0 }
+    // Bounded before the conversion: `Int(_:)` traps on a value it can't hold.
+    let steps = Int(min(max((translationX / step).rounded(), -1_000), 1_000))
+    return layoutDirection == .rightToLeft ? -steps : steps
+}
+
+/// The blocks as they would stand with the dragged one moved to `destination`
+/// (nil: where it is), and the index it would land at. Mirrors the move in
+/// `EditorViewModel.moveBlock`, destination clamp included, without touching the
+/// dragged block's indent (the landing level is decided afterwards).
+private func leafDragLanding(
+    blocks: [EditorBlock], blockID: UUID, destination: Int?
+) -> (blocks: [EditorBlock], index: Int, originalIndent: Int)? {
+    guard let source = blocks.firstIndex(where: { $0.id == blockID }) else { return nil }
+    let target = min(max(destination ?? source, 0), blocks.count - 1)
+    var moved = blocks
+    if target != source {
+        let block = moved.remove(at: source)
+        moved.insert(block, at: target)
+    }
+    return (moved, target, blocks[source].indent)
+}
+
+/// The levels a dragged nestable leaf may take if it were dropped at
+/// `destination` (nil: its current index) — `leafIndentRange` evaluated in the
+/// array after the move. Nil for a block that never nests (a divider).
+func leafDragIndentRange(blocks: [EditorBlock], blockID: UUID, destination: Int?) -> ClosedRange<Int>? {
+    guard let landing = leafDragLanding(blocks: blocks, blockID: blockID, destination: destination) else {
+        return nil
+    }
+    return leafIndentRange(at: landing.index, in: landing.blocks)
+}
+
+/// The level the dragged leaf shows (and takes on drop): the level a plain move
+/// to `destination` would give it (`movedLeafIndent`), shifted by the horizontal
+/// `steps` and clamped into the range that destination allows. Nil for a block
+/// that never nests.
+func leafDragPreviewIndent(blocks: [EditorBlock], blockID: UUID, destination: Int?, steps: Int) -> Int? {
+    guard let landing = leafDragLanding(blocks: blocks, blockID: blockID, destination: destination),
+        let base = movedLeafIndent(
+            at: landing.index, in: landing.blocks, originalIndent: landing.originalIndent)
+    else { return nil }
+    return movedLeafIndent(
+        at: landing.index, in: landing.blocks, originalIndent: landing.originalIndent, requested: base + steps)
 }
 
 // MARK: - The gesture
@@ -67,9 +133,9 @@ struct BlockReorderDrag: Equatable {
 /// the pan cannot start, so the canvas holds still while the block moves.
 struct BlockReorderGesture: UIGestureRecognizerRepresentable {
     var onBegan: () -> Void
-    /// Vertical distance from where the press began, in points.
-    var onChanged: (CGFloat) -> Void
-    var onEnded: (CGFloat) -> Void
+    /// Distance from where the press began, in points.
+    var onChanged: (CGSize) -> Void
+    var onEnded: (CGSize) -> Void
     var onCancelled: () -> Void
 
     /// Long enough that a plain tap on an image or attachment card still reaches it.
@@ -95,15 +161,17 @@ struct BlockReorderGesture: UIGestureRecognizerRepresentable {
     func handleUIGestureRecognizerAction(_ recognizer: UILongPressGestureRecognizer, context: Context) {
         // Measured in the window, never in the recognizer's view: the row is
         // `.offset` by the drag, so its own space moves with the finger.
-        let y = recognizer.location(in: nil).y
+        let point = recognizer.location(in: nil)
+        let start = context.coordinator.start
+        let translation = CGSize(width: point.x - start.x, height: point.y - start.y)
         switch recognizer.state {
         case .began:
-            context.coordinator.startY = y
+            context.coordinator.start = point
             onBegan()
         case .changed:
-            onChanged(y - context.coordinator.startY)
+            onChanged(translation)
         case .ended:
-            onEnded(y - context.coordinator.startY)
+            onEnded(translation)
         case .cancelled, .failed:
             onCancelled()
         default:
@@ -113,6 +181,6 @@ struct BlockReorderGesture: UIGestureRecognizerRepresentable {
 
     @MainActor
     final class Coordinator {
-        var startY: CGFloat = 0
+        var start: CGPoint = .zero
     }
 }

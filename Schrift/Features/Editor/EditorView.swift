@@ -967,7 +967,10 @@ struct EditorView: View {
                                     PendingAttachmentImageView(
                                         alt: pendingAttachmentAlt(for: block), display: display,
                                         onRetry: { retryPendingAttachment(for: block) },
-                                        onRemove: { viewModel.removePendingAttachment(blockID: block.id) })
+                                        onRemove: { viewModel.removePendingAttachment(blockID: block.id) }
+                                    )
+                                    // Inset by its nesting, as `MarkdownBlockView`'s image arm is.
+                                    .padding(.leading, EditorBlockMetrics.listIndentInset(block.indent))
                                 } else if case .checklistItem = block.kind {
                                     MarkdownBlockView(
                                         block: block, serverOrigin: serverOrigin,

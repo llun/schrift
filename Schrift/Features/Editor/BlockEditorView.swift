@@ -24,6 +24,8 @@ struct BlockEditorView<Header: View>: View {
     @ViewBuilder var header: () -> Header
 
     @Environment(LocalizationStore.self) private var loc
+    /// Flips the horizontal drag's meaning: the indent grows leftwards in RTL.
+    @Environment(\.layoutDirection) private var layoutDirection
     @State private var scrollPosition = ScrollPosition()
     /// The rows' latest frames, read when a leaf is dropped to decide where it lands.
     @State private var blockFrames: [UUID: CGRect] = [:]
@@ -129,18 +131,43 @@ struct BlockEditorView<Header: View>: View {
 }
 
 extension BlockEditorView {
-    /// Long-press-and-drag plus VoiceOver move actions for a leaf row; nothing
-    /// for a text row (see `blockIsReorderable`).
+    /// The level the leaf being dragged would take if dropped now: where the
+    /// finger is vertically picks the destination, and the horizontal slide
+    /// shifts the level from there. Nil for anything that never nests.
+    fileprivate func reorderPreviewIndent(for drag: BlockReorderDrag) -> Int? {
+        let blocks = viewModel.blocks
+        let destination = blockReorderDestination(
+            draggedID: drag.blockID, dragCenterY: drag.centerY, order: blocks.map(\.id), frames: blockFrames)
+        let steps = leafDragIndentSteps(
+            translationX: drag.translation.width, step: EditorBlockMetrics.listIndentStep,
+            layoutDirection: layoutDirection)
+        return leafDragPreviewIndent(blocks: blocks, blockID: drag.blockID, destination: destination, steps: steps)
+    }
+
+    /// Long-press-and-drag plus VoiceOver move, indent and outdent actions for a
+    /// leaf row; nothing for a text row (see `blockIsReorderable`).
     fileprivate func reorderable(_ block: EditorBlock, index: Int) -> BlockReorderRowModifier {
-        BlockReorderRowModifier(
+        let activeDrag = reorderDrag?.blockID == block.id ? reorderDrag : nil
+        let previewIndent = activeDrag.flatMap { reorderPreviewIndent(for: $0) }
+        let step = EditorBlockMetrics.listIndentStep
+        let direction: CGFloat = layoutDirection == .rightToLeft ? -1 : 1
+        return BlockReorderRowModifier(
             isEnabled: blockIsReorderable(block.kind),
-            translation: reorderDrag?.blockID == block.id ? reorderDrag?.translation : nil,
+            translation: activeDrag?.translation.height,
+            previewIndent: previewIndent,
+            horizontalOffset: previewIndent.map { CGFloat($0 - block.indent) * step * direction } ?? 0,
             canMoveUp: index > 0,
             canMoveDown: index < viewModel.blocks.count - 1,
+            canIndent: canIndentLeaf(at: index, in: viewModel.blocks),
+            canOutdent: canOutdentLeaf(at: index, in: viewModel.blocks),
             moveUpLabel: loc[.editor_move_block_up],
             moveDownLabel: loc[.editor_move_block_down],
+            indentLabel: loc[.editor_format_indent],
+            outdentLabel: loc[.editor_format_outdent],
             onMoveUp: { viewModel.moveBlock(blockID: block.id, to: index - 1) },
             onMoveDown: { viewModel.moveBlock(blockID: block.id, to: index + 1) },
+            onIndent: { _ = viewModel.indentLeaf(blockID: block.id) },
+            onOutdent: { _ = viewModel.outdentLeaf(blockID: block.id) },
             gesture: BlockReorderGesture(
                 onBegan: {
                     guard let frame = blockFrames[block.id] else { return }
@@ -153,13 +180,23 @@ extension BlockEditorView {
                 onEnded: { translation in
                     guard var drag = reorderDrag, drag.blockID == block.id else { return }
                     drag.translation = translation
+                    let blocks = viewModel.blocks
                     let destination = blockReorderDestination(
                         draggedID: block.id, dragCenterY: drag.centerY,
-                        order: viewModel.blocks.map(\.id), frames: blockFrames)
+                        order: blocks.map(\.id), frames: blockFrames)
+                    let steps = leafDragIndentSteps(
+                        translationX: translation.width, step: step, layoutDirection: layoutDirection)
+                    // A slide alone (no new position) still lands: move to the
+                    // same index at the new level. `moveBlock` is a no-op when
+                    // neither the index nor the clamped level changes.
+                    let landing = leafDragPreviewIndent(
+                        blocks: blocks, blockID: block.id, destination: destination, steps: steps)
                     withAnimation(.easeOut(duration: 0.2)) {
                         reorderDrag = nil
-                        if let destination {
-                            viewModel.moveBlock(blockID: block.id, to: destination)
+                        if destination != nil || (landing != nil && steps != 0) {
+                            viewModel.moveBlock(
+                                blockID: block.id, to: destination ?? index,
+                                indent: steps != 0 ? landing : nil)
                         }
                     }
                 },
@@ -180,12 +217,24 @@ struct BlockReorderRowModifier: ViewModifier {
     let isEnabled: Bool
     /// Non-nil while this row is the one being dragged.
     let translation: CGFloat?
+    /// The level the dragged leaf would take now; nil when not dragged or not nestable.
+    let previewIndent: Int?
+    /// How far the row slides sideways to show `previewIndent` (already
+    /// direction-adjusted), on top of the row's own indent inset.
+    let horizontalOffset: CGFloat
     let canMoveUp: Bool
     let canMoveDown: Bool
+    /// Nesting actions for VoiceOver; the drag does the same by sliding sideways.
+    let canIndent: Bool
+    let canOutdent: Bool
     let moveUpLabel: String
     let moveDownLabel: String
+    let indentLabel: String
+    let outdentLabel: String
     let onMoveUp: () -> Void
     let onMoveDown: () -> Void
+    let onIndent: () -> Void
+    let onOutdent: () -> Void
     let gesture: BlockReorderGesture
 
     func body(content: Content) -> some View {
@@ -193,14 +242,22 @@ struct BlockReorderRowModifier: ViewModifier {
             content
                 .scaleEffect(translation == nil ? 1 : 1.02)
                 .opacity(translation == nil ? 1 : 0.85)
+                .offset(x: horizontalOffset)
+                // Levels are discrete: ease the row between them rather than
+                // tracking the finger, which only the vertical offset does.
+                .animation(.easeOut(duration: 0.12), value: horizontalOffset)
                 .offset(y: translation ?? 0)
                 .zIndex(translation == nil ? 0 : 1)
                 // The press has become a drag: say so, since nothing moves until the finger does.
                 .sensoryFeedback(.impact, trigger: translation != nil) { _, isDragging in isDragging }
+                // A tick each time the slide crosses into another level.
+                .sensoryFeedback(.selection, trigger: previewIndent) { old, new in old != nil && new != nil }
                 .gesture(gesture)
                 .accessibilityActions {
                     if canMoveUp { Button(moveUpLabel, action: onMoveUp) }
                     if canMoveDown { Button(moveDownLabel, action: onMoveDown) }
+                    if canIndent { Button(indentLabel, action: onIndent) }
+                    if canOutdent { Button(outdentLabel, action: onOutdent) }
                 }
         } else {
             content
@@ -249,13 +306,17 @@ struct BlockEditorRow: View {
             // An image is a non-editable leaf, like a divider: it has no text
             // view. Backspace at the start of the following block deletes it as
             // a unit (see EditorViewModel.mergeBlockWithPrevious).
+            // Inset by its nesting — unconditionally, zero when flat — exactly as
+            // the reading surface's image arm is, so the swap never moves it.
             imageLeaf(alt: alt, url: url)
+                .padding(.leading, EditorBlockMetrics.listIndentInset(block.indent))
         } else if case .attachment(let name, let url) = block.kind {
             // Same leaf contract as an image: no text view, deletes as a unit,
             // never converted, never receives inline markers. The card is the
             // same one the reading surface draws, so an attachment looks and
             // behaves identically in both modes.
             attachmentLeaf(name: name, url: url)
+                .padding(.leading, EditorBlockMetrics.listIndentInset(block.indent))
         } else {
             // Every editable kind shares one structural shape (adornment slot
             // + text view with value-varying modifiers): converting the

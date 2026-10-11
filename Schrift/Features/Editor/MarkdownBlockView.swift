@@ -141,13 +141,18 @@ struct MarkdownBlockView: View {
                 .accessibilityLabel(loc[.editor_divider_a11y])
 
         case .image(let alt, let url):
-            if let imageURL = URL(string: url) {
-                MarkdownImageView(alt: alt, url: imageURL, serverOrigin: serverOrigin, isOffline: isOffline)
-            } else {
-                Text("![\(alt)](\(url))")
-                    .font(DocsFont.code)
-                    .foregroundStyle(theme.colors.textPrimary)
+            // Inset like a list item at the same depth — always, zero when flat —
+            // so a photo nested under an item reads as its child.
+            Group {
+                if let imageURL = URL(string: url) {
+                    MarkdownImageView(alt: alt, url: imageURL, serverOrigin: serverOrigin, isOffline: isOffline)
+                } else {
+                    Text("![\(alt)](\(url))")
+                        .font(DocsFont.code)
+                        .foregroundStyle(theme.colors.textPrimary)
+                }
             }
+            .padding(.leading, EditorBlockMetrics.listIndentInset(block.indent))
 
         case .attachment(let name, let url):
             // Classification happens in the parser now, so this arm just draws
@@ -157,13 +162,16 @@ struct MarkdownBlockView: View {
             // extension — and because a block whose url no longer matches this
             // server (a document opened after switching servers) must fall back
             // to plain link text rather than render a card it cannot load.
-            if let display = parseAttachmentLink("[\(name)](\(url))", serverOrigin: serverOrigin) {
-                AttachmentCardView(display: display, isOffline: isOffline)
-            } else {
-                Text(markdownInlineText("[\(name)](\(url))", theme: theme))
-                    .font(DocsFont.body)
-                    .foregroundStyle(theme.colors.textPrimary)
+            Group {
+                if let display = parseAttachmentLink("[\(name)](\(url))", serverOrigin: serverOrigin) {
+                    AttachmentCardView(display: display, isOffline: isOffline)
+                } else {
+                    Text(markdownInlineText("[\(name)](\(url))", theme: theme))
+                        .font(DocsFont.body)
+                        .foregroundStyle(theme.colors.textPrimary)
+                }
             }
+            .padding(.leading, EditorBlockMetrics.listIndentInset(block.indent))
 
         default:
             textRow

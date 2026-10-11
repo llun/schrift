@@ -16,12 +16,22 @@ import Foundation
 /// indentation, a line nested under prose, deeper than `maxListIndent` — stays
 /// verbatim text exactly as before.
 ///
+/// The other indented construct that classifies is a **nested leaf**: an image
+/// line, or a line that is nothing but one `[label](url)` link, indented
+/// *exactly* to the content column of an open list item directly above (no
+/// blank line between) — the app's own spelling of a photo or a file nested
+/// under a list item, as BlockNote nests them (`parseNestedLeaf`). It is read
+/// conservatively: only when what follows it cannot be a lazy continuation of
+/// it. The server's markdown export never writes this shape — it flattens a
+/// nested leaf to a column-zero line after a blank one, which still parses flat.
+///
 /// Intentional canonicalizations (lossy on re-serialize):
 /// - runs of blank lines collapse to a single separator
 /// - `*` bullets become `-`; `N)` ordered markers become `N.`; ordered runs renumber from 1
 /// - trailing whitespace on classified lines is trimmed (never inside code/unknown blocks)
 /// - dividers of any length/character normalize to `---`
-/// - a nested list item's indentation normalizes to its parent's content column
+/// - a nested list item's (or nested leaf's) indentation normalizes to its parent's content column
+///
 /// `serverOrigin` enables attachment classification, and defaults to "" — which
 /// classifies nothing, so every existing caller keeps exactly today's behavior.
 /// Pass it only where the distinction matters: the encoder (a `.attachment`
@@ -38,10 +48,32 @@ import Foundation
 /// in `parseClassifiedLine` instead and the identity breaks: an attachment line
 /// adjacent to prose would split into two blocks under one parse and stay a
 /// single `.unknown` under the other.
+///
+/// **The one sanctioned exception is a nested leaf** (`parseNestedLeaf`): an
+/// indented link line under a list item is classified outside `flushPending`,
+/// because it is a child block rather than a pending paragraph. It keeps the
+/// identity by deciding *structure* without the origin — whether the line
+/// becomes a nested child at all depends only on its origin-free shape
+/// (`attachmentLinkShape`) — and letting the origin choose only the child's
+/// kind: `.attachment` with one, `.paragraph` carrying the same link without.
+/// Both nest alike (`blockNestsAsLeaf`) and serialize to the same line.
 func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [EditorBlock] {
-    var blocks: [EditorBlock] = []
+    parseEditorBlocksTracingLines(markdownLines(markdown), serverOrigin: serverOrigin).map(\.block)
+}
+
+/// `parseEditorBlocks` over lines already split by `markdownLines`, with the index of the line
+/// each block starts on.
+///
+/// The line index is what lets a targeted rewrite of the source (the queued-photo rewriter and
+/// remover below) touch **exactly** the lines the parser classified — never a second, hand-kept
+/// copy of its rules, which would drift: an indented image line is an image block only at an
+/// open list item's content column with a safe run after it (`parseNestedLeaf`), and verbatim
+/// text (indented code, say) everywhere else.
+private func parseEditorBlocksTracingLines(
+    _ lines: [String], serverOrigin: String
+) -> [(block: EditorBlock, line: Int)] {
+    var blocks: [(block: EditorBlock, line: Int)] = []
     var pendingLines: [String] = []
-    let lines = markdownLines(markdown)
     var index = 0
     // Content columns of the open list items, outermost first: what a nested
     // item's indentation is measured against. Empty whenever the previous line
@@ -52,15 +84,18 @@ func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [Editor
     func flushPending() {
         guard !pendingLines.isEmpty else { return }
         defer { pendingLines = [] }
+        // Every pending line was consumed one by one, so the run started this many lines back.
+        let start = index - pendingLines.count
         if pendingLines.count == 1, isPlainParagraphLine(pendingLines[0]) {
             let text = pendingLines[0].trimmingCharacters(in: .whitespaces)
             if let attachment = parseAttachmentLink(text, serverOrigin: serverOrigin) {
-                blocks.append(EditorBlock(kind: .attachment(name: attachment.name, url: attachment.urlString)))
+                blocks.append(
+                    (EditorBlock(kind: .attachment(name: attachment.name, url: attachment.urlString)), start))
             } else {
-                blocks.append(EditorBlock(kind: .paragraph, text: text))
+                blocks.append((EditorBlock(kind: .paragraph, text: text), start))
             }
         } else {
-            blocks.append(EditorBlock(kind: .unknown, text: pendingLines.joined(separator: "\n")))
+            blocks.append((EditorBlock(kind: .unknown, text: pendingLines.joined(separator: "\n")), start))
         }
     }
 
@@ -76,7 +111,19 @@ func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [Editor
         }
 
         if pendingLines.isEmpty, let nested = parseNestedListItem(line, contentColumns: &listContentColumns) {
-            blocks.append(nested)
+            blocks.append((nested, index))
+            index += 1
+            continue
+        }
+
+        if pendingLines.isEmpty,
+            let leaf = parseNestedLeaf(line, contentColumns: listContentColumns, serverOrigin: serverOrigin),
+            nestedLeafRunEndsSafely(lines, after: index, contentColumns: Array(listContentColumns.prefix(leaf.indent)))
+        {
+            blocks.append((leaf, index))
+            // A leaf opens no level of its own: what follows nests at most
+            // beside it, under the same parent.
+            listContentColumns = Array(listContentColumns.prefix(leaf.indent))
             index += 1
             continue
         }
@@ -84,6 +131,7 @@ func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [Editor
         if let fence = parseCodeFenceOpening(line) {
             flushPending()
             listContentColumns = []
+            let start = index
             index += 1
             var content: [String] = []
             while index < lines.count, !closesCodeFence(lines[index], openingLength: fence.length) {
@@ -94,14 +142,14 @@ func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [Editor
                 index += 1
             }
             blocks.append(
-                EditorBlock(kind: .codeBlock(language: fence.language), text: content.joined(separator: "\n")))
+                (EditorBlock(kind: .codeBlock(language: fence.language), text: content.joined(separator: "\n")), start))
             continue
         }
 
         if isDividerLine(trimmed), line.first != " ", line.first != "\t" {
             flushPending()
             listContentColumns = []
-            blocks.append(EditorBlock(kind: .divider))
+            blocks.append((EditorBlock(kind: .divider), index))
             index += 1
             continue
         }
@@ -109,7 +157,7 @@ func parseEditorBlocks(_ markdown: String, serverOrigin: String = "") -> [Editor
         if let block = parseClassifiedLine(line) {
             flushPending()
             listContentColumns = blockIsListItem(block.kind) ? [listMarkerWidth(of: line)] : []
-            blocks.append(block)
+            blocks.append((block, index))
             index += 1
             continue
         }
@@ -179,6 +227,13 @@ private func canonicalizeLine(_ line: String) -> String {
     {
         return serializeBlock(block, numberedIndex: 1)
     }
+    // A nested leaf is re-indented the same way, so it too compares unindented.
+    // Applied to every indented leaf-shaped line, classified or not: a line kept
+    // verbatim keeps its indentation on both sides, so both sides canonicalize
+    // it alike.
+    if unindented.count < line.count, isNestedLeafShape(String(unindented)) {
+        return rstrip(String(unindented))
+    }
     return rstrip(line)
 }
 
@@ -202,6 +257,78 @@ private func parseNestedListItem(_ line: String, contentColumns: inout [Int]) ->
     block.indent = parent + 1
     contentColumns = Array(contentColumns.prefix(parent + 1)) + [leading + listMarkerWidth(of: rest)]
     return block
+}
+
+/// An image line, or a line that is a single `[label](url)` link and nothing
+/// else — what may nest under a list item as a leaf. Origin-free: this decides
+/// structure, and structure must not depend on the origin.
+private func isNestedLeafShape(_ rest: String) -> Bool {
+    if parseImageLine(rest) != nil { return true }
+    return isPlainParagraphLine(rest) && attachmentLinkShape(rstrip(rest)) != nil
+}
+
+/// An image or link line indented *exactly* to the content column of an open
+/// list item, as a leaf nested one level under that item — or nil, leaving the
+/// line to the paths that ran before nested leaves existed.
+///
+/// Stricter than `parseNestedListItem` on purpose: an exact column, not a band,
+/// because the app's serializer is the only writer of this shape and always
+/// writes the exact column; anything else stays verbatim. Spaces only, never a
+/// tab, and no deeper than `maxListIndent`.
+///
+/// The kind is the one thing the origin decides: an image line is an `.image`;
+/// a link line is an `.attachment` when `parseAttachmentLink` accepts it against
+/// `serverOrigin` and a `.paragraph` carrying the link otherwise. Whether the
+/// line nests at all never depends on the origin, which is what keeps an
+/// origin-aware parse and an origin-less one serializing identically.
+private func parseNestedLeaf(_ line: String, contentColumns: [Int], serverOrigin: String) -> EditorBlock? {
+    guard !contentColumns.isEmpty, line.first == " " else { return nil }
+    let leading = line.prefix { $0 == " " }.count
+    let rest = String(line.dropFirst(leading))
+    guard let parent = contentColumns.firstIndex(of: leading), parent + 1 <= maxListIndent else { return nil }
+    if let image = parseImageLine(rest) {
+        return EditorBlock(kind: .image(alt: image.alt, url: image.url), indent: parent + 1)
+    }
+    let link = rstrip(rest)
+    guard isPlainParagraphLine(rest), attachmentLinkShape(link) != nil else { return nil }
+    if let attachment = parseAttachmentLink(link, serverOrigin: serverOrigin) {
+        return EditorBlock(kind: .attachment(name: attachment.name, url: attachment.urlString), indent: parent + 1)
+    }
+    return EditorBlock(kind: .paragraph, text: link, indent: parent + 1)
+}
+
+/// Whether the nested leaf on line `index` — together with any further nested
+/// leaves straight after it — is followed by something that cannot be read as
+/// a lazy continuation of it: the end of the document, a blank line, a
+/// column-zero fence, divider or classified line, or a nested list item.
+///
+/// Anything else (indented prose, a column-zero paragraph) would make the run
+/// one paragraph in CommonMark, so the leaf declines and the whole run takes
+/// the verbatim path it took before nested leaves existed. Scanning the *run*
+/// rather than one line ahead is what makes that all-or-nothing: a leaf is
+/// never classified while the sibling after it falls to verbatim text, which
+/// would split one source paragraph into two blocks.
+///
+/// `contentColumns` is the list as it stands *after* the leaf on `index`.
+private func nestedLeafRunEndsSafely(_ lines: [String], after index: Int, contentColumns: [Int]) -> Bool {
+    var columns = contentColumns
+    var cursor = index + 1
+    while cursor < lines.count {
+        let next = lines[cursor]
+        let trimmed = next.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return true }
+        var listColumns = columns
+        if parseNestedListItem(next, contentColumns: &listColumns) != nil { return true }
+        if let sibling = parseNestedLeaf(next, contentColumns: columns, serverOrigin: "") {
+            columns = Array(columns.prefix(sibling.indent))
+            cursor += 1
+            continue
+        }
+        if parseCodeFenceOpening(next) != nil { return true }
+        if isDividerLine(trimmed), next.first != " ", next.first != "\t" { return true }
+        return parseClassifiedLine(next) != nil
+    }
+    return true
 }
 
 private func rstrip(_ line: String) -> String {
@@ -339,22 +466,14 @@ func markdownRewritingPendingAttachment(
 ) -> String {
     guard markdown.range(of: pendingAttachmentURLPrefix, options: .caseInsensitive) != nil else { return markdown }
     var lines = markdownLinesWithTerminators(markdown)
-    var openFenceLength: Int?
 
-    for index in lines.indices {
+    // The lines the parser itself reads as this record's image block — so a column-zero image
+    // line, and an indented one exactly where the parser nests it under a list item, and
+    // nothing else: not one inside a code fence, and not an indented code line that merely
+    // spells one (a rewrite there would change verbatim text the hold never counted).
+    for index in pendingAttachmentImageLines(lines.map(\.content), localID: localID) {
         let line = lines[index].content
-
-        if let length = openFenceLength {
-            if closesCodeFence(line, openingLength: length) { openFenceLength = nil }
-            continue
-        }
-        if let fence = parseCodeFenceOpening(line) {
-            openFenceLength = fence.length
-            continue
-        }
-        guard let image = parseImageLine(line),
-            pendingAttachmentID(fromPlaceholderURL: image.url) == localID
-        else { continue }
+        guard let image = parseImageLine(String(line.drop { $0 == " " })) else { continue }
         // Replace the destination as it is actually spelled on the line, searching backwards so
         // an alt text that happens to spell the same placeholder is left alone — the destination
         // is the last occurrence by construction.
@@ -376,31 +495,27 @@ func markdownRewritingPendingAttachment(
 /// Takes the line's terminator with it so removal doesn't leave a stray blank line behind.
 func markdownRemovingPendingAttachment(_ markdown: String, localID: UUID) -> String {
     guard markdown.range(of: pendingAttachmentURLPrefix, options: .caseInsensitive) != nil else { return markdown }
-    var lines = markdownLinesWithTerminators(markdown)
-    var openFenceLength: Int?
-    var kept: [(content: String, terminator: String)] = []
+    let lines = markdownLinesWithTerminators(markdown)
+    // Exactly the lines the parser reads as this record's image block — see the rewriter above.
+    let removed = pendingAttachmentImageLines(lines.map(\.content), localID: localID)
+    return lines.indices.filter { !removed.contains($0) }.map { lines[$0].content + lines[$0].terminator }.joined()
+}
 
-    for line in lines {
-        if let length = openFenceLength {
-            if closesCodeFence(line.content, openingLength: length) { openFenceLength = nil }
-            kept.append(line)
-            continue
-        }
-        if let fence = parseCodeFenceOpening(line.content) {
-            openFenceLength = fence.length
-            kept.append(line)
-            continue
-        }
-        if let image = parseImageLine(line.content),
-            pendingAttachmentID(fromPlaceholderURL: image.url) == localID
-        {
-            continue
-        }
-        kept.append(line)
-    }
-
-    lines = kept
-    return lines.map { $0.content + $0.terminator }.joined()
+/// The indices of the lines `parseEditorBlocks` reads as an image block naming `localID`.
+///
+/// Asked of the parser rather than re-derived, because the hold predicate
+/// (`markdownReferencesPendingAttachment`) *is* the parser: whatever it counts as this record's
+/// image, the rewriter must rewrite and the remover must remove, and nothing else. A column-zero
+/// image line, or an indented one at an open list item's content column (a photo nested under
+/// an item); never a line inside a code fence, and never an indented line the parser keeps
+/// verbatim — indented code, or an image line under prose.
+private func pendingAttachmentImageLines(_ lines: [String], localID: UUID) -> Set<Int> {
+    Set(
+        parseEditorBlocksTracingLines(lines, serverOrigin: "").compactMap { entry in
+            guard case .image(_, let url) = entry.block.kind, pendingAttachmentID(fromPlaceholderURL: url) == localID
+            else { return nil }
+            return entry.line
+        })
 }
 
 /// Splits into (content, terminator) pairs, so rejoining reproduces the input byte for byte.

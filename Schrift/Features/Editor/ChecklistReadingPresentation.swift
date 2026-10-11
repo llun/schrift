@@ -3,15 +3,20 @@ import Foundation
 /// A disposable reading projection. The editor, serializer and collaboration bridge
 /// always own the full source array; the source index also preserves numbered runs.
 ///
-/// Hiding a completed item also hides what belongs to it. First, the list items nested
-/// under it (its `indent` subtree): they are part of that item, and left on screen they
-/// would draw indented under whichever unrelated item precedes the hidden one. Then the
-/// media after it: the run of image and attachment leaves directly following the item
-/// (or its subtree) — only list items nest, so a photo "under" a checked item is the
-/// leaf that follows it. The media run ends at the first block that is not media, so
-/// prose, headings and other items are never hidden; a queued photo also ends it and
-/// stays visible. `hiddenCount` still counts completed items only — every checked item
-/// hidden, nested ones included — it is what the "Completed items hidden" notice reports.
+/// Hiding a completed item also hides what belongs to it. First, everything nested
+/// under it (its `indent` subtree): list items and the photos, files and link lines
+/// nested among them (`blockNestsAsLeaf`) are part of that item, and left on screen they
+/// would draw indented under whichever unrelated item precedes the hidden one. A queued
+/// photo inside the subtree is the exception — it stays visible (see below) without
+/// ending the subtree. Then the flat media after it: the run of indent-zero image and
+/// attachment leaves directly following the item (or its subtree) — the server's
+/// markdown export flattens a photo nested under an item to the leaf that follows it, so
+/// that is still read as belonging to the item. A *nested* leaf after the subtree is a
+/// sibling of the hidden item, under another parent, and stays. The media run ends at
+/// the first block that is not flat media, so prose, headings and other items are never
+/// hidden; a queued photo also ends it and stays visible. `hiddenCount` still counts
+/// completed items only — every checked item hidden, nested ones included — it is what
+/// the "Completed items hidden" notice reports.
 struct ChecklistReadingPresentation {
     struct Row: Identifiable {
         let sourceIndex: Int
@@ -30,8 +35,13 @@ struct ChecklistReadingPresentation {
         // The depth of the completed item whose nested items are being hidden, if any.
         var hiddenSubtreeDepth: Int?
         for (index, block) in blocks.enumerated() {
-            if let depth = hiddenSubtreeDepth, blockIsListItem(block.kind), block.indent > depth {
+            if let depth = hiddenSubtreeDepth, blockIsListItem(block.kind) || blockNestsAsLeaf(block),
+                block.indent > depth
+            {
                 if case .checklistItem(checked: true) = block.kind { hiddenCount += 1 }
+                // A queued photo keeps its Retry/Remove card reachable, but the
+                // subtree it sits in goes on hiding around it.
+                if isQueuedPhoto(block.kind) { rows.append(Row(sourceIndex: index, block: block)) }
                 continue
             }
             hiddenSubtreeDepth = nil
@@ -41,7 +51,7 @@ struct ChecklistReadingPresentation {
                 hiddenSubtreeDepth = block.indent
                 continue
             }
-            if hidingAttachedMedia, isChecklistAttachedMedia(block.kind) { continue }
+            if hidingAttachedMedia, block.indent == 0, isChecklistAttachedMedia(block.kind) { continue }
             hidingAttachedMedia = false
             rows.append(Row(sourceIndex: index, block: block))
         }
@@ -51,9 +61,16 @@ struct ChecklistReadingPresentation {
     }
 }
 
+/// A queued photo (`schrift-attachment://` placeholder): its card carries the Retry/Remove
+/// actions and the "missing" state, which must stay reachable while reading — so it is
+/// never hidden, not even inside a completed item's subtree.
+private func isQueuedPhoto(_ kind: BlockKind) -> Bool {
+    guard case .image(_, let url) = kind else { return false }
+    return pendingAttachmentID(fromPlaceholderURL: url) != nil
+}
+
 /// The leaves that ride along with the checklist item above them when it is hidden.
-/// A queued photo (`schrift-attachment://` placeholder) never does: its card carries the
-/// Retry/Remove actions and the "missing" state, which must stay reachable while reading.
+/// A queued photo never does (`isQueuedPhoto`).
 private func isChecklistAttachedMedia(_ kind: BlockKind) -> Bool {
     switch kind {
     case .image(_, let url): pendingAttachmentID(fromPlaceholderURL: url) == nil
