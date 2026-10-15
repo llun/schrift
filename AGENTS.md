@@ -4276,8 +4276,8 @@ Do **not** do any of the following without explicit human sign-off:
 - **Never introduce arbitrary code execution or destructive shell/git
   operations** — no `eval` of remote input, `curl | bash`, `rm -rf`,
   `git push --force` to shared branches, force-adding ignored files, or history
-  rewrites. Keep `set -euo pipefail` and the `chmod 600` / `umask 077` /
-  temp-key-cleanup handling in `scripts/bootstrap-testflight.sh`.
+  rewrites. Keep `set -euo pipefail`, `umask 077` and the
+  token-via-stdin handling (`gh secret set` fed by `printf`) in `scripts/bootstrap-testflight.sh`.
 
 When a requested change would require crossing one of these lines, stop and ask a
 human first.

@@ -343,6 +343,11 @@ platform :ios do
         keychain_name: "login.keychain"
       )
     end
+    if ENV["CI"] || ENV["DIST_CERT_P12"]
+      signing_keychain = ENV["CI"] ? ENV["MATCH_KEYCHAIN_NAME"] : "login.keychain"
+      identities = sh("security", "find-identity", "-v", "-p", "codesigning", signing_keychain, log: false)
+      UI.user_error!("No Apple Distribution identity in #{signing_keychain}; check the .p12 and its password") unless identities.include?("Apple Distribution")
+    end
     install_provisioning_profile(path: ENV["PROVISIONING_PROFILE"]) if ENV["PROVISIONING_PROFILE"]
 
     # Point the (freshly regenerated) project at the App Store profile with manual
@@ -508,11 +513,14 @@ platform :ios do
       password_file = File.join(out, "distribution.p12.password")
       File.write(password_file, p12_password)
       FileUtils.chmod(0o600, password_file)
-      sh("security", "export", "-k", keychain_path, "-t", "identities", "-f", "pkcs12", "-P", p12_password, "-o", p12)
+      sh("security", "export", "-k", keychain_path, "-t", "identities", "-f", "pkcs12", "-P", p12_password, "-o", p12, log: false)
       FileUtils.chmod(0o600, p12)
 
+      Spaceship::ConnectAPI::Profile.all(filter: { name: PROFILE_NAME }).each(&:delete!)
       sigh(
         api_key: api_key,
+        cert_id: ENV["CER_CERTIFICATE_ID"],
+        fail_on_name_taken: true,
         app_identifier: APP_IDENTIFIER,
         output_path: out,
         filename: "appstore.mobileprovision",

@@ -25,8 +25,7 @@ key="Schrift App Store Connect API Key"
 ASC_KEY_ID="$(op read "op://$vault/$key/key_id")"
 ASC_ISSUER_ID="$(op read "op://$vault/$key/issuer_id")"
 DEVELOPER_TEAM_ID="$(op read "op://$vault/$key/team_id")"
-# The .p12 password may legitimately be empty, and `op read` fails on an empty field.
-DIST_CERT_PASSWORD="$(op read "op://$vault/Schrift Distribution Certificate Password/password" 2>/dev/null || true)"
+DIST_CERT_PASSWORD="$(op read "op://$vault/Schrift Distribution Certificate Password/password")"
 
 DIST_CERT_P12="$dir/distribution.p12"
 PROVISIONING_PROFILE="$dir/appstore.mobileprovision"
@@ -34,6 +33,7 @@ ASC_KEY_P8="$dir/AuthKey.p8"
 
 for name in DIST_CERT_P12 DIST_CERT_PASSWORD PROVISIONING_PROFILE ASC_KEY_P8 ASC_KEY_ID ASC_ISSUER_ID DEVELOPER_TEAM_ID; do
   value="${!name}"
+  case "$value" in *$'\n'* | *$'\r'*) echo "error: $name contains a newline" >&2; exit 1 ;; esac
   if [ -n "${GITHUB_ENV:-}" ]; then
     case "$name" in
       DIST_CERT_P12 | PROVISIONING_PROFILE | ASC_KEY_P8) ;;

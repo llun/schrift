@@ -51,7 +51,7 @@ item names are fixed — `scripts/fetch-signing.sh` reads them verbatim:
 | Item (type) | Contents |
 | --- | --- |
 | `Schrift Distribution Certificate` (Document) | the Apple Distribution identity as a `.p12` |
-| `Schrift Distribution Certificate Password` (Password) | field `password` = the `.p12` password (may be empty) |
+| `Schrift Distribution Certificate Password` (Password) | field `password` = the `.p12` password |
 | `Schrift App Store Profile` (Document) | the App Store `.mobileprovision`; its profile *name* stays `match AppStore dev.llun.Schrift` (the `PROFILE_NAME` constant in the Fastfile) |
 | `Schrift App Store Connect API Key` (API Credential) | text fields `key_id`, `issuer_id`, `team_id` (Developer Team ID) plus the attached file `AuthKey.p8` |
 | `Schrift Match Passphrase` (Password) | archival only (the old match repo passphrase); nothing reads it |
@@ -61,8 +61,8 @@ item names are fixed — `scripts/fetch-signing.sh` reads them verbatim:
 1. In 1Password, create a **service account** with **read-only** access to the
    `Schrift` vault and nothing else.
 2. Store its token as the repo's single secret:
-   `OP_SERVICE_ACCOUNT_TOKEN=... ./scripts/bootstrap-testflight.sh`
-   (or `OP_TOKEN_REF='op://…' ./scripts/bootstrap-testflight.sh`).
+   `OP_TOKEN_REF='op://…' ./scripts/bootstrap-testflight.sh` (the script reads
+   the token with `op read`, so it never appears on the command line).
 
 `testflight.yml` installs the `op` CLI and runs `scripts/fetch-signing.sh`, which
 writes the files under `$RUNNER_TEMP/signing`, masks every value and exports
@@ -238,8 +238,9 @@ Signed in to the 1Password CLI (`op signin`), load the signing environment and
 run the lane:
 
 ```sh
-eval "$(scripts/fetch-signing.sh "$(mktemp -d)")"
+d="$(mktemp -d)"; eval "$(scripts/fetch-signing.sh "$d")"
 bundle exec fastlane beta
+rm -rf "$d"
 ```
 
 The `.p12` is imported into your login keychain and the profile installed. Delete
@@ -279,8 +280,11 @@ the temp directory afterwards.
   but not on CI, pin the runner's Xcode in the `setup-xcode` step to match yours.
 - **Certificate renewal / first-time signing assets (~yearly)**: run the
   `bootstrap` lane locally with `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` (path
-  to the `.p8`) and `DEVELOPER_TEAM_ID` exported (e.g. from the vault via
-  `eval "$(scripts/fetch-signing.sh "$(mktemp -d)")"`) and optionally
+  to the `.p8`) and `DEVELOPER_TEAM_ID` exported (when renewing, from the vault via
+  `d="$(mktemp -d)"; eval "$(scripts/fetch-signing.sh "$d")"; …; rm -rf "$d"`;
+  for the first-time bootstrap the certificate/profile items don't exist yet, so
+  `fetch-signing.sh` can't be used — export `ASC_KEY_ID`/`ASC_ISSUER_ID`/`ASC_KEY_P8`
+  by hand: `op read` the fields and `op read --out-file` the `.p8`) and optionally
   `SIGNING_OUT=<dir>`. It registers the App ID if missing, creates a distribution
   certificate (`cert`) in a throwaway keychain, exports it as `distribution.p12`
   with a generated password (written to `distribution.p12.password`, mode 600),
@@ -315,3 +319,11 @@ device's UDID, export an **Ad Hoc** `.ipa`, host it with a `manifest.plist` on
 any HTTPS URL, and install via an `itms-services://` link. Capped at 100
 devices/type per year, no auto-update — TestFlight is preferred. Ask and this
 pipeline can grow an `adhoc` lane.
+
+## After migrating
+
+Once CI ships from the vault:
+
+- delete the old repo secrets: `for s in ASC_ISSUER_ID ASC_KEY_CONTENT ASC_KEY_ID DEVELOPER_TEAM_ID MATCH_GIT_URL MATCH_PASSWORD MATCH_SSH_PRIVATE_KEY; do gh secret delete "$s"; done`;
+- revoke the previous App Store Connect API key in App Store Connect;
+- delete the old match certificates repo.
