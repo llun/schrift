@@ -1,0 +1,25 @@
+AGENTS.md
+  s_a7c14dee90b8fd::t_82a1f7bb2627d0 4279-4280
+scripts/fetch-signing.sh
+  s_a7c14dee90b8fd::t_82a1f7bb2627d0 28,36
+docs/testflight-setup.md
+  s_a7c14dee90b8fd::t_82a1f7bb2627d0 54,64-65,241,243,283-287,322-329
+fastlane/Fastfile
+  s_a7c14dee90b8fd::t_82a1f7bb2627d0 346-350,516,519,522-523
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b1845bde327d64c83bf310af54ce401d2dd094c",
+  "prompts": {},
+  "sessions": {
+    "s_a7c14dee90b8fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bfe2b93b-3a3a-4f52-bcd9-5b24557d035b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
