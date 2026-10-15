@@ -112,4 +112,4 @@ version, builds + uploads, then tags `v<version>` and cuts a GitHub Release.
 Write PR titles as Conventional Commits (`feat:` → minor, `feat!`/`BREAKING
 CHANGE` → major, otherwise patch) so the version bump is right. See
 [`docs/testflight-setup.md`](docs/testflight-setup.md) for the one-time setup
-(Apple Developer enrollment, signing, and secrets).
+(Apple Developer enrollment, the 1Password signing vault, and the one CI secret).

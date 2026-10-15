@@ -18,8 +18,12 @@ name: TestFlight
 # either. You can still ship manually from the Actions tab (workflow_dispatch);
 # add `[skip ci]` to a commit message to skip a build.
 #
+# Signing material and ASC credentials come from the 1Password `Schrift` vault,
+# read by a service account whose token (OP_SERVICE_ACCOUNT_TOKEN) is the only
+# GitHub secret used here (docs/testflight-setup.md).
+#
 # NOTE: never add a `pull_request` / `pull_request_target` trigger here — it
-# would expose the signing secrets below to fork PRs.
+# would expose the 1Password token (and so the signing secrets) to fork PRs.
 on:
   push:
     branches: [main]
@@ -43,14 +47,6 @@ jobs:
     timeout-minutes: 90
 
     env:
-      # --- App Store Connect API key (auth + signing + upload) ---
-      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-      ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}   # base64 of the .p8 file
-      # --- Signing (fastlane match) ---
-      DEVELOPER_TEAM_ID: ${{ secrets.DEVELOPER_TEAM_ID }}
-      MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
-      MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
       # --- Build metadata ---
       BUILD_NUMBER: ${{ github.run_number }}
 
@@ -107,20 +103,21 @@ jobs:
           # Ruby version is read from .ruby-version (kept in sync with local dev)
           bundler-cache: true
 
-      - name: Set up SSH access to the certificates repo
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "$MATCH_SSH_PRIVATE_KEY" > ~/.ssh/match_ed25519
-          chmod 600 ~/.ssh/match_ed25519
-          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+      # Signing material and App Store Connect credentials live in the 1Password
+      # `Schrift` vault; the one GitHub secret is the (read-only, vault-scoped)
+      # service account token. The script masks every value and exports them via
+      # $GITHUB_ENV for the fastlane steps below.
+      - uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
+
+      - name: Fetch signing material from 1Password
+        run: bash scripts/fetch-signing.sh "$RUNNER_TEMP/signing"
         env:
-          MATCH_SSH_PRIVATE_KEY: ${{ secrets.MATCH_SSH_PRIVATE_KEY }}
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
 
       - name: Build & upload
         id: upload
         run: bundle exec fastlane beta
         env:
-          GIT_SSH_COMMAND: "ssh -i ~/.ssh/match_ed25519 -o IdentitiesOnly=yes"
           MARKETING_VERSION: ${{ steps.version.outputs.version }}
 
       # The tag + release steps only run if the build & upload above succeeded,

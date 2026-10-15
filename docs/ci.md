@@ -5,7 +5,7 @@ Schrift has two CI concerns, deliberately kept in **separate workflows**:
 | Workflow | Trigger | Purpose | Secrets |
 |---|---|---|---|
 | [`.github/workflows/pr-checks.yml`](../.github/workflows/pr-checks.yml) | `pull_request` → `main`, `push` → `main`, `workflow_dispatch` | Build + run the full XCTest suite | **None — and it must stay that way** |
-| [`.github/workflows/testflight.yml`](../.github/workflows/testflight.yml) | `push` → `main`, `workflow_dispatch` | Signed Release build → TestFlight → tag + GitHub Release | Signing/ASC secrets |
+| [`.github/workflows/testflight.yml`](../.github/workflows/testflight.yml) | `push` → `main`, `workflow_dispatch` | Signed Release build → TestFlight → tag + GitHub Release | `OP_SERVICE_ACCOUNT_TOKEN` (1Password) |
 
 Never merge the two: `testflight.yml` must never gain a `pull_request` /
 `pull_request_target` trigger (it would expose signing secrets to fork PRs), and
@@ -143,7 +143,7 @@ mutable tag, with the human-readable version in a trailing comment
 (`actions/checkout@<sha> # v7.0.1`). A tag can be moved to point at new code; a
 SHA cannot, so a compromised or retargeted upstream tag can't silently change
 what runs — this matters most in `testflight.yml`, which holds the signing
-secrets, so its third-party actions (`maxim-lobanov/setup-xcode`,
+secrets, so its third-party actions (`maxim-lobanov/setup-xcode`, `1password/install-cli-action`,
 `ruby/setup-ruby`) are the highest-value pins.
 
 [`.github/dependabot.yml`](../.github/dependabot.yml) opens a monthly PR when a
