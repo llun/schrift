@@ -19,7 +19,7 @@ targets:
     platform: iOS
     # Local dev signing: pulls in a git-ignored Local.xcconfig (via
     # Signing.xcconfig's optional include) so a Team ID is never committed.
-    # CI overrides this with match — see fastlane/Fastfile.
+    # CI overrides this with the 1Password-sourced profile — see fastlane/Fastfile.
     configFiles:
       Debug: Signing.xcconfig
       Release: Signing.xcconfig

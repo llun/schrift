@@ -3,6 +3,9 @@ default_platform(:ios)
 APP_IDENTIFIER = "dev.llun.Schrift"
 XCODE_PROJECT  = "Schrift.xcodeproj"
 SCHEME         = "Schrift"
+# The App Store profile's name on the Developer Portal. It keeps the "match" prefix
+# because it is the profile fastlane match originally created; the profile now lives
+# in 1Password (scripts/fetch-signing.sh) and match is no longer used.
 PROFILE_NAME   = "match AppStore dev.llun.Schrift"
 
 # How many times to attempt the TestFlight upload, and how long to wait between
@@ -306,16 +309,16 @@ def connect_api_key
   app_store_connect_api_key(
     key_id: ENV["ASC_KEY_ID"],
     issuer_id: ENV["ASC_ISSUER_ID"],
-    key_content: ENV["ASC_KEY_CONTENT"],
-    is_key_content_base64: true
+    key_filepath: File.expand_path(ENV["ASC_KEY_P8"])
   )
 end
 
 platform :ios do
   desc "Build a Release archive and upload it to TestFlight"
   lane :beta do
-    # On CI, create a throwaway keychain so `match` can import the signing
-    # certificate without touching (or being blocked by) the login keychain.
+    # On CI, create a throwaway keychain so the signing certificate can be imported
+    # without touching (or being blocked by) the login keychain. setup_ci also sets
+    # MATCH_KEYCHAIN_NAME / MATCH_KEYCHAIN_PASSWORD, which we reuse below.
     setup_ci if ENV["CI"]
 
     api_key = connect_api_key
@@ -324,16 +327,25 @@ platform :ios do
     # (fastlane runs from the fastlane/ dir, so hop up to the repo root.)
     sh("cd .. && xcodegen generate")
 
-    # Fetch (readonly on CI) the distribution cert + provisioning profile
-    # from the private match repo.
-    match(
-      type: "appstore",
-      app_identifier: APP_IDENTIFIER,
-      api_key: api_key,
-      readonly: is_ci
-    )
+    # Signing material comes from 1Password via scripts/fetch-signing.sh
+    # (DIST_CERT_P12, DIST_CERT_PASSWORD, PROVISIONING_PROFILE in the environment).
+    if ENV["CI"]
+      import_certificate(
+        certificate_path: ENV["DIST_CERT_P12"],
+        certificate_password: ENV["DIST_CERT_PASSWORD"].to_s,
+        keychain_name: ENV["MATCH_KEYCHAIN_NAME"],
+        keychain_password: ENV["MATCH_KEYCHAIN_PASSWORD"]
+      )
+    elsif ENV["DIST_CERT_P12"]
+      import_certificate(
+        certificate_path: ENV["DIST_CERT_P12"],
+        certificate_password: ENV["DIST_CERT_PASSWORD"].to_s,
+        keychain_name: "login.keychain"
+      )
+    end
+    install_provisioning_profile(path: ENV["PROVISIONING_PROFILE"]) if ENV["PROVISIONING_PROFILE"]
 
-    # Point the (freshly regenerated) project at the match profile with manual
+    # Point the (freshly regenerated) project at the App Store profile with manual
     # signing. Safe to mutate — xcodegen recreates the project every run.
     update_code_signing_settings(
       path: XCODE_PROJECT,
@@ -437,19 +449,16 @@ platform :ios do
     distribute_uploaded_build(options)
   end
 
-  desc "One-time: register the App ID and generate + store signing assets"
+  desc "One-time/renewal: register the App ID, create the distribution cert + App Store profile, and write them for 1Password"
   lane :bootstrap do
-    api_key = app_store_connect_api_key(
-      key_id: ENV["ASC_KEY_ID"],
-      issuer_id: ENV["ASC_ISSUER_ID"],
-      key_content: ENV["ASC_KEY_CONTENT"],
-      is_key_content_base64: true
-    )
+    api_key = connect_api_key
 
     # Register the App ID (bundle identifier) on the Developer Portal if missing.
     # The App Store Connect API can manage identifiers (unlike the app *record*,
     # which has no API and must be created in the web UI).
     require "spaceship"
+    require "securerandom"
+    require "tmpdir"
     Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
       key_id: ENV["ASC_KEY_ID"],
       issuer_id: ENV["ASC_ISSUER_ID"],
@@ -462,10 +471,15 @@ platform :ios do
       UI.success("Registered bundle ID #{APP_IDENTIFIER}")
     end
 
-    # Import into an isolated throwaway keychain so match never touches — or
-    # pops a GUI password prompt on — the login keychain.
+    out = File.expand_path(ENV["SIGNING_OUT"] || Dir.mktmpdir("schrift-signing"))
+    FileUtils.mkdir_p(out)
+    FileUtils.chmod(0o700, out)
+
+    # Use an isolated throwaway keychain so nothing touches (or pops a GUI
+    # password prompt on) the login keychain.
     keychain = "schrift-bootstrap.keychain"
-    keychain_password = "schrift-bootstrap"
+    keychain_password = SecureRandom.hex(16)
+    keychain_path = File.expand_path("~/Library/Keychains/#{keychain}-db")
     begin
       delete_keychain(name: keychain)
     rescue StandardError
@@ -480,19 +494,39 @@ platform :ios do
       lock_when_sleeps: false
     )
 
-    # Generate the Apple Distribution certificate + App Store provisioning
-    # profile and push them (encrypted) to the match certificates repo.
     begin
-      match(
-        type: "appstore",
-        app_identifier: APP_IDENTIFIER,
+      # Creates a new Apple Distribution certificate and imports it into the keychain.
+      cert(
         api_key: api_key,
-        readonly: false,
-        keychain_name: keychain,
-        keychain_password: keychain_password
+        keychain_path: keychain_path,
+        keychain_password: keychain_password,
+        output_path: out
+      )
+
+      p12_password = SecureRandom.hex(16)
+      p12 = File.join(out, "distribution.p12")
+      password_file = File.join(out, "distribution.p12.password")
+      File.write(password_file, p12_password)
+      FileUtils.chmod(0o600, password_file)
+      sh("security", "export", "-k", keychain_path, "-t", "identities", "-f", "pkcs12", "-P", p12_password, "-o", p12)
+      FileUtils.chmod(0o600, p12)
+
+      sigh(
+        api_key: api_key,
+        app_identifier: APP_IDENTIFIER,
+        output_path: out,
+        filename: "appstore.mobileprovision",
+        provisioning_name: PROFILE_NAME,
+        force: true
       )
     ensure
       delete_keychain(name: keychain)
     end
+
+    UI.important("Signing files written to #{out}. Store them in the 1Password `Schrift` vault:")
+    UI.message(%(op document create "#{out}/distribution.p12" --vault Schrift --title "Schrift Distribution Certificate"))
+    UI.message(%(op document create "#{out}/appstore.mobileprovision" --vault Schrift --title "Schrift App Store Profile"))
+    UI.message(%(op item create --vault Schrift --category password --title "Schrift Distribution Certificate Password" "password[password]=$(cat #{password_file})"))
+    UI.message("(Use `op document edit` / `op item edit` instead when renewing.) Then delete #{out}.")
   end
 end

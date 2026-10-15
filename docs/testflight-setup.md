@@ -2,7 +2,8 @@
 
 This repo builds and uploads to TestFlight automatically via **fastlane** +
 **GitHub Actions** (`.github/workflows/testflight.yml`). Almost all of the
-setup is automated by [`scripts/bootstrap-testflight.sh`](../scripts/bootstrap-testflight.sh).
+setup is a 1Password vault plus one GitHub secret
+([`scripts/bootstrap-testflight.sh`](../scripts/bootstrap-testflight.sh) sets it).
 
 Everything is gated behind a **paid Apple Developer Program membership**
 ($99/yr). On a free Apple ID none of this works.
@@ -14,14 +15,15 @@ Already done in this repo:
 - Ruby **3.4.9** pinned via `.ruby-version` (local dev + CI use the same).
 - fastlane installed (`bundle install`), `Gemfile.lock` committed.
 - fastlane lanes `beta` (ship) and `bootstrap` (one-time setup) ready.
-- CI reads signing assets from a private repo over SSH (a read-only deploy key,
-  created for you by the bootstrap script — no manual GitHub token needed).
+- CI reads signing assets and App Store Connect credentials from a 1Password
+  vault (`Schrift`) via `scripts/fetch-signing.sh`; fastlane match and the
+  private certificates repo are gone.
 - Local on-device dev signing is separate from all of this: `project.yml` points
   both configurations at the committed `Signing.xcconfig`, which optionally
   includes a git-ignored `Local.xcconfig` holding your personal
   `DEVELOPMENT_TEAM` (copy `Local.xcconfig.example`, fill in your Team ID,
   re-run `xcodegen generate`). CI ignores this — the `beta` lane overrides
-  signing with `match`.
+  signing with the 1Password-sourced profile.
 
 ## Manual step 1: create an App Store Connect API key
 
@@ -39,37 +41,38 @@ the App Store Connect API, then the **Team Keys** section appears.)
 4. Grab your **Team ID**: <https://developer.apple.com/account> → Membership →
    the 10-character string (e.g. `A1B2C3D4E5`).
 
-That's everything only you can produce. Hand those four things off and the rest
-is one command.
+Store these in 1Password (next section); nothing else is needed from the web UI.
 
-## Run the bootstrap (everything else, automated)
+## The 1Password `Schrift` vault
 
-From the repo root:
+All signing material and credentials live in one vault named `Schrift`. The
+item names are fixed — `scripts/fetch-signing.sh` reads them verbatim:
 
-```sh
-ASC_KEY_ID=2X9R4HXF34 \
-ASC_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx \
-ASC_KEY_P8=~/Downloads/AuthKey_2X9R4HXF34.p8 \
-DEVELOPER_TEAM_ID=A1B2C3D4E5 \
-./scripts/bootstrap-testflight.sh
-```
+| Item (type) | Contents |
+| --- | --- |
+| `Schrift Distribution Certificate` (Document) | the Apple Distribution identity as a `.p12` |
+| `Schrift Distribution Certificate Password` (Password) | field `password` = the `.p12` password (may be empty) |
+| `Schrift App Store Profile` (Document) | the App Store `.mobileprovision`; its profile *name* stays `match AppStore dev.llun.Schrift` (the `PROFILE_NAME` constant in the Fastfile) |
+| `Schrift App Store Connect API Key` (API Credential) | text fields `key_id`, `issuer_id`, `team_id` (Developer Team ID) plus the attached file `AuthKey.p8` |
+| `Schrift Match Passphrase` (Password) | archival only (the old match repo passphrase); nothing reads it |
 
-This will:
-1. create a private **`schrift-certificates`** repo (encrypted signing store),
-2. generate a **read-only SSH deploy key** so CI can read it,
-3. register the **App ID** `dev.llun.Schrift` on the Developer Portal,
-4. generate the **Apple Distribution certificate + provisioning profile**,
-5. set all seven **GitHub Actions secrets** on this repo.
+### CI access
 
-It writes the generated `MATCH_PASSWORD` to `~/.schrift-testflight-secrets.txt`
-(mode 600, never printed) — **save it to your password manager, then delete that
-file** (you'll need the passphrase to renew certificates in about a year). Your
-`.p8` is never printed or committed.
+1. In 1Password, create a **service account** with **read-only** access to the
+   `Schrift` vault and nothing else.
+2. Store its token as the repo's single secret:
+   `OP_SERVICE_ACCOUNT_TOKEN=... ./scripts/bootstrap-testflight.sh`
+   (or `OP_TOKEN_REF='op://…' ./scripts/bootstrap-testflight.sh`).
+
+`testflight.yml` installs the `op` CLI and runs `scripts/fetch-signing.sh`, which
+writes the files under `$RUNNER_TEMP/signing`, masks every value and exports
+`DIST_CERT_P12`, `DIST_CERT_PASSWORD`, `PROVISIONING_PROFILE`, `ASC_KEY_P8`,
+`ASC_KEY_ID`, `ASC_ISSUER_ID` and `DEVELOPER_TEAM_ID` for fastlane.
 
 ## Manual step 2: create the App Store Connect app record
 
 Apple has no API to create an app record, so this one is done in the web UI
-(the bundle id it needs is already registered by the bootstrap above):
+(the bundle id it needs is registered by the `bootstrap` lane — see Troubleshooting):
 
 1. <https://appstoreconnect.apple.com> → **Apps** → **＋** → **New App**
 2. Platform **iOS**, Name **Schrift Docs** (the store listing name — the app
@@ -231,14 +234,16 @@ App Store Connect → **TestFlight** after a few minutes of Apple-side processin
 
 ## Running a build locally (optional)
 
-After bootstrap, you can push a build from your Mac without CI:
+Signed in to the 1Password CLI (`op signin`), load the signing environment and
+run the lane:
 
 ```sh
-export ASC_KEY_ID=... ASC_ISSUER_ID=... ASC_KEY_CONTENT="$(base64 < AuthKey_XXXX.p8)"
-export DEVELOPER_TEAM_ID=... \
-       MATCH_GIT_URL=git@github.com:llun/schrift-certificates.git MATCH_PASSWORD=...
+eval "$(scripts/fetch-signing.sh "$(mktemp -d)")"
 bundle exec fastlane beta
 ```
+
+The `.p12` is imported into your login keychain and the profile installed. Delete
+the temp directory afterwards.
 
 ## Versioning
 
@@ -260,32 +265,28 @@ bundle exec fastlane beta
   before; there the lookup is the only source, so a failure to reach App Store
   Connect stops the run rather than guessing.
 
-## The GitHub Actions secrets (set for you by bootstrap)
+## The GitHub Actions secret
 
 | Secret | What it is |
 | --- | --- |
-| `ASC_KEY_ID` / `ASC_ISSUER_ID` / `ASC_KEY_CONTENT` | App Store Connect API key (auth, signing lookups, upload) |
-| `DEVELOPER_TEAM_ID` | 10-char Developer Portal Team ID |
-| `MATCH_GIT_URL` | SSH URL of the certificates repo |
-| `MATCH_PASSWORD` | passphrase decrypting the certificates |
-| `MATCH_SSH_PRIVATE_KEY` | read-only deploy key for the certificates repo |
+| `OP_SERVICE_ACCOUNT_TOKEN` | read-only 1Password service account token, scoped to the `Schrift` vault — the only secret `testflight.yml` uses |
 
 ## Troubleshooting
 
 - **First CI run fails at archive/sign**: almost always a signing mismatch —
-  re-check `DEVELOPER_TEAM_ID` and that the bootstrap actually populated the
-  certs repo.
+  re-check the vault items (`team_id`, the profile name, certificate expiry).
 - **Xcode drift**: CI uses `latest-stable` Xcode. If a build compiles locally
   but not on CI, pin the runner's Xcode in the `setup-xcode` step to match yours.
-- **Certificate renewal (~yearly)**: re-run the `bootstrap` lane locally —
-  `bundle exec fastlane bootstrap` with `ASC_KEY_ID`, `ASC_ISSUER_ID`,
-  `ASC_KEY_CONTENT="$(base64 < AuthKey_XXXX.p8)"`, `ASC_KEY_P8` (path to the
-  `.p8`), `DEVELOPER_TEAM_ID`, `MATCH_GIT_URL`, and the existing
-  `MATCH_PASSWORD` exported — it runs `match` with the API key in a throwaway
-  keychain (`readonly: false`) and pushes the refreshed assets to the certs
-  repo; CI picks them up automatically. (The bare `fastlane match` CLI does
-  **not** read the `ASC_*` variables — they are consumed only inside the
-  Fastfile lanes — so it would fall back to interactive Apple ID login.)
+- **Certificate renewal / first-time signing assets (~yearly)**: run the
+  `bootstrap` lane locally with `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` (path
+  to the `.p8`) and `DEVELOPER_TEAM_ID` exported (e.g. from the vault via
+  `eval "$(scripts/fetch-signing.sh "$(mktemp -d)")"`) and optionally
+  `SIGNING_OUT=<dir>`. It registers the App ID if missing, creates a distribution
+  certificate (`cert`) in a throwaway keychain, exports it as `distribution.p12`
+  with a generated password (written to `distribution.p12.password`, mode 600),
+  creates the App Store profile (`sigh`) and prints the `op document create` /
+  `op item create` commands to store them in the vault. Run them (or `op ... edit`
+  when renewing), then delete the output directory.
 
 ## Xcode Cloud (alternative CI)
 
@@ -304,7 +305,7 @@ Xcode Cloud automatically runs any executable hooks in the repo-root
 and before `xcodebuild`, where it `brew install`s XcodeGen and runs
 `xcodegen generate` — the same step the fastlane lane performs. Nothing else is
 needed; keep the file executable (`chmod +x`) or Xcode Cloud silently skips it.
-(Xcode Cloud manages signing itself, so the `match`/`Local.xcconfig` machinery
+(Xcode Cloud manages signing itself, so the 1Password/`Local.xcconfig` machinery
 above does not apply to it.)
 
 ## Alternative: "remote" install without TestFlight (Ad Hoc)

@@ -9,6 +9,6 @@
 //
 // CI / TestFlight does NOT depend on this: the fastlane `beta` lane runs
 // `update_code_signing_settings` after `xcodegen generate`, which overrides
-// these values with manual signing + the `match` distribution profile. So the
+// these values with manual signing + the 1Password-sourced distribution profile. So the
 // settings here only ever affect on-device development builds from Xcode.
 #include? "Local.xcconfig"

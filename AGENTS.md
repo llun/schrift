@@ -4211,7 +4211,7 @@ dependencies; the app only ever talks to the user's own server). **Preserve it.*
 Do **not** do any of the following without explicit human sign-off:
 
 - **Never commit secrets or signing material.** No `*.p8`, `*.p12`,
-  `*.mobileprovision`, `*.cer`, SSH/deploy private keys, `MATCH_PASSWORD`, or App
+  `*.mobileprovision`, `*.cer`, SSH/deploy private keys, signing passphrases, or App
   Store Connect API keys. Never remove or narrow the "Signing secrets — NEVER
   commit these" rules in `.gitignore`, and never `git add -f` an ignored file.
 - **Never hardcode credentials, API keys, team ids, passphrases, or server URLs**
@@ -4267,7 +4267,7 @@ Do **not** do any of the following without explicit human sign-off:
 - **In CI/scripts, never expose secrets.** Keep the `printf '%s' | gh secret set`
   stdin pattern (no secrets in argv/`--body`), never `set -x` or echo secrets,
   never widen `upload-artifact` paths to catch keys/keychains/`.p8`, keep the CI
-  deploy key read-only, and keep `match` `readonly` on CI. Never add a
+  1Password service account read-only and scoped to the `Schrift` vault, and never print values read from 1Password (`scripts/fetch-signing.sh` masks them). Never add a
   `pull_request`/`pull_request_target` trigger to `testflight.yml` (it would
   expose signing secrets to fork PRs), and conversely never add a secret or a
   `pull_request_target` trigger to `pr-checks.yml` — the PR-check workflow stays
