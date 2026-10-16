@@ -1,0 +1,29 @@
+SchriftUITests/Features/Editor/OfflineControlsTests.swift
+  s_9761a720750dd7::t_9affe0d73b2f42 10
+SchriftUITests/Features/ElementSettling.swift
+  s_9761a720750dd7::t_9affe0d73b2f42 31-43
+AGENTS.md
+  s_9761a720750dd7::t_8ac31891df2a4b 4281-4282,4285-4298
+docs/ci.md
+  s_9761a720750dd7::t_8ac31891df2a4b 64-65,68,70-85
+SchriftUITests/Features/Editor/ChecklistFilterTests.swift
+  s_9761a720750dd7::t_9affe0d73b2f42 13,80-82
+.github/workflows/pr-checks.yml
+  s_9761a720750dd7::t_8ac31891df2a4b 163-171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e5c9b53b766d1c81f03fe74cc9837568e84b3ea9",
+  "prompts": {},
+  "sessions": {
+    "s_9761a720750dd7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2c75fa09-a86e-464b-8cb7-9fcb4be866a2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
