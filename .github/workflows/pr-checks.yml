@@ -160,6 +160,15 @@ jobs:
           SIM_UDID: ${{ steps.sim.outputs.udid }}
         run: xcrun simctl bootstatus "$SIM_UDID" -b
 
+      # On hosted runners the simulator's push daemon (apsd) loops reconnecting
+      # to sandbox.push.apple.com, logging 1,100-4,700 lines/s, which starves
+      # the simulator. Schrift has no push entitlement. Best-effort: never
+      # fails the job. See docs/ci.md.
+      - name: Stop simulator push daemon
+        env:
+          SIM_UDID: ${{ steps.sim.outputs.udid }}
+        run: xcrun simctl spawn "$SIM_UDID" launchctl bootout system/com.apple.apsd || true
+
       - name: Test
         env:
           SIM_UDID: ${{ steps.sim.outputs.udid }}

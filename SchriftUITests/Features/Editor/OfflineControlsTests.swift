@@ -7,6 +7,7 @@ final class OfflineControlsTests: XCTestCase {
         app.launchArguments = ["--offline-controls"] + (uncached ? ["--uncached"] : [])
         app.launch()
         XCTAssertTrue(app.staticTexts["Search is available when online."].firstMatch.waitForExistence(timeout: 10))
+        app.absorbFirstTouch(on: app.staticTexts["Search is available when online."].firstMatch)
         return app
     }
 

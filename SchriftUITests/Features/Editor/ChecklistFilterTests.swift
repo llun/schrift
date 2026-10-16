@@ -10,6 +10,7 @@ final class ChecklistFilterTests: XCTestCase {
         }
         app.launch()
         XCTAssertTrue(app.switches["checklist.hideCompleted"].waitForExistence(timeout: 10))
+        app.absorbFirstTouch(on: app.switches["checklist.hideCompleted"].staticTexts["Hide completed"])
         XCTAssertEqual(
             app.switches["checklist.hideCompleted"].value as? String,
             arguments.contains("--initially-hide-completed") ? "1" : "0")
@@ -76,7 +77,9 @@ final class ChecklistFilterTests: XCTestCase {
             let disappeared = XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "exists == false"), object: current)
             let appeared = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true"), object: next)
-            return XCTWaiter.wait(for: [disappeared, appeared], timeout: 5)
+            // A starved runner has kept the app non-idle ~9s after a correct swap,
+            // and one accessibility snapshot alone took 4s of a 5s budget.
+            return XCTWaiter.wait(for: [disappeared, appeared], timeout: 15)
         }
         XCTAssertTrue(current.waitForStableFrame(), "The mode action must stop moving before it is pressed")
         XCTAssertTrue(current.isEnabled && current.isHittable)

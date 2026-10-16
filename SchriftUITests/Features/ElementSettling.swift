@@ -28,3 +28,16 @@ extension XCUIElement {
         return false
     }
 }
+
+extension XCUIApplication {
+    /// Spends the launch's first synthesized touch on inert text, so no assertion rides on it.
+    ///
+    /// CI's simulator logs show two one-off stalls that land on the first touch: backboardd
+    /// attaching the session's first XCUITest virtual digitizer late, which flushed a 200ms
+    /// press as a 10-49ms burst the iOS 26 switch ignores; and Accessibility lazily loading
+    /// PDFKit on the main thread for ~0.8s mid-tap, which outlasted the row's tap gesture.
+    /// The target must not respond to a tap.
+    func absorbFirstTouch(on inert: XCUIElement) {
+        inert.tap()
+    }
+}

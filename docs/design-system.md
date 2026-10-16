@@ -115,7 +115,7 @@
 > on a list item fit the standard 343pt-or-wider column but scroll horizontally in
 > narrower ones (Display Zoom, Slide Over, a ⅓ split) rather than compressing the
 > buttons or widening the editor. The Sketch component library
-> (`Schrijft/Schrijft.sketch` in the `llun/sketch` repo) uses the same control
+> (`Schrift/Schrift.sketch` in the `llun/sketch` repo) uses the same control
 > dimensions and shapes.
 
 > **Revised: 2026-10-05 (Hide completed checklist items).** Reading mode offers
