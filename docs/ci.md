@@ -61,20 +61,28 @@ the push run is the post-merge verification of the real `main` history
    configured prerequisites do not replace that coverage. They use one 200ms stationary press
    on the native switch and require its off-to-on value transition before testing
    projection or mode changes. A hosted result captured a correctly targeted 50ms
-   tap that left the native switch off; why UIKit ignored it remains unconfirmed.
-   The tests neither retry the gesture nor bypass the interaction with preset state.
+   tap that left the native switch off. The tests neither retry the gesture nor bypass
+   the interaction with preset state.
    When the switch does not turn on, the filter-enable step attaches the switch frame,
    hittability, a screenshot and the hierarchy so a failure is diagnosable from the `.xcresult`.
-   **Known pattern:** every hosted failure of that press so far (runs 37349646189,
+   **Known pattern, mechanism confirmed:** every hosted failure of that press (runs 37349646189,
    37733961599, 37806233826) was in `testAllCompletedHasAccessibleRevealAtAccessibilitySize`,
-   which is alphabetically the first test of the UI bundle and so the first app launch
-   after the unit tests. Waiting for the simulator boot did not cure it. The press now
-   waits for the switch's frame to hold still across two reads first (`waitForStableFrame`,
-   in `SchriftUITests/Features/ElementSettling.swift`), on the hypothesis that a cold first
-   launch at an accessibility text size is still laying out when the switch first reads as
-   hittable; that is a plausible cause, not a confirmed one. The Edit/Done mode press waits
-   the same way, and so does `ChecklistHitTests`, which aims taps at offsets from frames
-   read once, before reading them.
+   alphabetically the first test of the UI bundle and so the first app launch after the
+   unit tests. The CI simulator's system logs (exported from the xcresult with `xcrun
+   xcresulttool export diagnostics`, `system.logarchive`) show `apsd` stuck reconnecting
+   and starving the simulator. That delays three things: (a) `backboardd` attaches the
+   session's first XCUITest virtual digitizer 210-440ms late, flushing a 200ms press as a
+   10-49ms burst, and the iOS 26 switch (a `UILongPressGestureRecognizer` on
+   `_UILiquidLensView`) ignores presses of 0.01s or less; (b) Accessibility lazily loads
+   PDFKit on the app's main thread (~0.8s) mid-tap, and a row's `.onTapGesture` gives up on
+   holds of ~0.9s or more; (c) the app can stay non-idle ~9s after a correct Edit/Done swap.
+   Mitigations: `XCUIApplication.absorbFirstTouch(on:)` (in
+   `SchriftUITests/Features/ElementSettling.swift`) spends the first touch on inert text
+   (not a retry); `setEditing`'s waiter is 15s; and the "Stop simulator push daemon" step
+   boots out `apsd` (Schrift has no push entitlement; best-effort, never fails the job).
+   The Edit/Done press and `ChecklistHitTests` still wait for the target's frame to hold
+   still across two reads (`waitForStableFrame`) as a precondition, but the frame was stable
+   in every captured failure.
    Checklist mode swaps likewise use one 200ms stationary press and require
    the old toolbar action to disappear and the new action to appear before
    checking content or restored scroll position. Offline editor toolbar tests

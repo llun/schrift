@@ -4278,15 +4278,24 @@ markdown write endpoint**. Understand this before touching the save path:
   with configured state or weaken scroll-return assertions. These interaction
   flows use one 200ms stationary press on the native switch and require its off-to-on value
   transition before continuing. CI captured a correctly targeted 50ms synthesized
-  tap that left the switch off; its underlying UIKit cause is unconfirmed. Do not
-  retry gestures until green or treat an unactivated filter as a mode-swap defect.
+  tap that left the switch off. Do not retry gestures until green or treat an
+  unactivated filter as a mode-swap defect.
   When the switch does not turn on, the filter-enable step attaches the switch frame,
   hittability, a screenshot and the hierarchy so a failure is diagnosable from the `.xcresult`.
-  Every hosted failure of that press so far was the UI bundle's first test (the first app
-  launch after the unit tests); the press, the Edit/Done press and `ChecklistHitTests`'
-  offset taps first wait for the target's frame to hold still (`waitForStableFrame`).
-  That is a precondition, not a retry, and the cause it targets is unconfirmed — read
-  `docs/ci.md` before changing it.
+  Every hosted failure of that press was the UI bundle's first test (the first app
+  launch after the unit tests). The simulator system log (`xcrun xcresulttool export
+  diagnostics`, `system.logarchive`) shows `apsd` stuck reconnecting and starving the
+  simulator, which makes three things late: (a) `backboardd` attaches the session's first
+  XCUITest virtual digitizer 210-440ms late, flushing a 200ms press as a 10-49ms burst,
+  and the iOS 26 switch (a `UILongPressGestureRecognizer` on `_UILiquidLensView`) ignores
+  presses of 0.01s or less; (b) Accessibility lazily loads PDFKit on the app's main thread
+  (~0.8s) mid-tap, and a row's `.onTapGesture` gives up on holds of ~0.9s or more; (c) the
+  app can stay non-idle ~9s after a correct Edit/Done swap. Mitigations:
+  `XCUIApplication.absorbFirstTouch(on:)` spends the first touch on inert text (not a
+  retry), `setEditing`'s waiter is 15s, and CI boots out `apsd`. The press, the Edit/Done
+  press and `ChecklistHitTests`' offset taps still wait for the target's frame to hold still
+  (`waitForStableFrame`); that is a precondition, and the frame was stable in every captured
+  failure. Read `docs/ci.md` before changing any of it.
 
 ## Docs convention
 
