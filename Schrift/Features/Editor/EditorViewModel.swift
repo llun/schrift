@@ -551,6 +551,9 @@ final class EditorViewModel {
     /// equality proves anything — the server's `""` changes nothing, and any other body it
     /// holds is stashed behind the "Updated" banner and conflicts on the first edit, the same
     /// way as for any other clean document. The first fetch replaces the baseline anyway.
+    ///
+    /// `syncedAt` is now because the create POST that produced this document has just
+    /// landed: the server holds exactly what is on screen, a title and no body.
     private func seedNewlyCreatedDocument() {
         guard displaySource == .none, !isLocalDocument, let entryIntent, entryIntent.isPending else { return }
         install(markdown: "", title: nil, syncedAt: Date())
@@ -820,6 +823,9 @@ final class EditorViewModel {
         dirtySince = nil
         isDirty = false
         mode = .reading
+        // A title-focus request the header never claimed must not outlive the session it
+        // belonged to, or a later manual Edit would select the title as if just created.
+        initialTitleFocusPending = false
         focusedBlockID = nil
         cursorRequest = nil
         selection = nil

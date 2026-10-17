@@ -1465,8 +1465,8 @@ struct EditorNoticeLabel: View {
 /// lines will appear, on an otherwise empty page.
 ///
 /// A skeleton rather than a spinner, per the handoff's loading rule, laid out on the reading
-/// surface's own gutter and header spacing so the title lands where its bar was. Only an
-/// *existing* document ever shows it: a just-created one opens straight into editing
+/// surface's own gutter and header spacing so the title lands where its bar was. A document
+/// opened with an unconsumed creation intent never shows it: it opens straight into editing
 /// (`EditorViewModel.seedNewlyCreatedDocument`), since its body is empty by construction.
 ///
 /// It **fills what it is offered** rather than sizing to its content, because the page

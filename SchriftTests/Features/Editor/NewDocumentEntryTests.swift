@@ -229,7 +229,8 @@ final class NewDocumentEntryTests: XCTestCase {
         stubContent(markdown: "Real body")
         await vm.refresh()
         XCTAssertFalse(vm.isEditing, "the creation intent was spent on the first open")
-        XCTAssertEqual(vm.currentMarkdown(), "Real body\n")
+        // Reading mode: the fetched source verbatim, not the blocks' serialization.
+        XCTAssertEqual(vm.currentMarkdown(), "Real body")
     }
 
     func testRefreshReappearanceAndRecreatedScreenDoNotReenterOrRefocus() async {

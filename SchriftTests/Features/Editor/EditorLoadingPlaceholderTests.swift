@@ -8,6 +8,10 @@ import XCTest
 /// it has to claim the whole proposal. Sized to the spinner, the column was a
 /// spinner wide and a Paper theme showed its colour only as a narrow strip down the middle
 /// of the screen while a new document loaded.
+///
+/// Scope: this pins the placeholder. `EditorView.mainContent` carries its own full-screen
+/// frame as the second half of the fix, which is private to `EditorView` and not hosted
+/// here, so a future content-sized loading view would be caught only by this file's rule.
 @MainActor
 final class EditorLoadingPlaceholderTests: XCTestCase {
     /// An iPhone 17 screen.

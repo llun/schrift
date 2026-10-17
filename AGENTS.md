@@ -1174,7 +1174,9 @@ new code reads like the surrounding code.
   never to a sheet that dismisses itself as it fires one. A **skeleton**
   (`SkeletonList`) stands in for a list on its *first* load with nothing cached
   — never over existing rows, which `shouldShowLoadingPlaceholder` already
-  gates; the handoff's rule is no spinners on lists. An **empty state** is
+  gates; the handoff's rule is no spinners on lists. The editor's first load with
+  nothing cached is the page-shaped twin, `EditorLoadingPlaceholder` (header and
+  first-line bars, filling the page). An **empty state** is
   `ContentUnavailableView`. (A *callout* — a persistent in-context note — is
   specified by the handoff but has no call site yet; don't invent one.)
 - **Glass is for surfaces that float over content, never for content itself.**
@@ -2489,7 +2491,8 @@ markdown write endpoint**. Understand this before touching the save path:
   This is the **one** sanctioned seed of a body not read from the server or the disk — it is
   keyed on the creation intent alone; never seed from an empty-looking fetch, a failed load or a
   default title. An ordinary open still waits for content, behind `EditorLoadingPlaceholder` (a
-  page skeleton that fills the screen, so the theme's page colour reaches every edge). The editable shared header claims a
+  page skeleton that fills the screen, so the theme's page colour reaches every edge).
+  The editable shared header claims a
   separate one-time title-focus request and selects the existing title without clearing or
   dirtying it. Do not derive entry/focus from the default title, emptiness, connectivity, a
   pending-create id, or an appearance callback: refresh, reconnect, navigation restoration,
