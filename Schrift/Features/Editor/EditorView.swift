@@ -20,10 +20,7 @@ func syncStatusCaption(lastSyncedAt: Date, now: Date, locale: Locale) -> SyncCap
     if now.timeIntervalSince(lastSyncedAt) < 60 {
         return .key(.editor_sync_just_now)
     }
-    let formatter = RelativeDateTimeFormatter()
-    formatter.unitsStyle = .abbreviated
-    formatter.locale = locale
-    return .syncedAgo(formatter.localizedString(for: lastSyncedAt, relativeTo: now))
+    return .syncedAgo(RelativeDateFormatterCache.shared.string(for: lastSyncedAt, relativeTo: now, locale: locale))
 }
 
 /// The editor header's sync caption, and whether it doubles as a retry button.
@@ -926,6 +923,7 @@ struct EditorView: View {
     /// the same thing in both.
     private var readingSurface: some View {
         let presentation = viewModel.checklistReadingPresentation
+        let numbering = numberedIndices(in: viewModel.blocks)
         return ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
@@ -974,7 +972,7 @@ struct EditorView: View {
                                 } else if case .checklistItem = block.kind {
                                     MarkdownBlockView(
                                         block: block, serverOrigin: serverOrigin,
-                                        numberedIndex: numberedIndex(of: index, in: viewModel.blocks),
+                                        numberedIndex: numbering[index],
                                         isOffline: isOffline,
                                         onToggleChecklist: {
                                             viewModel.toggleChecklist(blockID: block.id)
@@ -990,7 +988,7 @@ struct EditorView: View {
                                 } else {
                                     MarkdownBlockView(
                                         block: block, serverOrigin: serverOrigin,
-                                        numberedIndex: numberedIndex(of: index, in: viewModel.blocks),
+                                        numberedIndex: numbering[index],
                                         isOffline: isOffline
                                     )
                                     .contentShape(Rectangle())

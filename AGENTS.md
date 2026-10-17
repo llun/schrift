@@ -513,7 +513,9 @@ Schrift/
 │   │                    enqueueLiveSnapshot. Opt-in via the C3 Profile toggle
 │   │                    (default off — see Features/Profile)
 │   ├── Localization/    in-code catalog: AppLanguage (11 langs), L10nKey,
-│   │                    Strings+<lang>.swift tables, LocalizationStore, PluralRule
+│   │                    Strings+<lang>.swift tables, LocalizationStore, PluralRule,
+│   │                    RelativeDateFormatterCache (one shared relative-date formatter
+│   │                    per locale)
 │   ├── Networking/      actor DocsAPIClient + per-feature endpoint extensions
 │   │                    (incl. AttachmentEndpoints: multipart upload + media-check;
 │   │                    VersionEndpoints: read-only version list;

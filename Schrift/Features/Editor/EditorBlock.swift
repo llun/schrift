@@ -378,3 +378,34 @@ func numberedIndex(of index: Int, in blocks: [EditorBlock]) -> Int {
     }
     return position
 }
+
+/// `numberedIndex(of:in:)` for every block, in one forward pass.
+///
+/// The reading surface builds every row eagerly (it is deliberately not lazy),
+/// so asking `numberedIndex` per row rescanned the list backwards each time —
+/// quadratic for a long numbered list. This keeps, per nesting depth, the length
+/// of the run of numbered items that a backwards scan from the current position
+/// would count, and updates it by the same rules `numberedIndex` applies while
+/// walking back: a deeper list item or nested leaf is skipped (the run at a
+/// shallower depth survives it), and anything else that is not a same-depth
+/// numbered item ends the run at that depth and every deeper one.
+func numberedIndices(in blocks: [EditorBlock]) -> [Int] {
+    var runs: [Int] = []
+    var result: [Int] = []
+    result.reserveCapacity(blocks.count)
+    for block in blocks {
+        let level = max(block.indent, 0)
+        if runs.count <= level { runs.append(contentsOf: repeatElement(0, count: level + 1 - runs.count)) }
+        result.append(runs[level] + 1)
+        if blockNestsAsLeaf(block) {
+            // Skipped only by shallower scans; a same-depth or deeper scan stops here.
+            for depth in level..<runs.count { runs[depth] = 0 }
+        } else if blockIsListItem(block.kind) {
+            for depth in (level + 1)..<max(runs.count, level + 1) { runs[depth] = 0 }
+            if case .numberedItem = block.kind { runs[level] += 1 } else { runs[level] = 0 }
+        } else {
+            for depth in 0..<runs.count { runs[depth] = 0 }
+        }
+    }
+    return result
+}

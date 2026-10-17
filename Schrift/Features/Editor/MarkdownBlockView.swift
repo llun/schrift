@@ -8,22 +8,48 @@ import SwiftUI
 /// data detector over the rendered characters afterwards and attach a link
 /// only where one isn't already present, so bare URLs become tappable without
 /// double-linking the target of an existing markdown link.
+///
+/// The reading surface builds every row on every redraw, so results are memoized in a
+/// bounded `NSCache`. The output is a pure function of `(text, theme)` — the theme is the
+/// only style input, and link colours are the dynamic light/dark pair — so that is the
+/// whole key.
 func markdownInlineText(_ text: String, theme: AppTheme = .white) -> AttributedString {
+    let key = "\(theme.rawValue)\u{0}\(text)" as NSString
+    if let cached = inlineTextCache.object(forKey: key) { return cached.value }
     var attributed =
         (try? AttributedString(markdown: text, options: inlineMarkdownOptions)) ?? AttributedString(text)
     autolinkBareURLs(in: &attributed)
     styleLinks(in: &attributed, theme: theme)
+    inlineTextCache.setObject(InlineTextCacheEntry(attributed), forKey: key)
     return attributed
 }
+
+/// `NSCache` stores class instances only; this carries the value struct.
+private final class InlineTextCacheEntry {
+    let value: AttributedString
+    init(_ value: AttributedString) { self.value = value }
+}
+
+/// `NSCache` is documented thread-safe; `nonisolated(unsafe)` only lifts Swift 6's
+/// `Sendable` requirement on the global.
+nonisolated(unsafe) private let inlineTextCache: NSCache<NSString, InlineTextCacheEntry> = {
+    let cache = NSCache<NSString, InlineTextCacheEntry>()
+    cache.countLimit = 512
+    return cache
+}()
+
+/// One link detector for every render. `NSDataDetector` matching is thread-safe and the
+/// instance is never mutated, so sharing it is safe; `nonisolated(unsafe)` is needed only
+/// because the class is not `Sendable`.
+nonisolated(unsafe) private let linkDetector = try? NSDataDetector(
+    types: NSTextCheckingResult.CheckingType.link.rawValue)
 
 private let inlineMarkdownOptions = AttributedString.MarkdownParsingOptions(
     interpretedSyntax: .inlineOnlyPreservingWhitespace)
 
 private func autolinkBareURLs(in attributed: inout AttributedString) {
     let plain = String(attributed.characters)
-    guard !plain.isEmpty,
-        let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
-    else { return }
+    guard !plain.isEmpty, let detector = linkDetector else { return }
 
     let fullRange = NSRange(plain.startIndex..<plain.endIndex, in: plain)
     for match in detector.matches(in: plain, options: [], range: fullRange) {
