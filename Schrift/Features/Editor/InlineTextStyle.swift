@@ -24,7 +24,15 @@ enum InlineTextStyleResolver {
     /// Marks arrive outermost-first and compose: a bold link is blue, underlined
     /// and bold. Inline code wins the font, since a monospaced italic is not a
     /// distinction anyone reads.
-    static func style(for marks: [InlineMark], theme: AppTheme = .white) -> InlineTextStyle {
+    ///
+    /// A link to another document on `serverHost` is a page chip
+    /// (`DocumentLinkChip.swift`): the same brand ink, but **no underline** — the
+    /// chip's background and page glyph say "link" instead. The default `""`
+    /// classifies nothing, so every link stays underlined unless the caller
+    /// names its server.
+    static func style(
+        for marks: [InlineMark], theme: AppTheme = .white, serverHost: String = ""
+    ) -> InlineTextStyle {
         let light = DocsPalette(theme: theme, isDark: false)
         let dark = DocsPalette(theme: theme, isDark: true)
         var style = InlineTextStyle()
@@ -38,8 +46,8 @@ enum InlineTextStyleResolver {
                 style.isMonospaced = true
             case .strike:
                 style.isStruckThrough = true
-            case .link:
-                style.isUnderlined = true
+            case .link(let href):
+                style.isUnderlined = !isDocumentLink(href: href, serverHost: serverHost)
                 style.foregroundLightHex = light.textBrand
                 style.foregroundDarkHex = dark.textBrand
             }
@@ -50,10 +58,10 @@ enum InlineTextStyleResolver {
 
 /// The `NSAttributedString` attributes for a marked run, over the block's own
 /// font. The one place raw values become UIKit objects.
-func inlineTextAttributes(for marks: [InlineMark], base: UIFont, theme: AppTheme = .white) -> [NSAttributedString.Key:
-    Any]
-{
-    let style = InlineTextStyleResolver.style(for: marks, theme: theme)
+func inlineTextAttributes(
+    for marks: [InlineMark], base: UIFont, theme: AppTheme = .white, serverHost: String = ""
+) -> [NSAttributedString.Key: Any] {
+    let style = InlineTextStyleResolver.style(for: marks, theme: theme, serverHost: serverHost)
     var attributes: [NSAttributedString.Key: Any] = [.font: inlineFont(for: style, base: base)]
     if let color = Color(lightHex: style.foregroundLightHex, darkHex: style.foregroundDarkHex) {
         attributes[.foregroundColor] = UIColor(color)

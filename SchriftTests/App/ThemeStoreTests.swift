@@ -80,6 +80,8 @@ final class DocsThemePaletteTests: XCTestCase {
                 for (ink, fill) in [
                     (p.info650, p.infoSoft), (p.success650, p.successSoft),
                     (p.warning650, p.warningSoft), (p.dangerStrong, p.dangerSoft),
+                    // The page chip: a link to another document.
+                    (p.textBrand, p.brandFillSubtle),
                 ] {
                     XCTAssertGreaterThanOrEqual(contrastRatio(ink, fill), 4.5)
                 }

@@ -43,6 +43,35 @@ func documentLinkAction(for url: URL, serverHost: String, currentDocumentID: UUI
     return linkedID == currentDocumentID ? .alreadyOpen : .openInApp(linkedID)
 }
 
+/// Whether `url` names another document on this server — the exact match
+/// `documentLinkAction` opens in the app, so a link is drawn as a page chip
+/// (`DocumentLinkChip.swift`) exactly when tapping it would stay in the app.
+/// A link to the document on screen counts too: it is still a page.
+func isDocumentLink(_ url: URL, serverHost: String) -> Bool {
+    linkedDocumentID(from: url, serverHost: serverHost) != nil
+}
+
+/// `isDocumentLink` over a **raw** markdown destination (`InlineLinkSpan.url`),
+/// as the editing surface holds it. Parsed through `URL` only to classify it;
+/// the source is never rewritten.
+func isDocumentLink(href: String, serverHost: String) -> Bool {
+    guard let url = URL(string: href) else { return false }
+    return isDocumentLink(url, serverHost: serverHost)
+}
+
+/// The host `documentLinkAction` compares against, recovered from the
+/// `siteOrigin` the editor surfaces are already handed.
+///
+/// The surfaces carry `serverOrigin` (required, for the image and attachment
+/// gates) rather than `serverHost`; RootView derives both from one server URL,
+/// and `URL.host` of the origin is that URL's host (lowercased, IPv6 brackets
+/// stripped — the same spelling `serverURL.host` gives, compared
+/// case-insensitively anyway). An unparseable or empty origin yields "", which
+/// `linkedDocumentID` refuses to match.
+func documentLinkHost(forOrigin origin: String) -> String {
+    URL(string: origin)?.host ?? ""
+}
+
 private func linkedDocumentID(from url: URL, serverHost: String) -> UUID? {
     // `URL.host` is "" for a `file:` URL, and RootView falls back to "" when the server
     // URL somehow has no host; without this an empty host would match an empty serverHost.

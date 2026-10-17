@@ -15,6 +15,27 @@ final class InlineTextStyleTests: XCTestCase {
         XCTAssertTrue(style.isUnderlined)
     }
 
+    /// A link to another document on the server is a page chip: brand ink, no
+    /// underline. An external link on the same call keeps its underline, and so
+    /// does the document link when no server is named.
+    func testADocumentLinkIsNotUnderlinedButAnExternalLinkIs() {
+        let page = InlineMark.link(href: "https://docs.example.org/docs/11111111-1111-4111-8111-111111111111/")
+        let chip = InlineTextStyleResolver.style(for: [page], serverHost: "docs.example.org")
+        XCTAssertFalse(chip.isUnderlined)
+        XCTAssertEqual(chip.foregroundLightHex, DocsColorHex.textBrand)
+        XCTAssertEqual(chip.foregroundDarkHex, DocsColorHexDark.textBrand)
+
+        let external = InlineTextStyleResolver.style(
+            for: [.link(href: "https://example.com/docs/11111111-1111-4111-8111-111111111111/")],
+            serverHost: "docs.example.org")
+        XCTAssertTrue(external.isUnderlined)
+        XCTAssertTrue(InlineTextStyleResolver.style(for: [page]).isUnderlined)
+
+        let attributes = inlineTextAttributes(
+            for: [page], base: .systemFont(ofSize: 17), serverHost: "docs.example.org")
+        XCTAssertNil(attributes[.underlineStyle])
+    }
+
     func testNoMarksLeavesTheForegroundHexesNilSoTheBlockColorIsInherited() {
         let style = InlineTextStyleResolver.style(for: [.bold])
         XCTAssertNil(style.foregroundLightHex)

@@ -92,6 +92,103 @@ final class MarkdownBlockViewTests: XCTestCase {
         }
     }
 
+    // MARK: - Page chips (links to other documents on this server)
+
+    private let host = "docs.example.org"
+    private let page = "https://docs.example.org/docs/11111111-1111-4111-8111-111111111111/"
+
+    private func isChip(_ run: AttributedString.Runs.Run) -> Bool {
+        run.attributes[DocumentLinkChipAttribute.self] == true
+    }
+
+    /// A document link is a page chip — marked for the renderer, brand ink, and
+    /// **no underline** — while an external link in the same block keeps the
+    /// ordinary underlined link styling.
+    func testADocumentLinkIsAChipAndAnExternalLinkStaysUnderlined() {
+        let result = markdownInlineText(
+            "See [Roadmap](\(page)) and [the site](https://example.com/x).", serverHost: host)
+        let pageRuns = result.runs.filter { $0.link == URL(string: page)! }
+        let externalRuns = result.runs.filter { $0.link == URL(string: "https://example.com/x")! }
+
+        XCTAssertFalse(pageRuns.isEmpty)
+        for run in pageRuns {
+            XCTAssertTrue(isChip(run))
+            XCTAssertNil(run.underlineStyle)
+            assertLinkInk(run.foregroundColor)
+        }
+        XCTAssertFalse(externalRuns.isEmpty)
+        for run in externalRuns {
+            XCTAssertFalse(isChip(run))
+            XCTAssertEqual(run.underlineStyle, .single)
+        }
+        // Display only: the visible characters are the titles, nothing added.
+        XCTAssertEqual(String(result.characters), "See Roadmap and the site.")
+    }
+
+    /// The editing surface has no bare-URL autolinker, so only an explicit
+    /// `[Title](url)` may become a chip — a chipped bare URL would add width the
+    /// editing surface lacks and re-wrap the line on the swap.
+    func testABareDocumentURLIsAnOrdinaryLinkNotAChip() {
+        let result = markdownInlineText("Open \(page) now", serverHost: host)
+        let linkRuns = result.runs.filter { $0.link != nil }
+        XCTAssertEqual(linkRuns.count, 1)
+        XCTAssertFalse(linkRuns.contains(where: isChip))
+        XCTAssertEqual(linkRuns.first?.underlineStyle, .single)
+    }
+
+    /// With no server named nothing is a chip, so every existing caller keeps
+    /// its exact behaviour.
+    func testWithoutAServerHostADocumentLinkIsAnOrdinaryLink() {
+        let result = markdownInlineText("[Roadmap](\(page))")
+        XCTAssertFalse(result.runs.contains(where: isChip))
+        XCTAssertEqual(result.runs.first { $0.link != nil }?.underlineStyle, .single)
+    }
+
+    func testLookalikeHostsAreNotChips() {
+        let result = markdownInlineText(
+            "[a](https://docs.example.org.evil.com/docs/11111111-1111-4111-8111-111111111111/) "
+                + "[b](https://docs.example.org@evil.com/docs/11111111-1111-4111-8111-111111111111/)",
+            serverHost: host)
+        XCTAssertEqual(result.runs.filter { $0.link != nil }.count, 2)
+        XCTAssertFalse(result.runs.contains(where: isChip))
+    }
+
+    /// The reading surface composes its `Text` from these segments: ordinary text
+    /// as it is, and each document link's title — with its marks — as one chip.
+    func testSegmentsSplitAtDocumentLinksAndKeepATitlesMarksTogether() {
+        let result = markdownInlineText(
+            "See [Road **map**](\(page)), then [site](https://example.com/).", serverHost: host)
+        let segments = inlineTextSegments(result)
+
+        XCTAssertEqual(segments.map(\.isDocumentLink), [false, true, false])
+        let texts = segments.map { segment -> String in
+            switch segment {
+            case .text(let content), .documentLink(let content): return String(content.characters)
+            }
+        }
+        XCTAssertEqual(texts, ["See ", "Road map", ", then site."])
+        // Every character survives the split, in order.
+        XCTAssertEqual(texts.joined(), String(result.characters))
+        // The marker never reaches `Text`.
+        for segment in segments {
+            if case .documentLink(let content) = segment {
+                XCTAssertFalse(content.runs.contains(where: isChip))
+                XCTAssertTrue(content.runs.allSatisfy { $0.link == URL(string: page)! })
+            }
+        }
+    }
+
+    func testTwoDifferentDocumentLinksAreTwoChips() {
+        let other = "https://docs.example.org/docs/33333333-3333-4333-8333-333333333333/"
+        let result = markdownInlineText("[One](\(page))[Two](\(other))", serverHost: host)
+        XCTAssertEqual(inlineTextSegments(result).map(\.isDocumentLink), [true, true])
+    }
+
+    func testABlockWithoutDocumentLinksIsOneOrdinarySegment() {
+        let result = markdownInlineText("Plain **bold** and [site](https://example.com/)", serverHost: host)
+        XCTAssertEqual(inlineTextSegments(result).map(\.isDocumentLink), [false])
+    }
+
     func testPreservesLineBreaks() {
         // The `.inlineOnlyPreservingWhitespace` option keeps hard line breaks so
         // multi-line `.unknown` prose still renders across lines.

@@ -65,6 +65,13 @@ final class DocsColorTokenInvariantTests: XCTestCase {
         }
     }
 
+    /// A page chip (a link to another document) is `textBrand` on a `brandFillSubtle` background.
+    func testBrandInkIsReadableOnThePageChipFillInLightAndDark() {
+        XCTAssertGreaterThanOrEqual(contrastRatio(DocsColorHex.textBrand, DocsColorHex.brandFillSubtle), readable)
+        XCTAssertGreaterThanOrEqual(
+            contrastRatio(DocsColorHexDark.textBrand, DocsColorHexDark.brandFillSubtle), readable)
+    }
+
     /// Dark mode is a real inversion for the neutral surfaces and text, not a copy of light.
     func testNeutralSurfacesAndTextDifferBetweenLightAndDark() {
         let pairs: [(UInt32, UInt32)] = [

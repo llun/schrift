@@ -388,6 +388,13 @@ struct BlockEditorRow: View {
         makeTextView(for: block, inputRowID: inputRowID)
     }
 
+    /// The host a link must name to draw as a page chip — derived from the
+    /// required `serverOrigin`, exactly as the reading surface derives it, so
+    /// both surfaces chip the same links.
+    private var chipServerHost: String {
+        documentLinkHost(forOrigin: serverOrigin)
+    }
+
     private func makeTextView(for block: EditorBlock, inputRowID: UUID?) -> BlockTextView {
         // Register SwiftUI dependencies here; the escaping readers below still
         // resolve the latest values when UIKit actually consumes the update.
@@ -403,14 +410,18 @@ struct BlockEditorRow: View {
             pendingComposition: { token in
                 viewModel.pendingComposition(from: block.id, consumedCursorToken: token)
             },
-            compositionStyling: { blockTextStyling(for: $0, dynamicTypeSize: dynamicTypeSize, theme: theme) },
+            compositionStyling: {
+                blockTextStyling(
+                    for: $0, dynamicTypeSize: dynamicTypeSize, theme: theme, serverHost: chipServerHost)
+            },
             onCompositionChange: { targetID, text, selection, isMarked in
                 viewModel.updateComposition(blockID: targetID, text: text, selection: selection, isMarked: isMarked)
             },
             // Resolve by identity when UIKit updates, beyond SwiftUI's cached
             // row and Binding values. All writes already go through onEvent.
             text: { viewModel.blocks.first { $0.id == block.id }?.text ?? block.text },
-            styling: blockTextStyling(for: block, dynamicTypeSize: dynamicTypeSize, theme: theme),
+            styling: blockTextStyling(
+                for: block, dynamicTypeSize: dynamicTypeSize, theme: theme, serverHost: chipServerHost),
             isFocused: {
                 viewModel.focusedBlockID == block.id
                     && (inputRowID == nil || viewModel.inputRowID(for: block.id) == inputRowID)
@@ -507,6 +518,10 @@ private struct ChecklistCatalog: View {
             EditorBlock(
                 kind: .checklistItem(checked: true),
                 text: "Share the *completed report* and [supporting notes](https://example.org) with the team"),
+            // A link to another document on this server: a page chip on both surfaces.
+            EditorBlock(
+                kind: .checklistItem(checked: false),
+                text: "Read [Roadmap](https://docs.example.org/docs/11111111-1111-4111-8111-111111111111/) first"),
         ]
         return model
     }()

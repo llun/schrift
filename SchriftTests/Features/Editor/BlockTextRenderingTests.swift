@@ -232,6 +232,86 @@ final class BlockTextRenderingTests: XCTestCase {
         XCTAssertEqual(view.linkSpan(at: labelCentre(view, labelRange: second.labelRange))?.url, "https://b.dev/")
     }
 
+    // MARK: - Page chips
+
+    private let chipHost = "docs.example.org"
+    private let page = "https://docs.example.org/docs/11111111-1111-4111-8111-111111111111/"
+
+    /// The same view as `makeView`, styled with the server host so document links
+    /// become page chips — as the editing row styles it.
+    private func makeChipView(_ text: String, serverHost: String) -> EditorUITextView {
+        let view = makeView(text)
+        view.applyInlineStyling(
+            blockTextStyling(for: EditorBlock(kind: .paragraph, text: text), serverHost: serverHost))
+        return view
+    }
+
+    /// The chip is display only: not one character enters the buffer, and every
+    /// glyph still maps to its source character — so every `NSRange` is still a
+    /// source offset and the save re-parses exactly what was loaded.
+    func testADocumentLinkChipLeavesTheBufferByteIdentical() {
+        let source = "See [Roadmap](\(page)) now"
+        let view = makeChipView(source, serverHost: chipHost)
+        XCTAssertEqual(view.text, source)
+        XCTAssertEqual(view.textStorage.length, (source as NSString).length)
+        XCTAssertEqual(view.layoutManager.numberOfGlyphs, (source as NSString).length)
+        XCTAssertEqual(view.hiddenRanges, InlineMarkdown.layout(of: source).syntax)
+        XCTAssertEqual(
+            view.documentLinkChips,
+            [DocumentLinkChipSpan(slotIndex: 4, labelRange: NSRange(location: 5, length: 7))])
+    }
+
+    /// The hidden `[` becomes the icon's slot: the chip renders exactly the title
+    /// plus `slotWidth` — the same whole points the reading surface's inline icon
+    /// adds, which is what keeps a line wrapping at the same word on both.
+    func testADocumentLinkChipAddsExactlyTheIconSlotWidth() {
+        let chip = makeChipView("See [Roadmap](\(page)) now", serverHost: chipHost)
+        let plain = makeView("See Roadmap now")
+        let slot = DocumentLinkChipMetrics(
+            fontSize: blockTextStyling(for: EditorBlock(kind: .paragraph, text: "")).font.pointSize
+        ).slotWidth
+        XCTAssertGreaterThan(slot, 0)
+        XCTAssertEqual(renderedWidth(chip), renderedWidth(plain) + slot, accuracy: 0.5)
+    }
+
+    /// Negative control for the width claim: without a server host the same
+    /// link is an ordinary one, drawn at its title's width with its syntax at zero.
+    func testWithoutAServerHostADocumentLinkIsAnOrdinaryLink() {
+        let view = makeChipView("See [Roadmap](\(page)) now", serverHost: "")
+        XCTAssertEqual(view.documentLinkChips, [])
+        XCTAssertEqual(renderedWidth(view), renderedWidth(makeView("See Roadmap now")), accuracy: 0.5)
+        let underline = view.textStorage.attribute(.underlineStyle, at: 5, effectiveRange: nil) as? Int
+        XCTAssertEqual(underline, NSUnderlineStyle.single.rawValue)
+    }
+
+    /// A chip's title takes the brand ink but no underline; an external link in
+    /// the same block keeps its underline and gets no slot.
+    func testADocumentLinkTitleIsNotUnderlinedWhileAnExternalLinkIs() {
+        let source = "[Roadmap](\(page)) or [site](https://x.dev/)"
+        let view = makeChipView(source, serverHost: chipHost)
+        XCTAssertEqual(view.documentLinkChips.map(\.slotIndex), [0])
+        // Index 1 is the "R" of "Roadmap".
+        XCTAssertNil(view.textStorage.attribute(.underlineStyle, at: 1, effectiveRange: nil))
+        let color = view.textStorage.attribute(.foregroundColor, at: 1, effectiveRange: nil) as? UIColor
+        XCTAssertEqual(rgba(color), rgba(UIColor(Color(hex: DocsColorHex.textBrand))))
+        let siteLabel = (source as NSString).range(of: "site").location
+        let underline = view.textStorage.attribute(.underlineStyle, at: siteLabel, effectiveRange: nil) as? Int
+        XCTAssertEqual(underline, NSUnderlineStyle.single.rawValue)
+    }
+
+    /// Restyling to a block that renders no inline markdown drops the chips, or
+    /// a code block's literal `[` would be laid out as an icon slot.
+    func testConvertingToACodeBlockClearsTheChips() {
+        let source = "See [Roadmap](\(page)) now"
+        let view = makeChipView(source, serverHost: chipHost)
+        XCTAssertFalse(view.documentLinkChips.isEmpty)
+        view.applyInlineStyling(
+            blockTextStyling(for: EditorBlock(kind: .codeBlock(language: ""), text: source), serverHost: chipHost))
+        XCTAssertEqual(view.documentLinkChips, [])
+        XCTAssertEqual(
+            renderedWidth(view), renderedWidth(makeView(source, kind: .codeBlock(language: ""))), accuracy: 0.5)
+    }
+
     // MARK: - Blocks that style nothing keep nothing stale
 
     /// Converting a block that held a link into a code block must drop its hidden

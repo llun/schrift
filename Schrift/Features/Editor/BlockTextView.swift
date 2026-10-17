@@ -35,6 +35,9 @@ struct BlockTextStyling: Equatable {
     /// to parse: a code block's and an `.unknown` block's text is literal, and
     /// styling it would promise formatting the save would not write.
     let rendersInlineMarkdown: Bool
+    /// The server host a link must name to draw as a page chip
+    /// (`DocumentLinkChip.swift`). Empty classifies nothing.
+    let documentLinkHost: String
 }
 
 /// The editing surface's view of `blockTextAppearance` — the same table the
@@ -65,9 +68,14 @@ struct BlockTextStyling: Equatable {
 /// parser's fallback; the reflow it replaced happened on every tap, on every
 /// such block. Neither is free; this one is rarer and it is the one the reading
 /// surface has always had.
-func blockTextStyling(for block: EditorBlock, dynamicTypeSize: DynamicTypeSize = .large, theme: AppTheme = .white)
-    -> BlockTextStyling
-{
+///
+/// `serverHost` decides which links draw as page chips. It defaults to `""`
+/// (no chips) for the tests that only read fonts and colours; the editing row
+/// passes the host it derives from its required `serverOrigin`.
+func blockTextStyling(
+    for block: EditorBlock, dynamicTypeSize: DynamicTypeSize = .large, theme: AppTheme = .white,
+    serverHost: String = ""
+) -> BlockTextStyling {
     let appearance = blockTextAppearance(for: block.kind, text: block.text, theme: theme)
     let isLiteral: Bool
     let allowsNewlines: Bool
@@ -88,7 +96,8 @@ func blockTextStyling(for block: EditorBlock, dynamicTypeSize: DynamicTypeSize =
         isStruckThrough: appearance.isStruckThrough,
         isCodeLike: isLiteral,
         allowsNewlines: allowsNewlines,
-        rendersInlineMarkdown: rendersInlineMarkdown(block.kind)
+        rendersInlineMarkdown: rendersInlineMarkdown(block.kind),
+        documentLinkHost: serverHost
     )
 }
 
@@ -175,6 +184,14 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// on every layout pass, so it must be set before glyphs are invalidated.
     fileprivate(set) var hiddenRanges: [NSRange] = []
     fileprivate(set) var linkSpans: [InlineLinkSpan] = []
+    /// Document links drawn as page chips. Each one's hidden `[` is laid out as a
+    /// whitespace control glyph `chipSlotWidth` wide — the icon's slot — rather
+    /// than at zero width, so the chip adds exactly the width the reading
+    /// surface's inline icon does, without a character entering the buffer.
+    fileprivate(set) var documentLinkChips: [DocumentLinkChipSpan] = []
+    private var chipSlotIndexes: Set<Int> = []
+    private var chipSlotWidth: CGFloat = 0
+    private var chipIconCache: (metrics: DocumentLinkChipMetrics, band: DocumentLinkChipIconBand, icon: UIImage)?
 
     /// Builds the view on **TextKit 1**. `UITextView` defaults to TextKit 2 on
     /// iOS 16+, whose layout fragments offer no equivalent of
@@ -183,7 +200,8 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// inherited one and silently give some caller a TextKit 2 view.
     static func textKit1() -> EditorUITextView {
         let storage = NSTextStorage()
-        let layoutManager = NSLayoutManager()
+        // Paints the page chips' backgrounds and icons; lays out nothing itself.
+        let layoutManager = DocumentLinkChipLayoutManager()
         let container = NSTextContainer(size: CGSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
         container.widthTracksTextView = true
         container.heightTracksTextView = false
@@ -230,7 +248,12 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
         var changed = false
         for offset in 0..<glyphRange.length {
             let characterIndex = characterIndexes[offset]
-            if hiddenRanges.contains(where: { NSLocationInRange(characterIndex, $0) }) {
+            if chipSlotIndexes.contains(characterIndex) {
+                // Still hidden syntax — the `[` is never drawn — but laid out as
+                // the chip's icon slot (see the control-character methods below).
+                updated[offset] = .controlCharacter
+                changed = true
+            } else if hiddenRanges.contains(where: { NSLocationInRange(characterIndex, $0) }) {
                 updated[offset] = .null
                 changed = true
             } else {
@@ -242,6 +265,31 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
             glyphs, properties: updated, characterIndexes: characterIndexes,
             font: font, forGlyphRange: glyphRange)
         return glyphRange.length
+    }
+
+    /// A chip's slot glyph is laid out as whitespace; every other control
+    /// character keeps the action TextKit proposed.
+    func layoutManager(
+        _ layoutManager: NSLayoutManager,
+        shouldUse action: NSLayoutManager.ControlCharacterAction,
+        forControlCharacterAt charIndex: Int
+    ) -> NSLayoutManager.ControlCharacterAction {
+        chipSlotIndexes.contains(charIndex) ? .whitespace : action
+    }
+
+    /// The slot's advance: `DocumentLinkChipMetrics.slotWidth`, the same whole
+    /// points the reading surface's icon image is wide. Zero height, so the slot
+    /// can never make its line taller.
+    func layoutManager(
+        _ layoutManager: NSLayoutManager,
+        boundingBoxForControlGlyphAt glyphIndex: Int,
+        for textContainer: NSTextContainer,
+        proposedLineFragment proposedRect: CGRect,
+        glyphPosition: CGPoint,
+        characterIndex charIndex: Int
+    ) -> CGRect {
+        let width = chipSlotIndexes.contains(charIndex) ? chipSlotWidth : 0
+        return CGRect(x: glyphPosition.x, y: glyphPosition.y, width: width, height: 0)
     }
 
     /// Repaints the (short) block from its own buffer: base attributes
@@ -270,13 +318,17 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
         // Before `endEditing` triggers a layout pass that reads them.
         hiddenRanges = layout.syntax
         linkSpans = layout.links
+        configureDocumentLinkChips(
+            documentLinkChipSpans(in: layout, serverHost: styling.documentLinkHost), styling: styling)
 
         let selection = selectedRange
         textStorage.beginEditing()
         textStorage.setAttributes(baseTextAttributes(for: styling), range: full)
         for span in layout.spans {
             textStorage.addAttributes(
-                inlineTextAttributes(for: span.marks, base: font, theme: styling.theme), range: span.range)
+                inlineTextAttributes(
+                    for: span.marks, base: font, theme: styling.theme, serverHost: styling.documentLinkHost),
+                range: span.range)
         }
         textStorage.endEditing()
 
@@ -285,6 +337,36 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
         if selectedRange != selection {
             selectedRange = selection
         }
+    }
+
+    /// Hands the chips to the glyph pass (slot indexes and width) and to the
+    /// layout manager (what to paint). The icon is rebuilt only when the block's
+    /// font changes size, not on every keystroke's restyle.
+    private func configureDocumentLinkChips(_ chips: [DocumentLinkChipSpan], styling: BlockTextStyling) {
+        documentLinkChips = chips
+        chipSlotIndexes = Set(chips.map(\.slotIndex))
+        let chipLayout = layoutManager as? DocumentLinkChipLayoutManager
+        guard !chips.isEmpty else {
+            chipSlotWidth = 0
+            chipLayout?.chips = []
+            chipLayout?.chipAppearance = nil
+            return
+        }
+        let metrics = DocumentLinkChipMetrics(fontSize: styling.font.pointSize)
+        let band = DocumentLinkChipIconBand(font: styling.font)
+        let icon: UIImage
+        if let cached = chipIconCache, cached.metrics == metrics, cached.band == band {
+            icon = cached.icon
+        } else {
+            icon = documentLinkChipIconImage(metrics: metrics, band: band)
+            chipIconCache = (metrics, band, icon)
+        }
+        chipSlotWidth = metrics.slotWidth
+        chipLayout?.chips = chips
+        chipLayout?.chipAppearance = DocumentLinkChipLayoutManager.Appearance(
+            fill: UIColor(styling.theme.colors.brandFillSubtle),
+            iconColor: UIColor(styling.theme.colors.textBrand),
+            metrics: metrics, band: band, icon: icon)
     }
 
     // MARK: - Caret rules

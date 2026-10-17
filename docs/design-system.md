@@ -1,5 +1,19 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-10-17 — Links to other documents are page chips.** A markdown link
+> to another document on the user's server (`[Title](https://<host>/docs/<uuid>/)`, the
+> links `documentLinkAction` opens in the app) is drawn as a **page chip** on both the
+> reading and editing surfaces: a rounded `brandFillSubtle` background
+> (`DocsRadius.md`), `textBrand` title, **no underline**, and the `description` (page)
+> glyph before the title — inline in a sentence or alone on its line. External links
+> keep the underlined brand style. No new token: `textBrand` on `brandFillSubtle` is a
+> pinned contrast pair in every theme and mode. The icon, padding and slot scale with
+> the block's font (`DocumentLinkChipMetrics`, in whole points), so with Dynamic Type, and
+> both surfaces reserve exactly the same icon width so tapping into edit mode never
+> re-wraps a line. Display only — the saved markdown is unchanged. Implementation and
+> accepted residuals: `Schrift/Features/Editor/DocumentLinkChip.swift` and the
+> page-chip bullet in `AGENTS.md`.
+
 > **Revised: 2026-10-09 — One text-style button, and a fade where the bar scrolls.**
 > Bold, italic and link share one formatting-bar button on the list/quote terms: a tap
 > applies the remembered default (bold at first; local preference
