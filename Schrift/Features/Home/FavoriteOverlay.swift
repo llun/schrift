@@ -50,9 +50,10 @@ func applyingFavoriteFlag(_ documents: [Document], documentID: UUID, isFavorite:
 /// their other documents sit on a page Home never requests. Fixing it properly means paging the
 /// feed, which is a larger change than this one. Related and deliberate: Recent no longer holds
 /// the pinned document edited two minutes ago, so the `-updated_at` section no longer shows
-/// every recently-touched document. (Home's *top row* was already `pinnedDocuments[0]` in
-/// `favorite_list/`'s unstated order whenever anything was pinned — `DocumentListView` draws
-/// Pinned above Recent and is untouched here — so that part is not this change's doing.)
+/// every recently-touched document. (Home's *top row* is `pinnedDocuments[0]` whenever anything
+/// is pinned. Pinned is ordered client-side by `stablePinnedOrder` (most recently edited first,
+/// id tie-break), and pending local pins stay in front until the server confirms them.
+/// `DocumentListView` draws Pinned above Recent and is untouched here.)
 func recentsExcludingPinned(recent: [Document], pinned: [Document]) -> [Document] {
     guard !pinned.isEmpty else { return recent }
     let pinnedIDs = Set(pinned.map(\.id))
@@ -109,9 +110,10 @@ func applyFavoriteOverrides(
             if let source = recent.first(where: { $0.id == documentID }) {
                 var copy = source
                 copy.isFavorite = true
-                // At the front: "most recently pinned first" is the only ordering this screen
-                // can know — `favorite_list/` states none — and it matches
-                // `onDocumentMigrated`'s own `insert(at: 0)`.
+                // At the front: a pin made on this device stays ahead of the server's answer
+                // until the server confirms it. `stablePinnedOrder` orders that answer most
+                // recently edited first, so a local pin has no server rank to compare with.
+                // This matches `onDocumentMigrated`'s own `insert(at: 0)`.
                 resolvedPinned.insert(copy, at: 0)
             }
         } else {

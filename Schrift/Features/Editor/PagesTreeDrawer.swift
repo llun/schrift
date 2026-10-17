@@ -70,14 +70,17 @@ struct PagesTreeDrawer: View {
     }
 
     private func panel(width: CGFloat) -> some View {
-        VStack(spacing: 0) {
+        // Read once: `rows` is derived from the view model's levels, and the list body and the
+        // animation key below must describe the same snapshot.
+        let rows = viewModel.rows
+        return VStack(spacing: 0) {
             header
             Divider().overlay(theme.colors.borderDefault)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     rootRow
-                    ForEach(viewModel.rows) { row in
+                    ForEach(rows) { row in
                         treeRow(row)
                     }
                     if let errorKey = viewModel.errorKey {
@@ -86,7 +89,7 @@ struct PagesTreeDrawer: View {
                             .foregroundStyle(theme.colors.danger)
                             .padding(.horizontal, DocsSpacing.spaceSM)
                             .padding(.top, DocsSpacing.spaceXS)
-                    } else if viewModel.rows.isEmpty && !viewModel.loading.contains(viewModel.rootID) {
+                    } else if rows.isEmpty && !viewModel.loading.contains(viewModel.rootID) {
                         Text(loc[.pages_empty])
                             .font(DocsFont.footnote)
                             .foregroundStyle(theme.colors.textTertiary)
@@ -98,7 +101,7 @@ struct PagesTreeDrawer: View {
                 // Pages glide in when the cached level is replaced by the fetched one (and on
                 // expand/collapse) instead of snapping. The loading spinner shares the
                 // chevron's fixed 22pt slot, so it never shifts a row.
-                .animation(reduceMotion ? nil : .snappy, value: viewModel.rows.map(\.id))
+                .animation(reduceMotion ? nil : .snappy, value: rows.map(\.id))
                 .padding(.horizontal, DocsSpacing.spaceXS)
                 .padding(.vertical, DocsSpacing.spaceXS)
             }
