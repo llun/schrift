@@ -48,13 +48,16 @@ struct MarkdownImageView: View {
                     .accessibilityLabel(alt.isEmpty ? loc[.editor_image_a11y] : alt)
             } else {
                 switch matchesSession ? loader.state(for: url) : .unavailableOffline {
-                case .idle, .loading:
+                // `.cached` with no bitmap means the decoded image was evicted and is being re-decoded
+                // from disk (`.task` re-runs `loadIfNeeded`); it is transient, so keep the placeholder,
+                // not an error.
+                case .idle, .loading, .cached:
                     placeholder
                 case .requiresConsent:
                     tapToLoad
                 case .unavailableOffline:
                     unavailable(.editor_image_offline, canRetry: false)
-                case .failed, .cached:
+                case .failed:
                     unavailable(.editor_image_failed, canRetry: !isOffline && matchesSession)
                 }
             }
@@ -108,13 +111,21 @@ struct MarkdownImageView: View {
     }
 
     private var placeholder: some View {
-        RoundedRectangle(cornerRadius: DocsRadius.md)
-            .fill(theme.colors.surfaceSunken)
-            .frame(maxWidth: .infinity)
-            .frame(height: 160)
+        placeholderShape
             .overlay { ProgressView() }
             .accessibilityLabel(
                 alt.isEmpty ? loc[.editor_image_loading_a11y] : loc.format(.editor_image_loading_named_a11y, alt))
+    }
+
+    /// Full width at the image's remembered aspect ratio, so the loaded image lands in the same frame; a fixed 160pt
+    /// only when the size has never been seen.
+    @ViewBuilder private var placeholderShape: some View {
+        let shape = RoundedRectangle(cornerRadius: DocsRadius.md).fill(theme.colors.surfaceSunken)
+        if let ratio = loader.aspectRatio(for: url) {
+            shape.frame(maxWidth: .infinity).aspectRatio(ratio, contentMode: .fit)
+        } else {
+            shape.frame(maxWidth: .infinity).frame(height: 160)
+        }
     }
 
     private func unavailable(_ message: L10nKey, canRetry: Bool) -> some View {
