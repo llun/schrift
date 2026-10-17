@@ -1,10 +1,7 @@
 import SwiftUI
 
 func documentRowDate(_ document: Document, locale: Locale) -> String {
-    let formatter = RelativeDateTimeFormatter()
-    formatter.unitsStyle = .abbreviated
-    formatter.locale = locale
-    return formatter.localizedString(for: document.updatedAt, relativeTo: Date())
+    RelativeDateFormatterCache.shared.string(for: document.updatedAt, relativeTo: Date(), locale: locale)
 }
 
 /// The primary destinations, in their system tab-bar order. Profile is always last.

@@ -439,7 +439,13 @@ Choose the display source by precedence:
 3. **Cached content** (`contentCache.content(for:)`) — clean, previously synced.
    Install with the entry's markdown/title and `syncedAt` from the entry.
 4. **None of the above** — set `isLoading = true` and go straight to the fetch
-   (this is the **only** path that shows `ProgressView()`).
+   (this is the **only** path that shows the loading placeholder,
+   `EditorLoadingPlaceholder`: a full-page skeleton of the header and first lines).
+   One exception: a screen opened with an unconsumed creation intent for a
+   **server** document seeds a clean empty body instead
+   (`seedNewlyCreatedDocument` — baseline `""` with no server clock, `isLoading`
+   and `hasLocalCopy` stay false) and enters editing at once; the fetch still
+   revalidates it.
 
 For sources 1–3, content renders immediately: `isLoading` never becomes true and
 `hasLocalCopy = true`.
@@ -955,7 +961,7 @@ server is about to hold.
 
 ### 4. UI changes in `EditorView`
 
-- **Spinner only for source 4.** `if viewModel.isLoading` stays, but `isLoading`
+- **Loading placeholder only for source 4.** `if viewModel.isLoading` stays, but `isLoading`
   is now true only when there is no local copy. Cached opens render immediately —
   satisfying "no loading progress at all if loaded at least once."
 - **Header subtitle → real sync status** (`syncCaption`, `EditorView.swift`).
@@ -2872,7 +2878,8 @@ load() ── local phase (sync, no network; reset banner state) ─────
       │  in-flight save? ──▶ install (dirty)                           │
       │  stored draft?   ──▶ install (dirty; staleness checked later)  │
       │  cached content? ──▶ install (clean) + lastSyncedAt            │
-      │  none            ──▶ isLoading=true ─▶ ProgressView            │
+      │  new server doc  ──▶ install "" (clean) + enter editing        │
+      │  none            ──▶ isLoading=true ─▶ page skeleton           │
       ▼                                                                │
 revalidate (awaited tail; classify at completion; latest-wins) ◀───────┘
       │  transient fail (network/5xx/429/401) ─▶ keep display (offline reading)

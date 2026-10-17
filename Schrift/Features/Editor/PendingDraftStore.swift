@@ -62,6 +62,10 @@ let pendingDraftClockTolerance: TimeInterval = 120
 
 final class PendingDraftStore {
     private static let draftsKey = "dev.llun.Schrift.pendingDrafts"
+    /// Shared by every instance and every `UserDefaults`: it memoizes the decode of whatever
+    /// bytes were last read, so it can never answer for bytes it did not decode — see
+    /// `DecodedBlobMemo`.
+    private static let memo = DecodedBlobMemo<[String: PendingDraft]>()
 
     private let userDefaults: UserDefaults
     private let encoder: JSONEncoder
@@ -126,16 +130,21 @@ final class PendingDraftStore {
     /// un-gates it, destructively, on the first keystroke.
     var holdsUnreadableData: Bool {
         guard let data = userDefaults.data(forKey: Self.draftsKey) else { return false }
-        return (try? decoder.decode([String: PendingDraft].self, from: data)) == nil
+        return decoded(data) == nil
     }
 
     private func loadAll() -> [String: PendingDraft] {
-        guard let data = userDefaults.data(forKey: Self.draftsKey),
-            let drafts = try? decoder.decode([String: PendingDraft].self, from: data)
-        else {
+        guard let data = userDefaults.data(forKey: Self.draftsKey), let drafts = decoded(data) else {
             return [:]
         }
         return drafts
+    }
+
+    /// The blob's decode, memoized on its bytes: a read with no write since the last one costs a
+    /// byte comparison, not a decode of every draft body. nil means undecodable, exactly as the
+    /// direct `try? decode` it replaces.
+    private func decoded(_ data: Data) -> [String: PendingDraft]? {
+        Self.memo.value(for: data) { try? decoder.decode([String: PendingDraft].self, from: $0) }
     }
 
     private func persist(_ drafts: [String: PendingDraft]) {

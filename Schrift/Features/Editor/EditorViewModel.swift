@@ -92,6 +92,8 @@ final class EditorViewModel {
     var cursorRequest: CursorRequest?
     var selection: NSRange?
     /// Native keyboard identity can continue in another model block after a split/merge.
+    /// The map only grows (one entry per split or merge) for the view model's lifetime; that is
+    /// accepted because retired row ids must stay reserved (see `install`).
     private var inputRowIDs: [UUID: UUID] = [:]
 
     var slashQueryText: String?
@@ -476,6 +478,7 @@ final class EditorViewModel {
                     subpages = cachedChildren
                 }
                 restoreLocalContent()
+                seedNewlyCreatedDocument()
                 enterNewDocumentIfReady()
             }
             // No spinner for a document declared gone: `readingSurface` owns the
@@ -534,6 +537,30 @@ final class EditorViewModel {
             displaySource = .none
         }
         hasLocalCopy = displaySource != .none
+    }
+
+    /// A document this screen was opened to **create** opens straight into editing, with no
+    /// loading screen: its body is empty by construction (the create sends a title and
+    /// nothing else), so there is nothing to wait for. Only when the local phase found
+    /// nothing — a document created on this device already restored from its seed draft —
+    /// and only while the creation intent is still unconsumed, so a reopened or recreated
+    /// screen loads like any other document.
+    ///
+    /// The empty body goes through `install`, and its baseline claims exactly that and no
+    /// more: an empty body, with **no** server clock. A clock would let `draftSyncDecision`
+    /// prove a push by timestamp alone, so a body the server held at that same instant (one
+    /// the create itself wrote) would be abandoned and overwritten. With none, only body
+    /// equality proves anything — the server's `""` changes nothing, and any other body it
+    /// holds is stashed behind the "Updated" banner and conflicts on the first edit, the same
+    /// way as for any other clean document. The first fetch replaces the baseline anyway.
+    ///
+    /// `syncedAt` is now because the create POST that produced this document has just
+    /// landed: the server holds exactly what is on screen, a title and no body.
+    private func seedNewlyCreatedDocument() {
+        guard displaySource == .none, !isLocalDocument, let entryIntent, entryIntent.isPending else { return }
+        install(markdown: "", title: nil, syncedAt: Date())
+        serverBaseline = DraftBaseline(serverUpdatedAt: nil, markdown: "", title: title)
+        displaySource = .clean
     }
 
     /// Revalidation: the awaited structured tail of load() — no unstructured
@@ -798,6 +825,9 @@ final class EditorViewModel {
         dirtySince = nil
         isDirty = false
         mode = .reading
+        // A title-focus request the header never claimed must not outlive the session it
+        // belonged to, or a later manual Edit would select the title as if just created.
+        initialTitleFocusPending = false
         focusedBlockID = nil
         cursorRequest = nil
         selection = nil
@@ -1445,12 +1475,24 @@ final class EditorViewModel {
         }
         savedTitle = title
         rawMarkdown = markdown
-        blocks = parseEditorBlocks(markdown, serverOrigin: serverOrigin)
-        inputRowIDs = [:]
-        // Every block gets a fresh identity here, so any caret state still
-        // pointing into the outgoing blocks is now dangling. Clearing it in the
-        // one funnel every content swap routes through makes that unrepresentable
-        // — `reconcileDraft`'s server-wins install can land mid-edit.
+        // An unchanged block keeps its id (`reusingBlockIDs`): the reading surface, the
+        // editing canvas, the checklist presentation and the scroll anchor all key on it, so
+        // re-minting every id made a one-paragraph revalidation flash the whole document and
+        // strand the anchor. A changed, inserted or moved block still gets a fresh id. When
+        // nothing changed, `blocks` is not reassigned at all, so nothing observing it re-runs.
+        let parsed = reusingBlockIDs(from: blocks, into: parseEditorBlocks(markdown, serverOrigin: serverOrigin))
+        if parsed != blocks {
+            blocks = parsed
+        }
+        // `inputRowIDs` is deliberately kept. A surviving block keeps the native text view
+        // it had; an id that did not survive keeps its entry reserved, so a block that later
+        // comes back under that id (a remote reintroduction) cannot reclaim a row another
+        // block inherited. Resetting it now would rebind a surviving `UITextView` to a
+        // different surviving block. Fresh ids never collide with any entry.
+        // The swap can still land mid-edit (`reconcileDraft`'s server-wins install), and the
+        // focused block may be one that changed or went away, so any caret state is cleared
+        // exactly as before: one funnel every content swap routes through makes a dangling
+        // caret unrepresentable.
         focusedBlockID = nil
         cursorRequest = nil
         selection = nil
@@ -2769,7 +2811,7 @@ final class EditorViewModel {
         savedMarkdown = markdownRewritingPendingAttachment(savedMarkdown, localID: localID, resolvedURL: resolved)
         // The comparison basis for `serverChanged(fetched:)`. Left stale, the next revalidation
         // reads the replay's own push as a remote edit — a spurious "Document updated" banner
-        // mid-edit, or a needless `install()` that re-mints every block id and drops the caret.
+        // mid-edit, or a needless `install()` that re-identifies the block and drops the caret.
         displayedSourceMarkdown = markdownRewritingPendingAttachment(
             displayedSourceMarkdown, localID: localID, resolvedURL: resolved)
     }
@@ -3626,9 +3668,10 @@ final class EditorViewModel {
 
     /// The one non-`install(...)` content-swap funnel: applies a live remote
     /// change set (already diffed by `liveChangeSet`, B5) to the on-screen
-    /// blocks in place. Unlike `install`, it reuses every untouched block's
-    /// `id` and preserves the caret — `install` deliberately re-mints every
-    /// block's identity and nulls the caret (see its doc comment), which is
+    /// blocks in place. Unlike `install`, it keeps the id of every block the
+    /// change merely edits and preserves the caret — `install` keeps only the
+    /// ids of blocks whose content is unchanged (`reusingBlockIDs`), gives an
+    /// edited block a fresh one, and nulls the caret (see its body), which is
     /// exactly wrong for a peer's edit landing under the user's own cursor.
     ///
     /// Read-only from the save machinery's point of view: it advances the dirty

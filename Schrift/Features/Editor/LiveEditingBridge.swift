@@ -66,9 +66,10 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
     /// on first engage (`map` is empty), on resume after a pause during which a
     /// structural edit landed, and — the case a boolean `isSeeded` flag
     /// couldn't catch — when a pause-free `install(...)` (a pull-to-refresh or
-    /// server-wins reconcile) re-mints every `EditorBlock.id` while the doc
-    /// stays clean, since that never flips `canEngageLiveEditing` false and so
-    /// never reset a "seeded" flag either.
+    /// server-wins reconcile) re-identifies every changed block (only unchanged
+    /// blocks keep their `EditorBlock.id`) while the doc stays clean, since
+    /// that never flips `canEngageLiveEditing` false and so never reset a
+    /// "seeded" flag either.
     private var map: [String: UUID] = [:]
 
     /// The replica's current projection expressed as `[BlockNoteBlock]` (the `old` for
@@ -175,8 +176,11 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
 
         // Re-seed when the identity map no longer matches the editor's current
         // blocks — e.g. `install(...)` (a pull-to-refresh / server-wins
-        // reconcile) re-minted every `EditorBlock.id` underneath us while the
-        // doc stayed clean, so the carried-forward map is keyed to dead ids. In
+        // reconcile) gave every changed block a fresh `EditorBlock.id`
+        // underneath us while the doc stayed clean, so part of the
+        // carried-forward map is keyed to dead ids. (Any content change
+        // re-identifies or drops at least one block, so the id sets differ;
+        // an install that changed nothing leaves every id, and the map, valid.) In
         // steady state after an engaged apply the two sets are equal, so this
         // is a no-op; it fires exactly when the editor's block identities were
         // replaced out from under the map. This subsumes first-engage (empty

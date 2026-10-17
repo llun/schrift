@@ -239,8 +239,9 @@ The pieces live across `Core/Collaboration` and `Features/Editor`:
   (`liveChangeSet`), and applies the change through the editor's surgical funnel. Surviving
   blocks keep their `EditorBlock.id`, so SwiftUI identity, focus, and scroll survive.
 - **`EditorViewModel.applyLiveRemoteChange` is the one content-swap funnel that is NOT
-  `install(...)`.** `install` re-mints every block id and nulls the caret (correct for a
-  full server-wins swap); the live funnel instead mutates blocks in place, recomputes the
+  `install(...)`.** `install` re-parses the whole body, keeps only the ids of blocks whose
+  content is unchanged (`reusingBlockIDs`), and nulls the caret (correct for a full
+  server-wins swap); the live funnel instead mutates blocks in place, recomputes the
   focused block's caret with the pure UTF-16 `transformedCaret` rule, and advances the dirty
   baseline (`savedMarkdown`/`serverBaseline`) to the projected content — so a later
   tap-to-edit never false-dirties. It **never** enqueues a save, never sets `isDirty`, and
@@ -1002,11 +1003,16 @@ A successful creation action opens the editor with a one-time entry intent: Home
 pushes `DocumentEditorRoute(createdDocument:)`, Home on iPad selects that route, and both
 Subpages **Add a subpage** and the Pages drawer **New page** use the same creation callback.
 Ordinary opens (including reopening a newly created document) carry no intent and start in
-reading mode. Content must first initialize from the server or restore from a local draft/cache;
-only then does the view model consume the intent through `canStartEditing` and `startEditing`.
-A failed load stays in reading/error mode without a draft or empty-body save and preserves the
-intent for a successful retry. Offline creation restores its seed draft without fetching a local
-UUID. The rendered shared header focuses the title once and selects its existing text, so typing
+reading mode. Content must first initialize; only then does the view model consume the intent
+through `canStartEditing` and `startEditing`. A document created on the server initializes
+without waiting: its body is empty by construction, so the editor installs an empty body (with a
+baseline that carries no server clock, so only body equality can prove a push) and enters
+editing on the first frame, while the content fetch runs behind it under the ordinary revalidation
+rules (an unexpected server body is stashed behind the "Updated" banner and the first edit
+records a conflict, never an overwrite). Offline creation
+restores its seed draft without fetching a local UUID. Ordinary opens with nothing cached show a
+full-page skeleton of the header and first lines (`EditorLoadingPlaceholder`) until content lands.
+The rendered shared header focuses the title once and selects its existing text, so typing
 replaces the default without first deleting it. Selection alone never dirties the document.
 Consumption is shared with the route so screen recreation, refresh, reconnect, and a changed
 server identity cannot replay entry; the separate focus request belongs to the editing session.

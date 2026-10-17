@@ -513,7 +513,9 @@ Schrift/
 │   │                    enqueueLiveSnapshot. Opt-in via the C3 Profile toggle
 │   │                    (default off — see Features/Profile)
 │   ├── Localization/    in-code catalog: AppLanguage (11 langs), L10nKey,
-│   │                    Strings+<lang>.swift tables, LocalizationStore, PluralRule
+│   │                    Strings+<lang>.swift tables, LocalizationStore, PluralRule,
+│   │                    RelativeDateFormatterCache (one shared relative-date formatter
+│   │                    per locale)
 │   ├── Networking/      actor DocsAPIClient + per-feature endpoint extensions
 │   │                    (incl. AttachmentEndpoints: multipart upload + media-check;
 │   │                    VersionEndpoints: read-only version list;
@@ -1174,7 +1176,9 @@ new code reads like the surrounding code.
   never to a sheet that dismisses itself as it fires one. A **skeleton**
   (`SkeletonList`) stands in for a list on its *first* load with nothing cached
   — never over existing rows, which `shouldShowLoadingPlaceholder` already
-  gates; the handoff's rule is no spinners on lists. An **empty state** is
+  gates; the handoff's rule is no spinners on lists. The editor's first load with
+  nothing cached is the page-shaped twin, `EditorLoadingPlaceholder` (header and
+  first-line bars, filling the page). An **empty state** is
   `ContentUnavailableView`. (A *callout* — a persistent in-context note — is
   specified by the handoff but has no call site yet; don't invent one.)
 - **Glass is for surfaces that float over content, never for content itself.**
@@ -2090,13 +2094,27 @@ that are easy to violate and expensive to discover:
   the header's bar on **both** surfaces — the reading one previously drew its
   avatars offline. Don't re-add a second presence affordance to one mode only:
   that asymmetry is what the shared header exists to prevent.
-- **The scroll anchor degrades, it never corrupts.** `install(...)` re-mints
-  every `EditorBlock.id`, so an anchor naming a block can go stale after a
-  remote change; an unresolvable id simply scrolls nowhere and the surface opens
-  where it is. `.header` and `.trailer` are stable across that, and the
+- **The scroll anchor degrades, it never corrupts.** `install(...)` gives every
+  block whose content changed a fresh `EditorBlock.id` (only unchanged blocks keep
+  theirs — see the next bullet), so an anchor naming an edited block can go stale
+  after a remote change; an unresolvable id simply scrolls nowhere and the surface
+  opens where it is. `.header` and `.trailer` are stable across that, and the
   reading surface's own `.refreshable` is only reachable from the top, where the
   anchor is `.header`. Worth knowing before "fixing" a report of the editor
   opening at the top after a co-author's edit.
+- **`install(...)` keeps the id of every unchanged block** (`reusingBlockIDs`,
+  `EditorBlock.swift`): an LCS of old and new blocks under content equality (kind,
+  text, indent), after trimming the common prefix and suffix. Re-minting every id
+  made a one-paragraph revalidation re-identify the whole document — every row of
+  the reading surface and the editing canvas rebuilt (a flash) and every block
+  anchor stranded. Matching is **content equality only**: a changed, inserted or
+  moved block still gets a fresh id, never a positional reuse, because an id is
+  also the canvas's native text-view identity (`inputRowID`) and a surviving
+  `UITextView` must not be handed a block whose text changed under it. A body with
+  identical content leaves `blocks` unassigned. Everything else `install` does is
+  unchanged — caret/focus/selection still clear, the dirty baseline and the
+  round-trip source are still reset — and `inputRowIDs` is now **kept** rather than
+  reset, so a surviving block keeps its row and a dead id stays reserved.
 - **Known, accepted residual — an `.unknown` block can restyle mid-keystroke.**
   Its appearance follows its *text* (`unknownRendersAsProse`, per-line), so
   indenting the first line of a prose `.unknown`, or starting one with `|`/`<`,
@@ -2385,8 +2403,8 @@ markdown write endpoint**. Understand this before touching the save path:
   (out of process; no usage description, no `project.yml` change) → the same
   `attachment-upload` + media-check poll → `insertAttachmentBlock`, which is a
   structural twin of `insertImageBlock` down to verifying against the **saved**
-  markdown before committing and never re-parsing the document (that would
-  re-mint every block id and make a live forward diff as delete-all + reinsert).
+  markdown before committing and never re-parsing the document (a parse mints
+  fresh block ids, which would make a live forward diff as delete-all + reinsert).
   `sanitizedAttachmentFileName` enforces the union of two unrelated requirements,
   because the picked name is interpolated into both: multipart-header safety (no
   quote, CR, LF) *and* markdown-label safety (no brackets or parens, or the
@@ -2463,8 +2481,8 @@ markdown write endpoint**. Understand this before touching the save path:
   `EditorViewModel.install(...)` so the markdown round-trip safety check and
   the dirty baseline are never bypassed. **The one sanctioned exception is
   `applyLiveRemoteChange` (C1)** — the caret-preserving live-apply funnel. Unlike
-  `install`, which re-mints every block id and nulls the caret (a full server-wins
-  swap), it mutates `blocks` in place reusing surviving `EditorBlock.id`s,
+  `install`, which keeps only unchanged blocks' ids and nulls the caret (a full
+  server-wins swap), it mutates `blocks` in place reusing surviving `EditorBlock.id`s,
   recomputes the focused caret via the pure UTF-16 `transformedCaret`, and advances
   the dirty baseline to the projected content. It **never** calls `install`, never
   `enqueue`s a save, and never sets `isDirty`; it only runs while
@@ -2478,9 +2496,19 @@ markdown write endpoint**. Understand this before touching the save path:
 - **Only a creation action opens editing automatically.** `DocumentEditorRoute(createdDocument:)`
   carries a reference-backed `NewDocumentEntryIntent`; ordinary routes carry none. Home's
   compact push, regular-width selection, Subpages add, and Pages drawer create all use it.
-  `EditorViewModel` consumes it only after successful content installation or local restoration,
-  through `canStartEditing` / `startEditing`. Failed loads keep the intent pending for a
-  successful retry; they never seed an unloaded body. The editable shared header claims a
+  `EditorViewModel` consumes it only after content is installed, through `canStartEditing` /
+  `startEditing`. A just-created **server** document has no loading screen: its body is empty by
+  construction, so when the local phase finds nothing and the intent is unconsumed,
+  `seedNewlyCreatedDocument` installs `""` with a baseline that claims an empty body and **no**
+  server clock (a clock would let a timestamp alone prove a push), and the screen enters editing
+  at once.
+  The fetch that follows still runs the ordinary rules: a server body it did not expect is stashed
+  behind the "Updated" banner and the first edit records a conflict rather than overwriting it.
+  This is the **one** sanctioned seed of a body not read from the server or the disk — it is
+  keyed on the creation intent alone; never seed from an empty-looking fetch, a failed load or a
+  default title. An ordinary open still waits for content, behind `EditorLoadingPlaceholder` (a
+  page skeleton that fills the screen, so the theme's page colour reaches every edge).
+  The editable shared header claims a
   separate one-time title-focus request and selects the existing title without clearing or
   dirtying it. Do not derive entry/focus from the default title, emptiness, connectivity, a
   pending-create id, or an appearance callback: refresh, reconnect, navigation restoration,
@@ -3807,8 +3835,9 @@ markdown write endpoint**. Understand this before touching the save path:
   the source buffer on commit corrupts subsequent correction coordinates. Never
   replace marked characters, attributes, or selection during model reconciliation.
   Process shortcuts and slash queries on commit even when the committed characters
-  equal the provisional model text. Retired input row IDs stay reserved until a
-  content install, and stale row callbacks/focus requests cannot reclaim them.
+  equal the provisional model text. Retired input row IDs stay reserved for the
+  view model's lifetime (a content install keeps them too, since it now keeps
+  unchanged block ids), and stale row callbacks/focus requests cannot reclaim them.
   Native regression tests must include commit, cancel, unchanged commits, ranged
   corrections after commit, same-row pending carets, and real canvas reconciliation
   with the same native view, marked range, and first responder.
@@ -3951,6 +3980,16 @@ markdown write endpoint**. Understand this before touching the save path:
   seconds, making draft-vs-save races and eviction tie-breaks arbitrary
   (`DocumentCacheStore`, which carries no recency data, is the one `.iso8601`
   store).
+- **A one-blob store that is read often memoizes its decode on the blob's bytes
+  (`DecodedBlobMemo`), never on its own state.** `PendingDraftStore` and
+  `DocumentChildrenCacheStore` share one static memo each: every read still fetches
+  the current `Data` and reuses the decoded value only when the bytes are identical,
+  so several instances over `.standard`, raw test writes and `removePersistentDomain`
+  can never be served a stale copy, and an undecodable blob stays memoized as
+  undecodable (`holdsUnreadableData` unchanged). Writes do **not** seed the memo with
+  the dictionary they encoded: the `.millisecondsSince1970` round trip is not
+  bit-exact, so readers must only ever see what the decoder produced. Same keys, same
+  format — no migration.
 - **List-metadata caches** (`DocumentCacheStore`: pinned + recent (the
   unfiltered Home feed) + shared lists; `DocumentChildrenCacheStore`: sub-page
   lists keyed by parent document) make every document list instant and
