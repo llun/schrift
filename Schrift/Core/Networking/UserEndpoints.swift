@@ -58,13 +58,10 @@ extension CurrentUser {
 }
 
 extension DocsAPIClient {
-    /// Concurrent callers share one request (in-flight only, no cache: a call after the previous
-    /// one settled always asks the server). The 401 hook fires inside the shared request, once.
+    /// Every call does its own GET and is never shared: identity must come from a live fetch made
+    /// with the cookies in force *now*, and a joined request could have been sent with the
+    /// previous account's cookies across a login handover.
     func currentUser() async throws -> CurrentUser {
-        if let task = inFlightCurrentUser { return try await task.value }
-        let task = Task { try await self.get("users/me/") as CurrentUser }
-        inFlightCurrentUser = task
-        defer { inFlightCurrentUser = nil }
-        return try await task.value
+        try await get("users/me/")
     }
 }

@@ -33,7 +33,7 @@ final class ProfileViewModelFreshnessTests: XCTestCase {
         let recorder = RequestRecorder()
         MockURLProtocol.stubHandler = { request in
             recorder.record(request)
-            if request.url?.path.hasSuffix("config/") == true {
+            if request.url?.path.contains("config") == true {
                 return .init(
                     statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"5.4.1"}"#.utf8), error: nil)
             }

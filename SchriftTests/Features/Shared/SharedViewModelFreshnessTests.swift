@@ -46,11 +46,11 @@ final class SharedViewModelFreshnessTests: XCTestCase {
         stubEmptyList(recorder)
         let viewModel = makeViewModel()
 
-        await viewModel.loadIfStale()
+        await viewModel.loadIfStale(sessionGeneration: 0)
         XCTAssertEqual(recorder.count(ofMethod: "GET"), 1)
 
         clock = clock.addingTimeInterval(10)
-        await viewModel.loadIfStale()
+        await viewModel.loadIfStale(sessionGeneration: 0)
         XCTAssertEqual(recorder.count(ofMethod: "GET"), 1, "fresh: no second fetch")
 
         await viewModel.refresh()
@@ -65,10 +65,27 @@ final class SharedViewModelFreshnessTests: XCTestCase {
         stubEmptyList(recorder)
         let viewModel = makeViewModel()
 
-        await viewModel.loadIfStale()
+        await viewModel.loadIfStale(sessionGeneration: 0)
         clock = clock.addingTimeInterval(31)
-        await viewModel.loadIfStale()
+        await viewModel.loadIfStale(sessionGeneration: 0)
 
+        XCTAssertEqual(recorder.count(ofMethod: "GET"), 2)
+    }
+
+    func testANewSignInGenerationReloadsInsideTheWindow() async {
+        let recorder = RequestRecorder()
+        stubEmptyList(recorder)
+        let viewModel = makeViewModel()
+
+        await viewModel.loadIfStale(sessionGeneration: 0)
+        clock = clock.addingTimeInterval(5)
+        await viewModel.loadIfStale(sessionGeneration: 0)
+        XCTAssertEqual(recorder.count(ofMethod: "GET"), 1)
+
+        await viewModel.loadIfStale(sessionGeneration: 1)
+        XCTAssertEqual(recorder.count(ofMethod: "GET"), 2, "a re-login must not show the previous account's list")
+
+        await viewModel.loadIfStale(sessionGeneration: 1)
         XCTAssertEqual(recorder.count(ofMethod: "GET"), 2)
     }
 }
