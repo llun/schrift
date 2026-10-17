@@ -44,6 +44,13 @@ final class OnlineAvailability {
     /// evidence would make no request and could never recover.
     var showsOfflineStatus: Bool { isOffline || connectivity?.serverUnreachable == true }
 
+    /// The path/transport half of `showsOfflineStatus` — everything except the Work Offline
+    /// preference. This is what status chrome debounces (`DebouncedStatus`); the preference is
+    /// OR-ed in outside the debounce so turning it off hides the banner at once. Status only.
+    var transportOfflineEvidence: Bool {
+        connectivity?.isReachable == false || connectivity?.serverUnreachable == true
+    }
+
     /// Whether the connection itself looks down — path down or transport evidence — and
     /// **not** the Work Offline preference. Work Offline withholds reads but still sends
     /// saves, so a save in flight under it is genuinely saving; the editor's save status

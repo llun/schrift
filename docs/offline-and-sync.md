@@ -1778,7 +1778,7 @@ already-recorded ghost residual below, not a new one.
   network and the reconnect edge calls `syncPendingDrafts()` without `load()`. Once the
   read-time merge is wired, a live Home loses the row when `removePendingCreate` runs and
   regains it only on the next successful fetch.
-- **[LANDED — `onReplayedPushLanded`]** Home after a reconnect replay pushes an offline edit. The reconnect `load()` races the replay's PATCHes (unstructured `start` tasks that outlive `syncPendingDrafts()`) and re-caches the pre-push list. `runSyncPass` marks the ids it enqueues (`replayedPushes`); `finish` fires the callback when such a save's content lands, and Home runs a debounced (300 ms) silent `load()`. The mark is set only when the save actually started (a held save is not marked) and dropped by `discardPendingWork`. Like the migration reload, this silent `load()` can supersede an in-flight pull-to-refresh and clears the error banner. Ordinary autosaves are not marked, so typing causes no list reloads.
+- **[LANDED — `onReplayedPushLanded`]** Home after a reconnect replay pushes an offline edit. The reconnect `load()` races the replay's PATCHes (unstructured `start` tasks that outlive `syncPendingDrafts()`) and re-caches the pre-push list. `runSyncPass` marks the ids it enqueues (`replayedPushes`); `finish` fires the callback when such a save's content lands, and Home runs a debounced (300 ms) silent `load()`. The mark is set only when the save actually started (a held save is not marked) and dropped by `discardPendingWork`. Like the migration reload, this silent `load()` can supersede an in-flight pull-to-refresh; it no longer wipes a visible load error on its own — the load error clears only on a successful load, an offline result, a new error, a dismiss, or a user-initiated refresh. Ordinary autosaves are not marked, so typing causes no list reloads.
 - **[LANDED — `EditorViewModel.isLocalDocument` gates all four fetch paths]** Gating the editor's fetch on a pending-create id. `EditorViewModel.revalidate`
   404s on a client-minted id and calls `becomeUnavailable`, which clears
   `hasLoadedContent` — so every local-document caption cell is suppressed and the screen
@@ -2917,7 +2917,12 @@ delete / 404 / 403 ──▶ remove cache entry        sign-out ──▶ remove
   A request issued on a dead link reports only when its timeout fires, so an `.unreachable`
   whose request started before the last clearing event is stale and ignored.
   `OnlineAvailability.showsOfflineStatus` adds the evidence to `isOffline` for **status
-  display only** — the offline banner and the sync caption's wording. `saveStatusDisplay`
+  display only** — the offline banner and the sync caption's wording. The **banners** (editor, Home, Shared) additionally debounce the
+  transport evidence (`OnlineAvailability.transportOfflineEvidence`, plus Home/Shared's
+  `loadFailedOffline`) through `DebouncedStatus` — show after ~1.5 s of continuous evidence, hide
+  after ~1 s of recovery — and OR the Work Offline preference in *outside* the debounce, so
+  switching it off hides the banner at once. Display only: controls, saves and `permitsResponse`
+  never read the debounced value. `saveStatusDisplay`
   reads `connectionAppearsDown` (path or evidence, excluding Work Offline, which still
   PATCHes saves) and shows a `.saving` state as "Saved on this device" instead of "Saving…"
   for the whole request timeout. Controls and response tokens keep `isOffline` (a control

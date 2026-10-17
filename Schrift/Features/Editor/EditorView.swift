@@ -635,12 +635,11 @@ struct EditorView: View {
         AccessibilityNotification.ScreenChanged().post()
     }
 
-    /// The screen's content column, lifted out of `body` so the long
-    /// modifier chain that follows stays type-checkable on its own — with
-    /// both in one expression the compiler gives up.
-    private var mainContent: some View {
+    /// The banner stack above the document. The animations live on this container, not on
+    /// `mainContent`, so a banner coming or going animates without also animating the
+    /// loading/reading/editing content swap in the same transaction.
+    private var bannerStack: some View {
         VStack(spacing: 0) {
-
             if showsOfflineBanner, viewModel.hasLocalCopy {
                 OfflineBanner(note: loc[.editor_offline_local_copy])
                     .transition(.opacity.combined(with: .move(edge: .top)))
@@ -704,6 +703,20 @@ struct EditorView: View {
                 .padding(.top, DocsSpacing.spaceXS)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
+        }
+        .animation(reduceMotion ? nil : .snappy, value: showsOfflineBanner)
+        .animation(reduceMotion ? nil : .snappy, value: viewModel.syncConflict != nil)
+        .animation(reduceMotion ? nil : .snappy, value: viewModel.updateAvailable)
+        .animation(reduceMotion ? nil : .snappy, value: viewModel.errorKey)
+    }
+
+    /// The screen's content column, lifted out of `body` so the long
+    /// modifier chain that follows stays type-checkable on its own — with
+    /// both in one expression the compiler gives up.
+    private var mainContent: some View {
+        VStack(spacing: 0) {
+
+            bannerStack
 
             if viewModel.isLoading {
                 ProgressView()
@@ -731,11 +744,7 @@ struct EditorView: View {
                 readingSurface
             }
         }
-        .animation(reduceMotion ? nil : .snappy, value: showsOfflineBanner)
-        .animation(reduceMotion ? nil : .snappy, value: viewModel.syncConflict != nil)
-        .animation(reduceMotion ? nil : .snappy, value: viewModel.updateAvailable)
-        .animation(reduceMotion ? nil : .snappy, value: viewModel.errorKey)
-        .onChange(of: viewModel.availability.showsOfflineStatus, initial: true) { _, raw in
+        .onChange(of: viewModel.availability.transportOfflineEvidence, initial: true) { _, raw in
             offlineBannerStatus.update(raw)
         }
     }

@@ -90,7 +90,7 @@ struct DocumentListView: View {
             }
         }
         .animation(reduceMotion ? nil : .snappy, value: showsOfflineBanner)
-        .onChange(of: viewModel.isOffline, initial: true) { _, raw in offlineStatus.update(raw) }
+        .onChange(of: viewModel.offlineStatusEvidence, initial: true) { _, raw in offlineStatus.update(raw) }
         // Claim the full width the removed NavBar used to define, or the
         // screen sizes to its widest child and starves the title.
         .frame(maxWidth: .infinity)

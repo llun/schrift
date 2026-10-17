@@ -25,6 +25,8 @@ final class SharedViewModel {
     /// the last fetch failed with a transport (`DocsAPIError.network`) failure. The failure flag is
     /// latched until a load succeeds or the cache is served on purpose.
     var isOffline: Bool { availability.isOffline || loadFailedOffline }
+    /// Transport evidence only (no Work Offline preference), for the debounced banner.
+    var offlineStatusEvidence: Bool { availability.transportOfflineEvidence || loadFailedOffline }
     private var loadFailedOffline = false
 
     let client: DocsAPIClient

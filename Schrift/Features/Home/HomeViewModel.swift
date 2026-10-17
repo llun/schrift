@@ -106,6 +106,8 @@ final class HomeViewModel {
     private var loadFailedOffline = false
     let availability: OnlineAvailability
     var isOffline: Bool { availability.isOffline || loadFailedOffline }
+    /// Transport evidence only (no Work Offline preference), for the debounced banner.
+    var offlineStatusEvidence: Bool { availability.transportOfflineEvidence || loadFailedOffline }
     /// Whether the recent list is known — cached or fetched this session. The
     /// view may render the "No documents yet" empty state only for a known
     /// list: nil (never fetched) must not masquerade as a real empty result,
@@ -519,6 +521,8 @@ final class HomeViewModel {
             }
             searchPinRevision = pinRevision
             rawSearchResults = results
+            // A search that succeeds retires its own earlier failure; other errors stay.
+            if errorKey == .home_error_search { clearError() }
             saveCoordinator.pins.didReadFlags(
                 page.results.filter { !deletedSinceLoad.contains($0.id) }, ownerUserID: pinOwner, fetchedAt: pinRevision
             )

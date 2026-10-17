@@ -185,6 +185,22 @@ final class HomeViewModelLoadTests: HomeViewModelTestCase {
         XCTAssertEqual(viewModel.searchResults.map(\.title), ["Q3 Planning"])
     }
 
+    func testSuccessfulSearchClearsAnEarlierSearchError() async {
+        let viewModel = makeViewModel()
+        viewModel.searchQuery = "Q3"
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        await viewModel.search()
+        XCTAssertEqual(viewModel.errorKey, .home_error_search)
+
+        let body = Self.paginatedFixture(
+            id: "33333333-3333-4333-8333-333333333333", title: "Q3 Planning", isFavorite: false)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: body, error: nil) }
+        await viewModel.search()
+
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertNil(viewModel.errorDetail)
+    }
+
     func testLoadFailureSetsErrorMessage() async {
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
