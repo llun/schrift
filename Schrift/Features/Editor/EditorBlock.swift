@@ -69,9 +69,10 @@ func blockContentEqual(_ lhs: EditorBlock, _ rhs: EditorBlock) -> Bool {
 // MARK: - Identity across a content swap
 
 /// Above this many cells the id-reuse LCS table is skipped and the changed middle keeps its
-/// fresh ids. The common prefix and suffix are trimmed first, so only a document rewritten
+/// fresh ids. The cap bounds main-actor work during install, because each cell can be a string
+/// comparison. The common prefix and suffix are trimmed first, so only a document rewritten
 /// almost everywhere reaches it — and then the result is what `install` always did.
-let maxBlockIDReuseTableCells = 1_000_000
+let maxBlockIDReuseTableCells = 250_000
 
 /// `new`, with every block whose content is unchanged carrying the id it has in `old`.
 ///

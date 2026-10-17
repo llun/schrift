@@ -92,6 +92,8 @@ final class EditorViewModel {
     var cursorRequest: CursorRequest?
     var selection: NSRange?
     /// Native keyboard identity can continue in another model block after a split/merge.
+    /// The map only grows (one entry per split or merge) for the view model's lifetime; that is
+    /// accepted because retired row ids must stay reserved (see `install`).
     private var inputRowIDs: [UUID: UUID] = [:]
 
     var slashQueryText: String?
