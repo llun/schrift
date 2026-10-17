@@ -1007,7 +1007,8 @@ through `canStartEditing` and `startEditing`. A document created on the server i
 without waiting: its body is empty by construction, so the editor installs an empty body (with a
 baseline that carries no server clock, so only body equality can prove a push) and enters
 editing on the first frame, while the content fetch runs behind it under the ordinary revalidation
-rules (an unexpected server body is stashed behind the "Updated" banner and the first edit records a conflict, never an overwrite). Offline creation
+rules (an unexpected server body is stashed behind the "Updated" banner and the first edit
+records a conflict, never an overwrite). Offline creation
 restores its seed draft without fetching a local UUID. Ordinary opens with nothing cached show a
 full-page skeleton of the header and first lines (`EditorLoadingPlaceholder`) until content lands.
 The rendered shared header focuses the title once and selects its existing text, so typing
