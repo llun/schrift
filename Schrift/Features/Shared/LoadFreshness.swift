@@ -22,6 +22,11 @@ struct LoadFreshness<Token: Equatable> {
         lastSuccess = (now, token)
     }
 
+    /// Forgets the last success so the next passive check reads as never loaded.
+    mutating func invalidate() {
+        lastSuccess = nil
+    }
+
     /// True when the last success was under `window` ago and under the same token.
     func isFresh(token: Token, at now: Date) -> Bool {
         guard let lastSuccess, lastSuccess.token == token else { return false }

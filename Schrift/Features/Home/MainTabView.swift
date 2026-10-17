@@ -136,9 +136,12 @@ struct MainTabView: View {
                 }
             }
             // Popping back from an editor (or Search) may leave a rename the list has not seen,
-            // so a shrinking path refetches regardless of the 30 s freshness window.
+            // so a shrinking path marks the list stale and fetches once regardless of the 30 s freshness window.
             .onChange(of: docsPath.count) { old, new in
-                if new < old { Task { await viewModel.load() } }
+                if new < old {
+                    viewModel.markListStale()
+                    Task { await viewModel.loadIfStale() }
+                }
             }
         }
     }

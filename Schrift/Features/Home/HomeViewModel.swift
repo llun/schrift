@@ -311,6 +311,13 @@ final class HomeViewModel {
         !pinnedDocuments.isEmpty
     }
 
+    /// Forgets the last successful fetch, so the next `loadIfStale()` fetches whatever the window says.
+    /// For returning from a pushed screen, where a rename may be unseen: marking stale and then
+    /// calling `loadIfStale()` yields exactly one fetch however many triggers also call it.
+    func markListStale() {
+        freshness.invalidate()
+    }
+
     /// The passive on-appear entry: skips the fetch when the last successful one is recent and
     /// the availability token is unchanged. Everything else (pull-to-refresh, replay, migration,
     /// delete) calls `load()` and always fetches.

@@ -40,7 +40,10 @@ struct HomeSplitView: View {
             // stays mounted here, so its freshness-gated `.task` never refires. Deleting is
             // reloaded by `onDeleted` below.
             .onChange(of: selectedRoute) { old, new in
-                if old != nil, new != nil { Task { await viewModel.load() } }
+                if old != nil, new != nil {
+                    viewModel.markListStale()
+                    Task { await viewModel.loadIfStale() }
+                }
             }
         } detail: {
             if let selectedRoute {

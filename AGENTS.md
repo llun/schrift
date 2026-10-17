@@ -853,9 +853,10 @@ new code reads like the surrounding code.
   `ProfileViewModel.loadIfStale(sessionGeneration:)`): keyed on the availability token and, for Shared and
   Profile, the sign-in generation (`SessionStore.signInGeneration`), so a re-login never reads the previous
   account's list as fresh. Pull-to-refresh, replay, migration and delete reloads call `load()` and always fetch,
-  and so does returning from a pushed screen: `MainTabView` reloads when the compact docs `NavigationPath`
-  shrinks, and `HomeSplitView` when the selection moves off a document, so a rename made in the editor shows at
-  once. First appearance and tab switches stay on `loadIfStale()`.
+  and so does returning from a pushed screen: `MainTabView` reacts when the compact docs `NavigationPath`
+  shrinks, and `HomeSplitView` when the selection switches from one document to another (a deletion reloads
+  through `onDeleted`), by calling `HomeViewModel.markListStale()` and then `loadIfStale()` — one fetch even if
+  another passive trigger also fires — so a rename made in the editor shows at once. First appearance and tab switches stay on `loadIfStale()`.
 - **Decode** with the shared `JSONDecoder.docsAPI` (snake_case + dual ISO8601 date
   handling) — never a bare `JSONDecoder` for API responses. **Encoding** uses a
   bare `JSONEncoder` with no key strategy, so a request body with multi-word
