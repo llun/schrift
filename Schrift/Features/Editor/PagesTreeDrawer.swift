@@ -42,6 +42,7 @@ struct PagesTreeDrawer: View {
     var onUndoPendingDelete: (Document) -> Void = { _ in }
 
     @Environment(LocalizationStore.self) private var loc
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Which row's swipe strip is open. Drawer-local: it floats over the editor's own list,
     /// and one shared value would let either close the other's strip.
@@ -94,6 +95,10 @@ struct PagesTreeDrawer: View {
                             .padding(.top, DocsSpacing.spaceXS)
                     }
                 }
+                // Pages glide in when the cached level is replaced by the fetched one (and on
+                // expand/collapse) instead of snapping. The loading spinner shares the
+                // chevron's fixed 22pt slot, so it never shifts a row.
+                .animation(reduceMotion ? nil : .snappy, value: viewModel.rows.map(\.id))
                 .padding(.horizontal, DocsSpacing.spaceXS)
                 .padding(.vertical, DocsSpacing.spaceXS)
             }

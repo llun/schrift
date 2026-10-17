@@ -132,4 +132,28 @@ final class FavoriteOverlayTests: XCTestCase {
         XCTAssertEqual(
             recentsExcludingPinned(recent: recent, pinned: [document(b, isFavorite: true)]), recent)
     }
+
+    // MARK: - stablePinnedOrder
+
+    private func pinned(_ id: UUID, updatedAt: TimeInterval) -> Document {
+        Document(
+            id: id, title: "Doc", excerpt: nil, abilities: DocumentAbilities(),
+            linkReach: .restricted, linkRole: .reader, isFavorite: true, depth: 1,
+            numchild: 0, path: "0001", createdAt: Date(timeIntervalSince1970: 0),
+            updatedAt: Date(timeIntervalSince1970: updatedAt), userRole: nil, creator: nil)
+    }
+
+    /// The server's favorites order is unspecified, so the same set arriving in two orders must
+    /// settle on one — otherwise the Pinned section reshuffles when a revalidation lands.
+    func testPinnedOrderIsIndependentOfTheOrderTheServerReturned() {
+        let docs = [pinned(a, updatedAt: 100), pinned(b, updatedAt: 200)]
+        XCTAssertEqual(stablePinnedOrder(docs).map(\.id), [b, a], "most recently edited first")
+        XCTAssertEqual(stablePinnedOrder(docs.reversed()).map(\.id), stablePinnedOrder(docs).map(\.id))
+    }
+
+    func testPinnedOrderBreaksTimestampTiesByID() {
+        let docs = [pinned(b, updatedAt: 100), pinned(a, updatedAt: 100)]
+        XCTAssertEqual(stablePinnedOrder(docs).map(\.id), [a, b])
+        XCTAssertEqual(stablePinnedOrder(docs.reversed()).map(\.id), [a, b])
+    }
 }

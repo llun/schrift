@@ -7,6 +7,7 @@ struct SharedScreen: View {
     var onOpenDocument: (Document) -> Void
 
     @Environment(LocalizationStore.self) private var loc
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The struck-through row the user tapped, if any — see `pendingDeleteUndoAlert`.
     @State private var documentPendingUndo: Document?
 
@@ -80,6 +81,8 @@ struct SharedScreen: View {
                                 )
                             }
                         }
+                        // Rows glide when a revalidation changes the list rather than snapping.
+                        .animation(reduceMotion ? nil : .snappy, value: viewModel.documents.map(\.id))
                         // Matches Home's section rhythm before the footer.
                         .padding(.bottom, DocsSpacing.spaceSM)
                         .padding(.horizontal, DocsSpacing.gutter)

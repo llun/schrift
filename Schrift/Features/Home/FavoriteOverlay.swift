@@ -122,3 +122,18 @@ func applyFavoriteOverrides(
 
     return FavoriteOverlay(pinned: resolvedPinned, recent: resolvedRecent, confirmed: confirmed)
 }
+
+/// A deterministic order for the server's favorites list, whose own order is unspecified.
+///
+/// Without one, the cached Pinned rows and the freshly fetched ones can come back in different
+/// orders, so the section visibly reshuffles when a revalidation lands. Most recently edited
+/// first (the same direction as Recent), ties broken by id so two documents saved in the same
+/// instant cannot swap between fetches. Applied to the **server** answer only, before the pin
+/// overlay: a pin made on this device is inserted at the front by `applyFavoriteOverrides`
+/// ("most recently pinned first") and must stay there until the server has caught up.
+func stablePinnedOrder(_ documents: [Document]) -> [Document] {
+    documents.sorted { lhs, rhs in
+        if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
+        return lhs.id.uuidString < rhs.id.uuidString
+    }
+}
