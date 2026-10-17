@@ -968,7 +968,10 @@ new code reads like the surrounding code.
   `APIDiagnosticsLog` is lock-guarded rather than `@Observable @MainActor` (an
   actor hop would land after the catch). Callers snapshot `marker()` before the
   request and read `failure(after:)` in the catch — without the marker, an
-  offline `.network` failure would quote an unrelated earlier response.
+  offline `.network` failure would quote an unrelated earlier response. A caller
+  that issues a second request *concurrently* (the editor reads the sub-page list
+  beside the body) passes `failure(after:where:)` a filter (`isBodyReadFailure`),
+  because the other request's failure can be recorded first.
   `HomeViewModel.errorDetail` surfaces it under the error message; RootView wires
   the one shared client and the one log together.
 - A real 401 additionally fires the client's injected `onSessionExpired` hook

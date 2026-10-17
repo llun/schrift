@@ -1,5 +1,13 @@
 import Foundation
 
+/// Whether a recorded failure could be the body read's own, as opposed to the sub-page list
+/// read that `revalidate`/`refresh` issue alongside it. Both run concurrently, so the list's
+/// failure (the same 404/403, usually) can be recorded first, and the error detail must quote
+/// the request whose failure the catch is handling.
+func isBodyReadFailure(_ failure: RequestFailure) -> Bool {
+    !(failure.method == "GET" && failure.path.hasSuffix("/children/"))
+}
+
 @MainActor
 @Observable
 final class EditorViewModel {
@@ -587,6 +595,17 @@ final class EditorViewModel {
             // Snapshot before issuing: only the coordinator's state at *issue*
             // time can tell us whether the response might predate our own save.
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
+            // The sub-page list is issued alongside the body rather than after it, so opening
+            // a document costs the slower of the two reads instead of their sum. It is safe to
+            // overlap because nothing it writes depends on the body: `loadChildren` has its own
+            // latest-wins `childrenGeneration`, which every purge bumps (a 404/403 below, a
+            // delete), so a snapshot landing after one is discarded, and one landing before it
+            // is purged with the rest. Both `isLocalDocument` and the pending-delete state were
+            // checked above, and `loadChildren` re-checks the former. Structured on purpose:
+            // a body read that throws or is superseded leaves this scope, which cancels a list
+            // read still in flight (its `!Task.isCancelled` guard then drops it); one that
+            // already landed was a fresh server answer, and a 404/403 purge clears it anyway.
+            async let childrenLoad: Void = loadChildren()
             let fetched = try await client.formattedContent(documentID: documentID)
             let (formatted, leafNesting) = await recoveringLeafNesting(fetched, availabilityToken: availabilityToken)
             guard generation == revalidationGeneration, !Task.isCancelled,
@@ -601,7 +620,7 @@ final class EditorViewModel {
             // not keep the initialized canvas (or its one-time title focus) behind a spinner.
             if hasLoadedContent { isLoading = false }
             enterNewDocumentIfReady()
-            await loadChildren()
+            await childrenLoad
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration, !Task.isCancelled,
                 availability.permitsResponse(for: availabilityToken)
@@ -614,7 +633,7 @@ final class EditorViewModel {
             becomeUnavailable()
             // "No longer available" is a guess: a 404 also means a route this server does
             // not have, or a proxy hiccup. Say what the server actually answered.
-            errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
+            errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics, where: isBodyReadFailure)
         } catch {
             guard generation == revalidationGeneration, !Task.isCancelled,
                 availability.permitsResponse(for: availabilityToken)
@@ -630,7 +649,7 @@ final class EditorViewModel {
             // path — and that is precisely the failure whose reason nobody can guess. But
             // attach it only where a message actually appears: a silent background failure
             // over a local copy must not leave a detail behind for a later message to adopt.
-            let detail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
+            let detail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics, where: isBodyReadFailure)
             if isUnavailable {
                 showError(unavailableMessageKey, detail: detail)
             } else if displaySource == .none {
@@ -694,6 +713,9 @@ final class EditorViewModel {
         let diagnosticsMarker = diagnostics?.marker()
         do {
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
+            // Overlapped with the body read for the same reasons, and under the same
+            // structured-cancellation rule, as in `revalidate`.
+            async let childrenLoad: Void = loadChildren()
             let fetched = try await client.formattedContent(documentID: documentID)
             let (formatted, leafNesting) = await recoveringLeafNesting(fetched, availabilityToken: availabilityToken)
             guard generation == revalidationGeneration, !Task.isCancelled,
@@ -709,20 +731,20 @@ final class EditorViewModel {
             // screen; the invariant itself is pinned by
             // `testUnavailableAlwaysImpliesNoLoadedContent`.
             markAvailableAgain()
-            await loadChildren()
+            await childrenLoad
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration, !Task.isCancelled,
                 availability.permitsResponse(for: availabilityToken)
             else { return }
             becomeUnavailable()
-            errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
+            errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics, where: isBodyReadFailure)
         } catch {
             guard generation == revalidationGeneration, !Task.isCancelled,
                 availability.permitsResponse(for: availabilityToken)
             else { return }
             showError(
                 .editor_error_refresh,
-                detail: requestFailureDetail(after: diagnosticsMarker, in: diagnostics))
+                detail: requestFailureDetail(after: diagnosticsMarker, in: diagnostics, where: isBodyReadFailure))
         }
     }
 
@@ -768,13 +790,24 @@ final class EditorViewModel {
     private func recoveringLeafNesting(
         _ formatted: FormattedDocumentContent, availabilityToken: OnlineAvailability.Token
     ) async -> (content: FormattedDocumentContent, leafNesting: LeafNestingOverlay) {
-        guard let markdown = formatted.content, markdownMayHideLeafNesting(markdown),
-            availability.permitsResponse(for: availabilityToken)
+        guard let markdown = formatted.content else { return (formatted, .unknown) }
+        // Both checks below parse the whole body, so they run off the main actor — they are
+        // pure value code over `Sendable` inputs. The cheap substring test stays inline so a
+        // body with no link at all (the common case) costs no hop.
+        guard markdown.contains("](") else { return (formatted, .unknown) }
+        let mayHideNesting = await Task.detached(priority: .userInitiated) {
+            markdownMayHideLeafNesting(markdown)
+        }.value
+        guard mayHideNesting, availability.permitsResponse(for: availabilityToken)
         else { return (formatted, .unknown) }
         guard let tree = try? await client.formattedContentTree(documentID: documentID),
             tree.updatedAt.map({ $0 == formatted.updatedAt }) ?? true
         else { return (formatted, .unknown) }
-        let overlay = leafNestingOverlay(markdown, tree: tree.content, serverOrigin: serverOrigin)
+        let nodes = tree.content
+        let origin = serverOrigin
+        let overlay = await Task.detached(priority: .userInitiated) {
+            leafNestingOverlay(markdown, tree: nodes, serverOrigin: origin)
+        }.value
         guard case .recovered(let recovered) = overlay else { return (formatted, overlay) }
         let content = FormattedDocumentContent(
             id: formatted.id, title: formatted.title, content: recovered,
@@ -1859,7 +1892,7 @@ final class EditorViewModel {
                 // record dies and returns `subpages` unfiltered, so deleting this sub-page
                 // left its row rendering, tappable, and opening an editor for an id no
                 // record names — and offline nothing refetches the level to correct it
-                // (`revalidate` fails before it reaches `loadChildren`). The same reasoning
+                // (`revalidate`'s children read fails, or is cancelled with the body read). The same reasoning
                 // the local-parent branch above and `appendChild`'s cache filter already
                 // give: the merge layer is the single source of local rows.
                 return saveCoordinator.createLocalDocument(

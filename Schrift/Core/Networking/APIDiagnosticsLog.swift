@@ -51,7 +51,12 @@ final class APIDiagnosticsLog: @unchecked Sendable {
     /// The nil is equally load-bearing: a transport error (`.network`) or a decoding failure
     /// has no HTTP response, so without the marker the catch would quote an unrelated older
     /// one as its reason.
-    func failure(after marker: Int) -> RequestFailure? {
+    ///
+    /// `isRelevant` skips failures of requests the caller issued *concurrently* with the one
+    /// that threw, which can be recorded first: the editor reads a document's sub-page list
+    /// alongside its body, and a 404 on the list is not the body's reason. It filters only;
+    /// "first" still means first among the failures it accepts.
+    func failure(after marker: Int, where isRelevant: (RequestFailure) -> Bool = { _ in true }) -> RequestFailure? {
         lock.lock()
         defer { lock.unlock() }
         guard recorded > marker else { return nil }
@@ -59,8 +64,8 @@ final class APIDiagnosticsLog: @unchecked Sendable {
         // end. If the causal failure has already been evicted, the oldest we still hold is the
         // closest thing to it.
         let offsetFromEnd = recorded - marker
-        guard offsetFromEnd <= failures.count else { return failures.first }
-        return failures[failures.count - offsetFromEnd]
+        let start = max(failures.count - offsetFromEnd, 0)
+        return failures[start...].first(where: isRelevant)
     }
 
     var recentFailures: [RequestFailure] {
@@ -74,7 +79,10 @@ final class APIDiagnosticsLog: @unchecked Sendable {
 /// request that just failed produced no HTTP response of its own — so an offline `.network`
 /// failure never quotes an unrelated earlier one. Snapshot `log.marker()` before issuing the
 /// request and pass it here from the `catch`.
-func requestFailureDetail(after marker: Int?, in log: APIDiagnosticsLog?) -> String? {
-    guard let marker, let failure = log?.failure(after: marker) else { return nil }
+/// `isRelevant` is `APIDiagnosticsLog.failure(after:where:)`'s filter.
+func requestFailureDetail(
+    after marker: Int?, in log: APIDiagnosticsLog?, where isRelevant: (RequestFailure) -> Bool = { _ in true }
+) -> String? {
+    guard let marker, let failure = log?.failure(after: marker, where: isRelevant) else { return nil }
     return failure.displayText
 }

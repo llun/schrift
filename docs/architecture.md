@@ -1492,7 +1492,11 @@ the toolbar's Edit action always does.
 that lists a user's attachments, so the list is built from what this device
 already holds: `AttachmentsViewModel` reads every `DocumentContentCacheStore`
 entry and `attachmentLibraryGroups` runs each body through
-`parseEditorBlocks(_:serverOrigin:)`, keeping the `.attachment` blocks. It uses
+`parseEditorBlocks(_:serverOrigin:)`, keeping the `.attachment` blocks. The read,
+decode and parse run **off the main actor** (a detached task over
+`allContentsReader()`, which captures only the directory) — up to 50 files decoded
+and parsed on the main actor stalled the push into the screen — and the newest
+`load()` alone applies its result (`loadGeneration`). It uses
 the same classifier the editor does, so the list can never show a link the
 editor would draw as text, nor one on another host. Groups are per document,
 newest sync first, and a file linked twice in one document is listed once. A

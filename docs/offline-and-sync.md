@@ -899,8 +899,14 @@ choosing one whole version.
 #### Subpages
 
 `loadChildren()` (a network call) moves out of the instant path into the
-revalidation phase, after the content fetch, matching today's post-fetch
-ordering; the local phase never blocks on it. `subpages` becomes optional
+revalidation phase; the local phase never blocks on it. Revised 2026-10: the open/revalidate
+and pull-to-refresh paths issue it **concurrently** with the content fetch (`async let`), so
+opening a document costs the slower read rather than the sum. That is safe because
+`loadChildren` keeps its own latest-wins `childrenGeneration`, which every purge bumps: a list
+landing after a 404/403 teardown is dropped, one landing before it is purged with the rest,
+and a body read that throws or is superseded cancels a list read still in flight. The error
+detail filters the list's failure out (`isBodyReadFailure`), since it can be recorded first.
+The conflict "keep the server" path still loads children after it installs. `subpages` becomes optional
 (`[Document]?`, nil = not fetched this session): the subpages empty-state copy
 ("Organize this document by creating subpages.") is suppressed until a fetch has
 succeeded this session — render nothing (or just the eyebrow) in the meantime, so
@@ -2383,8 +2389,8 @@ stayed in the parent's Subpages list and in the Pages drawer, tappable, opening 
 editor for an id no record named — the synthetic `Document` that `addSubpage`'s
 retryable fallback had pushed into the in-memory `subpages` array, which nothing could
 take back out once the record died (`mergedSubpages` short-circuits on an empty local
-set and returns the fetched array unfiltered, and offline `revalidate` fails before it
-ever reaches `loadChildren`). That second half was a plain bug and is fixed by making
+set and returns the fetched array unfiltered, and offline neither `revalidate`'s body read
+nor its concurrent children read succeeds). That second half was a plain bug and is fixed by making
 the read-time merge the **single source of local rows**: neither fallback appends any
 more, exactly as their local-parent branches already declined to.
 

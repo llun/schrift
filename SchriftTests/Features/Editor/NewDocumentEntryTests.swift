@@ -180,8 +180,9 @@ final class NewDocumentEntryTests: XCTestCase {
         }
         let vm = editor(intent: NewDocumentEntryIntent())
         let load = Task { await vm.load() }
-        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
-        XCTAssertTrue(vm.hasLoadedContent)
+        // The children read is issued alongside the body, so it can be held before the body
+        // has landed; wait for both.
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 && vm.hasLoadedContent }
         XCTAssertTrue(vm.isEditing)
         XCTAssertFalse(vm.isLoading, "the spinner must release the editing canvas before children finish")
         XCTAssertTrue(vm.consumeInitialTitleFocus())
