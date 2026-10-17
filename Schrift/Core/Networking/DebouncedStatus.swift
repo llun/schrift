@@ -22,9 +22,9 @@ final class DebouncedStatus {
     /// The debounced value the view draws.
     private(set) var value: Bool = false
 
-    @ObservationIgnored private let showDelay: Duration
-    @ObservationIgnored private let hideDelay: Duration
-    @ObservationIgnored private let sleep: @Sendable (Duration) async throws -> Void
+    private let showDelay: Duration
+    private let hideDelay: Duration
+    private let sleep: @Sendable (Duration) async throws -> Void
     @ObservationIgnored private var hasReceivedInput = false
     @ObservationIgnored private var latestRaw = false
     @ObservationIgnored private var pending: Task<Void, Never>?

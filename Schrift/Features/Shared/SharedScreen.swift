@@ -33,13 +33,16 @@ struct SharedScreen: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: DocsSpacing.spaceBase) {
-                    if let errorKey = viewModel.errorKey {
-                        Text(loc[errorKey])
-                            .font(DocsFont.footnote)
-                            .foregroundStyle(theme.colors.danger)
-                            .padding(.horizontal, DocsSpacing.gutter)
-                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    Group {
+                        if let errorKey = viewModel.errorKey {
+                            Text(loc[errorKey])
+                                .font(DocsFont.footnote)
+                                .foregroundStyle(theme.colors.danger)
+                                .padding(.horizontal, DocsSpacing.gutter)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
                     }
+                    .animation(reduceMotion ? nil : .snappy, value: viewModel.errorKey)
 
                     // Per-list gate: spinner only while fetching a list with no
                     // local copy; never claim "0 documents" for a list that is
@@ -109,7 +112,6 @@ struct SharedScreen: View {
             }
         }
         .animation(reduceMotion ? nil : .snappy, value: showsOfflineBanner)
-        .animation(reduceMotion ? nil : .snappy, value: viewModel.errorKey)
         .onChange(of: viewModel.offlineStatusEvidence, initial: true) { _, raw in offlineStatus.update(raw) }
         // Claim the full width the removed NavBar used to define, or the
         // screen sizes to its widest child and starves the title.

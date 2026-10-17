@@ -201,6 +201,19 @@ final class HomeViewModelLoadTests: HomeViewModelTestCase {
         XCTAssertNil(viewModel.errorDetail)
     }
 
+    func testClearingTheQueryClearsAnEarlierSearchError() async {
+        let viewModel = makeViewModel()
+        viewModel.searchQuery = "Q3"
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        await viewModel.search()
+        XCTAssertEqual(viewModel.errorKey, .home_error_search)
+
+        viewModel.searchQuery = ""
+        await viewModel.search()
+
+        XCTAssertNil(viewModel.errorKey)
+    }
+
     func testLoadFailureSetsErrorMessage() async {
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }

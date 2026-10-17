@@ -44,40 +44,42 @@ struct DocumentListView: View {
                     searchField
                         .padding(.bottom, DocsSpacing.spaceBase + DocsSpacing.space4xs)
 
-                    if let errorKey = viewModel.errorKey {
-                        HStack(alignment: .firstTextBaseline, spacing: DocsSpacing.spaceXS) {
-                            VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
-                                Text(loc[errorKey])
-                                    .font(DocsFont.footnote)
-                                    .foregroundStyle(theme.colors.danger)
-                                if let errorDetail = viewModel.errorDetail {
-                                    Text(errorDetail)
+                    Group {
+                        if let errorKey = viewModel.errorKey {
+                            HStack(alignment: .firstTextBaseline, spacing: DocsSpacing.spaceXS) {
+                                VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
+                                    Text(loc[errorKey])
                                         .font(DocsFont.footnote)
-                                        .foregroundStyle(theme.colors.textSecondary)
+                                        .foregroundStyle(theme.colors.danger)
+                                    if let errorDetail = viewModel.errorDetail {
+                                        Text(errorDetail)
+                                            .font(DocsFont.footnote)
+                                            .foregroundStyle(theme.colors.textSecondary)
+                                    }
                                 }
+                                Spacer(minLength: 0)
+                                // Through `IconButton` rather than a bare 13pt glyph:
+                                // it keeps the small visual box but floors the tap
+                                // target at 44pt, which a footnote-sized close cross
+                                // came nowhere near on its own.
+                                IconButton(
+                                    icon: .close,
+                                    label: loc[.home_dismiss_error],
+                                    size: .small,
+                                    action: viewModel.dismissError)
                             }
-                            Spacer(minLength: 0)
-                            // Through `IconButton` rather than a bare 13pt glyph:
-                            // it keeps the small visual box but floors the tap
-                            // target at 44pt, which a footnote-sized close cross
-                            // came nowhere near on its own.
-                            IconButton(
-                                icon: .close,
-                                label: loc[.home_dismiss_error],
-                                size: .small,
-                                action: viewModel.dismissError)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.bottom, DocsSpacing.spaceXS)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.bottom, DocsSpacing.spaceXS)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
                     }
+                    .animation(reduceMotion ? nil : .snappy, value: viewModel.errorKey)
 
                     content
                 }
                 .padding(.top, DocsSpacing.space3xs)
                 .padding(.horizontal, DocsSpacing.gutter)
                 .padding(.bottom, DocsSpacing.spaceBase)
-                .animation(reduceMotion ? nil : .snappy, value: viewModel.errorKey)
             }
             .refreshable {
                 await viewModel.refresh()

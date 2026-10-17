@@ -503,6 +503,7 @@ final class HomeViewModel {
         let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             rawSearchResults = []
+            if errorKey == .home_error_search { clearError() }
             return
         }
         let marker = diagnostics?.marker()
