@@ -122,34 +122,64 @@ final class AttachmentsViewModelTests: XCTestCase {
         super.tearDown()
     }
 
-    func testLoadReadsTheContentCache() {
+    func testLoadReadsTheContentCache() async {
         let cache = DocumentContentCacheStore(directory: directory)
         cache.save(content(docA, link("a.pdf", document: docA, file: fileOne), at: 1))
         let viewModel = AttachmentsViewModel(contentCache: cache, serverOrigin: origin)
         XCTAssertFalse(viewModel.hasLoaded)
-        viewModel.load()
+        await viewModel.load()
         XCTAssertTrue(viewModel.hasLoaded)
         XCTAssertEqual(viewModel.groups.map(\.documentID), [docA])
     }
 
-    func testLoadPicksUpDocumentsCachedSinceTheLastLoad() {
+    func testLoadPicksUpDocumentsCachedSinceTheLastLoad() async {
         let cache = DocumentContentCacheStore(directory: directory)
         let viewModel = AttachmentsViewModel(contentCache: cache, serverOrigin: origin)
-        viewModel.load()
+        await viewModel.load()
         XCTAssertEqual(viewModel.groups, [])
         cache.save(content(docB, link("b.pdf", document: docB, file: fileTwo), at: 2))
-        viewModel.load()
+        await viewModel.load()
         XCTAssertEqual(viewModel.groups.map(\.documentID), [docB])
     }
 
-    func testLoadWithholdsADocumentWhoseDeletionIsQueued() {
+    func testLoadWithholdsADocumentWhoseDeletionIsQueued() async {
         let cache = DocumentContentCacheStore(directory: directory)
         cache.save(content(docA, link("a.pdf", document: docA, file: fileOne), at: 1))
         cache.save(content(docB, link("b.pdf", document: docB, file: fileTwo), at: 2))
         let viewModel = AttachmentsViewModel(
             contentCache: cache, serverOrigin: origin, isPendingDelete: { [docB] in $0 == docB })
-        viewModel.load()
+        await viewModel.load()
         XCTAssertEqual(viewModel.groups.map(\.documentID), [docA])
         XCTAssertEqual(viewModel.rows.count, 2)
+    }
+
+    /// The read runs off the main actor, so two loads can finish out of order — the screen
+    /// reloads on every appearance. The older one must not overwrite the newer answer.
+    func testAnOlderLoadFinishingLastDoesNotOverwriteANewerOne() async {
+        let stale = content(docA, link("a.pdf", document: docA, file: fileOne), at: 1)
+        let fresh = content(docB, link("b.pdf", document: docB, file: fileTwo), at: 2)
+        let reads = Counter()
+        let (release, releaseContinuation) = AsyncStream<Void>.makeStream()
+        let viewModel = AttachmentsViewModel(
+            serverOrigin: origin,
+            readContents: {
+                // The first read is held open until the test releases it; the second answers at once.
+                if reads.next() == 1 {
+                    for await _ in release { break }
+                    return [stale]
+                }
+                return [fresh]
+            })
+
+        let first = Task { await viewModel.load() }
+        await waitUntil { reads.current >= 1 }
+        await viewModel.load()
+        XCTAssertEqual(viewModel.groups.map(\.documentID), [docB])
+
+        releaseContinuation.yield()
+        releaseContinuation.finish()
+        await first.value
+        XCTAssertEqual(viewModel.groups.map(\.documentID), [docB], "the superseded read is dropped")
+        XCTAssertTrue(viewModel.hasLoaded)
     }
 }

@@ -147,7 +147,12 @@ final class EditorViewModelRevalidationTests: EditorViewModelTestCase {
         let requestCount = Counter()
         let firstBody = formattedBody(content: "# First")
         let secondBody = formattedBody(content: "# Second")
-        MockURLProtocol.stubHandler = { _ in
+        MockURLProtocol.stubHandler = { request in
+            // Only the body reads take a branch: each load also asks for its sub-pages,
+            // concurrently, and counting those would hand "first" to whichever won the race.
+            guard request.url?.path.contains("formatted-content") == true else {
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
             let isFirst = requestCount.next() == 1
             return .init(
                 statusCode: 200, headers: [:], body: isFirst ? firstBody : secondBody, error: nil,

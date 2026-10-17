@@ -123,6 +123,33 @@ final class EditorUnavailableDetailTests: XCTestCase {
         XCTAssertEqual(viewModel.errorDetail, "HTTP 404: the document's own reason")
     }
 
+    /// The sub-page list is read alongside the body, so its failure can be recorded first. The
+    /// detail must still quote the body's response — the one whose failure tore the screen down.
+    func testTheDetailQuotesTheBodysResponseNotTheConcurrentSubpageList() async {
+        let diagnostics = APIDiagnosticsLog()
+        let viewModel = makeViewModel(diagnostics: diagnostics)
+        let body = MockURLProtocol.ResponseGate()
+        MockURLProtocol.stubHandler = { request in
+            if request.url?.path.hasSuffix("/children/") == true {
+                return .init(
+                    statusCode: 404, headers: ["Content-Type": "application/json"],
+                    body: Data(#"{"detail":"children: wrong reason"}"#.utf8), error: nil)
+            }
+            return .init(
+                statusCode: 404, headers: ["Content-Type": "application/json"],
+                body: Data(#"{"detail":"Not found."}"#.utf8), error: nil, releasedBy: body)
+        }
+
+        let loading = Task { await viewModel.load() }
+        // The list's failure is on record before the body has answered.
+        await waitUntil { diagnostics.recentFailures.count == 1 }
+        body.open()
+        await loading.value
+
+        XCTAssertTrue(viewModel.isUnavailable)
+        XCTAssertEqual(viewModel.errorDetail, "HTTP 404: Not found.")
+    }
+
     /// `errorDetail` is only ever rendered beneath `errorKey`'s message, so a detail that
     /// outlives its message is invisible right up until an unrelated later message adopts it —
     /// the user then reads a stale "HTTP 404" under "Couldn't add the subpage."

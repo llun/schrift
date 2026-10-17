@@ -57,8 +57,9 @@ struct AttachmentsScreen: View {
         .navigationTitle(loc[.profile_attachments])
         .navigationBarTitleDisplayMode(.inline)
         // Re-read on every appearance: documents opened since the last visit
-        // add to the cache, and the read is local and cheap.
-        .onAppear { viewModel.load() }
+        // add to the cache. The read is local but not cheap (every cached body is
+        // decoded and parsed), so the view model does it off the main actor.
+        .task { await viewModel.load() }
     }
 }
 

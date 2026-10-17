@@ -132,6 +132,60 @@ final class EditorViewModelChildrenTests: XCTestCase {
         XCTAssertNotNil(viewModel.lastSyncedAt)
     }
 
+    /// Opening a document costs the slower of its two reads, not their sum: the sub-page list
+    /// is asked for while the body is still on the wire.
+    func testOpeningAsksForTheSubpagesWithoutWaitingForTheBody() async {
+        let viewModel = makeViewModel()
+        let contentBody = """
+            {"id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "title": "Doc", "content": "Body", "created_at": "2026-01-15T10:30:00Z", "updated_at": "2026-01-15T10:30:00Z"}
+            """.data(using: .utf8)!
+        let childrenBody = Self.childrenFixture(id: "22222222-2222-4222-8222-222222222222", title: "Child page")
+        let body = MockURLProtocol.ResponseGate()
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            if request.url?.path.contains("children") == true {
+                return .init(statusCode: 200, headers: [:], body: childrenBody, error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: contentBody, error: nil, releasedBy: body)
+        }
+
+        let loading = Task { await viewModel.load() }
+        await waitUntil { log.count(ofMethod: "GET", urlContaining: "/children/") == 1 }
+        XCTAssertFalse(viewModel.hasLoadedContent, "the body is still held")
+
+        body.open()
+        await loading.value
+        XCTAssertEqual(viewModel.subpages?.map(\.title), ["Child page"])
+        XCTAssertNotNil(viewModel.lastSyncedAt)
+    }
+
+    /// The overlap's one new interleaving: a sub-page list that lands *before* the body's 404
+    /// is still purged by the teardown, exactly as a list fetched afterwards never would have
+    /// been written.
+    func testASubpageListLandingBeforeABody404IsPurgedWithTheDocument() async {
+        let viewModel = makeViewModel()
+        let childrenBody = Self.childrenFixture(id: "22222222-2222-4222-8222-222222222222", title: "Child page")
+        let body = MockURLProtocol.ResponseGate()
+        MockURLProtocol.stubHandler = { request in
+            if request.url?.path.contains("children") == true {
+                return .init(statusCode: 200, headers: [:], body: childrenBody, error: nil)
+            }
+            return .init(
+                statusCode: 404, headers: ["Content-Type": "application/json"],
+                body: Data(#"{"detail": "Not found."}"#.utf8), error: nil, releasedBy: body)
+        }
+
+        let loading = Task { await viewModel.load() }
+        await waitUntil { viewModel.subpages != nil }
+        XCTAssertNotNil(childrenCache.children(for: documentID), "precondition: the list landed first")
+
+        body.open()
+        await loading.value
+        XCTAssertNil(viewModel.subpages)
+        XCTAssertNil(childrenCache.children(for: documentID), "the 404 purge covers the earlier list")
+    }
+
     private func decodeChild(id: String, title: String) -> Document {
         try! JSONDecoder.docsAPI
             .decode(PaginatedResponse<Document>.self, from: Self.childrenFixture(id: id, title: title))
