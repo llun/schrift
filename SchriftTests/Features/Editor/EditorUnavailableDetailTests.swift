@@ -130,7 +130,8 @@ final class EditorUnavailableDetailTests: XCTestCase {
         let viewModel = makeViewModel(diagnostics: diagnostics)
         let body = MockURLProtocol.ResponseGate()
         MockURLProtocol.stubHandler = { request in
-            if request.url?.path.hasSuffix("/children/") == true {
+            // `URL.path` drops the trailing slash, so match the segment, not the suffix.
+            if request.url?.path.hasSuffix("/children") == true {
                 return .init(
                     statusCode: 404, headers: ["Content-Type": "application/json"],
                     body: Data(#"{"detail":"children: wrong reason"}"#.utf8), error: nil)
