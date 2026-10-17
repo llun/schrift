@@ -574,7 +574,8 @@ final class SharedViewModelTests: XCTestCase {
         await viewModel.refresh()
         XCTAssertNotNil(viewModel.errorKey)
         let body = Self.listFixture(
-            id: "22222222-2222-4222-8222-222222222222", title: "Fresh Doc", creator: "someone")
+            id: "22222222-2222-4222-8222-222222222222", title: "Fresh Doc",
+            creator: "33333333-3333-4333-8333-333333333333")
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: body, error: nil) }
 
         await viewModel.load()
