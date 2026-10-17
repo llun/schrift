@@ -47,6 +47,12 @@ actor DocsAPIClient {
     /// `ContentSaveRoute` (`CollaborationYDocEndpoints.swift`).
     var contentSaveRoute: ContentSaveRoute?
 
+    /// The `config/` GET currently on the wire. Concurrent callers (launch task, Profile,
+    /// favorites route discovery) join one request instead of each issuing their own; the slot is
+    /// cleared as soon as it settles, so a later call always goes to the network. Server config
+    /// is not account-scoped. `users/me/` is deliberately **not** shared: see `currentUser()`.
+    var inFlightServerConfig: Task<ServerConfig, any Error>?
+
     init(
         baseURL: URL,
         session: URLSession = .shared,

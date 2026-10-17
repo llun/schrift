@@ -36,6 +36,15 @@ struct HomeSplitView: View {
                 }
             )
             .environment(\.docsCanvasRole, DocsCanvasRole.sidebar)
+            // Moving off a document may leave a rename or edit the list has not seen; the list
+            // stays mounted here, so its freshness-gated `.task` never refires. Deleting is
+            // reloaded by `onDeleted` below.
+            .onChange(of: selectedRoute) { old, new in
+                if old != nil, new != nil {
+                    viewModel.markListStale()
+                    Task { await viewModel.loadIfStale() }
+                }
+            }
         } detail: {
             if let selectedRoute {
                 let selectedDocument = selectedRoute.document

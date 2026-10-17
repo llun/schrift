@@ -10,12 +10,19 @@ final class ProfileViewModel {
     let client: DocsAPIClient
     private let signedInUser: SignedInUserStore
     private let cachedUser: CurrentUserCacheStore
+    @ObservationIgnored private let now: () -> Date
+    /// Keyed on the session generation, so a re-login (which bumps it) always reloads.
+    @ObservationIgnored private var freshness = LoadFreshness<Int>()
+    /// Set by `load()` when the account fetch answered with account detail.
+    @ObservationIgnored private var lastLoadFetchedUser = false
 
     init(
         client: DocsAPIClient,
         signedInUser: SignedInUserStore = SignedInUserStore(),
-        cachedUser: CurrentUserCacheStore = CurrentUserCacheStore()
+        cachedUser: CurrentUserCacheStore = CurrentUserCacheStore(),
+        now: @escaping () -> Date = { Date() }
     ) {
+        self.now = now
         self.client = client
         self.signedInUser = signedInUser
         self.cachedUser = cachedUser
@@ -26,7 +33,18 @@ final class ProfileViewModel {
         self.user = cachedUser.user
     }
 
+    /// The screen's passive entry: skips the two fetches when this session's last successful load
+    /// is recent. A different `sessionGeneration` (any sign-in) is never fresh.
+    func loadIfStale(sessionGeneration: Int) async {
+        if freshness.isFresh(token: sessionGeneration, at: now()) { return }
+        await load()
+        if !Task.isCancelled, lastLoadFetchedUser {
+            freshness.noteSuccess(token: sessionGeneration, at: now())
+        }
+    }
+
     func load() async {
+        lastLoadFetchedUser = false
         isLoading = true
         defer { isLoading = false }
         // **Before the fetch, not after it.** This runs again whenever the session changes
@@ -53,6 +71,7 @@ final class ProfileViewModel {
         // gates whose unsynced documents may be listed and replayed.
         guard !Task.isCancelled else { return }
         if let freshUser, freshUser.carriesAccountDetail {
+            lastLoadFetchedUser = true
             user = freshUser
             cachedUser.remember(freshUser)
         } else {

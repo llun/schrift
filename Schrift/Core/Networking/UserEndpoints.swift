@@ -58,6 +58,9 @@ extension CurrentUser {
 }
 
 extension DocsAPIClient {
+    /// Every call does its own GET and is never shared: identity must come from a live fetch made
+    /// with the cookies in force *now*, and a joined request could have been sent with the
+    /// previous account's cookies across a login handover.
     func currentUser() async throws -> CurrentUser {
         try await get("users/me/")
     }

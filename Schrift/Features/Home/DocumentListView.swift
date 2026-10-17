@@ -129,7 +129,7 @@ struct DocumentListView: View {
             }
         }
         .task(id: viewModel.availability.token) {
-            await viewModel.load()
+            await viewModel.loadIfStale()
             await viewModel.search()
         }
         .onChange(of: viewModel.searchQuery) {

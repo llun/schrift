@@ -845,6 +845,20 @@ new code reads like the surrounding code.
   `ImageTransport`, whose ephemeral, origin-pinned session supports explicitly
   consented external URLs without sharing credentials.)
 - Add each feature's endpoints as an `extension DocsAPIClient` in **its own file**.
+- **Repeat reads are de-duplicated, not cached.** Only `serverConfig()` shares a request already on the wire
+  (`inFlightServerConfig`; the slot clears when it settles), so the launch task, Profile and favorites route
+  discovery cost one `GET` when they overlap. `currentUser()` deliberately **never** shares: identity must come
+  from a live fetch per call, made with the cookies in force now (a joined request could have been sent with the
+  previous account's cookies across a login handover), and it is forgotten when cookies change hands. There is
+  **no TTL** either. Screens add a 30 s `LoadFreshness` window on their *passive* on-appear entry only
+  (`HomeViewModel.loadIfStale()`, `SharedViewModel.loadIfStale(sessionGeneration:)`,
+  `ProfileViewModel.loadIfStale(sessionGeneration:)`): keyed on the availability token and, for Shared and
+  Profile, the sign-in generation (`SessionStore.signInGeneration`), so a re-login never reads the previous
+  account's list as fresh. Pull-to-refresh, replay, migration and delete reloads call `load()` and always fetch,
+  and so does returning from a pushed screen: `MainTabView` reacts when the compact docs `NavigationPath`
+  shrinks, and `HomeSplitView` when the selection switches from one document to another (a deletion reloads
+  through `onDeleted`), by calling `HomeViewModel.markListStale()` and then `loadIfStale()` — one fetch even if
+  another passive trigger also fires — so a rename made in the editor shows at once. First appearance and tab switches stay on `loadIfStale()`.
 - **Decode** with the shared `JSONDecoder.docsAPI` (snake_case + dual ISO8601 date
   handling) — never a bare `JSONDecoder` for API responses. **Encoding** uses a
   bare `JSONEncoder` with no key strategy, so a request body with multi-word

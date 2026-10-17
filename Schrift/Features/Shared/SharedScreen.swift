@@ -4,6 +4,8 @@ struct SharedScreen: View {
     @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: SharedViewModel
     let serverHost: String
+    /// `SessionStore.signInGeneration`: a re-login reloads even inside the freshness window.
+    let signInGeneration: Int
     var onOpenDocument: (Document) -> Void
 
     @Environment(LocalizationStore.self) private var loc
@@ -110,8 +112,10 @@ struct SharedScreen: View {
         }
         .navigationTitle(loc[.shared_title])
         .navigationSubtitle(serverHost)
-        .task(id: viewModel.availability.token) {
-            await viewModel.load()
+        .task(
+            id: SharedViewModel.LoadKey(token: viewModel.availability.token, sessionGeneration: signInGeneration)
+        ) {
+            await viewModel.loadIfStale(sessionGeneration: signInGeneration)
         }
     }
 }
@@ -120,6 +124,7 @@ struct SharedScreen: View {
     SharedScreen(
         viewModel: SharedViewModel(client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)),
         serverHost: "docs.llun.dev",
+        signInGeneration: 0,
         onOpenDocument: { _ in }
     )
     .environment(LocalizationStore())
