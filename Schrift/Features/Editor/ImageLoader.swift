@@ -119,8 +119,10 @@ enum ImageLoadState: Equatable, Sendable {
     }
 
     private func recordAspectRatio(_ image: UIImage, for key: Key) {
-        aspectRatios = aspectRatios.filter { $0.key.scope == key.scope }
-        if let ratio = imageAspectRatio(of: image.size) { aspectRatios[key] = ratio }
+        if aspectRatios.keys.contains(where: { $0.scope != key.scope }) {
+            aspectRatios = aspectRatios.filter { $0.key.scope == key.scope }
+        }
+        if let ratio = imageAspectRatio(of: image.size), aspectRatios[key] != ratio { aspectRatios[key] = ratio }
     }
 
     func approve(_ url: URL) {

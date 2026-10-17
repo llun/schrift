@@ -73,6 +73,20 @@ import XCTest
         XCTAssertEqual(cold.aspectRatio(for: url) ?? 0, 2, accuracy: 0.001)
     }
 
+    func testAspectRatioOutlivesTheDecodedBitmapEviction() async throws {
+        let bytes = testPNGData(width: 80, height: 40)
+        let memory = NSCache<NSURL, UIImage>()
+        let subject = ImageLoader(
+            scopeProvider: { self.scope }, cache: ImageCacheStore(directory: directory),
+            decodedCache: memory, fetch: { _, _ in bytes }, cookieProvider: { _ in [] })
+        await subject.loadIfNeeded(url)
+        XCTAssertNotNil(subject.image(for: url))
+        memory.removeAllObjects()
+        // State stays `.cached` but the bitmap is gone: the view keeps the remembered-ratio placeholder.
+        XCTAssertNil(subject.image(for: url))
+        XCTAssertEqual(subject.aspectRatio(for: url) ?? 0, 2, accuracy: 0.001)
+    }
+
     func testImageAspectRatioRejectsDegenerateSizes() {
         XCTAssertEqual(imageAspectRatio(of: CGSize(width: 300, height: 100)), 3)
         XCTAssertNil(imageAspectRatio(of: .zero))
