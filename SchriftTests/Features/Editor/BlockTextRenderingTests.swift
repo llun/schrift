@@ -368,6 +368,37 @@ final class BlockTextRenderingTests: XCTestCase {
         XCTAssertEqual(slotAdvance(view, chip: chip), slot, accuracy: 0.5)
     }
 
+    /// Composing *before* a chip moves it by the marked length on every
+    /// keystroke, and it keeps its slot at each shifted index. Its new index is
+    /// neither a previous slot nor inside the pre-composition `hiddenRanges`, so a
+    /// keep-rule keyed on either dropped every trailing chip on each keystroke.
+    func testMarkedTextBeforeAChipKeepsItsSlotAtTheShiftedIndex() throws {
+        let source = "See [Roadmap](\(page)) now"
+        let styling = blockTextStyling(for: EditorBlock(kind: .paragraph, text: source), serverHost: chipHost)
+        let view = makeChipView(source, serverHost: chipHost)
+        let session = try makeComposing(view)
+        defer { endComposing(session) }
+        let chip = DocumentLinkChipSpan(slotIndex: 4, labelRange: NSRange(location: 5, length: 7))
+        XCTAssertEqual(view.documentLinkChips, [chip])
+        let slot = DocumentLinkChipMetrics(fontSize: styling.font.pointSize).slotWidth
+
+        view.selectedRange = NSRange(location: 0, length: 0)
+        view.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+        _ = try XCTUnwrap(view.markedTextRange)
+        view.applyInlineStyling(styling)
+        let afterOne = DocumentLinkChipSpan(slotIndex: 5, labelRange: NSRange(location: 6, length: 7))
+        XCTAssertEqual(view.documentLinkChips, [afterOne])
+
+        view.setMarkedText("日本", selectedRange: NSRange(location: 2, length: 0))
+        view.applyInlineStyling(styling)
+
+        XCTAssertNotNil(view.markedTextRange, "restyling must not end the composition")
+        XCTAssertEqual(view.text, "日本" + source)
+        let shifted = DocumentLinkChipSpan(slotIndex: 6, labelRange: NSRange(location: 7, length: 7))
+        XCTAssertEqual(view.documentLinkChips, [shifted])
+        XCTAssertEqual(slotAdvance(view, chip: shifted), slot, accuracy: 0.5)
+    }
+
     /// Composing *inside* a chip's title drops that chip only; a chip after the
     /// marked text keeps its slot at its shifted index.
     func testMarkedTextInsideAChipDropsOnlyThatChip() throws {

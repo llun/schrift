@@ -354,12 +354,16 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// stay as they are (the composition rules forbid changing the marked
     /// characters or their attributes), and glyphs and layout are invalidated
     /// only for the chips that changed:
-    /// - a slot that **appeared** has its one glyph regenerated, which the glyph
-    ///   pass turns into the slot (`chipSlotIndexes` is consulted before the
-    ///   possibly stale `hiddenRanges`);
-    ///   A slot appears only if its index is already in the (stale)
-    ///   `hiddenRanges`, i.e. the `[` was already hidden; otherwise the chip waits
-    ///   for the first restyle after commit.
+    /// - a chip is kept only where the layout manager's glyph for its `[` is
+    ///   already invisible — asked of the glyph, never of `hiddenRanges`, whose
+    ///   pre-composition coordinates are off by the marked length for every chip
+    ///   after the marked text. TextKit shifts the glyphs after an edit rather
+    ///   than regenerating them, so a chip that merely **moved** still holds its
+    ///   slot glyph and is only re-laid out; a `[` still drawn waits for the
+    ///   first restyle after commit;
+    /// - a slot that **appeared** over a `.null` `[` has its one glyph
+    ///   regenerated, which the glyph pass turns into the slot (`chipSlotIndexes`
+    ///   is consulted before the possibly stale `hiddenRanges`);
     /// - a slot that **went** keeps its (never drawn) control glyph and is only
     ///   re-laid out, where it is no longer a slot and so gets no advance — the
     ///   `[` stays invisible without the glyph pass reading stale hidden ranges.
@@ -381,28 +385,46 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
         for link in layout.links where linkRanges[link.range.location] == nil {
             linkRanges[link.range.location] = link.range
         }
-        let previousSlots = Set(documentLinkChips.map(\.slotIndex))
-        let chips = documentLinkChipSpans(in: layout, serverHost: styling.documentLinkHost).filter { chip in
-            guard let link = linkRanges[chip.slotIndex] else { return false }
-            // A new slot is only safe where the `[` is already hidden; the glyph
-            // pass would otherwise lay out a visible `[` as the slot.
-            if !previousSlots.contains(chip.slotIndex)
-                && !hiddenRanges.contains(where: { NSLocationInRange(chip.slotIndex, $0) })
-            {
-                return false
-            }
+        let previous = documentLinkChips
+        let previousSlots = Set(previous.map(\.slotIndex))
+        let candidates = documentLinkChipSpans(in: layout, serverHost: styling.documentLinkHost).filter { chip in
+            guard let link = linkRanges[chip.slotIndex], chip.slotIndex < length else { return false }
             if markedRange.length == 0 {
                 return !(markedRange.location > link.location && markedRange.location < NSMaxRange(link))
             }
             return NSIntersectionRange(link, markedRange).length == 0
         }
-        let previous = documentLinkChips
-        guard chips != previous else { return }
+        // Asking for a glyph can generate the invalidated ones before it — the
+        // marked characters — through the glyph pass. Old slot indexes are in
+        // pre-composition coordinates and could now name a marked character,
+        // which the pass would turn into an invisible slot, so it sees none.
+        if !candidates.isEmpty { chipSlotIndexes = [] }
+        var chips: [DocumentLinkChipSpan] = []
+        var slotsToRegenerate: [Int] = []
+        for chip in candidates {
+            // A slot is only safe where the `[` is already invisible; the glyph
+            // pass would otherwise lay out a visible `[` as the slot. Asked of
+            // the glyph itself, not of `hiddenRanges`, which keeps
+            // pre-composition coordinates: a chip after the marked text has moved
+            // by its length, and its `[` kept its glyph as it moved.
+            let property = layoutManager.propertyForGlyph(
+                at: layoutManager.glyphIndexForCharacter(at: chip.slotIndex))
+            if property.contains(.controlCharacter) {
+                chips.append(chip)  // already a slot glyph (it may only have moved)
+            } else if property.contains(.null) {
+                chips.append(chip)
+                slotsToRegenerate.append(chip.slotIndex)  // hidden; becomes the slot
+            }
+        }
+        guard chips != previous || !slotsToRegenerate.isEmpty else {
+            chipSlotIndexes = previousSlots
+            return
+        }
         configureDocumentLinkChips(chips, styling: styling)
 
-        for chip in chips where !previousSlots.contains(chip.slotIndex) && chip.slotIndex < length {
+        for slot in slotsToRegenerate {
             layoutManager.invalidateGlyphs(
-                forCharacterRange: NSRange(location: chip.slotIndex, length: 1), changeInLength: 0,
+                forCharacterRange: NSRange(location: slot, length: 1), changeInLength: 0,
                 actualCharacterRange: nil)
         }
         // Every chip that appeared or went; the old ones are in pre-composition

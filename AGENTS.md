@@ -2161,8 +2161,12 @@ that are easy to violate and expensive to discover:
   (`refreshDocumentLinkChipsWhileComposing`), so chips before or after the
   composition keep their slots instead of re-wrapping the line on every CJK
   keystroke; it never touches `hiddenRanges`, and invalidates glyphs/layout only
-  for the chips that changed. A chip may newly appear mid-composition only where
-  its `[` is already in the stale `hiddenRanges`; a removed chip's slot stays an
+  for the chips that changed. A chip is kept mid-composition only where the
+  layout manager's glyph for its `[` is already invisible (`.controlCharacter`
+  or `.null`) — asked of the glyph, never of the stale `hiddenRanges`, whose
+  pre-composition coordinates are off by the marked length for every chip after
+  the marked text (TextKit shifts those glyphs rather than regenerating them, so
+  a moved chip keeps its slot glyph); a removed chip's slot stays an
   undrawn control glyph only while the character at that index is still the `[`
   — composition just before a chip can briefly misplace it, the same
   stale-hidden-range limitation composition has for other hidden syntax, healed
