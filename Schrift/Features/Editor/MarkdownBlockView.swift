@@ -3,16 +3,18 @@ import SwiftUI
 /// Parse inline markdown for display, preserving whitespace (so multi-line
 /// prose keeps its line breaks) and autolinking bare URLs.
 ///
-/// `AttributedString(markdown:)` renders explicit `[text](url)` links but — per
-/// CommonMark — leaves *bare* URLs (`https://…`) as plain text. We run a link
+/// `AttributedString(markdown:)` renders explicit `[text](url)` links, and the
+/// system parser may also autolink a bare URL (`https://…`) itself. We run a link
 /// data detector over the rendered characters afterwards and attach a link
 /// only where one isn't already present, so bare URLs become tappable without
-/// double-linking the target of an existing markdown link.
+/// double-linking the target of an existing link.
 ///
 /// A markdown link to another document on `serverHost` is marked with
-/// `DocumentLinkChipAttribute` *before* autolinking — so only an explicit
+/// `DocumentLinkChipAttribute` *before* our autolinking — so only an explicit
 /// `[Title](url)` becomes a page chip, as on the editing surface — and is left
-/// un-underlined. The default `""` marks nothing.
+/// un-underlined. A link run whose text is its own URL is treated as a bare URL
+/// the parser autolinked, never a chip (`markDocumentLinks`). The default `""`
+/// marks nothing.
 func markdownInlineText(_ text: String, theme: AppTheme = .white, serverHost: String = "") -> AttributedString {
     var attributed =
         (try? AttributedString(markdown: text, options: inlineMarkdownOptions)) ?? AttributedString(text)
@@ -27,6 +29,11 @@ private func markDocumentLinks(in attributed: inout AttributedString, serverHost
     guard !serverHost.isEmpty else { return }
     let ranges = attributed.runs.filter { run in
         guard let link = run.link else { return false }
+        // Newer Foundation parsers autolink bare URLs themselves, so a link run is not
+        // proof of `[label](url)`. A run whose visible text *is* its URL is a bare URL.
+        let label = String(attributed[run.range].characters)
+        let target = link.absoluteString
+        if label == target || label + "/" == target || label == target + "/" { return false }
         return isDocumentLink(link, serverHost: serverHost)
     }.map(\.range)
     for range in ranges {

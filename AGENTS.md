@@ -2134,8 +2134,9 @@ that are easy to violate and expensive to discover:
   a glyph. Explicit `[label](url)` links *do* match: `markdownInlineText` paints
   them `textBrand` + single-underlined, as `InlineTextStyleResolver` does — except
   a link to another document on this server, which is a page chip on both
-  surfaces (next bullet). A bare *document* URL is never a chip: it is marked
-  before autolinking, so only an explicit link can add the chip's icon width.
+  surfaces (next bullet). A bare *document* URL is never a chip: a link run
+  whose visible text is its own URL is never chip-marked (the system parser may
+  autolink it before we do), so only an explicit link can add the chip's icon width.
 - **A document link is a "page chip" on both surfaces, and it is display only.**
   `Features/Editor/DocumentLinkChip.swift`: rounded `brandFillSubtle` background,
   `textBrand` ink, **no underline**, a `description` (page) glyph before the title;
@@ -2173,7 +2174,9 @@ that are easy to violate and expensive to discover:
   overlaps the next character on both surfaces rather than reserving width; two
   *adjacent* links to the same document merge into one chip while reading; and a
   link glued to the preceding letter (`x[Page](…)`) may break before the icon
-  while reading but not while editing.
+  while reading but not while editing; and an explicit link whose label is its own
+  URL (`[https://…/docs/<id>/](same url)`) is not a chip while reading, because it
+  cannot be told apart from a bare URL the parser autolinked, but it is one while editing.
 
 The backend stores content as an opaque base64 **Yjs CRDT** blob and has **no
 markdown write endpoint**. Understand this before touching the save path:
