@@ -30,7 +30,6 @@ struct DocumentListView: View {
     /// Display-only: the path/transport evidence is debounced so a slow or flaky load cannot
     /// flash the banner and shove the list down and back; Work Offline is a choice, so immediate.
     @State private var offlineStatus = DebouncedStatus()
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var showsOfflineBanner: Bool { workOffline || offlineStatus.value }
 
     /// Identity of what the Pinned and Recent sections show; the animation trigger.

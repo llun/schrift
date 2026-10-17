@@ -16,7 +16,6 @@ struct SharedScreen: View {
     /// Display-only debounce of the path/transport offline evidence, so a slow load cannot flash
     /// the banner and push the list down and back. Work Offline is a choice, so it is immediate.
     @State private var offlineStatus = DebouncedStatus()
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var showsOfflineBanner: Bool { workOffline || offlineStatus.value }
 
     private func subtitle(for document: Document) -> String {
