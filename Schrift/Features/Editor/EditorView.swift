@@ -694,9 +694,7 @@ struct EditorView: View {
             }
 
             if viewModel.isLoading {
-                ProgressView()
-                    .padding(DocsSpacing.spaceBase)
-                Spacer()
+                EditorLoadingPlaceholder()
             } else if viewModel.needsOnlineContent {
                 ContentUnavailableView {
                     Label {
@@ -719,6 +717,12 @@ struct EditorView: View {
                 readingSurface
             }
         }
+        // The column fills the screen in every state, so `body`'s page background does
+        // too. Without it a branch with no greedy child (the loading spinner) leaves the
+        // `VStack` only as wide as that child, and the page colour paints a narrow strip
+        // down the middle with the system background either side — invisible on White,
+        // obvious on Paper.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     /// Shown instead of the body for a document whose deletion is queued, with the undo beside
@@ -1452,5 +1456,22 @@ struct EditorNoticeLabel: View {
         .frame(minHeight: DocsSpacing.rowMinHeight)
         .background(Capsule().fill(theme.colors.gray050))
         .contentShape(Capsule())
+    }
+}
+
+// MARK: - Loading
+
+/// The editor's first-load state: a spinner near the top of an otherwise empty page.
+///
+/// It **fills what it is offered** rather than sizing to the spinner, because the page
+/// background is painted behind the column it sits in: sized to its content, the
+/// placeholder made that column a spinner wide, and a Paper (or any non-white) theme
+/// showed its colour only as a strip down the middle of the screen while a new document
+/// loaded. `EditorLoadingPlaceholderTests` measures it against a full-screen proposal.
+struct EditorLoadingPlaceholder: View {
+    var body: some View {
+        ProgressView()
+            .padding(DocsSpacing.spaceBase)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
