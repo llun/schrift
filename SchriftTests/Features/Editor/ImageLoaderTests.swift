@@ -107,7 +107,7 @@ import XCTest
         XCTAssertEqual(imageAspectRatio(of: CGSize(width: 300, height: 100)), 3)
         XCTAssertNil(imageAspectRatio(of: .zero))
         XCTAssertNil(imageAspectRatio(of: CGSize(width: 10, height: 0)))
-        XCTAssertNil(imageAspectRatio(of: CGSize(width: .infinity, height: 10)))
+        XCTAssertNil(imageAspectRatio(of: CGSize(width: CGFloat.infinity, height: 10)))
     }
 
     func testColdOfflineMissMakesNoRequest() async {
