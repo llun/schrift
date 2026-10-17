@@ -183,6 +183,10 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// Source ranges drawn at zero width. Read by the glyph-suppression delegate
     /// on every layout pass, so it must be set before glyphs are invalidated.
     fileprivate(set) var hiddenRanges: [NSRange] = []
+    /// The buffer `hiddenRanges` and the chips were last computed from, so a
+    /// restyle during composition can tell "nothing changed" from "the text
+    /// moved under the same state".
+    private var glyphStateSource: String?
     fileprivate(set) var linkSpans: [InlineLinkSpan] = []
     /// Document links drawn as page chips. Each one's hidden `[` is laid out as a
     /// whitespace control glyph `chipSlotWidth` wide — the icon's slot — rather
@@ -298,8 +302,8 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// `.textChanged` event is produced and the selection survives.
     ///
     /// While an input method is composing, the marked text's characters and
-    /// attributes are UIKit's, so only the page chips are refreshed
-    /// (`refreshDocumentLinkChipsWhileComposing`) and nothing is restyled.
+    /// attributes are UIKit's, so nothing is restyled: only the hidden syntax
+    /// and the page chips are recomputed (`refreshHiddenSyntaxWhileComposing`).
     ///
     /// Takes the whole `BlockTextStyling` rather than the two or three fields it
     /// happens to need: a field added to the block's appearance that this forgot
@@ -308,7 +312,7 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// on one surface only.
     func applyInlineStyling(_ styling: BlockTextStyling) {
         if let marked = markedTextRange {
-            refreshDocumentLinkChipsWhileComposing(around: marked, styling: styling)
+            refreshHiddenSyntaxWhileComposing(around: marked, styling: styling)
             return
         }
         let font = styling.font
@@ -321,6 +325,7 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
 
         // Before `endEditing` triggers a layout pass that reads them.
         hiddenRanges = layout.syntax
+        glyphStateSource = source
         linkSpans = layout.links
         configureDocumentLinkChips(
             documentLinkChipSpans(in: layout, serverHost: styling.documentLinkHost), styling: styling)
@@ -343,35 +348,32 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
         }
     }
 
-    /// The composition half of `applyInlineStyling`: recomputes the chips from
-    /// the current buffer, so a chip before or after the marked text keeps its
-    /// slot (at its shifted index) instead of every chip in the block vanishing
-    /// and re-wrapping the line on each keystroke of a CJK composition. Only a
-    /// chip whose link the marked text touches is dropped — its title is still
-    /// being typed — until the first restyle after commit.
+    /// The composition half of `applyInlineStyling`: recomputes the hidden
+    /// syntax and the page chips from the current buffer, so syntax and chips
+    /// before or after the marked text stay hidden (at their shifted indexes)
+    /// instead of reappearing and re-wrapping the line on each keystroke of a
+    /// CJK composition.
     ///
-    /// Touches nothing but the chip state. Text attributes and `hiddenRanges`
-    /// stay as they are (the composition rules forbid changing the marked
-    /// characters or their attributes), and glyphs and layout are invalidated
-    /// only for the chips that changed:
-    /// - a chip is kept only where the layout manager's glyph for its `[` is
-    ///   already invisible — asked of the glyph, never of `hiddenRanges`, whose
-    ///   pre-composition coordinates are off by the marked length for every chip
-    ///   after the marked text. TextKit shifts the glyphs after an edit rather
-    ///   than regenerating them, so a chip that merely **moved** still holds its
-    ///   slot glyph and is only re-laid out; a `[` still drawn waits for the
-    ///   first restyle after commit;
-    /// - a slot that **appeared** over a `.null` `[` has its one glyph
-    ///   regenerated, which the glyph pass turns into the slot (`chipSlotIndexes`
-    ///   is consulted before the possibly stale `hiddenRanges`);
-    /// - a slot that **went** keeps its (never drawn) control glyph and is only
-    ///   re-laid out, where it is no longer a slot and so gets no advance — the
-    ///   `[` stays invisible without the glyph pass reading stale hidden ranges.
-    ///   That holds while the character at that index is still the `[`;
-    ///   composition just before a chip can briefly misplace it, the same
-    ///   stale-hidden-range limitation composition already has for other hidden
-    ///   syntax, and it heals on commit.
-    private func refreshDocumentLinkChipsWhileComposing(around marked: UITextRange, styling: BlockTextStyling) {
+    /// Touches glyph properties only. Text, attributes and selection are
+    /// UIKit's until commit, so nothing is restyled; what changes is the state
+    /// the glyph pass reads, and glyphs and layout are then regenerated from it
+    /// — never inferred from glyphs TextKit kept or regenerated after the edit:
+    /// - `hiddenRanges` is the current buffer's syntax **minus any range the
+    ///   marked text intersects**, so a character being composed is never
+    ///   hidden. A range merely adjacent to it stays hidden: a chip's `](url)`
+    ///   must not unfold while the user composes right after the link;
+    /// - a chip is kept only where its link does not overlap the marked text
+    ///   (its title is still being typed) **and** its `[` is in that new
+    ///   `hiddenRanges`, so the glyph pass never lays out a visible `[` as a
+    ///   slot. A dropped chip returns on the first restyle after commit.
+    ///
+    /// Invalidating the whole (short) block is safe while composing: glyph and
+    /// layout invalidation regenerate glyphs from the unchanged text storage and
+    /// leave its characters, its attributes — the marked text's included — the
+    /// selection and the marked range alone. It is skipped when neither the
+    /// buffer nor the state changed since the last styling, the one case where
+    /// the existing glyphs are provably generated from this state for this text.
+    private func refreshHiddenSyntaxWhileComposing(around marked: UITextRange, styling: BlockTextStyling) {
         let source = text ?? ""
         let length = (source as NSString).length
         let markedRange = NSRange(
@@ -381,66 +383,34 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
             styling.rendersInlineMarkdown
             ? InlineMarkdown.layout(of: source)
             : InlineLayout(spans: [], syntax: [], links: [])
+        let hidden = layout.syntax.filter { NSIntersectionRange($0, markedRange).length == 0 }
         var linkRanges: [Int: NSRange] = [:]
         for link in layout.links where linkRanges[link.range.location] == nil {
             linkRanges[link.range.location] = link.range
         }
-        let previous = documentLinkChips
-        let previousSlots = Set(previous.map(\.slotIndex))
-        let candidates = documentLinkChipSpans(in: layout, serverHost: styling.documentLinkHost).filter { chip in
+        let chips = documentLinkChipSpans(in: layout, serverHost: styling.documentLinkHost).filter { chip in
             guard let link = linkRanges[chip.slotIndex], chip.slotIndex < length else { return false }
-            if markedRange.length == 0 {
-                return !(markedRange.location > link.location && markedRange.location < NSMaxRange(link))
-            }
-            return NSIntersectionRange(link, markedRange).length == 0
+            let overlapsMarked =
+                markedRange.length == 0
+                ? markedRange.location > link.location && markedRange.location < NSMaxRange(link)
+                : NSIntersectionRange(link, markedRange).length > 0
+            guard !overlapsMarked else { return false }
+            return hidden.contains { NSLocationInRange(chip.slotIndex, $0) }
         }
-        // Asking for a glyph can generate the invalidated ones before it — the
-        // marked characters — through the glyph pass. Old slot indexes are in
-        // pre-composition coordinates and could now name a marked character,
-        // which the pass would turn into an invisible slot, so it sees none.
-        if !candidates.isEmpty { chipSlotIndexes = [] }
-        var chips: [DocumentLinkChipSpan] = []
-        var slotsToRegenerate: [Int] = []
-        for chip in candidates {
-            // A slot is only safe where the `[` is already invisible; the glyph
-            // pass would otherwise lay out a visible `[` as the slot. Asked of
-            // the glyph itself, not of `hiddenRanges`, which keeps
-            // pre-composition coordinates: a chip after the marked text has moved
-            // by its length, and its `[` kept its glyph as it moved.
-            let property = layoutManager.propertyForGlyph(
-                at: layoutManager.glyphIndexForCharacter(at: chip.slotIndex))
-            if property.contains(.controlCharacter) {
-                chips.append(chip)  // already a slot glyph (it may only have moved)
-            } else if property.contains(.null) {
-                chips.append(chip)
-                slotsToRegenerate.append(chip.slotIndex)  // hidden; becomes the slot
-            }
-        }
-        guard chips != previous || !slotsToRegenerate.isEmpty else {
-            chipSlotIndexes = previousSlots
-            return
-        }
+        // A block with no chip before or after this keystroke keeps composing
+        // exactly as it always has: nothing is recomputed until commit.
+        guard !chips.isEmpty || !documentLinkChips.isEmpty else { return }
+        guard source != glyphStateSource || hidden != hiddenRanges || chips != documentLinkChips else { return }
+
+        // Before the invalidation below triggers a layout pass that reads them.
+        hiddenRanges = hidden
+        glyphStateSource = source
         configureDocumentLinkChips(chips, styling: styling)
 
-        for slot in slotsToRegenerate {
-            layoutManager.invalidateGlyphs(
-                forCharacterRange: NSRange(location: slot, length: 1), changeInLength: 0,
-                actualCharacterRange: nil)
-        }
-        // Every chip that appeared or went; the old ones are in pre-composition
-        // coordinates, so they are clamped to the buffer.
-        let changed = previous.filter { !chips.contains($0) } + chips.filter { !previous.contains($0) }
-        var start = length
-        var end = 0
-        for chip in changed {
-            start = min(start, chip.slotIndex)
-            end = max(end, NSMaxRange(chip.labelRange))
-        }
-        end = min(end, length)
-        guard start < end else { return }
-        let affected = NSRange(location: start, length: end - start)
-        layoutManager.invalidateLayout(forCharacterRange: affected, actualCharacterRange: nil)
-        layoutManager.invalidateDisplay(forCharacterRange: affected)
+        let full = NSRange(location: 0, length: length)
+        layoutManager.invalidateGlyphs(forCharacterRange: full, changeInLength: 0, actualCharacterRange: nil)
+        layoutManager.invalidateLayout(forCharacterRange: full, actualCharacterRange: nil)
+        layoutManager.invalidateDisplay(forCharacterRange: full)
     }
 
     /// Hands the chips to the glyph pass (slot indexes and width) and to the

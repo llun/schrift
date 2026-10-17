@@ -370,7 +370,7 @@ final class BlockTextRenderingTests: XCTestCase {
 
     /// Composing *before* a chip moves it by the marked length on every
     /// keystroke, and it keeps its slot at each shifted index. Its new index is
-    /// neither a previous slot nor inside the pre-composition `hiddenRanges`, so a
+    /// neither a previous slot nor inside the pre-composition hidden syntax, so a
     /// keep-rule keyed on either dropped every trailing chip on each keystroke.
     func testMarkedTextBeforeAChipKeepsItsSlotAtTheShiftedIndex() throws {
         let source = "See [Roadmap](\(page)) now"
@@ -397,6 +397,10 @@ final class BlockTextRenderingTests: XCTestCase {
         let shifted = DocumentLinkChipSpan(slotIndex: 6, labelRange: NSRange(location: 7, length: 7))
         XCTAssertEqual(view.documentLinkChips, [shifted])
         XCTAssertEqual(slotAdvance(view, chip: shifted), slot, accuracy: 0.5)
+        // The syntax after the marked text is recomputed too: the chip's
+        // `](url)` stays hidden at its shifted index.
+        let closing = view.layoutManager.glyphIndexForCharacter(at: NSMaxRange(shifted.labelRange))
+        XCTAssertTrue(view.layoutManager.propertyForGlyph(at: closing).contains(.null))
     }
 
     /// Composing *inside* a chip's title drops that chip only; a chip after the

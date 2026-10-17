@@ -2155,22 +2155,20 @@ that are easy to violate and expensive to discover:
   `DocumentLinkChipIconBand` (inside the font's line box), so a line wraps at the
   same word and stays the same height on the swap
   (`EditorSurfaceParityTests`, `BlockTextRenderingTests`). While an IME is
-  composing, `applyInlineStyling` restyles nothing (marked characters and
-  attributes are UIKit's) but recomputes the chips from the current buffer and
-  drops only a chip whose link the marked text touches
-  (`refreshDocumentLinkChipsWhileComposing`), so chips before or after the
-  composition keep their slots instead of re-wrapping the line on every CJK
-  keystroke; it never touches `hiddenRanges`, and invalidates glyphs/layout only
-  for the chips that changed. A chip is kept mid-composition only where the
-  layout manager's glyph for its `[` is already invisible (`.controlCharacter`
-  or `.null`) — asked of the glyph, never of the stale `hiddenRanges`, whose
-  pre-composition coordinates are off by the marked length for every chip after
-  the marked text (TextKit shifts those glyphs rather than regenerating them, so
-  a moved chip keeps its slot glyph); a removed chip's slot stays an
-  undrawn control glyph only while the character at that index is still the `[`
-  — composition just before a chip can briefly misplace it, the same
-  stale-hidden-range limitation composition has for other hidden syntax, healed
-  on commit. Accepted residuals:
+  composing, `applyInlineStyling` restyles nothing (marked characters,
+  attributes and selection are UIKit's) but recomputes the glyph pass's state
+  from the current buffer (`refreshHiddenSyntaxWhileComposing`): `hiddenRanges`
+  becomes the current syntax minus any range the marked text intersects (a
+  composed character is never hidden; an adjacent `](url)` stays hidden), and a
+  chip is kept only where its link does not overlap the marked text and its `[`
+  is in that new hidden syntax. It then invalidates glyphs and layout for the
+  whole block — glyph properties only, never text, attributes or selection — so
+  nothing depends on whether TextKit shifted or regenerated glyphs after the
+  edit, and syntax and chips before or after the composition stay hidden at
+  their shifted indexes instead of re-wrapping the line on every CJK keystroke.
+  A dropped chip returns on the first restyle after commit. A block with no chip
+  before or after the keystroke skips all of this and composes exactly as it did
+  before chips existed. Accepted residuals:
   the reading icon is not itself tappable (the title is); the trailing padding
   overlaps the next character on both surfaces rather than reserving width; two
   *adjacent* links to the same document merge into one chip while reading; and a
