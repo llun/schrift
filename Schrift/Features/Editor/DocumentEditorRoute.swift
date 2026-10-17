@@ -6,7 +6,7 @@ import Foundation
 @MainActor
 final class NewDocumentEntryIntent: Hashable {
     nonisolated private let id = UUID()
-    private var isPending = true
+    private(set) var isPending = true
 
     func consume() -> Bool {
         guard isPending else { return false }

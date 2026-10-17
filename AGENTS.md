@@ -2478,9 +2478,18 @@ markdown write endpoint**. Understand this before touching the save path:
 - **Only a creation action opens editing automatically.** `DocumentEditorRoute(createdDocument:)`
   carries a reference-backed `NewDocumentEntryIntent`; ordinary routes carry none. Home's
   compact push, regular-width selection, Subpages add, and Pages drawer create all use it.
-  `EditorViewModel` consumes it only after successful content installation or local restoration,
-  through `canStartEditing` / `startEditing`. Failed loads keep the intent pending for a
-  successful retry; they never seed an unloaded body. The editable shared header claims a
+  `EditorViewModel` consumes it only after content is installed, through `canStartEditing` /
+  `startEditing`. A just-created **server** document has no loading screen: its body is empty by
+  construction, so when the local phase finds nothing and the intent is unconsumed,
+  `seedNewlyCreatedDocument` installs `""` with a baseline that claims an empty body and **no**
+  server clock (a clock would let a timestamp alone prove a push), and the screen enters editing
+  at once.
+  The fetch that follows still runs the ordinary rules: a server body it did not expect is stashed
+  behind the "Updated" banner and the first edit records a conflict rather than overwriting it.
+  This is the **one** sanctioned seed of a body not read from the server or the disk — it is
+  keyed on the creation intent alone; never seed from an empty-looking fetch, a failed load or a
+  default title. An ordinary open still waits for content, behind `EditorLoadingPlaceholder` (a
+  page skeleton that fills the screen, so the theme's page colour reaches every edge). The editable shared header claims a
   separate one-time title-focus request and selects the existing title without clearing or
   dirtying it. Do not derive entry/focus from the default title, emptiness, connectivity, a
   pending-create id, or an appearance callback: refresh, reconnect, navigation restoration,

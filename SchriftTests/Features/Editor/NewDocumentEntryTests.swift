@@ -111,30 +111,57 @@ final class NewDocumentEntryTests: XCTestCase {
         vm.finishEditing()
     }
 
-    func testNewDocumentWaitsForContentThenEntersEditingWithoutDirtyingOrBodyFocus() async {
+    /// A just-created document's body is empty by construction, so it opens straight into
+    /// editing while its content fetch is still in flight, with no loading screen.
+    func testNewDocumentEntersEditingBeforeItsContentFetchLandsWithoutDirtyingOrBodyFocus() async {
         let intent = NewDocumentEntryIntent()
         let vm = editor(intent: intent)
         let gate = MockURLProtocol.ResponseGate()
-        stubContent(markdown: "Existing body", gate: gate)
+        stubContent(gate: gate)
         let load = Task { await vm.load() }
         await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
-        XCTAssertFalse(vm.canStartEditing)
-        XCTAssertFalse(vm.isEditing)
-        XCTAssertFalse(vm.consumeInitialTitleFocus())
-        vm.startEditing()
-        vm.flushPendingChanges()
-        XCTAssertFalse(vm.isEditing)
+        XCTAssertTrue(vm.canStartEditing)
+        XCTAssertTrue(vm.isEditing)
+        XCTAssertFalse(vm.isLoading, "a new document never shows the loading screen")
+        XCTAssertEqual(vm.currentMarkdown(), "")
+        XCTAssertNil(vm.focusedBlockID)
+        XCTAssertFalse(vm.isDirty)
         XCTAssertNil(drafts.draft(for: documentID))
+        XCTAssertTrue(vm.consumeInitialTitleFocus())
         gate.open()
         await load.value
         XCTAssertTrue(vm.isEditing)
-        XCTAssertEqual(vm.currentMarkdown(), "Existing body\n")
-        XCTAssertNil(vm.focusedBlockID)
+        XCTAssertFalse(vm.updateAvailable, "the server's empty body matches what is already on screen")
         XCTAssertFalse(vm.isDirty)
-        XCTAssertTrue(vm.consumeInitialTitleFocus())
         XCTAssertFalse(vm.consumeInitialTitleFocus())
         vm.finishEditing()
         XCTAssertNil(drafts.draft(for: documentID))
+    }
+
+    /// The empty body is a claim about the server, so the fetch that follows must still be
+    /// able to disprove it: a body the server unexpectedly holds is stashed behind the
+    /// "Updated" banner, and the first edit records a conflict instead of overwriting it.
+    func testAnUnexpectedServerBodyIsHeldAsAConflictNotOverwrittenByTheSeededEmptyBody() async {
+        let log = RequestRecorder()
+        let body = try! JSONSerialization.data(withJSONObject: [
+            "id": documentID.uuidString, "title": "Untitled document", "content": "Body that must survive",
+            "created_at": "2026-10-04T10:00:00Z", "updated_at": "2026-10-04T10:00:00Z",
+        ])
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            if request.url!.path.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: body, error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data("{\"count\":0,\"results\":[]}".utf8), error: nil)
+        }
+        let vm = editor(intent: NewDocumentEntryIntent())
+        await vm.load()
+        XCTAssertTrue(vm.isEditing)
+        XCTAssertTrue(vm.updateAvailable)
+        vm.updateTitle("My new title")
+        vm.finishEditing()
+        XCTAssertNotNil(vm.syncConflict)
+        await waitAndConfirmNever { log.count(ofMethod: "PATCH", urlContaining: "content") > 0 }
     }
 
     func testChildrenRevalidationCannotDelayInitializedCreationEntry() async {
@@ -175,34 +202,33 @@ final class NewDocumentEntryTests: XCTestCase {
         XCTAssertNil(drafts.draft(for: documentID))
     }
 
-    func testFailedLoadLeavesIntentPendingAndRetrySafelyEnters() async {
+    /// The fetch is only a check on a body already known to be empty, so its failure does
+    /// not keep a new document from opening.
+    func testAFailedFirstFetchStillOpensTheNewDocumentForWriting() async {
         let vm = editor(intent: NewDocumentEntryIntent())
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
         await vm.load()
-        XCTAssertEqual(vm.errorKey, .editor_error_load)
-        XCTAssertFalse(vm.isEditing)
-        XCTAssertFalse(vm.consumeInitialTitleFocus())
-        vm.flushPendingChanges()
-        XCTAssertNil(drafts.draft(for: documentID))
-        stubContent(markdown: "Body recovered on retry")
-        await vm.refresh()
+        XCTAssertNil(vm.errorKey)
         XCTAssertTrue(vm.isEditing)
-        XCTAssertEqual(vm.currentMarkdown(), "Body recovered on retry\n")
+        XCTAssertEqual(vm.currentMarkdown(), "")
         XCTAssertTrue(vm.consumeInitialTitleFocus())
+        vm.finishEditing()
+        XCTAssertNil(drafts.draft(for: documentID), "an untouched new document saves nothing")
     }
 
-    func testForbiddenLoadCannotEnterOrSaveAndSuccessfulRetryCanEnter() async {
+    func testForbiddenLoadEndsTheSeededSessionAndASuccessfulRetryReads() async {
         let vm = editor(intent: NewDocumentEntryIntent())
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 403, headers: [:], body: Data(), error: nil) }
         await vm.load()
         XCTAssertTrue(vm.isUnavailable)
+        XCTAssertFalse(vm.isEditing)
         XCTAssertFalse(vm.canStartEditing)
         XCTAssertFalse(vm.consumeInitialTitleFocus())
         vm.flushPendingChanges()
         XCTAssertNil(drafts.draft(for: documentID))
         stubContent(markdown: "Real body")
         await vm.refresh()
-        XCTAssertTrue(vm.isEditing)
+        XCTAssertFalse(vm.isEditing, "the creation intent was spent on the first open")
         XCTAssertEqual(vm.currentMarkdown(), "Real body\n")
     }
 
@@ -284,21 +310,20 @@ final class NewDocumentEntryTests: XCTestCase {
         XCTAssertFalse(vm.consumeInitialTitleFocus())
     }
 
-    func testTitleOnlyEditPersistsLoadedBodyAndOrdinaryReopenReadsSavedTitle() async {
+    func testTitleOnlyEditPersistsAndOrdinaryReopenReadsSavedTitle() async {
         let vm = editor(intent: NewDocumentEntryIntent())
-        stubContent(markdown: "Body that must survive the rename")
+        stubContent()
         await vm.load()
         XCTAssertTrue(vm.consumeInitialTitleFocus())
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
         vm.updateTitle("My new title")
         vm.finishEditing()
         XCTAssertEqual(drafts.draft(for: documentID)?.title, "My new title")
-        XCTAssertEqual(drafts.draft(for: documentID)?.markdown, "Body that must survive the rename\n")
+        XCTAssertEqual(drafts.draft(for: documentID)?.markdown, "")
         await waitUntil { vm.saveState == .pendingSync }
         let reopened = editor()
         await reopened.load()
         XCTAssertEqual(reopened.title, "My new title")
-        XCTAssertEqual(reopened.currentMarkdown(), "Body that must survive the rename\n")
         XCTAssertFalse(reopened.isEditing)
     }
 

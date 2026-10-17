@@ -1461,17 +1461,69 @@ struct EditorNoticeLabel: View {
 
 // MARK: - Loading
 
-/// The editor's first-load state: a spinner near the top of an otherwise empty page.
+/// The editor's first-load state: placeholder bars where the document header and its first
+/// lines will appear, on an otherwise empty page.
 ///
-/// It **fills what it is offered** rather than sizing to the spinner, because the page
-/// background is painted behind the column it sits in: sized to its content, the
-/// placeholder made that column a spinner wide, and a Paper (or any non-white) theme
-/// showed its colour only as a strip down the middle of the screen while a new document
-/// loaded. `EditorLoadingPlaceholderTests` measures it against a full-screen proposal.
+/// A skeleton rather than a spinner, per the handoff's loading rule, laid out on the reading
+/// surface's own gutter and header spacing so the title lands where its bar was. Only an
+/// *existing* document ever shows it: a just-created one opens straight into editing
+/// (`EditorViewModel.seedNewlyCreatedDocument`), since its body is empty by construction.
+///
+/// It **fills what it is offered** rather than sizing to its content, because the page
+/// background is painted behind the column it sits in: sized to a spinner, that column was
+/// a spinner wide, and a Paper (or any non-white) theme showed its colour only as a strip
+/// down the middle of the screen. `EditorLoadingPlaceholderTests` measures it against a
+/// full-screen proposal.
 struct EditorLoadingPlaceholder: View {
+    @Environment(LocalizationStore.self) private var loc
+
+    /// Fixed rhythm, like `SkeletonList`'s, so the placeholder doesn't reshuffle on redraw.
+    static let bodyLineFractions: [CGFloat] = [1, 0.92, 0.97, 0.6]
+
     var body: some View {
-        ProgressView()
-            .padding(DocsSpacing.spaceBase)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
+            VStack(alignment: .leading, spacing: EditorBlockMetrics.titleToMetadataSpacing) {
+                SkeletonLine(fraction: 0.62, height: 28)
+                HStack(spacing: DocsSpacing.spaceXS) {
+                    Skeleton(width: 76, height: 20, cornerRadius: DocsRadius.pill)
+                    Skeleton(width: 92, height: 11)
+                }
+                .frame(minHeight: DocsSpacing.rowMinHeight, alignment: .leading)
+            }
+            .padding(.bottom, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
+
+            ForEach(Array(Self.bodyLineFractions.enumerated()), id: \.offset) { _, fraction in
+                SkeletonLine(fraction: fraction, height: 13)
+            }
+        }
+        .padding(.horizontal, EditorBlockMetrics.gutter)
+        .padding(.top, DocsSpacing.spaceSM)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(loc[.common_loading])
     }
+}
+
+/// One placeholder text line, a fraction of the column wide.
+private struct SkeletonLine: View {
+    let fraction: CGFloat
+    let height: CGFloat
+
+    var body: some View {
+        GeometryReader { proxy in
+            Skeleton(width: proxy.size.width * fraction, height: height)
+        }
+        .frame(height: height)
+    }
+}
+
+#Preview("Loading placeholder") {
+    EditorLoadingPlaceholder()
+        .environment(LocalizationStore())
+}
+
+#Preview("Loading placeholder, dark") {
+    EditorLoadingPlaceholder()
+        .environment(LocalizationStore())
+        .preferredColorScheme(.dark)
 }
