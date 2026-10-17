@@ -166,4 +166,63 @@ final class DocumentChildrenCacheStoreTests: XCTestCase {
         XCTAssertEqual(store.children(for: middle), [])
         XCTAssertEqual(store.children(for: newest), [])
     }
+
+    // MARK: - Memoized decode
+
+    /// The save coordinator, the editor and the Pages drawer each build a store over
+    /// `.standard`; the decode is memoized, so every write — save, purge, wipe — through one
+    /// must be what the others read next.
+    func testTwoInstancesOnTheSameDefaultsSeeEachOthersWrites() {
+        let first = makeStore()
+        let second = makeStore()
+        let parentID = UUID(uuidString: "12121212-1212-4212-8212-121212121212")!
+        let child = makeDocument(id: "34343434-3434-4434-8434-343434343434", title: "Child")
+        XCTAssertNil(second.children(for: parentID), "primes the second instance's read")
+
+        first.save([child], for: parentID)
+        XCTAssertEqual(second.children(for: parentID), [child])
+        XCTAssertEqual(second.document(for: child.id), child)
+
+        second.removeDocument(child.id)
+        XCTAssertEqual(first.children(for: parentID), [])
+        XCTAssertNil(first.document(for: child.id))
+
+        first.removeAll()
+        XCTAssertNil(second.children(for: parentID))
+    }
+
+    func testStoresOnDifferentDefaultsDoNotShareEntries() {
+        let otherSuite = "DocumentChildrenCacheStoreTests.\(UUID().uuidString)"
+        let otherDefaults = UserDefaults(suiteName: otherSuite)!
+        defer { otherDefaults.removePersistentDomain(forName: otherSuite) }
+        let store = makeStore()
+        let other = DocumentChildrenCacheStore(userDefaults: otherDefaults)
+        let parentID = UUID(uuidString: "56565656-5656-4656-8656-565656565656")!
+
+        store.save([], for: parentID)
+
+        XCTAssertEqual(store.children(for: parentID), [])
+        XCTAssertNil(other.children(for: parentID))
+        XCTAssertEqual(store.children(for: parentID), [], "reading the other suite evicts nothing")
+    }
+
+    /// Bytes replaced behind the store's back after a memoized read are seen at once: undecodable
+    /// data still reads as an empty cache, and the next save starts over from it as before.
+    func testCorruptionAfterAMemoizedReadReadsAsEmpty() {
+        let store = makeStore()
+        let parentID = UUID(uuidString: "78787878-7878-4878-8878-787878787878")!
+        let child = makeDocument(id: "9a9a9a9a-9a9a-4a9a-8a9a-9a9a9a9a9a9a", title: "Child")
+        store.save([child], for: parentID)
+        XCTAssertEqual(store.children(for: parentID), [child])
+
+        userDefaults.set(Data("not json".utf8), forKey: "dev.llun.Schrift.cachedDocumentChildren")
+
+        XCTAssertNil(store.children(for: parentID))
+        XCTAssertNil(store.document(for: child.id))
+
+        let otherParent = UUID(uuidString: "bcbcbcbc-bcbc-4cbc-8cbc-bcbcbcbcbcbc")!
+        store.save([], for: otherParent)
+        XCTAssertEqual(store.children(for: otherParent), [])
+        XCTAssertNil(store.children(for: parentID))
+    }
 }

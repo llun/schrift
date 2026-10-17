@@ -3,7 +3,7 @@ import Foundation
 /// One document's cached children list (sub pages), keyed externally by the
 /// parent's UUID. `syncedAt` is the wall-clock of the fetch that produced it
 /// and drives eviction recency.
-struct CachedChildrenEntry: Codable, Equatable {
+struct CachedChildrenEntry: Codable, Equatable, Sendable {
     var documents: [Document]
     var syncedAt: Date
 }
@@ -18,6 +18,10 @@ struct CachedChildrenEntry: Codable, Equatable {
 /// real fetch result.
 final class DocumentChildrenCacheStore {
     private static let key = "dev.llun.Schrift.cachedDocumentChildren"
+    /// Shared by every instance (the save coordinator, the editor and the Pages drawer each
+    /// build one over `.standard`): it memoizes the decode of whatever bytes were last read, so
+    /// a write by any of them is seen by all — see `DecodedBlobMemo`.
+    private static let memo = DecodedBlobMemo<[UUID: CachedChildrenEntry]>()
 
     private let userDefaults: UserDefaults
     private let limit: Int
@@ -86,12 +90,17 @@ final class DocumentChildrenCacheStore {
     }
 
     private func loadEntries() -> [UUID: CachedChildrenEntry] {
-        guard let data = userDefaults.data(forKey: Self.key),
-            let entries = try? decoder.decode([UUID: CachedChildrenEntry].self, from: data)
-        else {
+        guard let data = userDefaults.data(forKey: Self.key), let entries = decoded(data) else {
             return [:]
         }
         return entries
+    }
+
+    /// The blob's decode, memoized on its bytes: a read with no write since the last one costs a
+    /// byte comparison, not a decode of every cached list. nil means undecodable, exactly as the
+    /// direct `try? decode` it replaces.
+    private func decoded(_ data: Data) -> [UUID: CachedChildrenEntry]? {
+        Self.memo.value(for: data) { try? decoder.decode([UUID: CachedChildrenEntry].self, from: $0) }
     }
 
     private func saveEntries(_ entries: [UUID: CachedChildrenEntry]) {
