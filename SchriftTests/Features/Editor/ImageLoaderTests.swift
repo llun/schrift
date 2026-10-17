@@ -83,8 +83,24 @@ import XCTest
         XCTAssertNotNil(subject.image(for: url))
         memory.removeAllObjects()
         // State stays `.cached` but the bitmap is gone: the view keeps the remembered-ratio placeholder.
+        if case .cached = subject.state(for: url) {} else { XCTFail("expected .cached") }
         XCTAssertNil(subject.image(for: url))
         XCTAssertEqual(subject.aspectRatio(for: url) ?? 0, 2, accuracy: 0.001)
+    }
+
+    func testRecordingUnderANewScopeForgetsAspectRatiosOfTheOldScope() async {
+        let log = RequestRecorder()
+        stub(log: log)
+        let subject = loader()
+        let scopeA = scope!
+        await subject.loadIfNeeded(url)
+        XCTAssertEqual(subject.aspectRatio(for: url) ?? 0, 2, accuracy: 0.001)
+        scope = ImageCacheScope(serverOrigin: origin, sessionID: UUID())
+        let otherURL = URL(string: "https://docs.example.org/media/other.png")!
+        await subject.loadIfNeeded(otherURL)
+        XCTAssertEqual(subject.aspectRatio(for: otherURL) ?? 0, 2, accuracy: 0.001)
+        scope = scopeA
+        XCTAssertNil(subject.aspectRatio(for: url))
     }
 
     func testImageAspectRatioRejectsDegenerateSizes() {

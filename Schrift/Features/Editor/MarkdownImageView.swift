@@ -48,8 +48,9 @@ struct MarkdownImageView: View {
                     .accessibilityLabel(alt.isEmpty ? loc[.editor_image_a11y] : alt)
             } else {
                 switch matchesSession ? loader.state(for: url) : .unavailableOffline {
-                // `.cached` with no bitmap means the decoded image was evicted and is being re-decoded from disk
-                // (`.task` re-runs `loadIfNeeded`); it is transient, so keep the placeholder rather than flash an error.
+                // `.cached` with no bitmap means the decoded image was evicted and is being re-decoded
+                // from disk (`.task` re-runs `loadIfNeeded`); it is transient, so keep the placeholder,
+                // not an error.
                 case .idle, .loading, .cached:
                     placeholder
                 case .requiresConsent:
