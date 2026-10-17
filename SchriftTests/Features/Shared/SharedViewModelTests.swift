@@ -548,4 +548,38 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorKey, "a failure that crossed an availability flip is discarded")
         XCTAssertFalse(viewModel.isLoading)
     }
+
+    // MARK: - Error retention across silent reloads
+
+    func testVisibleErrorSurvivesASilentReloadThatFailsQuietly() async {
+        cache.saveSharedWithMeDocuments([
+            decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
+        ])
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        await viewModel.refresh()
+        XCTAssertEqual(viewModel.errorKey, .shared_error_load)
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.errorKey, .shared_error_load, "a silent reload must not blink the error away")
+    }
+
+    func testVisibleErrorIsClearedByASilentReloadThatSucceeds() async {
+        cache.saveSharedWithMeDocuments([
+            decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
+        ])
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        await viewModel.refresh()
+        XCTAssertNotNil(viewModel.errorKey)
+        let body = Self.listFixture(
+            id: "22222222-2222-4222-8222-222222222222", title: "Fresh Doc",
+            creator: "33333333-3333-4333-8333-333333333333")
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: body, error: nil) }
+
+        await viewModel.load()
+
+        XCTAssertNil(viewModel.errorKey)
+    }
 }

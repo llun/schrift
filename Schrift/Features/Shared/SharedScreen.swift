@@ -4,11 +4,19 @@ struct SharedScreen: View {
     @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: SharedViewModel
     let serverHost: String
+    /// `SessionStore.signInGeneration`: a re-login reloads even inside the freshness window.
+    let signInGeneration: Int
     var onOpenDocument: (Document) -> Void
 
     @Environment(LocalizationStore.self) private var loc
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The struck-through row the user tapped, if any — see `pendingDeleteUndoAlert`.
     @State private var documentPendingUndo: Document?
+    @AppStorage("schrift.workOffline") private var workOffline = false
+    /// Display-only debounce of the path/transport offline evidence, so a slow load cannot flash
+    /// the banner and push the list down and back. Work Offline is a choice, so it is immediate.
+    @State private var offlineStatus = DebouncedStatus()
+    private var showsOfflineBanner: Bool { workOffline || offlineStatus.value }
 
     private func subtitle(for document: Document) -> String {
         let date = documentRowDate(document, locale: loc.locale)
@@ -20,16 +28,23 @@ struct SharedScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if viewModel.isOffline { OfflineBanner(note: loc[.offline_note]) }
+            if showsOfflineBanner {
+                OfflineBanner(note: loc[.offline_note])
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: DocsSpacing.spaceBase) {
-                    if let errorKey = viewModel.errorKey {
-                        Text(loc[errorKey])
-                            .font(DocsFont.footnote)
-                            .foregroundStyle(theme.colors.danger)
-                            .padding(.horizontal, DocsSpacing.gutter)
+                    Group {
+                        if let errorKey = viewModel.errorKey {
+                            Text(loc[errorKey])
+                                .font(DocsFont.footnote)
+                                .foregroundStyle(theme.colors.danger)
+                                .padding(.horizontal, DocsSpacing.gutter)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
                     }
+                    .animation(reduceMotion ? nil : .snappy, value: viewModel.errorKey)
 
                     // Per-list gate: spinner only while fetching a list with no
                     // local copy; never claim "0 documents" for a list that is
@@ -80,6 +95,8 @@ struct SharedScreen: View {
                                 )
                             }
                         }
+                        // Rows glide when a revalidation changes the list rather than snapping.
+                        .animation(reduceMotion ? nil : .snappy, value: viewModel.documents.map(\.id))
                         // Matches Home's section rhythm before the footer.
                         .padding(.bottom, DocsSpacing.spaceSM)
                         .padding(.horizontal, DocsSpacing.gutter)
@@ -98,6 +115,8 @@ struct SharedScreen: View {
                 await viewModel.refresh()
             }
         }
+        .animation(reduceMotion ? nil : .snappy, value: showsOfflineBanner)
+        .onChange(of: viewModel.offlineStatusEvidence, initial: true) { _, raw in offlineStatus.update(raw) }
         // Claim the full width the removed NavBar used to define, or the
         // screen sizes to its widest child and starves the title.
         .frame(maxWidth: .infinity)
@@ -107,8 +126,10 @@ struct SharedScreen: View {
         }
         .navigationTitle(loc[.shared_title])
         .navigationSubtitle(serverHost)
-        .task(id: viewModel.availability.token) {
-            await viewModel.load()
+        .task(
+            id: SharedViewModel.LoadKey(token: viewModel.availability.token, sessionGeneration: signInGeneration)
+        ) {
+            await viewModel.loadIfStale(sessionGeneration: signInGeneration)
         }
     }
 }
@@ -117,6 +138,7 @@ struct SharedScreen: View {
     SharedScreen(
         viewModel: SharedViewModel(client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)),
         serverHost: "docs.llun.dev",
+        signInGeneration: 0,
         onOpenDocument: { _ in }
     )
     .environment(LocalizationStore())

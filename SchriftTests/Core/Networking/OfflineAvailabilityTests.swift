@@ -185,8 +185,13 @@ final class OfflineAvailabilityTests: XCTestCase {
         let oldGate = MockURLProtocol.ResponseGate()
         let newGate = MockURLProtocol.ResponseGate()
         let counter = Counter()
-        MockURLProtocol.stubHandler = { _ in
-            .init(
+        MockURLProtocol.stubHandler = { request in
+            // Gate the body reads only: each load also asks for its sub-pages concurrently, and
+            // a gated (or counted) list read would make "the old load's body" a coin flip.
+            guard request.url!.path.contains("formatted-content") else {
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
+            return .init(
                 statusCode: 200, headers: [:], body: body, error: nil,
                 releasedBy: counter.next() == 1 ? oldGate : newGate)
         }

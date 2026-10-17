@@ -239,8 +239,9 @@ The pieces live across `Core/Collaboration` and `Features/Editor`:
   (`liveChangeSet`), and applies the change through the editor's surgical funnel. Surviving
   blocks keep their `EditorBlock.id`, so SwiftUI identity, focus, and scroll survive.
 - **`EditorViewModel.applyLiveRemoteChange` is the one content-swap funnel that is NOT
-  `install(...)`.** `install` re-mints every block id and nulls the caret (correct for a
-  full server-wins swap); the live funnel instead mutates blocks in place, recomputes the
+  `install(...)`.** `install` re-parses the whole body, keeps only the ids of blocks whose
+  content is unchanged (`reusingBlockIDs`), and nulls the caret (correct for a full
+  server-wins swap); the live funnel instead mutates blocks in place, recomputes the
   focused block's caret with the pure UTF-16 `transformedCaret` rule, and advances the dirty
   baseline (`savedMarkdown`/`serverBaseline`) to the projected content — so a later
   tap-to-edit never false-dirties. It **never** enqueues a save, never sets `isDirty`, and
@@ -1002,11 +1003,16 @@ A successful creation action opens the editor with a one-time entry intent: Home
 pushes `DocumentEditorRoute(createdDocument:)`, Home on iPad selects that route, and both
 Subpages **Add a subpage** and the Pages drawer **New page** use the same creation callback.
 Ordinary opens (including reopening a newly created document) carry no intent and start in
-reading mode. Content must first initialize from the server or restore from a local draft/cache;
-only then does the view model consume the intent through `canStartEditing` and `startEditing`.
-A failed load stays in reading/error mode without a draft or empty-body save and preserves the
-intent for a successful retry. Offline creation restores its seed draft without fetching a local
-UUID. The rendered shared header focuses the title once and selects its existing text, so typing
+reading mode. Content must first initialize; only then does the view model consume the intent
+through `canStartEditing` and `startEditing`. A document created on the server initializes
+without waiting: its body is empty by construction, so the editor installs an empty body (with a
+baseline that carries no server clock, so only body equality can prove a push) and enters
+editing on the first frame, while the content fetch runs behind it under the ordinary revalidation
+rules (an unexpected server body is stashed behind the "Updated" banner and the first edit
+records a conflict, never an overwrite). Offline creation
+restores its seed draft without fetching a local UUID. Ordinary opens with nothing cached show a
+full-page skeleton of the header and first lines (`EditorLoadingPlaceholder`) until content lands.
+The rendered shared header focuses the title once and selects its existing text, so typing
 replaces the default without first deleting it. Selection alone never dirties the document.
 Consumption is shared with the route so screen recreation, refresh, reconnect, and a changed
 server identity cannot replay entry; the separate focus request belongs to the editing session.
@@ -1486,7 +1492,11 @@ the toolbar's Edit action always does.
 that lists a user's attachments, so the list is built from what this device
 already holds: `AttachmentsViewModel` reads every `DocumentContentCacheStore`
 entry and `attachmentLibraryGroups` runs each body through
-`parseEditorBlocks(_:serverOrigin:)`, keeping the `.attachment` blocks. It uses
+`parseEditorBlocks(_:serverOrigin:)`, keeping the `.attachment` blocks. The read,
+decode and parse run **off the main actor** (a detached task over
+`allContentsReader()`, which captures only the directory) — up to 50 files decoded
+and parsed on the main actor stalled the push into the screen — and the newest
+`load()` alone applies its result (`loadGeneration`). It uses
 the same classifier the editor does, so the list can never show a link the
 editor would draw as text, nor one on another host. Groups are per document,
 newest sync first, and a file linked twice in one document is listed once. A
@@ -1628,7 +1638,7 @@ belongs anyway — the read side already refuses to engage on one.
 From the design handoff (`ui_kits/docs-ios/`), implemented as SwiftUI views using the DesignSystem components, not copied HTML/JS:
 
 - **Connect** — logo, "Welcome to Docs", server URL `TextField`, recent servers list, "Sign in to {host}" button → WebView login.
-- **Home** — a system large-title navigation bar (subtitle = server host, new-doc toolbar action), `SearchField`, Pinned + Recent sections of `DocRow`s — **each document renders in exactly one of the two**: the recents feed is fetched unfiltered, so `recentsExcludingPinned` subtracts whatever the Pinned section is already drawing (pinned wins, Recent is the residue; keyed on membership of the rendered pinned list, never on the `isFavorite` flag, which paginated favorites responses make disagree — see `AGENTS.md`) — the system `TabView` (Schrift/Shared/Profile, with Profile last). Compact Home pushes Search on its own navigation stack; regular-width Home searches inline in its split sidebar. Search hits `GET /documents/search/?q=` with recent-search history, Shared lists documents shared *with* the user (`GET /documents/?is_creator_me=false`) with an offline metadata cache, each row enriched best-effort with its members' avatars and the sharer's name from that document's `accesses/` (the "shared by me" scope was removed — the list API has no distinct by-me shared query), Profile shows the current user via `GET /users/me/` in a row that pushes the **Account screen** (`AccountScreen`, trimmed to the fields `/users/me/` actually returns; it renders an explicit unavailable state rather than a placeholder name when the user hasn't loaded), with the independent appearance/theme/language pickers, server + server-version rows, sign-out, and the Work Offline toggle.
+- **Home** — a system large-title navigation bar (subtitle = server host, new-doc toolbar action), `SearchField`, Pinned + Recent sections of `DocRow`s — **each document renders in exactly one of the two**: the recents feed is fetched unfiltered, so `recentsExcludingPinned` subtracts whatever the Pinned section is already drawing (pinned wins, Recent is the residue; keyed on membership of the rendered pinned list, never on the `isFavorite` flag, which paginated favorites responses make disagree — see `AGENTS.md`) — the system `TabView` (Schrift/Shared/Profile, with Profile last). Pinned is ordered most-recently-edited first (`stablePinnedOrder`, id tie-break), applied to the server answer before the pin overlay, so revalidations don't reshuffle it; list changes animate with `.snappy`, off under Reduce Motion. Compact Home pushes Search on its own navigation stack; regular-width Home searches inline in its split sidebar. Search hits `GET /documents/search/?q=` with recent-search history, Shared lists documents shared *with* the user (`GET /documents/?is_creator_me=false`) with an offline metadata cache, each row enriched best-effort with its members' avatars and the sharer's name from that document's `accesses/` (the "shared by me" scope was removed — the list API has no distinct by-me shared query), Profile shows the current user via `GET /users/me/` in a row that pushes the **Account screen** (`AccountScreen`, trimmed to the fields `/users/me/` actually returns; it renders an explicit unavailable state rather than a placeholder name when the user hasn't loaded), with the independent appearance/theme/language pickers, server + server-version rows, sign-out, and the Work Offline toggle.
   - Search results push the same `DocumentEditorRoute` as Home rows. The editor hides the native tab bar; Back restores Search (with its retained query), then Home. Shared and Profile retain their own stacks, including Profile → Account. Search's system field is always exposed in the navigation bar, with its localized prompt; Home's shortcut is one VoiceOver button.
   - The shell retains `SearchViewModel` across pop/re-entry and tab switches (query, in-memory results, recent terms). Search remains server-backed. Shared `OnlineAvailability` reads Work Offline and the live network path: Home's compact shortcut, pushed Search field and iPad inline field disable with a localized explanation while offline. Home shows cached rows instead of treating retained search results as an offline index. Search and Quick Access suppress requests in their view models too; availability/request generations reject late results and errors across reconnect. Query state and the PR #148 navigation structure survive these transitions.
 

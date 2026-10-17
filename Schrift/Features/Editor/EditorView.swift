@@ -20,10 +20,7 @@ func syncStatusCaption(lastSyncedAt: Date, now: Date, locale: Locale) -> SyncCap
     if now.timeIntervalSince(lastSyncedAt) < 60 {
         return .key(.editor_sync_just_now)
     }
-    let formatter = RelativeDateTimeFormatter()
-    formatter.unitsStyle = .abbreviated
-    formatter.locale = locale
-    return .syncedAgo(formatter.localizedString(for: lastSyncedAt, relativeTo: now))
+    return .syncedAgo(RelativeDateFormatterCache.shared.string(for: lastSyncedAt, relativeTo: now, locale: locale))
 }
 
 /// The editor header's sync caption, and whether it doubles as a retry button.
@@ -219,6 +216,14 @@ struct EditorView: View {
     /// Offline for *status display* only (banner, save status, sync caption): adds the
     /// transport evidence a satisfied-but-dead path produces. Controls keep `isOffline`.
     private var showsOfflineStatus: Bool { offlineOverride || viewModel.availability.showsOfflineStatus }
+    /// Display-only debounce of the path/transport offline evidence for the banner, so one slow
+    /// request cannot flash it and push the document down and back. Controls, saves and the
+    /// sync caption keep their own signals; Work Offline is a choice, so it shows immediately.
+    @State private var offlineBannerStatus = DebouncedStatus()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var showsOfflineBanner: Bool {
+        offlineOverride || viewModel.availability.isWorkOffline || offlineBannerStatus.value
+    }
     var onDeleted: (() -> Void)? = nil
     var onOpenDocument: ((Document) -> Void)? = nil
     var onCreatedDocument: ((Document) -> Void)? = nil
@@ -627,14 +632,14 @@ struct EditorView: View {
         AccessibilityNotification.ScreenChanged().post()
     }
 
-    /// The screen's content column, lifted out of `body` so the long
-    /// modifier chain that follows stays type-checkable on its own — with
-    /// both in one expression the compiler gives up.
-    private var mainContent: some View {
+    /// The banner stack above the document. The animations live on this container, not on
+    /// `mainContent`, so a banner coming or going animates without also animating the
+    /// loading/reading/editing content swap in the same transaction.
+    private var bannerStack: some View {
         VStack(spacing: 0) {
-
-            if showsOfflineStatus, viewModel.hasLocalCopy {
+            if showsOfflineBanner, viewModel.hasLocalCopy {
                 OfflineBanner(note: loc[.editor_offline_local_copy])
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             // Shown while EDITING too, unlike the "Updated" banner. The enqueue-hold parks
@@ -653,6 +658,7 @@ struct EditorView: View {
                 .padding(.top, DocsSpacing.spaceXS)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityLabel(loc[.editor_conflict_pill_a11y])
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             if viewModel.updateAvailable, !viewModel.isEditing {
@@ -667,6 +673,7 @@ struct EditorView: View {
                 .padding(.top, DocsSpacing.spaceXS)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityLabel(loc[.editor_update_available_a11y])
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             // A queued deletion is not a failure, so it is neither drawn in `danger` nor left
@@ -691,12 +698,25 @@ struct EditorView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, DocsSpacing.gutter)
                 .padding(.top, DocsSpacing.spaceXS)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
+        }
+        .animation(reduceMotion ? nil : .snappy, value: showsOfflineBanner)
+        .animation(reduceMotion ? nil : .snappy, value: viewModel.syncConflict != nil)
+        .animation(reduceMotion ? nil : .snappy, value: viewModel.updateAvailable)
+        .animation(reduceMotion ? nil : .snappy, value: viewModel.errorKey)
+    }
+
+    /// The screen's content column, lifted out of `body` so the long
+    /// modifier chain that follows stays type-checkable on its own — with
+    /// both in one expression the compiler gives up.
+    private var mainContent: some View {
+        VStack(spacing: 0) {
+
+            bannerStack
 
             if viewModel.isLoading {
-                ProgressView()
-                    .padding(DocsSpacing.spaceBase)
-                Spacer()
+                EditorLoadingPlaceholder()
             } else if viewModel.needsOnlineContent {
                 ContentUnavailableView {
                     Label {
@@ -719,6 +739,15 @@ struct EditorView: View {
                 readingSurface
             }
         }
+        .onChange(of: viewModel.availability.transportOfflineEvidence, initial: true) { _, raw in
+            offlineBannerStatus.update(raw)
+        }
+        // The column fills the screen in every state, so `body`'s page background does
+        // too. Without it a branch with no greedy child (the loading spinner) leaves the
+        // `VStack` only as wide as that child, and the page colour paints a narrow strip
+        // down the middle with the system background either side — invisible on White,
+        // obvious on Paper.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     /// Shown instead of the body for a document whose deletion is queued, with the undo beside
@@ -926,6 +955,7 @@ struct EditorView: View {
     /// the same thing in both.
     private var readingSurface: some View {
         let presentation = viewModel.checklistReadingPresentation
+        let numbering = numberedIndices(in: viewModel.blocks)
         return ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
@@ -974,7 +1004,7 @@ struct EditorView: View {
                                 } else if case .checklistItem = block.kind {
                                     MarkdownBlockView(
                                         block: block, serverOrigin: serverOrigin,
-                                        numberedIndex: numberedIndex(of: index, in: viewModel.blocks),
+                                        numberedIndex: numbering[index],
                                         isOffline: isOffline,
                                         onToggleChecklist: {
                                             viewModel.toggleChecklist(blockID: block.id)
@@ -990,7 +1020,7 @@ struct EditorView: View {
                                 } else {
                                     MarkdownBlockView(
                                         block: block, serverOrigin: serverOrigin,
-                                        numberedIndex: numberedIndex(of: index, in: viewModel.blocks),
+                                        numberedIndex: numbering[index],
                                         isOffline: isOffline
                                     )
                                     .contentShape(Rectangle())
@@ -1453,4 +1483,73 @@ struct EditorNoticeLabel: View {
         .background(Capsule().fill(theme.colors.gray050))
         .contentShape(Capsule())
     }
+}
+
+// MARK: - Loading
+
+/// The editor's first-load state: placeholder bars where the document header and its first
+/// lines will appear, on an otherwise empty page.
+///
+/// A skeleton rather than a spinner, per the handoff's loading rule, laid out on the reading
+/// surface's own gutter and header spacing so the title lands where its bar was. A document
+/// opened with an unconsumed creation intent never shows it: it opens straight into editing
+/// (`EditorViewModel.seedNewlyCreatedDocument`), since its body is empty by construction.
+///
+/// It **fills what it is offered** rather than sizing to its content, because the page
+/// background is painted behind the column it sits in: sized to a spinner, that column was
+/// a spinner wide, and a Paper (or any non-white) theme showed its colour only as a strip
+/// down the middle of the screen. `EditorLoadingPlaceholderTests` measures it against a
+/// full-screen proposal.
+struct EditorLoadingPlaceholder: View {
+    @Environment(LocalizationStore.self) private var loc
+
+    /// Fixed rhythm, like `SkeletonList`'s, so the placeholder doesn't reshuffle on redraw.
+    static let bodyLineFractions: [CGFloat] = [1, 0.92, 0.97, 0.6]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
+            VStack(alignment: .leading, spacing: EditorBlockMetrics.titleToMetadataSpacing) {
+                SkeletonLine(fraction: 0.62, height: 28)
+                HStack(spacing: DocsSpacing.spaceXS) {
+                    Skeleton(width: 76, height: 20, cornerRadius: DocsRadius.pill)
+                    Skeleton(width: 92, height: 11)
+                }
+                .frame(minHeight: DocsSpacing.rowMinHeight, alignment: .leading)
+            }
+            .padding(.bottom, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
+
+            ForEach(Array(Self.bodyLineFractions.enumerated()), id: \.offset) { _, fraction in
+                SkeletonLine(fraction: fraction, height: 13)
+            }
+        }
+        .padding(.horizontal, EditorBlockMetrics.gutter)
+        .padding(.top, DocsSpacing.spaceSM)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(loc[.common_loading])
+    }
+}
+
+/// One placeholder text line, a fraction of the column wide.
+private struct SkeletonLine: View {
+    let fraction: CGFloat
+    let height: CGFloat
+
+    var body: some View {
+        GeometryReader { proxy in
+            Skeleton(width: proxy.size.width * fraction, height: height)
+        }
+        .frame(height: height)
+    }
+}
+
+#Preview("Loading placeholder") {
+    EditorLoadingPlaceholder()
+        .environment(LocalizationStore())
+}
+
+#Preview("Loading placeholder, dark") {
+    EditorLoadingPlaceholder()
+        .environment(LocalizationStore())
+        .preferredColorScheme(.dark)
 }

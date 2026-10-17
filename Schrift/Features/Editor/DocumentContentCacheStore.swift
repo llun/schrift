@@ -58,7 +58,8 @@ struct CachedDocumentContent: Codable, Equatable, Sendable {
 /// would be OS-reclaimable). Stateless: the eviction index is derived from
 /// disk on every call, so independently constructed instances over the same
 /// directory stay consistent. Like the other stores it never throws and is
-/// confined to `@MainActor` callers. Entries hold full user document text —
+/// confined to `@MainActor` callers (the closure `allContentsReader()` returns is
+/// the one piece meant to run elsewhere). Entries hold full user document text —
 /// never log or print their contents.
 final class DocumentContentCacheStore {
     private let directory: URL
@@ -80,9 +81,13 @@ final class DocumentContentCacheStore {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .millisecondsSince1970
         self.encoder = encoder
+        self.decoder = Self.makeDecoder()
+    }
+
+    private static func makeDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .millisecondsSince1970
-        self.decoder = decoder
+        return decoder
     }
 
     func content(for documentID: UUID) -> CachedDocumentContent? {
@@ -101,6 +106,27 @@ final class DocumentContentCacheStore {
     /// decodes is skipped rather than failing the whole listing, the same
     /// answer `content(for:)` gives for it.
     func allContents() -> [CachedDocumentContent] {
+        Self.readAllContents(in: directory, fileManager: fileManager, decoder: decoder)
+    }
+
+    /// `allContents()` as a closure that may run on any thread, for a caller that
+    /// must keep the whole-directory read and decode — up to `limit` files — off
+    /// the main actor (the Attachments list). It captures only the directory, which
+    /// is `Sendable`, and builds its own decoder at call time; it reads through
+    /// `FileManager.default`, which is what every production store uses. The store
+    /// is stateless over its directory, so this answers exactly what
+    /// `allContents()` would at the moment it runs.
+    func allContentsReader() -> @Sendable () -> [CachedDocumentContent] {
+        let directory = directory
+        return {
+            DocumentContentCacheStore.readAllContents(
+                in: directory, fileManager: .default, decoder: DocumentContentCacheStore.makeDecoder())
+        }
+    }
+
+    private static func readAllContents(
+        in directory: URL, fileManager: FileManager, decoder: JSONDecoder
+    ) -> [CachedDocumentContent] {
         guard let urls = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
         else { return [] }
         return urls.compactMap { url in

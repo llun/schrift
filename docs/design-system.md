@@ -509,7 +509,8 @@
 >   options, not for confirming one destructive verb. *Toast* for transient
 >   confirmations ("Link copied", ~2s, glass, no button — a message you must
 >   dismiss is not transient). *Skeleton* rows replace the spinner on a
->   first-load list, per the handoff's "no spinners on lists". *Callout* is
+>   first-load list, per the handoff's "no spinners on lists", and the editor's
+>   first load is a page skeleton (`EditorLoadingPlaceholder`). *Callout* is
 >   still unused and unbuilt: no screen calls for one.
 > - The toast is owned by the **presenting** screen, not the sheets that raise
 >   it — Options and Share both dismiss themselves in the same breath, and a

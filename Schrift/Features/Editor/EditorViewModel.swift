@@ -1,5 +1,13 @@
 import Foundation
 
+/// Whether a recorded failure could be the body read's own, as opposed to the sub-page list
+/// read that `revalidate`/`refresh` issue alongside it. Both run concurrently, so the list's
+/// failure (the same 404/403, usually) can be recorded first, and the error detail must quote
+/// the request whose failure the catch is handling.
+func isBodyReadFailure(_ failure: RequestFailure) -> Bool {
+    !(failure.method == "GET" && failure.path.hasSuffix("/children/"))
+}
+
 @MainActor
 @Observable
 final class EditorViewModel {
@@ -92,6 +100,8 @@ final class EditorViewModel {
     var cursorRequest: CursorRequest?
     var selection: NSRange?
     /// Native keyboard identity can continue in another model block after a split/merge.
+    /// The map only grows (one entry per split or merge) for the view model's lifetime; that is
+    /// accepted because retired row ids must stay reserved (see `install`).
     private var inputRowIDs: [UUID: UUID] = [:]
 
     var slashQueryText: String?
@@ -476,6 +486,7 @@ final class EditorViewModel {
                     subpages = cachedChildren
                 }
                 restoreLocalContent()
+                seedNewlyCreatedDocument()
                 enterNewDocumentIfReady()
             }
             // No spinner for a document declared gone: `readingSurface` owns the
@@ -536,6 +547,30 @@ final class EditorViewModel {
         hasLocalCopy = displaySource != .none
     }
 
+    /// A document this screen was opened to **create** opens straight into editing, with no
+    /// loading screen: its body is empty by construction (the create sends a title and
+    /// nothing else), so there is nothing to wait for. Only when the local phase found
+    /// nothing — a document created on this device already restored from its seed draft —
+    /// and only while the creation intent is still unconsumed, so a reopened or recreated
+    /// screen loads like any other document.
+    ///
+    /// The empty body goes through `install`, and its baseline claims exactly that and no
+    /// more: an empty body, with **no** server clock. A clock would let `draftSyncDecision`
+    /// prove a push by timestamp alone, so a body the server held at that same instant (one
+    /// the create itself wrote) would be abandoned and overwritten. With none, only body
+    /// equality proves anything — the server's `""` changes nothing, and any other body it
+    /// holds is stashed behind the "Updated" banner and conflicts on the first edit, the same
+    /// way as for any other clean document. The first fetch replaces the baseline anyway.
+    ///
+    /// `syncedAt` is now because the create POST that produced this document has just
+    /// landed: the server holds exactly what is on screen, a title and no body.
+    private func seedNewlyCreatedDocument() {
+        guard displaySource == .none, !isLocalDocument, let entryIntent, entryIntent.isPending else { return }
+        install(markdown: "", title: nil, syncedAt: Date())
+        serverBaseline = DraftBaseline(serverUpdatedAt: nil, markdown: "", title: title)
+        displaySource = .clean
+    }
+
     /// Revalidation: the awaited structured tail of load() — no unstructured
     /// Task. Classification of the outcome happens when the fetch completes.
     /// `generation` guards against a superseded fetch (an earlier load() or
@@ -560,6 +595,17 @@ final class EditorViewModel {
             // Snapshot before issuing: only the coordinator's state at *issue*
             // time can tell us whether the response might predate our own save.
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
+            // The sub-page list is issued alongside the body rather than after it, so opening
+            // a document costs the slower of the two reads instead of their sum. It is safe to
+            // overlap because nothing it writes depends on the body: `loadChildren` has its own
+            // latest-wins `childrenGeneration`, which every purge bumps (a 404/403 below, a
+            // delete), so a snapshot landing after one is discarded, and one landing before it
+            // is purged with the rest. Both `isLocalDocument` and the pending-delete state were
+            // checked above, and `loadChildren` re-checks the former. Structured on purpose:
+            // a body read that throws or is superseded leaves this scope, which cancels a list
+            // read still in flight (its `!Task.isCancelled` guard then drops it); one that
+            // already landed was a fresh server answer, and a 404/403 purge clears it anyway.
+            async let childrenLoad: Void = loadChildren()
             let fetched = try await client.formattedContent(documentID: documentID)
             let (formatted, leafNesting) = await recoveringLeafNesting(fetched, availabilityToken: availabilityToken)
             guard generation == revalidationGeneration, !Task.isCancelled,
@@ -574,7 +620,7 @@ final class EditorViewModel {
             // not keep the initialized canvas (or its one-time title focus) behind a spinner.
             if hasLoadedContent { isLoading = false }
             enterNewDocumentIfReady()
-            await loadChildren()
+            await childrenLoad
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration, !Task.isCancelled,
                 availability.permitsResponse(for: availabilityToken)
@@ -587,7 +633,7 @@ final class EditorViewModel {
             becomeUnavailable()
             // "No longer available" is a guess: a 404 also means a route this server does
             // not have, or a proxy hiccup. Say what the server actually answered.
-            errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
+            errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics, where: isBodyReadFailure)
         } catch {
             guard generation == revalidationGeneration, !Task.isCancelled,
                 availability.permitsResponse(for: availabilityToken)
@@ -603,7 +649,7 @@ final class EditorViewModel {
             // path — and that is precisely the failure whose reason nobody can guess. But
             // attach it only where a message actually appears: a silent background failure
             // over a local copy must not leave a detail behind for a later message to adopt.
-            let detail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
+            let detail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics, where: isBodyReadFailure)
             if isUnavailable {
                 showError(unavailableMessageKey, detail: detail)
             } else if displaySource == .none {
@@ -667,6 +713,9 @@ final class EditorViewModel {
         let diagnosticsMarker = diagnostics?.marker()
         do {
             let saveMarker = saveCoordinator.saveMarker(documentID: documentID)
+            // Overlapped with the body read for the same reasons, and under the same
+            // structured-cancellation rule, as in `revalidate`.
+            async let childrenLoad: Void = loadChildren()
             let fetched = try await client.formattedContent(documentID: documentID)
             let (formatted, leafNesting) = await recoveringLeafNesting(fetched, availabilityToken: availabilityToken)
             guard generation == revalidationGeneration, !Task.isCancelled,
@@ -682,20 +731,20 @@ final class EditorViewModel {
             // screen; the invariant itself is pinned by
             // `testUnavailableAlwaysImpliesNoLoadedContent`.
             markAvailableAgain()
-            await loadChildren()
+            await childrenLoad
         } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
             guard generation == revalidationGeneration, !Task.isCancelled,
                 availability.permitsResponse(for: availabilityToken)
             else { return }
             becomeUnavailable()
-            errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics)
+            errorDetail = requestFailureDetail(after: diagnosticsMarker, in: diagnostics, where: isBodyReadFailure)
         } catch {
             guard generation == revalidationGeneration, !Task.isCancelled,
                 availability.permitsResponse(for: availabilityToken)
             else { return }
             showError(
                 .editor_error_refresh,
-                detail: requestFailureDetail(after: diagnosticsMarker, in: diagnostics))
+                detail: requestFailureDetail(after: diagnosticsMarker, in: diagnostics, where: isBodyReadFailure))
         }
     }
 
@@ -741,13 +790,24 @@ final class EditorViewModel {
     private func recoveringLeafNesting(
         _ formatted: FormattedDocumentContent, availabilityToken: OnlineAvailability.Token
     ) async -> (content: FormattedDocumentContent, leafNesting: LeafNestingOverlay) {
-        guard let markdown = formatted.content, markdownMayHideLeafNesting(markdown),
-            availability.permitsResponse(for: availabilityToken)
+        guard let markdown = formatted.content else { return (formatted, .unknown) }
+        // Both checks below parse the whole body, so they run off the main actor — they are
+        // pure value code over `Sendable` inputs. The cheap substring test stays inline so a
+        // body with no link at all (the common case) costs no hop.
+        guard markdown.contains("](") else { return (formatted, .unknown) }
+        let mayHideNesting = await Task.detached(priority: .userInitiated) {
+            markdownMayHideLeafNesting(markdown)
+        }.value
+        guard mayHideNesting, availability.permitsResponse(for: availabilityToken)
         else { return (formatted, .unknown) }
         guard let tree = try? await client.formattedContentTree(documentID: documentID),
             tree.updatedAt.map({ $0 == formatted.updatedAt }) ?? true
         else { return (formatted, .unknown) }
-        let overlay = leafNestingOverlay(markdown, tree: tree.content, serverOrigin: serverOrigin)
+        let nodes = tree.content
+        let origin = serverOrigin
+        let overlay = await Task.detached(priority: .userInitiated) {
+            leafNestingOverlay(markdown, tree: nodes, serverOrigin: origin)
+        }.value
         guard case .recovered(let recovered) = overlay else { return (formatted, overlay) }
         let content = FormattedDocumentContent(
             id: formatted.id, title: formatted.title, content: recovered,
@@ -798,6 +858,9 @@ final class EditorViewModel {
         dirtySince = nil
         isDirty = false
         mode = .reading
+        // A title-focus request the header never claimed must not outlive the session it
+        // belonged to, or a later manual Edit would select the title as if just created.
+        initialTitleFocusPending = false
         focusedBlockID = nil
         cursorRequest = nil
         selection = nil
@@ -1445,12 +1508,24 @@ final class EditorViewModel {
         }
         savedTitle = title
         rawMarkdown = markdown
-        blocks = parseEditorBlocks(markdown, serverOrigin: serverOrigin)
-        inputRowIDs = [:]
-        // Every block gets a fresh identity here, so any caret state still
-        // pointing into the outgoing blocks is now dangling. Clearing it in the
-        // one funnel every content swap routes through makes that unrepresentable
-        // — `reconcileDraft`'s server-wins install can land mid-edit.
+        // An unchanged block keeps its id (`reusingBlockIDs`): the reading surface, the
+        // editing canvas, the checklist presentation and the scroll anchor all key on it, so
+        // re-minting every id made a one-paragraph revalidation flash the whole document and
+        // strand the anchor. A changed, inserted or moved block still gets a fresh id. When
+        // nothing changed, `blocks` is not reassigned at all, so nothing observing it re-runs.
+        let parsed = reusingBlockIDs(from: blocks, into: parseEditorBlocks(markdown, serverOrigin: serverOrigin))
+        if parsed != blocks {
+            blocks = parsed
+        }
+        // `inputRowIDs` is deliberately kept. A surviving block keeps the native text view
+        // it had; an id that did not survive keeps its entry reserved, so a block that later
+        // comes back under that id (a remote reintroduction) cannot reclaim a row another
+        // block inherited. Resetting it now would rebind a surviving `UITextView` to a
+        // different surviving block. Fresh ids never collide with any entry.
+        // The swap can still land mid-edit (`reconcileDraft`'s server-wins install), and the
+        // focused block may be one that changed or went away, so any caret state is cleared
+        // exactly as before: one funnel every content swap routes through makes a dangling
+        // caret unrepresentable.
         focusedBlockID = nil
         cursorRequest = nil
         selection = nil
@@ -1817,7 +1892,7 @@ final class EditorViewModel {
                 // record dies and returns `subpages` unfiltered, so deleting this sub-page
                 // left its row rendering, tappable, and opening an editor for an id no
                 // record names — and offline nothing refetches the level to correct it
-                // (`revalidate` fails before it reaches `loadChildren`). The same reasoning
+                // (`revalidate`'s children read fails, or is cancelled with the body read). The same reasoning
                 // the local-parent branch above and `appendChild`'s cache filter already
                 // give: the merge layer is the single source of local rows.
                 return saveCoordinator.createLocalDocument(
@@ -2769,7 +2844,7 @@ final class EditorViewModel {
         savedMarkdown = markdownRewritingPendingAttachment(savedMarkdown, localID: localID, resolvedURL: resolved)
         // The comparison basis for `serverChanged(fetched:)`. Left stale, the next revalidation
         // reads the replay's own push as a remote edit — a spurious "Document updated" banner
-        // mid-edit, or a needless `install()` that re-mints every block id and drops the caret.
+        // mid-edit, or a needless `install()` that re-identifies the block and drops the caret.
         displayedSourceMarkdown = markdownRewritingPendingAttachment(
             displayedSourceMarkdown, localID: localID, resolvedURL: resolved)
     }
@@ -3626,9 +3701,10 @@ final class EditorViewModel {
 
     /// The one non-`install(...)` content-swap funnel: applies a live remote
     /// change set (already diffed by `liveChangeSet`, B5) to the on-screen
-    /// blocks in place. Unlike `install`, it reuses every untouched block's
-    /// `id` and preserves the caret — `install` deliberately re-mints every
-    /// block's identity and nulls the caret (see its doc comment), which is
+    /// blocks in place. Unlike `install`, it keeps the id of every block the
+    /// change merely edits and preserves the caret — `install` keeps only the
+    /// ids of blocks whose content is unchanged (`reusingBlockIDs`), gives an
+    /// edited block a fresh one, and nulls the caret (see its body), which is
     /// exactly wrong for a peer's edit landing under the user's own cursor.
     ///
     /// Read-only from the save machinery's point of view: it advances the dirty

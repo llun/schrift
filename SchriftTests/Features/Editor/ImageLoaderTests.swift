@@ -49,6 +49,67 @@ import XCTest
         XCTAssertEqual(log.methods, ["GET"])
     }
 
+    func testAspectRatioIsRememberedPerScopeAndNeverRequestsAnything() async {
+        let log = RequestRecorder()
+        stub(log: log)
+        let subject = loader()
+        XCTAssertNil(subject.aspectRatio(for: url))
+        await subject.loadIfNeeded(url)
+        XCTAssertEqual(subject.aspectRatio(for: url) ?? 0, 2, accuracy: 0.001)
+        scope = ImageCacheScope(serverOrigin: origin, sessionID: UUID())
+        XCTAssertNil(subject.aspectRatio(for: url))
+        scope = nil
+        XCTAssertNil(subject.aspectRatio(for: url))
+        XCTAssertEqual(log.methods, ["GET"])
+    }
+
+    func testAspectRatioIsKnownAfterColdLoadFromDisk() async {
+        let log = RequestRecorder()
+        stub(log: log)
+        await loader().loadIfNeeded(url)
+        let cold = loader()
+        XCTAssertNil(cold.aspectRatio(for: url))
+        await cold.loadIfNeeded(url, allowsNetwork: false)
+        XCTAssertEqual(cold.aspectRatio(for: url) ?? 0, 2, accuracy: 0.001)
+    }
+
+    func testAspectRatioOutlivesTheDecodedBitmapEviction() async throws {
+        let bytes = testPNGData(width: 80, height: 40)
+        let memory = NSCache<NSURL, UIImage>()
+        let subject = ImageLoader(
+            scopeProvider: { self.scope }, cache: ImageCacheStore(directory: directory),
+            decodedCache: memory, fetch: { _, _ in bytes }, cookieProvider: { _ in [] })
+        await subject.loadIfNeeded(url)
+        XCTAssertNotNil(subject.image(for: url))
+        memory.removeAllObjects()
+        // State stays `.cached` but the bitmap is gone: the view keeps the remembered-ratio placeholder.
+        if case .cached = subject.state(for: url) {} else { XCTFail("expected .cached") }
+        XCTAssertNil(subject.image(for: url))
+        XCTAssertEqual(subject.aspectRatio(for: url) ?? 0, 2, accuracy: 0.001)
+    }
+
+    func testRecordingUnderANewScopeForgetsAspectRatiosOfTheOldScope() async {
+        let log = RequestRecorder()
+        stub(log: log)
+        let subject = loader()
+        let scopeA = scope!
+        await subject.loadIfNeeded(url)
+        XCTAssertEqual(subject.aspectRatio(for: url) ?? 0, 2, accuracy: 0.001)
+        scope = ImageCacheScope(serverOrigin: origin, sessionID: UUID())
+        let otherURL = URL(string: "https://docs.example.org/media/other.png")!
+        await subject.loadIfNeeded(otherURL)
+        XCTAssertEqual(subject.aspectRatio(for: otherURL) ?? 0, 2, accuracy: 0.001)
+        scope = scopeA
+        XCTAssertNil(subject.aspectRatio(for: url))
+    }
+
+    func testImageAspectRatioRejectsDegenerateSizes() {
+        XCTAssertEqual(imageAspectRatio(of: CGSize(width: 300, height: 100)), 3)
+        XCTAssertNil(imageAspectRatio(of: .zero))
+        XCTAssertNil(imageAspectRatio(of: CGSize(width: 10, height: 0)))
+        XCTAssertNil(imageAspectRatio(of: CGSize(width: CGFloat.infinity, height: 10)))
+    }
+
     func testColdOfflineMissMakesNoRequest() async {
         let log = RequestRecorder()
         stub(log: log)

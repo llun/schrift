@@ -25,6 +25,8 @@ final class SharedViewModel {
     /// the last fetch failed with a transport (`DocsAPIError.network`) failure. The failure flag is
     /// latched until a load succeeds or the cache is served on purpose.
     var isOffline: Bool { availability.isOffline || loadFailedOffline }
+    /// Transport evidence only (no Work Offline preference), for the debounced banner.
+    var offlineStatusEvidence: Bool { availability.transportOfflineEvidence || loadFailedOffline }
     private var loadFailedOffline = false
 
     let client: DocsAPIClient
@@ -41,6 +43,18 @@ final class SharedViewModel {
     /// outcome only if no newer load() superseded it (.task refires on every
     /// tab revisit and races .refreshable).
     private var loadGeneration = 0
+    /// When the last successful list fetch landed, for `loadIfStale()`.
+    @ObservationIgnored private var freshness = LoadFreshness<LoadKey>()
+    /// The sign-in generation the last `loadIfStale` was asked under; a success recorded by any
+    /// load is keyed on it, so a re-login never reads the previous account's list as fresh.
+    @ObservationIgnored private var sessionGeneration = 0
+
+    /// What a recorded success is valid for: the availability token and the session.
+    struct LoadKey: Equatable {
+        let token: OnlineAvailability.Token
+        let sessionGeneration: Int
+    }
+    @ObservationIgnored private let now: () -> Date
     /// Documents whose deletion landed while a fetch was in flight. That fetch was issued
     /// before the DELETE and still names them, so its results are filtered through this before
     /// being applied or cached — invariant 0b, without cancelling the fetch (which would throw
@@ -63,8 +77,10 @@ final class SharedViewModel {
         userDefaults: UserDefaults = .standard,
         saveCoordinator: DocumentSaveCoordinator? = nil,
         signedInUser: SignedInUserStore = SignedInUserStore(),
-        availability: OnlineAvailability? = nil
+        availability: OnlineAvailability? = nil,
+        now: @escaping () -> Date = { Date() }
     ) {
+        self.now = now
         self.client = client
         self.cache = cache
         self.availability = availability ?? OnlineAvailability(userDefaults: userDefaults)
@@ -131,8 +147,20 @@ final class SharedViewModel {
         hasLoaded || !rawDocuments.isEmpty
     }
 
+    /// The passive on-appear entry: skips the fetch when the last successful one is recent and
+    /// the availability token is unchanged. Pull-to-refresh and other callers use `load()`.
+    func loadIfStale(sessionGeneration: Int) async {
+        self.sessionGeneration = sessionGeneration
+        let key = LoadKey(token: availability.token, sessionGeneration: sessionGeneration)
+        if freshness.isFresh(token: key, at: now()) { return }
+        await load()
+    }
+
     func load(userInitiated: Bool = false) async {
-        errorKey = nil
+        // A visible error survives a silent reload (clearing it blinked a persistent failure
+        // away and back); it leaves on success, offline, or a new error. Pull-to-refresh
+        // starts clean.
+        if userInitiated { errorKey = nil }
         loadGeneration += 1
         let generation = loadGeneration
         let fetchedPinRevision = saveCoordinator?.pins.revision ?? -1
@@ -147,6 +175,7 @@ final class SharedViewModel {
                 hasLoaded = true
             }
             loadFailedOffline = false
+            errorKey = nil
             isLoading = false
             return
         }
@@ -189,7 +218,7 @@ final class SharedViewModel {
         // cached — the fetch predates the DELETE and cannot know.
         let surviving = withMe.filter { !deletedSinceLoad.contains($0.id) }
         pinRevision = fetchedPinRevision
-        rawDocuments = surviving
+        if rawDocuments != surviving { rawDocuments = surviving }
         saveCoordinator?.pins.didReadFlags(surviving, ownerUserID: pinOwner, fetchedAt: fetchedPinRevision)
         cache.saveSharedWithMeDocuments(
             saveCoordinator?.pins.applyingFlags(
@@ -197,7 +226,10 @@ final class SharedViewModel {
                 ?? surviving)
         hasLoaded = true
         loadFailedOffline = false
+        errorKey = nil
         isLoading = false
+        freshness.noteSuccess(
+            token: LoadKey(token: availabilityToken, sessionGeneration: sessionGeneration), at: now())
         // Prune enrichment to the current list: a document that is no longer
         // shared can't keep showing stale avatars, and the dictionary can't grow
         // without bound across a long session. Surviving entries are overwritten

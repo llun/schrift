@@ -106,6 +106,8 @@ final class HomeViewModel {
     private var loadFailedOffline = false
     let availability: OnlineAvailability
     var isOffline: Bool { availability.isOffline || loadFailedOffline }
+    /// Transport evidence only (no Work Offline preference), for the debounced banner.
+    var offlineStatusEvidence: Bool { availability.transportOfflineEvidence || loadFailedOffline }
     /// Whether the recent list is known — cached or fetched this session. The
     /// view may render the "No documents yet" empty state only for a known
     /// list: nil (never fetched) must not masquerade as a real empty result,
@@ -142,6 +144,11 @@ final class HomeViewModel {
     /// newer load() superseded it (latest-wins; .task refires on pop-back and
     /// races .refreshable).
     private var loadGeneration = 0
+    /// When the last successful list fetch landed, for `loadIfStale()`.
+    @ObservationIgnored private var freshness = LoadFreshness<OnlineAvailability.Token>()
+    /// True while a passive `loadIfStale()` is awaiting `load()`; a concurrent passive call coalesces into it.
+    @ObservationIgnored private var isPassiveLoadInFlight = false
+    @ObservationIgnored private let now: () -> Date
     /// The debounced silent reload after a replayed offline push lands (see
     /// `onReplayedPushLanded`); a newer landing cancels the pending one.
     @ObservationIgnored private var replayReloadTask: Task<Void, Never>?
@@ -189,8 +196,10 @@ final class HomeViewModel {
         signedInUser: SignedInUserStore = SignedInUserStore(),
         cachedUser: CurrentUserCacheStore = CurrentUserCacheStore(),
         diagnostics: APIDiagnosticsLog? = nil,
-        availability: OnlineAvailability? = nil
+        availability: OnlineAvailability? = nil,
+        now: @escaping () -> Date = { Date() }
     ) {
+        self.now = now
         self.signedInUser = signedInUser
         self.cachedUser = cachedUser
         self.client = client
@@ -306,8 +315,30 @@ final class HomeViewModel {
         !pinnedDocuments.isEmpty
     }
 
+    /// Forgets the last successful fetch, so the next `loadIfStale()` fetches whatever the window says.
+    /// For returning from a pushed screen, where a rename may be unseen: marking stale and then
+    /// calling `loadIfStale()` yields exactly one fetch however many triggers also call it.
+    func markListStale() {
+        freshness.invalidate()
+    }
+
+    /// The passive on-appear entry: skips the fetch when the last successful one is recent and
+    /// the availability token is unchanged. Everything else (pull-to-refresh, replay, migration,
+    /// delete) calls `load()` and always fetches. A second passive call while one is in flight is
+    /// skipped, because the first one's result answers it.
+    func loadIfStale() async {
+        if isPassiveLoadInFlight || freshness.isFresh(token: availability.token, at: now()) { return }
+        isPassiveLoadInFlight = true
+        defer { isPassiveLoadInFlight = false }
+        await load()
+    }
+
     func load(userInitiated: Bool = false) async {
-        clearError()
+        // A visible error survives a silent reload: clearing it here made a persistent failure
+        // blink away and back on every revalidation. It leaves when a load succeeds (or the
+        // screen goes offline, where reads are withheld), is replaced by a new error, or is
+        // dismissed. A pull-to-refresh is the user asking again, so it starts clean.
+        if userInitiated { clearError() }
         loadGeneration += 1
         let generation = loadGeneration
         let pinRevision = saveCoordinator.pins.revision
@@ -327,6 +358,7 @@ final class HomeViewModel {
             if let cachedRecents { rawRecentDocuments = cachedRecents }
             hasKnownFetchedList = cachedRecents != nil
             loadFailedOffline = false
+            clearLoadError()
             isLoading = false
             return
         }
@@ -365,7 +397,7 @@ final class HomeViewModel {
             }
             // Anything deleted while this was in flight is dropped before it can be applied or
             // cached — the fetch predates the DELETE and cannot know.
-            let pinned = fetchedPinned.filter { !deletedSinceLoad.contains($0.id) }
+            let pinned = stablePinnedOrder(fetchedPinned.filter { !deletedSinceLoad.contains($0.id) })
             let recent = fetchedRecent.filter { !deletedSinceLoad.contains($0.id) }
             // …and a pin made here while this was in flight is folded back in, for the same
             // reason and by the same rule: filter, never cancel. Retiring the confirmed
@@ -380,8 +412,10 @@ final class HomeViewModel {
                 recent: overlaid.recent, overrides: moveOverrides, generation: generation)
             for documentID in moved.confirmed { moveOverrides[documentID] = nil }
             listPinRevision = pinRevision
-            rawPinnedDocuments = overlaid.pinned
-            rawRecentDocuments = moved.recent
+            // Only assign what changed: an identical refresh must not invalidate every reader
+            // of these arrays (and the `recentDocuments` memo with them) for no visible reason.
+            if rawPinnedDocuments != overlaid.pinned { rawPinnedDocuments = overlaid.pinned }
+            if rawRecentDocuments != moved.recent { rawRecentDocuments = moved.recent }
             let cacheProjection = saveCoordinator.pins.resolve(
                 pinned: overlaid.pinned, recent: moved.recent, ownerUserID: signedInUser.userID,
                 fetchedAt: pinRevision, includePending: false)
@@ -391,6 +425,8 @@ final class HomeViewModel {
                 pinned: overlaid.pinned, recent: moved.recent, ownerUserID: pinOwner, fetchedAt: pinRevision)
             hasKnownFetchedList = true
             loadFailedOffline = false
+            clearLoadError()
+            freshness.noteSuccess(token: availabilityToken, at: now())
         } catch {
             guard generation == loadGeneration else { return }
             guard availability.permitsResponse(for: availabilityToken) else {
@@ -495,6 +531,7 @@ final class HomeViewModel {
         let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             rawSearchResults = []
+            if errorKey == .home_error_search { clearError() }
             return
         }
         let marker = diagnostics?.marker()
@@ -513,6 +550,8 @@ final class HomeViewModel {
             }
             searchPinRevision = pinRevision
             rawSearchResults = results
+            // A search that succeeds retires its own earlier failure; other errors stay.
+            if errorKey == .home_error_search { clearError() }
             saveCoordinator.pins.didReadFlags(
                 page.results.filter { !deletedSinceLoad.contains($0.id) }, ownerUserID: pinOwner, fetchedAt: pinRevision
             )
@@ -825,6 +864,13 @@ final class HomeViewModel {
     private func clearError() {
         errorKey = nil
         errorDetail = nil
+    }
+
+    /// Drops only the list-load failure, leaving an unrelated action error (delete, pin,
+    /// create) that arrived while a silent reload was in flight.
+    private func clearLoadError() {
+        guard errorKey == .home_error_load else { return }
+        clearError()
     }
 
 }

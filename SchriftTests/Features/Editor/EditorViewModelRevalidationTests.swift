@@ -147,7 +147,12 @@ final class EditorViewModelRevalidationTests: EditorViewModelTestCase {
         let requestCount = Counter()
         let firstBody = formattedBody(content: "# First")
         let secondBody = formattedBody(content: "# Second")
-        MockURLProtocol.stubHandler = { _ in
+        MockURLProtocol.stubHandler = { request in
+            // Only the body reads take a branch: each load also asks for its sub-pages,
+            // concurrently, and counting those would hand "first" to whichever won the race.
+            guard request.url?.path.contains("formatted-content") == true else {
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
             let isFirst = requestCount.next() == 1
             return .init(
                 statusCode: 200, headers: [:], body: isFirst ? firstBody : secondBody, error: nil,
@@ -184,6 +189,28 @@ final class EditorViewModelRevalidationTests: EditorViewModelTestCase {
         XCTAssertEqual(viewModel.rawMarkdown, "# New", "explicit refresh applies directly")
         XCTAssertFalse(viewModel.updateAvailable)
         XCTAssertNotNil(viewModel.lastSyncedAt)
+    }
+
+    /// A revalidated body used to re-mint every `EditorBlock.id`, so one changed paragraph
+    /// re-identified the whole document: every row flashed and every scroll anchor naming a
+    /// block went stale. Only the changed block is re-identified now.
+    func testRevalidationWithOneChangedParagraphKeepsTheOtherBlockIDs() async {
+        let (viewModel, _, _, contentCache) = makeEnvironment()
+        contentCache.save(cachedEntry(markdown: "Alpha\n\nBeta\n\nGamma"))
+        stubOffline()
+        await viewModel.load()  // instant from cache, revalidation failed silently
+        let idsBefore = viewModel.blocks.map(\.id)
+        XCTAssertEqual(idsBefore.count, 3)
+
+        stubLoad(content: "Alpha\\n\\nBeta edited\\n\\nGamma")
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Alpha", "Beta edited", "Gamma"], "the server body is installed")
+        let idsAfter = viewModel.blocks.map(\.id)
+        XCTAssertEqual(idsAfter[0], idsBefore[0])
+        XCTAssertEqual(idsAfter[2], idsBefore[2])
+        XCTAssertFalse(idsBefore.contains(idsAfter[1]), "the changed paragraph is a new block")
+        XCTAssertFalse(viewModel.isDirty, "keeping ids must not dirty the installed copy")
     }
 
     func testRefreshClearsABannerStashedByAnEditingSession() async {

@@ -142,4 +142,78 @@ final class PendingDraftStoreTests: XCTestCase {
         XCTAssertNil(draft?.lastPushedMarkdown)
         XCTAssertNil(draft?.conflictServerUpdatedAt, "a pre-conflict-feature draft decodes with no hold")
     }
+
+    // MARK: - Memoized decode
+
+    /// Production builds more than one store over `.standard`, and the decode is memoized: a
+    /// write through either instance must be what the other reads next, never a remembered copy.
+    func testTwoInstancesOnTheSameDefaultsSeeEachOthersWrites() {
+        let (first, userDefaults) = makeStore()
+        let second = PendingDraftStore(userDefaults: userDefaults)
+        let draft = makeDraft()
+        XCTAssertNil(second.draft(for: draft.documentID), "primes the second instance's read")
+
+        first.save(draft)
+        XCTAssertEqual(second.draft(for: draft.documentID), draft)
+
+        let newer = makeDraft(markdown: "newer", updatedAt: Date(timeIntervalSince1970: 2_000))
+        second.save(newer)
+        XCTAssertEqual(first.draft(for: draft.documentID), newer)
+
+        second.remove(documentID: draft.documentID)
+        XCTAssertNil(first.draft(for: draft.documentID))
+        XCTAssertTrue(first.allDrafts().isEmpty)
+    }
+
+    /// The memo is shared across every `UserDefaults`, keyed on the bytes it decoded — so two
+    /// suites (two accounts' worth of tests, or two tests in a row) never read each other's drafts.
+    func testStoresOnDifferentDefaultsDoNotShareDrafts() {
+        let (first, _) = makeStore()
+        let (second, _) = makeStore()
+        let draft = makeDraft()
+
+        first.save(draft)
+
+        XCTAssertEqual(first.draft(for: draft.documentID), draft)
+        XCTAssertNil(second.draft(for: draft.documentID))
+        XCTAssertEqual(first.draft(for: draft.documentID), draft, "reading the other suite evicts nothing")
+    }
+
+    /// Bytes written behind the store's back after a memoized read — what a schema slip looks
+    /// like on a device, and what the coordinator's unreadable-drafts tests do — are seen at
+    /// once, and with exactly the old corruption semantics: unknown while damaged, then replaced
+    /// wholesale by the next write (the documented, owed-quarantine behavior — not made worse).
+    func testCorruptionAfterAMemoizedReadIsDetectedAndTheNextWriteReplacesIt() {
+        let (store, userDefaults) = makeStore()
+        let draft = makeDraft()
+        store.save(draft)
+        XCTAssertEqual(store.draft(for: draft.documentID), draft)
+        XCTAssertFalse(store.holdsUnreadableData)
+
+        userDefaults.set(Data("not json".utf8), forKey: "dev.llun.Schrift.pendingDrafts")
+
+        XCTAssertTrue(store.holdsUnreadableData, "unknown, not absent")
+        XCTAssertNil(store.draft(for: draft.documentID))
+        XCTAssertTrue(store.holdsUnreadableData, "a repeated read does not clear it")
+
+        let other = makeDraft(id: "22222222-2222-4222-8222-222222222222")
+        store.save(other)
+
+        XCTAssertFalse(store.holdsUnreadableData)
+        XCTAssertEqual(store.allDrafts(), [other])
+    }
+
+    func testRemovingThePersistentDomainAfterAMemoizedReadIsSeen() {
+        let suiteName = "PendingDraftStoreTests.\(UUID().uuidString)"
+        let userDefaults = UserDefaults(suiteName: suiteName)!
+        let store = PendingDraftStore(userDefaults: userDefaults)
+        let draft = makeDraft()
+        store.save(draft)
+        XCTAssertEqual(store.draft(for: draft.documentID), draft)
+
+        userDefaults.removePersistentDomain(forName: suiteName)
+
+        XCTAssertNil(store.draft(for: draft.documentID))
+        XCTAssertFalse(store.holdsUnreadableData, "no data is not unreadable data")
+    }
 }

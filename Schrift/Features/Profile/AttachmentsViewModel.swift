@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 /// One document's attachments, as the Attachments screen lists them.
-struct AttachmentLibraryGroup: Equatable, Identifiable {
+struct AttachmentLibraryGroup: Equatable, Identifiable, Sendable {
     let documentID: UUID
     let title: String?
     let syncedAt: Date
@@ -83,29 +83,57 @@ func attachmentGroupTitle(_ title: String?) -> String? {
 final class AttachmentsViewModel {
     private(set) var groups: [AttachmentLibraryGroup] = []
     private(set) var rows: [AttachmentLibraryRow] = []
-    /// False until the first `load()`, so the empty state never flashes before
-    /// the cache has been read.
+    /// False until the first `load()` lands, so the empty state never flashes
+    /// before the cache has been read. It is the screen's only loading state —
+    /// the list renders blank until then, with no spinner, as every list does.
     private(set) var hasLoaded = false
 
-    private let contentCache: DocumentContentCacheStore
+    /// Reads every cached document body. Called off the main actor: it is up to
+    /// the cache's whole limit of files read and JSON-decoded.
+    private let readContents: @Sendable () async -> [CachedDocumentContent]
     private let serverOrigin: String
     /// A document the user has deleted whose deletion is still queued keeps its
     /// content-cache entry until the deletion lands; it is withheld here, as
     /// every other list strikes or hides it.
     private let isPendingDelete: @MainActor (UUID) -> Bool
+    /// Latest-wins guard: the screen reloads on every appearance, and a read
+    /// that started earlier may finish later — it must not overwrite a newer one.
+    private var loadGeneration = 0
 
+    /// `readContents` replaces the cache read (tests hold it open to order two
+    /// loads); nil reads `contentCache`.
     init(
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(), serverOrigin: String,
-        isPendingDelete: @escaping @MainActor (UUID) -> Bool = { _ in false }
+        isPendingDelete: @escaping @MainActor (UUID) -> Bool = { _ in false },
+        readContents: (@Sendable () async -> [CachedDocumentContent])? = nil
     ) {
-        self.contentCache = contentCache
+        if let readContents {
+            self.readContents = readContents
+        } else {
+            let read = contentCache.allContentsReader()
+            self.readContents = { read() }
+        }
         self.serverOrigin = serverOrigin
         self.isPendingDelete = isPendingDelete
     }
 
-    func load() {
-        let contents = contentCache.allContents().filter { !isPendingDelete($0.documentID) }
-        groups = attachmentLibraryGroups(from: contents, serverOrigin: serverOrigin)
+    /// Reads the cache and parses every body **off the main actor** — the disk
+    /// read, the decode and a `parseEditorBlocks` per document are all pure value
+    /// work, and doing them on the main actor stalled the push into this screen.
+    /// Only the result is applied here, and only by the newest load. The
+    /// queued-deletion filter is applied at that point, on the main actor where
+    /// its predicate lives, so it is as fresh as the moment the list appears.
+    func load() async {
+        loadGeneration += 1
+        let generation = loadGeneration
+        let readContents = readContents
+        let origin = serverOrigin
+        let parsed = await Task.detached(priority: .userInitiated) {
+            let contents = await readContents()
+            return attachmentLibraryGroups(from: contents, serverOrigin: origin)
+        }.value
+        guard generation == loadGeneration else { return }
+        groups = parsed.filter { !isPendingDelete($0.documentID) }
         rows = attachmentLibraryRows(groups)
         hasLoaded = true
     }

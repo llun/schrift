@@ -66,4 +66,18 @@ final class APIDiagnosticsLogTests: XCTestCase {
         XCTAssertEqual(log.failure(after: marker)?.statusCode, 403)
     }
 
+    /// A request issued concurrently with the one that threw can be recorded first; the filter
+    /// skips it without losing "first" among the rest — and still honours the marker.
+    func testTheFilterSkipsAConcurrentRequestsFailureButKeepsTheMarker() {
+        let log = APIDiagnosticsLog()
+        log.record(RequestFailure(method: "GET", path: "documents/a/", statusCode: 500, body: Data()))
+        let marker = log.marker()
+        log.record(RequestFailure(method: "GET", path: "documents/a/children/", statusCode: 403, body: Data()))
+        log.record(RequestFailure(method: "GET", path: "documents/a/formatted-content/", statusCode: 404, body: Data()))
+        log.record(RequestFailure(method: "GET", path: "documents/0/formatted-content/", statusCode: 410, body: Data()))
+
+        XCTAssertEqual(log.failure(after: marker)?.statusCode, 403, "unfiltered, the first is the list's")
+        XCTAssertEqual(log.failure(after: marker, where: isBodyReadFailure)?.statusCode, 404)
+        XCTAssertNil(log.failure(after: log.marker(), where: isBodyReadFailure))
+    }
 }

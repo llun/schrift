@@ -822,8 +822,8 @@ final class DocumentSaveCoordinator {
             uniquingKeysWith: { first, _ in first })
     }
 
-    /// One decode for a whole listing: `draftStore.draft(for:)` re-decodes every draft —
-    /// document bodies included — on each call, and these are main-actor list paths.
+    /// One read for a whole listing rather than a `draftStore.draft(for:)` per row: these are
+    /// main-actor list paths, and the first read after any draft write decodes every body.
     private func draftTitlesByDocument() -> [UUID: String] {
         Dictionary(
             draftStore.allDrafts().map { ($0.documentID, $0.title) }, uniquingKeysWith: { _, latest in latest })

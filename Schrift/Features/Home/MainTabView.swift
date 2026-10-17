@@ -1,10 +1,7 @@
 import SwiftUI
 
 func documentRowDate(_ document: Document, locale: Locale) -> String {
-    let formatter = RelativeDateTimeFormatter()
-    formatter.unitsStyle = .abbreviated
-    formatter.locale = locale
-    return formatter.localizedString(for: document.updatedAt, relativeTo: Date())
+    RelativeDateFormatterCache.shared.string(for: document.updatedAt, relativeTo: Date(), locale: locale)
 }
 
 /// The primary destinations, in their system tab-bar order. Profile is always last.
@@ -135,13 +132,21 @@ struct MainTabView: View {
                     }
                 }
             }
+            // Popping back from an editor (or Search) may leave a rename the list has not seen,
+            // so a shrinking path marks the list stale and fetches once regardless of the 30 s freshness window.
+            .onChange(of: docsPath.count) { old, new in
+                if new < old {
+                    viewModel.markListStale()
+                    Task { await viewModel.loadIfStale() }
+                }
+            }
         }
     }
 
     private var sharedTab: some View {
         NavigationStack(path: $sharedPath) {
             SharedScreen(
-                viewModel: sharedViewModel, serverHost: serverHost,
+                viewModel: sharedViewModel, serverHost: serverHost, signInGeneration: signInGeneration,
                 onOpenDocument: { sharedPath.append(DocumentEditorRoute(document: $0)) }
             )
             .navigationDestination(for: DocumentEditorRoute.self) { route in
