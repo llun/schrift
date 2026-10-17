@@ -2167,7 +2167,51 @@ that are easy to violate and expensive to discover:
   with no reflow — `styleLinks` paints every link run, autolinked ones included,
   so the bare URL differs by an underline as well as a colour, and neither moves
   a glyph. Explicit `[label](url)` links *do* match: `markdownInlineText` paints
-  them `textBrand` + single-underlined, as `InlineTextStyleResolver` does.
+  them `textBrand` + single-underlined, as `InlineTextStyleResolver` does — except
+  a link to another document on this server, which is a page chip on both
+  surfaces (next bullet). A bare *document* URL is never a chip: a link run
+  whose visible text is its own URL is never chip-marked (the system parser may
+  autolink it before we do), so only an explicit link can add the chip's icon width.
+- **A document link is a "page chip" on both surfaces, and it is display only.**
+  `Features/Editor/DocumentLinkChip.swift`: rounded `brandFillSubtle` background,
+  `textBrand` ink, **no underline**, a `description` (page) glyph before the title;
+  external links keep the underline. Which links qualify is `isDocumentLink`, the
+  exact rule `documentLinkAction` opens in-app (`DocumentLink.swift` — one rule,
+  not two); the host comes from the required `serverOrigin` via
+  `documentLinkHost(forOrigin:)`. The markdown never changes. **Reading** splits
+  `markdownInlineText`'s output (`DocumentLinkChipAttribute`) into
+  `inlineTextSegments`, composes icon image + word joiner + title by
+  interpolation, and a `TextRenderer` (`DocumentLinkChipRenderer`, applied only
+  to blocks with a chip) fills the backgrounds. **Editing** keeps the buffer
+  byte-identical: the link's hidden `[` becomes a `.controlCharacter` glyph laid
+  out as `.whitespace` `slotWidth` wide (`boundingBoxForControlGlyphAt`), and
+  `DocumentLinkChipLayoutManager` paints the background and draws the icon into
+  that slot — no character inserted, no offset map. Both reserve exactly
+  `DocumentLinkChipMetrics.slotWidth` (whole points) and place the icon in
+  `DocumentLinkChipIconBand` (inside the font's line box), so a line wraps at the
+  same word and stays the same height on the swap
+  (`EditorSurfaceParityTests`, `BlockTextRenderingTests`). While an IME is
+  composing, `applyInlineStyling` restyles nothing (marked characters,
+  attributes and selection are UIKit's) but recomputes the glyph pass's state
+  from the current buffer (`refreshHiddenSyntaxWhileComposing`): `hiddenRanges`
+  becomes the current syntax minus any range the marked text intersects (a
+  composed character is never hidden; an adjacent `](url)` stays hidden), and a
+  chip is kept only where its link does not overlap the marked text and its `[`
+  is in that new hidden syntax. It then invalidates glyphs and layout for the
+  whole block — glyph properties only, never text, attributes or selection — so
+  nothing depends on whether TextKit shifted or regenerated glyphs after the
+  edit, and syntax and chips before or after the composition stay hidden at
+  their shifted indexes instead of re-wrapping the line on every CJK keystroke.
+  A dropped chip returns on the first restyle after commit. A block with no chip
+  before or after the keystroke skips all of this and composes exactly as it did
+  before chips existed. Accepted residuals:
+  the reading icon is not itself tappable (the title is); the trailing padding
+  overlaps the next character on both surfaces rather than reserving width; two
+  *adjacent* links to the same document merge into one chip while reading; and a
+  link glued to the preceding letter (`x[Page](…)`) may break before the icon
+  while reading but not while editing; and an explicit link whose label is its own
+  URL (`[https://…/docs/<id>/](same url)`) is not a chip while reading, because it
+  cannot be told apart from a bare URL the parser autolinked, but it is one while editing.
 
 The backend stores content as an opaque base64 **Yjs CRDT** blob and has **no
 markdown write endpoint**. Understand this before touching the save path:
@@ -3801,7 +3845,10 @@ markdown write endpoint**. Understand this before touching the save path:
   call sites, in the one subsystem whose defining rule is that a full-overwrite
   save must never eat content. `BlockTextRenderingTests` pins the width collapse
   and the buffer length; if TextKit 1 ever stops honouring `.null`, fall back to
-  drawing the syntax dimmed but visible — not to an offset map.
+  drawing the syntax dimmed but visible — not to an offset map. (The page chip is
+  the one glyph that is *not* `.null`: a document link's hidden `[` is a
+  `.controlCharacter` laid out as fixed-width whitespace for the chip's icon —
+  still never drawn, still one glyph per character; see the page-chip bullet.)
   The corollary is a property worth keeping: **any edit that breaks a mark's
   syntax simply makes it render as literal text.** Backspacing `[R](url)` down to
   `[](url)` stops it being a link and reveals it. Nothing is silently lost,

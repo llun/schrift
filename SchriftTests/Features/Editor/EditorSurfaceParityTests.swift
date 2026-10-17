@@ -525,6 +525,8 @@ final class EditorSurfaceParityTests: XCTestCase {
     func testEveryBlockOccupiesTheSameHeightOnBothSurfaces() {
         // Each fixture carries the number of text lines it wraps to at the row
         // width, because the residual below is per *line*, not per block.
+        let chipParagraph =
+            "See [Roadmap](https://docs.example.org/docs/" + "11111111-1111-4111-8111-111111111111/) first."
         let fixtures: [(block: EditorBlock, lines: CGFloat)] = [
             (EditorBlock(kind: .paragraph, text: "Some prose."), 1),
             (EditorBlock(kind: .heading(level: 1), text: "Title"), 1),
@@ -545,6 +547,9 @@ final class EditorSurfaceParityTests: XCTestCase {
             // difference `delta >= 0` is written to catch.
             (EditorBlock(kind: .unknown, text: "one\ntwo"), 2),
             (EditorBlock(kind: .unknown, text: "| a | b |"), 1),
+            // A page chip: its inline icon (reading) and control-glyph slot
+            // (editing) must stay inside the line box on both surfaces.
+            (EditorBlock(kind: .paragraph, text: chipParagraph), 1),
         ]
         let viewModel = makeViewModel(blocks: fixtures.map(\.block))
 

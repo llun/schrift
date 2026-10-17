@@ -232,6 +232,231 @@ final class BlockTextRenderingTests: XCTestCase {
         XCTAssertEqual(view.linkSpan(at: labelCentre(view, labelRange: second.labelRange))?.url, "https://b.dev/")
     }
 
+    // MARK: - Page chips
+
+    private let chipHost = "docs.example.org"
+    private let page = "https://docs.example.org/docs/11111111-1111-4111-8111-111111111111/"
+
+    /// The same view as `makeView`, styled with the server host so document links
+    /// become page chips — as the editing row styles it.
+    private func makeChipView(_ text: String, serverHost: String) -> EditorUITextView {
+        let view = makeView(text)
+        view.applyInlineStyling(
+            blockTextStyling(for: EditorBlock(kind: .paragraph, text: text), serverHost: serverHost))
+        return view
+    }
+
+    /// The chip is display only: not one character enters the buffer, and every
+    /// glyph still maps to its source character — so every `NSRange` is still a
+    /// source offset and the save re-parses exactly what was loaded.
+    func testADocumentLinkChipLeavesTheBufferByteIdentical() {
+        let source = "See [Roadmap](\(page)) now"
+        let view = makeChipView(source, serverHost: chipHost)
+        XCTAssertEqual(view.text, source)
+        XCTAssertEqual(view.textStorage.length, (source as NSString).length)
+        XCTAssertEqual(view.layoutManager.numberOfGlyphs, (source as NSString).length)
+        XCTAssertEqual(view.hiddenRanges, InlineMarkdown.layout(of: source).syntax)
+        XCTAssertEqual(
+            view.documentLinkChips,
+            [DocumentLinkChipSpan(slotIndex: 4, labelRange: NSRange(location: 5, length: 7))])
+    }
+
+    /// The hidden `[` becomes the icon's slot: the chip renders exactly the title
+    /// plus `slotWidth` — the same whole points the reading surface's inline icon
+    /// adds, which is what keeps a line wrapping at the same word on both.
+    func testADocumentLinkChipAddsExactlyTheIconSlotWidth() {
+        let chip = makeChipView("See [Roadmap](\(page)) now", serverHost: chipHost)
+        let plain = makeView("See Roadmap now")
+        let slot = DocumentLinkChipMetrics(
+            fontSize: blockTextStyling(for: EditorBlock(kind: .paragraph, text: "")).font.pointSize
+        ).slotWidth
+        XCTAssertGreaterThan(slot, 0)
+        XCTAssertEqual(renderedWidth(chip), renderedWidth(plain) + slot, accuracy: 0.5)
+    }
+
+    /// Negative control for the width claim: without a server host the same
+    /// link is an ordinary one, drawn at its title's width with its syntax at zero.
+    func testWithoutAServerHostADocumentLinkIsAnOrdinaryLink() {
+        let view = makeChipView("See [Roadmap](\(page)) now", serverHost: "")
+        XCTAssertEqual(view.documentLinkChips, [])
+        XCTAssertEqual(renderedWidth(view), renderedWidth(makeView("See Roadmap now")), accuracy: 0.5)
+        let underline = view.textStorage.attribute(.underlineStyle, at: 5, effectiveRange: nil) as? Int
+        XCTAssertEqual(underline, NSUnderlineStyle.single.rawValue)
+    }
+
+    /// A chip's title takes the brand ink but no underline; an external link in
+    /// the same block keeps its underline and gets no slot.
+    func testADocumentLinkTitleIsNotUnderlinedWhileAnExternalLinkIs() {
+        let source = "[Roadmap](\(page)) or [site](https://x.dev/)"
+        let view = makeChipView(source, serverHost: chipHost)
+        XCTAssertEqual(view.documentLinkChips.map(\.slotIndex), [0])
+        // Index 1 is the "R" of "Roadmap".
+        XCTAssertNil(view.textStorage.attribute(.underlineStyle, at: 1, effectiveRange: nil))
+        let color = view.textStorage.attribute(.foregroundColor, at: 1, effectiveRange: nil) as? UIColor
+        XCTAssertEqual(rgba(color), rgba(UIColor(Color(hex: DocsColorHex.textBrand))))
+        let siteLabel = (source as NSString).range(of: "site").location
+        let underline = view.textStorage.attribute(.underlineStyle, at: siteLabel, effectiveRange: nil) as? Int
+        XCTAssertEqual(underline, NSUnderlineStyle.single.rawValue)
+    }
+
+    /// Restyling to a block that renders no inline markdown drops the chips, or
+    /// a code block's literal `[` would be laid out as an icon slot.
+    func testConvertingToACodeBlockClearsTheChips() {
+        let source = "See [Roadmap](\(page)) now"
+        let view = makeChipView(source, serverHost: chipHost)
+        XCTAssertFalse(view.documentLinkChips.isEmpty)
+        view.applyInlineStyling(
+            blockTextStyling(for: EditorBlock(kind: .codeBlock(language: ""), text: source), serverHost: chipHost))
+        XCTAssertEqual(view.documentLinkChips, [])
+        XCTAssertEqual(
+            renderedWidth(view), renderedWidth(makeView(source, kind: .codeBlock(language: ""))), accuracy: 0.5)
+    }
+
+    /// The horizontal advance of a chip's slot glyph: from the `[` to the first
+    /// character of the title, which is where the reading surface's icon sits.
+    private func slotAdvance(_ view: EditorUITextView, chip: DocumentLinkChipSpan) -> CGFloat {
+        let manager = view.layoutManager
+        manager.ensureLayout(for: view.textContainer)
+        let slot = manager.glyphIndexForCharacter(at: chip.slotIndex)
+        let title = manager.glyphIndexForCharacter(at: chip.labelRange.location)
+        return manager.location(forGlyphAt: title).x - manager.location(forGlyphAt: slot).x
+    }
+
+    /// Puts the view in a windowed scene as first responder, so UIKit accepts
+    /// the input method's `setMarkedText` the way it does from a keyboard. The
+    /// caller passes the result to `endComposing` in a `defer`.
+    private func makeComposing(_ view: EditorUITextView) throws -> (window: UIWindow, previousKeyWindow: UIWindow?) {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 2000, height: 1000)
+        window.addSubview(view)
+        window.makeKeyAndVisible()
+        XCTAssertTrue(view.becomeFirstResponder())
+        return (window, previousKeyWindow)
+    }
+
+    private func endComposing(_ session: (window: UIWindow, previousKeyWindow: UIWindow?)) {
+        session.window.endEditing(true)
+        session.window.isHidden = true
+        session.previousKeyWindow?.makeKey()
+    }
+
+    /// Composing with an IME *after* a chip leaves the chip alone: each keystroke
+    /// restyles, and dropping the slot there would re-wrap the line under the
+    /// caret on every character of a CJK composition.
+    func testMarkedTextAfterAChipKeepsItsSlot() throws {
+        let source = "See [Roadmap](\(page)) now"
+        let styling = blockTextStyling(for: EditorBlock(kind: .paragraph, text: source), serverHost: chipHost)
+        let view = makeChipView(source, serverHost: chipHost)
+        let session = try makeComposing(view)
+        defer { endComposing(session) }
+        let chip = DocumentLinkChipSpan(slotIndex: 4, labelRange: NSRange(location: 5, length: 7))
+        let slot = DocumentLinkChipMetrics(fontSize: styling.font.pointSize).slotWidth
+        XCTAssertEqual(slotAdvance(view, chip: chip), slot, accuracy: 0.5)
+
+        view.selectedRange = NSRange(location: (source as NSString).length, length: 0)
+        view.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+        _ = try XCTUnwrap(view.markedTextRange)
+        view.applyInlineStyling(styling)
+        view.setMarkedText("日本", selectedRange: NSRange(location: 2, length: 0))
+        view.applyInlineStyling(styling)
+
+        XCTAssertNotNil(view.markedTextRange, "restyling must not end the composition")
+        XCTAssertEqual(view.text, source + "日本")
+        XCTAssertEqual(view.documentLinkChips, [chip])
+        XCTAssertEqual(slotAdvance(view, chip: chip), slot, accuracy: 0.5)
+    }
+
+    /// Composing *before* a chip moves it by the marked length on every
+    /// keystroke, and it keeps its slot at each shifted index. Its new index is
+    /// neither a previous slot nor inside the pre-composition hidden syntax, so a
+    /// keep-rule keyed on either dropped every trailing chip on each keystroke.
+    func testMarkedTextBeforeAChipKeepsItsSlotAtTheShiftedIndex() throws {
+        let source = "See [Roadmap](\(page)) now"
+        let styling = blockTextStyling(for: EditorBlock(kind: .paragraph, text: source), serverHost: chipHost)
+        let view = makeChipView(source, serverHost: chipHost)
+        let session = try makeComposing(view)
+        defer { endComposing(session) }
+        let chip = DocumentLinkChipSpan(slotIndex: 4, labelRange: NSRange(location: 5, length: 7))
+        XCTAssertEqual(view.documentLinkChips, [chip])
+        let slot = DocumentLinkChipMetrics(fontSize: styling.font.pointSize).slotWidth
+
+        view.selectedRange = NSRange(location: 0, length: 0)
+        view.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+        _ = try XCTUnwrap(view.markedTextRange)
+        view.applyInlineStyling(styling)
+        let afterOne = DocumentLinkChipSpan(slotIndex: 5, labelRange: NSRange(location: 6, length: 7))
+        XCTAssertEqual(view.documentLinkChips, [afterOne])
+
+        view.setMarkedText("日本", selectedRange: NSRange(location: 2, length: 0))
+        view.applyInlineStyling(styling)
+
+        XCTAssertNotNil(view.markedTextRange, "restyling must not end the composition")
+        XCTAssertEqual(view.text, "日本" + source)
+        let shifted = DocumentLinkChipSpan(slotIndex: 6, labelRange: NSRange(location: 7, length: 7))
+        XCTAssertEqual(view.documentLinkChips, [shifted])
+        XCTAssertEqual(slotAdvance(view, chip: shifted), slot, accuracy: 0.5)
+        // The syntax after the marked text is recomputed too: the chip's
+        // `](url)` stays hidden at its shifted index.
+        let closing = view.layoutManager.glyphIndexForCharacter(at: NSMaxRange(shifted.labelRange))
+        XCTAssertTrue(view.layoutManager.propertyForGlyph(at: closing).contains(.null))
+    }
+
+    /// Composing *inside* a chip's title drops that chip only; a chip after the
+    /// marked text keeps its slot at its shifted index.
+    func testMarkedTextInsideAChipDropsOnlyThatChip() throws {
+        let source = "[Roadmap](\(page)) and [Plan](\(page))"
+        let styling = blockTextStyling(for: EditorBlock(kind: .paragraph, text: source), serverHost: chipHost)
+        let view = makeChipView(source, serverHost: chipHost)
+        let session = try makeComposing(view)
+        defer { endComposing(session) }
+        XCTAssertEqual(view.documentLinkChips.count, 2)
+        let second = try XCTUnwrap(view.documentLinkChips.last)
+
+        // Inside "Roadmap", after "Ro".
+        view.selectedRange = NSRange(location: 3, length: 0)
+        view.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+        _ = try XCTUnwrap(view.markedTextRange)
+        view.applyInlineStyling(styling)
+
+        let shifted = DocumentLinkChipSpan(
+            slotIndex: second.slotIndex + 1,
+            labelRange: NSRange(location: second.labelRange.location + 1, length: second.labelRange.length))
+        XCTAssertEqual(view.documentLinkChips, [shifted])
+        XCTAssertEqual(
+            slotAdvance(view, chip: shifted), DocumentLinkChipMetrics(fontSize: styling.font.pointSize).slotWidth,
+            accuracy: 0.5)
+    }
+
+    /// A block whose only chip is dropped for the composition must keep
+    /// recomputing its hidden syntax, or the stale `](url)` range swallows
+    /// the second composed character.
+    func testComposingInALoneChipsTitleNeverHidesAComposedCharacter() throws {
+        let source = "[Roadmap](\(page))"
+        let styling = blockTextStyling(for: EditorBlock(kind: .paragraph, text: source), serverHost: chipHost)
+        let view = makeChipView(source, serverHost: chipHost)
+        let session = try makeComposing(view)
+        defer { endComposing(session) }
+        XCTAssertEqual(view.documentLinkChips.count, 1)
+
+        // At the end of "Roadmap", just before "]".
+        view.selectedRange = NSRange(location: 8, length: 0)
+        view.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+        _ = try XCTUnwrap(view.markedTextRange)
+        view.applyInlineStyling(styling)
+        view.setMarkedText("にほ", selectedRange: NSRange(location: 2, length: 0))
+        _ = try XCTUnwrap(view.markedTextRange)
+        view.applyInlineStyling(styling)
+
+        XCTAssertEqual(view.documentLinkChips, [])
+        let manager = view.layoutManager
+        for index in 8..<10 {
+            let glyph = manager.glyphIndexForCharacter(at: index)
+            XCTAssertFalse(manager.propertyForGlyph(at: glyph).contains(.null), "character \(index) is hidden")
+        }
+    }
+
     // MARK: - Blocks that style nothing keep nothing stale
 
     /// Converting a block that held a link into a code block must drop its hidden

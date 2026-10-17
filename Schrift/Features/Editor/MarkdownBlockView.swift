@@ -3,25 +3,50 @@ import SwiftUI
 /// Parse inline markdown for display, preserving whitespace (so multi-line
 /// prose keeps its line breaks) and autolinking bare URLs.
 ///
-/// `AttributedString(markdown:)` renders explicit `[text](url)` links but — per
-/// CommonMark — leaves *bare* URLs (`https://…`) as plain text. We run a link
+/// `AttributedString(markdown:)` renders explicit `[text](url)` links, and the
+/// system parser may also autolink a bare URL (`https://…`) itself. We run a link
 /// data detector over the rendered characters afterwards and attach a link
 /// only where one isn't already present, so bare URLs become tappable without
-/// double-linking the target of an existing markdown link.
+/// double-linking the target of an existing link.
+///
+/// A markdown link to another document on `serverHost` is marked with
+/// `DocumentLinkChipAttribute` *before* our autolinking — so only an explicit
+/// `[Title](url)` becomes a page chip, as on the editing surface — and is left
+/// un-underlined. A link run whose text is its own URL is treated as a bare URL
+/// the parser autolinked, never a chip (`markDocumentLinks`). The default `""`
+/// marks nothing.
 ///
 /// The reading surface builds every row on every redraw, so results are memoized in a
-/// bounded `NSCache`. The output is a pure function of `(text, theme)` — the theme is the
-/// only style input, and link colours are the dynamic light/dark pair — so that is the
-/// whole key.
-func markdownInlineText(_ text: String, theme: AppTheme = .white) -> AttributedString {
-    let key = "\(theme.rawValue)\u{0}\(text)" as NSString
+/// bounded `NSCache`. The output is a pure function of `(text, theme, serverHost)` — the
+/// theme is the only style input, link colours are the dynamic light/dark pair, and the
+/// host decides which links are chips — so that is the whole key.
+func markdownInlineText(_ text: String, theme: AppTheme = .white, serverHost: String = "") -> AttributedString {
+    let key = "\(theme.rawValue)\u{0}\(serverHost)\u{0}\(text)" as NSString
     if let cached = inlineTextCache.object(forKey: key) { return cached.value }
     var attributed =
         (try? AttributedString(markdown: text, options: inlineMarkdownOptions)) ?? AttributedString(text)
+    markDocumentLinks(in: &attributed, serverHost: serverHost)
     autolinkBareURLs(in: &attributed)
     styleLinks(in: &attributed, theme: theme)
     inlineTextCache.setObject(InlineTextCacheEntry(attributed), forKey: key)
     return attributed
+}
+
+/// Ranges collected before any is written, for the reason `styleLinks` gives.
+private func markDocumentLinks(in attributed: inout AttributedString, serverHost: String) {
+    guard !serverHost.isEmpty else { return }
+    let ranges = attributed.runs.filter { run in
+        guard let link = run.link else { return false }
+        // Newer Foundation parsers autolink bare URLs themselves, so a link run is not
+        // proof of `[label](url)`. A run whose visible text *is* its URL is a bare URL.
+        let label = String(attributed[run.range].characters)
+        let target = link.absoluteString
+        if label == target || label + "/" == target || label == target + "/" { return false }
+        return isDocumentLink(link, serverHost: serverHost)
+    }.map(\.range)
+    for range in ranges {
+        attributed[range][DocumentLinkChipAttribute.self] = true
+    }
 }
 
 /// `NSCache` stores class instances only; this carries the value struct.
@@ -90,11 +115,19 @@ private func autolinkBareURLs(in attributed: inout AttributedString) {
 /// only guaranteed valid against the value it was taken from. Two links in one
 /// paragraph is all it takes to reach that. (Same reason `autolinkBareURLs`
 /// above collects its matches from a plain `String` snapshot first.)
+///
+/// A page chip (`DocumentLinkChipAttribute`) takes the brand ink but no
+/// underline — its background and page glyph mark it as a link instead,
+/// matching `InlineTextStyleResolver`'s document-link arm.
 private func styleLinks(in attributed: inout AttributedString, theme: AppTheme) {
-    let linkRanges = attributed.runs.filter { $0.link != nil }.map(\.range)
-    for range in linkRanges {
-        attributed[range].foregroundColor = theme.colors.textBrand
-        attributed[range].underlineStyle = .single
+    let linkRanges = attributed.runs.filter { $0.link != nil }.map { run in
+        (range: run.range, isChip: run.attributes[DocumentLinkChipAttribute.self] == true)
+    }
+    for link in linkRanges {
+        attributed[link.range].foregroundColor = theme.colors.textBrand
+        if !link.isChip {
+            attributed[link.range].underlineStyle = .single
+        }
     }
 }
 
@@ -234,17 +267,24 @@ struct MarkdownBlockView: View {
         let appearance = blockTextAppearance(for: block.kind, text: block.text, theme: theme)
         // A verbatim block's text is literal — running it through the markdown
         // parser would promise formatting its own panel says is not applied.
+        let isVerbatim = blockRendersVerbatim(block.kind, text: block.text)
         let content =
-            blockRendersVerbatim(block.kind, text: block.text)
-            ? AttributedString(block.text) : markdownInlineText(block.text, theme: theme)
+            isVerbatim
+            ? AttributedString(block.text)
+            : markdownInlineText(block.text, theme: theme, serverHost: documentLinkHost(forOrigin: serverOrigin))
+        let segments = isVerbatim ? [] : inlineTextSegments(content)
+        let chips = segments.contains(where: \.isDocumentLink) ? chipRendering(appearance: appearance) : nil
         let text =
-            Text(content)
+            (chips.map { chip in
+                documentLinkChipText(segments, icon: chip.icon, band: chip.band, iconColor: theme.colors.textBrand)
+            } ?? Text(content))
             .font(appearance.font)
             .foregroundStyle(appearance.color)
             .strikethrough(appearance.isStruckThrough)
             .alignmentGuide(.checklistFirstLine) { dimensions in
                 EditorChecklistAlignment.reading(in: dimensions, dynamicTypeSize: textSize)
             }
+            .modifier(DocumentLinkChipRendering(renderer: chips?.renderer))
 
         // Branched rather than handing every kind an empty value: VoiceOver
         // skips an empty one, so it misbehaves either way, but stating an
@@ -255,6 +295,23 @@ struct MarkdownBlockView: View {
         } else {
             text
         }
+    }
+
+    /// What a block with page chips draws them with: the metrics, icon band and
+    /// icon the editing surface computes from the same `UIFont`
+    /// (`appearance.uiFont`, the editing row's font), so the icon slot is the
+    /// same whole-point width on both surfaces and a line wraps at the same word.
+    private func chipRendering(
+        appearance: BlockTextAppearance
+    ) -> (icon: Image, band: DocumentLinkChipIconBand, renderer: DocumentLinkChipRenderer)? {
+        let font = appearance.uiFont(dynamicTypeSize: dynamicTypeSize)
+        let metrics = DocumentLinkChipMetrics(fontSize: font.pointSize)
+        let band = DocumentLinkChipIconBand(font: font)
+        let image = DocumentLinkChipIconCache.image(metrics: metrics, band: band)
+        guard let cgImage = image.cgImage else { return nil }
+        // Decorative: the title beside it is what VoiceOver reads (as a link).
+        let icon = Image(decorative: cgImage, scale: image.scale).renderingMode(.template)
+        return (icon, band, DocumentLinkChipRenderer(fill: theme.colors.brandFillSubtle, metrics: metrics))
     }
 
     /// A completed to-do's state, spoken.
@@ -291,6 +348,18 @@ private struct MarkdownBlockCatalog: View {
                     serverOrigin: serverOrigin)
                 MarkdownBlockView(
                     block: EditorBlock(kind: .paragraph, text: "A [markdown link](https://example.com) inline."),
+                    serverOrigin: serverOrigin)
+                // Links to other documents on this server: page chips, inline
+                // and alone on their line. The external link above keeps its
+                // underline.
+                MarkdownBlockView(
+                    block: EditorBlock(
+                        kind: .paragraph,
+                        text: "See [Roadmap](\(serverOrigin)/docs/\(previewDocumentID)/) for the plan."),
+                    serverOrigin: serverOrigin)
+                MarkdownBlockView(
+                    block: EditorBlock(
+                        kind: .bulletItem, text: "[Meeting **notes**](\(serverOrigin)/docs/\(previewDocumentID)/)"),
                     serverOrigin: serverOrigin)
                 MarkdownBlockView(
                     block: EditorBlock(kind: .quote, text: "A quote should read as its own aside."),

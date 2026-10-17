@@ -140,4 +140,62 @@ final class DocumentLinkTests: XCTestCase {
         let fileURL = URL(string: "file:///docs/11111111-1111-4111-8111-111111111111/")!
         XCTAssertEqual(documentLinkAction(for: fileURL, serverHost: "", currentDocumentID: current), .openInBrowser)
     }
+
+    // MARK: - Page-chip classification
+
+    /// `isDocumentLink` is what decides which links draw as page chips. It must be
+    /// exactly the set `documentLinkAction` keeps in the app — a chip that then opened
+    /// Safari, or a lookalike host drawn as one of the user's pages, would both lie.
+    func testIsDocumentLinkAgreesWithTheInAppRule() {
+        let cases = [
+            "https://docs.example.org/docs/11111111-1111-4111-8111-111111111111/",
+            "https://DOCS.example.org/docs/11111111-1111-4111-8111-111111111111",
+            "https://docs.example.org/docs/22222222-2222-4222-8222-222222222222/",
+            "https://docs.example.org.evil.com/docs/11111111-1111-4111-8111-111111111111/",
+            "https://docs.example.org@evil.com/docs/11111111-1111-4111-8111-111111111111/",
+            "https://docs.example.org/docs/11111111-1111-4111-8111-111111111111/versions/1",
+            "https://docs.example.org/docs/new/",
+            "https://docs.example.org/media/photo.jpg",
+            "javascript:alert(1)",
+            "https://example.com/a/b",
+        ]
+        for string in cases {
+            let url = URL(string: string)!
+            let opensInApp = documentLinkAction(for: url, serverHost: serverHost, currentDocumentID: current)
+            XCTAssertEqual(isDocumentLink(url, serverHost: serverHost), opensInApp != .openInBrowser, string)
+            XCTAssertEqual(isDocumentLink(href: string, serverHost: serverHost), opensInApp != .openInBrowser, string)
+        }
+    }
+
+    func testLookalikeHostsAndWrongPathsAreNotDocumentLinks() {
+        XCTAssertFalse(
+            isDocumentLink(
+                href: "https://docs.example.org.evil.com/docs/11111111-1111-4111-8111-111111111111/",
+                serverHost: serverHost))
+        XCTAssertFalse(
+            isDocumentLink(
+                href: "https://docs.example.org@evil.com/docs/11111111-1111-4111-8111-111111111111/",
+                serverHost: serverHost))
+        XCTAssertFalse(isDocumentLink(href: "https://docs.example.org/docs/not-a-uuid/", serverHost: serverHost))
+        XCTAssertFalse(isDocumentLink(href: "not a url at all", serverHost: serverHost))
+        // Negative control: the canonical spelling of the same document does match.
+        XCTAssertTrue(
+            isDocumentLink(
+                href: "https://docs.example.org/docs/11111111-1111-4111-8111-111111111111/", serverHost: serverHost))
+    }
+
+    func testAnEmptyServerHostChipsNothing() {
+        XCTAssertFalse(
+            isDocumentLink(href: "https://docs.example.org/docs/11111111-1111-4111-8111-111111111111/", serverHost: ""))
+    }
+
+    /// The editor surfaces derive the host from the `serverOrigin` they already
+    /// carry; it must be the host `documentLinkAction` is handed (RootView's
+    /// `serverURL.host`), port and all stripped.
+    func testDocumentLinkHostIsTheOriginsHost() {
+        XCTAssertEqual(documentLinkHost(forOrigin: "https://docs.example.org"), "docs.example.org")
+        XCTAssertEqual(documentLinkHost(forOrigin: "http://docs.example.org:8443"), "docs.example.org")
+        XCTAssertEqual(documentLinkHost(forOrigin: "https://[::1]:8000"), URL(string: "https://[::1]:8000/")!.host)
+        XCTAssertEqual(documentLinkHost(forOrigin: ""), "")
+    }
 }

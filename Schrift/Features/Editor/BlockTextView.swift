@@ -35,6 +35,9 @@ struct BlockTextStyling: Equatable {
     /// to parse: a code block's and an `.unknown` block's text is literal, and
     /// styling it would promise formatting the save would not write.
     let rendersInlineMarkdown: Bool
+    /// The server host a link must name to draw as a page chip
+    /// (`DocumentLinkChip.swift`). Empty classifies nothing.
+    let documentLinkHost: String
 }
 
 /// The editing surface's view of `blockTextAppearance` — the same table the
@@ -65,9 +68,14 @@ struct BlockTextStyling: Equatable {
 /// parser's fallback; the reflow it replaced happened on every tap, on every
 /// such block. Neither is free; this one is rarer and it is the one the reading
 /// surface has always had.
-func blockTextStyling(for block: EditorBlock, dynamicTypeSize: DynamicTypeSize = .large, theme: AppTheme = .white)
-    -> BlockTextStyling
-{
+///
+/// `serverHost` decides which links draw as page chips. It defaults to `""`
+/// (no chips) for the tests that only read fonts and colours; the editing row
+/// passes the host it derives from its required `serverOrigin`.
+func blockTextStyling(
+    for block: EditorBlock, dynamicTypeSize: DynamicTypeSize = .large, theme: AppTheme = .white,
+    serverHost: String = ""
+) -> BlockTextStyling {
     let appearance = blockTextAppearance(for: block.kind, text: block.text, theme: theme)
     let isLiteral: Bool
     let allowsNewlines: Bool
@@ -88,7 +96,8 @@ func blockTextStyling(for block: EditorBlock, dynamicTypeSize: DynamicTypeSize =
         isStruckThrough: appearance.isStruckThrough,
         isCodeLike: isLiteral,
         allowsNewlines: allowsNewlines,
-        rendersInlineMarkdown: rendersInlineMarkdown(block.kind)
+        rendersInlineMarkdown: rendersInlineMarkdown(block.kind),
+        documentLinkHost: serverHost
     )
 }
 
@@ -174,7 +183,19 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// Source ranges drawn at zero width. Read by the glyph-suppression delegate
     /// on every layout pass, so it must be set before glyphs are invalidated.
     fileprivate(set) var hiddenRanges: [NSRange] = []
+    /// The buffer `hiddenRanges` and the chips were last computed from, so a
+    /// restyle during composition can tell "nothing changed" from "the text
+    /// moved under the same state".
+    private var glyphStateSource: String?
     fileprivate(set) var linkSpans: [InlineLinkSpan] = []
+    /// Document links drawn as page chips. Each one's hidden `[` is laid out as a
+    /// whitespace control glyph `chipSlotWidth` wide — the icon's slot — rather
+    /// than at zero width, so the chip adds exactly the width the reading
+    /// surface's inline icon does, without a character entering the buffer.
+    fileprivate(set) var documentLinkChips: [DocumentLinkChipSpan] = []
+    private var chipSlotIndexes: Set<Int> = []
+    private var chipSlotWidth: CGFloat = 0
+    private var chipIconCache: (metrics: DocumentLinkChipMetrics, band: DocumentLinkChipIconBand, icon: UIImage)?
 
     /// Builds the view on **TextKit 1**. `UITextView` defaults to TextKit 2 on
     /// iOS 16+, whose layout fragments offer no equivalent of
@@ -183,7 +204,8 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// inherited one and silently give some caller a TextKit 2 view.
     static func textKit1() -> EditorUITextView {
         let storage = NSTextStorage()
-        let layoutManager = NSLayoutManager()
+        // Paints the page chips' backgrounds and icons; lays out nothing itself.
+        let layoutManager = DocumentLinkChipLayoutManager()
         let container = NSTextContainer(size: CGSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
         container.widthTracksTextView = true
         container.heightTracksTextView = false
@@ -230,7 +252,12 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
         var changed = false
         for offset in 0..<glyphRange.length {
             let characterIndex = characterIndexes[offset]
-            if hiddenRanges.contains(where: { NSLocationInRange(characterIndex, $0) }) {
+            if chipSlotIndexes.contains(characterIndex) {
+                // Still hidden syntax — the `[` is never drawn — but laid out as
+                // the chip's icon slot (see the control-character methods below).
+                updated[offset] = .controlCharacter
+                changed = true
+            } else if hiddenRanges.contains(where: { NSLocationInRange(characterIndex, $0) }) {
                 updated[offset] = .null
                 changed = true
             } else {
@@ -244,13 +271,39 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
         return glyphRange.length
     }
 
+    /// A chip's slot glyph is laid out as whitespace; every other control
+    /// character keeps the action TextKit proposed.
+    func layoutManager(
+        _ layoutManager: NSLayoutManager,
+        shouldUse action: NSLayoutManager.ControlCharacterAction,
+        forControlCharacterAt charIndex: Int
+    ) -> NSLayoutManager.ControlCharacterAction {
+        chipSlotIndexes.contains(charIndex) ? .whitespace : action
+    }
+
+    /// The slot's advance: `DocumentLinkChipMetrics.slotWidth`, the same whole
+    /// points the reading surface's icon image is wide. Zero height, so the slot
+    /// can never make its line taller.
+    func layoutManager(
+        _ layoutManager: NSLayoutManager,
+        boundingBoxForControlGlyphAt glyphIndex: Int,
+        for textContainer: NSTextContainer,
+        proposedLineFragment proposedRect: CGRect,
+        glyphPosition: CGPoint,
+        characterIndex charIndex: Int
+    ) -> CGRect {
+        let width = chipSlotIndexes.contains(charIndex) ? chipSlotWidth : 0
+        return CGRect(x: glyphPosition.x, y: glyphPosition.y, width: width, height: 0)
+    }
+
     /// Repaints the (short) block from its own buffer: base attributes
     /// everywhere, then the marked spans, then the hidden ranges the glyph pass
     /// reads. Attribute-only edits leave the characters alone, so no
     /// `.textChanged` event is produced and the selection survives.
     ///
-    /// Skipped while an input method is composing, whose marked-text attributes
-    /// must not be overwritten.
+    /// While an input method is composing, the marked text's characters and
+    /// attributes are UIKit's, so nothing is restyled: only the hidden syntax
+    /// and the page chips are recomputed (`refreshHiddenSyntaxWhileComposing`).
     ///
     /// Takes the whole `BlockTextStyling` rather than the two or three fields it
     /// happens to need: a field added to the block's appearance that this forgot
@@ -258,7 +311,10 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// which is exactly how the strikethrough on a completed to-do came to exist
     /// on one surface only.
     func applyInlineStyling(_ styling: BlockTextStyling) {
-        guard markedTextRange == nil else { return }
+        if let marked = markedTextRange {
+            refreshHiddenSyntaxWhileComposing(around: marked, styling: styling)
+            return
+        }
         let font = styling.font
         let source = text ?? ""
         let full = NSRange(location: 0, length: (source as NSString).length)
@@ -269,14 +325,19 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
 
         // Before `endEditing` triggers a layout pass that reads them.
         hiddenRanges = layout.syntax
+        glyphStateSource = source
         linkSpans = layout.links
+        configureDocumentLinkChips(
+            documentLinkChipSpans(in: layout, serverHost: styling.documentLinkHost), styling: styling)
 
         let selection = selectedRange
         textStorage.beginEditing()
         textStorage.setAttributes(baseTextAttributes(for: styling), range: full)
         for span in layout.spans {
             textStorage.addAttributes(
-                inlineTextAttributes(for: span.marks, base: font, theme: styling.theme), range: span.range)
+                inlineTextAttributes(
+                    for: span.marks, base: font, theme: styling.theme, serverHost: styling.documentLinkHost),
+                range: span.range)
         }
         textStorage.endEditing()
 
@@ -285,6 +346,104 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
         if selectedRange != selection {
             selectedRange = selection
         }
+    }
+
+    /// The composition half of `applyInlineStyling`: recomputes the hidden
+    /// syntax and the page chips from the current buffer, so syntax and chips
+    /// before or after the marked text stay hidden (at their shifted indexes)
+    /// instead of reappearing and re-wrapping the line on each keystroke of a
+    /// CJK composition.
+    ///
+    /// Touches glyph properties only. Text, attributes and selection are
+    /// UIKit's until commit, so nothing is restyled; what changes is the state
+    /// the glyph pass reads, and glyphs and layout are then regenerated from it
+    /// — never inferred from glyphs TextKit kept or regenerated after the edit:
+    /// - `hiddenRanges` is the current buffer's syntax **minus any range the
+    ///   marked text intersects**, so a character being composed is never
+    ///   hidden. A range merely adjacent to it stays hidden: a chip's `](url)`
+    ///   must not unfold while the user composes right after the link;
+    /// - a chip is kept only where its link does not overlap the marked text
+    ///   (its title is still being typed) **and** its `[` is in that new
+    ///   `hiddenRanges`, so the glyph pass never lays out a visible `[` as a
+    ///   slot. A dropped chip returns on the first restyle after commit.
+    ///
+    /// Invalidating the whole (short) block is safe while composing: glyph and
+    /// layout invalidation regenerate glyphs from the unchanged text storage and
+    /// leave its characters, its attributes — the marked text's included — the
+    /// selection and the marked range alone. It is skipped when neither the
+    /// buffer nor the state changed since the last styling, the one case where
+    /// the existing glyphs are provably generated from this state for this text.
+    private func refreshHiddenSyntaxWhileComposing(around marked: UITextRange, styling: BlockTextStyling) {
+        let source = text ?? ""
+        let length = (source as NSString).length
+        let markedRange = NSRange(
+            location: offset(from: beginningOfDocument, to: marked.start),
+            length: offset(from: marked.start, to: marked.end))
+        let layout =
+            styling.rendersInlineMarkdown
+            ? InlineMarkdown.layout(of: source)
+            : InlineLayout(spans: [], syntax: [], links: [])
+        let hidden = layout.syntax.filter { NSIntersectionRange($0, markedRange).length == 0 }
+        var linkRanges: [Int: NSRange] = [:]
+        for link in layout.links where linkRanges[link.range.location] == nil {
+            linkRanges[link.range.location] = link.range
+        }
+        let allChips = documentLinkChipSpans(in: layout, serverHost: styling.documentLinkHost)
+        // A block with no chip before or after this keystroke keeps composing
+        // exactly as it always has: nothing is recomputed until commit. Keyed on
+        // the block's chips before filtering, because a chip dropped for the
+        // composition must keep the hidden ranges current for later keystrokes.
+        guard !allChips.isEmpty || !documentLinkChips.isEmpty else { return }
+        let chips = allChips.filter { chip in
+            guard let link = linkRanges[chip.slotIndex], chip.slotIndex < length else { return false }
+            let overlapsMarked =
+                markedRange.length == 0
+                ? markedRange.location > link.location && markedRange.location < NSMaxRange(link)
+                : NSIntersectionRange(link, markedRange).length > 0
+            guard !overlapsMarked else { return false }
+            return hidden.contains { NSLocationInRange(chip.slotIndex, $0) }
+        }
+        guard source != glyphStateSource || hidden != hiddenRanges || chips != documentLinkChips else { return }
+
+        // Before the invalidation below triggers a layout pass that reads them.
+        hiddenRanges = hidden
+        glyphStateSource = source
+        configureDocumentLinkChips(chips, styling: styling)
+
+        let full = NSRange(location: 0, length: length)
+        layoutManager.invalidateGlyphs(forCharacterRange: full, changeInLength: 0, actualCharacterRange: nil)
+        layoutManager.invalidateLayout(forCharacterRange: full, actualCharacterRange: nil)
+        layoutManager.invalidateDisplay(forCharacterRange: full)
+    }
+
+    /// Hands the chips to the glyph pass (slot indexes and width) and to the
+    /// layout manager (what to paint). The icon is rebuilt only when the block's
+    /// font changes size, not on every keystroke's restyle.
+    private func configureDocumentLinkChips(_ chips: [DocumentLinkChipSpan], styling: BlockTextStyling) {
+        documentLinkChips = chips
+        chipSlotIndexes = Set(chips.map(\.slotIndex))
+        let chipLayout = layoutManager as? DocumentLinkChipLayoutManager
+        guard !chips.isEmpty else {
+            chipSlotWidth = 0
+            chipLayout?.chips = []
+            chipLayout?.chipAppearance = nil
+            return
+        }
+        let metrics = DocumentLinkChipMetrics(fontSize: styling.font.pointSize)
+        let band = DocumentLinkChipIconBand(font: styling.font)
+        let icon: UIImage
+        if let cached = chipIconCache, cached.metrics == metrics, cached.band == band {
+            icon = cached.icon
+        } else {
+            icon = documentLinkChipIconImage(metrics: metrics, band: band)
+            chipIconCache = (metrics, band, icon)
+        }
+        chipSlotWidth = metrics.slotWidth
+        chipLayout?.chips = chips
+        chipLayout?.chipAppearance = DocumentLinkChipLayoutManager.Appearance(
+            fill: UIColor(styling.theme.colors.brandFillSubtle),
+            iconColor: UIColor(styling.theme.colors.textBrand),
+            metrics: metrics, band: band, icon: icon)
     }
 
     // MARK: - Caret rules
