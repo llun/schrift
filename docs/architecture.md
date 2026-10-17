@@ -239,8 +239,9 @@ The pieces live across `Core/Collaboration` and `Features/Editor`:
   (`liveChangeSet`), and applies the change through the editor's surgical funnel. Surviving
   blocks keep their `EditorBlock.id`, so SwiftUI identity, focus, and scroll survive.
 - **`EditorViewModel.applyLiveRemoteChange` is the one content-swap funnel that is NOT
-  `install(...)`.** `install` re-mints every block id and nulls the caret (correct for a
-  full server-wins swap); the live funnel instead mutates blocks in place, recomputes the
+  `install(...)`.** `install` re-parses the whole body, keeps only the ids of blocks whose
+  content is unchanged (`reusingBlockIDs`), and nulls the caret (correct for a full
+  server-wins swap); the live funnel instead mutates blocks in place, recomputes the
   focused block's caret with the pure UTF-16 `transformedCaret` rule, and advances the dirty
   baseline (`savedMarkdown`/`serverBaseline`) to the projected content — so a later
   tap-to-edit never false-dirties. It **never** enqueues a save, never sets `isDirty`, and

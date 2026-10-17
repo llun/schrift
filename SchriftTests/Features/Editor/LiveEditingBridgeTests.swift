@@ -432,8 +432,10 @@ final class LiveEditingBridgeTests: XCTestCase {
     /// identity map used to be gated by a boolean `isSeeded` flag that was only
     /// reset in `replicaDidChange()`'s pause branch — which runs only on a
     /// `replicaVersion` tick. `EditorViewModel.install(...)` (reached via a
-    /// pull-to-refresh / server-wins reconcile) re-mints every `EditorBlock.id`
-    /// without ever touching the bridge, ticking a replica version, or dropping
+    /// pull-to-refresh / server-wins reconcile) re-identifies every block whose
+    /// content changed (it used to re-mint every `EditorBlock.id`; now
+    /// `reusingBlockIDs` keeps the unchanged ones) without ever touching the
+    /// bridge, ticking a replica version, or dropping
     /// `canEngageLiveEditing` — so the flag stayed `true`, the map went stale,
     /// and the next peer update reduced a text-only change to a full
     /// remove+insert, dropping SwiftUI identity, focus, and scroll. The fix
@@ -454,15 +456,17 @@ final class LiveEditingBridgeTests: XCTestCase {
         XCTAssertTrue(bridge.isEngaged)
 
         // A pull-to-refresh reconcile installs a newer server body while the doc
-        // stays clean. `install(...)` re-mints every `EditorBlock.id` for the
-        // fresh parse — this never touches the bridge, never ticks
-        // `replicaVersion`, and never drops `canEngageLiveEditing`.
+        // stays clean. `install(...)` gives the changed paragraph a fresh
+        // `EditorBlock.id` (the unchanged one keeps its own) — this never touches
+        // the bridge, never ticks `replicaVersion`, and never drops
+        // `canEngageLiveEditing`.
         stubLoad(content: "Alpha\\n\\nBeta reworded")
         await viewModel.refresh()
         XCTAssertTrue(viewModel.canEngageLiveEditing, "the reconcile left the doc clean and idle")
         let reidentifiedIDs = viewModel.blocks.map(\.id)
         XCTAssertEqual(reidentifiedIDs.count, 2)
-        XCTAssertNotEqual(reidentifiedIDs, idsBeforeRefresh, "sanity: install() actually re-minted the ids")
+        XCTAssertEqual(reidentifiedIDs[0], idsBeforeRefresh[0], "the unchanged paragraph keeps its id")
+        XCTAssertNotEqual(reidentifiedIDs[1], idsBeforeRefresh[1], "sanity: install() re-identified the changed one")
 
         // A peer update lands next, carrying the SAME BlockNote ids the bridge
         // originally seeded against (the replica the bridge was watching never

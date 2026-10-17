@@ -58,7 +58,124 @@ struct EditorBlock: Identifiable, Equatable, Sendable {
 /// Content equality ignoring block identities.
 func blocksContentEqual(_ lhs: [EditorBlock], _ rhs: [EditorBlock]) -> Bool {
     lhs.count == rhs.count
-        && zip(lhs, rhs).allSatisfy { $0.kind == $1.kind && $0.text == $1.text && $0.indent == $1.indent }
+        && zip(lhs, rhs).allSatisfy { blockContentEqual($0, $1) }
+}
+
+/// Whether two blocks show exactly the same thing: same kind, text and nesting level.
+func blockContentEqual(_ lhs: EditorBlock, _ rhs: EditorBlock) -> Bool {
+    lhs.kind == rhs.kind && lhs.text == rhs.text && lhs.indent == rhs.indent
+}
+
+// MARK: - Identity across a content swap
+
+/// Above this many cells the id-reuse LCS table is skipped and the changed middle keeps its
+/// fresh ids. The cap bounds main-actor work during install, because each cell can be a string
+/// comparison. The common prefix and suffix are trimmed first, so only a document rewritten
+/// almost everywhere reaches it — and then the result is what `install` always did.
+let maxBlockIDReuseTableCells = 250_000
+
+/// `new`, with every block whose content is unchanged carrying the id it has in `old`.
+///
+/// `EditorViewModel.install(...)` re-parses a whole markdown body, and a parse mints a fresh
+/// `EditorBlock.id` for every block. The reading surface's `ForEach`, the editing canvas's
+/// rows, the checklist presentation and `EditorScrollAnchorStore` all key on those ids, so a
+/// revalidation that changed one paragraph used to re-identify the entire document: every row
+/// was torn down and rebuilt (a visible flash) and any scroll anchor naming a block went stale.
+///
+/// Matching is **content equality only** (`blockContentEqual`: kind, text and indent) — the
+/// longest common subsequence of `old` and `new` under that predicate, after trimming the
+/// common prefix and suffix. A matched block takes the old id; **every unmatched block keeps
+/// its fresh id**. There is deliberately no positional pairing of changed blocks, even of the
+/// same kind: an id is also the editing canvas's native text-view identity (`inputRowID`), and
+/// handing a surviving `UITextView` a block whose text changed under it is exactly the
+/// reconciliation the marked-text rules refuse to do. A block whose content changed is a
+/// different block as far as identity goes, which is what `install` always said; only the
+/// blocks nothing touched are now spared.
+///
+/// Ids stay unique: the LCS is one-to-one, an old id already handed out is never handed out
+/// twice (a defensive guard — `old` comes from the screen, whose ids are unique), and an
+/// unmatched block whose id collides with one that was reused is minted a new one.
+///
+/// When `new` has the same content as `old`, the result is equal to `old` — ids included —
+/// so the caller can skip the assignment entirely.
+func reusingBlockIDs(from old: [EditorBlock], into new: [EditorBlock]) -> [EditorBlock] {
+    guard !old.isEmpty, !new.isEmpty else { return new }
+    var result = new
+    var reused = Set<UUID>()
+    var matchedNewIndices = Set<Int>()
+    for (oldIndex, newIndex) in blockIDReuseMatches(old: old, new: new) {
+        let id = old[oldIndex].id
+        guard reused.insert(id).inserted else { continue }
+        result[newIndex] = EditorBlock(
+            id: id, kind: new[newIndex].kind, text: new[newIndex].text, indent: new[newIndex].indent)
+        matchedNewIndices.insert(newIndex)
+    }
+    var seen = reused
+    for index in result.indices where !matchedNewIndices.contains(index) {
+        if !seen.insert(result[index].id).inserted {
+            let block = result[index]
+            let fresh = UUID()
+            result[index] = EditorBlock(id: fresh, kind: block.kind, text: block.text, indent: block.indent)
+            seen.insert(fresh)
+        }
+    }
+    return result
+}
+
+/// The `(old, new)` index pairs whose content is equal, ascending in both coordinates: a
+/// longest common subsequence after trimming the common prefix and suffix (a revalidation
+/// typically changes a few blocks in the middle). The same shape as
+/// `BlockNoteAlignment.anchorPairs`, over editor blocks.
+private func blockIDReuseMatches(old: [EditorBlock], new: [EditorBlock]) -> [(Int, Int)] {
+    var prefix = 0
+    while prefix < old.count, prefix < new.count, blockContentEqual(old[prefix], new[prefix]) {
+        prefix += 1
+    }
+    var suffix = 0
+    while suffix < old.count - prefix, suffix < new.count - prefix,
+        blockContentEqual(old[old.count - 1 - suffix], new[new.count - 1 - suffix])
+    {
+        suffix += 1
+    }
+
+    var pairs: [(Int, Int)] = (0..<prefix).map { ($0, $0) }
+
+    let oldStart = prefix
+    let newStart = prefix
+    let rows = old.count - suffix - prefix
+    let columns = new.count - suffix - prefix
+    if rows > 0, columns > 0, (rows + 1) * (columns + 1) <= maxBlockIDReuseTableCells {
+        // lengths[i * width + j] = LCS length of old's middle from i and new's middle from j.
+        let width = columns + 1
+        var lengths = [Int32](repeating: 0, count: (rows + 1) * width)
+        for i in stride(from: rows - 1, through: 0, by: -1) {
+            for j in stride(from: columns - 1, through: 0, by: -1) {
+                if blockContentEqual(old[oldStart + i], new[newStart + j]) {
+                    lengths[i * width + j] = lengths[(i + 1) * width + j + 1] + 1
+                } else {
+                    lengths[i * width + j] = max(lengths[(i + 1) * width + j], lengths[i * width + j + 1])
+                }
+            }
+        }
+        var i = 0
+        var j = 0
+        while i < rows, j < columns {
+            if blockContentEqual(old[oldStart + i], new[newStart + j]) {
+                pairs.append((oldStart + i, newStart + j))
+                i += 1
+                j += 1
+            } else if lengths[(i + 1) * width + j] >= lengths[i * width + j + 1] {
+                i += 1
+            } else {
+                j += 1
+            }
+        }
+    }
+
+    for k in 0..<suffix {
+        pairs.append((old.count - suffix + k, new.count - suffix + k))
+    }
+    return pairs
 }
 
 // MARK: - List nesting

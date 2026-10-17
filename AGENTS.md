@@ -2094,13 +2094,27 @@ that are easy to violate and expensive to discover:
   the header's bar on **both** surfaces — the reading one previously drew its
   avatars offline. Don't re-add a second presence affordance to one mode only:
   that asymmetry is what the shared header exists to prevent.
-- **The scroll anchor degrades, it never corrupts.** `install(...)` re-mints
-  every `EditorBlock.id`, so an anchor naming a block can go stale after a
-  remote change; an unresolvable id simply scrolls nowhere and the surface opens
-  where it is. `.header` and `.trailer` are stable across that, and the
+- **The scroll anchor degrades, it never corrupts.** `install(...)` gives every
+  block whose content changed a fresh `EditorBlock.id` (only unchanged blocks keep
+  theirs — see the next bullet), so an anchor naming an edited block can go stale
+  after a remote change; an unresolvable id simply scrolls nowhere and the surface
+  opens where it is. `.header` and `.trailer` are stable across that, and the
   reading surface's own `.refreshable` is only reachable from the top, where the
   anchor is `.header`. Worth knowing before "fixing" a report of the editor
   opening at the top after a co-author's edit.
+- **`install(...)` keeps the id of every unchanged block** (`reusingBlockIDs`,
+  `EditorBlock.swift`): an LCS of old and new blocks under content equality (kind,
+  text, indent), after trimming the common prefix and suffix. Re-minting every id
+  made a one-paragraph revalidation re-identify the whole document — every row of
+  the reading surface and the editing canvas rebuilt (a flash) and every block
+  anchor stranded. Matching is **content equality only**: a changed, inserted or
+  moved block still gets a fresh id, never a positional reuse, because an id is
+  also the canvas's native text-view identity (`inputRowID`) and a surviving
+  `UITextView` must not be handed a block whose text changed under it. A body with
+  identical content leaves `blocks` unassigned. Everything else `install` does is
+  unchanged — caret/focus/selection still clear, the dirty baseline and the
+  round-trip source are still reset — and `inputRowIDs` is now **kept** rather than
+  reset, so a surviving block keeps its row and a dead id stays reserved.
 - **Known, accepted residual — an `.unknown` block can restyle mid-keystroke.**
   Its appearance follows its *text* (`unknownRendersAsProse`, per-line), so
   indenting the first line of a prose `.unknown`, or starting one with `|`/`<`,
@@ -2389,8 +2403,8 @@ markdown write endpoint**. Understand this before touching the save path:
   (out of process; no usage description, no `project.yml` change) → the same
   `attachment-upload` + media-check poll → `insertAttachmentBlock`, which is a
   structural twin of `insertImageBlock` down to verifying against the **saved**
-  markdown before committing and never re-parsing the document (that would
-  re-mint every block id and make a live forward diff as delete-all + reinsert).
+  markdown before committing and never re-parsing the document (a parse mints
+  fresh block ids, which would make a live forward diff as delete-all + reinsert).
   `sanitizedAttachmentFileName` enforces the union of two unrelated requirements,
   because the picked name is interpolated into both: multipart-header safety (no
   quote, CR, LF) *and* markdown-label safety (no brackets or parens, or the
@@ -2467,8 +2481,8 @@ markdown write endpoint**. Understand this before touching the save path:
   `EditorViewModel.install(...)` so the markdown round-trip safety check and
   the dirty baseline are never bypassed. **The one sanctioned exception is
   `applyLiveRemoteChange` (C1)** — the caret-preserving live-apply funnel. Unlike
-  `install`, which re-mints every block id and nulls the caret (a full server-wins
-  swap), it mutates `blocks` in place reusing surviving `EditorBlock.id`s,
+  `install`, which keeps only unchanged blocks' ids and nulls the caret (a full
+  server-wins swap), it mutates `blocks` in place reusing surviving `EditorBlock.id`s,
   recomputes the focused caret via the pure UTF-16 `transformedCaret`, and advances
   the dirty baseline to the projected content. It **never** calls `install`, never
   `enqueue`s a save, and never sets `isDirty`; it only runs while
@@ -3812,8 +3826,9 @@ markdown write endpoint**. Understand this before touching the save path:
   the source buffer on commit corrupts subsequent correction coordinates. Never
   replace marked characters, attributes, or selection during model reconciliation.
   Process shortcuts and slash queries on commit even when the committed characters
-  equal the provisional model text. Retired input row IDs stay reserved until a
-  content install, and stale row callbacks/focus requests cannot reclaim them.
+  equal the provisional model text. Retired input row IDs stay reserved for the
+  view model's lifetime (a content install keeps them too, since it now keeps
+  unchanged block ids), and stale row callbacks/focus requests cannot reclaim them.
   Native regression tests must include commit, cancel, unchanged commits, ranged
   corrections after commit, same-row pending carets, and real canvas reconciliation
   with the same native view, marked range, and first responder.
