@@ -7,9 +7,10 @@ final class HomeViewModelFreshnessTests: HomeViewModelTestCase {
     private var clock = Date(timeIntervalSince1970: 1_000_000)
 
     private func stubLists(_ recorder: RequestRecorder) {
+        let empty = Self.emptyFixture
         MockURLProtocol.stubHandler = { request in
             recorder.record(request)
-            return .init(statusCode: 200, headers: [:], body: Self.emptyFixture, error: nil)
+            return .init(statusCode: 200, headers: [:], body: empty, error: nil)
         }
     }
 
