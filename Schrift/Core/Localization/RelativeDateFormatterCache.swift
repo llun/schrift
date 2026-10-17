@@ -16,6 +16,12 @@ final class RelativeDateFormatterCache: @unchecked Sendable {
     init() {}
 
     /// The cached formatter for `locale`; the same instance on every call.
+    ///
+    /// Exists so tests can check instance identity (cache reuse) only. It is
+    /// returned after the lock is released, and the formatter is not
+    /// thread-safe, so production callers must never format with it. Format
+    /// through `string(for:relativeTo:locale:)`, which holds the lock for the
+    /// whole call.
     func formatter(for locale: Locale) -> RelativeDateTimeFormatter {
         lock.lock()
         defer { lock.unlock() }
