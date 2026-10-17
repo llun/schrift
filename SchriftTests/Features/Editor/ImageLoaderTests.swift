@@ -49,6 +49,37 @@ import XCTest
         XCTAssertEqual(log.methods, ["GET"])
     }
 
+    func testAspectRatioIsRememberedPerScopeAndNeverRequestsAnything() async {
+        let log = RequestRecorder()
+        stub(log: log)
+        let subject = loader()
+        XCTAssertNil(subject.aspectRatio(for: url))
+        await subject.loadIfNeeded(url)
+        XCTAssertEqual(subject.aspectRatio(for: url) ?? 0, 2, accuracy: 0.001)
+        scope = ImageCacheScope(serverOrigin: origin, sessionID: UUID())
+        XCTAssertNil(subject.aspectRatio(for: url))
+        scope = nil
+        XCTAssertNil(subject.aspectRatio(for: url))
+        XCTAssertEqual(log.methods, ["GET"])
+    }
+
+    func testAspectRatioIsKnownAfterColdLoadFromDisk() async {
+        let log = RequestRecorder()
+        stub(log: log)
+        await loader().loadIfNeeded(url)
+        let cold = loader()
+        XCTAssertNil(cold.aspectRatio(for: url))
+        await cold.loadIfNeeded(url, allowsNetwork: false)
+        XCTAssertEqual(cold.aspectRatio(for: url) ?? 0, 2, accuracy: 0.001)
+    }
+
+    func testImageAspectRatioRejectsDegenerateSizes() {
+        XCTAssertEqual(imageAspectRatio(of: CGSize(width: 300, height: 100)), 3)
+        XCTAssertNil(imageAspectRatio(of: .zero))
+        XCTAssertNil(imageAspectRatio(of: CGSize(width: 10, height: 0)))
+        XCTAssertNil(imageAspectRatio(of: CGSize(width: .infinity, height: 10)))
+    }
+
     func testColdOfflineMissMakesNoRequest() async {
         let log = RequestRecorder()
         stub(log: log)
