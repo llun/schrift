@@ -322,15 +322,24 @@ final class BlockTextRenderingTests: XCTestCase {
         return manager.location(forGlyphAt: title).x - manager.location(forGlyphAt: slot).x
     }
 
-    /// Puts the view in a window as first responder, so UIKit accepts the
-    /// input method's `setMarkedText` the way it does from a keyboard. The
-    /// caller hides the returned window when it is done.
-    private func makeComposing(_ view: EditorUITextView) -> UIWindow {
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 2000, height: 1000))
+    /// Puts the view in a windowed scene as first responder, so UIKit accepts
+    /// the input method's `setMarkedText` the way it does from a keyboard. The
+    /// caller passes the result to `endComposing` in a `defer`.
+    private func makeComposing(_ view: EditorUITextView) throws -> (window: UIWindow, previousKeyWindow: UIWindow?) {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 2000, height: 1000)
         window.addSubview(view)
         window.makeKeyAndVisible()
-        view.becomeFirstResponder()
-        return window
+        XCTAssertTrue(view.becomeFirstResponder())
+        return (window, previousKeyWindow)
+    }
+
+    private func endComposing(_ session: (window: UIWindow, previousKeyWindow: UIWindow?)) {
+        session.window.endEditing(true)
+        session.window.isHidden = true
+        session.previousKeyWindow?.makeKey()
     }
 
     /// Composing with an IME *after* a chip leaves the chip alone: each keystroke
@@ -340,11 +349,8 @@ final class BlockTextRenderingTests: XCTestCase {
         let source = "See [Roadmap](\(page)) now"
         let styling = blockTextStyling(for: EditorBlock(kind: .paragraph, text: source), serverHost: chipHost)
         let view = makeChipView(source, serverHost: chipHost)
-        let window = makeComposing(view)
-        defer {
-            view.resignFirstResponder()
-            window.isHidden = true
-        }
+        let session = try makeComposing(view)
+        defer { endComposing(session) }
         let chip = DocumentLinkChipSpan(slotIndex: 4, labelRange: NSRange(location: 5, length: 7))
         let slot = DocumentLinkChipMetrics(fontSize: styling.font.pointSize).slotWidth
         XCTAssertEqual(slotAdvance(view, chip: chip), slot, accuracy: 0.5)
@@ -368,11 +374,8 @@ final class BlockTextRenderingTests: XCTestCase {
         let source = "[Roadmap](\(page)) and [Plan](\(page))"
         let styling = blockTextStyling(for: EditorBlock(kind: .paragraph, text: source), serverHost: chipHost)
         let view = makeChipView(source, serverHost: chipHost)
-        let window = makeComposing(view)
-        defer {
-            view.resignFirstResponder()
-            window.isHidden = true
-        }
+        let session = try makeComposing(view)
+        defer { endComposing(session) }
         XCTAssertEqual(view.documentLinkChips.count, 2)
         let second = try XCTUnwrap(view.documentLinkChips.last)
 

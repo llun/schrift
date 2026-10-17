@@ -2161,7 +2161,12 @@ that are easy to violate and expensive to discover:
   (`refreshDocumentLinkChipsWhileComposing`), so chips before or after the
   composition keep their slots instead of re-wrapping the line on every CJK
   keystroke; it never touches `hiddenRanges`, and invalidates glyphs/layout only
-  for the chips that changed. Accepted residuals:
+  for the chips that changed. A chip may newly appear mid-composition only where
+  its `[` is already in the stale `hiddenRanges`; a removed chip's slot stays an
+  undrawn control glyph only while the character at that index is still the `[`
+  — composition just before a chip can briefly misplace it, the same
+  stale-hidden-range limitation composition has for other hidden syntax, healed
+  on commit. Accepted residuals:
   the reading icon is not itself tappable (the title is); the trailing padding
   overlaps the next character on both surfaces rather than reserving width; two
   *adjacent* links to the same document merge into one chip while reading; and a

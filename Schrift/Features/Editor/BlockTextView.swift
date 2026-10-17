@@ -357,9 +357,16 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// - a slot that **appeared** has its one glyph regenerated, which the glyph
     ///   pass turns into the slot (`chipSlotIndexes` is consulted before the
     ///   possibly stale `hiddenRanges`);
+    ///   A slot appears only if its index is already in the (stale)
+    ///   `hiddenRanges`, i.e. the `[` was already hidden; otherwise the chip waits
+    ///   for the first restyle after commit.
     /// - a slot that **went** keeps its (never drawn) control glyph and is only
     ///   re-laid out, where it is no longer a slot and so gets no advance — the
     ///   `[` stays invisible without the glyph pass reading stale hidden ranges.
+    ///   That holds while the character at that index is still the `[`;
+    ///   composition just before a chip can briefly misplace it, the same
+    ///   stale-hidden-range limitation composition already has for other hidden
+    ///   syntax, and it heals on commit.
     private func refreshDocumentLinkChipsWhileComposing(around marked: UITextRange, styling: BlockTextStyling) {
         let source = text ?? ""
         let length = (source as NSString).length
@@ -374,10 +381,16 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
         for link in layout.links where linkRanges[link.range.location] == nil {
             linkRanges[link.range.location] = link.range
         }
+        let previousSlots = Set(documentLinkChips.map(\.slotIndex))
         let chips = documentLinkChipSpans(in: layout, serverHost: styling.documentLinkHost).filter { chip in
-            let link =
-                linkRanges[chip.slotIndex]
-                ?? NSRange(location: chip.slotIndex, length: NSMaxRange(chip.labelRange) - chip.slotIndex)
+            guard let link = linkRanges[chip.slotIndex] else { return false }
+            // A new slot is only safe where the `[` is already hidden; the glyph
+            // pass would otherwise lay out a visible `[` as the slot.
+            if !previousSlots.contains(chip.slotIndex)
+                && !hiddenRanges.contains(where: { NSLocationInRange(chip.slotIndex, $0) })
+            {
+                return false
+            }
             if markedRange.length == 0 {
                 return !(markedRange.location > link.location && markedRange.location < NSMaxRange(link))
             }
@@ -387,7 +400,6 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
         guard chips != previous else { return }
         configureDocumentLinkChips(chips, styling: styling)
 
-        let previousSlots = Set(previous.map(\.slotIndex))
         for chip in chips where !previousSlots.contains(chip.slotIndex) && chip.slotIndex < length {
             layoutManager.invalidateGlyphs(
                 forCharacterRange: NSRange(location: chip.slotIndex, length: 1), changeInLength: 0,
