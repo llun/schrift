@@ -843,6 +843,14 @@ new code reads like the surrounding code.
   `ImageTransport`, whose ephemeral, origin-pinned session supports explicitly
   consented external URLs without sharing credentials.)
 - Add each feature's endpoints as an `extension DocsAPIClient` in **its own file**.
+- **Repeat reads are de-duplicated, not cached.** `currentUser()` and `serverConfig()` share a request
+  already on the wire (`inFlightCurrentUser` / `inFlightServerConfig`; the slot clears when it settles), so
+  the launch task, Profile and the replay passes cost one `GET` when they overlap. There is deliberately **no
+  TTL**: identity must come from a live fetch and is forgotten when cookies change hands. Screens add a
+  30 s `LoadFreshness` window on their *passive* on-appear entry only (`HomeViewModel`/`SharedViewModel`
+  `loadIfStale()`, `ProfileViewModel.loadIfStale(sessionGeneration:)`): keyed on the availability token
+  (Profile: the sign-in generation); pull-to-refresh, replay, migration and delete reloads call `load()` and
+  always fetch.
 - **Decode** with the shared `JSONDecoder.docsAPI` (snake_case + dual ISO8601 date
   handling) — never a bare `JSONDecoder` for API responses. **Encoding** uses a
   bare `JSONEncoder` with no key strategy, so a request body with multi-word

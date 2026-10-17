@@ -47,6 +47,14 @@ actor DocsAPIClient {
     /// `ContentSaveRoute` (`CollaborationYDocEndpoints.swift`).
     var contentSaveRoute: ContentSaveRoute?
 
+    /// The `users/me/` and `config/` GETs currently on the wire. Concurrent callers (launch task,
+    /// Profile, the replay passes, Home) join one request instead of each issuing their own; the
+    /// slot is cleared as soon as that request settles, so a call made afterwards always goes to
+    /// the network — identity must come from a live fetch (replay gating) and is forgotten when
+    /// cookies change hands, so nothing here may outlive the request. See `currentUser()`.
+    var inFlightCurrentUser: Task<CurrentUser, any Error>?
+    var inFlightServerConfig: Task<ServerConfig, any Error>?
+
     init(
         baseURL: URL,
         session: URLSession = .shared,
