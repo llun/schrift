@@ -274,7 +274,7 @@ struct MarkdownBlockView: View {
         let font = appearance.uiFont(dynamicTypeSize: dynamicTypeSize)
         let metrics = DocumentLinkChipMetrics(fontSize: font.pointSize)
         let band = DocumentLinkChipIconBand(font: font)
-        let image = documentLinkChipIconImage(metrics: metrics, band: band)
+        let image = DocumentLinkChipIconCache.image(metrics: metrics, band: band)
         guard let cgImage = image.cgImage else { return nil }
         // Decorative: the title beside it is what VoiceOver reads (as a link).
         let icon = Image(decorative: cgImage, scale: image.scale).renderingMode(.template)

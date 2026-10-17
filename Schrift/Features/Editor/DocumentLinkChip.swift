@@ -271,6 +271,21 @@ enum DocumentLinkChipAttribute: AttributedStringKey {
     static let name = "dev.llun.Schrift.documentLinkChip"
 }
 
+/// Memoizes the reading surface's chip icon, which `body` would otherwise
+/// re-render on every evaluation. One entry, like the editing surface's
+/// `chipIconCache`: a screen's blocks share a few font sizes at most.
+@MainActor
+enum DocumentLinkChipIconCache {
+    private static var entry: (metrics: DocumentLinkChipMetrics, band: DocumentLinkChipIconBand, icon: UIImage)?
+
+    static func image(metrics: DocumentLinkChipMetrics, band: DocumentLinkChipIconBand) -> UIImage {
+        if let entry, entry.metrics == metrics, entry.band == band { return entry.icon }
+        let icon = documentLinkChipIconImage(metrics: metrics, band: band)
+        entry = (metrics, band, icon)
+        return icon
+    }
+}
+
 /// A run of reading-surface text: ordinary, or one document link's title.
 enum InlineTextSegment: Equatable {
     case text(AttributedString)

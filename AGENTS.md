@@ -2137,6 +2137,7 @@ that are easy to violate and expensive to discover:
   surfaces (next bullet). A bare *document* URL is never a chip: it is marked
   before autolinking, so only an explicit link can add the chip's icon width.
 - **A document link is a "page chip" on both surfaces, and it is display only.**
+  While an IME is composing, `applyInlineStyling` drops the chip slots (restored by the first restyle after commit).
   `Features/Editor/DocumentLinkChip.swift`: rounded `brandFillSubtle` background,
   `textBrand` ink, **no underline**, a `description` (page) glyph before the title;
   external links keep the underline. Which links qualify is `isDocumentLink`, the

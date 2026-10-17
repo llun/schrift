@@ -46,7 +46,7 @@ func documentLinkAction(for url: URL, serverHost: String, currentDocumentID: UUI
 /// Whether `url` names another document on this server — the exact match
 /// `documentLinkAction` opens in the app, so a link is drawn as a page chip
 /// (`DocumentLinkChip.swift`) exactly when tapping it would stay in the app.
-/// A link to the document on screen counts too: it is still a page.
+/// A link to the document on screen counts too, because it is still a page.
 func isDocumentLink(_ url: URL, serverHost: String) -> Bool {
     linkedDocumentID(from: url, serverHost: serverHost) != nil
 }

@@ -178,6 +178,17 @@ final class MarkdownBlockViewTests: XCTestCase {
         }
     }
 
+    /// Taps on a chip still reach `openURL`: the segment that becomes the chip's
+    /// title keeps the document URL as its `.link`, on every run, marks included.
+    func testAChipTitleSegmentStillCarriesTheDocumentURL() {
+        let segments = inlineTextSegments(markdownInlineText("[Road **map**](\(page))", serverHost: host))
+        guard case .documentLink(let title)? = segments.first, segments.count == 1 else {
+            return XCTFail("expected exactly one document-link segment")
+        }
+        XCTAssertFalse(title.runs.isEmpty)
+        XCTAssertEqual(title.runs.map(\.link), Array(repeating: URL(string: page)!, count: title.runs.count))
+    }
+
     func testTwoDifferentDocumentLinksAreTwoChips() {
         let other = "https://docs.example.org/docs/33333333-3333-4333-8333-333333333333/"
         let result = markdownInlineText("[One](\(page))[Two](\(other))", serverHost: host)

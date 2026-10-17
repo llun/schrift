@@ -306,7 +306,21 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// which is exactly how the strikethrough on a completed to-do came to exist
     /// on one surface only.
     func applyInlineStyling(_ styling: BlockTextStyling) {
-        guard markedTextRange == nil else { return }
+        guard markedTextRange == nil else {
+            // Composition shifts character indexes under the stale slot set, so a
+            // chip's slot would land on the wrong glyph (and the chip fill on the
+            // wrong range). Drop them until the first restyle after commit.
+            if !chipSlotIndexes.isEmpty {
+                chipSlotIndexes = []
+                chipSlotWidth = 0
+                documentLinkChips = []
+                (layoutManager as? DocumentLinkChipLayoutManager)?.chips = []
+                let all = NSRange(location: 0, length: ((text ?? "") as NSString).length)
+                layoutManager.invalidateGlyphs(forCharacterRange: all, changeInLength: 0, actualCharacterRange: nil)
+                layoutManager.invalidateLayout(forCharacterRange: all, actualCharacterRange: nil)
+            }
+            return
+        }
         let font = styling.font
         let source = text ?? ""
         let full = NSRange(location: 0, length: (source as NSString).length)
