@@ -63,4 +63,32 @@ final class HomeViewModelFreshnessTests: HomeViewModelTestCase {
 
         XCTAssertGreaterThan(recorder.count(ofMethod: "GET", urlContaining: "documents/"), afterFirst)
     }
+
+    func testConcurrentPassiveReloadsCoalesceIntoOneFetch() async {
+        // Baseline: how many list requests one passive load issues on its own.
+        let baseline = RequestRecorder()
+        stubLists(baseline)
+        await makeViewModel(now: { [unowned self] in self.clock }).loadIfStale()
+        let oneLoad = baseline.count(ofMethod: "GET", urlContaining: "documents/")
+        XCTAssertGreaterThan(oneLoad, 0)
+        MockURLProtocol.reset()
+
+        let recorder = RequestRecorder()
+        let empty = Self.emptyFixture
+        let gate = MockURLProtocol.ResponseGate()
+        MockURLProtocol.stubHandler = { request in
+            recorder.record(request)
+            return .init(statusCode: 200, headers: [:], body: empty, error: nil, releasedBy: gate)
+        }
+        let viewModel = makeViewModel(now: { [unowned self] in self.clock })
+
+        async let first: Void = viewModel.loadIfStale()
+        async let second: Void = viewModel.loadIfStale()
+        // Let the second call reach the in-flight guard before the first response lands.
+        for _ in 0..<5 { await Task.yield() }
+        gate.open()
+        _ = await (first, second)
+
+        XCTAssertEqual(recorder.count(ofMethod: "GET", urlContaining: "documents/"), oneLoad)
+    }
 }

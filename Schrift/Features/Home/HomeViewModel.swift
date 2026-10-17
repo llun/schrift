@@ -144,6 +144,8 @@ final class HomeViewModel {
     private var loadGeneration = 0
     /// When the last successful list fetch landed, for `loadIfStale()`.
     @ObservationIgnored private var freshness = LoadFreshness<OnlineAvailability.Token>()
+    /// True while a passive `loadIfStale()` is awaiting `load()`; a concurrent passive call coalesces into it.
+    @ObservationIgnored private var isPassiveLoadInFlight = false
     @ObservationIgnored private let now: () -> Date
     /// The debounced silent reload after a replayed offline push lands (see
     /// `onReplayedPushLanded`); a newer landing cancels the pending one.
@@ -320,9 +322,12 @@ final class HomeViewModel {
 
     /// The passive on-appear entry: skips the fetch when the last successful one is recent and
     /// the availability token is unchanged. Everything else (pull-to-refresh, replay, migration,
-    /// delete) calls `load()` and always fetches.
+    /// delete) calls `load()` and always fetches. A second passive call while one is in flight is
+    /// skipped, because the first one's result answers it.
     func loadIfStale() async {
-        if freshness.isFresh(token: availability.token, at: now()) { return }
+        if isPassiveLoadInFlight || freshness.isFresh(token: availability.token, at: now()) { return }
+        isPassiveLoadInFlight = true
+        defer { isPassiveLoadInFlight = false }
         await load()
     }
 
