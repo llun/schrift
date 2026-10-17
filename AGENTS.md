@@ -1126,6 +1126,11 @@ new code reads like the surrounding code.
     When a change alters a screen, regenerate the affected screens there.
   - Commit and push the sketch repo **directly to its default branch** — no
     PR. Only the code change in this repo goes through the normal PR flow.
+  - Then publish it: run `scripts/publish.sh` in the sketch checkout. It tests
+    and builds the site and uploads it to the sketch repo's GitHub release
+    `site` with the GitHub CLI (`gh auth login` once); the VM deploys it to
+    <https://sketch.llun.dev/> within 10 minutes. Pushing alone does not update
+    the site.
 - **App identity:** `docs/assets/app-icon/make-svg.mjs` is the source of truth
   for the app icon and the sign-in logo; `export.sh` beside it renders every PNG
   (icon default/dark/tinted, logo Any/Dark). Change the geometry there and
