@@ -13,6 +13,7 @@ struct DocumentListView: View {
     var onNewDocument: (() -> Void)? = nil
 
     @Environment(LocalizationStore.self) private var loc
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("schrift.workOffline") private var workOffline = false
     /// The struck-through row the user tapped, if any — see `pendingDeleteUndoAlert`.
     @State private var documentPendingUndo: Document?
@@ -31,6 +32,11 @@ struct DocumentListView: View {
     @State private var offlineStatus = DebouncedStatus()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var showsOfflineBanner: Bool { workOffline || offlineStatus.value }
+
+    /// Identity of what the Pinned and Recent sections show; the animation trigger.
+    private var listIDs: [UUID] {
+        viewModel.pinnedDocuments.map(\.id) + viewModel.recentDocuments.map(\.id)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -77,6 +83,10 @@ struct DocumentListView: View {
 
                     content
                 }
+                // Rows glide when a revalidation adds, removes or reorders them (and when the
+                // Pinned header appears) instead of snapping. Keyed on the fetched lists only —
+                // never on search results, which change per keystroke and would feel laggy.
+                .animation(reduceMotion ? nil : .snappy, value: listIDs)
                 .padding(.top, DocsSpacing.space3xs)
                 .padding(.horizontal, DocsSpacing.gutter)
                 .padding(.bottom, DocsSpacing.spaceBase)
@@ -131,7 +141,7 @@ struct DocumentListView: View {
             }
         }
         .task(id: viewModel.availability.token) {
-            await viewModel.load()
+            await viewModel.loadIfStale()
             await viewModel.search()
         }
         .onChange(of: viewModel.searchQuery) {

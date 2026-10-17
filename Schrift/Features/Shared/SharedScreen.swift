@@ -4,9 +4,12 @@ struct SharedScreen: View {
     @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: SharedViewModel
     let serverHost: String
+    /// `SessionStore.signInGeneration`: a re-login reloads even inside the freshness window.
+    let signInGeneration: Int
     var onOpenDocument: (Document) -> Void
 
     @Environment(LocalizationStore.self) private var loc
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The struck-through row the user tapped, if any — see `pendingDeleteUndoAlert`.
     @State private var documentPendingUndo: Document?
     @AppStorage("schrift.workOffline") private var workOffline = false
@@ -93,6 +96,8 @@ struct SharedScreen: View {
                                 )
                             }
                         }
+                        // Rows glide when a revalidation changes the list rather than snapping.
+                        .animation(reduceMotion ? nil : .snappy, value: viewModel.documents.map(\.id))
                         // Matches Home's section rhythm before the footer.
                         .padding(.bottom, DocsSpacing.spaceSM)
                         .padding(.horizontal, DocsSpacing.gutter)
@@ -122,8 +127,10 @@ struct SharedScreen: View {
         }
         .navigationTitle(loc[.shared_title])
         .navigationSubtitle(serverHost)
-        .task(id: viewModel.availability.token) {
-            await viewModel.load()
+        .task(
+            id: SharedViewModel.LoadKey(token: viewModel.availability.token, sessionGeneration: signInGeneration)
+        ) {
+            await viewModel.loadIfStale(sessionGeneration: signInGeneration)
         }
     }
 }
@@ -132,6 +139,7 @@ struct SharedScreen: View {
     SharedScreen(
         viewModel: SharedViewModel(client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)),
         serverHost: "docs.llun.dev",
+        signInGeneration: 0,
         onOpenDocument: { _ in }
     )
     .environment(LocalizationStore())

@@ -65,7 +65,7 @@ struct ProfileScreen: View {
         // the view model is `@State` in `MainTabView`, which survives the sheet too. Left
         // unkeyed, an account row loaded for the previous user stays on screen (and stays
         // tappable through to their detail) until the user happens to switch tabs.
-        .task(id: signInGeneration) { await viewModel.load() }
+        .task(id: signInGeneration) { await viewModel.loadIfStale(sessionGeneration: signInGeneration) }
         .sheet(isPresented: $showAppearanceSheet) {
             AppearancePickerSheet()
                 .presentationDetents([.height(appearanceSheetHeight)])

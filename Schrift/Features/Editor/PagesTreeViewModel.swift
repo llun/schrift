@@ -320,7 +320,7 @@ final class PagesTreeViewModel {
             // A create landed while this was in flight, so this snapshot
             // predates the new child: dropping it keeps the child on screen.
             guard mutation == mutations[parentID] ?? 0 else { return }
-            children[parentID] = fetched
+            if children[parentID] != fetched { children[parentID] = fetched }
             saveCoordinator?.pins.didReadFlags(fetched, ownerUserID: pinOwner, fetchedAt: pinRevision)
             cache.save(fetched, for: parentID)
             failedLoads.remove(parentID)

@@ -16,6 +16,13 @@ func displayedImage(from data: Data) -> UIImage? {
     return UIImage(cgImage: image)
 }
 
+/// Width over height of a decoded image, or nil when either side is empty or non-finite.
+/// Pure so the placeholder/loaded-frame agreement is testable without SwiftUI.
+func imageAspectRatio(of size: CGSize) -> CGFloat? {
+    guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return nil }
+    return size.width / size.height
+}
+
 enum ImageLoadState: Equatable, Sendable {
     case idle, loading, requiresConsent, unavailableOffline, failed
     case cached(URL)
@@ -37,6 +44,11 @@ enum ImageLoadState: Equatable, Sendable {
     /// allowed retries these once; a content failure is never in here and stays retry-only.
     private var transportFailures: Set<Key> = []
     private var inFlight: [Key: Task<UIImage?, Never>] = [:]
+    /// Aspect ratio of every image prepared this session, keyed like the cache (scope + URL). It lets the loading
+    /// placeholder reserve the loaded image's frame when the decoded bitmap was evicted and must be rebuilt, so the
+    /// text below does not jump. Pure bookkeeping: it never causes a request, and entries of any other scope are
+    /// dropped as soon as a new image is recorded under a changed scope (sign-out/handover rotates it).
+    private var aspectRatios: [Key: CGFloat] = [:]
     private let decoded: NSCache<NSURL, UIImage>
     private let decode: @Sendable (Data) async -> UIImage?
     private let scopeProvider: () -> ImageCacheScope?
@@ -100,6 +112,19 @@ enum ImageLoadState: Equatable, Sendable {
         return decoded.object(forKey: file as NSURL)
     }
 
+    /// The remembered width/height of `url` in the current scope, if it was prepared before.
+    func aspectRatio(for url: URL) -> CGFloat? {
+        guard let scope else { return nil }
+        return aspectRatios[Key(scope: scope, url: url)]
+    }
+
+    private func recordAspectRatio(_ image: UIImage, for key: Key) {
+        if aspectRatios.keys.contains(where: { $0.scope != key.scope }) {
+            aspectRatios = aspectRatios.filter { $0.key.scope == key.scope }
+        }
+        if let ratio = imageAspectRatio(of: image.size), aspectRatios[key] != ratio { aspectRatios[key] = ratio }
+    }
+
     func approve(_ url: URL) {
         guard let scope, isFetchableImageURL(url) else { return }
         approved.insert(Key(scope: scope, url: url))
@@ -141,6 +166,7 @@ enum ImageLoadState: Equatable, Sendable {
         }
         if let file = cache.cachedFileURL(for: key.url, scope: key.scope) {
             if let image = decoded.object(forKey: file as NSURL) {
+                recordAspectRatio(image, for: key)
                 states[key] = .cached(file)
                 transportFailures.remove(key)
                 return image
@@ -152,6 +178,7 @@ enum ImageLoadState: Equatable, Sendable {
             {
                 guard scope == key.scope else { return nil }
                 remember(image, file: file)
+                recordAspectRatio(image, for: key)
                 states[key] = .cached(file)
                 transportFailures.remove(key)
                 return image
@@ -193,6 +220,7 @@ enum ImageLoadState: Equatable, Sendable {
                 return nil
             }
             remember(image, file: file)
+            recordAspectRatio(image, for: key)
             states[key] = .cached(file)
             transportFailures.remove(key)
             return image

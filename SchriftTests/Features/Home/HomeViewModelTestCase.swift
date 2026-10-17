@@ -58,7 +58,8 @@ class HomeViewModelTestCase: XCTestCase {
         signedInUser: SignedInUserStore? = nil,
         cachedUser: CurrentUserCacheStore? = nil,
         diagnostics: APIDiagnosticsLog? = nil,
-        availability: OnlineAvailability? = nil
+        availability: OnlineAvailability? = nil,
+        now: @escaping () -> Date = { Date() }
     ) -> HomeViewModel {
         // The client records into the same log the view model reads, exactly as RootView
         // wires them — a separate log would silently never produce a detail.
@@ -105,7 +106,8 @@ class HomeViewModelTestCase: XCTestCase {
             signedInUser: signedInUser ?? makeSignedInUser(userID: nil),
             cachedUser: cachedUser ?? CurrentUserCacheStore(userDefaults: defaults),
             diagnostics: diagnostics,
-            availability: availability
+            availability: availability,
+            now: now
         )
     }
 

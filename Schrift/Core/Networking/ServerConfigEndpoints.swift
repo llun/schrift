@@ -75,7 +75,18 @@ extension DocsAPIClient {
     /// straight to the collaboration server instead of discovering the legacy route's 404.
     /// The save path fetches config itself only after the legacy route 404s, to learn the
     /// collaboration org; see `ContentSaveRoute`.
+    ///
+    /// Concurrent callers (launch task, Profile, favorites route discovery) share one request;
+    /// the slot clears when it settles, so later calls refetch.
     func serverConfig() async throws -> ServerConfig {
+        if let task = inFlightServerConfig { return try await task.value }
+        let task = Task { try await self.fetchServerConfig() }
+        inFlightServerConfig = task
+        defer { inFlightServerConfig = nil }
+        return try await task.value
+    }
+
+    private func fetchServerConfig() async throws -> ServerConfig {
         let config: ServerConfig = try await get("config/")
         if let route = ContentSaveRoute(config: config) {
             contentSaveRoute = route
