@@ -388,7 +388,13 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
         for link in layout.links where linkRanges[link.range.location] == nil {
             linkRanges[link.range.location] = link.range
         }
-        let chips = documentLinkChipSpans(in: layout, serverHost: styling.documentLinkHost).filter { chip in
+        let allChips = documentLinkChipSpans(in: layout, serverHost: styling.documentLinkHost)
+        // A block with no chip before or after this keystroke keeps composing
+        // exactly as it always has: nothing is recomputed until commit. Keyed on
+        // the block's chips before filtering, because a chip dropped for the
+        // composition must keep the hidden ranges current for later keystrokes.
+        guard !allChips.isEmpty || !documentLinkChips.isEmpty else { return }
+        let chips = allChips.filter { chip in
             guard let link = linkRanges[chip.slotIndex], chip.slotIndex < length else { return false }
             let overlapsMarked =
                 markedRange.length == 0
@@ -397,9 +403,6 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
             guard !overlapsMarked else { return false }
             return hidden.contains { NSLocationInRange(chip.slotIndex, $0) }
         }
-        // A block with no chip before or after this keystroke keeps composing
-        // exactly as it always has: nothing is recomputed until commit.
-        guard !chips.isEmpty || !documentLinkChips.isEmpty else { return }
         guard source != glyphStateSource || hidden != hiddenRanges || chips != documentLinkChips else { return }
 
         // Before the invalidation below triggers a layout pass that reads them.

@@ -429,6 +429,34 @@ final class BlockTextRenderingTests: XCTestCase {
             accuracy: 0.5)
     }
 
+    /// A block whose only chip is dropped for the composition must keep
+    /// recomputing its hidden syntax, or the stale `](url)` range swallows
+    /// the second composed character.
+    func testComposingInALoneChipsTitleNeverHidesAComposedCharacter() throws {
+        let source = "[Roadmap](\(page))"
+        let styling = blockTextStyling(for: EditorBlock(kind: .paragraph, text: source), serverHost: chipHost)
+        let view = makeChipView(source, serverHost: chipHost)
+        let session = try makeComposing(view)
+        defer { endComposing(session) }
+        XCTAssertEqual(view.documentLinkChips.count, 1)
+
+        // At the end of "Roadmap", just before "]".
+        view.selectedRange = NSRange(location: 8, length: 0)
+        view.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+        _ = try XCTUnwrap(view.markedTextRange)
+        view.applyInlineStyling(styling)
+        view.setMarkedText("にほ", selectedRange: NSRange(location: 2, length: 0))
+        _ = try XCTUnwrap(view.markedTextRange)
+        view.applyInlineStyling(styling)
+
+        XCTAssertEqual(view.documentLinkChips, [])
+        let manager = view.layoutManager
+        for index in 8..<10 {
+            let glyph = manager.glyphIndexForCharacter(at: index)
+            XCTAssertFalse(manager.propertyForGlyph(at: glyph).contains(.null), "character \(index) is hidden")
+        }
+    }
+
     // MARK: - Blocks that style nothing keep nothing stale
 
     /// Converting a block that held a link into a code block must drop its hidden
