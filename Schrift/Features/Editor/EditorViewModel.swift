@@ -476,6 +476,7 @@ final class EditorViewModel {
                     subpages = cachedChildren
                 }
                 restoreLocalContent()
+                seedNewlyCreatedDocument()
                 enterNewDocumentIfReady()
             }
             // No spinner for a document declared gone: `readingSurface` owns the
@@ -534,6 +535,30 @@ final class EditorViewModel {
             displaySource = .none
         }
         hasLocalCopy = displaySource != .none
+    }
+
+    /// A document this screen was opened to **create** opens straight into editing, with no
+    /// loading screen: its body is empty by construction (the create sends a title and
+    /// nothing else), so there is nothing to wait for. Only when the local phase found
+    /// nothing — a document created on this device already restored from its seed draft —
+    /// and only while the creation intent is still unconsumed, so a reopened or recreated
+    /// screen loads like any other document.
+    ///
+    /// The empty body goes through `install`, and its baseline claims exactly that and no
+    /// more: an empty body, with **no** server clock. A clock would let `draftSyncDecision`
+    /// prove a push by timestamp alone, so a body the server held at that same instant (one
+    /// the create itself wrote) would be abandoned and overwritten. With none, only body
+    /// equality proves anything — the server's `""` changes nothing, and any other body it
+    /// holds is stashed behind the "Updated" banner and conflicts on the first edit, the same
+    /// way as for any other clean document. The first fetch replaces the baseline anyway.
+    ///
+    /// `syncedAt` is now because the create POST that produced this document has just
+    /// landed: the server holds exactly what is on screen, a title and no body.
+    private func seedNewlyCreatedDocument() {
+        guard displaySource == .none, !isLocalDocument, let entryIntent, entryIntent.isPending else { return }
+        install(markdown: "", title: nil, syncedAt: Date())
+        serverBaseline = DraftBaseline(serverUpdatedAt: nil, markdown: "", title: title)
+        displaySource = .clean
     }
 
     /// Revalidation: the awaited structured tail of load() — no unstructured
@@ -798,6 +823,9 @@ final class EditorViewModel {
         dirtySince = nil
         isDirty = false
         mode = .reading
+        // A title-focus request the header never claimed must not outlive the session it
+        // belonged to, or a later manual Edit would select the title as if just created.
+        initialTitleFocusPending = false
         focusedBlockID = nil
         cursorRequest = nil
         selection = nil

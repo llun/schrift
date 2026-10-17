@@ -691,9 +691,7 @@ struct EditorView: View {
             }
 
             if viewModel.isLoading {
-                ProgressView()
-                    .padding(DocsSpacing.spaceBase)
-                Spacer()
+                EditorLoadingPlaceholder()
             } else if viewModel.needsOnlineContent {
                 ContentUnavailableView {
                     Label {
@@ -716,6 +714,12 @@ struct EditorView: View {
                 readingSurface
             }
         }
+        // The column fills the screen in every state, so `body`'s page background does
+        // too. Without it a branch with no greedy child (the loading spinner) leaves the
+        // `VStack` only as wide as that child, and the page colour paints a narrow strip
+        // down the middle with the system background either side — invisible on White,
+        // obvious on Paper.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     /// Shown instead of the body for a document whose deletion is queued, with the undo beside
@@ -1451,4 +1455,73 @@ struct EditorNoticeLabel: View {
         .background(Capsule().fill(theme.colors.gray050))
         .contentShape(Capsule())
     }
+}
+
+// MARK: - Loading
+
+/// The editor's first-load state: placeholder bars where the document header and its first
+/// lines will appear, on an otherwise empty page.
+///
+/// A skeleton rather than a spinner, per the handoff's loading rule, laid out on the reading
+/// surface's own gutter and header spacing so the title lands where its bar was. A document
+/// opened with an unconsumed creation intent never shows it: it opens straight into editing
+/// (`EditorViewModel.seedNewlyCreatedDocument`), since its body is empty by construction.
+///
+/// It **fills what it is offered** rather than sizing to its content, because the page
+/// background is painted behind the column it sits in: sized to a spinner, that column was
+/// a spinner wide, and a Paper (or any non-white) theme showed its colour only as a strip
+/// down the middle of the screen. `EditorLoadingPlaceholderTests` measures it against a
+/// full-screen proposal.
+struct EditorLoadingPlaceholder: View {
+    @Environment(LocalizationStore.self) private var loc
+
+    /// Fixed rhythm, like `SkeletonList`'s, so the placeholder doesn't reshuffle on redraw.
+    static let bodyLineFractions: [CGFloat] = [1, 0.92, 0.97, 0.6]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
+            VStack(alignment: .leading, spacing: EditorBlockMetrics.titleToMetadataSpacing) {
+                SkeletonLine(fraction: 0.62, height: 28)
+                HStack(spacing: DocsSpacing.spaceXS) {
+                    Skeleton(width: 76, height: 20, cornerRadius: DocsRadius.pill)
+                    Skeleton(width: 92, height: 11)
+                }
+                .frame(minHeight: DocsSpacing.rowMinHeight, alignment: .leading)
+            }
+            .padding(.bottom, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
+
+            ForEach(Array(Self.bodyLineFractions.enumerated()), id: \.offset) { _, fraction in
+                SkeletonLine(fraction: fraction, height: 13)
+            }
+        }
+        .padding(.horizontal, EditorBlockMetrics.gutter)
+        .padding(.top, DocsSpacing.spaceSM)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(loc[.common_loading])
+    }
+}
+
+/// One placeholder text line, a fraction of the column wide.
+private struct SkeletonLine: View {
+    let fraction: CGFloat
+    let height: CGFloat
+
+    var body: some View {
+        GeometryReader { proxy in
+            Skeleton(width: proxy.size.width * fraction, height: height)
+        }
+        .frame(height: height)
+    }
+}
+
+#Preview("Loading placeholder") {
+    EditorLoadingPlaceholder()
+        .environment(LocalizationStore())
+}
+
+#Preview("Loading placeholder, dark") {
+    EditorLoadingPlaceholder()
+        .environment(LocalizationStore())
+        .preferredColorScheme(.dark)
 }
