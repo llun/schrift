@@ -297,8 +297,9 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// reads. Attribute-only edits leave the characters alone, so no
     /// `.textChanged` event is produced and the selection survives.
     ///
-    /// Skipped while an input method is composing, whose marked-text attributes
-    /// must not be overwritten.
+    /// While an input method is composing, the marked text's characters and
+    /// attributes are UIKit's, so only the page chips are refreshed
+    /// (`refreshDocumentLinkChipsWhileComposing`) and nothing is restyled.
     ///
     /// Takes the whole `BlockTextStyling` rather than the two or three fields it
     /// happens to need: a field added to the block's appearance that this forgot
@@ -306,19 +307,8 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// which is exactly how the strikethrough on a completed to-do came to exist
     /// on one surface only.
     func applyInlineStyling(_ styling: BlockTextStyling) {
-        guard markedTextRange == nil else {
-            // Composition shifts character indexes under the stale slot set, so a
-            // chip's slot would land on the wrong glyph (and the chip fill on the
-            // wrong range). Drop them until the first restyle after commit.
-            if !chipSlotIndexes.isEmpty {
-                chipSlotIndexes = []
-                chipSlotWidth = 0
-                documentLinkChips = []
-                (layoutManager as? DocumentLinkChipLayoutManager)?.chips = []
-                let all = NSRange(location: 0, length: ((text ?? "") as NSString).length)
-                layoutManager.invalidateGlyphs(forCharacterRange: all, changeInLength: 0, actualCharacterRange: nil)
-                layoutManager.invalidateLayout(forCharacterRange: all, actualCharacterRange: nil)
-            }
+        if let marked = markedTextRange {
+            refreshDocumentLinkChipsWhileComposing(around: marked, styling: styling)
             return
         }
         let font = styling.font
@@ -351,6 +341,72 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
         if selectedRange != selection {
             selectedRange = selection
         }
+    }
+
+    /// The composition half of `applyInlineStyling`: recomputes the chips from
+    /// the current buffer, so a chip before or after the marked text keeps its
+    /// slot (at its shifted index) instead of every chip in the block vanishing
+    /// and re-wrapping the line on each keystroke of a CJK composition. Only a
+    /// chip whose link the marked text touches is dropped — its title is still
+    /// being typed — until the first restyle after commit.
+    ///
+    /// Touches nothing but the chip state. Text attributes and `hiddenRanges`
+    /// stay as they are (the composition rules forbid changing the marked
+    /// characters or their attributes), and glyphs and layout are invalidated
+    /// only for the chips that changed:
+    /// - a slot that **appeared** has its one glyph regenerated, which the glyph
+    ///   pass turns into the slot (`chipSlotIndexes` is consulted before the
+    ///   possibly stale `hiddenRanges`);
+    /// - a slot that **went** keeps its (never drawn) control glyph and is only
+    ///   re-laid out, where it is no longer a slot and so gets no advance — the
+    ///   `[` stays invisible without the glyph pass reading stale hidden ranges.
+    private func refreshDocumentLinkChipsWhileComposing(around marked: UITextRange, styling: BlockTextStyling) {
+        let source = text ?? ""
+        let length = (source as NSString).length
+        let markedRange = NSRange(
+            location: offset(from: beginningOfDocument, to: marked.start),
+            length: offset(from: marked.start, to: marked.end))
+        let layout =
+            styling.rendersInlineMarkdown
+            ? InlineMarkdown.layout(of: source)
+            : InlineLayout(spans: [], syntax: [], links: [])
+        var linkRanges: [Int: NSRange] = [:]
+        for link in layout.links where linkRanges[link.range.location] == nil {
+            linkRanges[link.range.location] = link.range
+        }
+        let chips = documentLinkChipSpans(in: layout, serverHost: styling.documentLinkHost).filter { chip in
+            let link =
+                linkRanges[chip.slotIndex]
+                ?? NSRange(location: chip.slotIndex, length: NSMaxRange(chip.labelRange) - chip.slotIndex)
+            if markedRange.length == 0 {
+                return !(markedRange.location > link.location && markedRange.location < NSMaxRange(link))
+            }
+            return NSIntersectionRange(link, markedRange).length == 0
+        }
+        let previous = documentLinkChips
+        guard chips != previous else { return }
+        configureDocumentLinkChips(chips, styling: styling)
+
+        let previousSlots = Set(previous.map(\.slotIndex))
+        for chip in chips where !previousSlots.contains(chip.slotIndex) && chip.slotIndex < length {
+            layoutManager.invalidateGlyphs(
+                forCharacterRange: NSRange(location: chip.slotIndex, length: 1), changeInLength: 0,
+                actualCharacterRange: nil)
+        }
+        // Every chip that appeared or went; the old ones are in pre-composition
+        // coordinates, so they are clamped to the buffer.
+        let changed = previous.filter { !chips.contains($0) } + chips.filter { !previous.contains($0) }
+        var start = length
+        var end = 0
+        for chip in changed {
+            start = min(start, chip.slotIndex)
+            end = max(end, NSMaxRange(chip.labelRange))
+        }
+        end = min(end, length)
+        guard start < end else { return }
+        let affected = NSRange(location: start, length: end - start)
+        layoutManager.invalidateLayout(forCharacterRange: affected, actualCharacterRange: nil)
+        layoutManager.invalidateDisplay(forCharacterRange: affected)
     }
 
     /// Hands the chips to the glyph pass (slot indexes and width) and to the

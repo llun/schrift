@@ -1,25 +1,29 @@
 import SwiftUI
 import UIKit
 
-/// The "page chip": how a link to another document on this server is drawn on
-/// **both** editor surfaces — a rounded `brandFillSubtle` background, `textBrand`
-/// ink, no underline, and a small `description` (page) glyph before the title.
-/// External links keep the ordinary underlined link styling.
-///
-/// It is display only. The saved markdown is the same `[Title](url)` it always
-/// was: the reading surface splits its `AttributedString` into segments, and the
-/// editing surface draws the chip *around* its raw-markdown buffer without
-/// inserting a character (the link's hidden `[` becomes the icon's slot), so
-/// `UITextView.text` stays byte-identical to `block.text` and every `NSRange` is
-/// still a source offset.
-///
-/// The two surfaces must wrap a chip identically, or tapping into edit mode
-/// re-flows the paragraph. So everything with a width — the icon slot, the
-/// trailing padding — comes from `DocumentLinkChipMetrics`, in whole points,
-/// and both surfaces build the icon from the one `documentLinkChipIconImage`.
-///
-/// Concurrency: pure value code with no annotations, like the rest of the
-/// editor's style table.
+// The "page chip": how a link to another document on this server is drawn on
+// **both** editor surfaces — a rounded `brandFillSubtle` background, `textBrand`
+// ink, no underline, and a small `description` (page) glyph before the title.
+// External links keep the ordinary underlined link styling.
+//
+// It is display only. The saved markdown is the same `[Title](url)` it always
+// was: the reading surface splits its `AttributedString` into segments, and the
+// editing surface draws the chip *around* its raw-markdown buffer without
+// inserting a character (the link's hidden `[` becomes the icon's slot), so
+// `UITextView.text` stays byte-identical to `block.text` and every `NSRange` is
+// still a source offset.
+//
+// The two surfaces must wrap a chip identically, or tapping into edit mode
+// re-flows the paragraph. So everything with a width — the icon slot, the
+// trailing padding — comes from `DocumentLinkChipMetrics`, in whole points,
+// and both surfaces build the icon from the one `documentLinkChipIconImage`.
+//
+// Concurrency: the metrics, band, span and background functions are pure value
+// code with no annotations, like the rest of the editor's style table. The file
+// also holds UIKit/SwiftUI drawing types — `DocumentLinkChipLayoutManager` (an
+// `NSLayoutManager` subclass the editing surface owns) and the reading
+// surface's renderer — and `DocumentLinkChipIconCache`, which is `@MainActor`
+// because it is mutable shared state read from view bodies.
 
 // MARK: - Metrics
 
@@ -30,7 +34,7 @@ import UIKit
 /// inline image, whose width is its pixel size, and the editing surface with a
 /// control glyph's bounding box. A fractional width would round differently in
 /// the two and a line near its wrap point could break in one surface only.
-struct DocumentLinkChipMetrics: Equatable {
+struct DocumentLinkChipMetrics: Hashable {
     /// Background drawn before the icon, inside the slot.
     let leadingPadding: CGFloat
     /// The page glyph's em square.
@@ -61,7 +65,7 @@ struct DocumentLinkChipMetrics: Equatable {
 /// points), so the inline image can never make a reading line taller than the
 /// editing line it is swapped for. Both surfaces place the image with this band,
 /// so the glyph sits at the same height on both.
-struct DocumentLinkChipIconBand: Equatable {
+struct DocumentLinkChipIconBand: Hashable {
     /// The image's bottom edge relative to the baseline (negative is below it).
     let baselineOffset: CGFloat
     let height: CGFloat
@@ -272,16 +276,26 @@ enum DocumentLinkChipAttribute: AttributedStringKey {
 }
 
 /// Memoizes the reading surface's chip icon, which `body` would otherwise
-/// re-render on every evaluation. One entry, like the editing surface's
-/// `chipIconCache`: a screen's blocks share a few font sizes at most.
+/// re-render on every evaluation. Keyed by size, because one screen mixes a few
+/// (a heading's chip and a paragraph's): a single entry would thrash between
+/// them on every render. Bounded, since Dynamic Type changes add sizes; a
+/// screen's blocks share a handful at most, so clearing on overflow is enough.
 @MainActor
 enum DocumentLinkChipIconCache {
-    private static var entry: (metrics: DocumentLinkChipMetrics, band: DocumentLinkChipIconBand, icon: UIImage)?
+    private struct Key: Hashable {
+        let metrics: DocumentLinkChipMetrics
+        let band: DocumentLinkChipIconBand
+    }
+
+    private static let capacity = 16
+    private static var icons: [Key: UIImage] = [:]
 
     static func image(metrics: DocumentLinkChipMetrics, band: DocumentLinkChipIconBand) -> UIImage {
-        if let entry, entry.metrics == metrics, entry.band == band { return entry.icon }
+        let key = Key(metrics: metrics, band: band)
+        if let icon = icons[key] { return icon }
+        if icons.count >= capacity { icons.removeAll() }
         let icon = documentLinkChipIconImage(metrics: metrics, band: band)
-        entry = (metrics, band, icon)
+        icons[key] = icon
         return icon
     }
 }

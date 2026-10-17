@@ -2137,7 +2137,6 @@ that are easy to violate and expensive to discover:
   surfaces (next bullet). A bare *document* URL is never a chip: it is marked
   before autolinking, so only an explicit link can add the chip's icon width.
 - **A document link is a "page chip" on both surfaces, and it is display only.**
-  While an IME is composing, `applyInlineStyling` drops the chip slots (restored by the first restyle after commit).
   `Features/Editor/DocumentLinkChip.swift`: rounded `brandFillSubtle` background,
   `textBrand` ink, **no underline**, a `description` (page) glyph before the title;
   external links keep the underline. Which links qualify is `isDocumentLink`, the
@@ -2155,7 +2154,14 @@ that are easy to violate and expensive to discover:
   `DocumentLinkChipMetrics.slotWidth` (whole points) and place the icon in
   `DocumentLinkChipIconBand` (inside the font's line box), so a line wraps at the
   same word and stays the same height on the swap
-  (`EditorSurfaceParityTests`, `BlockTextRenderingTests`). Accepted residuals:
+  (`EditorSurfaceParityTests`, `BlockTextRenderingTests`). While an IME is
+  composing, `applyInlineStyling` restyles nothing (marked characters and
+  attributes are UIKit's) but recomputes the chips from the current buffer and
+  drops only a chip whose link the marked text touches
+  (`refreshDocumentLinkChipsWhileComposing`), so chips before or after the
+  composition keep their slots instead of re-wrapping the line on every CJK
+  keystroke; it never touches `hiddenRanges`, and invalidates glyphs/layout only
+  for the chips that changed. Accepted residuals:
   the reading icon is not itself tappable (the title is); the trailing padding
   overlaps the next character on both surfaces rather than reserving width; two
   *adjacent* links to the same document merge into one chip while reading; and a
