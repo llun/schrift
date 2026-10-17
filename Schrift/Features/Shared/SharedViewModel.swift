@@ -132,7 +132,10 @@ final class SharedViewModel {
     }
 
     func load(userInitiated: Bool = false) async {
-        errorKey = nil
+        // A visible error survives a silent reload (clearing it blinked a persistent failure
+        // away and back); it leaves on success, offline, or a new error. Pull-to-refresh
+        // starts clean.
+        if userInitiated { errorKey = nil }
         loadGeneration += 1
         let generation = loadGeneration
         let fetchedPinRevision = saveCoordinator?.pins.revision ?? -1
@@ -147,6 +150,7 @@ final class SharedViewModel {
                 hasLoaded = true
             }
             loadFailedOffline = false
+            errorKey = nil
             isLoading = false
             return
         }
@@ -197,6 +201,7 @@ final class SharedViewModel {
                 ?? surviving)
         hasLoaded = true
         loadFailedOffline = false
+        errorKey = nil
         isLoading = false
         // Prune enrichment to the current list: a document that is no longer
         // shared can't keep showing stale avatars, and the dictionary can't grow

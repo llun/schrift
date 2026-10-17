@@ -29,6 +29,14 @@ final class OnlineAvailability {
         return userDefaults.bool(forKey: "schrift.workOffline") || connectivity?.isReachable == false
     }
 
+    /// Whether the Work Offline preference is on — a deliberate user choice, so status chrome
+    /// may show it immediately where it debounces the path/transport evidence
+    /// (`DebouncedStatus`). Status display only.
+    var isWorkOffline: Bool {
+        _ = preferenceRevision
+        return userDefaults.bool(forKey: "schrift.workOffline")
+    }
+
     /// Whether status chrome should read as offline: `isOffline` plus transport evidence
     /// that the server cannot be reached despite a satisfied path (Wi-Fi without
     /// internet). For status display only (banner, save status, sync caption) — never

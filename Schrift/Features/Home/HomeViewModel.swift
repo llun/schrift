@@ -307,7 +307,11 @@ final class HomeViewModel {
     }
 
     func load(userInitiated: Bool = false) async {
-        clearError()
+        // A visible error survives a silent reload: clearing it here made a persistent failure
+        // blink away and back on every revalidation. It leaves when a load succeeds (or the
+        // screen goes offline, where reads are withheld), is replaced by a new error, or is
+        // dismissed. A pull-to-refresh is the user asking again, so it starts clean.
+        if userInitiated { clearError() }
         loadGeneration += 1
         let generation = loadGeneration
         let pinRevision = saveCoordinator.pins.revision
@@ -327,6 +331,7 @@ final class HomeViewModel {
             if let cachedRecents { rawRecentDocuments = cachedRecents }
             hasKnownFetchedList = cachedRecents != nil
             loadFailedOffline = false
+            clearLoadError()
             isLoading = false
             return
         }
@@ -391,6 +396,7 @@ final class HomeViewModel {
                 pinned: overlaid.pinned, recent: moved.recent, ownerUserID: pinOwner, fetchedAt: pinRevision)
             hasKnownFetchedList = true
             loadFailedOffline = false
+            clearLoadError()
         } catch {
             guard generation == loadGeneration else { return }
             guard availability.permitsResponse(for: availabilityToken) else {
@@ -825,6 +831,13 @@ final class HomeViewModel {
     private func clearError() {
         errorKey = nil
         errorDetail = nil
+    }
+
+    /// Drops only the list-load failure, leaving an unrelated action error (delete, pin,
+    /// create) that arrived while a silent reload was in flight.
+    private func clearLoadError() {
+        guard errorKey == .home_error_load else { return }
+        clearError()
     }
 
 }

@@ -26,11 +26,17 @@ struct DocumentListView: View {
     @State private var swipe = SwipeRevealState<UUID>()
 
     private var isOffline: Bool { viewModel.isOffline || workOffline }
+    /// Display-only: the path/transport evidence is debounced so a slow or flaky load cannot
+    /// flash the banner and shove the list down and back; Work Offline is a choice, so immediate.
+    @State private var offlineStatus = DebouncedStatus()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var showsOfflineBanner: Bool { workOffline || offlineStatus.value }
 
     var body: some View {
         VStack(spacing: 0) {
-            if isOffline {
+            if showsOfflineBanner {
                 OfflineBanner(note: loc[.offline_note])
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             ScrollView {
@@ -63,6 +69,7 @@ struct DocumentListView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.bottom, DocsSpacing.spaceXS)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                     }
 
                     content
@@ -70,6 +77,7 @@ struct DocumentListView: View {
                 .padding(.top, DocsSpacing.space3xs)
                 .padding(.horizontal, DocsSpacing.gutter)
                 .padding(.bottom, DocsSpacing.spaceBase)
+                .animation(reduceMotion ? nil : .snappy, value: viewModel.errorKey)
             }
             .refreshable {
                 await viewModel.refresh()
@@ -81,6 +89,8 @@ struct DocumentListView: View {
                 if phase == .interacting { swipe = swipeRevealAfterScrollInteraction(swipe) }
             }
         }
+        .animation(reduceMotion ? nil : .snappy, value: showsOfflineBanner)
+        .onChange(of: viewModel.isOffline, initial: true) { _, raw in offlineStatus.update(raw) }
         // Claim the full width the removed NavBar used to define, or the
         // screen sizes to its widest child and starves the title.
         .frame(maxWidth: .infinity)
@@ -160,8 +170,10 @@ struct DocumentListView: View {
                 Text(loc[.search_offline_explanation])
                     .font(DocsFont.footnote)
                     .foregroundStyle(theme.colors.textSecondary)
+                    .transition(.opacity)
             }
         }
+        .animation(reduceMotion ? nil : .snappy, value: viewModel.availability.isOffline)
     }
 
     @ViewBuilder

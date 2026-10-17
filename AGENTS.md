@@ -3572,7 +3572,7 @@ markdown write endpoint**. Understand this before touching the save path:
   only** — the editor's offline banner and sync caption wording; controls and
   `permitsResponse` keep `isOffline`, and the pending-sync **retry stays a control**
   (`syncCaption`'s `isPathOffline`), since a control disabled on failure evidence would
-  make no request and never recover. Each report carries its request's start instant and an
+  make no request and never recover. **The offline *banners* (editor, Home, Shared) additionally debounce that evidence** through `DebouncedStatus` (show after ~1.5s of continuous offline, hide after ~1s of recovery; Work Offline, a deliberate choice, shows immediately via `OnlineAvailability.isWorkOffline`), and banners/error text animate in and out (`.snappy`, off under Reduce Motion) — display only, never what controls, `permitsResponse` or saves read. Home and Shared keep a visible load error across a *silent* reload (cleared on success, offline, a new error, or dismiss; pull-to-refresh starts clean). Each report carries its request's start instant and an
   `.unreachable` that started before the last clearing event is dropped as stale. The save
   status reads `connectionAppearsDown` (path or evidence, not Work Offline, which still
   sends saves). Draft sync fires on `appearsOffline`'s true→false edge; live sockets
