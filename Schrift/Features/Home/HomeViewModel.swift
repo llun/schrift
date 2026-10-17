@@ -365,7 +365,7 @@ final class HomeViewModel {
             }
             // Anything deleted while this was in flight is dropped before it can be applied or
             // cached — the fetch predates the DELETE and cannot know.
-            let pinned = fetchedPinned.filter { !deletedSinceLoad.contains($0.id) }
+            let pinned = stablePinnedOrder(fetchedPinned.filter { !deletedSinceLoad.contains($0.id) })
             let recent = fetchedRecent.filter { !deletedSinceLoad.contains($0.id) }
             // …and a pin made here while this was in flight is folded back in, for the same
             // reason and by the same rule: filter, never cancel. Retiring the confirmed
@@ -380,8 +380,10 @@ final class HomeViewModel {
                 recent: overlaid.recent, overrides: moveOverrides, generation: generation)
             for documentID in moved.confirmed { moveOverrides[documentID] = nil }
             listPinRevision = pinRevision
-            rawPinnedDocuments = overlaid.pinned
-            rawRecentDocuments = moved.recent
+            // Only assign what changed: an identical refresh must not invalidate every reader
+            // of these arrays (and the `recentDocuments` memo with them) for no visible reason.
+            if rawPinnedDocuments != overlaid.pinned { rawPinnedDocuments = overlaid.pinned }
+            if rawRecentDocuments != moved.recent { rawRecentDocuments = moved.recent }
             let cacheProjection = saveCoordinator.pins.resolve(
                 pinned: overlaid.pinned, recent: moved.recent, ownerUserID: signedInUser.userID,
                 fetchedAt: pinRevision, includePending: false)

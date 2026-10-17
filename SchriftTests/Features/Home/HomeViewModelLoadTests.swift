@@ -26,6 +26,49 @@ final class HomeViewModelLoadTests: HomeViewModelTestCase {
         XCTAssertNil(viewModel.errorKey)
     }
 
+    func testLoadOrdersPinnedDocumentsNewestFirstWhateverTheServerOrder() async {
+        let viewModel = makeViewModel()
+        let older = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let newer = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        // The favorites action's own order is unspecified; serve it oldest-first with distinct
+        // updated_at values so only `stablePinnedOrder` can put the newer document on top.
+        let pinnedBody = Data(
+            """
+            {
+                "count": 2, "next": null, "previous": null,
+                "results": [
+                    {
+                        "id": "\(older.uuidString.lowercased())", "title": "Older", "excerpt": null,
+                        "abilities": {}, "computed_link_reach": "restricted", "computed_link_role": null,
+                        "created_at": "2026-01-01T00:00:00Z", "creator": null, "depth": 1,
+                        "link_role": "reader", "link_reach": "restricted", "numchild": 0, "path": "0001",
+                        "updated_at": "2026-01-01T00:00:00Z", "user_role": "owner", "is_favorite": true
+                    },
+                    {
+                        "id": "\(newer.uuidString.lowercased())", "title": "Newer", "excerpt": null,
+                        "abilities": {}, "computed_link_reach": "restricted", "computed_link_role": null,
+                        "created_at": "2026-01-01T00:00:00Z", "creator": null, "depth": 1,
+                        "link_role": "reader", "link_reach": "restricted", "numchild": 0, "path": "0002",
+                        "updated_at": "2026-03-01T00:00:00Z", "user_role": "owner", "is_favorite": true
+                    }
+                ]
+            }
+            """.utf8)
+        let recentBody = Self.paginatedFixture(
+            id: "33333333-3333-4333-8333-333333333333", title: "Recent Doc", isFavorite: false)
+        MockURLProtocol.stubHandler = { request in
+            let path = request.url?.path ?? ""
+            if path.contains("favorite_list") {
+                return .init(statusCode: 200, headers: [:], body: pinnedBody, error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: recentBody, error: nil)
+        }
+
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.pinnedDocuments.map(\.id), [newer, older])
+    }
+
     func testLoadOnNewServerDoesNotLoseRecentsToRemovedFavoritesRoute() async {
         let viewModel = makeViewModel()
         let log = RequestRecorder()

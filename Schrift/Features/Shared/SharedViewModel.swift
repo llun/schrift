@@ -189,7 +189,7 @@ final class SharedViewModel {
         // cached — the fetch predates the DELETE and cannot know.
         let surviving = withMe.filter { !deletedSinceLoad.contains($0.id) }
         pinRevision = fetchedPinRevision
-        rawDocuments = surviving
+        if rawDocuments != surviving { rawDocuments = surviving }
         saveCoordinator?.pins.didReadFlags(surviving, ownerUserID: pinOwner, fetchedAt: fetchedPinRevision)
         cache.saveSharedWithMeDocuments(
             saveCoordinator?.pins.applyingFlags(
