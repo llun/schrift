@@ -106,6 +106,8 @@ final class HomeViewModel {
     private var loadFailedOffline = false
     let availability: OnlineAvailability
     var isOffline: Bool { availability.isOffline || loadFailedOffline }
+    /// Transport evidence only (no Work Offline preference), for the debounced banner.
+    var offlineStatusEvidence: Bool { availability.transportOfflineEvidence || loadFailedOffline }
     /// Whether the recent list is known — cached or fetched this session. The
     /// view may render the "No documents yet" empty state only for a known
     /// list: nil (never fetched) must not masquerade as a real empty result,
@@ -332,7 +334,11 @@ final class HomeViewModel {
     }
 
     func load(userInitiated: Bool = false) async {
-        clearError()
+        // A visible error survives a silent reload: clearing it here made a persistent failure
+        // blink away and back on every revalidation. It leaves when a load succeeds (or the
+        // screen goes offline, where reads are withheld), is replaced by a new error, or is
+        // dismissed. A pull-to-refresh is the user asking again, so it starts clean.
+        if userInitiated { clearError() }
         loadGeneration += 1
         let generation = loadGeneration
         let pinRevision = saveCoordinator.pins.revision
@@ -352,6 +358,7 @@ final class HomeViewModel {
             if let cachedRecents { rawRecentDocuments = cachedRecents }
             hasKnownFetchedList = cachedRecents != nil
             loadFailedOffline = false
+            clearLoadError()
             isLoading = false
             return
         }
@@ -418,6 +425,7 @@ final class HomeViewModel {
                 pinned: overlaid.pinned, recent: moved.recent, ownerUserID: pinOwner, fetchedAt: pinRevision)
             hasKnownFetchedList = true
             loadFailedOffline = false
+            clearLoadError()
             freshness.noteSuccess(token: availabilityToken, at: now())
         } catch {
             guard generation == loadGeneration else { return }
@@ -523,6 +531,7 @@ final class HomeViewModel {
         let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             rawSearchResults = []
+            if errorKey == .home_error_search { clearError() }
             return
         }
         let marker = diagnostics?.marker()
@@ -541,6 +550,8 @@ final class HomeViewModel {
             }
             searchPinRevision = pinRevision
             rawSearchResults = results
+            // A search that succeeds retires its own earlier failure; other errors stay.
+            if errorKey == .home_error_search { clearError() }
             saveCoordinator.pins.didReadFlags(
                 page.results.filter { !deletedSinceLoad.contains($0.id) }, ownerUserID: pinOwner, fetchedAt: pinRevision
             )
@@ -853,6 +864,13 @@ final class HomeViewModel {
     private func clearError() {
         errorKey = nil
         errorDetail = nil
+    }
+
+    /// Drops only the list-load failure, leaving an unrelated action error (delete, pin,
+    /// create) that arrived while a silent reload was in flight.
+    private func clearLoadError() {
+        guard errorKey == .home_error_load else { return }
+        clearError()
     }
 
 }

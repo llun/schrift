@@ -216,6 +216,14 @@ struct EditorView: View {
     /// Offline for *status display* only (banner, save status, sync caption): adds the
     /// transport evidence a satisfied-but-dead path produces. Controls keep `isOffline`.
     private var showsOfflineStatus: Bool { offlineOverride || viewModel.availability.showsOfflineStatus }
+    /// Display-only debounce of the path/transport offline evidence for the banner, so one slow
+    /// request cannot flash it and push the document down and back. Controls, saves and the
+    /// sync caption keep their own signals; Work Offline is a choice, so it shows immediately.
+    @State private var offlineBannerStatus = DebouncedStatus()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var showsOfflineBanner: Bool {
+        offlineOverride || viewModel.availability.isWorkOffline || offlineBannerStatus.value
+    }
     var onDeleted: (() -> Void)? = nil
     var onOpenDocument: ((Document) -> Void)? = nil
     var onCreatedDocument: ((Document) -> Void)? = nil
@@ -624,14 +632,14 @@ struct EditorView: View {
         AccessibilityNotification.ScreenChanged().post()
     }
 
-    /// The screen's content column, lifted out of `body` so the long
-    /// modifier chain that follows stays type-checkable on its own — with
-    /// both in one expression the compiler gives up.
-    private var mainContent: some View {
+    /// The banner stack above the document. The animations live on this container, not on
+    /// `mainContent`, so a banner coming or going animates without also animating the
+    /// loading/reading/editing content swap in the same transaction.
+    private var bannerStack: some View {
         VStack(spacing: 0) {
-
-            if showsOfflineStatus, viewModel.hasLocalCopy {
+            if showsOfflineBanner, viewModel.hasLocalCopy {
                 OfflineBanner(note: loc[.editor_offline_local_copy])
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             // Shown while EDITING too, unlike the "Updated" banner. The enqueue-hold parks
@@ -650,6 +658,7 @@ struct EditorView: View {
                 .padding(.top, DocsSpacing.spaceXS)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityLabel(loc[.editor_conflict_pill_a11y])
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             if viewModel.updateAvailable, !viewModel.isEditing {
@@ -664,6 +673,7 @@ struct EditorView: View {
                 .padding(.top, DocsSpacing.spaceXS)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityLabel(loc[.editor_update_available_a11y])
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             // A queued deletion is not a failure, so it is neither drawn in `danger` nor left
@@ -688,7 +698,22 @@ struct EditorView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, DocsSpacing.gutter)
                 .padding(.top, DocsSpacing.spaceXS)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
+        }
+        .animation(reduceMotion ? nil : .snappy, value: showsOfflineBanner)
+        .animation(reduceMotion ? nil : .snappy, value: viewModel.syncConflict != nil)
+        .animation(reduceMotion ? nil : .snappy, value: viewModel.updateAvailable)
+        .animation(reduceMotion ? nil : .snappy, value: viewModel.errorKey)
+    }
+
+    /// The screen's content column, lifted out of `body` so the long
+    /// modifier chain that follows stays type-checkable on its own — with
+    /// both in one expression the compiler gives up.
+    private var mainContent: some View {
+        VStack(spacing: 0) {
+
+            bannerStack
 
             if viewModel.isLoading {
                 EditorLoadingPlaceholder()
@@ -713,6 +738,9 @@ struct EditorView: View {
             } else {
                 readingSurface
             }
+        }
+        .onChange(of: viewModel.availability.transportOfflineEvidence, initial: true) { _, raw in
+            offlineBannerStatus.update(raw)
         }
         // The column fills the screen in every state, so `body`'s page background does
         // too. Without it a branch with no greedy child (the loading spinner) leaves the

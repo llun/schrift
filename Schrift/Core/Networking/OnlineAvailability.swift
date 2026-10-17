@@ -29,12 +29,27 @@ final class OnlineAvailability {
         return userDefaults.bool(forKey: "schrift.workOffline") || connectivity?.isReachable == false
     }
 
+    /// Whether the Work Offline preference is on — a deliberate user choice, so status chrome
+    /// may show it immediately where it debounces the path/transport evidence
+    /// (`DebouncedStatus`). Status display only.
+    var isWorkOffline: Bool {
+        _ = preferenceRevision
+        return userDefaults.bool(forKey: "schrift.workOffline")
+    }
+
     /// Whether status chrome should read as offline: `isOffline` plus transport evidence
     /// that the server cannot be reached despite a satisfied path (Wi-Fi without
     /// internet). For status display only (banner, save status, sync caption) — never
     /// for gating controls or `permitsResponse`, since a control disabled on failure
     /// evidence would make no request and could never recover.
     var showsOfflineStatus: Bool { isOffline || connectivity?.serverUnreachable == true }
+
+    /// The path/transport half of `showsOfflineStatus` — everything except the Work Offline
+    /// preference. This is what status chrome debounces (`DebouncedStatus`); the preference is
+    /// OR-ed in outside the debounce so turning it off hides the banner at once. Status only.
+    var transportOfflineEvidence: Bool {
+        connectivity?.isReachable == false || connectivity?.serverUnreachable == true
+    }
 
     /// Whether the connection itself looks down — path down or transport evidence — and
     /// **not** the Work Offline preference. Work Offline withholds reads but still sends

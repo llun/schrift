@@ -25,6 +25,8 @@ final class SharedViewModel {
     /// the last fetch failed with a transport (`DocsAPIError.network`) failure. The failure flag is
     /// latched until a load succeeds or the cache is served on purpose.
     var isOffline: Bool { availability.isOffline || loadFailedOffline }
+    /// Transport evidence only (no Work Offline preference), for the debounced banner.
+    var offlineStatusEvidence: Bool { availability.transportOfflineEvidence || loadFailedOffline }
     private var loadFailedOffline = false
 
     let client: DocsAPIClient
@@ -155,7 +157,10 @@ final class SharedViewModel {
     }
 
     func load(userInitiated: Bool = false) async {
-        errorKey = nil
+        // A visible error survives a silent reload (clearing it blinked a persistent failure
+        // away and back); it leaves on success, offline, or a new error. Pull-to-refresh
+        // starts clean.
+        if userInitiated { errorKey = nil }
         loadGeneration += 1
         let generation = loadGeneration
         let fetchedPinRevision = saveCoordinator?.pins.revision ?? -1
@@ -170,6 +175,7 @@ final class SharedViewModel {
                 hasLoaded = true
             }
             loadFailedOffline = false
+            errorKey = nil
             isLoading = false
             return
         }
@@ -220,6 +226,7 @@ final class SharedViewModel {
                 ?? surviving)
         hasLoaded = true
         loadFailedOffline = false
+        errorKey = nil
         isLoading = false
         freshness.noteSuccess(
             token: LoadKey(token: availabilityToken, sessionGeneration: sessionGeneration), at: now())

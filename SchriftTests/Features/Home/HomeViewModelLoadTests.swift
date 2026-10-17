@@ -228,6 +228,35 @@ final class HomeViewModelLoadTests: HomeViewModelTestCase {
         XCTAssertEqual(viewModel.searchResults.map(\.title), ["Q3 Planning"])
     }
 
+    func testSuccessfulSearchClearsAnEarlierSearchError() async {
+        let viewModel = makeViewModel()
+        viewModel.searchQuery = "Q3"
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        await viewModel.search()
+        XCTAssertEqual(viewModel.errorKey, .home_error_search)
+
+        let body = Self.paginatedFixture(
+            id: "33333333-3333-4333-8333-333333333333", title: "Q3 Planning", isFavorite: false)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: body, error: nil) }
+        await viewModel.search()
+
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertNil(viewModel.errorDetail)
+    }
+
+    func testClearingTheQueryClearsAnEarlierSearchError() async {
+        let viewModel = makeViewModel()
+        viewModel.searchQuery = "Q3"
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        await viewModel.search()
+        XCTAssertEqual(viewModel.errorKey, .home_error_search)
+
+        viewModel.searchQuery = ""
+        await viewModel.search()
+
+        XCTAssertNil(viewModel.errorKey)
+    }
+
     func testLoadFailureSetsErrorMessage() async {
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
@@ -519,5 +548,46 @@ final class HomeViewModelLoadTests: HomeViewModelTestCase {
         // Forwarded: the draft was replayed and cleared, and a content PATCH fired.
         await waitUntil { draftStore.draft(for: documentID) == nil }
         XCTAssertGreaterThanOrEqual(log.count(ofMethod: "PATCH", urlContaining: "/content/"), 1)
+    }
+
+    // MARK: - Error retention across silent reloads
+
+    private func seedCachedRecents(_ cache: DocumentCacheStore) {
+        let body = Self.paginatedFixture(
+            id: "66666666-6666-4666-8666-666666666666", title: "Cached Recent", isFavorite: false)
+        let document = try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: body).results[0]
+        cache.saveRecentDocuments([document])
+    }
+
+    func testVisibleErrorSurvivesASilentReloadThatFailsQuietly() async {
+        let cache = makeCache()
+        seedCachedRecents(cache)
+        let viewModel = makeViewModel(cache: cache)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        await viewModel.refresh()
+        XCTAssertEqual(viewModel.errorKey, .home_error_load)
+
+        // A silent revalidation behind cached rows raises no error of its own, and must not
+        // blink the visible one away either.
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.errorKey, .home_error_load)
+    }
+
+    func testVisibleErrorIsClearedByASilentReloadThatSucceeds() async {
+        let cache = makeCache()
+        seedCachedRecents(cache)
+        let viewModel = makeViewModel(cache: cache)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        await viewModel.refresh()
+        XCTAssertNotNil(viewModel.errorKey)
+        let body = Self.paginatedFixture(
+            id: "22222222-2222-4222-8222-222222222222", title: "Recent Doc", isFavorite: false)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: body, error: nil) }
+
+        await viewModel.load()
+
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertNil(viewModel.errorDetail)
     }
 }
