@@ -3942,6 +3942,16 @@ markdown write endpoint**. Understand this before touching the save path:
   seconds, making draft-vs-save races and eviction tie-breaks arbitrary
   (`DocumentCacheStore`, which carries no recency data, is the one `.iso8601`
   store).
+- **A one-blob store that is read often memoizes its decode on the blob's bytes
+  (`DecodedBlobMemo`), never on its own state.** `PendingDraftStore` and
+  `DocumentChildrenCacheStore` share one static memo each: every read still fetches
+  the current `Data` and reuses the decoded value only when the bytes are identical,
+  so several instances over `.standard`, raw test writes and `removePersistentDomain`
+  can never be served a stale copy, and an undecodable blob stays memoized as
+  undecodable (`holdsUnreadableData` unchanged). Writes do **not** seed the memo with
+  the dictionary they encoded: the `.millisecondsSince1970` round trip is not
+  bit-exact, so readers must only ever see what the decoder produced. Same keys, same
+  format — no migration.
 - **List-metadata caches** (`DocumentCacheStore`: pinned + recent (the
   unfiltered Home feed) + shared lists; `DocumentChildrenCacheStore`: sub-page
   lists keyed by parent document) make every document list instant and
