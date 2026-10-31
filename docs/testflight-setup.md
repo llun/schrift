@@ -12,7 +12,7 @@ Everything is gated behind a **paid Apple Developer Program membership**
 
 Already done in this repo:
 
-- Ruby **3.4.9** pinned via `.ruby-version` (local dev + CI use the same).
+- Ruby **3.4.12** pinned via `.ruby-version` (local dev + CI use the same).
 - fastlane installed (`bundle install`), `Gemfile.lock` committed.
 - fastlane lanes `beta` (ship) and `bootstrap` (one-time setup) ready.
 - CI reads signing assets and App Store Connect credentials from a 1Password
