@@ -93,14 +93,48 @@ final class DocIdentityTests: XCTestCase {
 
     // MARK: - Accessibility label
 
-    func testAccessibilityLabelPlacesExcerptAfterTitle() {
+    func testAccessibilityLabelPlacesExcerptLast() {
         XCTAssertEqual(
             docRowAccessibilityLabel(
                 title: "Trip", excerpt: "Flights booked", reach: .restricted, date: "Thu",
                 pageCountLabel: "4 pages", pinned: true, pinnedLabel: "Pinned",
                 sharedWithOrganizationLabel: "Shared with organization", publicLabel: "Public"),
-            "Trip, Flights booked, Pinned, Thu, 4 pages"
+            "Trip, Pinned, Thu, 4 pages, Flights booked"
         )
+    }
+
+    func testAccessibilityLabelCapsALongExcerpt() {
+        // 195 characters. The first 100 hold two whole sentences and the start of a third, so
+        // the cut lands on the space after the second sentence's "call." (char 97).
+        let sentence = "Decisions and follow-ups from the planning call."
+        let excerpt = Array(repeating: sentence, count: 4).joined(separator: " ")
+        XCTAssertEqual(
+            docRowAccessibilityLabel(
+                title: "Trip", excerpt: excerpt, reach: .public, date: "Thu", pinned: false,
+                pinnedLabel: "Pinned", sharedWithOrganizationLabel: "Shared with organization",
+                publicLabel: "Public"),
+            "Trip, Public, Thu, \(sentence) \(sentence)…"
+        )
+    }
+
+    func testSpokenExcerptReturnsAnExcerptThatFitsUnchanged() {
+        XCTAssertEqual(docRowSpokenExcerpt("Flights booked"), "Flights booked")
+        let exactlyTheLimit = String(repeating: "a", count: 100)
+        XCTAssertEqual(docRowSpokenExcerpt(exactlyTheLimit), exactlyTheLimit)
+    }
+
+    func testSpokenExcerptCutsAtTheLastWordBoundaryWithAnEllipsis() {
+        // 149 characters. The first 100 are twenty "word " units, so the last space inside the
+        // limit is at index 99 and the cut keeps the twenty whole words before it: 99 characters
+        // plus the ellipsis.
+        let words = Array(repeating: "word", count: 30).joined(separator: " ")
+        let expected = Array(repeating: "word", count: 20).joined(separator: " ") + "…"
+        XCTAssertEqual(docRowSpokenExcerpt(words), expected)
+    }
+
+    func testSpokenExcerptCutsAnUnbrokenRunAtTheLimit() {
+        let run = String(repeating: "x", count: 150)
+        XCTAssertEqual(docRowSpokenExcerpt(run), String(repeating: "x", count: 100) + "…")
     }
 
     func testAccessibilityLabelOmitsEmptyExcerptAndPageCount() {

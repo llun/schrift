@@ -9,7 +9,9 @@
 > title's first line; the title's line limit is 2 when a second line exists
 > (`docRowTitleLineLimit`), and the accessibility-size stacked layout is unchanged (excerpt
 > up to two lines, date and badge below). The composed VoiceOver label reads
-> title, excerpt, state/reach, date, page count. The tile: a title that *starts with an emoji*
+> title, pinned, state/reach, date, page count, excerpt — the excerpt is spoken last and capped
+> to about 100 characters at a word boundary with an ellipsis (`docRowSpokenExcerpt`), so a long
+> excerpt does not bury the row's state. The tile: a title that *starts with an emoji*
 > shows it as the tile and displays the title without it (`docTitleParts`; digits and `#`
 > are not emoji, an emoji-only title is left whole); otherwise the page glyph sits on a soft
 > tint (the accent at 16%) picked by hashing the document id into the Avatar palette

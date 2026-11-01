@@ -27,9 +27,6 @@ func docRowAccessibilityLabel(
     publicLabel: String
 ) -> String {
     var parts = [title]
-    if !excerpt.isEmpty {
-        parts.append(excerpt)
-    }
     if pinned {
         parts.append(pinnedLabel)
     }
@@ -57,6 +54,11 @@ func docRowAccessibilityLabel(
     }
     if !pageCountLabel.isEmpty {
         parts.append(pageCountLabel)
+    }
+    // The excerpt is the document's own text and the least predictable part of the label, so it
+    // is spoken last, after the state and metadata that tell a listener what the row is.
+    if !excerpt.isEmpty {
+        parts.append(docRowSpokenExcerpt(excerpt))
     }
     return parts.joined(separator: ", ")
 }

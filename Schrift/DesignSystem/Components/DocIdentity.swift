@@ -55,6 +55,17 @@ func docRowExcerptText(_ raw: String?) -> String? {
     return collapsed.isEmpty ? nil : collapsed
 }
 
+/// An excerpt as a VoiceOver label speaks it: at most `limit` characters, cut back to the last
+/// word boundary and ended with an ellipsis. A run with no boundary inside the limit is cut at
+/// the limit. An excerpt that already fits is returned unchanged.
+func docRowSpokenExcerpt(_ excerpt: String, limit: Int = 100) -> String {
+    guard excerpt.count > limit else { return excerpt }
+    let head = excerpt.prefix(limit)
+    let boundary = head.lastIndex(where: { $0.isWhitespace }) ?? head.endIndex
+    let kept = head[..<boundary].trimmingCharacters(in: .whitespacesAndNewlines)
+    return (kept.isEmpty ? head.trimmingCharacters(in: .whitespacesAndNewlines) : kept) + "…"
+}
+
 /// How many lines a row's title may use. Stacked (accessibility) rows keep their three; a row
 /// with a second line of detail lets the title wrap to two so similar names stay distinguishable.
 func docRowTitleLineLimit(hasDetailLine: Bool, isStacked: Bool) -> Int {
