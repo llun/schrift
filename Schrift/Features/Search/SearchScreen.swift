@@ -68,22 +68,25 @@ struct SearchScreen: View {
         }
         // The view model outlives the screen and keeps its query, so its on-device index is
         // rebuilt each time Search appears (returning from a document included) and after a
-        // re-login, rather than only when the query is cleared.
+        // re-login, rather than only when the query is cleared; a re-login also retires the
+        // previous session's server rows and Quick access at once.
         .onAppear {
-            viewModel.invalidateLocalIndex()
+            viewModel.beginSession(signInGeneration: signInGeneration)
         }
         .onChange(of: signInGeneration) {
-            viewModel.invalidateLocalIndex()
+            viewModel.beginSession(signInGeneration: signInGeneration)
         }
         .task(id: SearchSessionID(availability: viewModel.availability.token, signInGeneration: signInGeneration)) {
-            await viewModel.loadQuickAccess()
+            await viewModel.loadQuickAccess(signInGeneration: signInGeneration)
         }
+        // Keyed on the account id as well: a re-login learns it from `/users/me/` only after the
+        // session began, and the device's own documents can only be searched once it is known.
         .task(
             id: SearchRequestID(
                 query: viewModel.query, availability: viewModel.availability.token,
-                signInGeneration: signInGeneration)
+                signInGeneration: signInGeneration, signedInUserID: viewModel.signedInUserID)
         ) {
-            await viewModel.search()
+            await viewModel.search(signInGeneration: signInGeneration)
         }
     }
 
@@ -249,6 +252,7 @@ private struct SearchRequestID: Hashable {
     let query: String
     let availability: OnlineAvailability.Token
     let signInGeneration: Int
+    let signedInUserID: UUID?
 }
 
 // MARK: - Recent searches wrap-flow

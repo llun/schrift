@@ -295,6 +295,133 @@ final class SearchViewModelLocalTests: XCTestCase {
         XCTAssertEqual(viewModel.results.map(\.title), ["Hotel shortlist"])
     }
 
+    func testOfflineTheSkeletonCoversTheGapUntilTheDeviceAnswers() async {
+        listCache.saveRecentDocuments([document(1, title: "Roadmap")], fetchedFor: me)
+        workOffline(true)
+        let viewModel = makeViewModel()
+        viewModel.query = "zebra"
+
+        let task = Task { await viewModel.search() }
+        // Let it start reading the caches. Until the device has answered, the screen draws
+        // placeholder rows rather than "No documents found".
+        await Task.yield()
+        if viewModel.localResultsQuery == nil {
+            XCTAssertTrue(
+                searchShowsSkeleton(isSearching: viewModel.isSearching, hasResults: !viewModel.resultSet.isEmpty))
+        }
+        await task.value
+
+        // The device answered with no match: now, and only now, the empty state.
+        XCTAssertEqual(viewModel.localResultsQuery, "zebra")
+        XCTAssertFalse(viewModel.isSearching)
+        XCTAssertTrue(viewModel.resultSet.isEmpty)
+        XCTAssertNil(viewModel.errorKey)
+    }
+
+    func testOfflineARefinementKeepsThePreviousRowsRatherThanTheSkeleton() async {
+        listCache.saveRecentDocuments([document(1, title: "Hotel shortlist")], fetchedFor: me)
+        workOffline(true)
+        let viewModel = makeViewModel()
+        viewModel.query = "hotel"
+        await viewModel.search()
+
+        // A refinement typed offline keeps the previous rows on screen (no skeleton) while it scans.
+        viewModel.query = "hotel s"
+        let refined = Task { await viewModel.search() }
+        await Task.yield()
+        XCTAssertFalse(
+            searchShowsSkeleton(isSearching: viewModel.isSearching, hasResults: !viewModel.resultSet.isEmpty))
+        await refined.value
+        XCTAssertFalse(viewModel.isSearching)
+        XCTAssertEqual(viewModel.results.map(\.title), ["Hotel shortlist"])
+    }
+
+    // MARK: - Retiring the server's rows
+
+    func testAFailedRefinementRetiresThePreviousQuerysServerRows() async {
+        listCache.saveRecentDocuments([document(1, title: "Hotel shortlist")], fetchedFor: me)
+        stubServer([(id: 3, title: "Hotel server")])
+        let viewModel = makeViewModel()
+        viewModel.query = "hotel"
+        await viewModel.search()
+        XCTAssertEqual(viewModel.resultSet.server.map(\.title), ["Hotel server"])
+
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        viewModel.query = "hotel s"
+        await viewModel.search()
+
+        // No answer for "hotel s" is coming, so "hotel"'s rows are not presented as its results.
+        XCTAssertEqual(viewModel.errorKey, .search_error_search)
+        XCTAssertTrue(viewModel.resultSet.server.isEmpty)
+        XCTAssertNil(viewModel.serverResultsQuery)
+        XCTAssertEqual(viewModel.resultSet.localOnly.map(\.title), ["Hotel shortlist"])
+
+        // Backing out to "hotel" does not bring them back either: they were dropped, not hidden.
+        viewModel.query = "hotel"
+        XCTAssertTrue(viewModel.resultSet.server.isEmpty)
+    }
+
+    func testAFailureForTheSameQueryKeepsItsServerRows() async {
+        stubServer([(id: 3, title: "Hotel server")])
+        let viewModel = makeViewModel()
+        viewModel.query = "hotel"
+        await viewModel.search()
+
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        await viewModel.search()
+
+        XCTAssertEqual(viewModel.errorKey, .search_error_search)
+        XCTAssertEqual(viewModel.resultSet.server.map(\.title), ["Hotel server"], "they still answer this query")
+    }
+
+    func testServerRowsShowOnlyForTheirQueryOrARefinementOfIt() async {
+        stubServer([(id: 3, title: "Hotel server")])
+        let viewModel = makeViewModel()
+        viewModel.query = "hotel"
+        await viewModel.search()
+
+        viewModel.query = "hotel s"
+        XCTAssertEqual(viewModel.resultSet.server.map(\.title), ["Hotel server"], "typing on keeps them in place")
+        viewModel.query = "hote"
+        XCTAssertTrue(viewModel.resultSet.server.isEmpty, "a deleted character is another question")
+        viewModel.query = "roadmap"
+        XCTAssertTrue(viewModel.resultSet.server.isEmpty, "a recent term or a new word is another question")
+        viewModel.query = "hotel"
+        XCTAssertEqual(viewModel.resultSet.server.map(\.title), ["Hotel server"])
+    }
+
+    func testReconnectingDoesNotBringBackAnotherQuerysServerRows() async {
+        listCache.saveRecentDocuments([document(1, title: "Banana bread")], fetchedFor: me)
+        stubServer([(id: 5, title: "Apple pie")])
+        let viewModel = makeViewModel()
+        viewModel.query = "apple"
+        await viewModel.search()
+        XCTAssertEqual(viewModel.resultSet.server.map(\.title), ["Apple pie"])
+
+        workOffline(true)
+        viewModel.query = "banana"
+        await viewModel.search()
+        XCTAssertEqual(viewModel.results.map(\.title), ["Banana bread"])
+
+        workOffline(false)
+        let gate = MockURLProtocol.ResponseGate()
+        let body = serverPage([(id: 6, title: "Banana split")])
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: body, error: nil, releasedBy: gate)
+        }
+        let task = Task { await viewModel.search() }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+
+        // Back online and the server is still answering "banana": "apple"'s rows stay retired.
+        XCTAssertTrue(viewModel.resultSet.server.isEmpty)
+        XCTAssertEqual(viewModel.resultSet.localOnly.map(\.title), ["Banana bread"])
+
+        gate.open()
+        await task.value
+        XCTAssertEqual(viewModel.resultSet.server.map(\.title), ["Banana split"])
+        XCTAssertEqual(viewModel.resultSet.localOnly.map(\.title), ["Banana bread"])
+    }
+
     func testAnOnlineErrorDoesNotFollowTheUserOffline() async {
         listCache.saveRecentDocuments([document(1, title: "Hotel shortlist")], fetchedFor: me)
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
@@ -390,6 +517,104 @@ final class SearchViewModelLocalTests: XCTestCase {
 
         signedIn.remember(someoneElse)
 
+        XCTAssertTrue(viewModel.quickAccess.isEmpty)
+    }
+
+    /// The real re-login: the id is cleared, the session's generation bumps, and the id is learned
+    /// again from `/users/me/` only later — here while the new session's request is in flight.
+    func testAReLoginThroughAnUnknownIdentityShowsTheNewSessionsRows() async {
+        listCache.saveRecentDocuments([document(1, title: "Hotel of mine")], fetchedFor: me)
+        listCache.savePinnedDocuments([document(2, title: "Hotel of theirs")], fetchedFor: someoneElse)
+        stubServer([(id: 3, title: "Hotel server, mine")])
+        let viewModel = makeViewModel()
+        viewModel.query = "hotel"
+        await viewModel.search(signInGeneration: 1)
+        XCTAssertEqual(viewModel.resultSet.server.map(\.title), ["Hotel server, mine"])
+        XCTAssertEqual(viewModel.resultSet.localOnly.map(\.title), ["Hotel of mine"])
+
+        // The login hands its cookies over: the id is forgotten and a new session begins.
+        signedIn.clear()
+        XCTAssertTrue(viewModel.resultSet.isEmpty, "the previous account's rows go at once")
+        viewModel.beginSession(signInGeneration: 2)
+
+        let gate = MockURLProtocol.ResponseGate()
+        let body = serverPage([(id: 4, title: "Hotel server, theirs")])
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: body, error: nil, releasedBy: gate)
+        }
+        let task = Task { await viewModel.search(signInGeneration: 2) }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+        XCTAssertTrue(viewModel.resultSet.isEmpty)
+        XCTAssertTrue(
+            searchShowsSkeleton(isSearching: viewModel.isSearching, hasResults: !viewModel.resultSet.isEmpty))
+
+        // `/users/me/` answers before the search does.
+        signedIn.remember(someoneElse)
+        gate.open()
+        await task.value
+
+        XCTAssertEqual(
+            viewModel.resultSet.server.map(\.title), ["Hotel server, theirs"], "the session's answer is kept")
+        XCTAssertTrue(viewModel.resultSet.localOnly.isEmpty, "the device was searched while the id was unknown")
+
+        // The screen searches again once the id is known (`signedInUserID` is in its task id), and
+        // now the device's documents of the new account are found too — never the previous one's.
+        stubServer([(id: 4, title: "Hotel server, theirs")])
+        await viewModel.search(signInGeneration: 2)
+        XCTAssertEqual(viewModel.resultSet.server.map(\.title), ["Hotel server, theirs"])
+        XCTAssertEqual(viewModel.resultSet.localOnly.map(\.title), ["Hotel of theirs"])
+    }
+
+    func testAnAnswerThatLandsBeforeTheIdIsLearnedStaysOnceItIs() async {
+        signedIn.clear()
+        stubServer([(id: 4, title: "Hotel server")])
+        let viewModel = makeViewModel()
+        viewModel.query = "hotel"
+        await viewModel.search(signInGeneration: 2)
+        XCTAssertEqual(viewModel.resultSet.server.map(\.title), ["Hotel server"])
+
+        signedIn.remember(someoneElse)
+
+        XCTAssertEqual(viewModel.resultSet.server.map(\.title), ["Hotel server"])
+    }
+
+    func testQuickAccessLoadedWhileTheIdIsUnknownIsKeptOnceItIsLearned() async {
+        stubServer([(id: 2, title: "Pinned of mine")])
+        let viewModel = makeViewModel()
+        await viewModel.loadQuickAccess(signInGeneration: 1)
+        XCTAssertEqual(viewModel.quickAccess.map(\.title), ["Pinned of mine"])
+
+        signedIn.clear()
+        XCTAssertTrue(viewModel.quickAccess.isEmpty)
+
+        let gate = MockURLProtocol.ResponseGate()
+        let body = serverPage([(id: 5, title: "Pinned of theirs")])
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: body, error: nil, releasedBy: gate)
+        }
+        let task = Task { await viewModel.loadQuickAccess(signInGeneration: 2) }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+        signedIn.remember(someoneElse)
+        gate.open()
+        await task.value
+
+        XCTAssertEqual(viewModel.quickAccess.map(\.title), ["Pinned of theirs"])
+    }
+
+    func testTheSameAccountSigningBackInDoesNotShowTheRowsFromBeforeTheReLogin() async {
+        stubServer([(id: 3, title: "Hotel server")])
+        let viewModel = makeViewModel()
+        viewModel.query = "hotel"
+        await viewModel.search(signInGeneration: 1)
+        await viewModel.loadQuickAccess(signInGeneration: 1)
+        XCTAssertFalse(viewModel.resultSet.server.isEmpty)
+        XCTAssertFalse(viewModel.quickAccess.isEmpty)
+
+        signedIn.clear()
+        signedIn.remember(me)
+        viewModel.beginSession(signInGeneration: 2)
+
+        XCTAssertTrue(viewModel.resultSet.server.isEmpty, "the new session asks again")
         XCTAssertTrue(viewModel.quickAccess.isEmpty)
     }
 

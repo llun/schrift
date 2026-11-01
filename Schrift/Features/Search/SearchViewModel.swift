@@ -5,10 +5,14 @@ import Foundation
 final class SearchViewModel {
     var query: String = ""
     /// The server's answer, the trimmed query it answered (nil for rows set directly, which
-    /// answer no query in particular) and the account it was fetched for. The rows stay on screen
-    /// while a newer query is in flight (see `mergeSearchResults`), but never for another account.
+    /// answer no query in particular), the sign-in session whose cookies fetched it and the
+    /// account known when it landed (nil while that session's id was still being learned). The
+    /// rows stay on screen while a query that refines theirs is in flight (see
+    /// `mergeSearchResults`), but never for another query, another session or another account
+    /// (`showsServerRows`).
     private var rawResults: [Document] = []
     private(set) var serverResultsQuery: String?
+    private var serverResultsSession = 0
     private var serverResultsOwner: UUID?
     private var resultsPinRevision = -1
     /// The matches among the documents already on this device, the trimmed query they answered
@@ -34,38 +38,91 @@ final class SearchViewModel {
     /// sheet keeps this view model, and the on-device rows carry cached body text.
     var resultSet: SearchResultSet {
         let owner = signedInUser.userID
-        let server = availability.isOffline || serverResultsOwner != owner ? [] : rawResults
+        let server = showsServerRows ? rawResults : []
         let merged = mergeSearchResults(server: server, local: localResultsOwner == owner ? localResults : [])
         guard let pins = saveCoordinator?.pins else { return merged }
         return SearchResultSet(
             server: pins.applyingFlags(merged.server, ownerUserID: owner, fetchedAt: resultsPinRevision),
             localOnly: pins.applyingFlags(merged.localOnly, ownerUserID: owner, fetchedAt: resultsPinRevision))
     }
+    /// Whether the server's rows answer what is on screen now. Online only; only in the session
+    /// that fetched them (`belongsToSession`); and only while the current query is theirs or
+    /// refines it — typing on keeps them in place until the new answer lands, but another query
+    /// (a recent term, a deleted character, a different word typed offline before a reconnect)
+    /// does not show an unrelated answer as its results.
+    private var showsServerRows: Bool {
+        guard !availability.isOffline, belongsToSession(serverResultsSession, owner: serverResultsOwner) else {
+            return false
+        }
+        guard let serverResultsQuery else { return true }
+        return query.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix(serverResultsQuery)
+    }
     var results: [Document] {
         get { resultSet.all }
         set {
             rawResults = newValue
             serverResultsQuery = nil
+            serverResultsSession = signInGeneration
             serverResultsOwner = signedInUser.userID
         }
     }
     private var rawQuickAccess: [Document] = []
+    private var quickAccessSession = 0
     private var quickAccessOwner: UUID?
     private var quickPinRevision = -1
     var quickAccess: [Document] {
         get {
-            // Like the results, the pinned list is never shown to another account than its own.
+            // Like the results, the pinned list is only shown in the session that fetched it.
             let owner = signedInUser.userID
-            let rows = quickAccessOwner == owner ? rawQuickAccess : []
+            let rows = belongsToSession(quickAccessSession, owner: quickAccessOwner) ? rawQuickAccess : []
             return saveCoordinator?.pins.resolve(
                 pinned: rows, recent: [], ownerUserID: owner, fetchedAt: quickPinRevision
             ).pinned ?? rows
         }
         set {
             rawQuickAccess = newValue
+            quickAccessSession = signInGeneration
             quickAccessOwner = signedInUser.userID
         }
     }
+
+    /// `SessionStore.signInGeneration` as the screen last reported it (`beginSession`, or the
+    /// argument to `search`/`loadQuickAccess`).
+    ///
+    /// The server's rows and Quick access are stamped with it rather than with the account id
+    /// alone: they are what one session's cookies were answered with, so they belong to that
+    /// session even when its id is learned only afterwards. A re-login clears the id, bumps the
+    /// generation and learns the id again from `/users/me/` some time later, so an answer
+    /// gated on the id known when it was asked would be dropped or hidden, with nothing to run
+    /// it again. The on-device lists stay gated on the id itself (`localSearchDocuments`).
+    private(set) var signInGeneration = 0
+
+    /// The signed-in account's id, for the screen to search again once a re-login learns it:
+    /// `SignedInUserStore` is not observable, and the on-device half reads nothing while the id is
+    /// unknown. Reading `pins.revision` registers the dependency on
+    /// `DocumentPinCoordinator.sessionIdentityDidChange`, which `HomeViewModel
+    /// .refreshSignedInUser` calls when it learns a different id.
+    var signedInUserID: UUID? {
+        _ = saveCoordinator?.pins.revision
+        return signedInUser.userID
+    }
+
+    /// Whether rows fetched in `session`, when `owner` was the known account, may be shown now:
+    /// only in that same session, and never once another account is known. An id learned after
+    /// they landed (`owner` nil) is that session's own, so it does not hide them; an id cleared
+    /// since (a re-login starting) hides rows known to be the previous account's at once.
+    private func belongsToSession(_ session: Int, owner: UUID?) -> Bool {
+        session == signInGeneration && (owner == nil || owner == signedInUser.userID)
+    }
+
+    /// Search appeared, or the sign-in session changed under it: the previous session's server
+    /// rows and Quick access stop showing at once, before the screen's tasks search again, and the
+    /// on-device index is read afresh (`invalidateLocalIndex`).
+    func beginSession(signInGeneration: Int) {
+        self.signInGeneration = signInGeneration
+        invalidateLocalIndex()
+    }
+
     var recentSearches: [String] = []
     var isSearching = false
     var errorKey: L10nKey?
@@ -165,20 +222,27 @@ final class SearchViewModel {
         Task { await saveCoordinator.syncPendingDrafts() }
     }
 
-    func loadQuickAccess() async {
+    /// `signInGeneration` is the session the screen loads for (nil keeps the last one reported).
+    func loadQuickAccess(signInGeneration: Int? = nil) async {
+        if let signInGeneration { self.signInGeneration = signInGeneration }
+        let session = self.signInGeneration
         quickAccessGeneration += 1
         let generation = quickAccessGeneration
         let pinRevision = saveCoordinator?.pins.revision ?? -1
-        let pinOwner = signedInUser.userID
+        let askedOwner = signedInUser.userID
         guard !availability.isOffline else { return }
         let token = availability.token
         do {
             let page = try await client.favoriteDocuments()
+            // The session's answer, even when its id was learned meanwhile; but not once a known
+            // account changed under it.
             guard generation == quickAccessGeneration, availability.permitsResponse(for: token), !Task.isCancelled,
-                signedInUser.userID == pinOwner
+                session == self.signInGeneration, askedOwner == nil || signedInUser.userID == askedOwner
             else { return }
+            let pinOwner = signedInUser.userID
             quickPinRevision = pinRevision
             rawQuickAccess = page.results.filter { !deletedSinceLoad.contains($0.id) }
+            quickAccessSession = session
             quickAccessOwner = pinOwner
             // Membership in this endpoint proves pinned even when the serializer omits the flag.
             let pinnedRows = rawQuickAccess.map { row in
@@ -202,12 +266,15 @@ final class SearchViewModel {
     /// Cancelling the task (the enclosing `.task(id:)` does on every keystroke) abandons the scan
     /// in flight and drops its result; the generation check does the same for a scan that
     /// finishes after a newer search began, and the owner check for one that finishes after
-    /// another account signed in.
-    func search() async {
+    /// another account signed in. The server's answer is the session's (`signInGeneration`, nil
+    /// keeps the last one reported), so it is kept when the session's id is learned meanwhile.
+    func search(signInGeneration: Int? = nil) async {
+        if let signInGeneration { self.signInGeneration = signInGeneration }
+        let session = self.signInGeneration
         searchGeneration += 1
         let generation = searchGeneration
         let pinRevision = saveCoordinator?.pins.revision ?? -1
-        // Captured before any await: whatever this search finds is that account's.
+        // Captured before any await: whatever the device finds is that account's.
         let owner = signedInUser.userID
         let token = availability.token
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -223,9 +290,11 @@ final class SearchViewModel {
         // is not its answer. Cleared here rather than before the request, which an offline search
         // never reaches.
         errorKey = nil
-        // A request is coming, so with nothing to show yet the screen draws placeholder rows
-        // from the first keystroke rather than a "no results" flash.
-        isSearching = !availability.isOffline
+        // An answer is coming — the device's, and online the server's too — so with nothing to
+        // show yet the screen draws placeholder rows from the first keystroke rather than a "no
+        // results" flash. Offline too: reading the caches and scanning take a moment, and the
+        // empty state is only true once the device has answered.
+        isSearching = true
         defer { if generation == searchGeneration { isSearching = false } }
 
         await searchOnDevice(trimmed, owner: owner, generation: generation)
@@ -245,28 +314,40 @@ final class SearchViewModel {
         do {
             let page = try await client.searchDocuments(query: trimmed)
             if generation == searchGeneration { isSearching = false }
+            // The session's answer, even when its id was learned meanwhile (a re-login); but not
+            // once a known account changed under it.
             guard generation == searchGeneration, availability.permitsResponse(for: token), !Task.isCancelled,
-                query.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed, signedInUser.userID == owner
+                query.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed, session == self.signInGeneration,
+                owner == nil || signedInUser.userID == owner
             else { return }
+            let landedOwner = signedInUser.userID
             resultsPinRevision = pinRevision
             rawResults = page.results.filter { !deletedSinceLoad.contains($0.id) }
             serverResultsQuery = trimmed
-            serverResultsOwner = owner
-            saveCoordinator?.pins.didReadFlags(rawResults, ownerUserID: owner, fetchedAt: pinRevision)
+            serverResultsSession = session
+            serverResultsOwner = landedOwner
+            saveCoordinator?.pins.didReadFlags(rawResults, ownerUserID: landedOwner, fetchedAt: pinRevision)
         } catch {
             if generation == searchGeneration { isSearching = false }
             guard generation == searchGeneration, availability.permitsResponse(for: token), !Task.isCancelled,
                 query.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
             else { return }
             errorKey = .search_error_search
+            // The rows of an earlier query were only kept as a placeholder for this answer, and
+            // none is coming: they are not this query's results. An answer to this very query
+            // (Search revisited with the network gone) still is, so it stays above the error.
+            if serverResultsQuery != trimmed {
+                rawResults = []
+                serverResultsQuery = nil
+            }
         }
     }
 
     /// Drops the on-device index, so the next search reads the caches again — and a build in
-    /// flight now is not installed when it finishes. Called when the query is cleared, and by the
-    /// screen when it appears and when the session changes: this view model outlives the screen
-    /// and keeps its query, so otherwise one "session" could last as long as the app and miss
-    /// every document opened, edited or newly cached since its index was built.
+    /// flight now is not installed when it finishes. Called when the query is cleared, and when
+    /// the screen appears and when the session changes (`beginSession`): this view model outlives
+    /// the screen and keeps its query, so otherwise one "session" could last as long as the app
+    /// and miss every document opened, edited or newly cached since its index was built.
     func invalidateLocalIndex() {
         localIndexSession += 1
         localEntries = nil

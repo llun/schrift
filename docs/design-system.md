@@ -7,9 +7,15 @@
 > "ON THIS DEVICE" section label (the existing `sectionLabel` style, no new token). Results on
 > screen stay while a refined query loads — the server's section keeps the previous answer's
 > rows until the new one lands, with the device's new matches deduped against them, so the list
-> does not collapse and re-expand per keystroke; the skeleton only shows when there is nothing
-> from the device or the server yet. A new query clears the previous one's error (offline too),
-> and rows found for one account are never shown to another after a re-login. Offline, Search
+> does not collapse and re-expand per keystroke; those rows are kept only while the query
+> refines theirs (not for a recent term, a deleted character or another word typed offline
+> before a reconnect) and a failed request drops them. The skeleton shows when there is nothing
+> from the device or the server yet, offline too until the device has answered, so the empty
+> state never flashes before the device's rows. A new query clears the previous one's error
+> (offline too). Rows found for one account are never shown to another after a re-login; the
+> server's rows and Quick access belong to the sign-in session that fetched them, so an answer
+> landing before the re-login has learned the account is kept, and the device is searched again
+> once it is known. Offline, Search
 > stays usable: the `OfflineBanner` reads "Results from this device only", the search field is
 > enabled (Home's compact shortcut too), the server's retained rows are ignored and Quick access
 > is hidden. Matching reuses
