@@ -327,6 +327,8 @@ enum Strings_en {
         .theme_paper_description: "Warm ivory and charcoal",
         .theme_footer:
             "Applies throughout Schrift, with light and dark palettes. Your documents and exports stay the same.",
+        .theme_specimen_title: "Meeting notes",
+        .theme_specimen_chip: "Roadmap",
         .profile_appearance: "Appearance",
         .profile_language: "Language",
         .profile_notifications: "Notifications",
