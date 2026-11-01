@@ -26,9 +26,8 @@ This file is the shorter, operational "how we write code here" companion.
 ## Task workflow — start here
 
 The rest of this file is reference; this is the order to work in. Each step
-names the section with the details. Throughout, the main thread orchestrates
-and delegates each step to sub-agents, choosing model and effort explicitly
-([Working with Sub-Agents](#working-with-sub-agents-always)).
+names the section with the details. Delegation and model choice follow
+[Working with Sub-Agents](#working-with-sub-agents).
 
 1. **Orient.** Skim this file's headings, then read the sections your task
    touches in full. Architecture rationale lives in the design spec
@@ -85,120 +84,35 @@ and delegates each step to sub-agents, choosing model and effort explicitly
      run and every thread is resolved;
    - **`Build & Test` is green on the latest pushed state.**
 
-## Working with Sub-Agents (always)
+## Working with Sub-Agents
 
-The main thread (the top-level session the user talks to) always delegates work
-to sub-agents. It is the orchestrator: it understands the ask, splits it into
-tasks, briefs a sub-agent for each, checks what comes back, and owns the final
-answer. It does not do the bulk reading, searching, editing or reviewing itself.
-Sub-agents do their assigned task directly and do not spawn further sub-agents
-unless their brief says to.
+When to delegate, which model to use and how much effort to spend come from one
+guide, kept in the `llun/labs` repository and not repeated here:
+[`agents-bridge/config/routing/shared.md`](https://github.com/llun/labs/blob/main/agents-bridge/config/routing/shared.md)
+and, for Claude Code,
+[`claude.md`](https://github.com/llun/labs/blob/main/agents-bridge/config/routing/claude.md)
+beside it. On the owner's Mac it is already loaded through `~/.claude/CLAUDE.md`.
 
-### Rules for the main thread
+Where the guide can't be read and the `delegate` tool is missing (cloud
+sessions), follow this summary of it:
 
-- **Delegate every non-trivial step.** Exploration, code search, reading large
-  files or logs, implementation, test runs, and code review each go to a
-  sub-agent. The main thread keeps the conclusions and the evidence it needs to
-  verify them, not the raw output. The main thread may still do directly:
-  reading the parts of this file it needs to brief sub-agents, one short command
-  or one small file whose output it needs anyway (for example `git status`,
-  `git diff --stat`, or spot-checking a `file:line` a sub-agent cited), and
-  git/PR bookkeeping (commits, pushes, PR descriptions, posting review findings
-  as PR comments, replying to and resolving review threads). Anything longer,
-  and any edit to the repository's files, goes to a sub-agent.
-- **Set model and effort on every sub-agent explicitly.** Never rely on the
-  inherited default. Choose the cheapest model and lowest effort that will still
-  do the task well, using the table below, and step up only where quality
-  depends on it.
-- **Run independent tasks in parallel.** Launch sub-agents that do not depend on
-  each other in a single message so they run concurrently. Read-only work
-  (search, reading, review) parallelizes freely; give parallel implementers
-  separate worktrees or non-overlapping files so they do not overwrite each
-  other. Never run two `xcodegen`/`xcodebuild` sub-agents at once in the same
-  checkout, and never two `xcodebuild test` runs on the same simulator even
-  from separate worktrees — they kill each other
-  ([Testing conventions](#testing-conventions)); run tests one at a time or
-  give each run its own simulator and `-derivedDataPath`.
-- **Brief each sub-agent completely.** A sub-agent starts with no context: give
-  it the goal, the relevant paths, the constraints from this file, whether it
-  may edit files, commit or push, and the exact shape of the result you want
-  back.
-- **Verify before trusting.** Check a sub-agent's claims (diffs, test output,
-  `file:line` references) before building on them or reporting them: spot-check
-  them yourself within the limits above, and send anything bigger (re-running
-  tests, reading a large diff) to a `fast`/`low` sub-agent. If a result is
-  wrong or shallow because the brief left something out, fix the brief and
-  re-run at the same tier; otherwise re-run that task one step up the escalation
-  ladder below rather than patching around it.
-- **Review with a fresh sub-agent.** Every round of the
-  [PR review loop](#pr-review-loop--required-for-all-agent-work) uses a new
-  reviewer sub-agent that did not write the change; fixes go to an implementer
-  sub-agent. That section's stop conditions (round cap, bots, green
-  `Build & Test`) apply unchanged.
+- Delegate work that runs in parallel, is bulk reading or editing, or needs a
+  fresh, independent context (review, verification). Do the rest in the main
+  thread.
+- Set `model` and `effort` on every Claude sub-agent: `haiku`/`low` (Fast),
+  `sonnet`/`medium` (Everyday), `sonnet`/`high` (Heavy), `opus`/`high`
+  (Frontier). Start at the tier that fits and go one up only after a wrong or
+  shallow answer. Use `xhigh` only for a bug that survived a fix, and never make
+  `max` a default.
+- Sub-agents see none of this conversation, so name the files, the goal and what
+  done looks like. Give parallel writers separate worktrees, and check their
+  diff and tests.
 
-### Choosing model and effort
-
-Match the tier to how much judgment the task needs, not to how important the
-overall change is. This policy works with any agent tool and any model, not only
-Claude: it is written in three model tiers (`fast`, `balanced`, `strongest`) and
-five effort steps (`low`, `medium`, `high`, `xhigh`, `max`), and the two tables
-after the task table map them onto each tool's own settings.
-
-| Task | Tier | Effort |
-| --- | --- | --- |
-| Finding files, grepping, listing usages, reading logs, summarizing docs | `fast` | `low` |
-| Mechanical edit of exact text in one or two files (rename, formatting, applying a fix that is already decided) | `fast` | `low` |
-| Mechanical edit that spans several files or needs surrounding code read (including updating docs to match code) | `balanced` | `low` |
-| Running builds, tests and linters and reporting failures (in a [cloud session](#claude-code-cloud-sessions-linux), where nothing is built or tested locally, read the `Build & Test` check logs instead) | `fast` | `low` |
-| Implementing a well-specified feature or fix, writing tests | `balanced` | `medium` |
-| Root-causing a CI failure or a bug with a clear reproduction | `balanced` | `medium` |
-| Implementing changes in `Core/Yjs`, the editor save path, auth/Keychain, or anything under [Safety](#safety--never-add-anything-dangerous) | `strongest` | `high` |
-| Architecture and design decisions, plans that touch several subsystems | `strongest` | `high` |
-| Hard debugging (concurrency, data loss, security, flaky behavior with no clear cause) | `strongest` | `high` |
-| Code review of a change before it is pushed or merged | `strongest` | `high` |
-
-Example models per tier. Model names change every few months, so check the
-tool's current model list and use its newest model in the same tier; any model
-not listed here (another vendor, a local model, a new release) goes in the tier
-that matches its capability and cost.
-
-| Tier | Claude Code (Agent tool `model`) | OpenAI Codex | Google Antigravity | Open-weight (Qwen, DeepSeek, GLM, Kimi, gpt-oss, …) |
-| --- | --- | --- | --- | --- |
-| `fast`: cheapest and quickest, for retrieval and mechanical work | `haiku` | the smallest current GPT model (for example Luna) | a Gemini Flash model | a small model, such as Qwen3-Coder-30B-A3B or gpt-oss-20b |
-| `balanced`: most implementation work | `sonnet` | the mid-tier current GPT model (for example Sol) | Claude Sonnet | a mid-size coding model, such as Qwen3-Coder-Next, DeepSeek V4 Flash or gpt-oss-120b |
-| `strongest`: design, hard debugging, high-risk code and review | `opus` | the top current GPT model (for example Astra) | Claude Opus or Gemini Pro | the largest current release of a frontier family, such as Qwen3.8, DeepSeek V4 Pro, GLM-5.2 or Kimi K2.6 |
-
-How each tool sets the effort step:
-
-| Tool | How to set effort |
-| --- | --- |
-| Claude Code | The Agent tool's `effort` takes the five steps as written. |
-| OpenAI Codex | `model_reasoning_effort` in the config or in a custom agent's TOML file (`.codex/agents/`); use the config value Codex documents for each step (for example `low`, `medium`, `high`, `xhigh`), and map `max` to its highest documented value. |
-| Google Antigravity | For Gemini models, pick the effort level the model picker offers that is closest to the step. Models offered as a single thinking variant (such as Claude in Antigravity) have no effort steps, so skip them as the ladder says. |
-| Open-weight models | Use the serving stack's reasoning setting where it has one (`reasoning_effort`, a thinking on/off switch, or a thinking-token budget): thinking off for `low`, on with the default budget for `medium`, a larger budget for `high`, and the largest budget the stack allows for `xhigh` and `max`. If it has none, skip the effort steps, as the ladder says. |
-
-Guidelines:
-
-- When the table does not cover a task and you are unsure, use `balanced` at
-  `medium`, a good balance of quality and cost for most coding work.
-- Use `fast` freely for retrieval and mechanical changes. It is the cheapest and
-  quickest, and a wrong search result is cheap to redo.
-- Start at `strongest` or `high` effort only where a mistake is expensive:
-  design, the high-risk areas in the table, subtle bugs, and review. When a task
-  matches both a cheaper row and the high-risk row, the high-risk row wins.
-  Reaching them by escalation is fine.
-- Escalate one step at a time, starting from the task's row in the table. The
-  ladder is `fast`/`low` → `fast`/`medium` → `balanced`/`medium` →
-  `balanced`/`high` → `strongest`/`high` → `strongest`/`xhigh` →
-  `strongest`/`max`; a task that starts at `balanced`/`low` steps to
-  `balanced`/`medium`. Never set `fast` above `medium`, and use `max` only on
-  `strongest` after `xhigh` has fallen short. Where a tool has fewer effort
-  steps than this ladder, skip the steps it lacks.
-- Do not go beyond these tiers and steps (for example Claude Code's `fable`
-  model, or an effort level above `max`) unless the user asks for it.
-- Tools without a sub-agent feature still follow the same split as closely as
-  they allow (a separate session or pass for review, the cheapest adequate model
-  per task) rather than skipping it.
+Whichever agent runs them, never run two `xcodegen`/`xcodebuild` jobs at once in
+the same checkout, and never two `xcodebuild test` runs on the same simulator
+even from separate worktrees: they kill each other
+([Testing conventions](#testing-conventions)). Run tests one at a time or give
+each run its own simulator and `-derivedDataPath`.
 
 ## Build, run, test
 
@@ -4602,16 +4516,16 @@ comments (steps 2–3) do **not** start a new loop: the re-review that follows
 them is simply the next round and counts toward the same round cap in step 4.
 
 1. **Review with a fresh sub-agent.** Spawn a reviewer sub-agent that did not
-   write the change (model and effort per
-   [Working with Sub-Agents](#working-with-sub-agents-always)) to review **all**
+   write the change (model per
+   [Working with Sub-Agents](#working-with-sub-agents)) to review **all**
    the code in the PR (the full diff, not just the latest commit) —
    correctness, the conventions in this file, test coverage, and the
    [Safety](#safety--never-add-anything-dangerous) rules. Post **everything it
    finds as review comments on the PR** — anchored to the relevant file and
    line when the finding maps to a line in the diff, otherwise as a top-level
    PR comment naming the file.
-2. **Address every comment.** An implementer sub-agent fixes each finding (or
-   the main thread explains in the thread why no change is needed). Then push
+2. **Address every comment.** Fix each finding (or explain in the thread why
+   no change is needed). Then push
    the fixes, **reply to each comment** describing what was done, and **mark
    the thread as resolved** (a top-level PR comment has no resolvable thread —
    a reply on the PR conversation recording the outcome counts as resolving
