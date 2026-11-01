@@ -66,6 +66,16 @@ func backToTopAutoDismisses(voiceOverEnabled: Bool) -> Bool { !voiceOverEnabled 
         return blockID
     }
 
+    /// The reader jumped somewhere on purpose: a heading, a find match or the title picked in the
+    /// outline. Ends the offer — "Back to top" belongs to the restore, not to a place the reader
+    /// chose — and, once there is content, spends the restore decision as a scroll would, so a
+    /// restore that had not happened yet cannot pull the page away from the jump. Where the jump
+    /// lands is remembered like any other place, from the top visible block when they leave.
+    func noteDeliberateJump(blocks: [EditorBlock]) {
+        dismissBackToTop()
+        _ = beginRestore(blocks: blocks, userHasScrolled: true)
+    }
+
     /// Ends the offer: the reader scrolled, tapped it, or left.
     func dismissBackToTop() {
         offerTask?.cancel()

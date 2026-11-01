@@ -462,4 +462,47 @@ final class ReadingPositionTests: XCTestCase {
 
         XCTAssertNotNil(store.position(serverOrigin: origin, documentID: id))
     }
+
+    @MainActor func testAnOutlineJumpEndsTheBackToTopOffer() {
+        let blocks = paragraphs(10)
+        let (session, store, id) = makeSession()
+        store.save(
+            blockID: UUID(), fingerprint: readingPositionFingerprint(of: blocks[6]), blockIndex: 6,
+            serverOrigin: origin, documentID: id)
+        _ = session.beginRestore(blocks: blocks, userHasScrolled: false, voiceOverEnabled: true)
+        XCTAssertTrue(session.offersBackToTop)
+
+        session.noteDeliberateJump(blocks: blocks)
+
+        XCTAssertFalse(session.offersBackToTop)
+    }
+
+    @MainActor func testAnOutlineJumpBeforeTheRestoreSpendsIt() {
+        let blocks = paragraphs(10)
+        let (session, store, id) = makeSession()
+        store.save(
+            blockID: UUID(), fingerprint: readingPositionFingerprint(of: blocks[6]), blockIndex: 6,
+            serverOrigin: origin, documentID: id)
+
+        session.noteDeliberateJump(blocks: blocks)
+
+        // Content settling after the jump must not pull the page back to the saved place.
+        XCTAssertNil(session.beginRestore(blocks: blocks, userHasScrolled: false))
+        XCTAssertFalse(session.offersBackToTop)
+        // And where the jump landed is remembered on leaving.
+        session.persist(blocks: blocks, topVisibleBlockID: blocks[3].id)
+        XCTAssertEqual(store.position(serverOrigin: origin, documentID: id)?.blockIndex, 3)
+    }
+
+    @MainActor func testAnOutlineJumpWithoutContentKeepsTheRestoreForLater() {
+        let blocks = paragraphs(10)
+        let (session, store, id) = makeSession()
+        store.save(
+            blockID: UUID(), fingerprint: readingPositionFingerprint(of: blocks[6]), blockIndex: 6,
+            serverOrigin: origin, documentID: id)
+
+        session.noteDeliberateJump(blocks: [])
+
+        XCTAssertEqual(session.beginRestore(blocks: blocks, userHasScrolled: false), blocks[6].id)
+    }
 }

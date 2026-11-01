@@ -6,6 +6,9 @@ struct OptionsSheetView: View {
     let shareURL: URL?
     let availability: OnlineAvailability
     var onShare: (() -> Void)? = nil
+    /// Opens the "In this document" outline. The presenter shows it once this sheet has
+    /// dismissed — two sheets are never up at once — so the row dismisses after calling it.
+    var onOutline: (() -> Void)? = nil
     /// Called once the deletion has been made **or queued**, with `queued: true` for the
     /// latter. The presenter needs the distinction: a completed delete purges every local
     /// copy, while a queued one must leave the draft and the record alone — they are what the
@@ -35,6 +38,7 @@ struct OptionsSheetView: View {
         availability: OnlineAvailability = OnlineAvailability(),
         onLinkCopied: (() -> Void)? = nil,
         onShare: (() -> Void)? = nil,
+        onOutline: (() -> Void)? = nil,
         onDeleted: ((_ queued: Bool) -> Void)? = nil
     ) {
         self.viewModel = viewModel
@@ -42,6 +46,7 @@ struct OptionsSheetView: View {
         self.shareURL = shareURL
         self.onLinkCopied = onLinkCopied
         self.onShare = onShare
+        self.onOutline = onOutline
         self.onDeleted = onDeleted
         self.restoreURL = documentShareURL(serverHost: serverHost, documentID: documentID)
         _versionHistoryViewModel = State(
@@ -73,6 +78,17 @@ struct OptionsSheetView: View {
 
             ScrollView {
                 VStack(spacing: 0) {
+                    // About the open document rather than its server copy, so it is offered for a
+                    // local document too.
+                    if onOutline != nil {
+                        ListRow(
+                            icon: .subject, title: loc[.outline_title], showsChevron: true,
+                            action: {
+                                onOutline?()
+                                dismiss()
+                            })
+                    }
+
                     // Everything above Delete addresses the *server's* copy, and a document
                     // created on this device has none: Pin POSTs to `…/favorite/` and 404s,
                     // Copy link yields a URL nobody can open (and says "Link copied" about

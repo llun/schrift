@@ -30,6 +30,31 @@ func attachmentCardState(loaderState: AttachmentLoadState?, isOffline: Bool) -> 
     }
 }
 
+/// Presents an attachment card's QuickLook preview on the card's behalf.
+///
+/// A card presents its own preview by default (the Attachments screen). The editor installs one
+/// of these instead, so the preview is driven by the editor's own state and held while its
+/// outline sheet is on screen (`OutlinePresentationGate`): the outline leaves both canvases
+/// interactive, and a preview the card presented itself would stack on the outline or fail and
+/// leave the card dead.
+struct AttachmentPreviewAction {
+    let handler: @MainActor (URL) -> Void
+
+    @MainActor func callAsFunction(_ url: URL) { handler(url) }
+}
+
+private struct AttachmentPreviewActionKey: EnvironmentKey {
+    static var defaultValue: AttachmentPreviewAction? { nil }
+}
+
+extension EnvironmentValues {
+    /// `nil` (the default) lets an attachment card present its own preview.
+    var attachmentPreview: AttachmentPreviewAction? {
+        get { self[AttachmentPreviewActionKey.self] }
+        set { self[AttachmentPreviewActionKey.self] = newValue }
+    }
+}
+
 /// An uploaded file (PDF, docx, …) rendered inline in a document, with a
 /// thumbnail when the system can make one and a full-screen QuickLook preview on
 /// tap.
@@ -48,6 +73,7 @@ struct AttachmentCardView: View {
     @Environment(AttachmentLoader.self) private var loader
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.attachmentPreview) private var attachmentPreview
 
     /// Both are keyed to `display.urlString` by the `.task(id:)` below and reset
     /// when it changes: `applyLiveRemoteChange` reuses a surviving block's
@@ -105,7 +131,7 @@ struct AttachmentCardView: View {
                     // way back. This re-downloads if needed and bumps recency.
                     Task {
                         await loader.loadIfNeeded(display, allowsNetwork: !isOffline)
-                        if case .cached(let current) = loader.state(for: display) { previewURL = current }
+                        if case .cached(let current) = loader.state(for: display) { preview(current) }
                     }
                 } label: {
                     card(subtitle: display.fileExtension.uppercased(), accessory: .chevron)
@@ -140,6 +166,16 @@ struct AttachmentCardView: View {
             card(subtitle: loc[.editor_attachment_offline], accessory: .none)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(loc.format(.editor_attachment_a11y, title, loc[.editor_attachment_offline]))
+        }
+    }
+
+    /// Hands the preview to the screen when it asked for it (`AttachmentPreviewAction`), else
+    /// presents it from this card.
+    private func preview(_ url: URL) {
+        if let attachmentPreview {
+            attachmentPreview(url)
+        } else {
+            previewURL = url
         }
     }
 
