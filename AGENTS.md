@@ -581,6 +581,9 @@ Schrift/
 │                        AttachmentLoader + AttachmentCacheStore + AttachmentCardView),
 │                        Pages tree drawer (PagesTreeDrawer + PagesTreeViewModel,
 │                        lazy per-level children via the children cache),
+│                        the "In this document" outline + find sheet for the OPEN document
+│                        (DocumentOutline: pure outline/find/section counts/stepping;
+│                        DocumentOutlineSheet; opened from Options or Command-F),
 │                        offline sync + detect-and-ask conflicts (DraftSyncDecision,
 │                        ConflictSheetView), documents created on-device
 │                        (PendingDocumentCreateStore + the replay; Home/editor create UI),

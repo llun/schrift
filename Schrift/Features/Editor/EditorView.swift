@@ -233,6 +233,13 @@ struct EditorView: View {
     @Environment(DocumentCollaborationManager.self) private var collaboration
     @State private var isPresentingShareSheet = false
     @State private var isPresentingOptionsSheet = false
+    /// The "In this document" outline sheet. Reached from Options (which hands off through
+    /// `pendingOutlineAfterOptions`, as Share does) or Command-F (`outlineFocusesFind`).
+    @State private var isPresentingOutline = false
+    @State private var pendingOutlineAfterOptions = false
+    @State private var outlineFocusesFind = false
+    /// What the outline sheet last asked the visible canvas to scroll to.
+    @State private var outlineScrollRequest: DocumentScrollRequest?
     @State private var conflictToResolve: IdentifiedSyncConflict?
     /// Transient confirmations ("Link copied"). Owned here, not in the sheets
     /// that raise them — those dismiss themselves in the same breath, and a
@@ -333,6 +340,7 @@ struct EditorView: View {
         // keep that chain inside the type-checker's budget — it belongs to the whole screen
         // either way (a struck-through row can be tapped in the Subpages list or the drawer).
         mainContent
+            .modifier(outlinePresentation)
             .pendingDeleteUndoAlert(for: $documentPendingUndo) { document in
                 viewModel.undoPendingDelete(document)
             }
@@ -495,6 +503,9 @@ struct EditorView: View {
                     if pendingShareAfterOptions && !isOffline {
                         pendingShareAfterOptions = false
                         isPresentingShareSheet = true
+                    } else if pendingOutlineAfterOptions {
+                        pendingOutlineAfterOptions = false
+                        presentOutline(focusingFind: false)
                     }
                 }
             ) {
@@ -526,6 +537,23 @@ struct EditorView: View {
         .presentationDragIndicator(.visible)
     }
 
+    private var outlinePresentation: DocumentOutlinePresentation {
+        DocumentOutlinePresentation(
+            isPresented: $isPresentingOutline, focusesFind: outlineFocusesFind,
+            documentTitle: viewModel.title, blocks: viewModel.blocks,
+            findShortcutTitle: loc[.outline_find_placeholder],
+            findShortcutEnabled: viewModel.hasLoadedContent && !viewModel.isLoading,
+            onFindShortcut: { presentOutline(focusingFind: true) },
+            onScroll: { target in
+                outlineScrollRequest = DocumentScrollRequest.following(outlineScrollRequest, target: target)
+            })
+    }
+
+    private func presentOutline(focusingFind: Bool) {
+        outlineFocusesFind = focusingFind
+        isPresentingOutline = true
+    }
+
     private var optionsSheet: some View {
         OptionsSheetView(
             viewModel: optionsViewModel,
@@ -538,6 +566,7 @@ struct EditorView: View {
             availability: viewModel.availability,
             onLinkCopied: { toastMessage = ToastMessage(loc[.toast_link_copied]) },
             onShare: { pendingShareAfterOptions = true },
+            onOutline: { pendingOutlineAfterOptions = true },
             onDeleted: { queued in
                 // A *queued* deletion is still cancellable, so the teardown must not purge:
                 // the draft, the create record and the cached body are what the undo puts
@@ -772,7 +801,8 @@ struct EditorView: View {
 
     private var editingSurface: some View {
         BlockEditorView(
-            viewModel: viewModel, serverOrigin: serverOrigin, isOffline: isOffline, scrollAnchor: scrollAnchor
+            viewModel: viewModel, serverOrigin: serverOrigin, isOffline: isOffline, scrollAnchor: scrollAnchor,
+            scrollRequest: outlineScrollRequest
         ) {
             // The same header the reading surface draws, so the swap moves
             // nothing. Only the status slot differs: `saveStatusDisplay` decides
@@ -1076,6 +1106,15 @@ struct EditorView: View {
                     }
                 } else if let offsetY = scrollAnchor.consumePendingOffset() {
                     readingScrollPosition.scrollTo(y: offsetY)
+                }
+            }
+            .onChange(of: outlineScrollRequest) { _, request in
+                guard let request else { return }
+                // The reading header carries no scroll id; the top is offset zero.
+                if request.target == .header {
+                    readingScrollPosition.scrollTo(y: 0)
+                } else {
+                    proxy.scrollTo(request.target, anchor: .top)
                 }
             }
             .refreshable {

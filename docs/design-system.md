@@ -1,5 +1,25 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — "In this document": an outline with find.** The editor gains
+> a sheet for the document that is open, separate from the Pages drawer (which is about
+> the *other* pages). It opens from a new first row in the Options sheet (the `subject`
+> glyph, "In this document") and, with a hardware keyboard, from Command-F, which also
+> puts the caret in the find field. Detents `.medium` and `.large` with the drag
+> indicator, a `SheetHeader`, and a flat, boxless list on `surfacePage`. Top to bottom: a
+> `SearchField` ("Find in this document"); while it has text, one line with "2 of 5"
+> (`footnote`, `textSecondary`) and previous/next `IconButton`s that wrap around; then the
+> document title (a way back to the top) and the level 1-3 headings, each indented one
+> gutter per level and 44pt tall at minimum — `headline` for level 1, `body` for level 2,
+> `subhead` in `textSecondary` for level 3. A heading whose section holds matches turns
+> `textBrand` and gains an accent `Badge` with the count (the heading itself and its
+> sub-headings included). Tapping a heading scrolls the canvas on screen — reading or
+> editing — to that block and closes the sheet; stepping through matches scrolls without
+> closing so the text stays visible above the sheet. Matching is case- and
+> diacritic-insensitive over the text a reader sees (inline markdown stripped), counted
+> per block. No new colour or icon; no animation, so nothing to gate on Reduce Motion.
+> Matches are not highlighted inside the text. Implementation:
+> `Schrift/Features/Editor/DocumentOutline.swift` and `DocumentOutlineSheet.swift`.
+
 > **Revised: 2026-10-17 — Links to other documents are page chips.** A markdown link
 > to another document on the user's server (`[Title](https://<host>/docs/<uuid>/)`, the
 > links `documentLinkAction` opens in the app) is drawn as a **page chip** on both the
