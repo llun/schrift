@@ -365,6 +365,7 @@ struct DocumentListView: View {
             accessibilityLabel: row.label,
             onOpen: open
         )
+        .documentZoomSource(document: document.id, surface: .home, style: .card)
         .contextMenu {
             ForEach(actions) { action in
                 Button(role: action.role == .destructive ? .destructive : nil, action: action.handler) {
@@ -438,6 +439,7 @@ struct DocumentListView: View {
                 onOpen: open
             )
         }
+        .documentZoomSource(document: document.id, surface: .home)
     }
 }
 
