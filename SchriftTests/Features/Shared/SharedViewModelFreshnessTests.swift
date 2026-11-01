@@ -88,4 +88,31 @@ final class SharedViewModelFreshnessTests: XCTestCase {
         await viewModel.loadIfStale(sessionGeneration: 1)
         XCTAssertEqual(recorder.count(ofMethod: "GET"), 2)
     }
+
+    /// A fetch that ran before the signed-in id was known cached its rows unstamped, so the `[[`
+    /// picker offers none of them. Once the id arrives that fetch is no longer fresh for this
+    /// account, however recent — the next passive entry refetches and re-stamps.
+    func testLearningTheSignedInIdMakesAnEarlierFetchStaleEvenInsideTheWindow() async {
+        let recorder = RequestRecorder()
+        stubEmptyList(recorder)
+        let signedIn = SignedInUserStore(userDefaults: preferences)
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let viewModel = SharedViewModel(
+            client: client, cache: cache, userDefaults: preferences, signedInUser: signedIn,
+            now: { [unowned self] in self.clock })
+
+        await viewModel.loadIfStale(sessionGeneration: 0)
+        clock = clock.addingTimeInterval(5)
+        await viewModel.loadIfStale(sessionGeneration: 0)
+        XCTAssertEqual(recorder.count(ofMethod: "GET"), 1, "precondition: nothing changed, still fresh")
+
+        let owner = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        signedIn.remember(owner)
+        await viewModel.loadIfStale(sessionGeneration: 0)
+        XCTAssertEqual(recorder.count(ofMethod: "GET"), 2, "the id arriving invalidates the unstamped fetch")
+        XCTAssertNotNil(cache.loadSharedWithMeDocuments())
+
+        await viewModel.loadIfStale(sessionGeneration: 0)
+        XCTAssertEqual(recorder.count(ofMethod: "GET"), 2, "and the re-stamped fetch is fresh again")
+    }
 }

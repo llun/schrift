@@ -492,22 +492,21 @@ final class HomeViewModel {
         // work can send four identical requests. The fix would be a write-through in the
         // coordinator rather than a reordering here.
         //
-        // **And a re-learn has to be followed by a load.** `SignedInUserStore` is deliberately
-        // neither `@Observable` nor cached, so reading it registers no SwiftUI dependency:
-        // learning the id un-hides this device's local rows in `recentDocuments` without
+        // **A re-learn is followed by a load, and `refreshSignedInUser` does it.** `SignedInUserStore`
+        // is deliberately neither `@Observable` nor cached, so reading it registers no SwiftUI
+        // dependency: learning the id un-hides this device's local rows in `recentDocuments` without
         // invalidating anything that would draw them. That is the same trap this function's own
         // comment below describes for a migrated row — the reconnect and foreground edges call
-        // this and not `load()` — so it takes the same answer. Gated on having actually learned
-        // something, which is rare, rather than on having asked.
+        // this and not `load()` — so it takes the same answer, inside the learning call so every
+        // caller gets it. Gated on having actually learned something, which is rare, rather than
+        // on having asked.
         //
         // It can therefore double up with the `onDocumentMigrated` load below when a create
         // pass migrates during the replay above and the identity was unknown — both are
         // generation-guarded and latest-wins, so that costs one redundant list fetch, not a
         // wrong list. Note `load()` also clears any undismissed error banner, which is new on
         // the foreground path but identical to what the migrated-row load already does.
-        if await refreshSignedInUserIfUnknown() {
-            await load()
-        }
+        await refreshSignedInUserIfUnknown()
         // **A migrated document must not vanish from a live Home.** The replay drops the
         // record, so the local row is correctly withheld the instant it migrates — but the
         // *real* row only exists in `fetchedRecentDocuments`, which still holds the fetch from
@@ -591,6 +590,16 @@ final class HomeViewModel {
         // A launch/reconnect may have skipped replay while identity was unknown.
         // Learning it is the trigger that resumes the account-scoped pin queue.
         await saveCoordinator.syncPendingPins()
+        // **A newly learned id has to be followed by a load.** `load()` captures the account it
+        // runs under when it *starts*, and on a fresh sign-in the list's first load races this
+        // very call (`RootView`'s `.task` runs it concurrently), so it can capture no owner and
+        // save both lists unstamped — which the editor's `[[` picker treats as nobody's, and
+        // offers no Home documents until something else reloads. This load starts with the id
+        // known, supersedes the racing one (latest wins) and re-stamps the cache. Gated on the
+        // id actually changing, so the ordinary launch with a known account costs nothing.
+        // Callers that load next anyway (`refresh()`, `reauthenticated()`) pay one redundant
+        // fetch, only on the rare change.
+        if previousOwner != user.id { await load() }
     }
 
     /// Ask who this session belongs to, but only when nothing on the device knows. Returns
