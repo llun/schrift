@@ -291,6 +291,8 @@ enum Strings_fr {
         .editor_error_add_file: "Impossible d'ajouter le fichier. Veuillez réessayer.",
         .editor_error_file_too_large: "Ce fichier est trop volumineux.",
         .editor_slash_file: "Fichier",
+        .editor_page_link_title: "Lier une page",
+        .editor_page_link_empty: "Aucune page correspondante",
         .editor_uploading_file: "Envoi du fichier…",
         .editor_uploading_file_a11y: "Envoi du fichier",
 
