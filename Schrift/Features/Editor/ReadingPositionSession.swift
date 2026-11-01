@@ -5,23 +5,29 @@ import Observation
 /// VoiceOver is running: the user may not have reached the pill before it would vanish.
 func backToTopAutoDismisses(voiceOverEnabled: Bool) -> Bool { !voiceOverEnabled }
 
-/// What to do with a decided restore, given which reading rows have reported a laid-out frame.
+/// What to do with a decided restore, given which reading rows are presented and which have
+/// reported a laid-out frame.
 enum ReadingRestoreScrollStep: Equatable {
-    /// No row has been laid out yet: content that has only just arrived is in the hierarchy but
-    /// not measured, and a `scrollTo` now has no frame to scroll to. Keep the restore pending.
+    /// The target row is presented but has not reported a frame yet: content that has only just
+    /// arrived is in the hierarchy but not measured, and a `scrollTo` now has no frame to scroll
+    /// to. Keep the restore pending.
     case wait
     /// The target row is laid out: scroll now.
     case scroll
-    /// Rows are laid out but the target is not among them (a completed checklist item that
-    /// "Hide completed" leaves out). The reading surface is a plain `VStack`, laid out in full,
-    /// so it is not coming: drop the restore rather than offer "Back to top" from the top.
+    /// The target row is not presented at all (a completed checklist item that "Hide completed"
+    /// leaves out, possibly leaving no rows whatever). No frame is coming for it, so waiting
+    /// would hold the restore, and the saving it suppresses, open for good: drop the restore
+    /// rather than offer "Back to top" from the top.
     case abandon
 }
 
-/// When a decided restore may scroll. See `ReadingRestoreScrollStep`.
-func readingRestoreScrollStep(target: UUID, laidOutBlockIDs: Set<UUID>) -> ReadingRestoreScrollStep {
-    guard !laidOutBlockIDs.isEmpty else { return .wait }
-    return laidOutBlockIDs.contains(target) ? .scroll : .abandon
+/// When a decided restore may scroll. See `ReadingRestoreScrollStep`. `presentedBlockIDs` is
+/// every row the reading surface shows, whether or not it has been measured yet.
+func readingRestoreScrollStep(
+    target: UUID, presentedBlockIDs: Set<UUID>, laidOutBlockIDs: Set<UUID>
+) -> ReadingRestoreScrollStep {
+    guard presentedBlockIDs.contains(target) else { return .abandon }
+    return laidOutBlockIDs.contains(target) ? .scroll : .wait
 }
 
 /// One open document's "continue reading" state: restores the saved position once when the
@@ -91,15 +97,20 @@ func readingRestoreScrollStep(target: UUID, laidOutBlockIDs: Set<UUID>) -> Readi
     var hasPendingRestoreScroll: Bool { pendingScrollBlockID != nil }
 
     /// The block to scroll to now, once, if a restore is pending and its row has been laid out
-    /// (`laidOutBlockIDs`: the rows that have reported a frame). Raises the "Back to top" offer,
+    /// (`laidOutBlockIDs`: the rows that have reported a frame; `presentedBlockIDs`: every row
+    /// the surface shows, so a target that is not shown is dropped, not waited for). Raises the "Back to top" offer,
     /// which dismisses itself after `offerDuration`.
     ///
     /// With VoiceOver running the offer does not time out (`backToTopAutoDismisses`): a
     /// screen-reader user needs longer than six seconds to find it, so it stays until they
     /// scroll, activate it or leave.
-    func takeRestoreScroll(laidOutBlockIDs: Set<UUID>, voiceOverEnabled: Bool = false) -> UUID? {
+    func takeRestoreScroll(
+        presentedBlockIDs: Set<UUID>, laidOutBlockIDs: Set<UUID>, voiceOverEnabled: Bool = false
+    ) -> UUID? {
         guard let blockID = pendingScrollBlockID else { return nil }
-        switch readingRestoreScrollStep(target: blockID, laidOutBlockIDs: laidOutBlockIDs) {
+        switch readingRestoreScrollStep(
+            target: blockID, presentedBlockIDs: presentedBlockIDs, laidOutBlockIDs: laidOutBlockIDs)
+        {
         case .wait:
             return nil
         case .abandon:

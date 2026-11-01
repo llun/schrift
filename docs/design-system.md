@@ -10,8 +10,10 @@
 > target row to report a laid-out frame (`readingRestoreScrollStep`), and the Back to top pill
 > appears at that moment, when the reader lands. A finger on the page, an outline jump, switching
 > to editing or leaving drops a restore that has not landed yet; nothing is saved while one is
-> waiting; a target row that is not shown (a completed item under "Hide completed") is dropped
-> rather than offering Back to top from the top. No visual, motion or string change: the scroll
+> waiting; a target row that is not shown (a completed item under "Hide completed", even when
+> that leaves no rows at all) is dropped at once, judged against the rows the surface presents
+> rather than the ones that have reported a frame, so the restore never waits for a frame that
+> is not coming; changing "Hide completed" also drops a pending restore. No visual, motion or string change: the scroll
 > is still instant, Reduce Motion and the VoiceOver announcement and pill behave as before.
 
 > **Revised: 2026-11-01 — Editor micro-motion (Direction D3).** Four small pieces of motion in the

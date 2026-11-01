@@ -4376,7 +4376,9 @@ markdown write endpoint**. Understand this before touching the save path:
   and **writes nothing until it has** — before then the viewport is at the top and
   persisting would overwrite the very position about to be restored. Deciding and scrolling
   are separate (`beginRestore`, then `takeRestoreScroll` once the target row reports a frame,
-  gated by the pure `readingRestoreScrollStep`): a **cached** open installs its body from
+  gated by the pure `readingRestoreScrollStep`, which judges the target against the rows
+  the surface *presents* — a hidden completed item is abandoned, never waited for — and
+  waits only for a presented row's frame): a **cached** open installs its body from
   `.task` after the reading surface appeared empty, so the restore is decided in the update
   that inserts the rows, and a `scrollTo` there has nothing laid out to reach. The top block is
   tracked continuously in `EditorScrollAnchorStore.lastTopVisibleBlockID` because a

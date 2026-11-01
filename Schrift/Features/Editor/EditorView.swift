@@ -1314,6 +1314,11 @@ struct EditorView: View {
             .onChange(of: viewModel.hasLoadedContent) { _, _ in restoreReadingPosition(proxy) }
             // The rows that content inserted have now been laid out; scroll to the decided block.
             .onChange(of: restoreLayoutPass) { _, _ in scrollToPendingRestore(proxy) }
+            // Flipping "Hide completed" changes which rows exist; a restore still pending was
+            // decided against the old set and must not land on the new one later.
+            .onChange(of: viewModel.hidesCompletedChecklistItems) { _, _ in
+                readingPosition.cancelPendingRestore()
+            }
             .onChange(of: outlineScrollRequest) { _, request in
                 guard let request else { return }
                 // The reading header carries no scroll id; the top is offset zero.
@@ -1374,6 +1379,7 @@ struct EditorView: View {
     private func scrollToPendingRestore(_ proxy: ScrollViewProxy) {
         guard
             let blockID = readingPosition.takeRestoreScroll(
+                presentedBlockIDs: Set(viewModel.checklistReadingPresentation.rows.map(\.id)),
                 laidOutBlockIDs: scrollAnchor.laidOutBlockIDs, voiceOverEnabled: voiceOverEnabled)
         else { return }
         proxy.scrollTo(EditorScrollTarget.block(blockID), anchor: .top)
