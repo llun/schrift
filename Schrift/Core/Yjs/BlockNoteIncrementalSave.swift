@@ -72,12 +72,14 @@ enum BlockNoteIncrementalSave {
         }
 
         let old = try oldBlocks(of: doc, serverOrigin: serverOrigin)
-        let aligned = BlockNoteAlignment.align(old: old, new: newBlocks)
-        let oldForWrite = old.map { block in
-            BlockNoteBlock(
-                node: block.node, props: block.props.map { (key: $0.key, value: $0.value) }, runs: block.runs,
-                id: block.id)
-        }
+        // Server blocks the markdown cannot spell are put back in place of their untouched
+        // shadows (`BlockNotePreservation`), so the write leaves them exactly as they are.
+        let preserved = BlockNotePreservation.preserve(
+            old: old, rules: BlockNotePreservation.rules(for: old, in: doc), new: newBlocks,
+            anchors: BlockNoteAlignment.anchorPairs(old: old, new: newBlocks))
+        let aligned = BlockNoteAlignment.align(old: old, new: preserved.blocks, forced: preserved.forced)
+        // The same copy a preserved block is written back as, so the write finds it unchanged.
+        let oldForWrite = old.map(BlockNotePreservation.writableCopy(of:))
 
         let stateBefore = doc.store.getStateVector()
         let deletesBefore = YStateEncoder.deleteBlocks(YDeleteSet.from(store: doc.store))

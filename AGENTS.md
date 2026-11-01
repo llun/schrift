@@ -2317,12 +2317,22 @@ markdown write endpoint**. Understand this before touching the save path:
   is configured with **`YHUB_JWT_PRIVATE_KEY`** — without it `updated_at` stops
   following editor edits, so that is a deployment requirement. Only blocks the
   alignment can anchor are left untouched — unchanged non-opaque blocks, plus
-  `unknownNode:*` and document-link blocks; an untouched opaque block (a table, which
-  parses as `.unknown`) and an untouched nested list are still **rewritten from
-  markdown on every save**, same as the classic save. That includes a list item with
-  a photo or file nested under it: the parent projects opaque, so it and its nested
-  media are rebuilt each save, resetting web-set props the markdown does not carry
-  (an image's `caption`, `previewWidth`, `textAlignment`; a file's `caption`). Refused as
+  `unknownNode:*` and document-link blocks — **plus every server block the markdown
+  cannot spell that the user left alone** (`BlockNotePreservation`): before alignment,
+  each non-`.modeled` server block gets a rule for recognising its markdown *shadow* in
+  the same gap (a modeled node: the same node, runs and expressible props; anything
+  else: the same words in order across a run of blocks — a table's pipe lines, a
+  callout's emoji paragraph, a toggle and its flattened children; a media node: one
+  block naming its URL), the shadow is replaced by an exact copy of the server block,
+  and the pair is forced into the alignment so `BlockNoteWrite` writes nothing for it.
+  Nodes the export never spells (`invisibleNodes`: a PDF preview, page break, math,
+  diagram, columns) are kept where they were when no shadow is found. Anything the
+  user edited no longer matches and is written from the markdown as before. Still
+  rewritten on every save: an untouched **nested list** (the editor models its
+  structure, so a re-indent keeps every word yet must be written), including a list
+  item with a photo or file nested under it — its nested media is rebuilt each save,
+  resetting web-set props the markdown does not carry (an image's `caption`,
+  `previewWidth`, `textAlignment`; a file's `caption`). Refused as
   `.decoding` (nothing PATCHed): undecodable state, pending structs, a non-canonical
   root, a non-countable `blockGroup` child, or empty/duplicate block ids — the differ
   maps old blocks to live containers by position and id. The web's document-link
