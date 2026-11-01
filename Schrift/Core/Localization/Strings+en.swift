@@ -44,6 +44,8 @@ enum Strings_en {
         .search_empty_title: "No documents found",
         .search_empty_body: "Nothing matches \u{201C}%@\u{201D}. Try another title or keyword.",
         .search_offline_explanation: "Search is available when online.",
+        .search_offline_local_only: "Results from this device only",
+        .search_on_this_device: "On this device",
         .versions_offline_explanation: "Version history is available when online.",
         .editor_offline_unavailable_title: "Not available offline",
         .editor_offline_open_online: "Open this document online first to save a copy on this device.",

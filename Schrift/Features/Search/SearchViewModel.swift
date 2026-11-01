@@ -4,14 +4,38 @@ import Foundation
 @Observable
 final class SearchViewModel {
     var query: String = ""
+    /// The server's answer, and the trimmed query it answered (nil for rows set directly, which
+    /// answer no query in particular — see `mergeSearchResults`).
     private var rawResults: [Document] = []
+    private var serverResultsQuery: String?
     private var resultsPinRevision = -1
+    /// The matches among the documents already on this device for the current query. Set before
+    /// the server is asked, so a keystroke has rows at once.
+    private var localResults: [Document] = []
+    /// The searchable form of the on-device documents, kept for the length of one search session
+    /// (until the query is cleared) so each keystroke is a scan of memory, not a read of the
+    /// caches. `localEntriesOwner` is the account it was built for: it is not reused for another.
+    private var localEntries: [LocalSearchEntry]?
+    private var localEntriesOwner: UUID?
+    /// The rows to show, server first and then the on-device matches the server did not return.
+    /// While offline the server's rows are not an index and are left out.
+    var resultSet: SearchResultSet {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let merged = mergeSearchResults(
+            server: availability.isOffline ? [] : rawResults,
+            serverIsCurrent: serverResultsQuery == trimmed, local: localResults)
+        guard let pins = saveCoordinator?.pins else { return merged }
+        let owner = signedInUser.userID
+        return SearchResultSet(
+            server: pins.applyingFlags(merged.server, ownerUserID: owner, fetchedAt: resultsPinRevision),
+            localOnly: pins.applyingFlags(merged.localOnly, ownerUserID: owner, fetchedAt: resultsPinRevision))
+    }
     var results: [Document] {
-        get {
-            saveCoordinator?.pins.applyingFlags(
-                rawResults, ownerUserID: signedInUser.userID, fetchedAt: resultsPinRevision) ?? rawResults
+        get { resultSet.all }
+        set {
+            rawResults = newValue
+            serverResultsQuery = nil
         }
-        set { rawResults = newValue }
     }
     private var rawQuickAccess: [Document] = []
     private var quickPinRevision = -1
@@ -33,6 +57,14 @@ final class SearchViewModel {
 
     let client: DocsAPIClient
     private let store: RecentSearchesStore
+    /// The caches the on-device search reads. Their lists are not cleared on sign-out, so they
+    /// are only read through the account-scoped accessors — see `localSearchDocuments`.
+    private let listCache: DocumentCacheStore
+    private let childrenCache: DocumentChildrenCacheStore
+    private let contentCache: DocumentContentCacheStore
+    /// The locale on-device matching folds case and diacritics with — the app's, set by the
+    /// screen, so a row is found by the same rule that then highlights it.
+    var locale: Locale = .current
     /// Optional: nil simply means "no queued deletions to annotate here", which is what every
     /// existing call site and `#Preview` gets.
     private let saveCoordinator: DocumentSaveCoordinator?
@@ -54,9 +86,15 @@ final class SearchViewModel {
         client: DocsAPIClient, store: RecentSearchesStore = RecentSearchesStore(),
         saveCoordinator: DocumentSaveCoordinator? = nil,
         signedInUser: SignedInUserStore = SignedInUserStore(),
-        availability: OnlineAvailability = OnlineAvailability()
+        availability: OnlineAvailability = OnlineAvailability(),
+        listCache: DocumentCacheStore = DocumentCacheStore(),
+        childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
+        contentCache: DocumentContentCacheStore = DocumentContentCacheStore()
     ) {
         self.client = client
+        self.listCache = listCache
+        self.childrenCache = childrenCache
+        self.contentCache = contentCache
         self.availability = availability
         self.store = store
         self.saveCoordinator = saveCoordinator
@@ -74,6 +112,8 @@ final class SearchViewModel {
 
     private func dropDeletedDocument(_ documentID: UUID) {
         rawResults.removeAll { $0.id == documentID }
+        localResults.removeAll { $0.id == documentID }
+        localEntries?.removeAll { $0.document.id == documentID }
         rawQuickAccess.removeAll { $0.id == documentID }
         deletedSinceLoad.insert(documentID)
     }
@@ -133,20 +173,37 @@ final class SearchViewModel {
         }
     }
 
+    /// Searches twice. The documents already on this device are matched first, at once and
+    /// without a request — on every keystroke, with no debounce, and also while offline. The
+    /// server is asked after the debounce (online only) and its rows are merged in by
+    /// `resultSet`.
+    ///
+    /// Cancelling the task (the enclosing `.task(id:)` does on every keystroke) abandons the scan
+    /// in flight and drops its result; the generation check does the same for a scan that
+    /// finishes after a newer search began.
     func search() async {
         searchGeneration += 1
         let generation = searchGeneration
         let pinRevision = saveCoordinator?.pins.revision ?? -1
         let pinOwner = signedInUser.userID
-        isSearching = false
-        guard !availability.isOffline else { return }
         let token = availability.token
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        isSearching = false
         guard !trimmed.isEmpty else {
             results = []
-            isSearching = false
+            localResults = []
+            localEntries = nil
             return
         }
+        // A request is coming, so with nothing to show yet the screen draws placeholder rows
+        // from the first keystroke rather than a "no results" flash.
+        isSearching = !availability.isOffline
+        defer { if generation == searchGeneration { isSearching = false } }
+
+        await searchOnDevice(trimmed, generation: generation)
+        guard generation == searchGeneration, !Task.isCancelled else { return }
+        guard !availability.isOffline else { return }
+
         // Debounce: when the query changes, the enclosing `.task(id:)` cancels
         // this task, so a newer keystroke supersedes an in-flight search and
         // stale results never overwrite fresh ones.
@@ -165,6 +222,7 @@ final class SearchViewModel {
             else { return }
             resultsPinRevision = pinRevision
             rawResults = page.results.filter { !deletedSinceLoad.contains($0.id) }
+            serverResultsQuery = trimmed
             saveCoordinator?.pins.didReadFlags(rawResults, ownerUserID: pinOwner, fetchedAt: pinRevision)
         } catch {
             if generation == searchGeneration { isSearching = false }
@@ -173,7 +231,48 @@ final class SearchViewModel {
             else { return }
             errorKey = .search_error_search
         }
-        isSearching = false
+    }
+
+    /// Matches `trimmed` against the documents on this device and installs the rows, unless a
+    /// newer search began meanwhile. The scan runs off the main actor.
+    private func searchOnDevice(_ trimmed: String, generation: Int) async {
+        let owner = signedInUser.userID
+        let entries: [LocalSearchEntry]
+        if let cached = localEntries, localEntriesOwner == owner {
+            entries = cached
+        } else {
+            let documents = localSearchDocuments()
+            let readContents = contentCache.allContentsReader()
+            entries = await Task.detached(priority: .userInitiated) {
+                localSearchEntries(documents: documents, contents: readContents())
+            }.value
+            // Kept even when a newer keystroke superseded this search: the index is not about
+            // this query, and dropping it would rebuild it for every keystroke typed meanwhile.
+            localEntries = entries.filter { !deletedSinceLoad.contains($0.document.id) }
+            localEntriesOwner = owner
+        }
+        let locale = locale
+        let scan = Task.detached(priority: .userInitiated) {
+            localSearchResults(query: trimmed, entries: entries, locale: locale)
+        }
+        let found = await withTaskCancellationHandler {
+            await scan.value
+        } onCancel: {
+            scan.cancel()
+        }
+        guard generation == searchGeneration, !Task.isCancelled else { return }
+        localResults = found.filter { !deletedSinceLoad.contains($0.id) }
+    }
+
+    /// The documents on this device that this account is known to see: Home's cached lists, but
+    /// only those a fetch for the signed-in account wrote (`documents(fetchedFor:)` — none when
+    /// the account is not known yet or the list was never stamped), and the cached sub-pages of
+    /// exactly those documents. Neither cache is cleared on sign-out, so reading them any other
+    /// way would search the previous user's titles for the next one.
+    private func localSearchDocuments() -> [Document] {
+        guard let owner = signedInUser.userID else { return [] }
+        let lists = listCache.documents(fetchedFor: owner)
+        return lists + childrenCache.children(ofParents: Set(lists.map(\.id)))
     }
 
     func recordSearch() {

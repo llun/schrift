@@ -42,6 +42,21 @@ final class DocHighlightTests: XCTestCase {
         XCTAssertTrue(matches("Trip to Chiang Mai", "budget").isEmpty)
     }
 
+    func testQueryTermsAreDistinctTrimmedAndCapped() {
+        XCTAssertEqual(searchQueryTerms("  Hotel  hotel\nNimman "), ["Hotel", "Nimman"])
+        XCTAssertTrue(searchQueryTerms("   ").isEmpty)
+        let many = (1...20).map { "term\($0)" }.joined(separator: " ")
+        XCTAssertEqual(searchQueryTerms(many).count, searchHighlightMaxTerms)
+    }
+
+    func testTextContainsUsesTheHighlightRule() {
+        XCTAssertTrue(searchTextContains("Café menu", term: "CAFE", locale: en))
+        XCTAssertTrue(searchTextContains("Cafe menu", term: "café", locale: en))
+        XCTAssertFalse(searchTextContains("Trip", term: "budget", locale: en))
+        XCTAssertFalse(searchTextContains("", term: "trip", locale: en))
+        XCTAssertFalse(searchTextContains("Trip", term: "", locale: en))
+    }
+
     func testBlankQueryOrTextGivesNoRanges() {
         XCTAssertTrue(matches("Trip", "").isEmpty)
         XCTAssertTrue(matches("Trip", "   \n").isEmpty)

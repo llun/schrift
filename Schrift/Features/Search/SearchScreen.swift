@@ -17,22 +17,13 @@ struct SearchScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             if viewModel.availability.isOffline {
-                OfflineBanner(note: loc[.search_offline_explanation])
-                SearchField(text: $viewModel.query, placeholder: loc[.search_placeholder])
-                    .disabled(true)
-                    .accessibilityHint(loc[.search_offline_explanation])
-                    .padding(.horizontal, DocsSpacing.gutter)
+                // Search keeps working offline, over the documents saved on this device only.
+                OfflineBanner(note: loc[.search_offline_local_only])
             }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    if viewModel.availability.isOffline {
-                        // Retained server results are not an offline-search index.
-                        // Cached documents remain reachable from Home.
-                        Text(loc[.search_offline_explanation])
-                            .font(DocsFont.subhead)
-                            .foregroundStyle(theme.colors.textSecondary)
-                    } else if trimmedQuery.isEmpty {
+                    if trimmedQuery.isEmpty {
                         emptyQueryContent
                     } else {
                         resultsContent
@@ -60,10 +51,14 @@ struct SearchScreen: View {
         // a search-role tab to reveal it. Recents and quick access stay as page content
         // rather than becoming `.searchSuggestions`, which would replace the
         // designed empty state with a plain system list.
-        .modifier(
-            AvailableSearchField(
-                query: $viewModel.query, isOffline: viewModel.availability.isOffline, prompt: loc[.search_placeholder])
+        .searchable(
+            text: $viewModel.query, placement: .navigationBarDrawer(displayMode: .always),
+            prompt: loc[.search_placeholder]
         )
+        // On-device matching folds case and diacritics with the same locale the rows highlight with.
+        .onChange(of: loc.locale, initial: true) {
+            viewModel.locale = loc.locale
+        }
         .onSubmit(of: .search) {
             viewModel.recordSearch()
         }
@@ -89,14 +84,17 @@ struct SearchScreen: View {
             }
         }
 
-        VStack(alignment: .leading, spacing: 0) {
-            sectionLabel(loc[.search_quick], icon: .push_pin, filled: true)
-            if viewModel.quickAccess.isEmpty {
-                Text(loc[.search_quick_empty])
-                    .font(DocsFont.subhead)
-                    .foregroundStyle(theme.colors.textTertiary)
-            } else {
-                documentList(viewModel.quickAccess)
+        // Quick access is the server's list of pinned documents; offline it is not shown.
+        if !viewModel.availability.isOffline {
+            VStack(alignment: .leading, spacing: 0) {
+                sectionLabel(loc[.search_quick], icon: .push_pin, filled: true)
+                if viewModel.quickAccess.isEmpty {
+                    Text(loc[.search_quick_empty])
+                        .font(DocsFont.subhead)
+                        .foregroundStyle(theme.colors.textTertiary)
+                } else {
+                    documentList(viewModel.quickAccess)
+                }
             }
         }
     }
@@ -105,11 +103,13 @@ struct SearchScreen: View {
 
     @ViewBuilder
     private var resultsContent: some View {
-        if searchShowsSkeleton(isSearching: viewModel.isSearching, hasResults: !viewModel.results.isEmpty) {
+        let resultSet = viewModel.resultSet
+        if searchShowsSkeleton(isSearching: viewModel.isSearching, hasResults: !resultSet.isEmpty) {
             // Rows are on their way: placeholders in the shape of the real rows, not a spinner.
-            // Results already on screen stay while a refined query is in flight.
+            // Results already on screen (the device's own matches included) stay while the
+            // server answers or a refined query is in flight.
             SkeletonList(shape: .ledger)
-        } else if let errorKey = viewModel.errorKey {
+        } else if resultSet.isEmpty, let errorKey = viewModel.errorKey {
             // A failed request isn't "no matches" — surface the error instead.
             Text(loc[errorKey])
                 .font(DocsFont.subhead)
@@ -117,19 +117,38 @@ struct SearchScreen: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, DocsSpacing.spaceLG)
-        } else if viewModel.results.isEmpty {
+        } else if resultSet.isEmpty {
             emptyState
         } else {
-            VStack(alignment: .leading, spacing: 0) {
-                sectionLabel(resultsCountLabel, icon: nil)
-                documentList(viewModel.results, highlightQuery: trimmedQuery)
+            VStack(alignment: .leading, spacing: 18) {
+                if !resultSet.server.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        sectionLabel(resultsCountLabel(resultSet.server.count), icon: nil)
+                        documentList(resultSet.server, highlightQuery: trimmedQuery)
+                    }
+                }
+                if !resultSet.localOnly.isEmpty {
+                    // Found on this device only: while the server is still answering, or offline,
+                    // or because the server did not return them.
+                    VStack(alignment: .leading, spacing: 0) {
+                        sectionLabel(loc[.search_on_this_device], icon: nil)
+                        documentList(resultSet.localOnly, highlightQuery: trimmedQuery)
+                    }
+                }
+                if let errorKey = viewModel.errorKey {
+                    // The server failed, but the device still had matches: keep them, say so.
+                    Text(loc[errorKey])
+                        .font(DocsFont.footnote)
+                        .foregroundStyle(theme.colors.danger)
+                        .padding(.horizontal, DocsSpacing.spaceXS)
+                }
             }
         }
     }
 
-    private var resultsCountLabel: String {
+    private func resultsCountLabel(_ count: Int) -> String {
         loc.plural(
-            viewModel.results.count, one: .search_results_one, other: .search_results_other,
+            count, one: .search_results_one, other: .search_results_other,
             two: .search_results_two, few: .search_results_few)
     }
 
@@ -206,23 +225,6 @@ func searchShowsSkeleton(isSearching: Bool, hasResults: Bool) -> Bool {
 private struct SearchRequestID: Hashable {
     let query: String
     let availability: OnlineAvailability.Token
-}
-
-/// Only the field is unavailable; navigation and the system Back button stay usable.
-private struct AvailableSearchField: ViewModifier {
-    @Environment(\.docsTheme) private var theme
-    @Binding var query: String
-    let isOffline: Bool
-    let prompt: String
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if isOffline {
-            content
-        } else {
-            content.searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: prompt)
-        }
-    }
 }
 
 // MARK: - Recent searches wrap-flow

@@ -44,6 +44,8 @@ enum Strings_es {
         .search_empty_title: "No se encontraron documentos",
         .search_empty_body: "Nada coincide con \u{201C}%@\u{201D}. Prueba con otro título o palabra clave.",
         .search_offline_explanation: "La búsqueda está disponible cuando estás en línea.",
+        .search_offline_local_only: "Solo resultados de este dispositivo",
+        .search_on_this_device: "En este dispositivo",
         .versions_offline_explanation: "El historial de versiones está disponible cuando estás en línea.",
         .editor_offline_unavailable_title: "No disponible sin conexión",
         .editor_offline_open_online: "Abre primero este documento en línea para guardar una copia en este dispositivo.",

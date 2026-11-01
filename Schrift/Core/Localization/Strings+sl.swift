@@ -49,6 +49,8 @@ enum Strings_sl {
         .search_empty_title: "Ni najdenih dokumentov",
         .search_empty_body: "Nič se ne ujema z \u{201C}%@\u{201D}. Poskusite z drugim naslovom ali ključno besedo.",
         .search_offline_explanation: "Iskanje je na voljo s spletno povezavo.",
+        .search_offline_local_only: "Samo rezultati iz te naprave",
+        .search_on_this_device: "V tej napravi",
         .versions_offline_explanation: "Zgodovina različic je na voljo s spletno povezavo.",
         .editor_offline_unavailable_title: "Ni na voljo brez povezave",
         .editor_offline_open_online:

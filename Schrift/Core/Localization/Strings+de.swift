@@ -44,6 +44,8 @@ enum Strings_de {
         .search_empty_body:
             "Nichts entspricht \u{201C}%@\u{201D}. Versuche einen anderen Titel oder ein anderes Stichwort.",
         .search_offline_explanation: "Die Suche ist online verfügbar.",
+        .search_offline_local_only: "Nur Ergebnisse von diesem Gerät",
+        .search_on_this_device: "Auf diesem Gerät",
         .versions_offline_explanation: "Der Versionsverlauf ist online verfügbar.",
         .editor_offline_unavailable_title: "Offline nicht verfügbar",
         .editor_offline_open_online:

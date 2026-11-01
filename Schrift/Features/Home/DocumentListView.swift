@@ -171,14 +171,16 @@ struct DocumentListView: View {
                 .buttonStyle(.plain)
                 // The native button combines its text label; an accessibility wrapper
                 // here would expose a second nested button on iPhone.
-                .accessibilityHint(viewModel.availability.isOffline ? loc[.search_offline_explanation] : "")
-                .disabled(viewModel.availability.isOffline)
+                // Offline it still opens Search, which then looks through this device's documents.
+                .accessibilityHint(viewModel.availability.isOffline ? loc[.search_offline_local_only] : "")
             } else {
                 SearchField(text: $viewModel.searchQuery, placeholder: loc[.home_search_documents])
                     .disabled(viewModel.availability.isOffline)
                     .accessibilityHint(viewModel.availability.isOffline ? loc[.search_offline_explanation] : "")
             }
-            if viewModel.availability.isOffline {
+            // The inline field is the server's search and stays unavailable offline; the compact
+            // shortcut opens the Search screen, which searches this device instead.
+            if viewModel.availability.isOffline, onSearchTap == nil {
                 Text(loc[.search_offline_explanation])
                     .font(DocsFont.footnote)
                     .foregroundStyle(theme.colors.textSecondary)

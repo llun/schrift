@@ -44,6 +44,8 @@ enum Strings_nl {
         .search_empty_body:
             "Niets komt overeen met \u{201C}%@\u{201D}. Probeer een andere titel of een ander trefwoord.",
         .search_offline_explanation: "Zoeken is beschikbaar wanneer je online bent.",
+        .search_offline_local_only: "Alleen resultaten van dit apparaat",
+        .search_on_this_device: "Op dit apparaat",
         .versions_offline_explanation: "Versiegeschiedenis is beschikbaar wanneer je online bent.",
         .editor_offline_unavailable_title: "Niet offline beschikbaar",
         .editor_offline_open_online: "Open dit document eerst online om een kopie op dit apparaat op te slaan.",

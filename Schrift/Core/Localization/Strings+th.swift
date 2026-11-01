@@ -43,6 +43,8 @@ enum Strings_th {
         .search_empty_title: "ไม่พบเอกสาร",
         .search_empty_body: "ไม่มีรายการที่ตรงกับ \u{201C}%@\u{201D} ลองใช้ชื่อหรือคำสำคัญอื่น",
         .search_offline_explanation: "ค้นหาได้เมื่อออนไลน์",
+        .search_offline_local_only: "ผลลัพธ์จากอุปกรณ์เครื่องนี้เท่านั้น",
+        .search_on_this_device: "บนอุปกรณ์นี้",
         .versions_offline_explanation: "ดูประวัติเวอร์ชันได้เมื่อออนไลน์",
         .editor_offline_unavailable_title: "ใช้งานแบบออฟไลน์ไม่ได้",
         .editor_offline_open_online: "เปิดเอกสารนี้ขณะออนไลน์ก่อนเพื่อบันทึกสำเนาบนอุปกรณ์นี้",

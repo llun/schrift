@@ -76,6 +76,12 @@
 > in the toolbar and Options, and Version history is disabled with an explanation.
 > `OnlineAvailability` combines Work Offline and the current network path for
 > these controls and Home's search surfaces, independent of Home's last fetch.
+> **Search now works offline** (2026-11-01): the pushed Search screen matches the
+> documents cached on the device — Home's account-stamped lists, the cached sub-pages
+> of those documents and, for body text, their cached content — before and without the
+> server, then merges the server's rows in when they arrive. Offline it makes no
+> request and says its results are from this device only; the iPad inline field is
+> still the server's search and stays disabled.
 > Work Offline still does **not** hold saves: the write-ahead draft and conflict
 > checks remain the durability guarantee. Reads are withheld; save/replay behavior
 > is unchanged. A satisfied network path does not promise a usable server, so

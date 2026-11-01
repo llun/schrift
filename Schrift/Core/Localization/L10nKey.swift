@@ -49,6 +49,8 @@ enum L10nKey: String, CaseIterable, Sendable {
     case search_empty_title = "search.empty.title"  // "No documents found"
     case search_empty_body = "search.empty.body"  // "Nothing matches \u{201C}%@\u{201D}. Try another title or keyword."
     case search_offline_explanation = "search.offline.explanation"
+    case search_offline_local_only = "search.offline.local_only"  // "Results from this device only"
+    case search_on_this_device = "search.on_this_device"  // "On this device"
     case versions_offline_explanation = "versions.offline.explanation"
     case editor_offline_unavailable_title = "editor.offline.unavailable_title"
     case editor_offline_open_online = "editor.offline.open_online"

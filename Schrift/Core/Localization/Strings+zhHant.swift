@@ -41,6 +41,8 @@ enum Strings_zhHant {
         .search_empty_title: "找不到文件",
         .search_empty_body: "沒有符合 \u{201C}%@\u{201D} 的項目。請嘗試其他標題或關鍵字。",
         .search_offline_explanation: "連線時可以搜尋。",
+        .search_offline_local_only: "僅顯示此裝置上的結果",
+        .search_on_this_device: "在此裝置上",
         .versions_offline_explanation: "連線時可以查看版本記錄。",
         .editor_offline_unavailable_title: "離線時無法使用",
         .editor_offline_open_online: "請先連線開啟此文件，以在此裝置上儲存副本。",

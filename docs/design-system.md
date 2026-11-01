@@ -1,5 +1,21 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — Search finds documents on the device first (Direction B).** As the
+> user types, Search shows matches from the documents already cached on the device at once (no
+> debounce), then merges the server's rows when they arrive: a document both found appears once
+> in the server's position, and the device's matches the server did not return follow under an
+> "ON THIS DEVICE" section label (the existing `sectionLabel` style, no new token). Results on
+> screen stay while a refined query loads; the skeleton only shows when there is nothing from
+> the device or the server yet. Offline, Search stays usable: the `OfflineBanner` reads "Results
+> from this device only", the search field is enabled (Home's compact shortcut too), the
+> server's retained rows are ignored and Quick access is hidden. Matching reuses
+> `searchHighlightRanges`' rule (case- and diacritic-insensitive, substring, every term must
+> match) over title, excerpt and cached body text, ranked title matches first and then recency;
+> a body-only match shows the matching line as the row's excerpt so the highlight is visible.
+> Only lists stamped for the signed-in account are read. Two new strings
+> (`search_offline_local_only`, `search_on_this_device`) in all 11 languages; no new colour,
+> spacing or motion.
+
 > **Revised: 2026-11-01 — Search shows skeleton rows and highlights what matched (Direction A).**
 > While a query is in flight and there are no results yet, Search draws a `SkeletonList`
 > (`.ledger` shape, the same rows as the results) instead of a spinner, honouring Reduce Motion

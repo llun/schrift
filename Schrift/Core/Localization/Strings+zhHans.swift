@@ -41,6 +41,8 @@ enum Strings_zhHans {
         .search_empty_title: "未找到文档",
         .search_empty_body: "没有与 \u{201C}%@\u{201D} 匹配的内容。请尝试其他标题或关键字。",
         .search_offline_explanation: "在线时可以搜索。",
+        .search_offline_local_only: "仅显示此设备上的结果",
+        .search_on_this_device: "在此设备上",
         .versions_offline_explanation: "在线时可以查看版本历史。",
         .editor_offline_unavailable_title: "离线时不可用",
         .editor_offline_open_online: "请先在线打开此文档，以在此设备上保存副本。",
