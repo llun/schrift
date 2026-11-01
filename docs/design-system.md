@@ -1,5 +1,19 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — Typing `[[` links a page.** In edit mode, `[[` opens a
+> floating **"Link a page"** card above the keyboard — the slash menu's sibling: the same
+> `.glassEffect(.regular)` surface in the same `GlassEffectContainer` as the formatting
+> bar, `DocsRadius.lg` corners, and the same four-row `@ScaledMetric` height cap. A
+> `caption` heading in `textTertiary`, then up to six documents matching what was typed
+> after `[[` (case- and diacritic-insensitive), each a `description` glyph on a
+> `brandFillSubtle` tile in `textBrand`, the title in `body` `textPrimary` with the
+> matched part bold. The row Return picks has a `brandFillSubtle` fill (`DocsRadius.md`);
+> hardware Up/Down move it. No match shows "No matching pages" in `textSecondary`.
+> Choosing a row inserts an ordinary page chip (`[Title](https://<host>/docs/<uuid>/)`).
+> No new token, so it follows every theme and both modes; it lists only documents
+> already cached on the device, so it works offline. Behaviour and rules: the `[[`
+> bullet in `AGENTS.md` and `Schrift/Features/Editor/PageLinkPicker.swift`.
+
 > **Revised: 2026-10-17 — Links to other documents are page chips.** A markdown link
 > to another document on the user's server (`[Title](https://<host>/docs/<uuid>/)`, the
 > links `documentLinkAction` opens in the app) is drawn as a **page chip** on both the

@@ -590,7 +590,8 @@ Schrift/
 │                        leaf nesting restored from the block tree (LeafNestingOverlay),
 │                        in-app document links (DocumentLink),
 │                        inline rendering (BlockTextView glyph suppression, HiddenSyntaxSelection,
-│                        InlineTextStyle) + link authoring (MarkdownLinkEditing, LinkEditorSheet),
+│                        InlineTextStyle) + link authoring (MarkdownLinkEditing, LinkEditorSheet,
+│                        the `[[` page picker: PageLinkPicker + PageLinkPickerView),
 │                        the one style table BOTH surfaces draw from (EditorBlockStyle:
 │                        EditorBlockMetrics, blockTextAppearance, editorBlockDecoration,
 │                        EditorBlockAdornment) + the shared EditorDocumentHeader and the
@@ -4028,6 +4029,35 @@ markdown write endpoint**. Understand this before touching the save path:
   along with any unsaved edit — over a dead link. `.sessionExpired` stays
   silent, because the shared client's `onSessionExpired` hook has already raised
   the re-login sheet.
+- **Typing `[[` links a page; the editor has two typed triggers, not one.** The slash
+  menu opens on a *paragraph whose text starts with* `/` (`slashQuery`); the page
+  picker opens wherever the caret sits right after `[[` plus a query
+  (`pageLinkTrigger(in:caret:)`, `Features/Editor/PageLinkPicker.swift` — pure, UTF-16,
+  tested) in any block that renders inline markdown, and never while the slash menu is
+  up. It is **derived, not stored**: `EditorViewModel.pageLinkPicker` recomputes from the
+  focused block's text and `selection`, so backspacing past the `[[`, typing `]`, moving
+  the caret out of the query, a ranged selection, or leaving the block closes it with
+  no state to unwind. The only stored state is an Escape dismissal keyed to that `[[`'s
+  offset (lapses once those brackets are gone) and the arrow-key highlight (reset by any
+  new query). A query that has grown a space and matches nothing closes it too — the
+  user is typing literal brackets. Choosing a row (tap, Return, or a hardware Up/Down
+  then Return — `EditorUITextView` claims Up/Down/Escape as key commands **only while
+  the picker is up**, so caret movement is otherwise untouched) replaces `[[query` with
+  `[Title](https://<host>/docs/<uuid>/)` built by `documentShareURL` +
+  `insertMarkdownLink` — byte-for-byte the shape `isDocumentLink` matches, so it draws
+  as a page chip — with the caret after it. Return with nothing to pick still splits.
+  **Candidates are this device's caches only** — `subpages`, Home's cached lists
+  (`DocumentCacheStore`, injected as `listCache`) and every cached children list — so it
+  works offline and makes no request; the cache reads are memoized per `[[` so a
+  keystroke never decodes `UserDefaults`. The current document, untitled documents,
+  pending creates (their id is re-keyed when the create syncs, so a link would dangle)
+  and pending deletes are never offered. Ranking (`rankedPageLinkCandidates`) folds
+  case and diacritics, requires every query word, and orders title-prefix, word-prefix,
+  then contains, newest first within each, six rows at most. The card
+  (`PageLinkPickerView`) is the slash menu's glass sibling in the same
+  `GlassEffectContainer`, hosted by `PageLinkPickerHost` so a caret move re-renders only
+  the card; VoiceOver hears "Link a page" when it opens and "No matching pages" when the
+  query stops matching.
 
 ### Persistence (`*Store` types)
 

@@ -449,6 +449,15 @@ struct BlockEditorRow: View {
                 }
                 return viewModel.indentListItem(blockID: block.id)
             },
+            isPageLinkPickerActive: {
+                if let inputRowID, viewModel.inputRowID(for: block.id) != inputRowID { return false }
+                return viewModel.isPageLinkPickerActive(in: block.id)
+            },
+            onPageLinkPickerKey: { key in
+                if let inputRowID, viewModel.inputRowID(for: block.id) != inputRowID { return }
+                guard viewModel.isPageLinkPickerActive(in: block.id) else { return }
+                viewModel.handlePageLinkPickerKey(key)
+            },
             onCursorRequestHandled: { token in
                 if viewModel.cursorRequest?.token == token {
                     viewModel.cursorRequest = nil
@@ -478,6 +487,9 @@ struct BlockEditorRow: View {
         case .textChanged(let text):
             viewModel.updateText(blockID: blockID, text: text)
         case .insertNewline(let cursorOffset):
+            // While the `[[` picker is up, Return picks its highlighted page rather than
+            // splitting the block — the same key a hardware keyboard confirms a menu with.
+            if viewModel.commitHighlightedPageLink(in: blockID) { return }
             viewModel.splitBlock(blockID: blockID, at: cursorOffset)
         case .deleteAtStart:
             viewModel.mergeBlockWithPrevious(blockID: blockID)

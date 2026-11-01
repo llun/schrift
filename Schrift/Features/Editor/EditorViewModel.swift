@@ -124,6 +124,17 @@ final class EditorViewModel {
     /// Drives the link sheet. Set by the formatting bar's link button and by a
     /// tap on a link's label; cleared on commit or cancel.
     var linkEditor: LinkEditorRequest?
+    /// The `[[` the user dismissed with Escape, by block and the `[[`'s offset. Hides the
+    /// page picker for that one search only: cleared once those brackets are gone, so a
+    /// fresh `[[` — even typed in the same place — opens it again.
+    private var dismissedPageLink: PageLinkSessionKey?
+    /// The row a hardware arrow key moved to, for one search and one query. Any other
+    /// query starts again from the top row, which is the best match.
+    private var pageLinkHighlight: PageLinkHighlight?
+    /// The cached documents the open `[[` search ranks, read once per search rather than
+    /// decoding Home's lists from `UserDefaults` on every keystroke. Not observed: it is a
+    /// memo of on-disk state, refreshed whenever a new search starts.
+    @ObservationIgnored private var pageLinkCandidateMemo: PageLinkCandidateMemo?
 
     let client: DocsAPIClient
     let documentID: UUID
@@ -160,6 +171,9 @@ final class EditorViewModel {
     private let actions: DocumentActions
     let contentCache: DocumentContentCacheStore
     let childrenCache: DocumentChildrenCacheStore
+    /// Home's cached lists (recent, pinned, shared with me). Only read, as one of the `[[`
+    /// page picker's offline sources alongside `childrenCache` and `subpages`.
+    let listCache: DocumentCacheStore
     let autosaveInterval: Duration
     /// Delay between media-check readiness polls. Tests pass `.zero`.
     let mediaCheckRetryInterval: Duration
@@ -251,6 +265,7 @@ final class EditorViewModel {
         signedInUser: SignedInUserStore = SignedInUserStore(),
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
+        listCache: DocumentCacheStore = DocumentCacheStore(),
         autosaveInterval: Duration = .seconds(10),
         mediaCheckRetryInterval: Duration = .seconds(1),
         remoteChangeDebounce: Duration = .milliseconds(600),
@@ -267,6 +282,7 @@ final class EditorViewModel {
         self.signedInUser = signedInUser
         self.contentCache = contentCache
         self.childrenCache = childrenCache
+        self.listCache = listCache
         self.autosaveInterval = autosaveInterval
         self.mediaCheckRetryInterval = mediaCheckRetryInterval
         self.remoteChangeDebounce = remoteChangeDebounce
@@ -2105,6 +2121,11 @@ final class EditorViewModel {
 
         blocks[index].text = text
         slashQueryText = focusedBlockID == blockID ? slashQuery(text: text, kind: blocks[index].kind) : nil
+        if let dismissed = dismissedPageLink, dismissed.blockID == blockID,
+            !hasPageLinkOpener(in: text, at: dismissed.anchor)
+        {
+            dismissedPageLink = nil
+        }
         if charactersChanged {
             detachBlocksThatNoLongerNest([blockID])
             markDirty()
@@ -2636,6 +2657,114 @@ final class EditorViewModel {
         selection = edit.selection
         detachBlocksThatNoLongerNest([blockID])
         markDirty()
+    }
+
+    // MARK: - Page links (the `[[` picker)
+
+    /// The host a picked page's link names — the one `isDocumentLink` checks, derived from
+    /// `serverOrigin` exactly as both editor surfaces derive it, so the inserted link is
+    /// drawn as a page chip. Empty (no origin) offers no picker at all.
+    private var pageLinkServerHost: String {
+        documentLinkHost(forOrigin: serverOrigin)
+    }
+
+    /// The focused block's `[[` search, when the picker may show for it: editing, a
+    /// collapsed caret in a block whose text is read as inline markdown (a `[[` in a code
+    /// block is literal), the slash menu not up, and not dismissed.
+    private var activePageLink: (blockID: UUID, trigger: PageLinkTrigger)? {
+        guard mode == .blocks, hasLoadedContent, slashQueryText == nil, let focusedBlockID,
+            let index = blockIndex(focusedBlockID), rendersInlineMarkdown(blocks[index].kind),
+            let selection, selection.length == 0,
+            let trigger = pageLinkTrigger(in: blocks[index].text, caret: selection.location)
+        else { return nil }
+        guard dismissedPageLink != PageLinkSessionKey(blockID: focusedBlockID, anchor: trigger.anchor) else {
+            return nil
+        }
+        return (blockID: focusedBlockID, trigger: trigger)
+    }
+
+    /// What the "Link a page" card shows, or nil when it is not up.
+    ///
+    /// Offline by construction: the candidates are what this device already knows — this
+    /// document's `subpages`, Home's cached lists and every cached children list — so no
+    /// request is made and the picker works the same with no network. Documents that only
+    /// exist on this device (a pending create, whose id is re-keyed when it syncs) and ones
+    /// queued for deletion are never offered, and neither is this document itself.
+    ///
+    /// A query that has grown a space and matches nothing closes the card: the user is
+    /// writing literal brackets, not searching.
+    var pageLinkPicker: PageLinkPickerState? {
+        guard !pageLinkServerHost.isEmpty, let active = activePageLink else { return nil }
+        let key = PageLinkSessionKey(blockID: active.blockID, anchor: active.trigger.anchor)
+        let query = active.trigger.query
+        let matches = rankedPageLinkCandidates(
+            query: query, documents: pageLinkCandidates(for: key), excluding: documentID)
+        if matches.isEmpty, query.contains(where: \.isWhitespace) { return nil }
+        let index = pageLinkHighlight.flatMap { $0.key == key && $0.query == query ? $0.index : nil } ?? 0
+        return PageLinkPickerState(
+            query: query, matches: matches, highlightedIndex: min(max(0, index), max(0, matches.count - 1)))
+    }
+
+    /// Replaces the open `[[query` with a link to `document` and puts the caret after it.
+    func selectPageLink(_ document: Document) {
+        guard let active = activePageLink, let index = blockIndex(active.blockID),
+            let edit = pageLinkInsertion(
+                in: blocks[index].text, trigger: active.trigger, document: document, serverHost: pageLinkServerHost)
+        else { return }
+        blocks[index].text = edit.text
+        pageLinkHighlight = nil
+        pageLinkCandidateMemo = nil
+        focusBlock(active.blockID, cursorAt: edit.selection.location)
+        detachBlocksThatNoLongerNest([active.blockID])
+        markDirty()
+    }
+
+    /// Return while the picker is up in `blockID` inserts the highlighted page instead of
+    /// splitting the block. False — let Return split as usual — when there is no picker or
+    /// nothing in it to pick.
+    @discardableResult
+    func commitHighlightedPageLink(in blockID: UUID) -> Bool {
+        guard activePageLink?.blockID == blockID, let document = pageLinkPicker?.highlighted else { return false }
+        selectPageLink(document)
+        return true
+    }
+
+    /// Whether `blockID`'s text view should claim the picker's hardware keys (up, down,
+    /// Escape) ahead of their usual caret movement.
+    func isPageLinkPickerActive(in blockID: UUID) -> Bool {
+        activePageLink?.blockID == blockID && pageLinkPicker != nil
+    }
+
+    /// Up and Down move the highlight (wrapping); Escape closes the picker for this `[[`.
+    func handlePageLinkPickerKey(_ key: PageLinkPickerKey) {
+        guard let active = activePageLink, let picker = pageLinkPicker else { return }
+        let sessionKey = PageLinkSessionKey(blockID: active.blockID, anchor: active.trigger.anchor)
+        switch key {
+        case .escape:
+            dismissedPageLink = sessionKey
+            pageLinkHighlight = nil
+        case .up, .down:
+            pageLinkHighlight = PageLinkHighlight(
+                key: sessionKey, query: picker.query,
+                index: movedPageLinkHighlight(picker.highlightedIndex, by: key, count: picker.matches.count))
+        }
+    }
+
+    private func pageLinkCandidates(for key: PageLinkSessionKey) -> [Document] {
+        let cached: [Document]
+        if let memo = pageLinkCandidateMemo, memo.key == key {
+            cached = memo.documents
+        } else {
+            cached =
+                (listCache.loadRecentDocuments() ?? []) + listCache.loadPinnedDocuments()
+                + (listCache.loadSharedWithMeDocuments() ?? []) + childrenCache.allDocuments()
+            pageLinkCandidateMemo = PageLinkCandidateMemo(key: key, documents: cached)
+        }
+        // `subpages` is live state, so it is merged on every read rather than memoized, and
+        // first: it is the freshest copy of the documents it holds.
+        return ((subpages ?? []) + cached).filter {
+            !saveCoordinator.isPendingCreate(documentID: $0.id) && !saveCoordinator.isPendingDelete(documentID: $0.id)
+        }
     }
 
     /// Inserts a divider below the focused block (or at the end), keeping an

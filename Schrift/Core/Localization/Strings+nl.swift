@@ -289,6 +289,8 @@ enum Strings_nl {
         .editor_error_add_file: "Kan het bestand niet toevoegen. Probeer het opnieuw.",
         .editor_error_file_too_large: "Dit bestand is te groot.",
         .editor_slash_file: "Bestand",
+        .editor_page_link_title: "Pagina koppelen",
+        .editor_page_link_empty: "Geen overeenkomende pagina's",
         .editor_uploading_file: "Bestand uploaden…",
         .editor_uploading_file_a11y: "Bestand uploaden",
 

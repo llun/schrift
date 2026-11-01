@@ -174,6 +174,11 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// Returning true swallows the key; otherwise Tab types a tab character as
     /// it always has, and Shift-Tab does nothing.
     var onTabKey: (@MainActor (Bool) -> Bool)?
+    /// Whether the `[[` page picker is up for this block. While it is, Up, Down and Escape
+    /// are claimed as key commands and go to `onPageLinkPickerKey` instead of moving the
+    /// caret; otherwise they are left to the system untouched.
+    var isPageLinkPickerActive: (@MainActor () -> Bool)?
+    var onPageLinkPickerKey: (@MainActor (PageLinkPickerKey) -> Void)?
     /// Invoked when the user taps a link's visible label. The view is passed
     /// back rather than captured, so the stored closure cannot retain it.
     var onLinkTapped: (@MainActor (EditorUITextView, InlineLinkSpan, CGPoint) -> Void)?
@@ -477,13 +482,42 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// tab character, or focus navigation on iPad). Not offered while text is
     /// being composed: the input method owns the keyboard until it commits.
     override var keyCommands: [UIKeyCommand]? {
-        let inherited = super.keyCommands ?? []
-        guard onTabKey != nil, markedTextRange == nil else { return inherited }
-        let indent = UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(tabKeyPressed))
-        let outdent = UIKeyCommand(input: "\t", modifierFlags: .shift, action: #selector(shiftTabKeyPressed))
-        indent.wantsPriorityOverSystemBehavior = true
-        outdent.wantsPriorityOverSystemBehavior = true
-        return inherited + [indent, outdent]
+        var commands = super.keyCommands ?? []
+        guard markedTextRange == nil else { return commands }
+        if onTabKey != nil {
+            let indent = UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(tabKeyPressed))
+            let outdent = UIKeyCommand(input: "\t", modifierFlags: .shift, action: #selector(shiftTabKeyPressed))
+            indent.wantsPriorityOverSystemBehavior = true
+            outdent.wantsPriorityOverSystemBehavior = true
+            commands += [indent, outdent]
+        }
+        // Only while the picker is up: claiming the arrows unconditionally would take
+        // caret movement away from every hardware-keyboard user.
+        if isPageLinkPickerActive?() == true {
+            let up = UIKeyCommand(
+                input: UIKeyCommand.inputUpArrow, modifierFlags: [], action: #selector(pickerUpPressed))
+            let down = UIKeyCommand(
+                input: UIKeyCommand.inputDownArrow, modifierFlags: [], action: #selector(pickerDownPressed))
+            let escape = UIKeyCommand(
+                input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(pickerEscapePressed))
+            for command in [up, down, escape] {
+                command.wantsPriorityOverSystemBehavior = true
+            }
+            commands += [up, down, escape]
+        }
+        return commands
+    }
+
+    @objc private func pickerUpPressed() {
+        onPageLinkPickerKey?(.up)
+    }
+
+    @objc private func pickerDownPressed() {
+        onPageLinkPickerKey?(.down)
+    }
+
+    @objc private func pickerEscapePressed() {
+        onPageLinkPickerKey?(.escape)
     }
 
     @objc private func tabKeyPressed() {
@@ -562,6 +596,9 @@ struct BlockTextView: UIViewRepresentable {
     var onEvent: (BlockTextEvent) -> Void
     /// Tab (`false`) or Shift-Tab (`true`); returns whether the key was handled.
     var onTabKey: (Bool) -> Bool = { _ in false }
+    /// Whether the `[[` page picker is up for this block, and where its keys go.
+    var isPageLinkPickerActive: () -> Bool = { false }
+    var onPageLinkPickerKey: (PageLinkPickerKey) -> Void = { _ in }
     var onCursorRequestHandled: (UUID) -> Void = { _ in }
     /// Keyboard events may arrive before a structural edit reaches UIKit.
     var onPendingInput: (String, UUID?) -> Bool = { _, _ in false }
@@ -606,6 +643,12 @@ struct BlockTextView: UIViewRepresentable {
         }
         view.onTabKey = { [weak coordinator = context.coordinator] outdent in
             coordinator?.parent.onTabKey(outdent) ?? false
+        }
+        view.isPageLinkPickerActive = { [weak coordinator = context.coordinator] in
+            coordinator?.parent.isPageLinkPickerActive() ?? false
+        }
+        view.onPageLinkPickerKey = { [weak coordinator = context.coordinator] key in
+            coordinator?.parent.onPageLinkPickerKey(key)
         }
         view.onPendingDeleteBackward = { [weak coordinator = context.coordinator] in
             guard let coordinator else { return false }

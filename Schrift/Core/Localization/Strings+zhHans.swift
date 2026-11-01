@@ -282,6 +282,8 @@ enum Strings_zhHans {
         .editor_error_add_file: "无法添加文件。请重试。",
         .editor_error_file_too_large: "该文件过大。",
         .editor_slash_file: "文件",
+        .editor_page_link_title: "链接页面",
+        .editor_page_link_empty: "没有匹配的页面",
         .editor_uploading_file: "正在上传文件…",
         .editor_uploading_file_a11y: "正在上传文件",
 
