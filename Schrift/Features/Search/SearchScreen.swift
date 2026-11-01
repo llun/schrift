@@ -11,6 +11,7 @@ struct SearchScreen: View {
     var onOpenDocument: (Document) -> Void
 
     @Environment(LocalizationStore.self) private var loc
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The struck-through row the user tapped, if any — see `pendingDeleteUndoAlert`.
     @State private var documentPendingUndo: Document?
 
@@ -23,6 +24,7 @@ struct SearchScreen: View {
             if viewModel.availability.isOffline {
                 // Search keeps working offline, over the documents saved on this device only.
                 OfflineBanner(note: loc[.search_offline_local_only])
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             ScrollView {
@@ -42,6 +44,7 @@ struct SearchScreen: View {
                 .padding(.bottom, DocsSpacing.spaceBase)
             }
         }
+        .animation(reduceMotion ? nil : .snappy, value: viewModel.availability.isOffline)
         // Claim the full width the removed NavBar used to define, or the
         // screen sizes to its widest child and starves the title.
         .frame(maxWidth: .infinity)

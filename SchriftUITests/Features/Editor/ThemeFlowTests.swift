@@ -70,24 +70,6 @@ final class ThemeFlowTests: XCTestCase {
         }
     }
 
-    /// Reads one pixel of a screenshot as 8-bit RGB, addressed in points.
-    private func rgb(_ screenshot: XCUIScreenshot, x: CGFloat, y: CGFloat) throws -> [Int] {
-        let image = screenshot.image
-        let cgImage = try XCTUnwrap(image.cgImage)
-        let scale = CGFloat(cgImage.width) / image.size.width
-        var pixel = [UInt8](repeating: 0, count: 4)
-        let context = try XCTUnwrap(
-            CGContext(
-                data: &pixel, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
-                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
-        context.draw(
-            cgImage,
-            in: CGRect(
-                x: -x * scale, y: -(CGFloat(cgImage.height) - 1 - y * scale), width: CGFloat(cgImage.width),
-                height: CGFloat(cgImage.height)))
-        return pixel.prefix(3).map(Int.init)
-    }
-
     /// The strip behind the status bar must be the detail canvas, not the system
     /// background. White's light page colour is white, which hid the split view's
     /// container showing the system colour there until the paired themes existed.
@@ -95,9 +77,9 @@ final class ThemeFlowTests: XCTestCase {
     private func assertTopSafeAreaMatchesDetailCanvas(_ app: XCUIApplication, _ name: String) throws {
         let screenshot = app.screenshot()
         let width = screenshot.image.size.width
-        let strip = try rgb(screenshot, x: width * 0.75, y: 2)
-        let canvas = try rgb(screenshot, x: width * 0.75, y: screenshot.image.size.height * 0.88)
-        let delta = zip(strip, canvas).map { abs($0 - $1) }.max() ?? 0
+        let strip = try screenshot.rgb(x: width * 0.75, y: 2)
+        let canvas = try screenshot.rgb(x: width * 0.75, y: screenshot.image.size.height * 0.88)
+        let delta = colorDistance(strip, canvas)
         XCTAssertLessThanOrEqual(delta, 3, "\(name): status strip \(strip) differs from the canvas \(canvas)")
     }
 

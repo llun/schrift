@@ -715,6 +715,18 @@ new code reads like the surrounding code.
   no destination uses `role: .search`. Screens set `.navigationTitle` /
   `.navigationSubtitle` and put actions in `.toolbar` — they do not draw a `NavBar`.
   Keep native Liquid Glass, minimize-on-scroll, scroll-edge effects and safe areas.
+  - A strip under the bar (the offline banner on Home, Shared and Search, and the
+    editor's `bannerStack`) sits above the `ScrollView` in a `VStack(spacing: 0)`,
+    so the scroll view starts below it: collapsed, rows scroll under the strip and
+    never show between the bar and the strip. Never let such a strip's fill bleed
+    through the top edge: the bare `.background(color)` is the ShapeStyle overload
+    that ignores the safe area on every edge, so a strip against the bar's safe area
+    paints up through the whole bar. Use
+    `.background(color, ignoresSafeAreaEdges: .horizontal)` (and give a hairline
+    `.ignoresSafeArea(edges: .horizontal)`), which keeps the top bounded while the
+    strip still runs edge to edge in landscape. That bleed, not the banner's
+    placement, is what hid Home's large title and subtitle offline (a grey band
+    under "+", read as blank in White).
   - Home's circular create action uses a Material Symbols template `Image`
     and `.buttonBorderShape(.circle)`. A `MaterialSymbol` text label is sized
     as a wider text action by the native toolbar, making its glass surface oval.

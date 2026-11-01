@@ -81,6 +81,59 @@ final class OfflineControlsTests: XCTestCase {
         app.terminate()
     }
 
+    /// The banner sits under the navigation bar rather than costing it its title: its fill used to
+    /// ignore the safe area and reach up through the whole bar, a grey band under "+" that painted
+    /// over the large title and subtitle.
+    ///
+    /// The element frames can't see that: the fill was drawn outside the banner's layout frame, so
+    /// the title, subtitle and banner frames were the same with or without the bleed. The check is
+    /// the screenshot's pixels instead. Just above the banner, on its empty trailing side, the bar
+    /// must show the page colour, not the banner's grey. Both references are sampled from the same
+    /// screenshot, so the check holds in any theme.
+    func testHomeKeepsLargeTitleAndSubtitleWhileOffline() throws {
+        let app = launch()
+        guard app.buttons["Search docs.example.org"].exists else {
+            app.terminate()
+            throw XCTSkip("Home's large title belongs to the compact navigation stack.")
+        }
+        let banner = offlineBanner(app, note: "All documents saved on this device")
+        let bar = app.navigationBars.firstMatch
+        let title = bar.staticTexts["Schrift"].firstMatch
+        let subtitle = bar.staticTexts["docs.example.org"].firstMatch
+        let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Offline fixture")).firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "The large title is in the bar while offline")
+        XCTAssertTrue(subtitle.exists, "The server subtitle is in the bar while offline")
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        XCTAssertTrue(banner.waitForStableFrame())
+        // Layout sanity only: these frames were already right before the fix.
+        XCTAssertLessThanOrEqual(title.frame.maxY, banner.frame.minY + 1, "The title is laid out above the banner")
+        XCTAssertLessThanOrEqual(
+            subtitle.frame.maxY, banner.frame.minY + 1, "The subtitle is laid out above the banner")
+
+        let screenshot = app.screenshot()
+        // The banner's trailing end is its spacer, so its fill shows there with no glyphs, and
+        // the subtitle row above it is empty at that x.
+        let x = banner.frame.maxX - 24
+        let gapTop = max(subtitle.frame.maxY, banner.frame.minY - 8)
+        let aboveBanner = try screenshot.rgb(x: x, y: min((gapTop + banner.frame.minY) / 2, banner.frame.minY - 1))
+        let insideBanner = try screenshot.rgb(x: x, y: banner.frame.midY)
+        // The page, below the fixture's only row and above any tab bar.
+        let tabBar = app.tabBars.firstMatch
+        let pageBottom = tabBar.exists ? tabBar.frame.minY : screenshot.image.size.height
+        let page = try screenshot.rgb(x: x, y: (row.frame.maxY + pageBottom) / 2)
+        XCTAssertGreaterThan(
+            colorDistance(insideBanner, page), 6,
+            "The banner \(insideBanner) must differ from the page \(page) for this check to mean anything")
+        XCTAssertLessThanOrEqual(
+            colorDistance(aboveBanner, page), 4,
+            "The bar above the banner \(aboveBanner) shows the page \(page), not the banner's fill")
+        XCTAssertGreaterThan(
+            colorDistance(aboveBanner, insideBanner), 6,
+            "The banner's fill \(insideBanner) stops at its top edge instead of reaching up the bar")
+        capture(app, "iphone-home-offline-large-title")
+        app.terminate()
+    }
+
     func testHomeAndPushedSearchAvailabilityTransitions() {
         let app = launch()
         let shortcut = app.buttons["Search docs.example.org"]
@@ -97,6 +150,10 @@ final class OfflineControlsTests: XCTestCase {
             let localOnly = offlineBanner(app, note: "Results from this device only")
             XCTAssertTrue(localOnly.waitForExistence(timeout: 5))
             XCTAssertFalse(app.staticTexts["Search is available when online."].exists)
+            let title = app.navigationBars.firstMatch.staticTexts["Search"].firstMatch
+            XCTAssertTrue(title.exists, "The large title is in the bar while offline")
+            XCTAssertLessThanOrEqual(
+                title.frame.maxY, localOnly.frame.minY + 1, "The title is laid out above the banner")
             field.tap()
             field.typeText("Roadmap")
             XCTAssertTrue(app.navigationBars.buttons.firstMatch.isEnabled, "Back remains available")
