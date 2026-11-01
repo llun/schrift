@@ -602,9 +602,9 @@ final class HomeViewModel {
         if previousOwner != user.id { await load() }
     }
 
-    /// Ask who this session belongs to, but only when nothing on the device knows. Returns
-    /// whether the answer was actually learned, so a caller that renders local rows can decide
-    /// whether it now has something new to show.
+    /// Ask who this session belongs to, but only when nothing on the device knows. Learning the
+    /// id is all this does; the reload that a newly learned id needs happens in
+    /// `refreshSignedInUser()`, which both callers reach through this function.
     ///
     /// Failing closed is right; *staying* closed is not. `SessionStore.noteSessionCookiesReplaced`
     /// deliberately leaves the identity unknown when a login hands its cookies over and the
@@ -666,12 +666,10 @@ final class HomeViewModel {
     /// three (a pull-to-refresh can join them), self-limiting — the next caller finds the id
     /// known — and latest-wins on the loads that follow, so the cost is redundant traffic
     /// rather than a wrong list.
-    @discardableResult
-    private func refreshSignedInUserIfUnknown() async -> Bool {
-        guard signedInUser.userID == nil else { return false }
-        guard !userDefaults.bool(forKey: "schrift.workOffline") else { return false }
+    private func refreshSignedInUserIfUnknown() async {
+        guard signedInUser.userID == nil else { return }
+        guard !userDefaults.bool(forKey: "schrift.workOffline") else { return }
         await refreshSignedInUser()
-        return signedInUser.userID != nil
     }
 
     /// Whether this document's deletion is queued and unsent, so its row draws struck through

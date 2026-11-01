@@ -855,7 +855,9 @@ new code reads like the surrounding code.
   (`HomeViewModel.loadIfStale()`, `SharedViewModel.loadIfStale(sessionGeneration:)`,
   `ProfileViewModel.loadIfStale(sessionGeneration:)`): keyed on the availability token and, for Shared and
   Profile, the sign-in generation (`SessionStore.signInGeneration`), so a re-login never reads the previous
-  account's list as fresh. Pull-to-refresh, replay, migration and delete reloads call `load()` and always fetch,
+  account's list as fresh. Shared's passive freshness also compares `lastFetchedOwner` against
+  `signedInUser.userID`, so a fetch stamped before the id was known is not fresh however recent it is.
+  Pull-to-refresh, replay, migration and delete reloads call `load()` and always fetch,
   and so does returning from a pushed screen: `MainTabView` reacts when the compact docs `NavigationPath`
   shrinks, and `HomeSplitView` when the selection switches from one document to another (a deletion reloads
   through `onDeleted`), by calling `HomeViewModel.markListStale()` and then `loadIfStale()` — one fetch even if
@@ -4059,8 +4061,11 @@ markdown write endpoint**. Understand this before touching the save path:
   cached lists (`DocumentCacheStore`, injected as `listCache`) only where a fetch for the
   signed-in account wrote them — each list carries a `fetchedFor` stamp, set by Home's and
   Shared's successful loads, cleared by a save without an account or a local insertion,
-  read via `documents(fetchedFor:)`; and the cached children (`children(ofParents:)`) of
-  exactly those pages plus this document. No children list under any other parent is
+  read via `documents(fetchedFor:)`. A Home load captures the owner when it *starts*, so a
+  load started before the signed-in id is known saves both lists unstamped; therefore
+  `HomeViewModel.refreshSignedInUser()` runs `load()` whenever the id changes (`refresh()` and
+  `reauthenticated()` then pay one redundant fetch). And the cached children
+  (`children(ofParents:)`) of exactly those pages plus this document. No children list under any other parent is
   read. It works offline and makes no request; the cache reads are memoized per `[[` so a
   keystroke never decodes `UserDefaults`. The current document, untitled documents,
   pending creates (their id is re-keyed when the create syncs, so a link would dangle)
