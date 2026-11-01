@@ -297,6 +297,7 @@ struct EditorView: View {
     /// sync caption keep their own signals; Work Offline is a choice, so it shows immediately.
     @State private var offlineBannerStatus = DebouncedStatus()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     private var showsOfflineBanner: Bool {
         offlineOverride || viewModel.availability.isWorkOffline || offlineBannerStatus.value
     }
@@ -352,7 +353,10 @@ struct EditorView: View {
     /// throwing the reader back to the top of the page. Shared by both surfaces
     /// and deliberately not observable — see `EditorScrollAnchorStore`.
     @State private var scrollAnchor = EditorScrollAnchorStore()
+    /// Reopens the document where it was last read and offers the way back to the top.
+    @State private var readingPosition: ReadingPositionSession
     @State private var readingScrollPosition = ScrollPosition()
+    @State private var restoreAnnouncementTask: Task<Void, Never>?
     @State private var checklistRevealFocusRequest = 0
     @State private var pagesTreeViewModel: PagesTreeViewModel
 
@@ -394,6 +398,8 @@ struct EditorView: View {
         self.linkRole = linkRole
         self.initialIsFavorite = initialIsFavorite
         self.offlineOverride = isOffline
+        _readingPosition = State(
+            initialValue: ReadingPositionSession(serverOrigin: serverOrigin, documentID: viewModel.documentID))
         self.onDeleted = onDeleted
         self.onOpenDocument = onOpenDocument
         self.onCreatedDocument = onCreatedDocument
@@ -569,6 +575,12 @@ struct EditorView: View {
                 // must not re-key a document whose screen is about to come back. It is
                 // released when the view model is deallocated — see `noteEditorAppeared`.
                 viewModel.flushPendingChanges()
+                persistReadingPosition()
+                // Leaving ends the Back to top offer (it never auto-dismisses under VoiceOver) and
+                // drops a restore announcement still waiting for the transition to settle.
+                readingPosition.dismissBackToTop()
+                restoreAnnouncementTask?.cancel()
+                restoreAnnouncementTask = nil
                 if holdsCollaborationSession {
                     collaboration.release(viewModel.documentID)
                     holdsCollaborationSession = false
@@ -577,6 +589,7 @@ struct EditorView: View {
             .onChange(of: scenePhase) { _, phase in
                 if phase == .background || phase == .inactive {
                     viewModel.flushPendingChanges()
+                    persistReadingPosition()
                 }
             }
             .sheet(isPresented: heldForOutline($isPresentingShareSheet)) { shareSheet }
@@ -632,9 +645,7 @@ struct EditorView: View {
             findShortcutEnabled: viewModel.hasLoadedContent && !viewModel.isLoading && !hasPendingPresentation,
             closesOutline: outlineGate.closesOutline(hasPendingRequest: hasPendingPresentation),
             onFindShortcut: { presentOutline(focusingFind: true) },
-            onScroll: { target in
-                outlineScrollRequest = DocumentScrollRequest.following(outlineScrollRequest, target: target)
-            },
+            onScroll: { target in requestOutlineScroll(to: target) },
             onAppear: { outlineGate.outlineAppeared() },
             // Releases whatever was requested while the outline was up; it presents now, and a held
             // navigation runs.
@@ -646,8 +657,17 @@ struct EditorView: View {
                 // Editing: move focus to the heading so restoring the old caret on dismiss cannot
                 // scroll the canvas back; `BlockEditorView` scrolls to a newly focused block.
                 if viewModel.isEditing { viewModel.focusedBlockID = blockID }
-                outlineScrollRequest = DocumentScrollRequest.following(outlineScrollRequest, target: .block(blockID))
+                requestOutlineScroll(to: .block(blockID))
             })
+    }
+
+    /// A scroll the outline asked for: a heading, a find match, or the title. The reader chose where
+    /// to be, so it also settles "continue reading" — the Back to top offer ends (the outline's jump
+    /// is not a programmatic scroll that reports a scroll phase) and a restore still undecided can no
+    /// longer pull the page away from the jump. See `ReadingPositionSession.noteDeliberateJump`.
+    private func requestOutlineScroll(to target: EditorScrollTarget) {
+        readingPosition.noteDeliberateJump(blocks: viewModel.blocks)
+        outlineScrollRequest = DocumentScrollRequest.following(outlineScrollRequest, target: target)
     }
 
     /// Whether anything other than the outline is presented or asking to be.
@@ -1261,8 +1281,12 @@ struct EditorView: View {
                     }
                 } else if let offsetY = scrollAnchor.consumePendingOffset() {
                     readingScrollPosition.scrollTo(y: offsetY)
+                } else {
+                    restoreReadingPosition(proxy)
                 }
             }
+            // Content that arrives after the surface appeared (a revalidation over an empty page).
+            .onChange(of: viewModel.hasLoadedContent) { _, _ in restoreReadingPosition(proxy) }
             .onChange(of: outlineScrollRequest) { _, request in
                 guard let request else { return }
                 // The reading header carries no scroll id; the top is offset zero.
@@ -1279,7 +1303,12 @@ struct EditorView: View {
             // the same reason it does on Home and in the drawer — and guarded the same way, so a
             // swipe that nudges this scroll view does not close its own strip.
             .onScrollPhaseChange { _, phase in
-                if phase == .interacting { subpageSwipe = swipeRevealAfterScrollInteraction(subpageSwipe) }
+                // Any movement ends the offer, including the programmatic and VoiceOver scrolls
+                // that never report `.interacting`.
+                if phase != .idle { readingPosition.dismissBackToTop() }
+                if phase == .interacting {
+                    subpageSwipe = swipeRevealAfterScrollInteraction(subpageSwipe)
+                }
             }
             // A `.link` run in a `Text` — an inline markdown link, or a bare URL the
             // autolinker matched — dispatches through this action. Without an override the
@@ -1287,12 +1316,71 @@ struct EditorView: View {
             // for Safari. Scoped to the reading surface: it is the only subtree that renders
             // content the user didn't type, and the sheets keep the system behavior.
             .environment(\.openURL, OpenURLAction(handler: openLink))
+            .overlay(alignment: .bottom) { backToTopOffer }
+            // Keeps "Back to top" reachable from the VoiceOver actions rotor on the reading surface.
+            .accessibilityActions {
+                if readingPosition.offersBackToTop {
+                    Button(loc[.editor_back_to_top]) { backToTop() }
+                }
+            }
         }
+    }
+
+    // MARK: - Continue reading
+
+    /// Scrolls to the block the reader left off at, once the content is here. Not animated:
+    /// it is the page opening, not a gesture, and it must not fight the layout still settling.
+    private func restoreReadingPosition(_ proxy: ScrollViewProxy) {
+        guard
+            let blockID = readingPosition.beginRestore(
+                blocks: viewModel.blocks, userHasScrolled: scrollAnchor.currentOffsetY > 8,
+                voiceOverEnabled: voiceOverEnabled)
+        else { return }
+        proxy.scrollTo(EditorScrollTarget.block(blockID), anchor: .top)
+        // The jump is silent for VoiceOver users otherwise, like the Toast announcement.
+        // Posted after the push transition settles, otherwise the screen change speech cuts it off.
+        let message = loc[.editor_continued_reading]
+        restoreAnnouncementTask?.cancel()
+        restoreAnnouncementTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            AccessibilityNotification.Announcement(message).post()
+        }
+    }
+
+    private func backToTop() {
+        readingPosition.dismissBackToTop()
+        if reduceMotion {
+            readingScrollPosition.scrollTo(y: 0)
+        } else {
+            withAnimation(.snappy) { readingScrollPosition.scrollTo(y: 0) }
+        }
+    }
+
+    private func persistReadingPosition() {
+        readingPosition.persist(blocks: viewModel.blocks, topVisibleBlockID: scrollAnchor.lastTopVisibleBlockID)
+    }
+
+    /// Respects Reduce Motion: the pill appears and goes without animating, and the scroll back
+    /// is instant.
+    private var backToTopOffer: some View {
+        ZStack {
+            if readingPosition.offersBackToTop {
+                BackToTopPill(title: loc[.editor_back_to_top], accessibilityLabel: loc[.editor_back_to_top_a11y]) {
+                    backToTop()
+                }
+                .padding(.bottom, DocsSpacing.spaceBase)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+        .animation(reduceMotion ? nil : .snappy, value: readingPosition.offersBackToTop)
     }
 
     /// Raw offsets still preserve the ordinary parity handoff. With checklist
     /// chrome or hidden rows, measured block identity preserves the logical place.
     private func snapshotScrollForModeSwap() {
+        // The reading surface is about to be replaced; the offer belongs to it.
+        readingPosition.dismissBackToTop()
         guard viewModel.checklistReadingPresentation.hasChecklistItems || viewModel.hidesCompletedChecklistItems else {
             scrollAnchor.snapshotForSwap()
             return

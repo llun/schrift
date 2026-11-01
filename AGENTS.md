@@ -602,6 +602,8 @@ Schrift/
 │                        EditorScrollAnchorStore that carries scroll position across the
 │                        reading ↔ editing swap (EditorScrollTarget names the editing
 │                        canvas's rows for its own ScrollViewReader, nothing more),
+│                        "continue reading" (ReadingPositionStore, ReadingPositionSession,
+│                        BackToTopPill — see Persistence),
 │                        read-only version history (VersionHistoryViewModel,
 │                        VersionHistorySheetView — see Networking)
 └── Assets.xcassets/
@@ -4352,6 +4354,25 @@ markdown write endpoint**. Understand this before touching the save path:
   bodies are too large for UserDefaults): stateless over its directory,
   `isExcludedFromBackup`, cleared on sign-out, never logged. Its eviction
   selection is a top-level pure free function (`contentCacheEvictions`).
+- **"Continue reading" positions** (`ReadingPositionStore`,
+  `dev.llun.Schrift.readingPositions`, one JSON blob in UserDefaults) remember which
+  block was at the top of the screen when a document was left, so reopening scrolls
+  back to it. Keyed by `readingPositionKey(serverOrigin:documentID:)`, capped to 200
+  documents by the pure `recordingReadingPosition` (least recently saved evicted; the
+  entry being written always survives), dates in milliseconds. A position is a block id
+  plus `readingPositionFingerprint` — an FNV-1a hash of the block's normalised first 160
+  characters, **not** `Hashable` (seeded per process) and **no document text** — because
+  block ids are re-minted by every parse and only the fingerprint survives a relaunch.
+  `readingPositionRestore` is the pure decision: id, else fingerprint (nearest to the old
+  index among equals), else nothing, and nothing when the block is within the first two.
+  **Cleared on sign-out** in RootView's `onSignOut` beside the content caches (it is
+  reading history, not unsynced work, so unlike drafts it does not outlive the session).
+  `ReadingPositionSession` (in `EditorView`'s `@State`) decides the restore once per open
+  and **writes nothing until it has** — before then the viewport is at the top and
+  persisting would overwrite the very position about to be restored. The top block is
+  tracked continuously in `EditorScrollAnchorStore.lastTopVisibleBlockID` because a
+  disappearing screen reports no frames. No deep link addresses a position inside a
+  document today; one would need to bypass the restore.
 
 ### Style & comments
 
