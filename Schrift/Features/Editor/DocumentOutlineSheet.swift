@@ -36,6 +36,10 @@ struct DocumentOutlineSheet: View {
     var focusesFind = false
     /// Scrolls the editor's visible canvas to a target.
     let onScroll: (EditorScrollTarget) -> Void
+    /// Jumps to a tapped heading. Separate from `onScroll` so the editing canvas can move focus
+    /// there: otherwise UIKit gives the caret back to the old block when the sheet closes and the
+    /// canvas scrolls back to it. Falls back to a plain scroll.
+    var onSelectHeading: ((UUID) -> Void)?
 
     @State private var query = ""
     /// The match the stepper is on. An id rather than an index so an edit that adds or removes
@@ -82,9 +86,10 @@ struct DocumentOutlineSheet: View {
         .onChange(of: query) { _, _ in
             // A new query starts at its first match, and the canvas behind follows so "1 of 5" is
             // true of what is on screen.
-            let first = findMatchingBlockIDs(in: blocks, query: query).first
-            currentMatchID = first
-            if let first { onScroll(.block(first)) }
+            let found = findMatchingBlockIDs(in: blocks, query: query)
+            currentMatchID = found.first
+            if let first = found.first { onScroll(.block(first)) }
+            announceMatch(position: found.isEmpty ? nil : 0, count: found.count)
         }
     }
 
@@ -122,6 +127,14 @@ struct DocumentOutlineSheet: View {
         guard let index = steppedMatchIndex(from: position, by: delta, count: matches.count) else { return }
         currentMatchID = matches[index]
         onScroll(.block(matches[index]))
+        announceMatch(position: index, count: matches.count)
+    }
+
+    /// Focus stays on the Previous/Next button (or the field), so say which match the canvas is on.
+    private func announceMatch(position: Int?, count: Int) {
+        guard isFinding else { return }
+        let text = position.map { loc.format(.outline_match_position, $0 + 1, count) } ?? loc[.outline_no_matches]
+        AccessibilityNotification.Announcement(text).post()
     }
 
     // MARK: - Rows
@@ -147,7 +160,11 @@ struct DocumentOutlineSheet: View {
     private func headingRow(_ item: OutlineItem) -> some View {
         let hasMatches = item.matchCount > 0
         return Button {
-            onScroll(.block(item.blockID))
+            if let onSelectHeading {
+                onSelectHeading(item.blockID)
+            } else {
+                onScroll(.block(item.blockID))
+            }
             dismiss()
         } label: {
             HStack(spacing: DocsSpacing.spaceXS) {
@@ -216,6 +233,7 @@ struct DocumentOutlinePresentation: ViewModifier {
     let findShortcutEnabled: Bool
     let onFindShortcut: () -> Void
     let onScroll: (EditorScrollTarget) -> Void
+    let onSelectHeading: (UUID) -> Void
 
     func body(content: Content) -> some View {
         content
@@ -224,9 +242,14 @@ struct DocumentOutlinePresentation: ViewModifier {
             }
             .sheet(isPresented: $isPresented) {
                 DocumentOutlineSheet(
-                    documentTitle: documentTitle, blocks: blocks, focusesFind: focusesFind, onScroll: onScroll
+                    documentTitle: documentTitle, blocks: blocks, focusesFind: focusesFind, onScroll: onScroll,
+                    onSelectHeading: onSelectHeading
                 )
                 .presentationDetents([.medium, .large])
+                // Let the canvas behind the half-height sheet be seen and scrolled while stepping
+                // through matches. Regular-width iPad ignores detents (centered form sheet), so
+                // stepping there may be covered; tapping a heading closes the sheet either way.
+                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
                 .presentationDragIndicator(.visible)
             }
     }

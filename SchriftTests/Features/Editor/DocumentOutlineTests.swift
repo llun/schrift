@@ -55,6 +55,14 @@ final class DocumentOutlineTests: XCTestCase {
         XCTAssertEqual(findMatchingBlockIDs(in: [a, b, c, d], query: "budget"), [a.id, c.id, d.id])
     }
 
+    func testFindOverReadingRowsSkipsBlocksHiddenByHideCompleted() {
+        let blocks = parseEditorBlocks("- [x] Budget done\n  - [ ] Budget child\n- [ ] Budget open")
+        let visible = ChecklistReadingPresentation(blocks: blocks, hidingCompleted: true).rows.map(\.block)
+
+        XCTAssertEqual(findMatchingBlockIDs(in: blocks, query: "budget").count, 3)
+        XCTAssertEqual(findMatchingBlockIDs(in: visible, query: "budget"), [blocks[2].id])
+    }
+
     func testFindIgnoresCaseAndDiacritics() {
         let cafe = paragraph("Meet at the Café")
         let school = paragraph("ÉCOLE du soir")

@@ -14,7 +14,11 @@
 > `textBrand` and gains an accent `Badge` with the count (the heading itself and its
 > sub-headings included). Tapping a heading scrolls the canvas on screen — reading or
 > editing — to that block and closes the sheet; stepping through matches scrolls without
-> closing so the text stays visible above the sheet. Matching is case- and
+> closing, and background interaction is enabled at the half-height detent so the text stays
+> visible and scrollable above the sheet on iPhone (regular-width iPad ignores detents and
+> shows a centered form sheet, so there the match can be covered). Stepping and a new query
+> announce "N of M" to VoiceOver; while reading with completed checklist items hidden, find
+> covers only the blocks drawn; in editing, tapping a heading moves focus to it. Matching is case- and
 > diacritic-insensitive over the text a reader sees (inline markdown stripped), counted
 > per block. No new colour or icon; no animation, so nothing to gate on Reduce Motion.
 > Matches are not highlighted inside the text. Implementation:

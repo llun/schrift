@@ -540,12 +540,21 @@ struct EditorView: View {
     private var outlinePresentation: DocumentOutlinePresentation {
         DocumentOutlinePresentation(
             isPresented: $isPresentingOutline, focusesFind: outlineFocusesFind,
-            documentTitle: viewModel.title, blocks: viewModel.blocks,
+            documentTitle: viewModel.title,
+            // Only what the canvas draws: with completed checklist items hidden, a match inside one
+            // would count but could never be scrolled to.
+            blocks: viewModel.checklistReadingPresentation.rows.map(\.block),
             findShortcutTitle: loc[.outline_find_placeholder],
             findShortcutEnabled: viewModel.hasLoadedContent && !viewModel.isLoading,
             onFindShortcut: { presentOutline(focusingFind: true) },
             onScroll: { target in
                 outlineScrollRequest = DocumentScrollRequest.following(outlineScrollRequest, target: target)
+            },
+            onSelectHeading: { blockID in
+                // Editing: move focus to the heading so restoring the old caret on dismiss cannot
+                // scroll the canvas back; `BlockEditorView` scrolls to a newly focused block.
+                if viewModel.isEditing { viewModel.focusedBlockID = blockID }
+                outlineScrollRequest = DocumentScrollRequest.following(outlineScrollRequest, target: .block(blockID))
             })
     }
 
