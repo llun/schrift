@@ -233,6 +233,9 @@ struct DocumentOutlinePresentation: ViewModifier {
     let findShortcutEnabled: Bool
     let onFindShortcut: () -> Void
     let onScroll: (EditorScrollTarget) -> Void
+    /// Runs after the sheet has finished dismissing — where a sheet requested while the outline was
+    /// up (see `EditorSheetHandoff`) can safely be presented.
+    let onDismiss: () -> Void
     let onSelectHeading: (UUID) -> Void
 
     func body(content: Content) -> some View {
@@ -240,7 +243,7 @@ struct DocumentOutlinePresentation: ViewModifier {
             .background {
                 DocumentFindShortcut(title: findShortcutTitle, isEnabled: findShortcutEnabled, action: onFindShortcut)
             }
-            .sheet(isPresented: $isPresented) {
+            .sheet(isPresented: $isPresented, onDismiss: onDismiss) {
                 DocumentOutlineSheet(
                     documentTitle: documentTitle, blocks: blocks, focusesFind: focusesFind, onScroll: onScroll,
                     onSelectHeading: onSelectHeading

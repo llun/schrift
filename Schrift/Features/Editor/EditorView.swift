@@ -190,6 +190,24 @@ func editorToolbarActions(isEditing: Bool, isLocal: Bool = false, isOffline: Boo
     return actions
 }
 
+/// What to do when a toolbar action asks for a sheet. With the outline up (it keeps the canvas, and so
+/// the toolbar, interactive) a second `.sheet` cannot be presented over it and would silently fail or
+/// pop up later, so the outline closes first and the sheet is presented from its `onDismiss`.
+enum EditorSheetHandoff: Equatable {
+    case presentNow
+    case closeOutlineFirst
+}
+
+func editorSheetHandoff(isOutlinePresented: Bool) -> EditorSheetHandoff {
+    isOutlinePresented ? .closeOutlineFirst : .presentNow
+}
+
+/// The sheets a toolbar button can request.
+enum EditorRequestedSheet: Equatable {
+    case share
+    case options
+}
+
 /// How many peers to present, or `nil` when presence should not be shown at all.
 ///
 /// Offline suppresses it: peer state is whatever the socket last said, and
@@ -237,6 +255,8 @@ struct EditorView: View {
     /// `pendingOutlineAfterOptions`, as Share does) or Command-F (`outlineFocusesFind`).
     @State private var isPresentingOutline = false
     @State private var pendingOutlineAfterOptions = false
+    /// A toolbar sheet requested while the outline was up, presented when the outline finishes dismissing.
+    @State private var pendingSheetAfterOutline: EditorRequestedSheet?
     @State private var outlineFocusesFind = false
     /// What the outline sheet last asked the visible canvas to scroll to.
     @State private var outlineScrollRequest: DocumentScrollRequest?
@@ -550,12 +570,34 @@ struct EditorView: View {
             onScroll: { target in
                 outlineScrollRequest = DocumentScrollRequest.following(outlineScrollRequest, target: target)
             },
+            onDismiss: {
+                guard let sheet = pendingSheetAfterOutline else { return }
+                pendingSheetAfterOutline = nil
+                presentRequestedSheet(sheet)
+            },
             onSelectHeading: { blockID in
                 // Editing: move focus to the heading so restoring the old caret on dismiss cannot
                 // scroll the canvas back; `BlockEditorView` scrolls to a newly focused block.
                 if viewModel.isEditing { viewModel.focusedBlockID = blockID }
                 outlineScrollRequest = DocumentScrollRequest.following(outlineScrollRequest, target: .block(blockID))
             })
+    }
+
+    private func requestSheet(_ sheet: EditorRequestedSheet) {
+        switch editorSheetHandoff(isOutlinePresented: isPresentingOutline) {
+        case .presentNow:
+            presentRequestedSheet(sheet)
+        case .closeOutlineFirst:
+            pendingSheetAfterOutline = sheet
+            isPresentingOutline = false
+        }
+    }
+
+    private func presentRequestedSheet(_ sheet: EditorRequestedSheet) {
+        switch sheet {
+        case .share: if !isOffline { isPresentingShareSheet = true }
+        case .options: isPresentingOptionsSheet = true
+        }
     }
 
     private func presentOutline(focusingFind: Bool) {
@@ -846,7 +888,8 @@ struct EditorView: View {
                             isLocalDocument: viewModel.isLocalDocument,
                             onSelect: { viewModel.applySlashSelection($0) })
                     }
-                    EditorFormattingBar(viewModel: viewModel, isOffline: isOffline)
+                    EditorFormattingBar(
+                        viewModel: viewModel, isOffline: isOffline, isOutlinePresented: isPresentingOutline)
                 }
             }
             .padding(.horizontal, DocsSpacing.gutter)
@@ -1456,7 +1499,7 @@ struct EditorView: View {
         case .share:
             Button {
                 guard !isOffline else { return }
-                isPresentingShareSheet = true
+                requestSheet(.share)
             } label: {
                 ToolbarIcon(.share)
             }
@@ -1465,7 +1508,7 @@ struct EditorView: View {
 
         case .options:
             Button {
-                isPresentingOptionsSheet = true
+                requestSheet(.options)
             } label: {
                 ToolbarIcon(.more_horiz)
             }

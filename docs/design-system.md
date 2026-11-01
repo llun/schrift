@@ -1,5 +1,10 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — outline and other sheets.** The outline keeps the canvas interactive, so
+> a second sheet cannot be stacked on it. Share and Options in the toolbar close the outline first
+> and present from its dismissal (as Options already hands off to Share and the outline); the
+> formatting bar's link and attach (Photo, File) buttons are disabled while the outline is up.
+>
 > **Revised: 2026-11-01 — "In this document": an outline with find.** The editor gains
 > a sheet for the document that is open, separate from the Pages drawer (which is about
 > the *other* pages). It opens from a new first row in the Options sheet (the `subject`

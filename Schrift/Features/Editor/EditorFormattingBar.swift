@@ -34,6 +34,14 @@ func canOfferAttach(photo: Bool, file: Bool) -> Bool {
     photo || file
 }
 
+/// Whether a bar action that presents its own picker or sheet (link editor, photo picker, file
+/// importer) must be withheld because the outline sheet is up. The outline keeps the canvas
+/// interactive behind it, so these buttons stay tappable, but SwiftUI cannot present a second
+/// sheet over a presented one: the request would silently fail or pop up later.
+func formattingBarActionBlockedByOutline(opensSheet: Bool, isOutlinePresented: Bool) -> Bool {
+    opensSheet && isOutlinePresented
+}
+
 /// Floating formatting toolbar shown above the keyboard while editing.
 ///
 /// The actions target the focused block (convert type, wrap the selection in
@@ -43,6 +51,9 @@ struct EditorFormattingBar: View {
     /// Read/control availability, which withholds the File choice (it uploads at once).
     /// Required, not defaulted: a call site that forgot it would offer File offline.
     let isOffline: Bool
+    /// Whether the outline sheet is up. It keeps the canvas interactive, so the actions that
+    /// present another sheet or picker (link, attach) are disabled meanwhile.
+    var isOutlinePresented = false
 
     @Environment(LocalizationStore.self) private var loc
 
@@ -84,7 +95,11 @@ struct EditorFormattingBar: View {
             case .textStyle:
                 choices(
                     current: defaultTextStyle,
-                    isDisabled: { _ in !viewModel.canEditLink }
+                    isDisabled: { choice in
+                        !viewModel.canEditLink
+                            || formattingBarActionBlockedByOutline(
+                                opensSheet: choice == .link, isOutlinePresented: isOutlinePresented)
+                    }
                 ) {
                     viewModel.applyTextStyle($0)
                     defaultTextStyleRaw = $0.rawValue
@@ -169,13 +184,15 @@ struct EditorFormattingBar: View {
     }
 
     private var canOfferPhoto: Bool {
-        canOfferPhotoInsertion(hasTarget: hasTarget, canInsertPhoto: viewModel.canInsertPhoto)
+        !formattingBarActionBlockedByOutline(opensSheet: true, isOutlinePresented: isOutlinePresented)
+            && canOfferPhotoInsertion(hasTarget: hasTarget, canInsertPhoto: viewModel.canInsertPhoto)
     }
 
     private var canOfferFile: Bool {
-        canOfferAttachmentInsertion(
-            hasTarget: hasTarget, canInsertAttachment: viewModel.canInsertAttachment,
-            isOffline: isOffline, isLocalDocument: viewModel.isLocalDocument)
+        !formattingBarActionBlockedByOutline(opensSheet: true, isOutlinePresented: isOutlinePresented)
+            && canOfferAttachmentInsertion(
+                hasTarget: hasTarget, canInsertAttachment: viewModel.canInsertAttachment,
+                isOffline: isOffline, isLocalDocument: viewModel.isLocalDocument)
     }
 
     /// Close, Photo, File. Each choice closes the row before presenting its picker.
@@ -205,7 +222,9 @@ struct EditorFormattingBar: View {
             // render inline markdown, so the whole family is disabled on `!canEditLink`.
             barButton(
                 icon: defaultTextStyle.icon, label: loc[defaultTextStyle.labelKey],
-                disabled: !viewModel.canEditLink,
+                disabled: !viewModel.canEditLink
+                    || formattingBarActionBlockedByOutline(
+                        opensSheet: defaultTextStyle == .link, isOutlinePresented: isOutlinePresented),
                 longPressLabel: loc[.editor_format_change_text_style],
                 longPressAction: { choosingFamily = .textStyle }
             ) {

@@ -38,3 +38,21 @@ final class EditorToolbarActionsTests: XCTestCase {
         XCTAssertNil(presentedPeerCount(peerCount: 0, isOffline: true))
     }
 }
+
+// MARK: - Outline hand-off
+
+final class EditorSheetHandoffTests: XCTestCase {
+    func testASheetIsPresentedAtOnceWhenTheOutlineIsClosed() {
+        XCTAssertEqual(editorSheetHandoff(isOutlinePresented: false), .presentNow)
+    }
+
+    func testTheOutlineClosesFirstWhenItIsUp() {
+        XCTAssertEqual(editorSheetHandoff(isOutlinePresented: true), .closeOutlineFirst)
+    }
+
+    func testSheetOpeningFormattingActionsAreBlockedOnlyWhileTheOutlineIsUp() {
+        XCTAssertTrue(formattingBarActionBlockedByOutline(opensSheet: true, isOutlinePresented: true))
+        XCTAssertFalse(formattingBarActionBlockedByOutline(opensSheet: true, isOutlinePresented: false))
+        XCTAssertFalse(formattingBarActionBlockedByOutline(opensSheet: false, isOutlinePresented: true))
+    }
+}
