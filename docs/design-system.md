@@ -1,5 +1,41 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — outline and other sheets.** The outline keeps the canvas interactive, so
+> a second sheet cannot be stacked on it. Every other presentation the editor owns — Share and
+> Options, the Pages drawer, the link editor (formatting bar or a link's Edit), the photo and file
+> pickers (formatting bar or slash menu), a sub-page's Move and Delete, the undo and conflict
+> prompts, an attachment card's QuickLook preview — is held while the outline is on screen:
+> asking for one closes the outline, and it presents once the outline has finished dismissing
+> (`OutlinePresentationGate`; attachment cards in the editor hand their preview up through
+> `AttachmentPreviewAction` and still present it themselves elsewhere). Leaving for another
+> document (a page chip, a Subpages row, Add a page, the drawer) is held the same way, so the
+> outline never stays open over the next document (`OutlineHeldNavigation`). Nothing is
+> disabled and no request or typed text is dropped; Command-F is off while something else is up.
+>
+> **Revised: 2026-11-01 — "In this document": an outline with find.** The editor gains
+> a sheet for the document that is open, separate from the Pages drawer (which is about
+> the *other* pages). It opens from a new first row in the Options sheet (the `subject`
+> glyph, "In this document") and, with a hardware keyboard, from Command-F, which also
+> puts the caret in the find field. Detents `.medium` and `.large` with the drag
+> indicator, a `SheetHeader`, and a flat, boxless list on `surfacePage`. Top to bottom: a
+> `SearchField` ("Find in this document"); while it has text, one line with "2 of 5"
+> (`footnote`, `textSecondary`) and previous/next `IconButton`s that wrap around; then the
+> document title (a way back to the top) and the level 1-3 headings, each indented one
+> gutter per level and 44pt tall at minimum — `headline` for level 1, `body` for level 2,
+> `subhead` in `textSecondary` for level 3. A heading whose section holds matches turns
+> `textBrand` and gains an accent `Badge` with the count (the heading itself and its
+> sub-headings included). Tapping a heading scrolls the canvas on screen — reading or
+> editing — to that block and closes the sheet; stepping through matches scrolls without
+> closing, and background interaction is enabled at the half-height detent so the text stays
+> visible and scrollable above the sheet on iPhone (regular-width iPad ignores detents and
+> shows a centered form sheet, so there the match can be covered). Stepping and a new query
+> announce "N of M" to VoiceOver; while reading with completed checklist items hidden, find
+> covers only the blocks drawn; in editing, tapping a heading moves focus to it. Matching is case- and
+> diacritic-insensitive over the text a reader sees (inline markdown stripped), counted
+> per block. No new colour or icon; no animation, so nothing to gate on Reduce Motion.
+> Matches are not highlighted inside the text. Implementation:
+> `Schrift/Features/Editor/DocumentOutline.swift` and `DocumentOutlineSheet.swift`.
+
 > **Revised: 2026-11-01 — Documents zoom open from their row (Direction D, Tactile).** On a
 > compact-width stack, opening a document from Home (a row or a pinned card), Search results or
 > Shared uses the iOS 18+ zoom transition: each row is a `matchedTransitionSource` and the
