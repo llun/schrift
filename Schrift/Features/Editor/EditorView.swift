@@ -358,6 +358,10 @@ struct EditorView: View {
     @State private var readingScrollPosition = ScrollPosition()
     @State private var restoreAnnouncementTask: Task<Void, Never>?
     @State private var checklistRevealFocusRequest = 0
+    /// The pending second phase of each tick made while completed items are hidden — the row
+    /// leaving once its tick has landed (see `toggleChecklistFromReading`). Cancelled on untick
+    /// and when the screen goes away.
+    @State private var checklistSettleTasks: [UUID: Task<Void, Never>] = [:]
     @State private var pagesTreeViewModel: PagesTreeViewModel
 
     /// Height the formatting bar reserves at the bottom of the editing canvas:
@@ -581,6 +585,10 @@ struct EditorView: View {
                 readingPosition.dismissBackToTop()
                 restoreAnnouncementTask?.cancel()
                 restoreAnnouncementTask = nil
+                // A tick still settling hides at once rather than collapsing off screen.
+                for task in checklistSettleTasks.values { task.cancel() }
+                checklistSettleTasks = [:]
+                viewModel.clearChecklistSettling()
                 if holdsCollaborationSession {
                     collaboration.release(viewModel.documentID)
                     holdsCollaborationSession = false
@@ -1221,12 +1229,7 @@ struct EditorView: View {
                                         block: block, serverOrigin: serverOrigin,
                                         numberedIndex: numbering[index],
                                         isOffline: isOffline,
-                                        onToggleChecklist: {
-                                            viewModel.toggleChecklist(blockID: block.id)
-                                            if viewModel.hidesCompletedChecklistItems {
-                                                checklistRevealFocusRequest += 1
-                                            }
-                                        },
+                                        onToggleChecklist: { toggleChecklistFromReading(block.id) },
                                         onTapText: {
                                             snapshotScrollForModeSwap()
                                             viewModel.startEditing(focusing: block.id)
@@ -1250,6 +1253,10 @@ struct EditorView: View {
                             }
                             .id(EditorScrollTarget.block(block.id))
                             .recordingEditorBlockFrame(block.id)
+                            // Plays only inside a settled tick's collapse (`toggleChecklistFromReading`);
+                            // everywhere else a row appearing or going (a remote edit, the Hide
+                            // completed switch) is unchanged.
+                            .transition(DocsMotion.checklistCollapseTransition(reduceMotion: reduceMotion))
                         }
                     }
 
@@ -1386,6 +1393,35 @@ struct EditorView: View {
         .animation(reduceMotion ? nil : .snappy, value: readingPosition.offersBackToTop)
     }
 
+    /// A checkbox tapped on the reading surface.
+    ///
+    /// With completed items hidden, a tick is two phases, so the row is seen ticked before it
+    /// goes: first the tick alone (the row stays, checked, while its checkbox pulses), then —
+    /// after `DocsMotion.checklistSettleDelay` — the row leaves inside the collapse animation
+    /// (a fade under Reduce Motion, after a shorter beat) and the rows below close up. An
+    /// untick during the beat cancels the second phase and the row stays.
+    private func toggleChecklistFromReading(_ blockID: UUID) {
+        guard viewModel.hidesCompletedChecklistItems else {
+            viewModel.toggleChecklist(blockID: blockID)
+            return
+        }
+        checklistSettleTasks[blockID]?.cancel()
+        checklistSettleTasks[blockID] = nil
+        guard let token = viewModel.toggleChecklistSettling(blockID: blockID) else { return }
+        let delay = DocsMotion.checklistSettleDelay(reduceMotion: reduceMotion)
+        let collapse = DocsMotion.checklistCollapseAnimation(reduceMotion: reduceMotion)
+        checklistSettleTasks[blockID] = Task { @MainActor in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            checklistSettleTasks[blockID] = nil
+            let hid = withAnimation(collapse) {
+                viewModel.finishChecklistSettling(blockID: blockID, token: token)
+            }
+            // The row may have held VoiceOver focus; give it the reveal control to land on.
+            if hid { checklistRevealFocusRequest += 1 }
+        }
+    }
+
     /// Raw offsets still preserve the ordinary parity handoff. With checklist
     /// chrome or hidden rows, measured block identity preserves the logical place.
     private func snapshotScrollForModeSwap() {
@@ -1397,7 +1433,8 @@ struct EditorView: View {
         }
         let allIDs = viewModel.blocks.map(\.id)
         let readingIDs = ChecklistReadingPresentation(
-            blocks: viewModel.blocks, hidingCompleted: viewModel.hidesCompletedChecklistItems
+            blocks: viewModel.blocks, hidingCompleted: viewModel.hidesCompletedChecklistItems,
+            settling: viewModel.checklistSettling.ids
         ).rows.map(\.id)
         scrollAnchor.snapshotForSwap(
             blockOrder: viewModel.isEditing ? allIDs : readingIDs,

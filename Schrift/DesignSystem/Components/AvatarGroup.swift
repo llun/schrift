@@ -19,6 +19,23 @@ func avatarGroupLayout(names: [String], max: Int) -> AvatarGroupLayout {
     return AvatarGroupLayout(visibleNames: visible, overflowCount: overflow)
 }
 
+/// One visible avatar and the identity SwiftUI tracks it by.
+struct AvatarGroupFace: Identifiable, Equatable {
+    let id: UInt
+    let name: String
+}
+
+/// The visible names paired with their identities: the caller's, where it gave one per name,
+/// otherwise the position — which is what the row has always been identified by. A short
+/// `identities` array falls back to the position for the names it does not cover rather than
+/// trapping on an out-of-range index.
+func avatarGroupFaces(names: [String], identities: [UInt]?) -> [AvatarGroupFace] {
+    names.enumerated().map { index, name in
+        AvatarGroupFace(
+            id: identities.flatMap { $0.indices.contains(index) ? $0[index] : nil } ?? UInt(index), name: name)
+    }
+}
+
 /// Every length in a stacked avatar row, derived from one diameter.
 struct AvatarGroupMetrics: Equatable {
     let diameter: CGFloat
@@ -44,6 +61,12 @@ struct AvatarGroup: View {
     let names: [String]
     var size: CGFloat = 32
     var max: Int = 4
+    /// A stable identity per name (a collaborator's client id), parallel to `names`. Without
+    /// it a face is identified by its position, which is right for a static row; with it an
+    /// avatar that joins is a *new* view, so `arrivalTransition` can play for it alone.
+    var identities: [UInt]? = nil
+    /// How a newly arriving avatar enters. `.identity` (the default) is no transition.
+    var arrivalTransition: AnyTransition = .identity
 
     /// The row's single scale. It is handed down to each `Avatar` rather than
     /// letting them scale themselves, so the discs, the negative overlap and the
@@ -55,9 +78,10 @@ struct AvatarGroup: View {
         let layout = avatarGroupLayout(names: names, max: max)
         let metrics = avatarGroupMetrics(size: size, scale: scale)
         HStack(spacing: metrics.overlap) {
-            ForEach(Array(layout.visibleNames.enumerated()), id: \.offset) { _, name in
-                Avatar(name: name, size: size, scaleOverride: scale)
+            ForEach(avatarGroupFaces(names: layout.visibleNames, identities: identities)) { face in
+                Avatar(name: face.name, size: size, scaleOverride: scale)
                     .overlay(Circle().stroke(theme.colors.surfacePage, lineWidth: 2))
+                    .transition(arrivalTransition)
             }
             if layout.overflowCount > 0 {
                 Circle()

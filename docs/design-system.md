@@ -1,5 +1,31 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — Editor micro-motion (Direction D3).** Four small pieces of motion in the
+> editor, all with their rules in `DocsMotion+Editor.swift` (pure functions of Reduce Motion,
+> unit-tested) and all built on `DocsMotion.crossfade`. **Checklist:** ticking or unticking a
+> checkbox fires a selection haptic (`.sensoryFeedback` triggered by the person's own tap count,
+> so the first render and a collaborator's edit arriving over sync stay silent) and swells the
+> glyph 1.18x with a short overshoot (`scaleEffect`, so layout is untouched); with "Hide
+> completed" on, a tick is two phases (`ChecklistSettling`): the row first stays on screen,
+> checked, while the glyph pulses, then after `checklistSettleDelay` (0.3s; 0.15s under Reduce
+> Motion) it slides out to the leading edge while fading and the rows below close the gap
+> (`withAnimation` around that second phase only, so a remote edit or the Hide completed switch
+> still cuts). Unticking during the beat keeps the row; a peer removing or unticking it, the
+> switch, or leaving the screen ends the beat. **Save status:** "Saving…", "Saved" and the other states crossfade with a
+> slight blur inside a `ZStack` in the slot the indicator already reserves (every state keeps its
+> `rowMinHeight` floor, so nothing around it moves); the "Saved" check is a stroked shape that
+> draws itself in; the animation is an ease, never a spring, because it runs on every autosave.
+> **Formatting bar:** the row of actions and the Photo/File or style/list/quote choices
+> crossfade with a slight grow from the leading edge (in a `ZStack`, so the outgoing and incoming
+> sets overlap rather than stack) and a selection haptic marks a swap made by a press on the
+> bar (the caret moving to another block also closes a choice set, silently). **Presence:**
+> `AvatarGroup` takes optional per-face `identities` (the collaborator's client id) and an
+> `arrivalTransition`, so a newly joined avatar springs in (scale from 0.4 with opacity) while the
+> others stay put; the disc colour is unchanged. **Reduce Motion:** no scale, slide, spring or
+> blur — each piece is a plain opacity crossfade (the check is simply drawn); **haptics stay on**,
+> since they are not motion. VoiceOver is unaffected: no label, trait or order changed, and the
+> new check shape is hidden like the glyph it replaces.
+
 > **Revised: 2026-11-01 — the Pages drawer follows your finger (Direction D2).** The drawer is no
 > longer a transition that plays on a bool: `PagesDrawerPresentation` (a modifier on the editor)
 > holds a `progress` from 0 to 1, and the panel's offset (`pagesDrawerPanelOffset`) and the scrim's

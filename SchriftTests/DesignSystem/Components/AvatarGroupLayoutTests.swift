@@ -22,4 +22,27 @@ final class AvatarGroupLayoutTests: XCTestCase {
     func testANegativeMaxWithNoNamesShowsNothing() {
         XCTAssertEqual(avatarGroupLayout(names: [], max: -5), AvatarGroupLayout(visibleNames: [], overflowCount: 0))
     }
+
+    // MARK: Face identities
+
+    func testFacesWithoutIdentitiesAreTrackedByPosition() {
+        XCTAssertEqual(
+            avatarGroupFaces(names: ["A", "B"], identities: nil),
+            [AvatarGroupFace(id: 0, name: "A"), AvatarGroupFace(id: 1, name: "B")])
+    }
+
+    /// The point of the identities: a collaborator who joins ahead of the others in the list
+    /// is a new face, and the existing ones keep theirs — so only the newcomer transitions.
+    func testFacesKeepTheirCollaboratorsIdentityWhenSomeoneJoinsAhead() {
+        let before = avatarGroupFaces(names: ["B", "C"], identities: [20, 30])
+        let after = avatarGroupFaces(names: ["A", "B", "C"], identities: [10, 20, 30])
+        XCTAssertEqual(after.map(\.id), [10, 20, 30])
+        XCTAssertEqual(before.map(\.id), [20, 30])
+        XCTAssertEqual(Set(after.map(\.id)).subtracting(before.map(\.id)), [10])
+    }
+
+    func testAShortIdentitiesArrayFallsBackToPositionInsteadOfTrapping() {
+        XCTAssertEqual(avatarGroupFaces(names: ["A", "B", "C"], identities: [7]).map(\.id), [7, 1, 2])
+        XCTAssertEqual(avatarGroupFaces(names: [], identities: [7]), [])
+    }
 }

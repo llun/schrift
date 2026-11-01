@@ -159,6 +159,7 @@ struct EditorDocumentHeader<Status: View>: View {
     @ViewBuilder var status: () -> Status
 
     @Environment(LocalizationStore.self) private var loc
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isTitleFocused: Bool
     @State private var titleSelection: TextSelection?
 
@@ -176,6 +177,13 @@ struct EditorDocumentHeader<Status: View>: View {
                 PresenceBar(peers: peers, size: 22, max: 3)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            // A collaborator arriving springs in (a fade under Reduce Motion). The animation is
+            // attached here, to the row that is always present, because `PresenceBar` itself
+            // renders nothing while alone — an animation on a view that does not exist yet
+            // cannot run for the first peer.
+            .animation(
+                DocsMotion.presenceArrivalAnimation(reduceMotion: reduceMotion), value: peers.map(\.clientID)
+            )
             // A floor, never a fixed height (which would clip at larger text
             // sizes). It equalises the two surfaces' status slots — a footnote
             // caption against a `SaveStatusIndicator` that floors itself at

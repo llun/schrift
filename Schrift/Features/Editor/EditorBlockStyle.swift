@@ -395,7 +395,16 @@ struct EditorBlockAdornment: View {
     var onToggleChecklist: (() -> Void)?
 
     @Environment(LocalizationStore.self) private var loc
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .body) private var checkboxSize = EditorBlockMetrics.checkboxSize
+
+    /// How many times *this person* has tapped the checkbox. The selection haptic triggers on
+    /// this and not on `checked`, so it fires for a tick or untick they made and never for the
+    /// first render or for a collaborator's edit arriving over sync (which flips `checked`
+    /// without a tap). Haptics are not motion, so Reduce Motion does not gate it.
+    @State private var userTickCount = 0
+    /// The glyph's swell while a tick lands; only ever true when Reduce Motion is off.
+    @State private var isPulsing = false
 
     var body: some View {
         switch kind {
@@ -412,16 +421,34 @@ struct EditorBlockAdornment: View {
 
         case .checklistItem(let checked):
             if let onToggleChecklist {
-                Button(action: onToggleChecklist) { checkbox(checked: checked) }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(
-                        checked ? loc[.editor_checklist_not_done_a11y] : loc[.editor_checklist_done_a11y])
+                Button {
+                    userTickCount += 1
+                    pulse()
+                    onToggleChecklist()
+                } label: {
+                    checkbox(checked: checked)
+                }
+                .buttonStyle(.plain)
+                .sensoryFeedback(.selection, trigger: userTickCount)
+                .accessibilityLabel(
+                    checked ? loc[.editor_checklist_not_done_a11y] : loc[.editor_checklist_done_a11y])
             } else {
                 checkbox(checked: checked)
             }
 
         default:
             EmptyView()
+        }
+    }
+
+    /// A short swell on the glyph: up fast, back with a small overshoot. Drawn with
+    /// `scaleEffect`, which moves nothing in layout, and skipped under Reduce Motion.
+    private func pulse() {
+        guard DocsMotion.checklistPulses(reduceMotion: reduceMotion) else { return }
+        withAnimation(DocsMotion.checklistPulseRise) {
+            isPulsing = true
+        } completion: {
+            withAnimation(DocsMotion.checklistPulseSettle) { isPulsing = false }
         }
     }
 
@@ -442,6 +469,7 @@ struct EditorBlockAdornment: View {
         let glyphCenter = checkboxCenterAboveBaseline(checked: checked, size: checkboxSize)
         return MaterialSymbol(checked ? .check_box : .check_box_outline_blank, size: EditorBlockMetrics.checkboxSize)
             .foregroundStyle(checked ? theme.colors.brandFill : theme.colors.textTertiary)
+            .scaleEffect(isPulsing ? DocsMotion.checklistPulseScale : 1)
             .alignmentGuide(.checklistFirstLine) {
                 $0[.firstTextBaseline] - glyphCenter
             }

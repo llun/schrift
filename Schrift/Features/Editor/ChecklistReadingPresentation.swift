@@ -17,6 +17,9 @@ import Foundation
 /// hidden; a queued photo also ends it and stays visible. `hiddenCount` still counts
 /// completed items only — every checked item hidden, nested ones included — it is what
 /// the "Completed items hidden" notice reports.
+///
+/// A completed item in `settling` (just ticked, see `ChecklistSettling`) is not hidden yet: it
+/// and everything that would go with it stay as rows, and it is not counted, until it settles.
 struct ChecklistReadingPresentation {
     struct Row: Identifiable {
         let sourceIndex: Int
@@ -28,7 +31,7 @@ struct ChecklistReadingPresentation {
     let hiddenCount: Int
     let hasChecklistItems: Bool
 
-    init(blocks: [EditorBlock], hidingCompleted: Bool) {
+    init(blocks: [EditorBlock], hidingCompleted: Bool, settling: Set<UUID> = []) {
         var rows: [Row] = []
         var hiddenCount = 0
         var hidingAttachedMedia = false
@@ -45,7 +48,7 @@ struct ChecklistReadingPresentation {
                 continue
             }
             hiddenSubtreeDepth = nil
-            if hidingCompleted, case .checklistItem(checked: true) = block.kind {
+            if hidingCompleted, case .checklistItem(checked: true) = block.kind, !settling.contains(block.id) {
                 hiddenCount += 1
                 hidingAttachedMedia = true
                 hiddenSubtreeDepth = block.indent

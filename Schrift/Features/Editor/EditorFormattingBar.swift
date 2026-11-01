@@ -45,6 +45,7 @@ struct EditorFormattingBar: View {
     let isOffline: Bool
 
     @Environment(LocalizationStore.self) private var loc
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Each family button's default kind — local preferences, see `FormattingBarFormat`.
     @AppStorage(TextStyleFormat.preferenceKey) private var defaultTextStyleRaw = TextStyleFormat.fallback.rawValue
@@ -65,6 +66,10 @@ struct EditorFormattingBar: View {
     /// same plain buttons as every other formatting action and nothing new competes with
     /// the text view for first responder mid-edit.
     @State private var choosingFamily: Family?
+    /// How many times a press on the bar swapped its set — the selection haptic's trigger. Not
+    /// `choosingFamily` itself: the caret moving to another block also ends a choice, and that
+    /// must stay silent rather than tick while the person types or taps text.
+    @State private var setSwitchPresses = 0
 
     /// Which edges have hidden content, from the row's scroll geometry — drives the fade.
     @State private var fadeEdges = ScrollFadeEdges()
@@ -80,32 +85,47 @@ struct EditorFormattingBar: View {
         // Keep every action circular and 44pt square. A horizontal scroll view
         // contains the row on narrow screens without widening the editor.
         ScrollView(.horizontal) {
-            switch choosingFamily {
-            case .textStyle:
-                choices(
-                    current: defaultTextStyle,
-                    isDisabled: { _ in !viewModel.canEditLink }
-                ) {
-                    viewModel.applyTextStyle($0)
-                    defaultTextStyleRaw = $0.rawValue
+            // A stack, so the set leaving and the set arriving overlap instead of stacking
+            // vertically in the scroll view while they crossfade. Each set carries the same
+            // transition (a fade under Reduce Motion, with a slight grow otherwise).
+            ZStack(alignment: .leading) {
+                switch choosingFamily {
+                case .textStyle:
+                    choices(
+                        current: defaultTextStyle,
+                        isDisabled: { _ in !viewModel.canEditLink }
+                    ) {
+                        viewModel.applyTextStyle($0)
+                        defaultTextStyleRaw = $0.rawValue
+                    }
+                    .transition(switchTransition)
+                case .list:
+                    choices(current: defaultListFormat) {
+                        viewModel.chooseFormat($0)
+                        defaultListFormatRaw = $0.rawValue
+                    }
+                    .transition(switchTransition)
+                case .quote:
+                    choices(current: defaultQuoteFormat) {
+                        viewModel.chooseFormat($0)
+                        defaultQuoteFormatRaw = $0.rawValue
+                    }
+                    .transition(switchTransition)
+                case .attach:
+                    attachChoices
+                        .transition(switchTransition)
+                case nil:
+                    actions
+                        .transition(switchTransition)
                 }
-            case .list:
-                choices(current: defaultListFormat) {
-                    viewModel.chooseFormat($0)
-                    defaultListFormatRaw = $0.rawValue
-                }
-            case .quote:
-                choices(current: defaultQuoteFormat) {
-                    viewModel.chooseFormat($0)
-                    defaultQuoteFormatRaw = $0.rawValue
-                }
-            case .attach:
-                attachChoices
-            case nil:
-                actions
             }
         }
         .scrollIndicators(.hidden)
+        .animation(DocsMotion.formattingBarSwitchAnimation(reduceMotion: reduceMotion), value: choosingFamily)
+        // A selection tick when a press swaps the row's set (opening one, or closing it by
+        // picking or pressing Close) — see `switchSet(to:)`. Not motion, so Reduce Motion leaves
+        // it on.
+        .sensoryFeedback(.selection, trigger: setSwitchPresses)
         .onScrollGeometryChange(for: ScrollFadeEdges.self) { geometry in
             scrollFadeEdges(
                 contentOffsetX: geometry.contentOffset.x, contentWidth: geometry.contentSize.width,
@@ -123,8 +143,21 @@ struct EditorFormattingBar: View {
         // The bar floats over the canvas, which is exactly the functional layer
         // glass is meant for.
         .glassEffect(.regular, in: Capsule())
-        // The choices act on the focused block; moving the caret elsewhere ends the choice.
+        // The choices act on the focused block; moving the caret elsewhere ends the choice —
+        // silently, so this sets the state directly rather than through `switchSet(to:)`.
         .onChange(of: viewModel.focusedBlockID) { choosingFamily = nil }
+    }
+
+    /// Swaps the row's set in answer to a press on the bar, and counts the press for the
+    /// selection haptic. Every press path goes through here; nothing else bumps the count.
+    private func switchSet(to family: Family?) {
+        guard choosingFamily != family else { return }
+        choosingFamily = family
+        setSwitchPresses += 1
+    }
+
+    private var switchTransition: AnyTransition {
+        DocsMotion.formattingBarSwitchTransition(reduceMotion: reduceMotion)
     }
 
     /// Short gradient at each edge that has hidden content, so the row reads as scrollable.
@@ -152,7 +185,7 @@ struct EditorFormattingBar: View {
     ) -> some View {
         HStack(spacing: DocsSpacing.space4xs) {
             barButton(icon: .close, label: loc[.common_close], disabled: false) {
-                choosingFamily = nil
+                switchSet(to: nil)
             }
             ForEach(Choice.allCases, id: \.self) { choice in
                 barButton(
@@ -160,7 +193,7 @@ struct EditorFormattingBar: View {
                     disabled: isDisabled?(choice)
                 ) {
                     pick(choice)
-                    choosingFamily = nil
+                    switchSet(to: nil)
                 }
                 // The brand colour marks the default for sighted users; VoiceOver gets the trait.
                 .accessibilityAddTraits(choice == current ? .isSelected : [])
@@ -182,14 +215,14 @@ struct EditorFormattingBar: View {
     private var attachChoices: some View {
         HStack(spacing: DocsSpacing.space4xs) {
             barButton(icon: .close, label: loc[.common_close], disabled: false) {
-                choosingFamily = nil
+                switchSet(to: nil)
             }
             barButton(icon: .image, label: loc[.editor_format_insert_photo], disabled: !canOfferPhoto) {
-                choosingFamily = nil
+                switchSet(to: nil)
                 viewModel.requestPhotoInsertion()
             }
             barButton(icon: .description, label: loc[.editor_format_insert_file], disabled: !canOfferFile) {
-                choosingFamily = nil
+                switchSet(to: nil)
                 viewModel.requestAttachmentInsertion()
             }
         }
@@ -207,7 +240,7 @@ struct EditorFormattingBar: View {
                 icon: defaultTextStyle.icon, label: loc[defaultTextStyle.labelKey],
                 disabled: !viewModel.canEditLink,
                 longPressLabel: loc[.editor_format_change_text_style],
-                longPressAction: { choosingFamily = .textStyle }
+                longPressAction: { switchSet(to: .textStyle) }
             ) {
                 guard choosingFamily == nil else { return }
                 viewModel.applyTextStyle(defaultTextStyle)
@@ -217,7 +250,7 @@ struct EditorFormattingBar: View {
             barButton(
                 icon: defaultListFormat.icon, label: loc[defaultListFormat.labelKey],
                 longPressLabel: loc[.editor_format_change_list_type],
-                longPressAction: { choosingFamily = .list }
+                longPressAction: { switchSet(to: .list) }
             ) {
                 guard choosingFamily == nil else { return }
                 viewModel.tapFormat(defaultListFormat)
@@ -244,7 +277,7 @@ struct EditorFormattingBar: View {
             barButton(
                 icon: defaultQuoteFormat.icon, label: loc[defaultQuoteFormat.labelKey],
                 longPressLabel: loc[.editor_format_change_quote_type],
-                longPressAction: { choosingFamily = .quote }
+                longPressAction: { switchSet(to: .quote) }
             ) {
                 guard choosingFamily == nil else { return }
                 viewModel.tapFormat(defaultQuoteFormat)
@@ -257,7 +290,7 @@ struct EditorFormattingBar: View {
                 icon: .attach_file, label: loc[.editor_format_attach],
                 disabled: !canOfferAttach(photo: canOfferPhoto, file: canOfferFile)
             ) {
-                choosingFamily = .attach
+                switchSet(to: .attach)
             }
         }
     }
