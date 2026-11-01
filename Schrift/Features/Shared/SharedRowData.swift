@@ -29,3 +29,26 @@ func sharedCreatorName(accesses: [DocumentAccess], creator: UUID?) -> String? {
     guard let name, !name.isEmpty else { return nil }
     return name
 }
+
+/// Which faces a Shared row draws: the sharer leads the row, the rest trail as the
+/// member group.
+struct SharedRowFaces: Equatable {
+    /// The name whose `Avatar` leads the row. nil ⇒ the sharer is unknown (accesses not
+    /// loaded, failed, or offline), so the row keeps its `DocIcon` in the same slot.
+    let leading: String?
+    /// The names for the trailing `AvatarGroup`: every member except the leading person.
+    let trailing: [String]
+}
+
+/// Splits the row's people into the leading avatar and the trailing group. The sharer
+/// would otherwise appear twice (they are one of the document's members), so the first
+/// matching member is dropped from the group; later duplicates are different people who
+/// happen to share a display name and stay. A blank sharer name is treated as unknown.
+func sharedRowFaces(sharedByName: String?, memberNames: [String]) -> SharedRowFaces {
+    guard let sharedByName, !sharedByName.isEmpty else {
+        return SharedRowFaces(leading: nil, trailing: memberNames)
+    }
+    var trailing = memberNames
+    if let index = trailing.firstIndex(of: sharedByName) { trailing.remove(at: index) }
+    return SharedRowFaces(leading: sharedByName, trailing: trailing)
+}
