@@ -803,9 +803,9 @@ struct EditorView: View {
         }
         .safeAreaInset(edge: .bottom) {
             // A container so the glass surfaces stacked here (the bar, and the
-            // slash menu when it is up) are rendered as one system pass and
-            // blend where they meet, rather than as separate panes sitting on
-            // top of each other.
+            // slash menu or `[[` page picker when one is up) are rendered as one
+            // system pass and blend where they meet, rather than as separate
+            // panes sitting on top of each other.
             GlassEffectContainer(spacing: DocsSpacing.spaceXS) {
                 VStack(spacing: DocsSpacing.spaceXS) {
                     if viewModel.isUploadingPhoto {
@@ -820,6 +820,9 @@ struct EditorView: View {
                             isLocalDocument: viewModel.isLocalDocument,
                             onSelect: { viewModel.applySlashSelection($0) })
                     }
+                    // "Link a page", opened by typing `[[`. Never up together with the
+                    // slash menu: `pageLinkPicker` is nil while a slash query is open.
+                    PageLinkPickerHost(viewModel: viewModel)
                     EditorFormattingBar(viewModel: viewModel, isOffline: isOffline)
                 }
             }

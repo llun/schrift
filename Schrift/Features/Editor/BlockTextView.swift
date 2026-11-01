@@ -174,6 +174,11 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// Returning true swallows the key; otherwise Tab types a tab character as
     /// it always has, and Shift-Tab does nothing.
     var onTabKey: (@MainActor (Bool) -> Bool)?
+    /// Whether the `[[` page picker claims a key for this block: Escape while the card is up,
+    /// Up and Down while it also has rows. A claimed key is a key command that goes to
+    /// `onPageLinkPickerKey` instead of moving the caret; others are left to the system.
+    var claimsPageLinkPickerKey: (@MainActor (PageLinkPickerKey) -> Bool)?
+    var onPageLinkPickerKey: (@MainActor (PageLinkPickerKey) -> Void)?
     /// Invoked when the user taps a link's visible label. The view is passed
     /// back rather than captured, so the stored closure cannot retain it.
     var onLinkTapped: (@MainActor (EditorUITextView, InlineLinkSpan, CGPoint) -> Void)?
@@ -477,13 +482,43 @@ final class EditorUITextView: UITextView, @preconcurrency NSLayoutManagerDelegat
     /// tab character, or focus navigation on iPad). Not offered while text is
     /// being composed: the input method owns the keyboard until it commits.
     override var keyCommands: [UIKeyCommand]? {
-        let inherited = super.keyCommands ?? []
-        guard onTabKey != nil, markedTextRange == nil else { return inherited }
-        let indent = UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(tabKeyPressed))
-        let outdent = UIKeyCommand(input: "\t", modifierFlags: .shift, action: #selector(shiftTabKeyPressed))
-        indent.wantsPriorityOverSystemBehavior = true
-        outdent.wantsPriorityOverSystemBehavior = true
-        return inherited + [indent, outdent]
+        var commands = super.keyCommands ?? []
+        guard markedTextRange == nil else { return commands }
+        if onTabKey != nil {
+            let indent = UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(tabKeyPressed))
+            let outdent = UIKeyCommand(input: "\t", modifierFlags: .shift, action: #selector(shiftTabKeyPressed))
+            indent.wantsPriorityOverSystemBehavior = true
+            outdent.wantsPriorityOverSystemBehavior = true
+            commands += [indent, outdent]
+        }
+        // Only the keys the picker claims right now: taking the arrows unconditionally would
+        // take caret movement away from every hardware-keyboard user, and in the empty
+        // "No matching pages" state there is no row for them to move to.
+        if let claims = claimsPageLinkPickerKey {
+            let candidates: [(PageLinkPickerKey, String, Selector)] = [
+                (.up, UIKeyCommand.inputUpArrow, #selector(pickerUpPressed)),
+                (.down, UIKeyCommand.inputDownArrow, #selector(pickerDownPressed)),
+                (.escape, UIKeyCommand.inputEscape, #selector(pickerEscapePressed)),
+            ]
+            for (key, input, action) in candidates where claims(key) {
+                let command = UIKeyCommand(input: input, modifierFlags: [], action: action)
+                command.wantsPriorityOverSystemBehavior = true
+                commands.append(command)
+            }
+        }
+        return commands
+    }
+
+    @objc private func pickerUpPressed() {
+        onPageLinkPickerKey?(.up)
+    }
+
+    @objc private func pickerDownPressed() {
+        onPageLinkPickerKey?(.down)
+    }
+
+    @objc private func pickerEscapePressed() {
+        onPageLinkPickerKey?(.escape)
     }
 
     @objc private func tabKeyPressed() {
@@ -562,6 +597,12 @@ struct BlockTextView: UIViewRepresentable {
     var onEvent: (BlockTextEvent) -> Void
     /// Tab (`false`) or Shift-Tab (`true`); returns whether the key was handled.
     var onTabKey: (Bool) -> Bool = { _ in false }
+    /// Which keys the `[[` page picker claims for this block, and where they go.
+    var claimsPageLinkPickerKey: (PageLinkPickerKey) -> Bool = { _ in false }
+    var onPageLinkPickerKey: (PageLinkPickerKey) -> Void = { _ in }
+    /// Whether this block's buffer holds an input method's marked (uncommitted) text, reported
+    /// with each text and selection change ahead of the event itself.
+    var onMarkedTextChange: (Bool) -> Void = { _ in }
     var onCursorRequestHandled: (UUID) -> Void = { _ in }
     /// Keyboard events may arrive before a structural edit reaches UIKit.
     var onPendingInput: (String, UUID?) -> Bool = { _, _ in false }
@@ -606,6 +647,12 @@ struct BlockTextView: UIViewRepresentable {
         }
         view.onTabKey = { [weak coordinator = context.coordinator] outdent in
             coordinator?.parent.onTabKey(outdent) ?? false
+        }
+        view.claimsPageLinkPickerKey = { [weak coordinator = context.coordinator] key in
+            coordinator?.parent.claimsPageLinkPickerKey(key) ?? false
+        }
+        view.onPageLinkPickerKey = { [weak coordinator = context.coordinator] key in
+            coordinator?.parent.onPageLinkPickerKey(key)
         }
         view.onPendingDeleteBackward = { [weak coordinator = context.coordinator] in
             guard let coordinator else { return false }
@@ -917,6 +964,9 @@ struct BlockTextView: UIViewRepresentable {
                 parent.onCompositionChange(
                     target, textView.text ?? "", textView.selectedRange, textView.markedTextRange != nil)
             } else {
+                // Before the text: the model must already know these characters may be an
+                // uncommitted composition when it reads them.
+                parent.onMarkedTextChange(textView.markedTextRange != nil)
                 parent.onEvent(.textChanged(textView.text ?? ""))
             }
             // Only blocks that render inline markdown need a per-keystroke
@@ -943,6 +993,7 @@ struct BlockTextView: UIViewRepresentable {
                     target, textView.text ?? "", textView.selectedRange, textView.markedTextRange != nil)
                 return
             }
+            parent.onMarkedTextChange(textView.markedTextRange != nil)
             guard !parent.hasPendingSelection(consumedCursorToken) else { return }
             guard let editor = textView as? EditorUITextView else { return }
             // Re-entrant by design: assigning `selectedRange` fires this again,

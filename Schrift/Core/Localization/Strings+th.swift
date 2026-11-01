@@ -289,6 +289,8 @@ enum Strings_th {
         .editor_error_add_file: "เพิ่มไฟล์ไม่สำเร็จ โปรดลองใหม่",
         .editor_error_file_too_large: "ไฟล์นี้มีขนาดใหญ่เกินไป",
         .editor_slash_file: "ไฟล์",
+        .editor_page_link_title: "ลิงก์ไปยังหน้า",
+        .editor_page_link_empty: "ไม่พบหน้าที่ตรงกัน",
         .editor_uploading_file: "กำลังอัปโหลดไฟล์…",
         .editor_uploading_file_a11y: "กำลังอัปโหลดไฟล์",
 

@@ -4,10 +4,20 @@ import Foundation
 /// The Optional loads return nil when a list was never cached, which is
 /// distinct from a cached empty list (a real fetch result): the nil case is
 /// what allows the UI to show its one first-run spinner.
+///
+/// **The lists are not cleared on sign-out** (a recorded decision), so after an account switch
+/// they can hold the previous account's rows until the next successful fetch. Each list
+/// therefore also records **whose fetch wrote it** — the signed-in user id the list load ran
+/// under — and `documents(fetchedFor:)` answers only the lists written for that account.
+/// Home itself still renders whatever is cached; the stamp is for readers that must not show
+/// one account's titles to another, such as the editor's `[[` page picker.
 final class DocumentCacheStore {
     private static let pinnedKey = "dev.llun.Schrift.cachedPinnedDocuments"
     private static let recentKey = "dev.llun.Schrift.cachedRecentDocuments"
     private static let sharedWithMeKey = "dev.llun.Schrift.cachedSharedWithMeDocuments"
+    /// The account each list was last fetched for, as a user-id string, stored under the
+    /// list's own key plus this suffix. Absent means unknown, which vouches for nobody.
+    private static let ownerSuffix = ".fetchedFor"
 
     let userDefaults: UserDefaults
     private let encoder: JSONEncoder
@@ -41,16 +51,29 @@ final class DocumentCacheStore {
         load(forKey: Self.sharedWithMeKey)
     }
 
-    func savePinnedDocuments(_ documents: [Document]) {
-        save(documents, forKey: Self.pinnedKey)
+    /// Writes a whole list. `ownerUserID` is the account the fetch behind it was made for. A
+    /// save without one (the account is unknown, or the list was rebuilt locally) **clears**
+    /// the stamp, so a list never stays vouched for by an account whose rows it may not hold.
+    func savePinnedDocuments(_ documents: [Document], fetchedFor ownerUserID: UUID? = nil) {
+        save(documents, forKey: Self.pinnedKey, fetchedFor: ownerUserID)
     }
 
-    func saveRecentDocuments(_ documents: [Document]) {
-        save(documents, forKey: Self.recentKey)
+    func saveRecentDocuments(_ documents: [Document], fetchedFor ownerUserID: UUID? = nil) {
+        save(documents, forKey: Self.recentKey, fetchedFor: ownerUserID)
     }
 
-    func saveSharedWithMeDocuments(_ documents: [Document]) {
-        save(documents, forKey: Self.sharedWithMeKey)
+    func saveSharedWithMeDocuments(_ documents: [Document], fetchedFor ownerUserID: UUID? = nil) {
+        save(documents, forKey: Self.sharedWithMeKey, fetchedFor: ownerUserID)
+    }
+
+    /// Every cached list that a fetch for `ownerUserID` wrote — recents, then pinned, then
+    /// shared with me — skipping any list written for another account or an unknown one. A
+    /// document in more than one list appears more than once; callers de-duplicate.
+    func documents(fetchedFor ownerUserID: UUID) -> [Document] {
+        [Self.recentKey, Self.pinnedKey, Self.sharedWithMeKey].flatMap { key -> [Document] in
+            guard owner(forKey: key) == ownerUserID else { return [] }
+            return load(forKey: key) ?? []
+        }
     }
 
     func document(for documentID: UUID) -> Document? {
@@ -97,11 +120,15 @@ final class DocumentCacheStore {
     ///
     /// **Never fabricates**, so a device whose recents were never cached stays never-cached and
     /// keeps its first-run placeholder, exactly as `insertIntoListCaches` refuses to.
+    ///
+    /// The list's account stamp is cleared. This store cannot tell whose row is being added,
+    /// and a list that may now mix two accounts' rows must vouch for neither until the next
+    /// fetch rewrites it.
     func insertRecentDocument(_ document: Document) {
         guard var recents = load(forKey: Self.recentKey), !recents.contains(where: { $0.id == document.id })
         else { return }
         recents.insert(document, at: 0)
-        save(recents, forKey: Self.recentKey)
+        save(recents, forKey: Self.recentKey, fetchedFor: nil)
     }
 
     /// Reflect a pin/unpin in every cached list, so a relaunch — or an offline launch, which
@@ -135,11 +162,13 @@ final class DocumentCacheStore {
             guard !alreadyPinned, var copy = document else { return }
             copy.isFavorite = true
             pinned.insert(copy, at: 0)
+            // An inserted row clears the account stamp, for the reason `insertRecentDocument` gives.
+            save(pinned, forKey: Self.pinnedKey, fetchedFor: nil)
         } else {
             guard alreadyPinned else { return }
             pinned.removeAll { $0.id == documentID }
+            save(pinned, forKey: Self.pinnedKey)
         }
-        save(pinned, forKey: Self.pinnedKey)
     }
 
     private func load(forKey key: String) -> [Document]? {
@@ -151,8 +180,25 @@ final class DocumentCacheStore {
         return documents
     }
 
+    /// Rewrites a list and keeps its account stamp: for edits that only remove rows or flip a
+    /// flag, which cannot add another account's documents to it.
     private func save(_ documents: [Document], forKey key: String) {
         guard let data = try? encoder.encode(documents) else { return }
         userDefaults.set(data, forKey: key)
+    }
+
+    /// Writes a list and replaces its account stamp, removing it when `ownerUserID` is nil.
+    private func save(_ documents: [Document], forKey key: String, fetchedFor ownerUserID: UUID?) {
+        guard let data = try? encoder.encode(documents) else { return }
+        userDefaults.set(data, forKey: key)
+        if let ownerUserID {
+            userDefaults.set(ownerUserID.uuidString, forKey: key + Self.ownerSuffix)
+        } else if userDefaults.object(forKey: key + Self.ownerSuffix) != nil {
+            userDefaults.removeObject(forKey: key + Self.ownerSuffix)
+        }
+    }
+
+    private func owner(forKey key: String) -> UUID? {
+        userDefaults.string(forKey: key + Self.ownerSuffix).flatMap(UUID.init(uuidString:))
     }
 }

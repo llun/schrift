@@ -287,6 +287,8 @@ enum Strings_zhHant {
         .editor_error_add_file: "無法加入檔案。請重試。",
         .editor_error_file_too_large: "該檔案過大。",
         .editor_slash_file: "檔案",
+        .editor_page_link_title: "連結頁面",
+        .editor_page_link_empty: "沒有相符的頁面",
         .editor_uploading_file: "正在上傳檔案…",
         .editor_uploading_file_a11y: "正在上傳檔案",
 
