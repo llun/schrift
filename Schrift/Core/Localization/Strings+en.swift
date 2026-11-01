@@ -67,6 +67,8 @@ enum Strings_en {
         .docrow_pinned: "Pinned",
         .docrow_shared_with_organization: "Shared with organization",
         .docrow_public: "Public",
+        .docrow_pages_one: "%d page",
+        .docrow_pages_other: "%d pages",
         .docrow_available_offline: "Available offline",
         .docrow_pending_delete: "Waiting to be deleted",
         .pending_delete_alert_message: "This document will be deleted the next time it can reach the server.",
