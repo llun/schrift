@@ -163,4 +163,53 @@ final class DocumentCacheStoreTests: XCTestCase {
 
         XCTAssertNil(userDefaults.data(forKey: "dev.llun.Schrift.cachedSharedByMeDocuments"))
     }
+
+    // MARK: - Whose fetch wrote a list
+
+    private let accountA = UUID(uuidString: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA")!
+    private let accountB = UUID(uuidString: "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB")!
+
+    /// The lists survive sign-out, so only a list a fetch for this account wrote answers for it.
+    func testDocumentsFetchedForAnAccountSkipListsWrittenForAnyoneElse() {
+        let store = makeStore()
+        let recent = makeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Recent")
+        let pinned = makeDocument(id: "22222222-2222-4222-8222-222222222222", title: "Pinned")
+        let shared = makeDocument(id: "33333333-3333-4333-8333-333333333333", title: "Shared")
+        store.saveRecentDocuments([recent], fetchedFor: accountA)
+        store.savePinnedDocuments([pinned], fetchedFor: accountB)
+        store.saveSharedWithMeDocuments([shared])
+
+        XCTAssertEqual(store.documents(fetchedFor: accountA).map(\.id), [recent.id])
+        XCTAssertEqual(store.documents(fetchedFor: accountB).map(\.id), [pinned.id])
+        XCTAssertEqual(store.loadSharedWithMeDocuments(), [shared], "an unstamped list still loads for Home")
+    }
+
+    func testASaveWithoutAnAccountClearsTheStamp() {
+        let store = makeStore()
+        let document = makeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Doc")
+        store.saveRecentDocuments([document], fetchedFor: accountA)
+
+        store.saveRecentDocuments([document])
+
+        XCTAssertEqual(store.documents(fetchedFor: accountA), [])
+    }
+
+    /// Removing a row cannot add another account's documents, so the stamp stays; inserting
+    /// one might, so it goes until the next fetch.
+    func testRemovalsKeepTheStampAndInsertionsClearIt() {
+        let store = makeStore()
+        let kept = makeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Kept")
+        let doomed = makeDocument(id: "22222222-2222-4222-8222-222222222222", title: "Doomed")
+        let added = makeDocument(id: "33333333-3333-4333-8333-333333333333", title: "Added")
+        store.saveRecentDocuments([kept, doomed], fetchedFor: accountA)
+        store.savePinnedDocuments([kept, doomed], fetchedFor: accountA)
+
+        store.removeDocument(doomed.id)
+        store.setFavorite(kept.id, isFavorite: false, document: nil)
+        XCTAssertEqual(store.documents(fetchedFor: accountA).map(\.id), [kept.id])
+
+        store.insertRecentDocument(added)
+        store.setFavorite(added.id, isFavorite: true, document: added)
+        XCTAssertEqual(store.documents(fetchedFor: accountA), [])
+    }
 }
