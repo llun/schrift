@@ -1,5 +1,25 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — Documents reopen where you left off reading.** Leaving a
+> document (the screen disappears, or the app moves to the background) records the
+> block at the top of the screen; reopening scrolls the reading surface straight to it
+> once the content is there, so a long document no longer starts from the top every
+> time. A small glass **Back to top** pill (`BackToTopPill`, text only, 44pt minimum
+> height, Dynamic Type via `DocsFont.footnote`) floats near the bottom edge for about
+> six seconds after such a restore and goes away on its own, on the first scroll, or
+> when tapped (which scrolls to the top). Nothing is restored when the saved block is
+> within the first two blocks (the first screenful already shows it, and being back
+> there clears the saved position), when the block can no longer be found, or once the
+> reader has started scrolling before the content arrived. The restore is instant, never
+> animated; with Reduce Motion the pill also appears and goes without animation and the
+> scroll to the top is instant. The position is a block id plus a short hash of the
+> block's normalised text (block ids change on every parse, so the hash is what survives
+> a relaunch or an edit made elsewhere), keyed by server origin and document id, capped
+> at 200 documents (least recently read first) and cleared on sign-out. No new colour or
+> spacing token. Implementation: `Schrift/Features/Editor/ReadingPositionStore.swift`
+> (pure store, fingerprint and restore rules), `ReadingPositionSession.swift`,
+> `BackToTopPill.swift`; strings `editor.back_to_top` / `editor.back_to_top_a11y`.
+
 > **Revised: 2026-11-01 — Shared rows lead with the sharer's face.** A Shared row now
 > leads with the sharer's `Avatar` (38pt, the same box as the tinted `DocIcon`) instead of
 > the generic document icon; the trailing `AvatarGroup` stays but no longer repeats the

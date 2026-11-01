@@ -161,6 +161,8 @@ enum Strings_th {
         .editor_offline_local_copy: "กำลังทำงานกับสำเนาที่บันทึกไว้บนอุปกรณ์นี้",
         .editor_update_available: "เอกสารมีการอัปเดต · แตะเพื่อรีเฟรช",
         .editor_update_available_a11y: "เอกสารมีการอัปเดต แตะเพื่อรีเฟรช",
+        .editor_back_to_top: "กลับขึ้นด้านบน",
+        .editor_back_to_top_a11y: "กลับไปที่จุดเริ่มต้นของเอกสาร",
         .editor_uploading_photo: "กำลังอัปโหลดรูปภาพ…",
         .editor_attachment_pending: "รอการอัปโหลด",
         .editor_attachment_pending_a11y: "รูปภาพรอการอัปโหลด",

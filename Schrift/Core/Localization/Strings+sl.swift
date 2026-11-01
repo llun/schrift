@@ -173,6 +173,8 @@ enum Strings_sl {
         .editor_offline_local_copy: "Delate s kopijo, shranjeno v tej napravi",
         .editor_update_available: "Dokument posodobljen · tapnite za osvežitev",
         .editor_update_available_a11y: "Dokument posodobljen. Tapnite za osvežitev.",
+        .editor_back_to_top: "Nazaj na vrh",
+        .editor_back_to_top_a11y: "Nazaj na začetek dokumenta",
         .editor_uploading_photo: "Nalaganje fotografije…",
         .editor_attachment_pending: "Čaka na nalaganje",
         .editor_attachment_pending_a11y: "Fotografija čaka na nalaganje",

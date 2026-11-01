@@ -163,6 +163,8 @@ enum Strings_nl {
         .editor_offline_local_copy: "Je werkt aan de kopie die op dit apparaat is opgeslagen",
         .editor_update_available: "Document bijgewerkt · tik om te vernieuwen",
         .editor_update_available_a11y: "Document bijgewerkt. Tik om te vernieuwen.",
+        .editor_back_to_top: "Terug naar boven",
+        .editor_back_to_top_a11y: "Terug naar het begin van het document",
         .editor_uploading_photo: "Foto uploaden…",
         .editor_attachment_pending: "Wacht op uploaden",
         .editor_attachment_pending_a11y: "Foto wacht op uploaden",

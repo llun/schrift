@@ -159,6 +159,8 @@ enum Strings_zhHans {
         .editor_offline_local_copy: "正在使用保存在此设备上的副本",
         .editor_update_available: "文档已更新 · 点按以刷新",
         .editor_update_available_a11y: "文档已更新。点按以刷新。",
+        .editor_back_to_top: "回到顶部",
+        .editor_back_to_top_a11y: "回到文档开头",
         .editor_uploading_photo: "正在上传照片…",
         .editor_attachment_pending: "等待上传",
         .editor_attachment_pending_a11y: "照片等待上传",

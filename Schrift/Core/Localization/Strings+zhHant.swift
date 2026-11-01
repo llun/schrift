@@ -159,6 +159,8 @@ enum Strings_zhHant {
         .editor_offline_local_copy: "正在使用儲存在此裝置的副本",
         .editor_update_available: "文件已更新 · 點按以重新整理",
         .editor_update_available_a11y: "文件已更新。點按以重新整理。",
+        .editor_back_to_top: "回到頂端",
+        .editor_back_to_top_a11y: "回到文件開頭",
         .editor_uploading_photo: "正在上傳照片…",
         .editor_attachment_pending: "等待上傳",
         .editor_attachment_pending_a11y: "照片等待上傳",

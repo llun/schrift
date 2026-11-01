@@ -162,6 +162,8 @@ enum Strings_it {
         .editor_offline_local_copy: "Stai lavorando sulla copia salvata su questo dispositivo",
         .editor_update_available: "Documento aggiornato · tocca per aggiornare",
         .editor_update_available_a11y: "Documento aggiornato. Tocca per aggiornare.",
+        .editor_back_to_top: "Torna su",
+        .editor_back_to_top_a11y: "Torna all'inizio del documento",
         .editor_uploading_photo: "Caricamento foto…",
         .editor_attachment_pending: "In attesa di caricamento",
         .editor_attachment_pending_a11y: "Foto in attesa di caricamento",
