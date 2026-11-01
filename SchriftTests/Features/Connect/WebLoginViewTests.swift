@@ -6,13 +6,10 @@ import XCTest
 @MainActor
 final class WebLoginViewTests: XCTestCase {
     func testLoginWebViewIsInspectableInDebugBuilds() {
-        // CI tests the Debug configuration only; Release safety rests on the `#if DEBUG`
-        // in `makeLoginWebView()`, and the `#else` half guards any Release-configured run.
-        let webView = makeLoginWebView()
+        // Tests only build in Debug (`@testable import` needs testability), so this pins the
+        // Debug half. Release safety rests on the `#if DEBUG` in `makeLoginWebView()`.
         #if DEBUG
-            XCTAssertTrue(webView.isInspectable)
-        #else
-            XCTAssertFalse(webView.isInspectable)
+            XCTAssertTrue(makeLoginWebView().isInspectable)
         #endif
     }
 }
