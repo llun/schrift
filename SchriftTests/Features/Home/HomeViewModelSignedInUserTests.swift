@@ -107,6 +107,7 @@ final class HomeViewModelSignedInUserTests: HomeViewModelTestCase {
     /// remembered, must not pay a list fetch for confirming it.
     func testRefreshingAnAlreadyKnownIdDoesNotLoad() async {
         let log = RequestRecorder()
+        let empty = Self.emptyFixture
         MockURLProtocol.stubHandler = { request in
             log.record(request)
             let path = request.url?.path ?? ""
@@ -116,7 +117,7 @@ final class HomeViewModelSignedInUserTests: HomeViewModelTestCase {
                     body: Data(#"{"id":"11111111-1111-4111-8111-111111111111","email":"ada@example.org"}"#.utf8),
                     error: nil)
             }
-            return .init(statusCode: 200, headers: [:], body: Self.emptyFixture, error: nil)
+            return .init(statusCode: 200, headers: [:], body: empty, error: nil)
         }
         let viewModel = makeViewModel(signedInUser: makeSignedInUser())
 
