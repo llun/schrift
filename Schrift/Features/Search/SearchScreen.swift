@@ -11,6 +11,7 @@ struct SearchScreen: View {
     var onOpenDocument: (Document) -> Void
 
     @Environment(LocalizationStore.self) private var loc
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The struck-through row the user tapped, if any — see `pendingDeleteUndoAlert`.
     @State private var documentPendingUndo: Document?
 
@@ -19,29 +20,32 @@ struct SearchScreen: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if viewModel.availability.isOffline {
-                // Search keeps working offline, over the documents saved on this device only.
-                OfflineBanner(note: loc[.search_offline_local_only])
-            }
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    if trimmedQuery.isEmpty {
-                        emptyQueryContent
-                    } else {
-                        resultsContent
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                if trimmedQuery.isEmpty {
+                    emptyQueryContent
+                } else {
+                    resultsContent
                 }
-                // The search field used to be the widest child and set the
-                // column width; now that it belongs to the system, the content
-                // has to claim the full width itself or it centres.
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.top, DocsSpacing.space3xs)
-                .padding(.bottom, DocsSpacing.spaceBase)
+            }
+            // The search field used to be the widest child and set the
+            // column width; now that it belongs to the system, the content
+            // has to claim the full width itself or it centres.
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, DocsSpacing.gutter)
+            .padding(.top, DocsSpacing.space3xs)
+            .padding(.bottom, DocsSpacing.spaceBase)
+        }
+        // A bar on the scroll view, as on Home and Shared: stacked above it, the banner would cost
+        // the navigation bar its content scroll view, and with it the large title and subtitle.
+        // Search keeps working offline, over the documents saved on this device only.
+        .safeAreaBar(edge: .top, spacing: 0) {
+            if viewModel.availability.isOffline {
+                OfflineBanner(note: loc[.search_offline_local_only])
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        .animation(reduceMotion ? nil : .snappy, value: viewModel.availability.isOffline)
         // Claim the full width the removed NavBar used to define, or the
         // screen sizes to its widest child and starves the title.
         .frame(maxWidth: .infinity)

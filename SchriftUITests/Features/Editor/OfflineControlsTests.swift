@@ -117,6 +117,9 @@ final class OfflineControlsTests: XCTestCase {
             let localOnly = offlineBanner(app, note: "Results from this device only")
             XCTAssertTrue(localOnly.waitForExistence(timeout: 5))
             XCTAssertFalse(app.staticTexts["Search is available when online."].exists)
+            let title = app.navigationBars.firstMatch.staticTexts["Search"]
+            XCTAssertTrue(title.exists, "The large title is drawn while offline")
+            XCTAssertLessThanOrEqual(title.frame.maxY, localOnly.frame.minY + 1, "The title sits above the banner")
             field.tap()
             field.typeText("Roadmap")
             XCTAssertTrue(app.navigationBars.buttons.firstMatch.isEnabled, "Back remains available")

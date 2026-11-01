@@ -715,7 +715,7 @@ new code reads like the surrounding code.
   no destination uses `role: .search`. Screens set `.navigationTitle` /
   `.navigationSubtitle` and put actions in `.toolbar` — they do not draw a `NavBar`.
   Keep native Liquid Glass, minimize-on-scroll, scroll-edge effects and safe areas.
-  - A strip under the bar (the offline banner on Home and Shared) goes on the
+  - A strip under the bar (the offline banner on Home, Shared and Search) goes on the
     screen's `ScrollView` as `.safeAreaBar(edge: .top)`, never as a `VStack`
     sibling above it: anything stacked between the bar and the scroll view
     costs the bar its content scroll view, and iOS 26 then leaves the large
