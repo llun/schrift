@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 
 @testable import Schrift
@@ -87,4 +88,29 @@ final class AttachmentCardViewTests: XCTestCase {
         XCTAssertEqual(attachmentDisplayTitle(unnamed), "22222222-2222-4222-8222-222222222222.pdf")
         XCTAssertEqual(attachmentDisplayTitle(named), "Q3 report.pdf")
     }
+}
+
+// MARK: - Preview hand-off
+
+final class AttachmentPreviewActionTests: XCTestCase {
+    /// Outside the editor nothing is installed, so a card keeps presenting its own preview.
+    func testCardsPresentTheirOwnPreviewUnlessAScreenTakesIt() {
+        XCTAssertNil(EnvironmentValues().attachmentPreview)
+    }
+
+    /// The editor installs one so the preview is held while its outline is up; the card hands it the URL it
+    /// would have previewed.
+    @MainActor
+    func testTheActionHandsTheURLToTheScreen() {
+        let file = URL(fileURLWithPath: "/tmp/22222222-2222-4222-8222-222222222222.pdf")
+        let recorder = PreviewRecorder()
+        let action = AttachmentPreviewAction { recorder.url = $0 }
+        action(file)
+        XCTAssertEqual(recorder.url, file)
+    }
+}
+
+@MainActor
+private final class PreviewRecorder {
+    var url: URL?
 }

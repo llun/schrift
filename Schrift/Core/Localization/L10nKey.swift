@@ -156,6 +156,18 @@ enum L10nKey: String, CaseIterable, Sendable {
     case move_error = "move.error"  // "Couldn't move document. Please try again."
     case move_error_load = "move.error.load"  // "Couldn't load destinations. Please try again."
 
+    // "In this document" outline-and-find sheet (opened from Options or Command-F). The
+    // per-section match count is spoken as a number, never a plural phrase, so it needs no
+    // plural keys in the eleven tables.
+    case outline_title = "outline.title"  // "In this document"
+    case outline_find_placeholder = "outline.find_placeholder"  // "Find in this document"
+    case outline_match_position = "outline.match_position"  // "2 of 5" (current, total)
+    case outline_no_matches = "outline.no_matches"  // "No matches"
+    case outline_previous = "outline.previous"  // "Previous match"
+    case outline_next = "outline.next"  // "Next match"
+    case outline_empty = "outline.empty"  // "No headings in this document"
+    case outline_section_matches_a11y = "outline.section_matches_a11y"  // "Matches in this section: 2"
+
     // Share sheet
     case share_title = "share.title"  // "Share"
     case share_invite_placeholder = "share.invite_placeholder"  // "Invite by name or email"

@@ -21,6 +21,8 @@ struct BlockEditorView<Header: View>: View {
     /// Carries the reading surface's scroll anchor in, and this canvas's back
     /// out. See `EditorScrollAnchorStore` for why it is not observable.
     let scrollAnchor: EditorScrollAnchorStore
+    /// A scroll the outline sheet asked for (`DocumentScrollRequest`); nil until it asks.
+    var scrollRequest: DocumentScrollRequest? = nil
     @ViewBuilder var header: () -> Header
 
     @Environment(LocalizationStore.self) private var loc
@@ -120,6 +122,17 @@ struct BlockEditorView<Header: View>: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
+            .onChange(of: scrollRequest) { _, request in
+                guard let request else { return }
+                switch request.target {
+                case .block(let blockID):
+                    // The model id, resolved to the native input row this canvas keys its rows by.
+                    guard viewModel.blocks.contains(where: { $0.id == blockID }) else { return }
+                    proxy.scrollTo(EditorScrollTarget.block(viewModel.inputRowID(for: blockID)), anchor: .top)
+                case .header, .trailer:
+                    proxy.scrollTo(request.target, anchor: .top)
+                }
+            }
             .onChange(of: viewModel.focusedBlockID) { _, focusedID in
                 guard let focusedID else { return }
                 withAnimation(.easeOut(duration: 0.15)) {
