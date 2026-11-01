@@ -64,6 +64,8 @@ enum Strings_zhHant {
         .docrow_pinned: "已釘選",
         .docrow_shared_with_organization: "與機構共用",
         .docrow_public: "公開",
+        .docrow_pages_one: "%d 頁",
+        .docrow_pages_other: "%d 頁",
         .docrow_available_offline: "可離線使用",
 
         .docrow_pending_delete: "等待刪除",

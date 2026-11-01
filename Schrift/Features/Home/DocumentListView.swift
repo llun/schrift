@@ -14,6 +14,7 @@ struct DocumentListView: View {
 
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("schrift.workOffline") private var workOffline = false
     /// The struck-through row the user tapped, if any — see `pendingDeleteUndoAlert`.
     @State private var documentPendingUndo: Document?
@@ -230,6 +231,7 @@ struct DocumentListView: View {
             if viewModel.showsPinnedSection {
                 documentSection(
                     title: loc[.home_section_pinned], icon: .push_pin, filled: true,
+                    shelf: pinnedShelfIsEnabled(canvasRole: canvasRole, dynamicTypeSize: dynamicTypeSize),
                     documents: viewModel.pinnedDocuments)
             }
             documentSection(
@@ -242,9 +244,10 @@ struct DocumentListView: View {
     /// A flat document section — an icon+label header over hover-highlighted
     /// rows, with no grouped-card border (matches the reference doc list).
     @ViewBuilder
-    private func documentSection(title: String, icon: MaterialIcon? = nil, filled: Bool = false, documents: [Document])
-        -> some View
-    {
+    private func documentSection(
+        title: String, icon: MaterialIcon? = nil, filled: Bool = false, shelf: Bool = false,
+        documents: [Document]
+    ) -> some View {
         if !documents.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: DocsSpacing.space3xs + 1) {
@@ -260,73 +263,180 @@ struct DocumentListView: View {
                 .padding(.horizontal, DocsSpacing.spaceXS)
                 .padding(.bottom, DocsSpacing.space3xs)
 
-                ForEach(documents) { document in
-                    // Every predicate is read *here*, in the body, which is what registers the
-                    // `@Observable` dependency — so a row strikes through, un-strikes, or
-                    // swaps Pin for Unpin without waiting for a list fetch.
-                    let isPendingDelete = viewModel.isDeletePending(document)
-                    let isLocal = viewModel.isLocalDocument(document)
-                    let title = document.title ?? loc[.common_untitled]
-                    let date = documentRowDate(document, locale: loc.locale)
-                    // Hoisted and handed to both the row and its swipe wrapper: the wrapper
-                    // collapses with `children: .ignore`, which discards whatever `DocRow`
-                    // composed, so it has to be given the identical string.
-                    let label = docRowAccessibilityLabel(
-                        title: title, reach: document.linkReach, date: date,
-                        pinned: document.isFavorite,
-                        pendingSync: isLocal, pendingSyncLabel: loc[.docrow_on_this_device],
-                        pendingDelete: isPendingDelete, pendingDeleteLabel: loc[.docrow_pending_delete],
-                        pinnedLabel: loc[.docrow_pinned],
-                        sharedWithOrganizationLabel: loc[.docrow_shared_with_organization],
-                        publicLabel: loc[.docrow_public])
-                    // A document on its way out is not opened — the tap offers to keep it
-                    // instead, which is the only place that choice is still available.
-                    let open = {
-                        if isPendingDelete {
-                            documentPendingUndo = document
-                        } else {
-                            onSelect(document)
-                        }
-                    }
-
-                    SwipeRevealRow(
-                        id: document.id,
-                        state: $swipe,
-                        actions: documentRowSwipeActions(
-                            isPendingDelete: isPendingDelete,
-                            isLocalDocument: isLocal,
-                            isFavorite: document.isFavorite,
-                            offersPin: true,
-                            keepLabel: loc[.pending_delete_undo],
-                            pinLabel: loc[.options_pin],
-                            unpinLabel: loc[.options_unpin],
-                            moveLabel: loc[.options_move],
-                            deleteLabel: loc[.options_delete],
-                            onKeep: { viewModel.undoPendingDelete(document) },
-                            onTogglePin: { Task { await viewModel.toggleFavorite(document) } },
-                            onMove: { documentPendingMove = document },
-                            onDelete: { documentPendingDeleteConfirmation = document }),
-                        accessibilityLabel: label,
-                        onActivate: open
-                    ) {
-                        DocRow(
-                            emoji: nil,
-                            title: title,
-                            pinned: document.isFavorite,
-                            reach: document.linkReach,
-                            date: date,
-                            offlineAvailable: isOffline,
-                            // Created here and not yet on the server — the one row state the
-                            // user can act on (it is why the document is missing from the web).
-                            pendingSync: isLocal,
-                            // Deleted here, not yet sent.
-                            pendingDelete: isPendingDelete,
-                            onOpen: open
-                        )
+                // The shelf only ever replaces the Pinned section's rows; the swipe strip and the
+                // card's context menu offer the same actions.
+                if shelf {
+                    pinnedShelf(documents)
+                } else {
+                    ForEach(documents) { document in
+                        documentRow(document)
                     }
                 }
             }
             .padding(.bottom, DocsSpacing.spaceSM)
+        }
+    }
+
+    /// The identity every presentation of a document shares: title without its leading
+    /// emoji, that emoji (nil → tinted page glyph), one-line excerpt and the composed
+    /// VoiceOver label. Hoisted so the row, its swipe wrapper and the pinned card speak the
+    /// identical string.
+    private struct RowPresentation {
+        let emoji: String?
+        let title: String
+        let excerpt: String?
+        let date: String
+        let pageCountLabel: String?
+        let label: String
+    }
+
+    private func presentation(
+        _ document: Document, isLocal: Bool, isPendingDelete: Bool
+    ) -> RowPresentation {
+        let parts = docTitleParts(document.title)
+        let title = parts.title.isEmpty ? loc[.common_untitled] : parts.title
+        let excerpt = docRowExcerptText(document.excerpt)
+        let date = documentRowDate(document, locale: loc.locale)
+        let pageCountLabel = docRowPageCountLabel(document.numchild, loc: loc)
+        let label = docRowAccessibilityLabel(
+            title: title, excerpt: excerpt ?? "", reach: document.linkReach, date: date,
+            pageCountLabel: pageCountLabel ?? "", pinned: document.isFavorite,
+            pendingSync: isLocal, pendingSyncLabel: loc[.docrow_on_this_device],
+            pendingDelete: isPendingDelete, pendingDeleteLabel: loc[.docrow_pending_delete],
+            pinnedLabel: loc[.docrow_pinned],
+            sharedWithOrganizationLabel: loc[.docrow_shared_with_organization],
+            publicLabel: loc[.docrow_public])
+        return RowPresentation(
+            emoji: parts.emoji, title: title, excerpt: excerpt, date: date,
+            pageCountLabel: pageCountLabel, label: label)
+    }
+
+    /// A horizontal shelf of pinned cards. Keeps the tap/open behaviour of the rows it replaces
+    /// and exposes their swipe actions as a context menu and as VoiceOver actions.
+    @ViewBuilder
+    private func pinnedShelf(_ documents: [Document]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: DocsSpacing.spaceXS) {
+                ForEach(documents) { document in
+                    pinnedCard(document)
+                }
+            }
+            .padding(.horizontal, DocsSpacing.spaceXS)
+            .padding(.vertical, DocsSpacing.space3xs)
+        }
+        // Cards sit inside the screen gutter, but a card scrolled past it should run to the
+        // screen edge instead of being clipped a gutter short of it.
+        .scrollClipDisabled()
+    }
+
+    @ViewBuilder
+    private func pinnedCard(_ document: Document) -> some View {
+        let isPendingDelete = viewModel.isDeletePending(document)
+        let isLocal = viewModel.isLocalDocument(document)
+        let row = presentation(document, isLocal: isLocal, isPendingDelete: isPendingDelete)
+        let open = {
+            if isPendingDelete {
+                documentPendingUndo = document
+            } else {
+                onSelect(document)
+            }
+        }
+        let actions = documentRowSwipeActions(
+            isPendingDelete: isPendingDelete,
+            isLocalDocument: isLocal,
+            isFavorite: document.isFavorite,
+            offersPin: true,
+            keepLabel: loc[.pending_delete_undo],
+            pinLabel: loc[.options_pin],
+            unpinLabel: loc[.options_unpin],
+            moveLabel: loc[.options_move],
+            deleteLabel: loc[.options_delete],
+            onKeep: { viewModel.undoPendingDelete(document) },
+            onTogglePin: { Task { await viewModel.toggleFavorite(document) } },
+            onMove: { documentPendingMove = document },
+            onDelete: { documentPendingDeleteConfirmation = document })
+
+        PinnedCard(
+            emoji: row.emoji,
+            title: row.title,
+            excerpt: row.excerpt,
+            tintSeed: document.id,
+            pendingDelete: isPendingDelete,
+            accessibilityLabel: row.label,
+            onOpen: open
+        )
+        .contextMenu {
+            ForEach(actions) { action in
+                Button(role: action.role == .destructive ? .destructive : nil, action: action.handler) {
+                    Text(action.label)
+                }
+            }
+        }
+        .accessibilityActions {
+            ForEach(actions) { action in
+                Button(action.label, action: action.handler)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func documentRow(_ document: Document) -> some View {
+        // Every predicate is read *here*, in the body, which is what registers the
+        // `@Observable` dependency — so a row strikes through, un-strikes, or
+        // swaps Pin for Unpin without waiting for a list fetch.
+        let isPendingDelete = viewModel.isDeletePending(document)
+        let isLocal = viewModel.isLocalDocument(document)
+        // Hoisted and handed to both the row and its swipe wrapper: the wrapper
+        // collapses with `children: .ignore`, which discards whatever `DocRow`
+        // composed, so it has to be given the identical string.
+        let row = presentation(document, isLocal: isLocal, isPendingDelete: isPendingDelete)
+        // A document on its way out is not opened — the tap offers to keep it
+        // instead, which is the only place that choice is still available.
+        let open = {
+            if isPendingDelete {
+                documentPendingUndo = document
+            } else {
+                onSelect(document)
+            }
+        }
+
+        SwipeRevealRow(
+            id: document.id,
+            state: $swipe,
+            actions: documentRowSwipeActions(
+                isPendingDelete: isPendingDelete,
+                isLocalDocument: isLocal,
+                isFavorite: document.isFavorite,
+                offersPin: true,
+                keepLabel: loc[.pending_delete_undo],
+                pinLabel: loc[.options_pin],
+                unpinLabel: loc[.options_unpin],
+                moveLabel: loc[.options_move],
+                deleteLabel: loc[.options_delete],
+                onKeep: { viewModel.undoPendingDelete(document) },
+                onTogglePin: { Task { await viewModel.toggleFavorite(document) } },
+                onMove: { documentPendingMove = document },
+                onDelete: { documentPendingDeleteConfirmation = document }),
+            accessibilityLabel: row.label,
+            onActivate: open
+        ) {
+            DocRow(
+                emoji: row.emoji,
+                title: row.title,
+                pinned: document.isFavorite,
+                reach: document.linkReach,
+                date: row.date,
+                offlineAvailable: isOffline,
+                // Created here and not yet on the server — the one row state the
+                // user can act on (it is why the document is missing from the web).
+                pendingSync: isLocal,
+                // Deleted here, not yet sent.
+                pendingDelete: isPendingDelete,
+                excerpt: row.excerpt,
+                pageCount: document.numchild,
+                tintSeed: document.id,
+                onOpen: open
+            )
         }
     }
 }

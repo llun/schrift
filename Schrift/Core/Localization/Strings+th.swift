@@ -66,6 +66,8 @@ enum Strings_th {
         .docrow_pinned: "ปักหมุดแล้ว",
         .docrow_shared_with_organization: "แชร์กับองค์กร",
         .docrow_public: "สาธารณะ",
+        .docrow_pages_one: "%d หน้า",
+        .docrow_pages_other: "%d หน้า",
         .docrow_available_offline: "ใช้งานได้แบบออฟไลน์",
 
         .docrow_pending_delete: "รอการลบ",

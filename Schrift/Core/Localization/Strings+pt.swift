@@ -67,6 +67,8 @@ enum Strings_pt {
         .docrow_pinned: "Fixado",
         .docrow_shared_with_organization: "Partilhado com a organização",
         .docrow_public: "Público",
+        .docrow_pages_one: "%d página",
+        .docrow_pages_other: "%d páginas",
         .docrow_available_offline: "Disponível offline",
 
         .docrow_pending_delete: "A aguardar eliminação",
