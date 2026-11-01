@@ -41,18 +41,37 @@ final class EditorToolbarActionsTests: XCTestCase {
 
 // MARK: - Outline hand-off
 
-final class EditorSheetHandoffTests: XCTestCase {
-    func testASheetIsPresentedAtOnceWhenTheOutlineIsClosed() {
-        XCTAssertEqual(editorSheetHandoff(isOutlinePresented: false), .presentNow)
+final class OutlinePresentationGateTests: XCTestCase {
+    func testNothingIsHeldWhileTheOutlineIsClosed() {
+        let gate = OutlinePresentationGate()
+        XCTAssertTrue(gate.releases(true))
+        XCTAssertFalse(gate.releases(false))
+        XCTAssertEqual(gate.release("link"), "link")
+        XCTAssertFalse(gate.closesOutline(hasPendingRequest: true))
     }
 
-    func testTheOutlineClosesFirstWhenItIsUp() {
-        XCTAssertEqual(editorSheetHandoff(isOutlinePresented: true), .closeOutlineFirst)
+    func testARequestMadeWhileTheOutlineIsUpIsHeldAndClosesTheOutline() {
+        var gate = OutlinePresentationGate()
+        gate.outlineAppeared()
+        XCTAssertFalse(gate.releases(true))
+        XCTAssertNil(gate.release("link"))
+        XCTAssertTrue(gate.closesOutline(hasPendingRequest: true))
+        XCTAssertFalse(gate.closesOutline(hasPendingRequest: false))
     }
 
-    func testSheetOpeningFormattingActionsAreBlockedOnlyWhileTheOutlineIsUp() {
-        XCTAssertTrue(formattingBarActionBlockedByOutline(opensSheet: true, isOutlinePresented: true))
-        XCTAssertFalse(formattingBarActionBlockedByOutline(opensSheet: true, isOutlinePresented: false))
-        XCTAssertFalse(formattingBarActionBlockedByOutline(opensSheet: false, isOutlinePresented: true))
+    func testTheHeldRequestIsReleasedOnceTheOutlineHasDismissed() {
+        var gate = OutlinePresentationGate()
+        gate.outlineAppeared()
+        gate.outlineDismissed()
+        // The request itself was never reset, so it presents now with the same value.
+        XCTAssertTrue(gate.releases(true))
+        XCTAssertEqual(gate.release("link"), "link")
+        XCTAssertFalse(gate.closesOutline(hasPendingRequest: true))
+    }
+
+    func testAnOutlineThatNeverAppearedHoldsNothingBack() {
+        // Only appearance arms the gate: a presentation request for the outline that failed must
+        // not leave every other sheet, picker and alert held for good.
+        XCTAssertFalse(OutlinePresentationGate().isOutlineOnScreen)
     }
 }

@@ -1,9 +1,12 @@
 # iOS design update — tab pages, dark mode, localization
 
 > **Revised: 2026-11-01 — outline and other sheets.** The outline keeps the canvas interactive, so
-> a second sheet cannot be stacked on it. Share and Options in the toolbar close the outline first
-> and present from its dismissal (as Options already hands off to Share and the outline); the
-> formatting bar's link and attach (Photo, File) buttons are disabled while the outline is up.
+> a second sheet cannot be stacked on it. Every other presentation the editor owns — Share and
+> Options, the Pages drawer, the link editor (formatting bar or a link's Edit), the photo and file
+> pickers (formatting bar or slash menu), a sub-page's Move and Delete, the undo and conflict
+> prompts — is held while the outline is on screen: asking for one closes the outline, and it
+> presents once the outline has finished dismissing (`OutlinePresentationGate`). Nothing is
+> disabled and no request or typed text is dropped; Command-F is off while something else is up.
 >
 > **Revised: 2026-11-01 — "In this document": an outline with find.** The editor gains
 > a sheet for the document that is open, separate from the Pages drawer (which is about

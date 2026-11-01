@@ -231,10 +231,15 @@ struct DocumentOutlinePresentation: ViewModifier {
     let blocks: [EditorBlock]
     let findShortcutTitle: String
     let findShortcutEnabled: Bool
+    /// Set when another presentation was asked for while the sheet is up: the sheet then closes so
+    /// that one can present once it is gone (see `OutlinePresentationGate`).
+    let closesOutline: Bool
     let onFindShortcut: () -> Void
     let onScroll: (EditorScrollTarget) -> Void
-    /// Runs after the sheet has finished dismissing — where a sheet requested while the outline was
-    /// up (see `EditorSheetHandoff`) can safely be presented.
+    /// Runs as the sheet appears.
+    let onAppear: () -> Void
+    /// Runs after the sheet has finished dismissing — where a presentation requested while the
+    /// outline was up (see `OutlinePresentationGate`) can safely come up.
     let onDismiss: () -> Void
     let onSelectHeading: (UUID) -> Void
 
@@ -254,6 +259,10 @@ struct DocumentOutlinePresentation: ViewModifier {
                 // stepping there may be covered; tapping a heading closes the sheet either way.
                 .presentationBackgroundInteraction(.enabled(upThrough: .medium))
                 .presentationDragIndicator(.visible)
+                .onAppear(perform: onAppear)
+            }
+            .onChange(of: closesOutline) { _, closes in
+                if closes { isPresented = false }
             }
     }
 }
