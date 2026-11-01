@@ -43,8 +43,8 @@ func skeletonShimmerBandTransform(
 /// placeholders would be a downgrade.
 ///
 /// The shimmer replaces the old opacity blink. It is a `ShimmerBand` overlay, one `.linear` repeating
-/// animation of a sweep phase, so the render server interpolates it and the view's body is not
-/// re-evaluated per frame (no per-bar `TimelineView`). Bars in a `SkeletonList` appear together,
+/// animation of a sweep phase. SwiftUI steps only the `GeometryEffect` each frame; the view's body is
+/// not re-evaluated per frame (no per-bar `TimelineView`). Bars in a `SkeletonList` appear together,
 /// so they start in step. It is off under Reduce Motion (`skeletonShimmerIsEnabled`), leaving the
 /// static bar.
 struct Skeleton: View {

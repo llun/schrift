@@ -10,8 +10,8 @@
 > its opacity blink for a shimmer: a highlight band (`surfacePage` at 70% in light, `textPrimary`
 > at 10% in dark — theme tokens only) sweeping across the bar every 1.6s. A private `ShimmerBand`
 > owns the sweep phase and runs one `.linear` repeating animation of it, attached to the band for
-> `phase` alone, so the render server interpolates it and the view body is not re-evaluated per
-> frame (bars in a `SkeletonList` appear together, so they sweep in step). The band's position comes
+> `phase` alone, so SwiftUI steps only the `GeometryEffect` each frame and the view body is not
+> re-evaluated per frame (bars in a `SkeletonList` appear together, so they sweep in step). The band's position comes
 > from its live size through a `GeometryEffect` (`skeletonShimmerBandTransform`), so the bar's frame
 > never joins the repeat and a bar that resizes is still crossed edge to edge; the phase resets to 0
 > on disappear so a reappearing or reused bar sweeps again. Under Reduce Motion there is no shimmer view at all and
