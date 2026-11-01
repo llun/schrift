@@ -7,21 +7,60 @@ final class DocumentZoomTests: XCTestCase {
     private let first = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
     private let second = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
 
+    private func route(_ id: UUID) -> DocumentEditorRoute {
+        DocumentEditorRoute(
+            document: Document(
+                id: id, title: "Doc", excerpt: nil, abilities: DocumentAbilities(), linkReach: .restricted,
+                linkRole: .reader, isFavorite: false, depth: 1, numchild: 0, path: "0001",
+                createdAt: Date(timeIntervalSince1970: 0), updatedAt: Date(timeIntervalSince1970: 0),
+                userRole: nil, creator: nil))
+    }
+
     // MARK: - Transition style
 
-    func testRowOpenedDocumentZoomsFromItsRow() {
+    func testPushedWithASourceZoomsFromItsRow() {
         let source = DocumentZoomSourceID(documentID: first, surface: .home)
-        XCTAssertEqual(documentTransitionStyle(source: source, reduceMotion: false), .zoom(source))
+        XCTAssertEqual(documentTransitionStyle(source: source), .zoom(source))
     }
 
-    func testPushWithoutARowUsesTheDefaultTransition() {
-        XCTAssertEqual(documentTransitionStyle(source: nil, reduceMotion: false), .automatic)
+    func testPushWithoutASourceUsesTheDefaultTransition() {
+        XCTAssertEqual(documentTransitionStyle(source: nil), .automatic)
     }
 
-    func testReduceMotionFallsBackToTheDefaultTransition() {
-        let source = DocumentZoomSourceID(documentID: first, surface: .shared)
-        XCTAssertEqual(documentTransitionStyle(source: source, reduceMotion: true), .automatic)
-        XCTAssertEqual(documentTransitionStyle(source: nil, reduceMotion: true), .automatic)
+    // MARK: - Push helper
+
+    func testPushFromARowRecordsItsSource() {
+        let push = documentPush(for: route(first), from: .shared, reduceMotion: false)
+        XCTAssertEqual(push.route, route(first))
+        XCTAssertEqual(push.zoomSource, DocumentZoomSourceID(documentID: first, surface: .shared))
+    }
+
+    func testPushNotFromARowRecordsNoSource() {
+        // Page chips, "new document" and anything else without a row.
+        XCTAssertNil(documentPush(for: route(second), from: nil, reduceMotion: false).zoomSource)
+    }
+
+    func testReduceMotionRecordsNoSourceAtPushTime() {
+        let push = documentPush(for: route(first), from: .home, reduceMotion: true)
+        XCTAssertNil(push.zoomSource)
+        XCTAssertEqual(documentTransitionStyle(source: push.zoomSource), .automatic)
+    }
+
+    func testEachPushKeepsItsOwnDecisionWhenReduceMotionChanges() {
+        let zoomed = documentPush(for: route(first), from: .home, reduceMotion: false)
+        let plain = documentPush(for: route(second), from: .home, reduceMotion: true)
+        // The first push is unaffected by the later one: the value on the path is fixed.
+        XCTAssertNotNil(zoomed.zoomSource)
+        XCTAssertNil(plain.zoomSource)
+    }
+
+    func testTheSameDocumentFromDifferentRowsIsADifferentPathElement() {
+        XCTAssertNotEqual(
+            documentPush(for: route(first), from: .home, reduceMotion: false),
+            documentPush(for: route(first), from: .search, reduceMotion: false))
+        XCTAssertNotEqual(
+            documentPush(for: route(first), from: .home, reduceMotion: false),
+            documentPush(for: route(first), from: .home, reduceMotion: true))
     }
 
     func testSurfacesGiveTheSameDocumentDistinctSourceIDs() {
@@ -35,54 +74,5 @@ final class DocumentZoomTests: XCTestCase {
     func testSourceShapeUsesTheDesignSystemRadius() {
         XCTAssertEqual(DocumentZoomSourceStyle.row.cornerRadius, DocsRadius.lg)
         XCTAssertEqual(DocumentZoomSourceStyle.card.cornerRadius, DocsRadius.lg)
-    }
-
-    // MARK: - Tracker
-
-    func testTrackerReportsTheRowAnEditorWasOpenedFrom() {
-        var tracker = DocumentZoomTracker()
-        let source = DocumentZoomSourceID(documentID: first, surface: .home)
-        tracker.push(source)
-        XCTAssertEqual(tracker.source(for: first), source)
-        XCTAssertNil(tracker.source(for: second))
-    }
-
-    func testTrackerHasNoSourceForPushesThatDidNotComeFromARow() {
-        var tracker = DocumentZoomTracker()
-        tracker.push(DocumentZoomSourceID(documentID: first, surface: .home))
-        // A page chip inside the first editor opens the second.
-        tracker.push(nil)
-        XCTAssertNil(tracker.source(for: second))
-        XCTAssertNotNil(tracker.source(for: first))
-    }
-
-    func testTrackerForgetsPoppedRoutes() {
-        var tracker = DocumentZoomTracker()
-        tracker.push(nil)  // Search
-        tracker.push(DocumentZoomSourceID(documentID: first, surface: .search))
-        tracker.trim(to: 1)
-        XCTAssertNil(tracker.source(for: first))
-        XCTAssertEqual(tracker.entries.count, 1)
-        tracker.trim(to: 0)
-        XCTAssertTrue(tracker.entries.isEmpty)
-    }
-
-    func testTrimIgnoresAnOversizedOrNegativeCount() {
-        var tracker = DocumentZoomTracker()
-        tracker.push(DocumentZoomSourceID(documentID: first, surface: .home))
-        tracker.trim(to: 5)
-        XCTAssertEqual(tracker.entries.count, 1)
-        tracker.trim(to: -1)
-        XCTAssertEqual(tracker.entries.count, 1)
-    }
-
-    func testReopeningFromARowAfterAPopZoomsAgain() {
-        var tracker = DocumentZoomTracker()
-        tracker.push(DocumentZoomSourceID(documentID: first, surface: .home))
-        tracker.trim(to: 0)
-        let search = DocumentZoomSourceID(documentID: first, surface: .search)
-        tracker.push(nil)
-        tracker.push(search)
-        XCTAssertEqual(tracker.source(for: first), search)
     }
 }

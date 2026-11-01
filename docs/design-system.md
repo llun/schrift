@@ -12,9 +12,12 @@
 > selects rather than pushes); a source id is the document id plus its list (`DocumentZoomSurface`),
 > so Home's list under a pushed Search screen never registers a duplicate. A push that is not from
 > a row (page chips and "new page" in the editor, a created document) has no source and uses the
-> default push: `DocumentZoomTracker` mirrors each stack's path, `nil` for those pushes, and
-> `documentTransitionStyle` picks `.automatic` for them and whenever Reduce Motion is on, so the
-> zoom never depends on how the system treats a missing source.
+> default push. The source travels on the path element itself: the stacks push a `DocumentPush`
+> (the `DocumentEditorRoute` plus an optional `DocumentZoomSourceID`) built by `documentPush`, and
+> the `navigationDestination(for: DocumentPush.self)` receives both, so nothing parallel to the path
+> has to be kept in step with it. Reduce Motion is decided once at push time: with it on the push
+> records no source and gets the default transition; the destination reads only the stored value, so
+> toggling Reduce Motion never rebuilds an open editor and the next push picks the new setting up.
 
 > **Revised: 2026-11-01 — Ledger rows on Home and Search (Direction A).** A document row
 > now has a tile, a title that may use two lines, one line of the document's text and a

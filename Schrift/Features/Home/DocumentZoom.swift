@@ -23,12 +23,34 @@ enum DocumentTransitionStyle: Equatable {
     case zoom(DocumentZoomSourceID)
 }
 
-/// The transition for a pushed editor: a zoom only when it was opened from a row (there is a
-/// source to grow from) and Reduce Motion is off. Deep links, page chips inside the editor
-/// and "new document" have no source and use the stack's default push, as does everyone who
-/// asked the system for less motion.
-func documentTransitionStyle(source: DocumentZoomSourceID?, reduceMotion: Bool) -> DocumentTransitionStyle {
-    guard let source, !reduceMotion else { return .automatic }
+/// What a navigation stack's path holds for a pushed editor: the route plus the row it was
+/// opened from, if any. The zoom source travels on the path element itself, so the destination
+/// closure receives it with the route and it is fixed for as long as that element is on the
+/// stack. Nothing parallel to the path has to be kept in step with it, and a pop, a
+/// programmatic reset or state restoration cannot leave a stale answer behind.
+struct DocumentPush: Hashable {
+    let route: DocumentEditorRoute
+    /// The row or card to grow out of. `nil` for every push that did not come from a row (deep
+    /// links, page chips inside the editor, "new document") and for every push made while
+    /// Reduce Motion was on.
+    let zoomSource: DocumentZoomSourceID?
+}
+
+/// Build the path element for opening `route`. Reduce Motion is decided here, once, when the
+/// push happens: with it on the push records no source, so the stack's default transition runs.
+/// The destination only reads the stored value, so flipping the setting while an editor is
+/// open changes nothing about that editor, and the next push picks the new setting up.
+func documentPush(
+    for route: DocumentEditorRoute, from surface: DocumentZoomSurface?, reduceMotion: Bool
+) -> DocumentPush {
+    let source = surface.map { DocumentZoomSourceID(documentID: route.document.id, surface: $0) }
+    return DocumentPush(route: route, zoomSource: reduceMotion ? nil : source)
+}
+
+/// The transition for a pushed editor: a zoom when it was pushed with a source, otherwise the
+/// stack's default push.
+func documentTransitionStyle(source: DocumentZoomSourceID?) -> DocumentTransitionStyle {
+    guard let source else { return .automatic }
     return .zoom(source)
 }
 
@@ -47,33 +69,6 @@ enum DocumentZoomSourceStyle: Equatable {
         case .row: return colors.surfacePage
         case .card: return colors.brandFillSubtle
         }
-    }
-}
-
-/// Which pushed editors on one navigation stack were opened from a row, kept parallel to the
-/// stack's path (one entry per pushed route, `nil` for a push that did not come from a row).
-///
-/// A destination closure only receives its route, so this is how it learns whether there is
-/// a source to zoom from. Because each document's entry is fixed when it is pushed and only
-/// removed when it is popped, a visible editor's transition never changes under it.
-struct DocumentZoomTracker: Equatable {
-    private(set) var entries: [DocumentZoomSourceID?] = []
-
-    /// Record a push. Call it immediately before appending the route to the path.
-    mutating func push(_ source: DocumentZoomSourceID?) {
-        entries.append(source)
-    }
-
-    /// Drop the entries of routes that were popped.
-    mutating func trim(to pathCount: Int) {
-        guard pathCount >= 0, entries.count > pathCount else { return }
-        entries.removeLast(entries.count - pathCount)
-    }
-
-    /// The row the most recent push of this document came from, if it came from one.
-    func source(for documentID: UUID) -> DocumentZoomSourceID? {
-        guard let entry = entries.last(where: { $0?.documentID == documentID }) else { return nil }
-        return entry
     }
 }
 
@@ -111,12 +106,11 @@ private struct DocumentZoomSourceModifier: ViewModifier {
 }
 
 private struct DocumentZoomDestinationModifier: ViewModifier {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let source: DocumentZoomSourceID?
     let namespace: Namespace.ID
 
     func body(content: Content) -> some View {
-        switch documentTransitionStyle(source: source, reduceMotion: reduceMotion) {
+        switch documentTransitionStyle(source: source) {
         case .automatic:
             content.navigationTransition(.automatic)
         case .zoom(let id):
@@ -135,7 +129,8 @@ extension View {
     }
 
     /// Apply to a pushed editor at its `navigationDestination` site: it zooms out of `source`
-    /// when there is one, and otherwise (or under Reduce Motion) uses the default push.
+    /// when the push recorded one, and otherwise uses the default push. It reads no live
+    /// environment, so the transition of an open editor never changes.
     func documentZoomDestination(source: DocumentZoomSourceID?, in namespace: Namespace.ID) -> some View {
         modifier(DocumentZoomDestinationModifier(source: source, namespace: namespace))
     }
