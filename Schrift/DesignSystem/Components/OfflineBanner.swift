@@ -32,15 +32,17 @@ struct OfflineBanner: View {
         }
         .padding(.horizontal, DocsSpacing.gutter)
         .padding(.vertical, DocsSpacing.spaceXS)
-        // Bounded to the strip. The plain `.background(_:)` ShapeStyle overload ignores the safe
-        // area on every edge, and the banner sits right against the navigation bar's safe area,
-        // so its fill reached up through the whole bar and painted over the large title and
-        // subtitle: a grey band under "+" for as long as the banner was up.
-        .background(theme.colors.gray050, ignoresSafeAreaEdges: [])
+        // Never through the top edge. The plain `.background(_:)` ShapeStyle overload ignores the
+        // safe area on every edge, and the banner sits right against the navigation bar's safe
+        // area, so its fill reached up through the whole bar and painted over the large title and
+        // subtitle: a grey band under "+" for as long as the banner was up. The sides still ignore
+        // the safe area, so in landscape the strip (and its hairline) runs edge to edge.
+        .background(theme.colors.gray050, ignoresSafeAreaEdges: .horizontal)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(theme.colors.borderDefault)
                 .frame(height: 0.5)
+                .ignoresSafeArea(edges: .horizontal)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(loc[.offline_status]). \(note)")

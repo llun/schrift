@@ -83,7 +83,7 @@ final class OfflineControlsTests: XCTestCase {
 
     /// The banner sits under the navigation bar rather than costing it its title: its fill used to
     /// ignore the safe area and reach up through the whole bar, a grey band under "+" that painted
-    /// over the large title and subtitle (the banner's frame then started at the bar's top edge).
+    /// over the large title and subtitle.
     func testHomeKeepsLargeTitleAndSubtitleWhileOffline() throws {
         let app = launch()
         guard app.buttons["Search docs.example.org"].exists else {
@@ -101,6 +101,12 @@ final class OfflineControlsTests: XCTestCase {
         // One slim strip (padding and a caption line, about 40pt), not a fill reaching up the bar.
         XCTAssertLessThan(banner.frame.height, 80, "The banner's fill stays inside its own strip")
         capture(app, "iphone-home-offline-large-title")
+        // Collapsed: the list scrolls below the strip, which stays put under the inline bar, so no
+        // row shows between the bar and the strip. The screenshot is the check for that seam.
+        app.scrollViews.firstMatch.swipeUp()
+        XCTAssertTrue(banner.waitForExistence(timeout: 5), "The banner stays up once the title collapses")
+        XCTAssertLessThan(banner.frame.height, 80, "The banner's fill stays inside its own strip")
+        capture(app, "iphone-home-offline-collapsed-title")
         app.terminate()
     }
 

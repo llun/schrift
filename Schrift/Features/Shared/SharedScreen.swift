@@ -27,95 +27,94 @@ struct SharedScreen: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DocsSpacing.spaceBase) {
-                Group {
-                    if let errorKey = viewModel.errorKey {
-                        Text(loc[errorKey])
-                            .font(DocsFont.footnote)
-                            .foregroundStyle(theme.colors.danger)
-                            .padding(.horizontal, DocsSpacing.gutter)
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
-                }
-                .animation(reduceMotion ? nil : .snappy, value: viewModel.errorKey)
-
-                // Per-list gate: spinner only while fetching a list with no
-                // local copy; never claim "0 documents" for a list that is
-                // simply not yet known (the banner/error above conveys that).
-                if viewModel.showsLoadingPlaceholder {
-                    // Skeleton rows rather than a spinner: the handoff's
-                    // loading rule for lists, and it says "rows are coming"
-                    // where a spinner only says "wait".
-                    SkeletonList(shape: .shared)
-                        .padding(.horizontal, DocsSpacing.gutter)
-                } else if viewModel.showsDocumentList {
-                    // Flat, per the handoff: an uppercase count eyebrow over
-                    // rows drawn straight on the page, with no grouped card
-                    // around them — matching Home's sections rather than the
-                    // boxed list this used to be.
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(
-                            loc.plural(
-                                viewModel.documents.count, one: .shared_count_one,
-                                other: .shared_count_other,
-                                two: .shared_count_two, few: .shared_count_few
-                            )
-                            .uppercased()
-                        )
-                        .font(DocsFont.footnote.weight(.semibold))
-                        .foregroundStyle(theme.colors.textTertiary)
-                        .docsTracking(DocsTypographySpec.footnote, DocsTracking.eyebrow)
-                        .padding(.horizontal, DocsSpacing.spaceXS)
-                        .padding(.bottom, DocsSpacing.space3xs)
-
-                        ForEach(viewModel.documents) { document in
-                            SharedRow(
-                                title: document.title ?? loc[.common_untitled],
-                                subtitle: subtitle(for: document),
-                                sharedByName: viewModel.enrichment[document.id]?.sharedByName,
-                                memberNames: viewModel.enrichment[document.id]?.memberNames ?? [],
-                                // Reading the predicate in this body registers the
-                                // `@Observable` dependency, so the row strikes through
-                                // (and un-strikes on undo) with no list fetch.
-                                pendingDelete: viewModel.isDeletePending(document),
-                                pendingDeleteLabel: loc[.docrow_pending_delete],
-                                onTap: {
-                                    if viewModel.isDeletePending(document) {
-                                        documentPendingUndo = document
-                                    } else {
-                                        onOpenDocument(document)
-                                    }
-                                }
-                            )
-                            .documentZoomSource(document: document.id, surface: .shared)
-                        }
-                    }
-                    // Rows glide when a revalidation changes the list rather than snapping.
-                    .animation(reduceMotion ? nil : .snappy, value: viewModel.documents.map(\.id))
-                    // Matches Home's section rhythm before the footer.
-                    .padding(.bottom, DocsSpacing.spaceSM)
-                    .padding(.horizontal, DocsSpacing.gutter)
-                }
-
-                Text(loc[.shared_footer_with])
-                    .font(DocsFont.footnote)
-                    .foregroundStyle(theme.colors.textTertiary)
-                    .padding(.horizontal, DocsSpacing.gutterGrouped)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, DocsSpacing.spaceBase)
-            .padding(.bottom, DocsSpacing.spaceBase)
-        }
-        .refreshable {
-            await viewModel.refresh()
-        }
-        // A bar on the scroll view, as on Home: the ScrollView stays the root the navigation bar
-        // tracks, and the banner sits under the large title and subtitle in either bar state.
-        .safeAreaBar(edge: .top, spacing: 0) {
+        VStack(spacing: 0) {
             if showsOfflineBanner {
                 OfflineBanner(note: loc[.offline_note])
                     .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: DocsSpacing.spaceBase) {
+                    Group {
+                        if let errorKey = viewModel.errorKey {
+                            Text(loc[errorKey])
+                                .font(DocsFont.footnote)
+                                .foregroundStyle(theme.colors.danger)
+                                .padding(.horizontal, DocsSpacing.gutter)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+                    }
+                    .animation(reduceMotion ? nil : .snappy, value: viewModel.errorKey)
+
+                    // Per-list gate: spinner only while fetching a list with no
+                    // local copy; never claim "0 documents" for a list that is
+                    // simply not yet known (the banner/error above conveys that).
+                    if viewModel.showsLoadingPlaceholder {
+                        // Skeleton rows rather than a spinner: the handoff's
+                        // loading rule for lists, and it says "rows are coming"
+                        // where a spinner only says "wait".
+                        SkeletonList(shape: .shared)
+                            .padding(.horizontal, DocsSpacing.gutter)
+                    } else if viewModel.showsDocumentList {
+                        // Flat, per the handoff: an uppercase count eyebrow over
+                        // rows drawn straight on the page, with no grouped card
+                        // around them — matching Home's sections rather than the
+                        // boxed list this used to be.
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(
+                                loc.plural(
+                                    viewModel.documents.count, one: .shared_count_one,
+                                    other: .shared_count_other,
+                                    two: .shared_count_two, few: .shared_count_few
+                                )
+                                .uppercased()
+                            )
+                            .font(DocsFont.footnote.weight(.semibold))
+                            .foregroundStyle(theme.colors.textTertiary)
+                            .docsTracking(DocsTypographySpec.footnote, DocsTracking.eyebrow)
+                            .padding(.horizontal, DocsSpacing.spaceXS)
+                            .padding(.bottom, DocsSpacing.space3xs)
+
+                            ForEach(viewModel.documents) { document in
+                                SharedRow(
+                                    title: document.title ?? loc[.common_untitled],
+                                    subtitle: subtitle(for: document),
+                                    sharedByName: viewModel.enrichment[document.id]?.sharedByName,
+                                    memberNames: viewModel.enrichment[document.id]?.memberNames ?? [],
+                                    // Reading the predicate in this body registers the
+                                    // `@Observable` dependency, so the row strikes through
+                                    // (and un-strikes on undo) with no list fetch.
+                                    pendingDelete: viewModel.isDeletePending(document),
+                                    pendingDeleteLabel: loc[.docrow_pending_delete],
+                                    onTap: {
+                                        if viewModel.isDeletePending(document) {
+                                            documentPendingUndo = document
+                                        } else {
+                                            onOpenDocument(document)
+                                        }
+                                    }
+                                )
+                                .documentZoomSource(document: document.id, surface: .shared)
+                            }
+                        }
+                        // Rows glide when a revalidation changes the list rather than snapping.
+                        .animation(reduceMotion ? nil : .snappy, value: viewModel.documents.map(\.id))
+                        // Matches Home's section rhythm before the footer.
+                        .padding(.bottom, DocsSpacing.spaceSM)
+                        .padding(.horizontal, DocsSpacing.gutter)
+                    }
+
+                    Text(loc[.shared_footer_with])
+                        .font(DocsFont.footnote)
+                        .foregroundStyle(theme.colors.textTertiary)
+                        .padding(.horizontal, DocsSpacing.gutterGrouped)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, DocsSpacing.spaceBase)
+                .padding(.bottom, DocsSpacing.spaceBase)
+            }
+            .refreshable {
+                await viewModel.refresh()
             }
         }
         .animation(reduceMotion ? nil : .snappy, value: showsOfflineBanner)

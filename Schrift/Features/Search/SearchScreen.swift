@@ -20,29 +20,28 @@ struct SearchScreen: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                if trimmedQuery.isEmpty {
-                    emptyQueryContent
-                } else {
-                    resultsContent
-                }
-            }
-            // The search field used to be the widest child and set the
-            // column width; now that it belongs to the system, the content
-            // has to claim the full width itself or it centres.
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, DocsSpacing.gutter)
-            .padding(.top, DocsSpacing.space3xs)
-            .padding(.bottom, DocsSpacing.spaceBase)
-        }
-        // A bar on the scroll view, as on Home and Shared: the ScrollView stays the root the
-        // navigation bar tracks, and the banner sits under the large title in either bar state.
-        // Search keeps working offline, over the documents saved on this device only.
-        .safeAreaBar(edge: .top, spacing: 0) {
+        VStack(spacing: 0) {
             if viewModel.availability.isOffline {
+                // Search keeps working offline, over the documents saved on this device only.
                 OfflineBanner(note: loc[.search_offline_local_only])
                     .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if trimmedQuery.isEmpty {
+                        emptyQueryContent
+                    } else {
+                        resultsContent
+                    }
+                }
+                // The search field used to be the widest child and set the
+                // column width; now that it belongs to the system, the content
+                // has to claim the full width itself or it centres.
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, DocsSpacing.gutter)
+                .padding(.top, DocsSpacing.space3xs)
+                .padding(.bottom, DocsSpacing.spaceBase)
             }
         }
         .animation(reduceMotion ? nil : .snappy, value: viewModel.availability.isOffline)
