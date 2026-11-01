@@ -172,7 +172,8 @@ struct ThemeSpecimen: View {
         }
         .padding(DocsSpacing.spaceXS)
         .frame(
-            minWidth: fixedWidth, maxWidth: fixedWidth ?? .infinity, alignment: .leading)
+            minWidth: fixedWidth, maxWidth: fixedWidth ?? .infinity, alignment: .leading
+        )
         .background(colors.surfacePage, in: RoundedRectangle(cornerRadius: DocsRadius.lg))
         .overlay(
             RoundedRectangle(cornerRadius: DocsRadius.lg)
