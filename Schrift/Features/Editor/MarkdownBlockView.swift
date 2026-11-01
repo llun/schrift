@@ -135,7 +135,9 @@ private func styleLinks(in attributed: inout AttributedString, theme: AppTheme) 
 /// a paragraph with a hard line break) and should render as rich inline text
 /// rather than verbatim monospace. Tables (`|`), HTML (`<`), standalone images
 /// (`![`), and indented continuation content stay verbatim so structure and
-/// content are never reinterpreted.
+/// content are never reinterpreted. (The reading surface draws a clean GFM table
+/// as a grid instead — `parseMarkdownTable` — but this answer still decides the
+/// editing surface's panel for it.)
 func unknownRendersAsProse(_ text: String) -> Bool {
     let lines = text.components(separatedBy: "\n")
     guard lines.contains(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) else { return false }
@@ -170,6 +172,11 @@ func unknownRendersAsProse(_ text: String) -> Bool {
 /// held by inspection alone. Said plainly because the previous version of this
 /// sentence claimed a drifting token "fails rather than ships", which a height
 /// comparison cannot deliver.
+///
+/// The `.unknown` arm's table grid (`MarkdownTableView`) is the one reading-only
+/// exception: it names `DocsFont`/`DocsSpacing` itself and has no editing twin,
+/// because editing a table edits its markdown in the verbatim panel. AGENTS.md
+/// records that its height differs between the two surfaces.
 struct MarkdownBlockView: View {
     @Environment(\.docsTheme) private var theme
     let block: EditorBlock
@@ -231,6 +238,17 @@ struct MarkdownBlockView: View {
                 }
             }
             .padding(.leading, EditorBlockMetrics.listIndentInset(block.indent))
+
+        case .unknown:
+            // A GFM table is drawn as a grid while reading. The block stays `.unknown`
+            // — its source is saved back verbatim and edited as markdown — so this is
+            // display only; anything that is not cleanly a table keeps the panel.
+            if let table = parseMarkdownTable(block.text) {
+                MarkdownTableView(table: table, serverOrigin: serverOrigin)
+                    .padding(.leading, EditorBlockMetrics.listIndentInset(block.indent))
+            } else {
+                textRow
+            }
 
         default:
             textRow

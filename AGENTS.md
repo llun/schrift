@@ -2202,6 +2202,15 @@ that are easy to violate and expensive to discover:
   made tapping *any* prose `.unknown` reflow it, the defect this whole change
   exists to remove. A rare flip while typing a structural character beats a
   certain one on every tap, and the reading surface has always worked this way.
+- **A table is drawn as a grid while reading, and edited as markdown.** A GFM
+  table stays one `.unknown` block (its source is saved back verbatim); only
+  `MarkdownBlockView` reinterprets it, via `parseMarkdownTable` and
+  `MarkdownTableView` (`MarkdownTable.swift`), when the block's text is cleanly a
+  table — anything else keeps the verbatim panel. Tapping it enters the editor,
+  which shows the source in the panel, so a table is the one block whose height
+  changes between surfaces — accepted, since editing it is editing its markdown.
+  Columns share the width like a web table's and scroll sideways once they
+  can't each keep `MarkdownTableColumnWidths.minimumColumnWidth`.
 - **Known, accepted residual — the two frameworks' line boxes.** A SwiftUI
   `Text` carries slightly more leading than the same font in a `UITextView` with
   `lineFragmentPadding` and `textContainerInset` zeroed: measured at the Large
