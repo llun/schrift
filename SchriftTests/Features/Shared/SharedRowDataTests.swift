@@ -53,4 +53,42 @@ final class SharedRowDataTests: XCTestCase {
             sharedCreatorName(
                 accesses: nameless, creator: UUID(uuidString: "55555555-5555-4555-8555-555555555555")!))
     }
+
+    func testFacesLeadWithSharerAndDropThemFromGroup() {
+        let faces = sharedRowFaces(sharedByName: "Amandine", memberNames: ["Cam", "Amandine", "Al"])
+        XCTAssertEqual(faces, SharedRowFaces(leading: "Amandine", trailing: ["Cam", "Al"]))
+    }
+
+    func testFacesDropOnlyFirstDuplicateName() {
+        let faces = sharedRowFaces(sharedByName: "Sam", memberNames: ["Sam", "Sam"])
+        XCTAssertEqual(faces, SharedRowFaces(leading: "Sam", trailing: ["Sam"]))
+    }
+
+    func testFacesKeepGroupWhenSharerNotAmongMembers() {
+        let faces = sharedRowFaces(sharedByName: "Zed", memberNames: ["Cam", "Al"])
+        XCTAssertEqual(faces, SharedRowFaces(leading: "Zed", trailing: ["Cam", "Al"]))
+    }
+
+    func testFacesFallBackToIconWhenSharerUnknownOrBlank() {
+        XCTAssertEqual(
+            sharedRowFaces(sharedByName: nil, memberNames: ["Cam"]),
+            SharedRowFaces(leading: nil, trailing: ["Cam"]))
+        XCTAssertEqual(
+            sharedRowFaces(sharedByName: "", memberNames: ["Cam"]),
+            SharedRowFaces(leading: nil, trailing: ["Cam"]))
+        XCTAssertEqual(
+            sharedRowFaces(sharedByName: nil, memberNames: []),
+            SharedRowFaces(leading: nil, trailing: []))
+    }
+
+    /// The leading Avatar is sized from `docIconBoxSize` and told not to scale again, so its
+    /// rendered size equals the tinted DocIcon box at every Dynamic Type scale.
+    @MainActor
+    func testAvatarWithScaleOverrideDoesNotScaleTwice() {
+        for scale: CGFloat in [0.82, 1, 1.35, 2.1, 3.1] {
+            let box = docIconBoxSize(scale: scale, tinted: true)
+            let avatar = Avatar(name: "Amandine Salambo", size: box, scaleOverride: 1)
+            XCTAssertEqual(avatar.scaledSize, box, accuracy: 0.001)
+        }
+    }
 }

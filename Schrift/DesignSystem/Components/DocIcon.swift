@@ -5,6 +5,14 @@ func docIconDisplayText(emoji: String?) -> String? {
     return emoji
 }
 
+/// The side of a `DocIcon`'s box for a glyph `size` at a Dynamic Type `scale`. Pure and shared so a
+/// neighbour that must occupy the same box (the Shared row's leading `Avatar`) is sized from the
+/// same formula rather than a copied "24 + 14".
+func docIconBoxSize(size: CGFloat = 24, scale: CGFloat, tinted: Bool) -> CGFloat {
+    let glyph = size * scale
+    return tinted ? glyph + 14 : glyph
+}
+
 struct DocIcon: View {
     @Environment(\.docsTheme) private var theme
     var emoji: String? = nil
@@ -18,7 +26,7 @@ struct DocIcon: View {
     @ScaledMetric(relativeTo: .body) private var scale: CGFloat = 1
 
     private var glyphSize: CGFloat { size * scale }
-    private var box: CGFloat { tinted ? glyphSize + 14 : glyphSize }
+    private var box: CGFloat { docIconBoxSize(size: size, scale: scale, tinted: tinted) }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {

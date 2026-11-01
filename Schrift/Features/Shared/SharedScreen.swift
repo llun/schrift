@@ -79,6 +79,7 @@ struct SharedScreen: View {
                                 SharedRow(
                                     title: document.title ?? loc[.common_untitled],
                                     subtitle: subtitle(for: document),
+                                    sharedByName: viewModel.enrichment[document.id]?.sharedByName,
                                     memberNames: viewModel.enrichment[document.id]?.memberNames ?? [],
                                     // Reading the predicate in this body registers the
                                     // `@Observable` dependency, so the row strikes through
