@@ -9,8 +9,10 @@
 > `brandFillSubtle` in `textPrimary` and semibold. Matching is `searchHighlightRanges(in:query:locale:)`
 > — whitespace-tokenised (at most 8 distinct terms), case- and diacritic-insensitive with the
 > app locale, substring based so CJK works, overlapping or touching ranges merged. When the first
-> match lies beyond what one excerpt line shows, `searchExcerptWindow` starts the excerpt on a
-> word about 12 characters before it with a leading "…". VoiceOver is unchanged: the row label
+> match starts beyond ~12 characters (per excerpt line; independent of Dynamic Type and script
+> width), `searchExcerptWindow` starts the excerpt on a word about that far before it with a
+> leading "…". Pending-delete rows are never highlighted (`docRowHighlightQuery`), keeping their
+> dimmed strikethrough uniform. VoiceOver is unchanged: the row label
 > is composed from plain text and never carries the highlight. No new colour token or string.
 
 > **Revised: 2026-11-01 — Ledger rows on Home and Search (Direction A).** A document row

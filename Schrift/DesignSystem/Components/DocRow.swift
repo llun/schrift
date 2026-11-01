@@ -84,10 +84,19 @@ func rowUsesStackedLayout(_ dynamicTypeSize: DynamicTypeSize) -> Bool {
     dynamicTypeSize.isAccessibilitySize
 }
 
-/// Roughly how many characters of a footnote excerpt fit on one line beside the row's tile, used
-/// to decide whether a search match is out of sight (`searchExcerptWindow`).
-let docRowExcerptVisibleCharacters = 40
+/// How many characters of leading context an excerpt keeps before the first search match
+/// (`searchExcerptWindow`), per line shown. A match starting later than that is windowed, so it
+/// sits near the start of the line whatever the Dynamic Type size or script width.
 let docRowExcerptLeadingCharacters = 12
+
+/// The query a row highlights, or nil for plain text. Rows queued for deletion are drawn dimmed
+/// and struck through as a whole, so they never carry match highlights.
+func docRowHighlightQuery(_ query: String?, pendingDelete: Bool) -> String? {
+    guard !pendingDelete, let query = query?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty else {
+        return nil
+    }
+    return query
+}
 
 struct DocRow: View {
     @Environment(\.docsTheme) private var theme
@@ -130,10 +139,7 @@ struct DocRow: View {
     private var isStacked: Bool { rowUsesStackedLayout(dynamicTypeSize) }
     private var excerptText: String? { docRowExcerptText(excerpt) }
     private var activeHighlightQuery: String? {
-        guard let query = highlightQuery?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty else {
-            return nil
-        }
-        return query
+        docRowHighlightQuery(highlightQuery, pendingDelete: pendingDelete)
     }
     private var pageCountText: String? { docRowPageCountLabel(pageCount, loc: loc) }
     /// A second line exists (excerpt and/or page count), so the title may wrap to two lines.
@@ -236,8 +242,7 @@ struct DocRow: View {
         let shown =
             activeHighlightQuery.map {
                 searchExcerptWindow(
-                    text, query: $0, locale: loc.locale, visibleLimit: docRowExcerptVisibleCharacters * lines,
-                    leadingContext: docRowExcerptLeadingCharacters * lines)
+                    text, query: $0, locale: loc.locale, leadingContext: docRowExcerptLeadingCharacters * lines)
             } ?? text
         return highlightedText(shown, font: DocsFont.footnote)
             .font(DocsFont.footnote)

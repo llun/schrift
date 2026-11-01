@@ -74,12 +74,9 @@ final class DocHighlightTests: XCTestCase {
     private let longExcerpt =
         "Notes from the planning call with the whole team, where we agreed the hotel near Nimman is the pick"
 
-    func testShortExcerptIsUnchanged() {
+    func testMatchWithinLeadingContextIsUnchanged() {
         XCTAssertEqual(
             searchExcerptWindow("Need hotel near Nimman", query: "hotel", locale: en), "Need hotel near Nimman")
-    }
-
-    func testVisibleMatchLeavesLongExcerptUnchanged() {
         XCTAssertEqual(searchExcerptWindow(longExcerpt, query: "notes", locale: en), longExcerpt)
     }
 
@@ -88,14 +85,29 @@ final class DocHighlightTests: XCTestCase {
     }
 
     func testHiddenMatchStartsOnAWordNearItWithLeadingEllipsis() {
-        let window = searchExcerptWindow(longExcerpt, query: "hotel", locale: en, visibleLimit: 40, leadingContext: 12)
+        let window = searchExcerptWindow(longExcerpt, query: "hotel", locale: en, leadingContext: 12)
         XCTAssertEqual(window, "…agreed the hotel near Nimman is the pick")
+    }
+
+    func testAccessibilitySizeLeadingContextWindowsEarlierMatch() {
+        // Two lines at accessibility sizes still window a match that a one-line budget would hide.
+        let excerpt = "Notes from the call: hotel near Nimman is the pick"
+        XCTAssertEqual(
+            searchExcerptWindow(excerpt, query: "hotel", locale: en, leadingContext: docRowExcerptLeadingCharacters),
+            "…call: hotel near Nimman is the pick")
     }
 
     func testWindowHandlesCJKWithoutSpaces() {
         let excerpt = String(repeating: "あ", count: 60) + "東京" + "いう"
-        let window = searchExcerptWindow(excerpt, query: "東京", locale: en, visibleLimit: 40, leadingContext: 5)
+        let window = searchExcerptWindow(excerpt, query: "東京", locale: en, leadingContext: 5)
         XCTAssertEqual(window, "…" + String(repeating: "あ", count: 5) + "東京いう")
+    }
+
+    func testWideCJKMatchAroundCharacter25IsWindowed() {
+        // 25 wide characters can already overflow one line, so the match must not stay put.
+        let excerpt = String(repeating: "あ", count: 25) + "東京" + String(repeating: "い", count: 20)
+        let window = searchExcerptWindow(excerpt, query: "東京", locale: en)
+        XCTAssertEqual(window, "…" + String(repeating: "あ", count: 12) + "東京" + String(repeating: "い", count: 20))
     }
 
     func testWindowedExcerptStillHighlights() {
@@ -109,11 +121,13 @@ final class DocHighlightTests: XCTestCase {
         let attributed = searchHighlightedString(
             "Hotel shortlist", query: "hotel", locale: en, font: .body, background: .yellow, foreground: .black)
         XCTAssertEqual(String(attributed.characters), "Hotel shortlist")
-        let marked = attributed.runs.filter { $0.backgroundColor != nil }
+        let background = AttributeScopes.SwiftUIAttributes.BackgroundColorAttribute.self
+        let font = AttributeScopes.SwiftUIAttributes.FontAttribute.self
+        let marked = attributed.runs.filter { $0[background] != nil }
         XCTAssertEqual(marked.count, 1)
         XCTAssertEqual(String(attributed[marked[0].range].characters), "Hotel")
-        XCTAssertEqual(marked[0].backgroundColor, .yellow)
-        XCTAssertNotNil(marked[0].font)
+        XCTAssertEqual(marked[0][background], .yellow)
+        XCTAssertNotNil(marked[0][font])
     }
 
     func testAttributedStringWithoutMatchIsPlain() {
@@ -127,6 +141,13 @@ final class DocHighlightTests: XCTestCase {
     @MainActor
     func testDocRowHighlightQueryDefaultsToNil() {
         XCTAssertNil(DocRow().highlightQuery)
+    }
+
+    func testPendingDeleteRowsAreNotHighlighted() {
+        XCTAssertNil(docRowHighlightQuery("hotel", pendingDelete: true))
+        XCTAssertEqual(docRowHighlightQuery(" hotel ", pendingDelete: false), "hotel")
+        XCTAssertNil(docRowHighlightQuery("  ", pendingDelete: false))
+        XCTAssertNil(docRowHighlightQuery(nil, pendingDelete: false))
     }
 
     func testAccessibilityLabelIsPlainText() {

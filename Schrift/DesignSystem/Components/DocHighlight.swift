@@ -54,25 +54,21 @@ func mergedSearchHighlightRanges(_ ranges: [Range<String.Index>]) -> [Range<Stri
     return merged
 }
 
-/// An excerpt trimmed so its first match is visible.
+/// An excerpt trimmed so its first match sits near the start of the line.
 ///
-/// A row shows one line of the excerpt, so a match further in than `visibleLimit` characters is
-/// cut off by the tail truncation and the row would show nothing to explain why it matched.
-/// When that happens the excerpt starts about `leadingContext` characters before the match,
-/// moved forward to a word boundary when there is one, and a leading ellipsis marks the cut.
-/// An excerpt that fits, whose first match is already visible, or that has no match is returned
-/// unchanged.
+/// A row shows one or two lines of the excerpt and how many characters fit depends on Dynamic
+/// Type, the script (CJK glyphs are about twice as wide) and the device, so no character budget
+/// can say whether a match is in sight. Instead the excerpt is windowed whenever its first match
+/// starts beyond `leadingContext` characters: it then starts about `leadingContext` characters
+/// before the match, moved forward to a word boundary when there is one, and a leading ellipsis
+/// marks the cut. An excerpt whose first match is within the leading context, or that has no
+/// match, is returned unchanged.
 func searchExcerptWindow(
-    _ excerpt: String, query: String, locale: Locale = .current,
-    visibleLimit: Int = 40, leadingContext: Int = 12
+    _ excerpt: String, query: String, locale: Locale = .current, leadingContext: Int = 12
 ) -> String {
-    guard excerpt.count > visibleLimit,
-        let first = searchHighlightRanges(in: excerpt, query: query, locale: locale).first
-    else { return excerpt }
-    let matchEnd = excerpt.distance(from: excerpt.startIndex, to: first.upperBound)
-    guard matchEnd > visibleLimit else { return excerpt }
-
+    guard let first = searchHighlightRanges(in: excerpt, query: query, locale: locale).first else { return excerpt }
     let matchStart = excerpt.distance(from: excerpt.startIndex, to: first.lowerBound)
+    guard matchStart > leadingContext else { return excerpt }
     var start = excerpt.index(excerpt.startIndex, offsetBy: max(0, matchStart - leadingContext))
     // Begin on a word: when the cut lands inside one (or on the space after one), skip ahead to
     // the next word, but never past the match itself.
@@ -97,9 +93,11 @@ func searchHighlightedString(
     var attributed = AttributedString(text)
     for range in searchHighlightRanges(in: text, query: query, locale: locale) {
         guard let target = Range<AttributedString.Index>(range, in: attributed) else { continue }
-        attributed[target].backgroundColor = background
-        attributed[target].foregroundColor = foreground
-        attributed[target].font = font.weight(.semibold)
+        // Keyed explicitly: the bare `.backgroundColor` / `.font` names also exist in the UIKit
+        // and AppKit scopes, so the SwiftUI keys are named to keep the lookup unambiguous.
+        attributed[target][AttributeScopes.SwiftUIAttributes.BackgroundColorAttribute.self] = background
+        attributed[target][AttributeScopes.SwiftUIAttributes.ForegroundColorAttribute.self] = foreground
+        attributed[target][AttributeScopes.SwiftUIAttributes.FontAttribute.self] = font.weight(.semibold)
     }
     return attributed
 }
