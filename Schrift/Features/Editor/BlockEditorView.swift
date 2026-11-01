@@ -449,14 +449,18 @@ struct BlockEditorRow: View {
                 }
                 return viewModel.indentListItem(blockID: block.id)
             },
-            isPageLinkPickerActive: {
+            claimsPageLinkPickerKey: { key in
                 if let inputRowID, viewModel.inputRowID(for: block.id) != inputRowID { return false }
-                return viewModel.isPageLinkPickerActive(in: block.id)
+                return viewModel.claimsPageLinkPickerKey(key, in: block.id)
             },
             onPageLinkPickerKey: { key in
                 if let inputRowID, viewModel.inputRowID(for: block.id) != inputRowID { return }
-                guard viewModel.isPageLinkPickerActive(in: block.id) else { return }
+                guard viewModel.claimsPageLinkPickerKey(key, in: block.id) else { return }
                 viewModel.handlePageLinkPickerKey(key)
+            },
+            onMarkedTextChange: { isMarked in
+                if let inputRowID, viewModel.inputRowID(for: block.id) != inputRowID { return }
+                viewModel.noteMarkedText(isMarked, in: block.id)
             },
             onCursorRequestHandled: { token in
                 if viewModel.cursorRequest?.token == token {

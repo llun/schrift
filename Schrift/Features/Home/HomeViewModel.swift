@@ -419,8 +419,10 @@ final class HomeViewModel {
             let cacheProjection = saveCoordinator.pins.resolve(
                 pinned: overlaid.pinned, recent: moved.recent, ownerUserID: signedInUser.userID,
                 fetchedAt: pinRevision, includePending: false)
-            cache.savePinnedDocuments(cacheProjection.pinned)
-            cache.saveRecentDocuments(cacheProjection.recent)
+            // Stamped with the account this load ran under, so a reader that must not cross
+            // accounts (the editor's `[[` picker) can tell these rows from a previous user's.
+            cache.savePinnedDocuments(cacheProjection.pinned, fetchedFor: pinOwner)
+            cache.saveRecentDocuments(cacheProjection.recent, fetchedFor: pinOwner)
             saveCoordinator.pins.didCacheFreshLists(
                 pinned: overlaid.pinned, recent: moved.recent, ownerUserID: pinOwner, fetchedAt: pinRevision)
             hasKnownFetchedList = true

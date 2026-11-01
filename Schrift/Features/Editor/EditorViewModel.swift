@@ -135,6 +135,12 @@ final class EditorViewModel {
     /// decoding Home's lists from `UserDefaults` on every keystroke. Not observed: it is a
     /// memo of on-disk state, refreshed whenever a new search starts.
     @ObservationIgnored private var pageLinkCandidateMemo: PageLinkCandidateMemo?
+    /// The block whose text view holds an input method's uncommitted (marked) text, as its
+    /// text view last reported it. While it does, UIKit owns those characters — a model write
+    /// is not applied to the view until the composition commits, and the commit then
+    /// overwrites it — so the `[[` picker neither shows nor picks in that block. Observed, so
+    /// the card appears once the composition commits.
+    private(set) var markedTextBlockID: UUID?
 
     let client: DocsAPIClient
     let documentID: UUID
@@ -2080,6 +2086,7 @@ final class EditorViewModel {
         case .divider, .image, .attachment: return
         default: break
         }
+        noteMarkedText(isMarked, in: blockID)
         if focusedBlockID == blockID {
             let length = (text as NSString).length
             let offset = min(max(0, range.location), length)
@@ -2670,9 +2677,11 @@ final class EditorViewModel {
 
     /// The focused block's `[[` search, when the picker may show for it: editing, a
     /// collapsed caret in a block whose text is read as inline markdown (a `[[` in a code
-    /// block is literal), the slash menu not up, and not dismissed.
+    /// block is literal), no input-method composition in progress there, the slash menu not
+    /// up, and not dismissed.
     private var activePageLink: (blockID: UUID, trigger: PageLinkTrigger)? {
         guard mode == .blocks, hasLoadedContent, slashQueryText == nil, let focusedBlockID,
+            markedTextBlockID != focusedBlockID,
             let index = blockIndex(focusedBlockID), rendersInlineMarkdown(blocks[index].kind),
             let selection, selection.length == 0,
             let trigger = pageLinkTrigger(in: blocks[index].text, caret: selection.location)
@@ -2686,8 +2695,9 @@ final class EditorViewModel {
     /// What the "Link a page" card shows, or nil when it is not up.
     ///
     /// Offline by construction: the candidates are what this device already knows — this
-    /// document's `subpages`, Home's cached lists and every cached children list — so no
-    /// request is made and the picker works the same with no network. Documents that only
+    /// document's `subpages`, Home's cached lists written for the signed-in account, and the
+    /// cached children of those pages (see `pageLinkCandidates`) — so no request is made and
+    /// the picker works the same with no network. Documents that only
     /// exist on this device (a pending create, whose id is re-keyed when it syncs) and ones
     /// queued for deletion are never offered, and neither is this document itself.
     ///
@@ -2729,10 +2739,22 @@ final class EditorViewModel {
         return true
     }
 
-    /// Whether `blockID`'s text view should claim the picker's hardware keys (up, down,
-    /// Escape) ahead of their usual caret movement.
-    func isPageLinkPickerActive(in blockID: UUID) -> Bool {
-        activePageLink?.blockID == blockID && pageLinkPicker != nil
+    /// Whether `blockID`'s text view should claim `key` ahead of its usual behaviour. Escape
+    /// is claimed whenever the card is up; Up and Down only while it has a row to move to, so
+    /// in the "No matching pages" state they still move the caret between lines.
+    func claimsPageLinkPickerKey(_ key: PageLinkPickerKey, in blockID: UUID) -> Bool {
+        guard activePageLink?.blockID == blockID, let picker = pageLinkPicker else { return false }
+        return pageLinkPickerClaims(key, matchCount: picker.matches.count)
+    }
+
+    /// What a text view reports about input-method composition: whether `blockID`'s buffer
+    /// holds marked (uncommitted) text right now. See `markedTextBlockID`.
+    func noteMarkedText(_ isMarked: Bool, in blockID: UUID) {
+        if isMarked {
+            if markedTextBlockID != blockID { markedTextBlockID = blockID }
+        } else if markedTextBlockID == blockID {
+            markedTextBlockID = nil
+        }
     }
 
     /// Up and Down move the highlight (wrapping); Escape closes the picker for this `[[`.
@@ -2744,20 +2766,30 @@ final class EditorViewModel {
             dismissedPageLink = sessionKey
             pageLinkHighlight = nil
         case .up, .down:
+            guard !picker.matches.isEmpty else { return }
             pageLinkHighlight = PageLinkHighlight(
                 key: sessionKey, query: picker.query,
                 index: movedPageLinkHighlight(picker.highlightedIndex, by: key, count: picker.matches.count))
         }
     }
 
+    /// Only documents this account is known to see. Neither metadata cache is cleared on
+    /// sign-out and the children cache is not scoped by account or server, so reading them
+    /// wholesale would offer the previous user's page titles to the next one — and picking one
+    /// would write that title, and a link that dangles, into this account's document.
+    ///
+    /// What is vouched for: `subpages` (this document's own level); Home's cached lists, but
+    /// only those a fetch for the signed-in account wrote (`documents(fetchedFor:)` — none when
+    /// the account is not known yet); and the cached children of exactly those parents plus
+    /// this document. A children list under any other parent is never read.
     private func pageLinkCandidates(for key: PageLinkSessionKey) -> [Document] {
         let cached: [Document]
         if let memo = pageLinkCandidateMemo, memo.key == key {
             cached = memo.documents
         } else {
-            cached =
-                (listCache.loadRecentDocuments() ?? []) + listCache.loadPinnedDocuments()
-                + (listCache.loadSharedWithMeDocuments() ?? []) + childrenCache.allDocuments()
+            let homeLists = signedInUser.userID.map { listCache.documents(fetchedFor: $0) } ?? []
+            let parents = Set([documentID] + (subpages ?? []).map(\.id) + homeLists.map(\.id))
+            cached = homeLists + childrenCache.children(ofParents: parents)
             pageLinkCandidateMemo = PageLinkCandidateMemo(key: key, documents: cached)
         }
         // `subpages` is live state, so it is merged on every read rather than memoized, and

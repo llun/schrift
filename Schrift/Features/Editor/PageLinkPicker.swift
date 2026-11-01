@@ -203,6 +203,16 @@ struct PageLinkPickerState: Equatable {
     }
 }
 
+/// Whether the visible picker claims `key` from the text view. Escape always closes the card;
+/// Up and Down only have a row to move to when there are matches, and otherwise keep moving
+/// the caret between lines.
+func pageLinkPickerClaims(_ key: PageLinkPickerKey, matchCount: Int) -> Bool {
+    switch key {
+    case .escape: return true
+    case .up, .down: return matchCount > 0
+    }
+}
+
 /// The highlighted row after an arrow key, wrapping at both ends like a menu.
 func movedPageLinkHighlight(_ index: Int, by key: PageLinkPickerKey, count: Int) -> Int {
     guard count > 0 else { return 0 }

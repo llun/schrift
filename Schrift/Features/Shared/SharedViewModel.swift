@@ -223,7 +223,10 @@ final class SharedViewModel {
         cache.saveSharedWithMeDocuments(
             saveCoordinator?.pins.applyingFlags(
                 surviving, ownerUserID: signedInUser.userID, fetchedAt: fetchedPinRevision, includePending: false)
-                ?? surviving)
+                ?? surviving,
+            // The account this load ran under: what lets the editor's `[[` picker offer these
+            // rows to that account only.
+            fetchedFor: pinOwner)
         hasLoaded = true
         loadFailedOffline = false
         errorKey = nil

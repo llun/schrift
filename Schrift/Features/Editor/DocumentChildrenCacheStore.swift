@@ -52,11 +52,17 @@ final class DocumentChildrenCacheStore {
         loadEntries().values.flatMap(\.documents).first { $0.id == documentID }
     }
 
-    /// Every document in every cached children list, the most recently synced list
-    /// first. A document listed under two parents appears twice; callers de-duplicate.
-    /// One of the offline sources of the editor's `[[` page picker.
-    func allDocuments() -> [Document] {
-        loadEntries().values.sorted { $0.syncedAt > $1.syncedAt }.flatMap(\.documents)
+    /// The cached children of the given parents only, the most recently synced list first. A
+    /// document listed under two of them appears twice; callers de-duplicate.
+    ///
+    /// Deliberately not "every cached list": this store is neither account- nor server-scoped
+    /// and survives sign-out, so only a caller that can vouch for each parent (the editor's
+    /// `[[` page picker passes the open document and the pages this account is known to see)
+    /// may read its children.
+    func children(ofParents parentIDs: Set<UUID>) -> [Document] {
+        loadEntries().filter { parentIDs.contains($0.key) }.values
+            .sorted { $0.syncedAt > $1.syncedAt }
+            .flatMap(\.documents)
     }
 
     func save(_ documents: [Document], for parentID: UUID) {

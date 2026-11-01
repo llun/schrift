@@ -240,6 +240,17 @@ final class PageLinkPickerTests: XCTestCase {
         XCTAssertEqual(movedPageLinkHighlight(5, by: .down, count: 0), 0)
     }
 
+    /// The empty "No matching pages" state has no row to move to, so the arrows keep moving
+    /// the caret; Escape still closes the card.
+    func testArrowsAreClaimedOnlyWithRowsAndEscapeAlways() {
+        XCTAssertTrue(pageLinkPickerClaims(.up, matchCount: 2))
+        XCTAssertTrue(pageLinkPickerClaims(.down, matchCount: 1))
+        XCTAssertTrue(pageLinkPickerClaims(.escape, matchCount: 1))
+        XCTAssertFalse(pageLinkPickerClaims(.up, matchCount: 0))
+        XCTAssertFalse(pageLinkPickerClaims(.down, matchCount: 0))
+        XCTAssertTrue(pageLinkPickerClaims(.escape, matchCount: 0))
+    }
+
     func testTheOpenerCheckSeesOnlyBracketsAtTheAnchor() {
         XCTAssertTrue(hasPageLinkOpener(in: "a [[rel", at: 2))
         XCTAssertFalse(hasPageLinkOpener(in: "a [rel", at: 2))

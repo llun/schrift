@@ -11,7 +11,9 @@
 > hardware Up/Down move it. No match shows "No matching pages" in `textSecondary`.
 > Choosing a row inserts an ordinary page chip (`[Title](https://<host>/docs/<uuid>/)`).
 > No new token, so it follows every theme and both modes; it lists only documents
-> already cached on the device, so it works offline. Behaviour and rules: the `[[`
+> already cached on the device that the signed-in account is known to see, so it works
+> offline. It stays hidden while an input method is composing, and with no matches Up and
+> Down keep moving the caret. Behaviour and rules: the `[[`
 > bullet in `AGENTS.md` and `Schrift/Features/Editor/PageLinkPicker.swift`.
 
 > **Revised: 2026-10-17 — Links to other documents are page chips.** A markdown link

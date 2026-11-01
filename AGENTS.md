@@ -4041,14 +4041,27 @@ markdown write endpoint**. Understand this before touching the save path:
   offset (lapses once those brackets are gone) and the arrow-key highlight (reset by any
   new query). A query that has grown a space and matches nothing closes it too — the
   user is typing literal brackets. Choosing a row (tap, Return, or a hardware Up/Down
-  then Return — `EditorUITextView` claims Up/Down/Escape as key commands **only while
-  the picker is up**, so caret movement is otherwise untouched) replaces `[[query` with
+  then Return — `EditorUITextView` claims Escape as a key command **only while the card
+  is up**, and Up/Down only while it also has rows (`pageLinkPickerClaims`), so caret
+  movement is otherwise untouched, the empty state included) replaces `[[query` with
   `[Title](https://<host>/docs/<uuid>/)` built by `documentShareURL` +
   `insertMarkdownLink` — byte-for-byte the shape `isDocumentLink` matches, so it draws
   as a page chip — with the caret after it. Return with nothing to pick still splits.
-  **Candidates are this device's caches only** — `subpages`, Home's cached lists
-  (`DocumentCacheStore`, injected as `listCache`) and every cached children list — so it
-  works offline and makes no request; the cache reads are memoized per `[[` so a
+  **Never during input-method composition**: while the focused block's text view holds
+  marked text (reported by `BlockTextView.onMarkedTextChange`, and by
+  `updateComposition`'s `isMarked` on the hand-off path, into `markedTextBlockID`) the
+  card is hidden and nothing can be picked — `reconcile` leaves UIKit's buffer alone
+  until commit, and the commit would overwrite an inserted link.
+  **Candidates are this device's caches only, and only what this account is known to
+  see** — neither metadata cache is cleared on sign-out and the children cache is not
+  account- or server-scoped, so reading them wholesale would offer the previous user's
+  titles (and write a dangling link into this account's document). So: `subpages`; Home's
+  cached lists (`DocumentCacheStore`, injected as `listCache`) only where a fetch for the
+  signed-in account wrote them — each list carries a `fetchedFor` stamp, set by Home's and
+  Shared's successful loads, cleared by a save without an account or a local insertion,
+  read via `documents(fetchedFor:)`; and the cached children (`children(ofParents:)`) of
+  exactly those pages plus this document. No children list under any other parent is
+  read. It works offline and makes no request; the cache reads are memoized per `[[` so a
   keystroke never decodes `UserDefaults`. The current document, untitled documents,
   pending creates (their id is re-keyed when the create syncs, so a link would dangle)
   and pending deletes are never offered. Ranking (`rankedPageLinkCandidates`) folds

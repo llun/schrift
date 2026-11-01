@@ -38,11 +38,14 @@ final class EditorPageLinkPickerTests: XCTestCase {
             userRole: .owner, creator: nil)
     }
 
-    /// Every store isolated in one suite — the list and children caches the picker reads, and
-    /// the create/delete stores whose records it must skip.
+    /// Every store isolated in one suite — the list and children caches the picker reads, the
+    /// signed-in account it scopes them to, and the create/delete stores whose records it
+    /// must skip. `recents` are cached as a fetch for the signed-in `ownerID` wrote them, and
+    /// `children` as this document's cached sub-pages; `configure` seeds anything else.
     private func makeEditingViewModel(
         content: String = "Body", serverOrigin: String? = nil, recents: [Document] = [],
-        children: [Document] = []
+        children: [Document] = [],
+        configure: (DocumentCacheStore, DocumentChildrenCacheStore) -> Void = { _, _ in }
     ) async -> (viewModel: EditorViewModel, coordinator: DocumentSaveCoordinator) {
         MockURLProtocol.stubHandler = { _ in
             let body = """
@@ -55,8 +58,11 @@ final class EditorPageLinkPickerTests: XCTestCase {
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let listCache = DocumentCacheStore(userDefaults: defaults)
         let childrenCache = DocumentChildrenCacheStore(userDefaults: defaults)
-        listCache.saveRecentDocuments(recents)
-        if !children.isEmpty { childrenCache.save(children, for: UUID()) }
+        let signedInUser = SignedInUserStore(userDefaults: defaults)
+        signedInUser.remember(ownerID)
+        listCache.saveRecentDocuments(recents, fetchedFor: ownerID)
+        if !children.isEmpty { childrenCache.save(children, for: documentID) }
+        configure(listCache, childrenCache)
         let coordinator = DocumentSaveCoordinator(
             client: client, draftStore: PendingDraftStore(userDefaults: defaults), contentCache: contentCache,
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
@@ -65,7 +71,7 @@ final class EditorPageLinkPickerTests: XCTestCase {
             serverOrigin: self.serverOrigin, backgroundTasks: .noop)
         let viewModel = EditorViewModel(
             client: client, documentID: documentID, title: "Doc", saveCoordinator: coordinator,
-            serverOrigin: serverOrigin ?? self.serverOrigin, contentCache: contentCache,
+            serverOrigin: serverOrigin ?? self.serverOrigin, signedInUser: signedInUser, contentCache: contentCache,
             childrenCache: childrenCache, listCache: listCache)
         await viewModel.load()
         viewModel.startEditing()
@@ -112,6 +118,61 @@ final class EditorPageLinkPickerTests: XCTestCase {
         typeText("[[", in: viewModel)
 
         XCTAssertEqual(viewModel.pageLinkPicker?.matches.map(\.id), [subpage.id])
+    }
+
+    // MARK: - Only what this account is known to see
+
+    /// The children cache is neither account- nor server-scoped and survives sign-out: a
+    /// list under a parent this session cannot vouch for may be the previous user's, so
+    /// nothing in it is offered. Lists under a vouched parent — a page from this account's
+    /// Home lists, or this document — are.
+    func testAChildrenListUnderAnUnrelatedParentIsNeverOffered() async {
+        let home = document("Team wiki")
+        let homeChild = document("Wiki onboarding")
+        let ownChild = document("Own subpage")
+        let foreign = document("Previous user's wiki page")
+        let (viewModel, _) = await makeEditingViewModel(recents: [home], children: [ownChild]) { _, children in
+            children.save([homeChild], for: home.id)
+            children.save([foreign], for: UUID())
+        }
+
+        typeText("[[", in: viewModel)
+
+        let offered = Set(viewModel.pageLinkPicker?.matches.map(\.id) ?? [])
+        XCTAssertEqual(offered, [home.id, homeChild.id, ownChild.id])
+        typeText("[[previous", in: viewModel)
+        XCTAssertEqual(viewModel.pageLinkPicker?.matches, [])
+    }
+
+    /// Home's lists are not cleared on sign-out either. One written by a fetch for another
+    /// account, or for an unknown one, is not offered — nor are the children of its pages.
+    func testHomeListsNotFetchedForThisAccountAreNotOffered() async {
+        let otherAccount = UUID()
+        let stale = document("Previous user's plan")
+        let staleChild = document("Previous user's notes")
+        let unstamped = document("Unknown account's doc")
+        let (viewModel, _) = await makeEditingViewModel { lists, children in
+            lists.saveRecentDocuments([stale], fetchedFor: otherAccount)
+            lists.saveSharedWithMeDocuments([unstamped])
+            children.save([staleChild], for: stale.id)
+        }
+
+        typeText("[[", in: viewModel)
+
+        XCTAssertEqual(viewModel.pageLinkPicker?.matches, [])
+    }
+
+    /// Before the server has said who is signed in, no Home list can be vouched for; this
+    /// document's own sub-pages still can.
+    func testWithNoKnownAccountOnlyThisDocumentsPagesAreOffered() async {
+        let home = document("Team wiki")
+        let ownChild = document("Own subpage")
+        let (viewModel, _) = await makeEditingViewModel(recents: [home], children: [ownChild])
+        SignedInUserStore(userDefaults: defaults).clear()
+
+        typeText("[[", in: viewModel)
+
+        XCTAssertEqual(viewModel.pageLinkPicker?.matches.map(\.id), [ownChild.id])
     }
 
     /// A pending create's id is re-keyed when it syncs, so a link to it would dangle; a
@@ -264,12 +325,78 @@ final class EditorPageLinkPickerTests: XCTestCase {
     func testTheKeyCommandsAreClaimedOnlyWhileThePickerIsUp() async {
         let (viewModel, _) = await makeEditingViewModel(recents: [document("Roadmap")])
         let blockID = viewModel.blocks[0].id
-        XCTAssertFalse(viewModel.isPageLinkPickerActive(in: blockID))
+        for key in [PageLinkPickerKey.up, .down, .escape] {
+            XCTAssertFalse(viewModel.claimsPageLinkPickerKey(key, in: blockID))
+        }
 
         typeText("[[", in: viewModel)
 
-        XCTAssertTrue(viewModel.isPageLinkPickerActive(in: blockID))
-        XCTAssertFalse(viewModel.isPageLinkPickerActive(in: UUID()))
+        for key in [PageLinkPickerKey.up, .down, .escape] {
+            XCTAssertTrue(viewModel.claimsPageLinkPickerKey(key, in: blockID))
+            XCTAssertFalse(viewModel.claimsPageLinkPickerKey(key, in: UUID()))
+        }
+    }
+
+    /// "No matching pages" has no row to move to: Up and Down keep moving the caret between
+    /// lines, and only Escape is taken.
+    func testTheEmptyStateClaimsOnlyEscape() async {
+        let (viewModel, _) = await makeEditingViewModel(recents: [document("Roadmap")])
+        let blockID = viewModel.blocks[0].id
+
+        typeText("[[zzz", in: viewModel)
+
+        XCTAssertEqual(viewModel.pageLinkPicker?.matches, [])
+        XCTAssertFalse(viewModel.claimsPageLinkPickerKey(.up, in: blockID))
+        XCTAssertFalse(viewModel.claimsPageLinkPickerKey(.down, in: blockID))
+        XCTAssertTrue(viewModel.claimsPageLinkPickerKey(.escape, in: blockID))
+        viewModel.handlePageLinkPickerKey(.escape)
+        XCTAssertNil(viewModel.pageLinkPicker)
+    }
+
+    // MARK: - Input-method composition
+
+    /// While an input method holds marked text UIKit owns those characters and overwrites a
+    /// model write when it commits, so the card neither shows nor picks until then.
+    func testThePickerWaitsForACompositionToCommit() async {
+        let roadmap = document("ロードマップ")
+        let (viewModel, _) = await makeEditingViewModel(recents: [roadmap])
+        let blockID = viewModel.blocks[0].id
+
+        viewModel.noteMarkedText(true, in: blockID)
+        typeText("[[ロ", in: viewModel)
+
+        XCTAssertNil(viewModel.pageLinkPicker)
+        XCTAssertFalse(viewModel.claimsPageLinkPickerKey(.escape, in: blockID))
+        XCTAssertFalse(viewModel.commitHighlightedPageLink(in: blockID))
+        viewModel.selectPageLink(roadmap)
+        XCTAssertEqual(viewModel.blocks[0].text, "[[ロ", "nothing is written under the composition")
+
+        viewModel.noteMarkedText(false, in: blockID)
+
+        XCTAssertEqual(viewModel.pageLinkPicker?.matches.map(\.id), [roadmap.id])
+    }
+
+    /// The same through the composition hand-off path, which reports marked text itself.
+    func testACompositionHandOffAlsoHoldsThePicker() async {
+        let roadmap = document("ロードマップ")
+        let (viewModel, _) = await makeEditingViewModel(recents: [roadmap])
+        let blockID = viewModel.blocks[0].id
+        let caret = NSRange(location: ("[[ロ" as NSString).length, length: 0)
+
+        viewModel.updateComposition(blockID: blockID, text: "[[ロ", selection: caret, isMarked: true)
+        XCTAssertNil(viewModel.pageLinkPicker)
+
+        viewModel.updateComposition(blockID: blockID, text: "[[ロ", selection: caret, isMarked: false)
+        XCTAssertEqual(viewModel.pageLinkPicker?.matches.map(\.id), [roadmap.id])
+    }
+
+    func testMarkedTextInAnotherBlockDoesNotHoldThePicker() async {
+        let (viewModel, _) = await makeEditingViewModel(recents: [document("Roadmap")])
+
+        viewModel.noteMarkedText(true, in: UUID())
+        typeText("[[", in: viewModel)
+
+        XCTAssertNotNil(viewModel.pageLinkPicker)
     }
 
     // MARK: - Escape
