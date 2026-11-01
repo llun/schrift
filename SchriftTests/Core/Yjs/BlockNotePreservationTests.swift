@@ -119,6 +119,29 @@ final class BlockNotePreservationTests: XCTestCase {
     }
 
     /// Without a base nothing can be shown to be untouched, so no shadow is matched.
+    /// A row the user deleted must not be made up from the next block's words: the shadow
+    /// has to have been one run in the base.
+    func testATableThatLostARowDoesNotBorrowTheNextBlocksWords() throws {
+        let twoRows = BlockNoteBlock(node: "table", props: [], runs: [InlineRun("A B")], id: idB)
+        let callout = BlockNoteBlock(
+            node: "callout", props: [("emoji", .string("💡"))], runs: [InlineRun("B")], id: idC)
+        let state = served([twoRows, callout])
+
+        let after = try project(
+            state, after: try save(state, "| A |\n| --- |\n\n💡 B", base: "| A |\n| --- |\n| B |\n\n💡 B"))
+
+        XCTAssertFalse(after.blocks.contains { $0.node == "table" })
+        XCTAssertEqual(after.blocks.last?.id, idC)
+        XCTAssertEqual(after.blocks.last?.node, "callout")
+    }
+
+    /// A save whose baseline is the user's own body (a "keep mine" with no server copy to
+    /// carry) passes no base, so nothing the user wrote can read as untouched.
+    func testALocalBaselineIsNoBase() {
+        XCTAssertNil(DraftBaseline(serverUpdatedAt: nil, markdown: "Mine", markdownIsLocal: true).serverMarkdown)
+        XCTAssertEqual(DraftBaseline(serverUpdatedAt: nil, markdown: "Server").serverMarkdown, "Server")
+    }
+
     func testWithoutABaseNoShadowIsMatched() throws {
         let state = served([paragraph("Intro", id: idA), table])
 
@@ -279,6 +302,22 @@ final class BlockNotePreservationTests: XCTestCase {
         XCTAssertEqual(prop("textAlignment", of: after.blocks[1]), .string("center"))
     }
 
+    /// A plain duplicate of a coloured paragraph's words must not anchor onto its shadow and
+    /// leave the coloured one with nothing to match.
+    func testAPlainDuplicateCannotTakeAColouredParagraphsShadow() throws {
+        let red = BlockNoteBlock(
+            node: "paragraph", props: [("backgroundColor", .string("red"))], runs: [InlineRun("Warning")], id: idA)
+        let state = served([red, paragraph("Warning", id: idB), paragraph("Note", id: idC)])
+
+        let after = try project(
+            state,
+            after: try save(state, "Warning\n\nWarning\n\nNote, edited", base: "Warning\n\nWarning\n\nNote"))
+
+        XCTAssertEqual(after.blocks.map(\.id), [idA, idB, idC])
+        XCTAssertEqual(prop("backgroundColor", of: after.blocks[0]), .string("red"))
+        XCTAssertEqual(after.blocks[2].runs, [InlineRun("Note, edited")])
+    }
+
     /// A tick is a change the markdown carries, so it must be written even though the item's
     /// colour is not: the user's change wins over preservation.
     func testTickingAColouredChecklistItemIsWritten() throws {
@@ -345,6 +384,6 @@ final class BlockNotePreservationTests: XCTestCase {
     func testUntouchedIsTheLongestCommonSubsequenceWithTheBase() {
         let base = blocks("One\n\nTwo\n\nThree")
         let new = blocks("One\n\nTwo, edited\n\nThree\n\nFour")
-        XCTAssertEqual(BlockNotePreservation.untouched(base: base, new: new), [0, 2])
+        XCTAssertEqual(BlockNotePreservation.untouched(base: base, new: new), [0: 0, 2: 2])
     }
 }

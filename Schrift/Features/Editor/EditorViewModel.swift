@@ -3547,9 +3547,11 @@ final class EditorViewModel {
         // server is no newer than the baseline, so the retry after a failed push pushes the title
         // the user chose rather than re-raising the title conflict they just answered.
         let baselineBeforeResolving = serverBaseline
+        // With no baseline the body is the user's own (`markdownIsLocal`), which the Docs 6 save's
+        // block preservation must never read as the server copy.
         serverBaseline = DraftBaseline(
             serverUpdatedAt: conflict.serverUpdatedAt, markdown: serverBaseline?.markdown ?? currentMarkdown(),
-            title: serverBaseline?.title)
+            title: serverBaseline?.title, markdownIsLocal: serverBaseline.map { $0.markdownIsLocal } ?? true)
         flushPendingChanges()
         // **Re-check after the flush.** `isDirty` is not proof there is anything to push:
         // `flushPendingChanges` enqueues nothing when the content serializes back to

@@ -159,14 +159,23 @@ enum BlockNoteAlignment {
 
     /// The anchors: a longest common subsequence under `sameVisibleContent`, after trimming
     /// the common prefix and suffix (a typical save changes a few blocks in the middle).
-    static func anchorPairs(old: [ProjectedBlock], new: [BlockNoteBlock]) -> [(old: Int, new: Int)] {
+    ///
+    /// `alsoMatches(oldIndex, newIndex)`, when given, counts as a match too: the save passes
+    /// "this new block is the untouched shadow of that server block" (`BlockNotePreservation`),
+    /// so a plain duplicate cannot claim a preserved block's shadow first.
+    static func anchorPairs(
+        old: [ProjectedBlock], new: [BlockNoteBlock], alsoMatches: ((Int, Int) -> Bool)? = nil
+    ) -> [(old: Int, new: Int)] {
+        func same(_ i: Int, _ j: Int) -> Bool {
+            sameVisibleContent(old: old[i], new: new[j]) || alsoMatches?(i, j) == true
+        }
         var prefix = 0
-        while prefix < old.count, prefix < new.count, sameVisibleContent(old: old[prefix], new: new[prefix]) {
+        while prefix < old.count, prefix < new.count, same(prefix, prefix) {
             prefix += 1
         }
         var suffix = 0
         while suffix < old.count - prefix, suffix < new.count - prefix,
-            sameVisibleContent(old: old[old.count - 1 - suffix], new: new[new.count - 1 - suffix])
+            same(old.count - 1 - suffix, new.count - 1 - suffix)
         {
             suffix += 1
         }
@@ -183,7 +192,7 @@ enum BlockNoteAlignment {
             var lengths = [Int](repeating: 0, count: (rows + 1) * width)
             for i in stride(from: rows - 1, through: 0, by: -1) {
                 for j in stride(from: columns - 1, through: 0, by: -1) {
-                    if sameVisibleContent(old: old[oldMiddle.lowerBound + i], new: new[newMiddle.lowerBound + j]) {
+                    if same(oldMiddle.lowerBound + i, newMiddle.lowerBound + j) {
                         lengths[i * width + j] = lengths[(i + 1) * width + j + 1] + 1
                     } else {
                         lengths[i * width + j] = max(lengths[(i + 1) * width + j], lengths[i * width + j + 1])
@@ -193,7 +202,7 @@ enum BlockNoteAlignment {
             var i = 0
             var j = 0
             while i < rows, j < columns {
-                if sameVisibleContent(old: old[oldMiddle.lowerBound + i], new: new[newMiddle.lowerBound + j]) {
+                if same(oldMiddle.lowerBound + i, newMiddle.lowerBound + j) {
                     pairs.append((old: oldMiddle.lowerBound + i, new: newMiddle.lowerBound + j))
                     i += 1
                     j += 1

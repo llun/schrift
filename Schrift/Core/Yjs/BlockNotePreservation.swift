@@ -33,9 +33,15 @@ import Foundation
 /// - `.media(url)` — one new block that is that media's shadow (`isMediaShadow`): an image
 ///   or file node with the same URL, a paragraph that is only a link to it, or a paragraph
 ///   of `<figure>`/`<audio>` HTML naming it.
-/// - `.invisible` — a node the export never spells (`invisibleNodes`). If no text shadow is
-///   found it is kept where it was, since the user could not have deleted what they never
-///   saw.
+/// - `.invisible` — a node the export never spells (`invisibleNodes`). It has no shadow to
+///   look for, so it is always kept where it was: the user could not have deleted what they
+///   never saw, and a word search could only ever hit someone else's block.
+///
+/// A multi-block shadow must also have been one run in the base (its blocks map to
+/// consecutive base blocks), so a table that lost a row cannot borrow the next block's words.
+/// A server block that is the untouched shadow of a single new block also counts as a match
+/// for the plain alignment's anchors, so a plain duplicate of that block cannot claim it
+/// first and leave the server block with nothing to match.
 ///
 /// A recognised shadow is replaced by an exact copy of the server block (same id, node,
 /// props and runs as `BlockNoteIncrementalSave` hands `BlockNoteWrite` for it), and the pair
@@ -61,8 +67,8 @@ enum BlockNotePreservation {
         case exact(node: String, props: [String: YAnyValue], runs: [InlineRun])
         case text([String])
         case media(url: String)
-        /// Kept where it was when no text shadow (possibly empty) is found.
-        case invisible([String])
+        /// Never spelled by the export: always kept where it was.
+        case invisible
     }
 
     /// Nodes the server's markdown export does not spell at all, so the editor never shows
@@ -115,12 +121,8 @@ enum BlockNotePreservation {
         if hasNestedChildren, structuredListNodes.contains(node) { return nil }
         let props = attributes(of: element)
 
-        if node == "pdf", props["showPreview"] != .bool(false) {
-            return walkedTokens(of: container).map { .invisible($0) }
-        }
-        if invisibleNodes.contains(node) {
-            return walkedTokens(of: container).map { .invisible($0) }
-        }
+        if node == "pdf", props["showPreview"] != .bool(false) { return .invisible }
+        if invisibleNodes.contains(node) { return .invisible }
         if mediaNodes.contains(node), !hasNestedChildren {
             guard case .string(let url)? = props["url"], !url.isEmpty else { return nil }
             return .media(url: url)
@@ -148,6 +150,9 @@ enum BlockNotePreservation {
         // Iterative, so a deeply nested replica cannot overrun the stack.
         var stack: [YType] = [container]
         while let type = stack.popLast() {
+            // Each type's text starts on a word boundary, so sibling `xmlText`s (either side
+            // of a hard break or a mention) never run together.
+            text += " "
             if type.typeRef != .xmlText, type.typeRef != .xmlElement(nodeName: "blockContainer") {
                 for (key, value) in attributes(of: type) where !styleKeys.contains(key) {
                     if case .string(let string) = value { attributeText += " " + string }
@@ -161,9 +166,7 @@ enum BlockNotePreservation {
                 if !current.deleted {
                     switch current.content {
                     case .string(let units): text += String(decoding: units, as: UTF16.self)
-                    case .type(let child):
-                        text += " "
-                        pending.append(child)
+                    case .type(let child): pending.append(child)
                     default: break
                     }
                 }
@@ -292,24 +295,24 @@ enum BlockNotePreservation {
             && zip(lhs.children, rhs.children).allSatisfy { sameContent($0, $1) }
     }
 
-    /// The indices of `new` blocks the user did not touch: a longest common subsequence with
-    /// `base`, the blocks parsed from the markdown the edit started from. Only these may be a
+    /// The `new` blocks the user did not touch, each mapped to its index in `base` (the blocks
+    /// parsed from the markdown the edit started from): a longest common subsequence. Only these may be a
     /// server block's shadow, so a change the words cannot see (punctuation, a bold word, a
     /// link target, a tick on a nested checklist item, a callout turned into a heading) is
     /// always written. Past `BlockNoteAlignment.maxTableCells` only the common prefix and
     /// suffix count, which just preserves less.
-    static func untouched(base: [BlockNoteBlock], new: [BlockNoteBlock]) -> Set<Int> {
-        var result: Set<Int> = []
+    static func untouched(base: [BlockNoteBlock], new: [BlockNoteBlock]) -> [Int: Int] {
+        var result: [Int: Int] = [:]
         var prefix = 0
         while prefix < base.count, prefix < new.count, sameContent(base[prefix], new[prefix]) {
-            result.insert(prefix)
+            result[prefix] = prefix
             prefix += 1
         }
         var suffix = 0
         while suffix < base.count - prefix, suffix < new.count - prefix,
             sameContent(base[base.count - 1 - suffix], new[new.count - 1 - suffix])
         {
-            result.insert(new.count - 1 - suffix)
+            result[new.count - 1 - suffix] = base.count - 1 - suffix
             suffix += 1
         }
         let rows = base.count - prefix - suffix
@@ -332,7 +335,7 @@ enum BlockNotePreservation {
         var j = 0
         while i < rows, j < columns {
             if sameContent(base[prefix + i], new[prefix + j]) {
-                result.insert(prefix + j)
+                result[prefix + j] = prefix + i
                 i += 1
                 j += 1
             } else if lengths[(i + 1) * width + j] >= lengths[i * width + j + 1] {
@@ -357,13 +360,14 @@ enum BlockNotePreservation {
     ///
     /// `anchors` are the plain alignment's anchors between `old` and `new`; each old block is
     /// only looked for inside its own gap, so the pairs are ascending in both coordinates by
-    /// construction. `untouched` (see `untouched(base:new:)`) are the only new blocks a shadow
-    /// may be made of.
+    /// construction. An anchor whose new block is its server block's untouched shadow (see
+    /// `isSingleShadow`, which the save passes to `anchorPairs`) is a placement too.
+    /// `untouched` (see `untouched(base:new:)`) are the only new blocks a shadow may be made of.
     static func preserve(
-        old: [ProjectedBlock], rules: [Rule?], new: [BlockNoteBlock], untouched: Set<Int>,
-        anchors: [(old: Int, new: Int)]
+        old: [ProjectedBlock], rules: [Rule?], new: [BlockNoteBlock], untouched: [Int: Int],
+        anchors: [(old: Int, new: Int)], tokens precomputed: [[String]]? = nil
     ) -> (blocks: [BlockNoteBlock], forced: [(old: Int, new: Int)]) {
-        let tokens = new.map { signatureTokens(of: $0) }
+        let tokens = precomputed ?? new.map { signatureTokens(of: $0) }
         var budget = maxShadowComparisons
         // Placements in `new` coordinates: replace `range` (empty = insert at its lower bound).
         var placements: [(old: Int, range: Range<Int>)] = []
@@ -381,21 +385,27 @@ enum BlockNotePreservation {
                     passed += 1
                     continue
                 }
-                if let range = shadow(
+                if case .invisible = rule {
+                    let position = min(cursor + passed, newEnd)
+                    placements.append((old: oldIndex, range: position..<position))
+                    cursor = position
+                    passed = 0
+                } else if let range = shadow(
                     of: rule, in: new, tokens: tokens, untouched: untouched, from: cursor, to: newEnd,
                     budget: &budget)
                 {
                     placements.append((old: oldIndex, range: range))
                     cursor = range.upperBound
                     passed = 0
-                } else if case .invisible = rule {
-                    let position = min(cursor + passed, newEnd)
-                    placements.append((old: oldIndex, range: position..<position))
-                    cursor = position
-                    passed = 0
                 } else {
                     passed += 1
                 }
+            }
+            if anchor.old < old.count, anchor.old < rules.count, let rule = rules[anchor.old],
+                untouched[anchor.new] != nil,
+                isSingleShadow(new[anchor.new], tokens: tokens[anchor.new], of: rule)
+            {
+                placements.append((old: anchor.old, range: anchor.new..<(anchor.new + 1)))
             }
             oldStart = anchor.old + 1
             newStart = anchor.new + 1
@@ -429,34 +439,50 @@ enum BlockNotePreservation {
             && !block.runs.map(\.text).joined().trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    /// Whether one untouched new block is, on its own, the shadow of the server block `rule`
+    /// was made for. `tokens` are `signatureTokens(of: block)`.
+    static func isSingleShadow(_ block: BlockNoteBlock, tokens: [String], of rule: Rule) -> Bool {
+        switch rule {
+        case .exact(let node, let props, let runs): return isExactShadow(block, node: node, props: props, runs: runs)
+        case .media(let url): return isMediaShadow(block, url: url)
+        case .text(let words): return !words.isEmpty && tokens == words
+        case .invisible: return false
+        }
+    }
+
     private static func shadow(
-        of rule: Rule, in new: [BlockNoteBlock], tokens: [[String]], untouched: Set<Int>, from start: Int,
+        of rule: Rule, in new: [BlockNoteBlock], tokens: [[String]], untouched: [Int: Int], from start: Int,
         to end: Int, budget: inout Int
     ) -> Range<Int>? {
         guard start < end else { return nil }
         switch rule {
+        case .invisible:
+            return nil
         case .exact(let node, let props, let runs):
-            for index in start..<end where untouched.contains(index) {
+            for index in start..<end where untouched[index] != nil {
                 budget -= 1
                 if isExactShadow(new[index], node: node, props: props, runs: runs) { return index..<(index + 1) }
             }
             return nil
         case .media(let url):
-            for index in start..<end where untouched.contains(index) {
+            for index in start..<end where untouched[index] != nil {
                 budget -= 1
                 if isMediaShadow(new[index], url: url) { return index..<(index + 1) }
             }
             return nil
-        case .text(let words), .invisible(let words):
+        case .text(let words):
             guard !words.isEmpty else { return nil }
-            for first in start..<end where untouched.contains(first) {
+            for first in start..<end {
+                guard let firstBase = untouched[first] else { continue }
                 budget -= 1
                 guard budget > 0 else { return nil }
                 let firstTokens = tokens[first]
                 guard !firstTokens.isEmpty, words.starts(with: firstTokens) else { continue }
                 var matched = firstTokens.count
                 var last = first
-                while matched < words.count, last + 1 < end, untouched.contains(last + 1) {
+                // Each further block must have followed the last one in the base too: one run
+                // there, so it was this block's export and not its neighbour's.
+                while matched < words.count, last + 1 < end, untouched[last + 1] == firstBase + (last + 1 - first) {
                     budget -= 1
                     let more = tokens[last + 1]
                     if more.isEmpty {

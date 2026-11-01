@@ -3510,13 +3510,16 @@ final class DocumentSaveCoordinator {
                     baseline: DraftBaseline(
                         serverUpdatedAt: resolved.serverUpdatedAt,
                         markdown: draft.baseline?.markdown ?? draft.markdown,
+                        // With no baseline the body is the user's own, which block
+                        // preservation must never read as the server copy.
                         // The title rides along unchanged, and the advanced timestamp is what
                         // makes this answer stick for the title too: `draftTitleOutcome` keeps
                         // the draft's title whenever the server is no newer than the baseline,
                         // so a retry after a failed push cannot re-raise the same *title*
                         // conflict the user just answered. (Only the timestamp is knowable —
                         // `SyncConflict` carries no server content, titles included.)
-                        title: draft.baseline?.title),
+                        title: draft.baseline?.title,
+                        markdownIsLocal: draft.baseline.map { $0.markdownIsLocal } ?? true),
                     lastPushedMarkdown: draft.lastPushedMarkdown,
                     // The user answered: the hold is released, on disk as well as in memory
                     // (`clearResolvedConflict` below rewrites this to nil).
@@ -3712,8 +3715,9 @@ final class DocumentSaveCoordinator {
         let taskToken = backgroundTasks.begin("SchriftDocumentSave")
         // The draft's baseline is the server copy this edit descends from (the draft is
         // written before any save starts): the Docs 6 save reads it to keep the web blocks the
-        // user left alone (`BlockNotePreservation`).
-        let baseMarkdown = draftStore.draft(for: documentID)?.baseline?.markdown
+        // user left alone (`BlockNotePreservation`). A baseline that is the user's own body
+        // (`markdownIsLocal`) is no base at all.
+        let baseMarkdown = draftStore.draft(for: documentID)?.baseline?.serverMarkdown
         inFlight[documentID] = Task {
             do {
                 // A non-nil return means the CONTENT PATCH landed and only the title failed:

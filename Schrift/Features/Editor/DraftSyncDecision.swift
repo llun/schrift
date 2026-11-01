@@ -19,16 +19,28 @@ import Foundation
 /// `serverUpdatedAt` is: drafts and cache entries written before this field existed decode
 /// as nil, and a nil title simply means "unknown", which keeps the title rule inert and the
 /// legacy behavior exactly as it was.
+///
+/// `markdownIsLocal` is `true` when `markdown` is not a server copy at all but the user's own
+/// body, stamped by a "keep mine" resolution that had no baseline to carry forward. The
+/// conflict rules only need *some* body there, but the Docs 6 save's block preservation reads
+/// `markdown` as what the user started from, and must not treat the user's own edits as
+/// untouched (`DocumentSaveCoordinator.start`). `nil` (every other baseline, and every one
+/// decoded from before the field existed) means a server copy.
 struct DraftBaseline: Codable, Equatable, Sendable {
     let serverUpdatedAt: Date?
     let markdown: String
     let title: String?
+    let markdownIsLocal: Bool?
 
-    init(serverUpdatedAt: Date?, markdown: String, title: String? = nil) {
+    init(serverUpdatedAt: Date?, markdown: String, title: String? = nil, markdownIsLocal: Bool? = nil) {
         self.serverUpdatedAt = serverUpdatedAt
         self.markdown = markdown
         self.title = title
+        self.markdownIsLocal = markdownIsLocal
     }
+
+    /// `markdown` when it is the server copy the edit descends from, else `nil`.
+    var serverMarkdown: String? { markdownIsLocal == true ? nil : markdown }
 }
 
 /// *Why* a replay is safe. The distinction is load-bearing: three of the four rules prove
@@ -98,7 +110,8 @@ private enum DraftTitleOutcome: Equatable {
 func adoptedBaseline(_ baseline: DraftBaseline?, draftTitle: String, pushingTitle: String) -> DraftBaseline? {
     guard let baseline, pushingTitle != draftTitle else { return baseline }
     return DraftBaseline(
-        serverUpdatedAt: baseline.serverUpdatedAt, markdown: baseline.markdown, title: pushingTitle)
+        serverUpdatedAt: baseline.serverUpdatedAt, markdown: baseline.markdown, title: pushingTitle,
+        markdownIsLocal: baseline.markdownIsLocal)
 }
 
 /// Canonical markdown for equality comparisons: the same normalization the
