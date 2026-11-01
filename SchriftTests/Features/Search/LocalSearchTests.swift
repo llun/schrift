@@ -160,6 +160,23 @@ final class LocalSearchTests: XCTestCase {
         XCTAssertTrue(snippet?.contains("hotel") ?? false, "the cap must not cut the match off")
     }
 
+    func testSnippetIsTheLineOfTheEarliestMatchOfAnyTerm() {
+        let body = "Intro\nWe met alpha here\nThen beta came\nalpha and beta again"
+        // "beta" is the first term, but "alpha" matches earlier in the text.
+        XCTAssertEqual(localSearchSnippet(body: body, query: "beta alpha", locale: en), "We met alpha here")
+    }
+
+    func testFirstMatchIsTheEarliestOfEveryTermsFirstOccurrence() {
+        let text = "one Beta two ALPHA three beta"
+        let match = localSearchFirstMatch(in: text, query: "alpha béta", locale: en)
+        XCTAssertEqual(match.map { String(text[$0]) }, "Beta")
+        XCTAssertEqual(
+            match?.lowerBound, searchHighlightRanges(in: text, query: "alpha béta", locale: en).first?.lowerBound,
+            "the same place the highlight starts")
+        XCTAssertNil(localSearchFirstMatch(in: text, query: "gamma", locale: en))
+        XCTAssertNil(localSearchFirstMatch(in: "", query: "alpha", locale: en))
+    }
+
     // MARK: - Entries
 
     func testEntriesPairBodiesWithListedDocumentsOnly() {
@@ -198,7 +215,7 @@ final class LocalSearchTests: XCTestCase {
         let a = document(1, title: "A")
         let b = document(2, title: "B")
         let c = document(3, title: "C")
-        let merged = mergeSearchResults(server: [b, a], serverIsCurrent: true, local: [a, c])
+        let merged = mergeSearchResults(server: [b, a], local: [a, c])
         XCTAssertEqual(merged.server.map(\.id), [b.id, a.id])
         XCTAssertEqual(merged.localOnly.map(\.id), [c.id])
         XCTAssertEqual(merged.all.map(\.id), [b.id, a.id, c.id])
@@ -208,28 +225,30 @@ final class LocalSearchTests: XCTestCase {
         var fresh = document(1, title: "Server title")
         fresh.isFavorite = true
         let stale = document(1, title: "Cached title")
-        let merged = mergeSearchResults(server: [fresh], serverIsCurrent: true, local: [stale])
+        let merged = mergeSearchResults(server: [fresh], local: [stale])
         XCTAssertEqual(merged.all.count, 1)
         XCTAssertEqual(merged.all.first?.title, "Server title")
         XCTAssertTrue(merged.localOnly.isEmpty)
     }
 
-    func testStaleServerRowsGiveWayToTheDevicesMatches() {
+    func testServerRowsForAnEarlierQueryKeepTheirPlaceAndTheDevicesMatchesAreDedupedAgainstThem() {
+        // The device has answered the refined query; the server still shows the earlier one's rows.
         let old = document(1, title: "Old answer")
-        let mine = document(2, title: "Mine")
-        let merged = mergeSearchResults(server: [old], serverIsCurrent: false, local: [mine])
-        XCTAssertTrue(merged.server.isEmpty)
+        let both = document(2, title: "Both")
+        let mine = document(3, title: "Mine")
+        let merged = mergeSearchResults(server: [old, both], local: [both, mine])
+        XCTAssertEqual(merged.server.map(\.id), [old.id, both.id], "the server's section does not collapse")
         XCTAssertEqual(merged.localOnly.map(\.id), [mine.id])
     }
 
-    func testStaleServerRowsStayWhenTheDeviceHasNothingToShow() {
+    func testServerRowsStayWhenTheDeviceHasNothingToShow() {
         let old = document(1, title: "Old answer")
-        let merged = mergeSearchResults(server: [old], serverIsCurrent: false, local: [])
+        let merged = mergeSearchResults(server: [old], local: [])
         XCTAssertEqual(merged.server.map(\.id), [old.id])
         XCTAssertFalse(merged.isEmpty)
     }
 
     func testNothingFromEitherSideIsEmpty() {
-        XCTAssertTrue(mergeSearchResults(server: [], serverIsCurrent: true, local: []).isEmpty)
+        XCTAssertTrue(mergeSearchResults(server: [], local: []).isEmpty)
     }
 }

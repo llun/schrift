@@ -127,6 +127,7 @@ struct MainTabView: View {
                     case .search:
                         SearchScreen(
                             viewModel: searchViewModel, serverHost: serverHost,
+                            signInGeneration: signInGeneration,
                             onOpenDocument: { docsPath.append(DocumentEditorRoute(document: $0)) }
                         )
                     }

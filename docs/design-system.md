@@ -5,8 +5,11 @@
 > debounce), then merges the server's rows when they arrive: a document both found appears once
 > in the server's position, and the device's matches the server did not return follow under an
 > "ON THIS DEVICE" section label (the existing `sectionLabel` style, no new token). Results on
-> screen stay while a refined query loads; the skeleton only shows when there is nothing from
-> the device or the server yet. Offline, Search stays usable: the `OfflineBanner` reads "Results
+> screen stay while a refined query loads — the server's section keeps the previous answer's
+> rows until the new one lands, with the device's new matches deduped against them, so the list
+> does not collapse and re-expand per keystroke; the skeleton only shows when there is nothing
+> from the device or the server yet. A new query clears the previous one's error (offline too),
+> and rows found for one account are never shown to another after a re-login. Offline, Search stays usable: the `OfflineBanner` reads "Results
 > from this device only", the search field is enabled (Home's compact shortcut too), the
 > server's retained rows are ignored and Quick access is hidden. Matching reuses
 > `searchHighlightRanges`' rule (case- and diacritic-insensitive, substring, every term must

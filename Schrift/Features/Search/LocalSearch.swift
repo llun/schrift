@@ -79,7 +79,7 @@ func localSearchResults(
         guard matchesAll else { continue }
         var document = entry.document
         if !inTitle, let body = entry.body,
-            searchHighlightRanges(in: excerpt, query: query, locale: locale).isEmpty,
+            localSearchFirstMatch(in: excerpt, query: query, locale: locale) == nil,
             let snippet = localSearchSnippet(body: body, query: query, locale: locale)
         {
             document.excerpt = snippet
@@ -97,23 +97,40 @@ func localSearchResults(
     return ranked.prefix(limit).map { $0.document }
 }
 
+/// The earliest place in `text` that any term of `query` matches, by `searchHighlightRanges`'
+/// rule. One search per term, each stopping at its first occurrence — a snippet needs only where
+/// the first match is, not every occurrence of every term in a whole cached body.
+func localSearchFirstMatch(in text: String, query: String, locale: Locale = .current) -> Range<String.Index>? {
+    guard !text.isEmpty else { return nil }
+    var first: Range<String.Index>?
+    for term in searchQueryTerms(query) {
+        guard
+            let range = text.range(of: term, options: [.caseInsensitive, .diacriticInsensitive], locale: locale),
+            !range.isEmpty
+        else { continue }
+        if let current = first, current.lowerBound <= range.lowerBound { continue }
+        first = range
+    }
+    return first
+}
+
 /// The line of `body` holding its first match for `query`, as a one-line excerpt: leading
 /// markdown markers (`#`, `-`, `*`, `>`, `+`) and surrounding whitespace dropped, and capped at
 /// `localSearchSnippetMaxLength` (a longer line starts shortly before its match).
 /// nil when nothing in `body` matches, or the matching line is only markers.
 func localSearchSnippet(body: String, query: String, locale: Locale = .current) -> String? {
-    guard let match = searchHighlightRanges(in: body, query: query, locale: locale).first else { return nil }
+    guard let match = localSearchFirstMatch(in: body, query: query, locale: locale) else { return nil }
     let lineRange = body.lineRange(for: match)
     var line = body[lineRange].trimmingCharacters(in: .whitespacesAndNewlines)
     // Markers are dropped only from the front, and only when the match is not among them.
     let markers: Set<Character> = ["#", ">", "-", "*", "+", " ", "\t"]
     let trimmed = String(line.drop(while: { markers.contains($0) }))
-    if searchHighlightRanges(in: trimmed, query: query, locale: locale).first != nil { line = trimmed }
+    if localSearchFirstMatch(in: trimmed, query: query, locale: locale) != nil { line = trimmed }
     guard !line.isEmpty else { return nil }
     // A line longer than the cap would cut its own match off, so it starts a little before the
     // match instead. A shorter one is left whole: the row windows its excerpt itself.
     if line.count > localSearchSnippetMaxLength,
-        let first = searchHighlightRanges(in: line, query: query, locale: locale).first
+        let first = localSearchFirstMatch(in: line, query: query, locale: locale)
     {
         let lead = line.distance(from: line.startIndex, to: first.lowerBound)
         if lead > localSearchSnippetLeadingContext {
@@ -140,13 +157,12 @@ struct SearchResultSet: Equatable {
 /// fresher one and its order is its relevance. Documents only the device found follow, still in
 /// the device's ranking, to be labelled "On this device".
 ///
-/// `serverIsCurrent` says whether `server` answers the query being shown. When it does not (the
-/// user is still typing and the server has only answered an earlier query) and the device has
-/// matches for the new one, the device's matches alone are shown: stale server rows would be a
-/// different question's answer. With nothing on the device to show instead, the earlier rows
-/// stay rather than leaving the list empty, as a refined query always has.
-func mergeSearchResults(server: [Document], serverIsCurrent: Bool, local: [Document]) -> SearchResultSet {
-    if !serverIsCurrent, !local.isEmpty { return SearchResultSet(server: [], localOnly: local) }
+/// `server` may answer an earlier query than `local` does: the device answers every keystroke at
+/// once, the server only after the debounce and a round trip. Its rows keep their place until the
+/// new answer replaces them, as a refined query's results always have, so the list does not
+/// collapse and re-expand on every keystroke; the device's matches are deduped against them all
+/// the same.
+func mergeSearchResults(server: [Document], local: [Document]) -> SearchResultSet {
     let serverIDs = Set(server.map(\.id))
     return SearchResultSet(server: server, localOnly: local.filter { !serverIDs.contains($0.id) })
 }

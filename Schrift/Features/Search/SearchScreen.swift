@@ -4,6 +4,10 @@ struct SearchScreen: View {
     @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: SearchViewModel
     let serverHost: String
+    /// `SessionStore.signInGeneration`: a re-login, which may be another account, searches again
+    /// and reads the device's documents afresh. Required, not defaulted — see
+    /// `ProfileScreen.signInGeneration`.
+    let signInGeneration: Int
     var onOpenDocument: (Document) -> Void
 
     @Environment(LocalizationStore.self) private var loc
@@ -62,10 +66,23 @@ struct SearchScreen: View {
         .onSubmit(of: .search) {
             viewModel.recordSearch()
         }
-        .task(id: viewModel.availability.token) {
+        // The view model outlives the screen and keeps its query, so its on-device index is
+        // rebuilt each time Search appears (returning from a document included) and after a
+        // re-login, rather than only when the query is cleared.
+        .onAppear {
+            viewModel.invalidateLocalIndex()
+        }
+        .onChange(of: signInGeneration) {
+            viewModel.invalidateLocalIndex()
+        }
+        .task(id: SearchSessionID(availability: viewModel.availability.token, signInGeneration: signInGeneration)) {
             await viewModel.loadQuickAccess()
         }
-        .task(id: SearchRequestID(query: viewModel.query, availability: viewModel.availability.token)) {
+        .task(
+            id: SearchRequestID(
+                query: viewModel.query, availability: viewModel.availability.token,
+                signInGeneration: signInGeneration)
+        ) {
             await viewModel.search()
         }
     }
@@ -222,9 +239,15 @@ func searchShowsSkeleton(isSearching: Bool, hasResults: Bool) -> Bool {
     isSearching && !hasResults
 }
 
+private struct SearchSessionID: Hashable {
+    let availability: OnlineAvailability.Token
+    let signInGeneration: Int
+}
+
 private struct SearchRequestID: Hashable {
     let query: String
     let availability: OnlineAvailability.Token
+    let signInGeneration: Int
 }
 
 // MARK: - Recent searches wrap-flow
@@ -315,6 +338,7 @@ private struct FlowLayout: Layout {
     SearchScreen(
         viewModel: SearchViewModel(client: DocsAPIClient(baseURL: URL(string: "https://docs.llun.dev/api/v1.0/")!)),
         serverHost: "docs.llun.dev",
+        signInGeneration: 0,
         onOpenDocument: { _ in }
     )
     .environment(LocalizationStore())

@@ -169,6 +169,42 @@ final class SearchViewModelLocalTests: XCTestCase {
         await task.value
     }
 
+    func testRefiningOnlineKeepsTheServersRowsUntilItsNewAnswerLands() async {
+        listCache.saveRecentDocuments(
+            [document(1, title: "Hotel shortlist"), document(2, title: "Hotel budget")], fetchedFor: me)
+        stubServer([(id: 3, title: "Hotel server"), (id: 1, title: "Hotel shortlist")])
+        let viewModel = makeViewModel()
+        viewModel.query = "hotel"
+        await viewModel.search()
+        XCTAssertEqual(viewModel.resultSet.server.map(\.id), [documentID(3), documentID(1)])
+        XCTAssertEqual(viewModel.resultSet.localOnly.map(\.id), [documentID(2)])
+
+        let gate = MockURLProtocol.ResponseGate()
+        let body = serverPage([(id: 1, title: "Hotel shortlist")])
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: body, error: nil, releasedBy: gate)
+        }
+        viewModel.query = "hotel s"
+        let task = Task { await viewModel.search() }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+
+        // The device has answered "hotel s" and the server is still on "hotel": its section keeps
+        // its rows rather than collapsing, and the device's match is shown once, in its place.
+        XCTAssertEqual(viewModel.localResultsQuery, "hotel s")
+        XCTAssertEqual(viewModel.serverResultsQuery, "hotel")
+        XCTAssertEqual(viewModel.resultSet.server.map(\.id), [documentID(3), documentID(1)])
+        XCTAssertTrue(viewModel.resultSet.localOnly.isEmpty)
+        XCTAssertFalse(
+            searchShowsSkeleton(isSearching: viewModel.isSearching, hasResults: !viewModel.resultSet.isEmpty))
+
+        gate.open()
+        await task.value
+
+        XCTAssertEqual(viewModel.serverResultsQuery, "hotel s")
+        XCTAssertEqual(viewModel.resultSet.server.map(\.id), [documentID(1)])
+        XCTAssertTrue(viewModel.resultSet.localOnly.isEmpty)
+    }
+
     func testClearingTheQueryClearsEveryResult() async {
         listCache.saveRecentDocuments([document(1, title: "Hotel")], fetchedFor: me)
         stubServer([(id: 2, title: "Hotel server")])
@@ -259,7 +295,103 @@ final class SearchViewModelLocalTests: XCTestCase {
         XCTAssertEqual(viewModel.results.map(\.title), ["Hotel shortlist"])
     }
 
+    func testAnOnlineErrorDoesNotFollowTheUserOffline() async {
+        listCache.saveRecentDocuments([document(1, title: "Hotel shortlist")], fetchedFor: me)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        let viewModel = makeViewModel()
+        viewModel.query = "zebra"
+        await viewModel.search()
+        XCTAssertEqual(viewModel.errorKey, .search_error_search)
+
+        workOffline(true)
+        await viewModel.search()
+        XCTAssertNil(viewModel.errorKey, "offline, no request failed: no matches is the empty state")
+        XCTAssertTrue(viewModel.results.isEmpty)
+
+        viewModel.query = "hotel"
+        await viewModel.search()
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertEqual(viewModel.results.map(\.title), ["Hotel shortlist"])
+    }
+
+    func testANewQueryClearsThePreviousQuerysErrorBeforeTheServerIsAsked() async {
+        listCache.saveRecentDocuments([document(1, title: "Hotel shortlist")], fetchedFor: me)
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
+        let viewModel = makeViewModel()
+        viewModel.query = "hotel"
+        await viewModel.search()
+        XCTAssertEqual(viewModel.errorKey, .search_error_search)
+
+        let gate = MockURLProtocol.ResponseGate()
+        let body = serverPage([])
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: body, error: nil, releasedBy: gate)
+        }
+        viewModel.query = "hotel s"
+        let task = Task { await viewModel.search() }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+
+        XCTAssertNil(viewModel.errorKey)
+        gate.open()
+        await task.value
+    }
+
     // MARK: - Account scoping
+
+    func testAnAccountSwitchHidesTheRowsFoundForThePreviousAccount() async {
+        listCache.saveRecentDocuments([document(1, title: "Meeting notes")], fetchedFor: me)
+        contentCache.save(
+            CachedDocumentContent(
+                documentID: documentID(1), title: "Meeting notes", markdown: "hotel booking secrets",
+                syncedAt: Date()))
+        stubServer([(id: 2, title: "Hotel server")])
+        let viewModel = makeViewModel()
+        viewModel.query = "hotel"
+        await viewModel.search()
+        XCTAssertEqual(viewModel.resultSet.server.map(\.title), ["Hotel server"])
+        XCTAssertEqual(viewModel.resultSet.localOnly.map(\.title), ["Meeting notes"])
+
+        // The re-login sheet signs another account in without rebuilding the screen.
+        signedIn.remember(someoneElse)
+
+        XCTAssertTrue(viewModel.resultSet.isEmpty, "nothing found for the previous account is shown, before any search")
+
+        // The screen searches again for the new session: only its own answers come back.
+        stubServer([(id: 5, title: "Hotel of the new account")])
+        await viewModel.search()
+        XCTAssertEqual(viewModel.resultSet.server.map(\.title), ["Hotel of the new account"])
+        XCTAssertTrue(viewModel.resultSet.localOnly.isEmpty)
+    }
+
+    func testAServerAnswerLandingAfterAnAccountSwitchIsDropped() async {
+        let gate = MockURLProtocol.ResponseGate()
+        let body = serverPage([(id: 2, title: "Hotel server")])
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 200, headers: [:], body: body, error: nil, releasedBy: gate)
+        }
+        let viewModel = makeViewModel()
+        viewModel.query = "hotel"
+        let task = Task { await viewModel.search() }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+
+        signedIn.remember(someoneElse)
+        gate.open()
+        await task.value
+
+        XCTAssertNil(viewModel.serverResultsQuery, "the previous account's answer is not installed")
+        XCTAssertTrue(viewModel.results.isEmpty)
+    }
+
+    func testQuickAccessIsHiddenAfterAnAccountSwitch() async {
+        stubServer([(id: 2, title: "Pinned of mine")])
+        let viewModel = makeViewModel()
+        await viewModel.loadQuickAccess()
+        XCTAssertEqual(viewModel.quickAccess.map(\.title), ["Pinned of mine"])
+
+        signedIn.remember(someoneElse)
+
+        XCTAssertTrue(viewModel.quickAccess.isEmpty)
+    }
 
     func testAnotherAccountsListsNeverAppear() async {
         listCache.saveRecentDocuments([document(1, title: "Hotel secret")], fetchedFor: someoneElse)
@@ -415,5 +547,92 @@ final class SearchViewModelLocalTests: XCTestCase {
         viewModel.query = "hotel"
         await viewModel.search()
         XCTAssertEqual(viewModel.results.count, 2, "a new session reads the caches again")
+    }
+
+    func testTheIndexIsRebuiltWhenSearchAppearsAgain() async {
+        listCache.saveRecentDocuments([document(1, title: "Hotel shortlist")], fetchedFor: me)
+        workOffline(true)
+        let viewModel = makeViewModel()
+        viewModel.query = "hotel"
+        await viewModel.search()
+        XCTAssertEqual(viewModel.results.count, 1)
+
+        // Meanwhile Home cached another document, and the user comes back with the query kept.
+        listCache.saveRecentDocuments(
+            [document(1, title: "Hotel shortlist"), document(2, title: "Hotel budget")], fetchedFor: me)
+        viewModel.invalidateLocalIndex()
+        await viewModel.search()
+
+        XCTAssertEqual(viewModel.results.count, 2)
+    }
+
+    func testTheIndexIsRebuiltWhenAvailabilityChanges() async {
+        listCache.saveRecentDocuments([document(1, title: "Hotel shortlist")], fetchedFor: me)
+        workOffline(true)
+        let viewModel = makeViewModel()
+        viewModel.query = "hotel"
+        await viewModel.search()
+        XCTAssertEqual(viewModel.results.count, 1)
+
+        listCache.saveRecentDocuments(
+            [document(1, title: "Hotel shortlist"), document(2, title: "Hotel budget")], fetchedFor: me)
+        workOffline(false)
+        stubServer([])
+        await viewModel.search()
+
+        XCTAssertEqual(viewModel.resultSet.localOnly.count, 2)
+    }
+
+    func testTheIndexIsRebuiltForAnotherAccount() async {
+        listCache.saveRecentDocuments([document(1, title: "Hotel mine")], fetchedFor: me)
+        listCache.savePinnedDocuments([document(2, title: "Hotel theirs")], fetchedFor: someoneElse)
+        workOffline(true)
+        let viewModel = makeViewModel()
+        viewModel.query = "hotel"
+        await viewModel.search()
+        XCTAssertEqual(viewModel.results.map(\.title), ["Hotel mine"])
+
+        signedIn.remember(someoneElse)
+        await viewModel.search()
+
+        XCTAssertEqual(viewModel.results.map(\.title), ["Hotel theirs"])
+    }
+
+    func testASearchTypedDuringTheFirstBuildGetsItsRows() async {
+        listCache.saveRecentDocuments(
+            [document(1, title: "Hotel shortlist"), document(2, title: "Hotel budget")], fetchedFor: me)
+        workOffline(true)
+        let viewModel = makeViewModel()
+        viewModel.query = "hotel"
+        let first = Task { await viewModel.search() }
+        // Let it start the build; the next keystroke awaits that build rather than starting another.
+        await Task.yield()
+        viewModel.query = "hotel b"
+        let second = Task { await viewModel.search() }
+        await first.value
+        await second.value
+
+        XCTAssertEqual(viewModel.results.map(\.title), ["Hotel budget"])
+        XCTAssertEqual(viewModel.localResultsQuery, "hotel b")
+    }
+
+    func testAnIndexBuiltBeforeTheQueryWasClearedIsNotReused() async {
+        listCache.saveRecentDocuments([document(1, title: "Hotel shortlist")], fetchedFor: me)
+        workOffline(true)
+        let viewModel = makeViewModel()
+        viewModel.query = "hotel"
+        let first = Task { await viewModel.search() }
+        // Let it start its build, then clear the query while that build is in flight.
+        await Task.yield()
+        viewModel.query = ""
+        await viewModel.search()
+        await first.value
+        listCache.saveRecentDocuments(
+            [document(1, title: "Hotel shortlist"), document(2, title: "Hotel budget")], fetchedFor: me)
+
+        viewModel.query = "hotel"
+        await viewModel.search()
+
+        XCTAssertEqual(viewModel.results.count, 2, "the new session reads the caches as they are now")
     }
 }

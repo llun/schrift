@@ -4,28 +4,39 @@ import Foundation
 @Observable
 final class SearchViewModel {
     var query: String = ""
-    /// The server's answer, and the trimmed query it answered (nil for rows set directly, which
-    /// answer no query in particular — see `mergeSearchResults`).
+    /// The server's answer, the trimmed query it answered (nil for rows set directly, which
+    /// answer no query in particular) and the account it was fetched for. The rows stay on screen
+    /// while a newer query is in flight (see `mergeSearchResults`), but never for another account.
     private var rawResults: [Document] = []
-    private var serverResultsQuery: String?
+    private(set) var serverResultsQuery: String?
+    private var serverResultsOwner: UUID?
     private var resultsPinRevision = -1
-    /// The matches among the documents already on this device for the current query. Set before
-    /// the server is asked, so a keystroke has rows at once.
+    /// The matches among the documents already on this device, the trimmed query they answered
+    /// and the account whose documents they were found among. Set before the server is asked, so
+    /// a keystroke has rows at once.
     private var localResults: [Document] = []
+    private(set) var localResultsQuery: String?
+    private var localResultsOwner: UUID?
     /// The searchable form of the on-device documents, kept for the length of one search session
-    /// (until the query is cleared) so each keystroke is a scan of memory, not a read of the
-    /// caches. `localEntriesOwner` is the account it was built for: it is not reused for another.
+    /// so each keystroke is a scan of memory, not a read of the caches. A session ends when the
+    /// query is cleared or Search appears (`invalidateLocalIndex`), and the index is only reused
+    /// for the account and the availability it was built under (`LocalIndexKey`).
     private var localEntries: [LocalSearchEntry]?
-    private var localEntriesOwner: UUID?
+    private var localEntriesKey: LocalIndexKey?
+    /// The index build in flight. Every search typed while it runs awaits it instead of starting
+    /// another read of the caches.
+    private var localIndexBuild: LocalIndexBuild?
+    /// Bumped whenever the index is dropped, so a build that was in flight then is not installed.
+    private var localIndexSession = 0
     /// The rows to show, server first and then the on-device matches the server did not return.
-    /// While offline the server's rows are not an index and are left out.
+    /// While offline the server's rows are not an index and are left out. Rows found for another
+    /// account than the signed-in one are never shown: an account switch through the re-login
+    /// sheet keeps this view model, and the on-device rows carry cached body text.
     var resultSet: SearchResultSet {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let merged = mergeSearchResults(
-            server: availability.isOffline ? [] : rawResults,
-            serverIsCurrent: serverResultsQuery == trimmed, local: localResults)
-        guard let pins = saveCoordinator?.pins else { return merged }
         let owner = signedInUser.userID
+        let server = availability.isOffline || serverResultsOwner != owner ? [] : rawResults
+        let merged = mergeSearchResults(server: server, local: localResultsOwner == owner ? localResults : [])
+        guard let pins = saveCoordinator?.pins else { return merged }
         return SearchResultSet(
             server: pins.applyingFlags(merged.server, ownerUserID: owner, fetchedAt: resultsPinRevision),
             localOnly: pins.applyingFlags(merged.localOnly, ownerUserID: owner, fetchedAt: resultsPinRevision))
@@ -35,17 +46,25 @@ final class SearchViewModel {
         set {
             rawResults = newValue
             serverResultsQuery = nil
+            serverResultsOwner = signedInUser.userID
         }
     }
     private var rawQuickAccess: [Document] = []
+    private var quickAccessOwner: UUID?
     private var quickPinRevision = -1
     var quickAccess: [Document] {
         get {
-            saveCoordinator?.pins.resolve(
-                pinned: rawQuickAccess, recent: [], ownerUserID: signedInUser.userID, fetchedAt: quickPinRevision
-            ).pinned ?? rawQuickAccess
+            // Like the results, the pinned list is never shown to another account than its own.
+            let owner = signedInUser.userID
+            let rows = quickAccessOwner == owner ? rawQuickAccess : []
+            return saveCoordinator?.pins.resolve(
+                pinned: rows, recent: [], ownerUserID: owner, fetchedAt: quickPinRevision
+            ).pinned ?? rows
         }
-        set { rawQuickAccess = newValue }
+        set {
+            rawQuickAccess = newValue
+            quickAccessOwner = signedInUser.userID
+        }
     }
     var recentSearches: [String] = []
     var isSearching = false
@@ -155,10 +174,12 @@ final class SearchViewModel {
         let token = availability.token
         do {
             let page = try await client.favoriteDocuments()
-            guard generation == quickAccessGeneration, availability.permitsResponse(for: token), !Task.isCancelled
+            guard generation == quickAccessGeneration, availability.permitsResponse(for: token), !Task.isCancelled,
+                signedInUser.userID == pinOwner
             else { return }
             quickPinRevision = pinRevision
             rawQuickAccess = page.results.filter { !deletedSinceLoad.contains($0.id) }
+            quickAccessOwner = pinOwner
             // Membership in this endpoint proves pinned even when the serializer omits the flag.
             let pinnedRows = rawQuickAccess.map { row in
                 var row = row
@@ -180,27 +201,34 @@ final class SearchViewModel {
     ///
     /// Cancelling the task (the enclosing `.task(id:)` does on every keystroke) abandons the scan
     /// in flight and drops its result; the generation check does the same for a scan that
-    /// finishes after a newer search began.
+    /// finishes after a newer search began, and the owner check for one that finishes after
+    /// another account signed in.
     func search() async {
         searchGeneration += 1
         let generation = searchGeneration
         let pinRevision = saveCoordinator?.pins.revision ?? -1
-        let pinOwner = signedInUser.userID
+        // Captured before any await: whatever this search finds is that account's.
+        let owner = signedInUser.userID
         let token = availability.token
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         isSearching = false
         guard !trimmed.isEmpty else {
             results = []
             localResults = []
-            localEntries = nil
+            localResultsQuery = nil
+            invalidateLocalIndex()
             return
         }
+        // A new question: the previous one's failure (or Quick access', which shares the property)
+        // is not its answer. Cleared here rather than before the request, which an offline search
+        // never reaches.
+        errorKey = nil
         // A request is coming, so with nothing to show yet the screen draws placeholder rows
         // from the first keystroke rather than a "no results" flash.
         isSearching = !availability.isOffline
         defer { if generation == searchGeneration { isSearching = false } }
 
-        await searchOnDevice(trimmed, generation: generation)
+        await searchOnDevice(trimmed, owner: owner, generation: generation)
         guard generation == searchGeneration, !Task.isCancelled else { return }
         guard !availability.isOffline else { return }
 
@@ -218,12 +246,13 @@ final class SearchViewModel {
             let page = try await client.searchDocuments(query: trimmed)
             if generation == searchGeneration { isSearching = false }
             guard generation == searchGeneration, availability.permitsResponse(for: token), !Task.isCancelled,
-                query.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
+                query.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed, signedInUser.userID == owner
             else { return }
             resultsPinRevision = pinRevision
             rawResults = page.results.filter { !deletedSinceLoad.contains($0.id) }
             serverResultsQuery = trimmed
-            saveCoordinator?.pins.didReadFlags(rawResults, ownerUserID: pinOwner, fetchedAt: pinRevision)
+            serverResultsOwner = owner
+            saveCoordinator?.pins.didReadFlags(rawResults, ownerUserID: owner, fetchedAt: pinRevision)
         } catch {
             if generation == searchGeneration { isSearching = false }
             guard generation == searchGeneration, availability.permitsResponse(for: token), !Task.isCancelled,
@@ -233,24 +262,23 @@ final class SearchViewModel {
         }
     }
 
-    /// Matches `trimmed` against the documents on this device and installs the rows, unless a
-    /// newer search began meanwhile. The scan runs off the main actor.
-    private func searchOnDevice(_ trimmed: String, generation: Int) async {
-        let owner = signedInUser.userID
-        let entries: [LocalSearchEntry]
-        if let cached = localEntries, localEntriesOwner == owner {
-            entries = cached
-        } else {
-            let documents = localSearchDocuments()
-            let readContents = contentCache.allContentsReader()
-            entries = await Task.detached(priority: .userInitiated) {
-                localSearchEntries(documents: documents, contents: readContents())
-            }.value
-            // Kept even when a newer keystroke superseded this search: the index is not about
-            // this query, and dropping it would rebuild it for every keystroke typed meanwhile.
-            localEntries = entries.filter { !deletedSinceLoad.contains($0.document.id) }
-            localEntriesOwner = owner
-        }
+    /// Drops the on-device index, so the next search reads the caches again — and a build in
+    /// flight now is not installed when it finishes. Called when the query is cleared, and by the
+    /// screen when it appears and when the session changes: this view model outlives the screen
+    /// and keeps its query, so otherwise one "session" could last as long as the app and miss
+    /// every document opened, edited or newly cached since its index was built.
+    func invalidateLocalIndex() {
+        localIndexSession += 1
+        localEntries = nil
+        localEntriesKey = nil
+        localIndexBuild = nil
+    }
+
+    /// Matches `trimmed` against `owner`'s documents on this device and installs the rows, unless
+    /// a newer search began or another account signed in meanwhile. The scan runs off the main
+    /// actor.
+    private func searchOnDevice(_ trimmed: String, owner: UUID?, generation: Int) async {
+        guard let entries = await localIndex(for: owner, generation: generation) else { return }
         let locale = locale
         let scan = Task.detached(priority: .userInitiated) {
             localSearchResults(query: trimmed, entries: entries, locale: locale)
@@ -260,17 +288,74 @@ final class SearchViewModel {
         } onCancel: {
             scan.cancel()
         }
-        guard generation == searchGeneration, !Task.isCancelled else { return }
+        guard generation == searchGeneration, !Task.isCancelled, signedInUser.userID == owner else { return }
         localResults = found.filter { !deletedSinceLoad.contains($0.id) }
+        localResultsQuery = trimmed
+        localResultsOwner = owner
     }
 
-    /// The documents on this device that this account is known to see: Home's cached lists, but
-    /// only those a fetch for the signed-in account wrote (`documents(fetchedFor:)` — none when
-    /// the account is not known yet or the list was never stamped), and the cached sub-pages of
-    /// exactly those documents. Neither cache is cleared on sign-out, so reading them any other
-    /// way would search the previous user's titles for the next one.
-    private func localSearchDocuments() -> [Document] {
-        guard let owner = signedInUser.userID else { return [] }
+    /// What an on-device index was built for. It is reused only for the same account, and only
+    /// under the same availability: a reconnect or a Work Offline toggle is when Home refreshes
+    /// the caches it reads.
+    private struct LocalIndexKey: Equatable {
+        let owner: UUID?
+        let availability: OnlineAvailability.Token
+    }
+
+    private struct LocalIndexBuild {
+        let session: Int
+        let key: LocalIndexKey
+        let task: Task<[LocalSearchEntry], Never>
+    }
+
+    /// `owner`'s on-device index: the session's, or the one being built (awaited rather than
+    /// started again), or a new build. nil when another account signed in meanwhile, or when
+    /// the session was reset under a search that is no longer current.
+    private func localIndex(for owner: UUID?, generation: Int) async -> [LocalSearchEntry]? {
+        let key = LocalIndexKey(owner: owner, availability: availability.token)
+        if let localEntries, localEntriesKey == key { return localEntries }
+        let session = localIndexSession
+        let build: Task<[LocalSearchEntry], Never>
+        if let inFlight = localIndexBuild, inFlight.session == session, inFlight.key == key {
+            build = inFlight.task
+        } else {
+            let documents = localSearchDocuments(owner: owner)
+            let readContents = contentCache.allContentsReader()
+            build = Task.detached(priority: .userInitiated) {
+                localSearchEntries(documents: documents, contents: readContents())
+            }
+            localIndexBuild = LocalIndexBuild(session: session, key: key, task: build)
+        }
+        let entries = await build.value
+        if let inFlight = localIndexBuild, inFlight.session == session, inFlight.key == key {
+            localIndexBuild = nil
+        }
+        // Another account signed in while it was building: nothing read for the previous one is used.
+        guard signedInUser.userID == owner else { return nil }
+        // The session was reset (the query cleared, the screen reappeared) or availability changed
+        // while it was building: what it read may be out of date, so it is not kept and the caches
+        // are read again — unless this search was abandoned or superseded meanwhile, when the
+        // search that replaced it builds its own.
+        guard session == localIndexSession, key == LocalIndexKey(owner: owner, availability: availability.token)
+        else {
+            if Task.isCancelled || generation != searchGeneration { return nil }
+            return await localIndex(for: owner, generation: generation)
+        }
+        // Kept even when a newer keystroke superseded this search: the index is not about this
+        // query, and dropping it would rebuild it for every keystroke typed meanwhile.
+        let kept = entries.filter { !deletedSinceLoad.contains($0.document.id) }
+        localEntries = kept
+        localEntriesKey = key
+        return kept
+    }
+
+    /// The documents on this device that `owner` is known to see: Home's cached lists, but only
+    /// those a fetch for that account wrote (`documents(fetchedFor:)` — none when the account is
+    /// not known yet or the list was never stamped), and the cached sub-pages of exactly those
+    /// documents. Neither cache is cleared on sign-out, so reading them any other way would
+    /// search the previous user's titles for the next one.
+    private func localSearchDocuments(owner: UUID?) -> [Document] {
+        guard let owner else { return [] }
         let lists = listCache.documents(fetchedFor: owner)
         return lists + childrenCache.children(ofParents: Set(lists.map(\.id)))
     }

@@ -737,7 +737,15 @@ new code reads like the surrounding code.
     `DocHighlight.swift` (every term must appear in the title, excerpt or body), ranked
     title matches first, then recency. Offline the server's retained rows are ignored,
     no request is made, and the banner says results are from this device only; results
-    already on screen are never replaced by a skeleton while the server is in flight.
+    already on screen are never replaced by a skeleton while the server is in flight, and
+    the server's rows for the previous query stay in their section until its new answer
+    lands. Server, on-device and Quick access rows each record the account they were
+    found for and `resultSet`/`quickAccess` hide them from any other (`SearchScreen` also
+    keys its tasks on `signInGeneration`). The on-device index lives for one session: one
+    build at a time (later keystrokes await it), dropped when the query is cleared, when
+    Search appears (`invalidateLocalIndex`) or on re-login, and rebuilt for another account
+    or availability token; a build that finishes after its session was reset is discarded.
+    Every non-empty search clears `errorKey` first.
   - Home (including Search) and Shared share one `editorScreen(for:path:)`
     builder. `.toolbar(.hidden, for: .tabBar)` hides the native bar while an
     editor is pushed and restores it on pop. Keep Profile's account destination.
