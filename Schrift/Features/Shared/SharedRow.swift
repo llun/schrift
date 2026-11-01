@@ -4,6 +4,9 @@ struct SharedRow: View {
     @Environment(\.docsTheme) private var theme
     let title: String
     let subtitle: String
+    /// Who shared the document, when known. Leads the row as an `Avatar`; nil keeps the
+    /// `DocIcon` so the row is never an empty circle (accesses not loaded, or offline).
+    var sharedByName: String? = nil
     var memberNames: [String] = []
     /// Deleted on this device, waiting for the server to be told — struck through, with a
     /// delete glyph, and tapping offers the undo instead of opening the document.
@@ -14,12 +17,25 @@ struct SharedRow: View {
     var pendingDeleteLabel: String = ""
     var onTap: (() -> Void)? = nil
 
+    /// Same base and `relativeTo:` as `DocIcon`'s own scale, so the two leading states measure
+    /// the same box at every Dynamic Type category.
+    @ScaledMetric(relativeTo: .body) private var scale: CGFloat = 1
+
     var body: some View {
+        let faces = sharedRowFaces(sharedByName: sharedByName, memberNames: memberNames)
         Button {
             onTap?()
         } label: {
             HStack(spacing: DocsSpacing.spaceSM) {
-                DocIcon(emoji: nil, tinted: true)
+                // Both states occupy `DocIcon`'s tinted box (38pt at default size), so the row's
+                // height and its text origin do not move when the enrichment lands. The avatar is
+                // sized from that box at the row's scale and told not to scale again.
+                if let leading = faces.leading {
+                    Avatar(
+                        name: leading, size: docIconBoxSize(scale: scale, tinted: true), scaleOverride: 1)
+                } else {
+                    DocIcon(emoji: nil, tinted: true)
+                }
 
                 VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
                     Text(title)
@@ -39,8 +55,8 @@ struct SharedRow: View {
                 if pendingDelete {
                     MaterialSymbol(.delete, size: 16)
                         .foregroundStyle(theme.colors.gray350)
-                } else if !memberNames.isEmpty {
-                    AvatarGroup(names: memberNames, size: 28, max: 3)
+                } else if !faces.trailing.isEmpty {
+                    AvatarGroup(names: faces.trailing, size: 28, max: 3)
                 }
             }
             .padding(.horizontal, DocsSpacing.spaceBase)
@@ -51,11 +67,11 @@ struct SharedRow: View {
         .buttonStyle(.plain)
         // Collapse into a single button carrying the composed label. The avatar
         // group is otherwise dropped by `children: .ignore`, so its members are
-        // folded into the label — the subtitle only names the sharer.
+        // folded into the label — the subtitle names the sharer, who is not repeated here.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
             ([title] + (pendingDelete && !pendingDeleteLabel.isEmpty ? [pendingDeleteLabel] : [])
-                + [subtitle] + (pendingDelete ? [] : memberNames)).joined(separator: ", ")
+                + [subtitle] + (pendingDelete ? [] : faces.trailing)).joined(separator: ", ")
         )
         .accessibilityAddTraits(.isButton)
     }
@@ -74,9 +90,14 @@ private var sharedRowPreview: some View {
         SharedRow(
             title: "Q2 roadmap",
             subtitle: "Shared by Amandine Salambo · 2 days ago",
+            sharedByName: "Amandine Salambo",
             memberNames: ["Amandine Salambo", "Charlie Saris", "Alfredo Levin", "Cam Moreau"]
         )
+        // Enrichment not loaded: DocIcon fallback, same height.
         SharedRow(title: "Bibliography", subtitle: "Shared · Last week")
+        SharedRow(
+            title: "Meeting notes", subtitle: "Shared by Charlie Saris · Yesterday",
+            sharedByName: "Charlie Saris", memberNames: ["Charlie Saris"])
         SharedRow(
             title: "Deleted while offline", subtitle: "Shared · Just now",
             memberNames: ["Amandine Salambo"], pendingDelete: true,
