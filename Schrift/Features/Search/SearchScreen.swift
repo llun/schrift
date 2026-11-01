@@ -178,6 +178,7 @@ struct SearchScreen: View {
                         }
                     }
                 )
+                .documentZoomSource(document: document.id, surface: .search)
             }
         }
     }

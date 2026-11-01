@@ -1,5 +1,21 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — Documents zoom open from their row (Direction D, Tactile).** On a
+> compact-width stack, opening a document from Home (a row or a pinned card), Search results or
+> Shared uses the iOS 18+ zoom transition: each row is a `matchedTransitionSource` and the
+> pushed editor applies `.navigationTransition(.zoom(sourceID:in:))` at the
+> `navigationDestination` site in `MainTabView` (nothing under `Features/Editor/` changed).
+> The source is clipped to `DocsRadius.lg` over the surface it is drawn on (`surfacePage` for a
+> row, `brandFillSubtle` for a `PinnedCard`) so the grow starts seamlessly
+> (`DocumentZoomSourceStyle`). The namespace travels in the environment
+> (`documentZoomNamespace`, one per stack, nil — so no source — in the iPad split view, which
+> selects rather than pushes); a source id is the document id plus its list (`DocumentZoomSurface`),
+> so Home's list under a pushed Search screen never registers a duplicate. A push that is not from
+> a row (page chips and "new page" in the editor, a created document) has no source and uses the
+> default push: `DocumentZoomTracker` mirrors each stack's path, `nil` for those pushes, and
+> `documentTransitionStyle` picks `.automatic` for them and whenever Reduce Motion is on, so the
+> zoom never depends on how the system treats a missing source.
+
 > **Revised: 2026-11-01 — Ledger rows on Home and Search (Direction A).** A document row
 > now has a tile, a title that may use two lines, one line of the document's text and a
 > sub-page count. `DocRow` takes an optional `excerpt` (`footnote`, `textSecondary`, one line,

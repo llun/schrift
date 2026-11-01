@@ -34,6 +34,14 @@ struct MainTabView: View {
     @State private var selectedTab: AppTab = .docs
     @State private var docsPath = NavigationPath()
     @State private var sharedPath = NavigationPath()
+    /// Where a document zooms open from, one namespace per stack (a tab's rows are never the
+    /// source for another tab's pushes), and which pushed editors on each stack came from a
+    /// row at all — see `DocumentZoomTracker`. The iPad split view pushes nothing and so
+    /// registers no sources.
+    @Namespace private var docsZoom
+    @Namespace private var sharedZoom
+    @State private var docsZoomTracker = DocumentZoomTracker()
+    @State private var sharedZoomTracker = DocumentZoomTracker()
 
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -115,26 +123,41 @@ struct MainTabView: View {
                 DocumentListView(
                     viewModel: viewModel,
                     serverHost: serverHost,
-                    onSelect: { docsPath.append(DocumentEditorRoute(document: $0)) },
-                    onSearchTap: { docsPath.append(HomeRoute.search) },
+                    onSelect: {
+                        push(
+                            DocumentEditorRoute(document: $0), from: .home, path: $docsPath,
+                            tracker: $docsZoomTracker)
+                    },
+                    onSearchTap: {
+                        docsZoomTracker.push(nil)
+                        docsPath.append(HomeRoute.search)
+                    },
                     onNewDocument: createDocument
                 )
                 .navigationDestination(for: DocumentEditorRoute.self) { route in
-                    editorScreen(for: route, path: $docsPath)
+                    editorScreen(for: route, path: $docsPath, tracker: $docsZoomTracker)
+                        .documentZoomDestination(
+                            source: docsZoomTracker.source(for: route.document.id), in: docsZoom)
                 }
                 .navigationDestination(for: HomeRoute.self) { route in
                     switch route {
                     case .search:
                         SearchScreen(
                             viewModel: searchViewModel, serverHost: serverHost,
-                            onOpenDocument: { docsPath.append(DocumentEditorRoute(document: $0)) }
+                            onOpenDocument: {
+                                push(
+                                    DocumentEditorRoute(document: $0), from: .search, path: $docsPath,
+                                    tracker: $docsZoomTracker)
+                            }
                         )
                     }
                 }
             }
+            .environment(\.documentZoomNamespace, docsZoom)
             // Popping back from an editor (or Search) may leave a rename the list has not seen,
             // so a shrinking path marks the list stale and fetches once regardless of the 30 s freshness window.
             .onChange(of: docsPath.count) { old, new in
+                docsZoomTracker.trim(to: new)
                 if new < old {
                     viewModel.markListStale()
                     Task { await viewModel.loadIfStale() }
@@ -147,11 +170,21 @@ struct MainTabView: View {
         NavigationStack(path: $sharedPath) {
             SharedScreen(
                 viewModel: sharedViewModel, serverHost: serverHost, signInGeneration: signInGeneration,
-                onOpenDocument: { sharedPath.append(DocumentEditorRoute(document: $0)) }
+                onOpenDocument: {
+                    push(
+                        DocumentEditorRoute(document: $0), from: .shared, path: $sharedPath,
+                        tracker: $sharedZoomTracker)
+                }
             )
             .navigationDestination(for: DocumentEditorRoute.self) { route in
-                editorScreen(for: route, path: $sharedPath)
+                editorScreen(for: route, path: $sharedPath, tracker: $sharedZoomTracker)
+                    .documentZoomDestination(
+                        source: sharedZoomTracker.source(for: route.document.id), in: sharedZoom)
             }
+        }
+        .environment(\.documentZoomNamespace, sharedZoom)
+        .onChange(of: sharedPath.count) { _, new in
+            sharedZoomTracker.trim(to: new)
         }
     }
 
@@ -201,7 +234,9 @@ struct MainTabView: View {
 
     /// One builder for Home (including Search) and Shared, so the editor
     /// is configured identically no matter which tab it was reached from.
-    private func editorScreen(for route: DocumentEditorRoute, path: Binding<NavigationPath>) -> some View {
+    private func editorScreen(
+        for route: DocumentEditorRoute, path: Binding<NavigationPath>, tracker: Binding<DocumentZoomTracker>
+    ) -> some View {
         let document = route.document
         return EditorScreen(
             client: viewModel.client,
@@ -221,8 +256,11 @@ struct MainTabView: View {
                 pop(path)
                 Task { await viewModel.load() }
             },
-            onOpenDocument: { path.wrappedValue.append(DocumentEditorRoute(document: $0)) },
-            onCreatedDocument: { path.wrappedValue.append(DocumentEditorRoute(createdDocument: $0)) }
+            // Page chips and "new page" are not opened from a row: no zoom source.
+            onOpenDocument: { push(DocumentEditorRoute(document: $0), from: nil, path: path, tracker: tracker) },
+            onCreatedDocument: {
+                push(DocumentEditorRoute(createdDocument: $0), from: nil, path: path, tracker: tracker)
+            }
         )
         // The editor is a full-screen surface: the tab bar steps aside for it,
         // and returns when the stack pops. Its navigation bar is the system's
@@ -234,9 +272,23 @@ struct MainTabView: View {
     private func createDocument() {
         Task {
             if let document = await viewModel.createDocument() {
-                docsPath.append(DocumentEditorRoute(createdDocument: document))
+                push(
+                    DocumentEditorRoute(createdDocument: document), from: nil, path: $docsPath,
+                    tracker: $docsZoomTracker)
             }
         }
+    }
+
+    /// Push an editor, recording whether it came from a row (and which list) so its destination
+    /// can zoom out of that row. Every append to a path goes through here or pushes `nil`
+    /// itself, keeping the tracker parallel to the path.
+    private func push(
+        _ route: DocumentEditorRoute, from surface: DocumentZoomSurface?, path: Binding<NavigationPath>,
+        tracker: Binding<DocumentZoomTracker>
+    ) {
+        tracker.wrappedValue.push(
+            surface.map { DocumentZoomSourceID(documentID: route.document.id, surface: $0) })
+        path.wrappedValue.append(route)
     }
 
     private func pop(_ path: Binding<NavigationPath>) {
