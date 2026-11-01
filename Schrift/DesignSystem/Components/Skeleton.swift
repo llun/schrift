@@ -22,6 +22,17 @@ func skeletonShimmerBandOffset(
     return -band + phase * (width + band)
 }
 
+/// The band's transform inside a bar `width` wide. The band is laid out as wide as the bar, so this
+/// squeezes it to `bandFraction` of that and slides it to `skeletonShimmerBandOffset`. It is computed
+/// from the live width on every frame, so a bar that resizes mid-sweep is still crossed edge to edge.
+func skeletonShimmerBandTransform(
+    phase: CGFloat, width: CGFloat, bandFraction: CGFloat = SkeletonShimmer.bandFraction
+) -> CGAffineTransform {
+    CGAffineTransform(
+        a: bandFraction, b: 0, c: 0, d: 1,
+        tx: skeletonShimmerBandOffset(phase: phase, width: width, bandFraction: bandFraction), ty: 0)
+}
+
 /// A placeholder shape with a soft highlight sweeping across it.
 ///
 /// The handoff's loading rule: *skeletons for lists, not spinners* — a spinner
@@ -31,8 +42,8 @@ func skeletonShimmerBandOffset(
 /// `shouldShowLoadingPlaceholder`), because replacing real content with
 /// placeholders would be a downgrade.
 ///
-/// The shimmer replaces the old opacity blink. It is one `.linear` repeating animation of the band's
-/// offset, started once on appear, so the render server interpolates it and the view's body is not
+/// The shimmer replaces the old opacity blink. It is a `ShimmerBand` overlay, one `.linear` repeating
+/// animation of a sweep phase, so the render server interpolates it and the view's body is not
 /// re-evaluated per frame (no per-bar `TimelineView`). Bars in a `SkeletonList` appear together,
 /// so they start in step. It is off under Reduce Motion (`skeletonShimmerIsEnabled`), leaving the
 /// static bar.
@@ -44,9 +55,6 @@ struct Skeleton: View {
     var height: CGFloat = 12
     var cornerRadius: CGFloat = DocsRadius.sm
 
-    /// 0 at rest, animated to 1 once on appear; the band's offset is derived from it.
-    @State private var phase: CGFloat = 0
-
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius)
             .fill(theme.colors.surfaceMuted)
@@ -54,7 +62,11 @@ struct Skeleton: View {
             .overlay {
                 // Gate the view, not just an animation: with Reduce Motion on there is no
                 // shimmer view at all, so the bar is exactly the static placeholder.
-                if skeletonShimmerIsEnabled(reduceMotion: reduceMotion) { shimmer }
+                if skeletonShimmerIsEnabled(reduceMotion: reduceMotion) {
+                    ShimmerBand(highlight: highlight)
+                        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+                        .allowsHitTesting(false)
+                }
             }
             .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
             .accessibilityHidden(true)
@@ -64,22 +76,47 @@ struct Skeleton: View {
     private var highlight: Color {
         colorScheme == .dark ? theme.colors.textPrimary.opacity(0.1) : theme.colors.surfacePage.opacity(0.7)
     }
+}
 
-    private var shimmer: some View {
-        GeometryReader { proxy in
-            LinearGradient(
-                colors: [Color.clear, highlight, Color.clear], startPoint: .leading, endPoint: .trailing
-            )
-            .frame(width: proxy.size.width * SkeletonShimmer.bandFraction)
-            .offset(x: skeletonShimmerBandOffset(phase: phase, width: proxy.size.width))
-        }
-        .onAppear {
-            withAnimation(.linear(duration: SkeletonShimmer.period).repeatForever(autoreverses: false)) {
-                phase = 1
+/// The highlight sweeping across one `Skeleton` bar.
+///
+/// It owns its phase, so each insertion (first appearance, Reduce Motion turned back off) starts a
+/// fresh sweep from 0, and `onDisappear` puts it back to 0 so a reappearance whose state survived
+/// (cell reuse, a tab switch, a navigation pop) sweeps again instead of resting at 1. Only `phase`
+/// animates: the repeat is attached to this view for `phase` alone, and the band's position is
+/// derived from its live size in `ShimmerSweep`, so the bar's own frame never joins the repeating
+/// animation and a width that is 0 at first, or changes later, is still crossed edge to edge.
+private struct ShimmerBand: View {
+    let highlight: Color
+
+    /// 0 at rest, 1 at the end of a sweep; repeats from 0 while the band is on screen.
+    @State private var phase: CGFloat = 0
+
+    var body: some View {
+        LinearGradient(colors: [Color.clear, highlight, Color.clear], startPoint: .leading, endPoint: .trailing)
+            .modifier(ShimmerSweep(phase: phase))
+            .animation(.linear(duration: SkeletonShimmer.period).repeatForever(autoreverses: false), value: phase)
+            .onAppear { phase = 1 }
+            .onDisappear {
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { phase = 0 }
             }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-        .allowsHitTesting(false)
+    }
+}
+
+/// Places the band for `phase` from the size it is given at render time
+/// (`skeletonShimmerBandTransform`); `phase` is the only animatable value.
+private struct ShimmerSweep: GeometryEffect {
+    var phase: CGFloat
+
+    var animatableData: CGFloat {
+        get { phase }
+        set { phase = newValue }
+    }
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        ProjectionTransform(skeletonShimmerBandTransform(phase: phase, width: size.width))
     }
 }
 

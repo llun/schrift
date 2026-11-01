@@ -8,10 +8,13 @@
 > stutter, and a drag that starts on an already-open row begins past the threshold so grabbing
 > it is silent. Haptics are not motion, so Reduce Motion does not gate them. `Skeleton` swaps
 > its opacity blink for a shimmer: a highlight band (`surfacePage` at 70% in light, `textPrimary`
-> at 10% in dark — theme tokens only) sweeping across the bar every 1.6s, driven by one
-> `.linear` repeating offset animation per bar, started on appear, so the render server
-> interpolates it and the view body is not re-evaluated per frame (bars in a `SkeletonList`
-> appear together, so they sweep in step). Under Reduce Motion there is no shimmer view at all and
+> at 10% in dark — theme tokens only) sweeping across the bar every 1.6s. A private `ShimmerBand`
+> owns the sweep phase and runs one `.linear` repeating animation of it, attached to the band for
+> `phase` alone, so the render server interpolates it and the view body is not re-evaluated per
+> frame (bars in a `SkeletonList` appear together, so they sweep in step). The band's position comes
+> from its live size through a `GeometryEffect` (`skeletonShimmerBandTransform`), so the bar's frame
+> never joins the repeat and a bar that resizes is still crossed edge to edge; the phase resets to 0
+> on disappear so a reappearing or reused bar sweeps again. Under Reduce Motion there is no shimmer view at all and
 > the bars are static (`skeletonShimmerIsEnabled`). New `DocsMotion` maps Reduce Motion to
 > animations: `animation(_:reduceMotion:)` is `nil` (instant) when reduced, and the toast —
 > the one animation outside the editor that lacked a fallback — slides up normally but only
