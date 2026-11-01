@@ -1,4 +1,5 @@
 import PhotosUI
+import QuickLook
 import SwiftUI
 
 /// Either a fixed localized string, or the "Synced %@" template with the
@@ -195,7 +196,9 @@ func editorToolbarActions(isEditing: Bool, isLocal: Bool = false, isOffline: Boo
 /// The outline keeps the canvas, the toolbar and the formatting bar interactive behind it, so
 /// anything can ask to present meanwhile: Share and Options, the Pages drawer, the formatting bar's
 /// link and attach buttons, the slash menu's Photo and File, a link's Edit, a sub-page row's Move
-/// and Delete, a sync conflict. SwiftUI shows one presentation at a time, so any of them presented
+/// and Delete, a sync conflict, an attachment card's QuickLook preview (handed up through
+/// `AttachmentPreviewAction`). Navigation away from the document is held the same way, by
+/// `OutlineHeldNavigation`. SwiftUI shows one presentation at a time, so any of them presented
 /// over the outline would silently fail (leaving its flag set, so the next attempt does nothing) or
 /// pop up later. Instead every request stays set but is *held*: the outline is asked to close, and
 /// once its sheet has finished dismissing the request is released and presents. Nothing is reset,
@@ -223,6 +226,44 @@ struct OutlinePresentationGate: Equatable {
     func closesOutline(hasPendingRequest: Bool) -> Bool {
         hasPendingRequest && isOutlineOnScreen
     }
+}
+
+/// A navigation away from this document, held until the outline sheet has gone.
+///
+/// The outline is a sheet on this screen, and this screen stays alive underneath a pushed
+/// document, so a push made while the outline is up (a page chip or a Subpages row tapped on the
+/// canvas behind it) would leave the outline over the new document, listing the old one's
+/// headings. Instead the destination is held, the outline closes, and the destination is handed
+/// back from the outline's `onDismiss`. With the outline not on screen it goes straight through.
+struct OutlineHeldNavigation<Destination> {
+    private(set) var pending: Destination?
+
+    var isHolding: Bool { pending != nil }
+
+    /// The destination to navigate to now, or `nil` when it is held until the outline has dismissed.
+    /// A newer request replaces a held one: only the last tap is followed.
+    mutating func request(_ destination: Destination, isOutlineOnScreen: Bool) -> Destination? {
+        guard isOutlineOnScreen else {
+            pending = nil
+            return destination
+        }
+        pending = destination
+        return nil
+    }
+
+    /// The held destination, now that the outline has finished dismissing. Handed out once.
+    mutating func takeAfterOutlineDismissed() -> Destination? {
+        defer { pending = nil }
+        return pending
+    }
+}
+
+/// Where the editor sends the user when they leave this document for another one.
+enum EditorNavigation {
+    /// An existing document: a page chip, a Subpages row or a drawer row.
+    case open(Document)
+    /// A page just created here: "Add a page" or the drawer's New page.
+    case created(Document)
 }
 
 /// How many peers to present, or `nil` when presence should not be shown at all.
@@ -274,6 +315,11 @@ struct EditorView: View {
     @State private var pendingOutlineAfterOptions = false
     /// Holds every other presentation back while the outline is on screen — see `OutlinePresentationGate`.
     @State private var outlineGate = OutlinePresentationGate()
+    /// A navigation asked for while the outline was on screen — see `navigate(_:)`.
+    @State private var outlineHeldNavigation = OutlineHeldNavigation<EditorNavigation>()
+    /// An attachment card's QuickLook preview. The cards hand it here (`AttachmentPreviewAction`)
+    /// rather than presenting it themselves, so it is held like the rest while the outline is up.
+    @State private var attachmentPreviewURL: URL?
     @State private var outlineFocusesFind = false
     /// What the outline sheet last asked the visible canvas to scroll to.
     @State private var outlineScrollRequest: DocumentScrollRequest?
@@ -590,8 +636,12 @@ struct EditorView: View {
                 outlineScrollRequest = DocumentScrollRequest.following(outlineScrollRequest, target: target)
             },
             onAppear: { outlineGate.outlineAppeared() },
-            // Releases whatever was requested while the outline was up; it presents now.
-            onDismiss: { outlineGate.outlineDismissed() },
+            // Releases whatever was requested while the outline was up; it presents now, and a held
+            // navigation runs.
+            onDismiss: {
+                outlineGate.outlineDismissed()
+                if let held = outlineHeldNavigation.takeAfterOutlineDismissed() { perform(held) }
+            },
             onSelectHeading: { blockID in
                 // Editing: move focus to the heading so restoring the old caret on dismiss cannot
                 // scroll the canvas back; `BlockEditorView` scrolls to a newly focused block.
@@ -606,7 +656,8 @@ struct EditorView: View {
             || documentPendingMove != nil || subpagePendingDeleteConfirmation != nil
             || drawerPendingDeleteConfirmation != nil || documentPendingUndo != nil || conflictToResolve != nil
             || viewModel.linkEditor != nil || viewModel.isPhotoPickerPresented
-            || viewModel.isAttachmentImporterPresented
+            || viewModel.isAttachmentImporterPresented || attachmentPreviewURL != nil
+            || outlineHeldNavigation.isHolding
     }
 
     /// `binding`, held back while the outline is on screen (`OutlinePresentationGate`).
@@ -622,6 +673,23 @@ struct EditorView: View {
     /// The Pages drawer, as shown: an overlay rather than a sheet, but held like one so it never
     /// opens underneath the outline.
     private var presentsPagesTree: Bool { outlineGate.releases(isPresentingPagesTree) }
+
+    /// Every navigation away from this document goes through here, so none of them can leave the
+    /// outline open over the next document (`OutlineHeldNavigation`). The outline is closed even when
+    /// it has not appeared yet, so a sheet still on its way up cannot land on the new document either.
+    private func navigate(_ navigation: EditorNavigation) {
+        isPresentingOutline = false
+        if let now = outlineHeldNavigation.request(navigation, isOutlineOnScreen: outlineGate.isOutlineOnScreen) {
+            perform(now)
+        }
+    }
+
+    private func perform(_ navigation: EditorNavigation) {
+        switch navigation {
+        case .open(let document): onOpenDocument?(document)
+        case .created(let document): onCreatedDocument?(document)
+        }
+    }
 
     private func presentOutline(focusingFind: Bool) {
         // The drawer is an overlay, so it can still be open here (Options reached over it). Close it,
@@ -693,11 +761,11 @@ struct EditorView: View {
                             return
                         }
                         isPresentingPagesTree = false
-                        onOpenDocument?(document)
+                        navigate(.open(document))
                     },
                     onCreated: { document in
                         dismissPagesTree()
-                        onCreatedDocument?(document)
+                        navigate(.created(document))
                     },
                     onClose: { dismissPagesTree() },
                     // The drawer closes first: the confirmation is presented by the editor
@@ -854,6 +922,10 @@ struct EditorView: View {
         // down the middle with the system background either side — invisible on White,
         // obvious on Paper.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // Attachment cards in either canvas hand their preview here instead of presenting it
+        // themselves, so it is held while the outline is up like every other presentation.
+        .environment(\.attachmentPreview, AttachmentPreviewAction { attachmentPreviewURL = $0 })
+        .quickLookPreview(heldForOutline($attachmentPreviewURL))
     }
 
     /// Shown instead of the body for a document whose deletion is queued, with the undo beside
@@ -1240,10 +1312,10 @@ struct EditorView: View {
         case .openInApp(let linkedID):
             // No navigation host (previews, and nothing else today): the link is still a
             // real URL, so let the system have it rather than swallow the tap.
-            guard let onOpenDocument else { return .systemAction }
+            guard onOpenDocument != nil else { return .systemAction }
             Task {
                 if let document = await viewModel.openLinkedDocument(linkedID) {
-                    onOpenDocument(document)
+                    navigate(.open(document))
                 }
             }
             return .handled
@@ -1346,13 +1418,11 @@ struct EditorView: View {
         let isPendingDelete = viewModel.isDeletePending(child)
         let trimmed = child.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let childTitle = trimmed.isEmpty ? loc[.common_untitled] : trimmed
-        // Annotated: `onOpenDocument?(child)` is optional-chained, so an inferred closure
-        // would be `() -> ()?` and match neither parameter it is handed to.
         let open: () -> Void = {
             if isPendingDelete {
                 documentPendingUndo = child
             } else {
-                onOpenDocument?(child)
+                navigate(.open(child))
             }
         }
 
@@ -1437,7 +1507,7 @@ struct EditorView: View {
                 Button {
                     Task {
                         if let child = await viewModel.addSubpage() {
-                            onCreatedDocument?(child)
+                            navigate(.created(child))
                         }
                     }
                 } label: {

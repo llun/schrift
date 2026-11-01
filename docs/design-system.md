@@ -4,8 +4,12 @@
 > a second sheet cannot be stacked on it. Every other presentation the editor owns — Share and
 > Options, the Pages drawer, the link editor (formatting bar or a link's Edit), the photo and file
 > pickers (formatting bar or slash menu), a sub-page's Move and Delete, the undo and conflict
-> prompts — is held while the outline is on screen: asking for one closes the outline, and it
-> presents once the outline has finished dismissing (`OutlinePresentationGate`). Nothing is
+> prompts, an attachment card's QuickLook preview — is held while the outline is on screen:
+> asking for one closes the outline, and it presents once the outline has finished dismissing
+> (`OutlinePresentationGate`; attachment cards in the editor hand their preview up through
+> `AttachmentPreviewAction` and still present it themselves elsewhere). Leaving for another
+> document (a page chip, a Subpages row, Add a page, the drawer) is held the same way, so the
+> outline never stays open over the next document (`OutlineHeldNavigation`). Nothing is
 > disabled and no request or typed text is dropped; Command-F is off while something else is up.
 >
 > **Revised: 2026-11-01 — "In this document": an outline with find.** The editor gains
