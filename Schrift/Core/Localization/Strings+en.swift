@@ -288,6 +288,8 @@ enum Strings_en {
         .editor_error_add_file: "Couldn't add the file. Please try again.",
         .editor_error_file_too_large: "That file is too large to add.",
         .editor_slash_file: "File",
+        .editor_page_link_title: "Link a page",
+        .editor_page_link_empty: "No matching pages",
         .editor_uploading_file: "Uploading file…",
         .editor_uploading_file_a11y: "Uploading file",
 
