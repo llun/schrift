@@ -54,6 +54,7 @@ struct PinnedCard: View {
         .frame(width: pinnedCardBaseWidth * scale, alignment: .leading)
         .background(theme.colors.brandFillSubtle, in: RoundedRectangle(cornerRadius: DocsRadius.lg))
         .contentShape(RoundedRectangle(cornerRadius: DocsRadius.lg))
+        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: DocsRadius.lg))
         .onTapGesture { onOpen?() }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel.isEmpty ? title : accessibilityLabel)

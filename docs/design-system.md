@@ -18,8 +18,11 @@
 > surface, `DocsRadius.lg`, title ≤ 2 lines, excerpt ≤ 2 lines) on the compact/page canvas
 > only; the iPad sidebar (`DocsCanvasRole.sidebar`) and accessibility text sizes keep vertical
 > rows (`pinnedShelfIsEnabled`). A card's swipe actions are its context menu and VoiceOver
-> actions. `SkeletonRow` now has the same shape (tile, title with trailing date, excerpt
-> line) and the same padding, so loading → content does not shift. `SharedRow` is unchanged.
+> actions. `SkeletonRow(shape: .ledger)` has the same shape (tile, title with trailing date,
+> excerpt line) and the same padding, so loading → content does not shift; Shared's
+> placeholder uses `SkeletonRow(shape: .shared)` (compact two-line, same tile box). Skeleton
+> bar and line heights scale with Dynamic Type. `PinnedCard` also sets a rounded
+> `.contextMenuPreview` content shape. `SharedRow` is unchanged.
 
 > **Revised: 2026-10-17 — Links to other documents are page chips.** A markdown link
 > to another document on the user's server (`[Title](https://<host>/docs/<uuid>/)`, the

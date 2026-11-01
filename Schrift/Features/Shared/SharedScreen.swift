@@ -53,7 +53,7 @@ struct SharedScreen: View {
                         // Skeleton rows rather than a spinner: the handoff's
                         // loading rule for lists, and it says "rows are coming"
                         // where a spinner only says "wait".
-                        SkeletonList()
+                        SkeletonList(shape: .shared)
                             .padding(.horizontal, DocsSpacing.gutter)
                     } else if viewModel.showsDocumentList {
                         // Flat, per the handoff: an uppercase count eyebrow over
