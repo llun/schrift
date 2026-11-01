@@ -64,6 +64,8 @@ enum Strings_zhHans {
         .docrow_pinned: "已置顶",
         .docrow_shared_with_organization: "已与组织共享",
         .docrow_public: "公开",
+        .docrow_pages_one: "%d 页",
+        .docrow_pages_other: "%d 页",
         .docrow_available_offline: "可离线使用",
 
         .docrow_pending_delete: "等待删除",

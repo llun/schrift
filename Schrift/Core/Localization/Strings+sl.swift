@@ -75,6 +75,10 @@ enum Strings_sl {
         .docrow_pinned: "Pripeto",
         .docrow_shared_with_organization: "Deljeno z organizacijo",
         .docrow_public: "Javno",
+        .docrow_pages_one: "%d stran",
+        .docrow_pages_other: "%d strani",
+        .docrow_pages_two: "%d strani",
+        .docrow_pages_few: "%d strani",
         .docrow_available_offline: "Na voljo brez povezave",
 
         .docrow_pending_delete: "Čaka na izbris",

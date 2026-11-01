@@ -159,12 +159,17 @@ struct SearchScreen: View {
     private func documentList(_ documents: [Document]) -> some View {
         VStack(spacing: 0) {
             ForEach(documents) { document in
+                let parts = docTitleParts(document.title)
                 DocRow(
-                    title: document.title ?? loc[.common_untitled],
+                    emoji: parts.emoji,
+                    title: parts.title.isEmpty ? loc[.common_untitled] : parts.title,
                     pinned: document.isFavorite,
                     reach: document.linkReach,
                     date: documentRowDate(document, locale: loc.locale),
                     pendingDelete: viewModel.isDeletePending(document),
+                    excerpt: document.excerpt,
+                    pageCount: document.numchild,
+                    tintSeed: document.id,
                     onOpen: {
                         if viewModel.isDeletePending(document) {
                             documentPendingUndo = document
