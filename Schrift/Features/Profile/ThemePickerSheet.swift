@@ -19,10 +19,10 @@ func themeDescriptionKey(_ theme: AppTheme) -> L10nKey {
 /// Relative widths of the specimen's two placeholder text lines (full, then shorter).
 let themeSpecimenLineFractions: [CGFloat] = [1, 0.62]
 
-/// At accessibility Dynamic Type sizes the specimen sits above the name instead of beside it,
-/// so the text keeps the full row width.
-func themePickerStacksRows(_ size: DynamicTypeSize) -> Bool {
-    size.isAccessibilitySize
+/// The specimen's fixed width beside the name, or `nil` when stacked above it: the scaled width
+/// grows past a phone's row at AX4/AX5, so a stacked specimen fills the row instead.
+func themeSpecimenFixedWidth(scaledWidth: CGFloat, stacked: Bool) -> CGFloat? {
+    stacked ? nil : scaledWidth
 }
 
 /// Changes only the local palette. Keeping the sheet open makes choices comparable
@@ -48,7 +48,8 @@ struct ThemePickerSheet: View {
                                 theme: option,
                                 title: loc[.theme_specimen_title],
                                 chipTitle: loc[.theme_specimen_chip],
-                                isSelected: isSelected)
+                                isSelected: isSelected,
+                                stacked: rowUsesStackedLayout(typeSize))
                             let name = VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
                                 Text(loc[themeValueKey(option)])
                                     .font(DocsFont.body.weight(.semibold))
@@ -62,7 +63,7 @@ struct ThemePickerSheet: View {
                                 .opacity(isSelected ? 1 : 0)
                                 .accessibilityHidden(true)
                             Group {
-                                if themePickerStacksRows(typeSize) {
+                                if rowUsesStackedLayout(typeSize) {
                                     VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
                                         specimen
                                         HStack(alignment: .top, spacing: DocsSpacing.spaceBase) {
@@ -140,11 +141,14 @@ struct ThemeSpecimen: View {
     let title: String
     let chipTitle: String
     var isSelected = false
+    /// True when the specimen sits above the name; it then fills the row instead of keeping a fixed width.
+    var stacked = false
 
     @ScaledMetric(relativeTo: .caption) private var width: CGFloat = 124
 
     var body: some View {
         let colors = theme.colors
+        let fixedWidth = themeSpecimenFixedWidth(scaledWidth: width, stacked: stacked)
         VStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
             Text(title)
                 .font(DocsFont.caption.weight(.bold))
@@ -167,7 +171,8 @@ struct ThemeSpecimen: View {
             .background(colors.brandFillSubtle, in: RoundedRectangle(cornerRadius: DocsRadius.sm))
         }
         .padding(DocsSpacing.spaceXS)
-        .frame(width: width, alignment: .leading)
+        .frame(
+            minWidth: fixedWidth, maxWidth: fixedWidth ?? .infinity, alignment: .leading)
         .background(colors.surfacePage, in: RoundedRectangle(cornerRadius: DocsRadius.lg))
         .overlay(
             RoundedRectangle(cornerRadius: DocsRadius.lg)

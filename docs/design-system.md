@@ -8,7 +8,8 @@
 > keeps its check and gains a 2pt `brandFill` border. The specimen is decorative
 > (`accessibilityHidden`); each option stays one button with name, description and the
 > selected trait. At accessibility Dynamic Type sizes the specimen stacks above the name
-> (`themePickerStacksRows`). No colour values or typography tokens changed; the paired
+> (`rowUsesStackedLayout`) and fills the row width there, since its scaled fixed width would
+> overflow a phone at AX4/AX5 (`themeSpecimenFixedWidth`). No colour values or typography tokens changed; the paired
 > `ThemeSwatch` remains for the design-system catalogue.
 
 > **Revised: 2026-10-17 — Links to other documents are page chips.** A markdown link
