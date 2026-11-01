@@ -417,6 +417,20 @@ final class ReadingPositionTests: XCTestCase {
         XCTAssertFalse(session.offersBackToTop)
     }
 
+    @MainActor func testLeavingEndsAVoiceOverOffer() {
+        let blocks = paragraphs(10)
+        let (session, store, id) = makeSession()
+        store.save(
+            blockID: UUID(), fingerprint: readingPositionFingerprint(of: blocks[6]), blockIndex: 6,
+            serverOrigin: origin, documentID: id)
+        _ = session.beginRestore(blocks: blocks, userHasScrolled: false, voiceOverEnabled: true)
+        XCTAssertTrue(session.offersBackToTop)
+
+        // The reading surface disappearing (or swapping to the editing surface) dismisses.
+        session.dismissBackToTop()
+        XCTAssertFalse(session.offersBackToTop)
+    }
+
     @MainActor func testPersistIsIgnoredUntilTheRestoreWasDecided() {
         let blocks = paragraphs(10)
         let (session, store, id) = makeSession()

@@ -266,6 +266,7 @@ struct EditorView: View {
     /// Reopens the document where it was last read and offers the way back to the top.
     @State private var readingPosition: ReadingPositionSession
     @State private var readingScrollPosition = ScrollPosition()
+    @State private var restoreAnnouncementTask: Task<Void, Never>?
     @State private var checklistRevealFocusRequest = 0
     @State private var pagesTreeViewModel: PagesTreeViewModel
 
@@ -484,6 +485,11 @@ struct EditorView: View {
                 // released when the view model is deallocated — see `noteEditorAppeared`.
                 viewModel.flushPendingChanges()
                 persistReadingPosition()
+                // Leaving ends the Back to top offer (it never auto-dismisses under VoiceOver) and
+                // drops a restore announcement still waiting for the transition to settle.
+                readingPosition.dismissBackToTop()
+                restoreAnnouncementTask?.cancel()
+                restoreAnnouncementTask = nil
                 if holdsCollaborationSession {
                     collaboration.release(viewModel.documentID)
                     holdsCollaborationSession = false
@@ -1096,9 +1102,11 @@ struct EditorView: View {
             // the same reason it does on Home and in the drawer — and guarded the same way, so a
             // swipe that nudges this scroll view does not close its own strip.
             .onScrollPhaseChange { _, phase in
+                // Any movement ends the offer, including the programmatic and VoiceOver scrolls
+                // that never report `.interacting`.
+                if phase != .idle { readingPosition.dismissBackToTop() }
                 if phase == .interacting {
                     subpageSwipe = swipeRevealAfterScrollInteraction(subpageSwipe)
-                    readingPosition.dismissBackToTop()
                 }
             }
             // A `.link` run in a `Text` — an inline markdown link, or a bare URL the
@@ -1129,7 +1137,14 @@ struct EditorView: View {
         else { return }
         proxy.scrollTo(EditorScrollTarget.block(blockID), anchor: .top)
         // The jump is silent for VoiceOver users otherwise, like the Toast announcement.
-        AccessibilityNotification.Announcement(loc[.editor_continued_reading]).post()
+        // Posted after the push transition settles, otherwise the screen change speech cuts it off.
+        let message = loc[.editor_continued_reading]
+        restoreAnnouncementTask?.cancel()
+        restoreAnnouncementTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            AccessibilityNotification.Announcement(message).post()
+        }
     }
 
     private func backToTop() {
@@ -1163,6 +1178,8 @@ struct EditorView: View {
     /// Raw offsets still preserve the ordinary parity handoff. With checklist
     /// chrome or hidden rows, measured block identity preserves the logical place.
     private func snapshotScrollForModeSwap() {
+        // The reading surface is about to be replaced; the offer belongs to it.
+        readingPosition.dismissBackToTop()
         guard viewModel.checklistReadingPresentation.hasChecklistItems || viewModel.hidesCompletedChecklistItems else {
             scrollAnchor.snapshotForSwap()
             return
