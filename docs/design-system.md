@@ -1,5 +1,14 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — Shared rows lead with the sharer's face.** A Shared row now
+> leads with the sharer's `Avatar` (38pt, the same box as the tinted `DocIcon`) instead of
+> the generic document icon; the trailing `AvatarGroup` stays but no longer repeats the
+> sharer (`sharedRowFaces`). Until the accesses call lands, or when it fails or the device
+> is offline, the row keeps the `DocIcon` in the same slot, so height and text origin
+> never change and the row is never an empty circle. Subtitle and VoiceOver label
+> conventions are unchanged (the subtitle names the sharer). Implementation:
+> `Schrift/Features/Shared/SharedRow.swift`, `SharedRowData.swift`.
+
 > **Revised: 2026-10-17 — Links to other documents are page chips.** A markdown link
 > to another document on the user's server (`[Title](https://<host>/docs/<uuid>/)`, the
 > links `documentLinkAction` opens in the app) is drawn as a **page chip** on both the

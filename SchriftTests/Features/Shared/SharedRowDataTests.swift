@@ -53,4 +53,31 @@ final class SharedRowDataTests: XCTestCase {
             sharedCreatorName(
                 accesses: nameless, creator: UUID(uuidString: "55555555-5555-4555-8555-555555555555")!))
     }
+
+    func testFacesLeadWithSharerAndDropThemFromGroup() {
+        let faces = sharedRowFaces(sharedByName: "Amandine", memberNames: ["Cam", "Amandine", "Al"])
+        XCTAssertEqual(faces, SharedRowFaces(leading: "Amandine", trailing: ["Cam", "Al"]))
+    }
+
+    func testFacesDropOnlyFirstDuplicateName() {
+        let faces = sharedRowFaces(sharedByName: "Sam", memberNames: ["Sam", "Sam"])
+        XCTAssertEqual(faces, SharedRowFaces(leading: "Sam", trailing: ["Sam"]))
+    }
+
+    func testFacesKeepGroupWhenSharerNotAmongMembers() {
+        let faces = sharedRowFaces(sharedByName: "Zed", memberNames: ["Cam", "Al"])
+        XCTAssertEqual(faces, SharedRowFaces(leading: "Zed", trailing: ["Cam", "Al"]))
+    }
+
+    func testFacesFallBackToIconWhenSharerUnknownOrBlank() {
+        XCTAssertEqual(
+            sharedRowFaces(sharedByName: nil, memberNames: ["Cam"]),
+            SharedRowFaces(leading: nil, trailing: ["Cam"]))
+        XCTAssertEqual(
+            sharedRowFaces(sharedByName: "", memberNames: ["Cam"]),
+            SharedRowFaces(leading: nil, trailing: ["Cam"]))
+        XCTAssertEqual(
+            sharedRowFaces(sharedByName: nil, memberNames: []),
+            SharedRowFaces(leading: nil, trailing: []))
+    }
 }
