@@ -84,6 +84,11 @@ func rowUsesStackedLayout(_ dynamicTypeSize: DynamicTypeSize) -> Bool {
     dynamicTypeSize.isAccessibilitySize
 }
 
+/// Roughly how many characters of a footnote excerpt fit on one line beside the row's tile, used
+/// to decide whether a search match is out of sight (`searchExcerptWindow`).
+let docRowExcerptVisibleCharacters = 40
+let docRowExcerptLeadingCharacters = 12
+
 struct DocRow: View {
     @Environment(\.docsTheme) private var theme
     var emoji: String? = nil
@@ -113,6 +118,10 @@ struct DocRow: View {
     var pageCount: Int = 0
     /// Seeds the tile's soft tint (the document id); nil keeps the single brand tint.
     var tintSeed: UUID? = nil
+    /// Search results pass the query so the matched words in the title and excerpt are drawn
+    /// highlighted, and an excerpt whose match is out of sight starts near it. nil (every other
+    /// list) draws plain text. The VoiceOver label never carries the highlight.
+    var highlightQuery: String? = nil
     var onOpen: (() -> Void)? = nil
 
     @Environment(LocalizationStore.self) private var loc
@@ -120,6 +129,12 @@ struct DocRow: View {
 
     private var isStacked: Bool { rowUsesStackedLayout(dynamicTypeSize) }
     private var excerptText: String? { docRowExcerptText(excerpt) }
+    private var activeHighlightQuery: String? {
+        guard let query = highlightQuery?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty else {
+            return nil
+        }
+        return query
+    }
     private var pageCountText: String? { docRowPageCountLabel(pageCount, loc: loc) }
     /// A second line exists (excerpt and/or page count), so the title may wrap to two lines.
     private var hasDetailLine: Bool { excerptText != nil || pageCountText != nil }
@@ -193,7 +208,7 @@ struct DocRow: View {
     /// DocIcon keeps the outer 12pt gap.
     private var titleLine: some View {
         HStack(spacing: DocsSpacing.space2xs) {
-            Text(title)
+            highlightedText(title, font: DocsFont.body)
                 .font(DocsFont.body)
                 .foregroundStyle(pendingDelete ? theme.colors.textTertiary : theme.colors.textPrimary)
                 .strikethrough(pendingDelete)
@@ -207,8 +222,24 @@ struct DocRow: View {
         }
     }
 
+    /// Plain `Text` unless a search query is set, in which case the matched words are highlighted
+    /// with the brand-subtle fill and a semibold weight (existing tokens, no new colours).
+    private func highlightedText(_ string: String, font: Font) -> Text {
+        guard let query = activeHighlightQuery else { return Text(string) }
+        return Text(
+            searchHighlightedString(
+                string, query: query, locale: loc.locale, font: font,
+                background: theme.colors.brandFillSubtle, foreground: theme.colors.textPrimary))
+    }
+
     private func excerptLabel(_ text: String, lines: Int) -> some View {
-        Text(text)
+        let shown =
+            activeHighlightQuery.map {
+                searchExcerptWindow(
+                    text, query: $0, locale: loc.locale, visibleLimit: docRowExcerptVisibleCharacters * lines,
+                    leadingContext: docRowExcerptLeadingCharacters * lines)
+            } ?? text
+        return highlightedText(shown, font: DocsFont.footnote)
             .font(DocsFont.footnote)
             .foregroundStyle(theme.colors.textSecondary)
             .lineLimit(lines)

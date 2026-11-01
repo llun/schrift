@@ -1,5 +1,18 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — Search shows skeleton rows and highlights what matched (Direction A).**
+> While a query is in flight and there are no results yet, Search draws a `SkeletonList`
+> (`.ledger` shape, the same rows as the results) instead of a spinner, honouring Reduce Motion
+> as `Skeleton` already does; results already on screen stay while a refined query loads
+> (`searchShowsSkeleton`). Result rows take `DocRow(highlightQuery:)` (nil by default, so Home
+> and every other list are unchanged): the matched words in the title and excerpt are drawn on
+> `brandFillSubtle` in `textPrimary` and semibold. Matching is `searchHighlightRanges(in:query:locale:)`
+> — whitespace-tokenised (at most 8 distinct terms), case- and diacritic-insensitive with the
+> app locale, substring based so CJK works, overlapping or touching ranges merged. When the first
+> match lies beyond what one excerpt line shows, `searchExcerptWindow` starts the excerpt on a
+> word about 12 characters before it with a leading "…". VoiceOver is unchanged: the row label
+> is composed from plain text and never carries the highlight. No new colour token or string.
+
 > **Revised: 2026-11-01 — Ledger rows on Home and Search (Direction A).** A document row
 > now has a tile, a title that may use two lines, one line of the document's text and a
 > sub-page count. `DocRow` takes an optional `excerpt` (`footnote`, `textSecondary`, one line,
