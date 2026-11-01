@@ -16,6 +16,10 @@ enum SwipeRevealMetrics {
     static let rubberBandFactor: CGFloat = 0.25
     /// Share of the strip that must be revealed for a release to settle open.
     static let openThresholdRatio: CGFloat = 0.5
+    /// How far back past the open threshold a drag must return before the haptic re-arms, in
+    /// points. Without this band a finger resting on the threshold would buzz on every
+    /// one-point wobble. A feel constant like the rest of this enum.
+    static let thresholdHysteresis: CGFloat = 6
     /// The strip may never cover more than this share of the row, or at accessibility text
     /// sizes the title it is attached to disappears entirely.
     static let maxStripFraction: CGFloat = 0.6
@@ -140,6 +144,40 @@ func swipeRevealSettle(
 ) -> SwipeRevealSettle {
     guard stripWidth > 0 else { return .closed }
     return abs(predictedEndOffset) >= stripWidth * openThresholdRatio ? .open : .closed
+}
+
+/// The outcome of re-judging a live drag against the open threshold.
+struct SwipeRevealThresholdUpdate: Equatable {
+    /// Whether the drag is now past the threshold — the state to carry into the next move.
+    let isPast: Bool
+    /// Whether this move crossed it, in either direction. The haptic's one trigger.
+    let crossed: Bool
+}
+
+/// Decides, for one move of a live drag, whether the row has just crossed the point past which
+/// releasing would settle it open (`swipeRevealSettle`'s threshold) — so the row can tick once
+/// per crossing, and again each time the finger comes back across.
+///
+/// Judged on the live, rubber-banded `offset` (negative in the reveal direction, already
+/// sign-corrected), in the same space `swipeRevealSettle` compares, so the tick and the
+/// outcome cannot disagree about where the line is. (A release's flick projection can still
+/// settle a row that never ticked; the tick marks the finger's position, not the velocity.)
+///
+/// **Re-arming has a band.** Going past happens at the threshold; coming back requires
+/// `hysteresis` points of travel below it, so a finger hovering on the line does not stutter.
+/// With no strip there is nothing to cross.
+func swipeRevealThresholdUpdate(
+    wasPast: Bool,
+    offset: CGFloat,
+    stripWidth: CGFloat,
+    openThresholdRatio: CGFloat = SwipeRevealMetrics.openThresholdRatio,
+    hysteresis: CGFloat = SwipeRevealMetrics.thresholdHysteresis
+) -> SwipeRevealThresholdUpdate {
+    guard stripWidth > 0 else { return SwipeRevealThresholdUpdate(isPast: false, crossed: false) }
+    let distance = abs(offset)
+    let threshold = stripWidth * openThresholdRatio
+    let isPast = wasPast ? distance > threshold - hysteresis : distance >= threshold
+    return SwipeRevealThresholdUpdate(isPast: isPast, crossed: isPast != wasPast)
 }
 
 /// Per-action button width: the Dynamic-Type-scaled base, capped so the whole strip never
@@ -315,6 +353,12 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
     /// Where the content sat when this drag began, so a drag starting on an already-open row
     /// continues from the strip edge instead of snapping to zero.
     @State private var dragStartOffset: CGFloat = 0
+    /// Whether the live drag currently sits past the open threshold. Not the haptic's trigger —
+    /// it is reset at the end of a drag, and that reset must stay silent.
+    @State private var isPastThreshold = false
+    /// Bumped once per crossing of the threshold, in either direction; the light haptic's
+    /// trigger. A counter rather than the flag itself so the silent resets above cannot fire it.
+    @State private var thresholdCrossings = 0
 
     private var isOpen: Bool { state.openRowID == id }
     /// Read off the *list-wide* state rather than a second per-row flag — claiming the row is
@@ -396,9 +440,12 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
             // only discard the vertical ones after the fact, which on iOS 26 costs the
             // enclosing `ScrollView` the touch. See `SwipeRevealPanGestureRecognizer`.
             .gesture(swipeGesture)
+            // A light tick each time the drag crosses the open threshold. Haptics are not motion,
+            // so Reduce Motion does not gate this.
+            .sensoryFeedback(.impact(weight: .light), trigger: thresholdCrossings)
             .onChange(of: isOpen) { _, open in
                 guard !open, offset != 0 else { return }
-                withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) { offset = 0 }
+                withAnimation(DocsMotion.animation(.snappy(duration: 0.25), reduceMotion: reduceMotion)) { offset = 0 }
             }
             // **Release the list-wide drag claim if this row goes away mid-swipe.**
             // `draggingRowID` is normally cleared by `onEnded`/`onCancelled`, but a row can be torn down
@@ -426,6 +473,12 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
             onBegan: {
                 guard !actions.isEmpty else { return }
                 dragStartOffset = offset
+                // A drag that starts on an already-open row begins past the threshold; starting
+                // from "not past" would tick for a crossing that did not happen.
+                isPastThreshold =
+                    swipeRevealThresholdUpdate(
+                        wasPast: false, offset: offset, stripWidth: stripWidth
+                    ).isPast
                 state = swipeRevealBeginningDrag(state, rowID: id)
             },
             onChanged: { translation in
@@ -437,9 +490,14 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
                     translation: translation * directionSign,
                     startingOffset: dragStartOffset,
                     stripWidth: stripWidth)
+                let crossing = swipeRevealThresholdUpdate(
+                    wasPast: isPastThreshold, offset: offset, stripWidth: stripWidth)
+                isPastThreshold = crossing.isPast
+                if crossing.crossed { thresholdCrossings += 1 }
             },
             onEnded: { predictedTranslation in
                 guard isDragging else { return }
+                isPastThreshold = false
                 let predicted = swipeRevealOffset(
                     translation: predictedTranslation * directionSign,
                     startingOffset: dragStartOffset,
@@ -452,6 +510,7 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
                 // all and leaned on `onDisappear` to release the claim, which left the
                 // list-wide close-on-scroll rule disabled for any drag the system took away.
                 guard isDragging else { return }
+                isPastThreshold = false
                 settle(swipeRevealSettle(predictedEndOffset: offset, stripWidth: stripWidth))
             })
     }
@@ -487,7 +546,7 @@ struct SwipeRevealRow<ID: Hashable, Content: View>: View {
 
     private func settle(_ outcome: SwipeRevealSettle) {
         state = swipeRevealSettling(state, rowID: id, settle: outcome)
-        withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) {
+        withAnimation(DocsMotion.animation(.snappy(duration: 0.25), reduceMotion: reduceMotion)) {
             offset = outcome == .open ? -stripWidth : 0
         }
     }

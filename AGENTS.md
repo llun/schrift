@@ -545,7 +545,8 @@ Schrift/
 │                        incremental update via BlockNoteWrite.applyEdit)
 ├── DesignSystem/
 │   ├── Tokens/          DocsColor, DocsTypography (DocsFont/DocsTracking),
-│   │                    DocsSpacing, DocsRadius, HexColor (light+dark adaptive),
+│   │                    DocsSpacing, DocsRadius, DocsMotion (Reduce Motion → animation),
+│   │                    HexColor (light+dark adaptive),
 │   │                    MaterialIcon (the app's icon set — Material Symbols)
 │   └── Components/      Avatar, AvatarGroup, Badge, Button, DocIcon, DocIdentity, DocRow, PinnedCard,
 │                        IconButton, LinkReachPill, ListRow, ListSection,

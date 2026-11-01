@@ -56,6 +56,7 @@ extension View {
 
 private struct ToastPresenter: ViewModifier {
     @Environment(\.docsTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var message: ToastMessage?
     let bottomInset: CGFloat
 
@@ -66,24 +67,30 @@ private struct ToastPresenter: ViewModifier {
     func body(content: Content) -> some View {
         content
             .overlay(alignment: .bottom) {
-                if let message {
-                    Toast(message: message.text)
-                        .padding(.bottom, DocsSpacing.spaceLG + bottomInset)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .id(message.id)
-                        .animation(.snappy, value: message.id)
-                        .task(id: message.id) {
-                            // Spoken, not just labelled: the toast dismisses
-                            // itself in two seconds and never takes focus, so a
-                            // VoiceOver user would otherwise never learn the
-                            // copy happened at all. Re-posted per message id, so
-                            // a repeated copy is announced again.
-                            AccessibilityNotification.Announcement(message.text).post()
-                            try? await Task.sleep(for: Self.duration)
-                            guard !Task.isCancelled else { return }
-                            self.message = nil
-                        }
+                // The animation lives on the container, outside the conditional: a modifier
+                // inside `if let` is not in the hierarchy yet when the toast is inserted and is
+                // already gone when it is removed, so neither would animate.
+                ZStack {
+                    if let message {
+                        Toast(message: message.text)
+                            .padding(.bottom, DocsSpacing.spaceLG + bottomInset)
+                            // Slides up normally; under Reduce Motion it only crossfades.
+                            .transition(DocsMotion.toastTransition(reduceMotion: reduceMotion))
+                            .id(message.id)
+                            .task(id: message.id) {
+                                // Spoken, not just labelled: the toast dismisses
+                                // itself in two seconds and never takes focus, so a
+                                // VoiceOver user would otherwise never learn the
+                                // copy happened at all. Re-posted per message id, so
+                                // a repeated copy is announced again.
+                                AccessibilityNotification.Announcement(message.text).post()
+                                try? await Task.sleep(for: Self.duration)
+                                guard !Task.isCancelled else { return }
+                                self.message = nil
+                            }
+                    }
                 }
+                .animation(DocsMotion.toastAnimation(reduceMotion: reduceMotion), value: message?.id)
             }
     }
 }
