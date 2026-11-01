@@ -9,15 +9,35 @@
 > rows until the new one lands, with the device's new matches deduped against them, so the list
 > does not collapse and re-expand per keystroke; the skeleton only shows when there is nothing
 > from the device or the server yet. A new query clears the previous one's error (offline too),
-> and rows found for one account are never shown to another after a re-login. Offline, Search stays usable: the `OfflineBanner` reads "Results
-> from this device only", the search field is enabled (Home's compact shortcut too), the
-> server's retained rows are ignored and Quick access is hidden. Matching reuses
+> and rows found for one account are never shown to another after a re-login. Offline, Search
+> stays usable: the `OfflineBanner` reads "Results from this device only", the search field is
+> enabled (Home's compact shortcut too), the server's retained rows are ignored and Quick access
+> is hidden. Matching reuses
 > `searchHighlightRanges`' rule (case- and diacritic-insensitive, substring, every term must
 > match) over title, excerpt and cached body text, ranked title matches first and then recency;
 > a body-only match shows the matching line as the row's excerpt so the highlight is visible.
 > Only lists stamped for the signed-in account are read. Two new strings
 > (`search_offline_local_only`, `search_on_this_device`) in all 11 languages; no new colour,
 > spacing or motion.
+
+> **Revised: 2026-11-01 — Documents zoom open from their row (Direction D, Tactile).** On a
+> compact-width stack, opening a document from Home (a row or a pinned card), Search results or
+> Shared uses the iOS 18+ zoom transition: each row is a `matchedTransitionSource` and the
+> pushed editor applies `.navigationTransition(.zoom(sourceID:in:))` at the
+> `navigationDestination` site in `MainTabView` (nothing under `Features/Editor/` changed).
+> The source is clipped to `DocsRadius.lg` over the surface it is drawn on (`surfacePage` for a
+> row, `brandFillSubtle` for a `PinnedCard`) so the grow starts seamlessly
+> (`DocumentZoomSourceStyle`). The namespace travels in the environment
+> (`documentZoomNamespace`, one per stack, nil — so no source — in the iPad split view, which
+> selects rather than pushes); a source id is the document id plus its list (`DocumentZoomSurface`),
+> so Home's list under a pushed Search screen never registers a duplicate. A push that is not from
+> a row (page chips and "new page" in the editor, a created document) has no source and uses the
+> default push. The source travels on the path element itself: the stacks push a `DocumentPush`
+> (the `DocumentEditorRoute` plus an optional `DocumentZoomSourceID`) built by `documentPush`, and
+> the `navigationDestination(for: DocumentPush.self)` receives both, so nothing parallel to the path
+> has to be kept in step with it. Reduce Motion is decided once at push time: with it on the push
+> records no source and gets the default transition; the destination reads only the stored value, so
+> toggling Reduce Motion never rebuilds an open editor and the next push picks the new setting up.
 
 > **Revised: 2026-11-01 — Search shows skeleton rows and highlights what matched (Direction A).**
 > While a query is in flight and there are no results yet, Search draws a `SkeletonList`
