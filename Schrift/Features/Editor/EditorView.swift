@@ -357,6 +357,9 @@ struct EditorView: View {
     @State private var readingPosition: ReadingPositionSession
     @State private var readingScrollPosition = ScrollPosition()
     @State private var restoreAnnouncementTask: Task<Void, Never>?
+    /// Bumped by a reading-surface layout while a decided restore waits for its row, so the
+    /// scroll runs once the rows exist. See `ReadingPositionSession.takeRestoreScroll`.
+    @State private var restoreLayoutPass = 0
     @State private var checklistRevealFocusRequest = 0
     /// The pending second phase of each tick made while completed items are hidden — the row
     /// leaving once its tick has landed (see `toggleChecklistFromReading`). Cancelled on untick
@@ -583,6 +586,7 @@ struct EditorView: View {
                 // Leaving ends the Back to top offer (it never auto-dismisses under VoiceOver) and
                 // drops a restore announcement still waiting for the transition to settle.
                 readingPosition.dismissBackToTop()
+                readingPosition.cancelPendingRestore()
                 restoreAnnouncementTask?.cancel()
                 restoreAnnouncementTask = nil
                 // A tick still settling hides at once rather than collapsing off screen.
@@ -1288,6 +1292,7 @@ struct EditorView: View {
             }
             .onPreferenceChange(EditorBlockFramesKey.self) { frames in
                 scrollAnchor.noteBlockFrames(frames)
+                if readingPosition.hasPendingRestoreScroll { restoreLayoutPass &+= 1 }
             }
             .onAppear {
                 if let blockID = scrollAnchor.consumePendingBlock() {
@@ -1302,8 +1307,18 @@ struct EditorView: View {
                     restoreReadingPosition(proxy)
                 }
             }
-            // Content that arrives after the surface appeared (a revalidation over an empty page).
+            // Content that arrives after the surface appeared. This is the **cached** open, not
+            // the rare one: `load()` installs the cached body from `.task`, after this surface
+            // has appeared over an empty page (only a network fetch shows the loading
+            // placeholder, and so brings a new surface that restores from `onAppear`).
             .onChange(of: viewModel.hasLoadedContent) { _, _ in restoreReadingPosition(proxy) }
+            // The rows that content inserted have now been laid out; scroll to the decided block.
+            .onChange(of: restoreLayoutPass) { _, _ in scrollToPendingRestore(proxy) }
+            // Flipping "Hide completed" changes which rows exist; a restore still pending was
+            // decided against the old set and must not land on the new one later.
+            .onChange(of: viewModel.hidesCompletedChecklistItems) { _, _ in
+                readingPosition.cancelPendingRestore()
+            }
             .onChange(of: outlineScrollRequest) { _, request in
                 guard let request else { return }
                 // The reading header carries no scroll id; the top is offset zero.
@@ -1324,6 +1339,8 @@ struct EditorView: View {
                 // that never report `.interacting`.
                 if phase != .idle { readingPosition.dismissBackToTop() }
                 if phase == .interacting {
+                    // The reader took hold of the page before a restore landed; leave it with them.
+                    readingPosition.cancelPendingRestore()
                     subpageSwipe = swipeRevealAfterScrollInteraction(subpageSwipe)
                 }
             }
@@ -1345,13 +1362,25 @@ struct EditorView: View {
 
     // MARK: - Continue reading
 
-    /// Scrolls to the block the reader left off at, once the content is here. Not animated:
-    /// it is the page opening, not a gesture, and it must not fight the layout still settling.
+    /// Decides the restore once the content is here, and scrolls at once if its rows are already
+    /// laid out (the surface appeared with its content). Otherwise — content that has only just
+    /// been inserted, as a cached open's is — the next layout's frames report runs the scroll
+    /// (`restoreLayoutPass`).
     private func restoreReadingPosition(_ proxy: ScrollViewProxy) {
         guard
-            let blockID = readingPosition.beginRestore(
-                blocks: viewModel.blocks, userHasScrolled: scrollAnchor.currentOffsetY > 8,
-                voiceOverEnabled: voiceOverEnabled)
+            readingPosition.beginRestore(
+                blocks: viewModel.blocks, userHasScrolled: scrollAnchor.currentOffsetY > 8) != nil
+        else { return }
+        scrollToPendingRestore(proxy)
+    }
+
+    /// Scrolls to the block the reader left off at, once its row is laid out. Not animated:
+    /// it is the page opening, not a gesture, and it must not fight the layout still settling.
+    private func scrollToPendingRestore(_ proxy: ScrollViewProxy) {
+        guard
+            let blockID = readingPosition.takeRestoreScroll(
+                presentedBlockIDs: Set(viewModel.checklistReadingPresentation.rows.map(\.id)),
+                laidOutBlockIDs: scrollAnchor.laidOutBlockIDs, voiceOverEnabled: voiceOverEnabled)
         else { return }
         proxy.scrollTo(EditorScrollTarget.block(blockID), anchor: .top)
         // The jump is silent for VoiceOver users otherwise, like the Toast announcement.
@@ -1425,8 +1454,10 @@ struct EditorView: View {
     /// Raw offsets still preserve the ordinary parity handoff. With checklist
     /// chrome or hidden rows, measured block identity preserves the logical place.
     private func snapshotScrollForModeSwap() {
-        // The reading surface is about to be replaced; the offer belongs to it.
+        // The reading surface is about to be replaced; the offer and a restore not yet
+        // scrolled to belong to it.
         readingPosition.dismissBackToTop()
+        readingPosition.cancelPendingRestore()
         guard viewModel.checklistReadingPresentation.hasChecklistItems || viewModel.hidesCompletedChecklistItems else {
             scrollAnchor.snapshotForSwap()
             return
