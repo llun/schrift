@@ -458,10 +458,10 @@ struct EditorView: View {
             // The drawer is an overlay rather than a sheet, so it gets none of a
             // sheet's VoiceOver scoping for free: without this the editor behind
             // it stays in the accessibility tree and a swipe walks straight into
-            // toolbar buttons the drawer is covering. Ordered before `.overlay`,
+            // toolbar buttons the drawer is covering. Ordered before the presentation,
             // which adds the drawer on top of the hidden content.
             .accessibilityHidden(presentsPagesTree)
-            .overlay { pagesTreeOverlay }
+            .modifier(pagesDrawerPresentation)
             // One system toolbar in both modes. The document title stays in the
             // canvas as a large content header (`EditorDocumentHeader`) rather than in the
             // bar, so the bar carries only the back button and the trailing actions
@@ -744,61 +744,71 @@ struct EditorView: View {
         .presentationDragIndicator(.visible)
     }
 
-    private var pagesTreeOverlay: some View {
-        // The `.animation` belongs here, on the container the drawer comes and
-        // goes inside — on the body it would also animate whatever else changed
-        // in the same transaction (the save status, a conflict pill).
-        ZStack {
-            if presentsPagesTree {
-                PagesTreeDrawer(
-                    viewModel: pagesTreeViewModel,
-                    rootTitle: viewModel.title.isEmpty ? loc[.common_untitled] : viewModel.title,
-                    onOpen: { document in
-                        // A page on its way out is not opened from the drawer either.
-                        guard !viewModel.isDeletePending(document) else {
-                            isPresentingPagesTree = false
-                            documentPendingUndo = document
-                            return
-                        }
-                        isPresentingPagesTree = false
-                        navigate(.open(document))
-                    },
-                    onCreated: { document in
-                        dismissPagesTree()
-                        navigate(.created(document))
-                    },
-                    onClose: { dismissPagesTree() },
-                    // The drawer closes first: the confirmation is presented by the editor
-                    // beneath it, and leaving the drawer up would put a system alert over a
-                    // transitioning overlay.
-                    onRequestDelete: { document in
-                        dismissPagesTree()
-                        drawerPendingDeleteConfirmation = document
-                    },
-                    // Same handover as Delete, and for the same reason: the drawer closes and
-                    // the editor beneath it presents the picker.
-                    onRequestMove: { document in
-                        dismissPagesTree()
-                        documentPendingMove = document
-                    },
-                    onUndoPendingDelete: { document in
-                        dismissPagesTree()
-                        documentPendingUndo = document
-                    }
-                )
-                .task {
-                    // Nothing announces an overlay the way it would a sheet, so
-                    // say the screen changed and let VoiceOver land in the drawer.
-                    AccessibilityNotification.ScreenChanged().post()
-                    // A document queued for deletion is asked nothing — the same rule
-                    // `load`/`revalidate`/`refresh` follow, and this is the one other path
-                    // that would GET its children.
-                    guard !viewModel.isDocumentPendingDelete else { return }
-                    await pagesTreeViewModel.loadRoot()
-                }
-            }
+    /// The drawer as a panel that follows a finger (`PagesDrawerPresentation`): pulled in from the
+    /// leading edge, pushed back out, or sprung open by the toolbar button — which stays the
+    /// path that needs no gesture.
+    private var pagesDrawerPresentation: some ViewModifier {
+        PagesDrawerPresentation(
+            isPresented: Binding(get: { presentsPagesTree }, set: { isPresentingPagesTree = $0 }),
+            // Not while anything else is up or asking to be, or the pull would open the drawer
+            // underneath it.
+            isGestureEnabled: !hasPendingPresentation && !isPresentingOutline,
+            onPresentedByDrag: { AccessibilityNotification.ScreenChanged().post() }
+        ) { progress, pan in
+            pagesTreeDrawer(progress: progress, pan: pan)
         }
-        .animation(.snappy, value: presentsPagesTree)
+    }
+
+    private func pagesTreeDrawer(progress: CGFloat, pan: PagesDrawerPanHandlers) -> some View {
+        PagesTreeDrawer(
+            viewModel: pagesTreeViewModel,
+            rootTitle: viewModel.title.isEmpty ? loc[.common_untitled] : viewModel.title,
+            onOpen: { document in
+                // A page on its way out is not opened from the drawer either.
+                guard !viewModel.isDeletePending(document) else {
+                    isPresentingPagesTree = false
+                    documentPendingUndo = document
+                    return
+                }
+                isPresentingPagesTree = false
+                navigate(.open(document))
+            },
+            onCreated: { document in
+                dismissPagesTree()
+                navigate(.created(document))
+            },
+            onClose: { dismissPagesTree() },
+            // The drawer closes first: the confirmation is presented by the editor
+            // beneath it, and leaving the drawer up would put a system alert over a
+            // transitioning overlay.
+            onRequestDelete: { document in
+                dismissPagesTree()
+                drawerPendingDeleteConfirmation = document
+            },
+            // Same handover as Delete, and for the same reason: the drawer closes and
+            // the editor beneath it presents the picker.
+            onRequestMove: { document in
+                dismissPagesTree()
+                documentPendingMove = document
+            },
+            onUndoPendingDelete: { document in
+                dismissPagesTree()
+                documentPendingUndo = document
+            },
+            progress: progress,
+            pan: pan
+        )
+        .task {
+            // Nothing announces an overlay the way it would a sheet, so say the screen
+            // changed and let VoiceOver land in the drawer. Only when it is open: a drag
+            // mounts the drawer before it is known to be staying, and announces on release.
+            if presentsPagesTree { AccessibilityNotification.ScreenChanged().post() }
+            // A document queued for deletion is asked nothing — the same rule
+            // `load`/`revalidate`/`refresh` follow, and this is the one other path
+            // that would GET its children.
+            guard !viewModel.isDocumentPendingDelete else { return }
+            await pagesTreeViewModel.loadRoot()
+        }
     }
 
     private func dismissPagesTree() {

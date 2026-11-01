@@ -581,7 +581,8 @@ Schrift/
 │                        file attachments (AttachmentDisplay classifier +
 │                        AttachmentLoader + AttachmentCacheStore + AttachmentCardView),
 │                        Pages tree drawer (PagesTreeDrawer + PagesTreeViewModel,
-│                        lazy per-level children via the children cache),
+│                        lazy per-level children via the children cache; PagesDrawerPan:
+│                        the edge pull / drag-to-close, progress-driven, back-swipe aware),
 │                        the "In this document" outline + find sheet for the OPEN document
 │                        (DocumentOutline: pure outline/find/section counts/stepping;
 │                        DocumentOutlineSheet; opened from Options or Command-F),

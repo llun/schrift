@@ -1,5 +1,39 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — the Pages drawer follows your finger (Direction D2).** The drawer is no
+> longer a transition that plays on a bool: `PagesDrawerPresentation` (a modifier on the editor)
+> holds a `progress` from 0 to 1, and the panel's offset (`pagesDrawerPanelOffset`) and the scrim's
+> opacity (`pagesDrawerScrimOpacity`, the scrim token scaled from 0 to its full strength) both
+> read it, so the same view serves the toolbar button, a scrim tap and a finger. A pull from the
+> leading edge mounts the drawer and tracks the finger 1:1 (`pagesDrawerProgress`); past fully open
+> the panel stretches by an asymptotic rubber band (`pagesDrawerRubberBand`, never more than
+> 32pt, and the panel's background reaches that far past its leading edge so no gap shows). On
+> release `pagesDrawerSettle` adds the flick's momentum (`swipeFlickProjection`, the same fast
+> deceleration the swipe rows use) to the position and opens at or past half; the panel then springs
+> (`PagesDrawerMotion.settle`, `.spring(duration: 0.4, bounce: 0.15)`). Dragging the open drawer left
+> — on the scrim, the header or the New page footer — closes it by the same maths; a tap on the scrim
+> still closes it. The list rows are left out of the close drag on purpose: their own leftward swipe
+> reveals Move and Delete, and two recognizers on one drag would do both. **Reduce Motion:** the
+> panel still follows the finger (direct manipulation, not motion), but the release settles with
+> no animation (`DocsMotion.animation`), so there is no overshoot. **VoiceOver:** the toolbar
+> button is unchanged and remains the only path a screen reader needs; a drag that opens the drawer
+> posts the same screen-changed announcement the button does. **The system back swipe:** the editor
+> is pushed in a `NavigationStack` on iPhone, where the left edge already means "back". The drawer's
+> recognizer (`PagesDrawerPanGestureRecognizer`) therefore only starts a touch in a 36pt strip
+> that is inset 24pt from the edge when the hosting `UINavigationController` can pop
+> (`pagesDrawerCanInteractivePop`: more than one controller and the pop recognizer enabled), so
+> a swipe from the very edge still goes back; where there is nothing to pop to — the iPad detail pane
+> — the strip starts at the edge itself. Inside the strip the navigation controller's own pan
+> recognizers wait for the drawer's to fail (`shouldBeRequiredToFailBy`), which is what lets an iOS 26
+> content back swipe and the drawer pull share that part of the screen; a touch outside the strip
+> fails the drawer's recognizer on the spot, releasing them immediately. Like the swipe rows, the
+> recognizer refuses a vertical or wrong-way drag outright rather than ignoring it
+> (`swipeGestureLatchDecision`), so scrolling is untouched, and it runs alongside only a scroll
+> view's own pan, so text selection keeps exclusive ownership of a touch it has claimed. The
+> gesture is off while anything else is presented or asking to be, and mirrors in right-to-left
+> layouts. The pure maths is unit-tested in `PagesDrawerPanTests`; the feel constants
+> (`PagesDrawerMetrics`) want tuning on a device.
+
 > **Revised: 2026-11-01 — Tactile polish: swipe haptics, shimmering skeletons, Reduce Motion
 > coverage (Direction D4).** `SwipeRevealRow` fires a light impact (`.sensoryFeedback`) each
 > time a live drag crosses the open threshold (the point `swipeRevealSettle` opens at), and
@@ -20,7 +54,7 @@
 > the one animation outside the editor that lacked a fallback — slides up normally but only
 > crossfades (`DocsMotion.crossfade`) under Reduce Motion. Home, Shared and the swipe row's
 > settle already gated their `.snappy` list/banner animations; the swipe row now goes through
-> `DocsMotion`. The Pages drawer is covered separately (D2).
+> `DocsMotion`. The Pages drawer is covered separately (D2, above).
 
 > **Revised: 2026-11-01 — outline and other sheets.** The outline keeps the canvas interactive, so
 > a second sheet cannot be stacked on it. Every other presentation the editor owns — Share and
