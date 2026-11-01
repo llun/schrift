@@ -19,6 +19,22 @@
 > records no source and gets the default transition; the destination reads only the stored value, so
 > toggling Reduce Motion never rebuilds an open editor and the next push picks the new setting up.
 
+> **Revised: 2026-11-01 — Search shows skeleton rows and highlights what matched (Direction A).**
+> While a query is in flight and there are no results yet, Search draws a `SkeletonList`
+> (`.ledger` shape, the same rows as the results) instead of a spinner, honouring Reduce Motion
+> as `Skeleton` already does; results already on screen stay while a refined query loads
+> (`searchShowsSkeleton`). Result rows take `DocRow(highlightQuery:)` (nil by default, so Home
+> and every other list are unchanged): the matched words in the title and excerpt are drawn on
+> `brandFillSubtle` in `textPrimary` and semibold. Matching is `searchHighlightRanges(in:query:locale:)`
+> — whitespace-tokenised (at most 8 distinct terms), case- and diacritic-insensitive with the
+> app locale, substring based so CJK works, overlapping or touching ranges merged. When the first
+> match starts beyond ~12 characters (per excerpt line; independent of Dynamic Type and script
+> width), `searchExcerptWindow` starts the excerpt on a word about that far before it with a
+> leading "…" (skipping ahead to the next word is only done when at least half the context remains before
+> the match; otherwise a cut word that begins the excerpt leaves it unchanged). Pending-delete rows are never highlighted (`docRowHighlightQuery`), keeping their
+> dimmed strikethrough uniform. VoiceOver is unchanged: the row label
+> is composed from plain text and never carries the highlight. No new colour token or string.
+
 > **Revised: 2026-11-01 — Typing `[[` links a page.** In edit mode, `[[` opens a
 > floating **"Link a page"** card above the keyboard — the slash menu's sibling: the same
 > `.glassEffect(.regular)` surface in the same `GlassEffectContainer` as the formatting

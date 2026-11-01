@@ -105,13 +105,10 @@ struct SearchScreen: View {
 
     @ViewBuilder
     private var resultsContent: some View {
-        if viewModel.isSearching {
-            HStack {
-                Spacer()
-                ProgressView()
-                Spacer()
-            }
-            .padding(.vertical, DocsSpacing.spaceLG)
+        if searchShowsSkeleton(isSearching: viewModel.isSearching, hasResults: !viewModel.results.isEmpty) {
+            // Rows are on their way: placeholders in the shape of the real rows, not a spinner.
+            // Results already on screen stay while a refined query is in flight.
+            SkeletonList(shape: .ledger)
         } else if let errorKey = viewModel.errorKey {
             // A failed request isn't "no matches" — surface the error instead.
             Text(loc[errorKey])
@@ -125,7 +122,7 @@ struct SearchScreen: View {
         } else {
             VStack(alignment: .leading, spacing: 0) {
                 sectionLabel(resultsCountLabel, icon: nil)
-                documentList(viewModel.results)
+                documentList(viewModel.results, highlightQuery: trimmedQuery)
             }
         }
     }
@@ -156,7 +153,7 @@ struct SearchScreen: View {
     // MARK: - Helpers
 
     @ViewBuilder
-    private func documentList(_ documents: [Document]) -> some View {
+    private func documentList(_ documents: [Document], highlightQuery: String? = nil) -> some View {
         VStack(spacing: 0) {
             ForEach(documents) { document in
                 let parts = docTitleParts(document.title)
@@ -170,6 +167,7 @@ struct SearchScreen: View {
                     excerpt: document.excerpt,
                     pageCount: document.numchild,
                     tintSeed: document.id,
+                    highlightQuery: highlightQuery,
                     onOpen: {
                         if viewModel.isDeletePending(document) {
                             documentPendingUndo = document
@@ -198,6 +196,12 @@ struct SearchScreen: View {
         // and the reference (the wrapping VStacks use spacing 0).
         .padding(.bottom, DocsSpacing.space3xs)
     }
+}
+
+/// Whether the results area shows placeholder rows: a query is in flight and there is nothing to
+/// show yet. With results on screen (a refined query) they stay, so the list does not flash.
+func searchShowsSkeleton(isSearching: Bool, hasResults: Bool) -> Bool {
+    isSearching && !hasResults
 }
 
 private struct SearchRequestID: Hashable {
