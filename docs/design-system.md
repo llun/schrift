@@ -26,6 +26,18 @@
 > bar and line heights scale with Dynamic Type. `PinnedCard` also sets a rounded
 > `.contextMenuPreview` content shape. `SharedRow` is unchanged by this change.
 
+> **Revised: 2026-11-01 — The theme picker previews each theme as a small document.** The
+> "Aa" swatch per theme is replaced by a specimen drawn through that theme's own
+> `DocsColors` in the current light/dark appearance: a bold sample title, two placeholder
+> lines (`textPrimary` at 35%) and a page chip that mirrors `DocumentLinkChip`
+> (`brandFillSubtle` background, `textBrand` title, `description` glyph). The selected theme
+> keeps its check and gains a 2pt `brandFill` border. The specimen is decorative
+> (`accessibilityHidden`); each option stays one button with name, description and the
+> selected trait. At accessibility Dynamic Type sizes the specimen stacks above the name
+> (`rowUsesStackedLayout`) and fills the row width there, since its scaled fixed width would
+> overflow a phone at AX4/AX5 (`themeSpecimenFixedWidth`). No colour values or typography tokens changed; the paired
+> `ThemeSwatch` remains for the design-system catalogue.
+
 > **Revised: 2026-11-01 — Shared rows lead with the sharer's face.** A Shared row now
 > leads with the sharer's `Avatar` (38pt, the same box as the tinted `DocIcon`) instead of
 > the generic document icon; the trailing `AvatarGroup` stays but no longer repeats the
@@ -135,10 +147,11 @@
 > `HomeSplitView` paints it `surfacePage`. Only White's light page matched the system
 > colour there, so its regression test runs on a local iPad (CI's iPhone skips it).
 >
-> Profile's Theme sheet shows paired samples, remains open to compare selections,
-> and announces the selected row to VoiceOver. Its English copy uses the existing
-> catalog fallback until a reviewed translation pass. `ThemeCatalogPreview` supplies
-> six isolated component specimens. `ThemeStoreTests`, `DocsThemePaletteTests` and
+> Profile's Theme sheet shows one small document specimen per theme, drawn in that
+> theme's palette, remains open to compare selections, and announces the selected row
+> to VoiceOver. Its English copy uses the existing catalog fallback until a reviewed
+> translation pass. The paired `ThemeSwatch` is used only in `ThemeCatalogPreview`,
+> which supplies six isolated component specimens. `ThemeStoreTests`, `DocsThemePaletteTests` and
 > `EditorThemeTests` cover persistence, contrast and mounted editor continuity;
 > `ThemeFlowTests` exercises the production screens and exports native screenshots
 > through the test-only host. `--theme-audit`, `--theme-white/mist/paper`,
