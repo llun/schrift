@@ -1,5 +1,13 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — The offline banner no longer covers the large title.** `OfflineBanner`
+> filled itself with the bare `.background(gray050)`, the ShapeStyle overload that ignores the safe
+> area on every edge; set right against the navigation bar, the fill reached up through the whole
+> bar and painted over Home's large title and subtitle (and Search's and Shared's). The fill is now
+> bounded to the strip (`ignoresSafeAreaEdges: []`). On Home, Shared and Search the banner is a
+> `.safeAreaBar(edge: .top)` on the screen's scroll view, under the title in the large and the
+> collapsed state. No colour, spacing or string change.
+
 > **Revised: 2026-11-01 — Continue reading also restores a document opened from its cache.**
 > A document whose body was already on the device reopened at the top: its cached body is
 > installed by `load()` after the reading surface has appeared over an empty page, so the restore

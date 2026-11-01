@@ -81,8 +81,9 @@ final class OfflineControlsTests: XCTestCase {
         app.terminate()
     }
 
-    /// The banner sits under the navigation bar rather than costing it its title: stacked above
-    /// Home's scroll view, it left the large title and subtitle undrawn, a blank band under "+".
+    /// The banner sits under the navigation bar rather than costing it its title: its fill used to
+    /// ignore the safe area and reach up through the whole bar, a grey band under "+" that painted
+    /// over the large title and subtitle (the banner's frame then started at the bar's top edge).
     func testHomeKeepsLargeTitleAndSubtitleWhileOffline() throws {
         let app = launch()
         guard app.buttons["Search docs.example.org"].exists else {
@@ -97,6 +98,8 @@ final class OfflineControlsTests: XCTestCase {
         XCTAssertTrue(subtitle.exists, "The server subtitle is drawn while offline")
         XCTAssertLessThanOrEqual(title.frame.maxY, banner.frame.minY + 1, "The title sits above the banner")
         XCTAssertLessThanOrEqual(subtitle.frame.maxY, banner.frame.minY + 1, "The subtitle sits above the banner")
+        // One slim strip (padding and a caption line, about 40pt), not a fill reaching up the bar.
+        XCTAssertLessThan(banner.frame.height, 80, "The banner's fill stays inside its own strip")
         capture(app, "iphone-home-offline-large-title")
         app.terminate()
     }

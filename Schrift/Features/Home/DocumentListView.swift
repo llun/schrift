@@ -94,10 +94,11 @@ struct DocumentListView: View {
         .onScrollPhaseChange { _, phase in
             if phase == .interacting { swipe = swipeRevealAfterScrollInteraction(swipe) }
         }
-        // The banner is a bar on the scroll view, not a sibling stacked above it: with anything
-        // between the navigation bar and the ScrollView, the bar no longer tracks it as its
-        // content scroll view and iOS 26 leaves the large title and subtitle undrawn, a blank
-        // band under the toolbar for as long as the banner is up.
+        // The banner is a bar on the scroll view, not a sibling stacked above it, so the ScrollView
+        // stays the screen's root: the navigation bar tracks it for the large-title collapse and
+        // the scroll-edge effect, and the bar sits at its top safe-area edge, under the large
+        // title and subtitle in both the large and the collapsed state. (The banner keeps its own
+        // fill inside the strip — see `OfflineBanner` — or it would paint over that title.)
         .safeAreaBar(edge: .top, spacing: 0) {
             if showsOfflineBanner {
                 OfflineBanner(note: loc[.offline_note])

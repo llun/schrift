@@ -32,7 +32,11 @@ struct OfflineBanner: View {
         }
         .padding(.horizontal, DocsSpacing.gutter)
         .padding(.vertical, DocsSpacing.spaceXS)
-        .background(theme.colors.gray050)
+        // Bounded to the strip. The plain `.background(_:)` ShapeStyle overload ignores the safe
+        // area on every edge, and the banner sits right against the navigation bar's safe area,
+        // so its fill reached up through the whole bar and painted over the large title and
+        // subtitle: a grey band under "+" for as long as the banner was up.
+        .background(theme.colors.gray050, ignoresSafeAreaEdges: [])
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(theme.colors.borderDefault)

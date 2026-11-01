@@ -36,8 +36,8 @@ struct SearchScreen: View {
             .padding(.top, DocsSpacing.space3xs)
             .padding(.bottom, DocsSpacing.spaceBase)
         }
-        // A bar on the scroll view, as on Home and Shared: stacked above it, the banner would cost
-        // the navigation bar its content scroll view, and with it the large title and subtitle.
+        // A bar on the scroll view, as on Home and Shared: the ScrollView stays the root the
+        // navigation bar tracks, and the banner sits under the large title in either bar state.
         // Search keeps working offline, over the documents saved on this device only.
         .safeAreaBar(edge: .top, spacing: 0) {
             if viewModel.availability.isOffline {

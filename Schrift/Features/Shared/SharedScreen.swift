@@ -110,8 +110,8 @@ struct SharedScreen: View {
         .refreshable {
             await viewModel.refresh()
         }
-        // A bar on the scroll view, as on Home: stacked above it, the banner would cost the
-        // navigation bar its content scroll view, and with it the large title and subtitle.
+        // A bar on the scroll view, as on Home: the ScrollView stays the root the navigation bar
+        // tracks, and the banner sits under the large title and subtitle in either bar state.
         .safeAreaBar(edge: .top, spacing: 0) {
             if showsOfflineBanner {
                 OfflineBanner(note: loc[.offline_note])

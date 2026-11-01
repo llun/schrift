@@ -716,10 +716,15 @@ new code reads like the surrounding code.
   `.navigationSubtitle` and put actions in `.toolbar` — they do not draw a `NavBar`.
   Keep native Liquid Glass, minimize-on-scroll, scroll-edge effects and safe areas.
   - A strip under the bar (the offline banner on Home, Shared and Search) goes on the
-    screen's `ScrollView` as `.safeAreaBar(edge: .top)`, never as a `VStack`
-    sibling above it: anything stacked between the bar and the scroll view
-    costs the bar its content scroll view, and iOS 26 then leaves the large
-    title and subtitle undrawn.
+    screen's `ScrollView` as `.safeAreaBar(edge: .top)`, so the scroll view stays the
+    root the bar tracks (large-title collapse, scroll-edge effect) and the strip sits
+    at its top safe-area edge, under the large title and subtitle. Give such a strip
+    a fill bounded to itself — `.background(color, ignoresSafeAreaEdges: [])` or
+    `.background(color, in: Rectangle())` — never the bare `.background(color)`:
+    that ShapeStyle overload ignores the safe area on every edge, so a view against
+    the bar's safe area paints up through the whole bar. That bleed, not the
+    banner's placement, is what hid Home's large title and subtitle offline (a grey
+    band under "+", read as blank in White).
   - Home's circular create action uses a Material Symbols template `Image`
     and `.buttonBorderShape(.circle)`. A `MaterialSymbol` text label is sized
     as a wider text action by the native toolbar, making its glass surface oval.
