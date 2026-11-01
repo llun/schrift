@@ -232,6 +232,17 @@ struct MarkdownBlockView: View {
             }
             .padding(.leading, EditorBlockMetrics.listIndentInset(block.indent))
 
+        case .unknown:
+            // A GFM table is drawn as a grid while reading. The block stays `.unknown`
+            // — its source is saved back verbatim and edited as markdown — so this is
+            // display only; anything that is not cleanly a table keeps the panel.
+            if let table = parseMarkdownTable(block.text) {
+                MarkdownTableView(table: table, serverOrigin: serverOrigin)
+                    .padding(.leading, EditorBlockMetrics.listIndentInset(block.indent))
+            } else {
+                textRow
+            }
+
         default:
             textRow
         }
