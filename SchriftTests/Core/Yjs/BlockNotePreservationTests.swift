@@ -7,6 +7,9 @@ import XCTest
 /// touch it, and still write everything the user did change. Verified at the document level,
 /// like `BlockNoteIncrementalSaveTests`: apply the update to a replica of the served state
 /// and project the result.
+///
+/// Each save passes `base`, the markdown the server's export gave the editor before the edit
+/// (the draft's baseline in the app), which is what says which blocks the user left alone.
 final class BlockNotePreservationTests: XCTestCase {
     private let origin = "https://docs.example.test"
 
@@ -30,10 +33,13 @@ final class BlockNotePreservationTests: XCTestCase {
         BlockNoteYjs.encode(blocks, clientID: 1)
     }
 
-    private func save(_ state: Data, _ markdown: String) throws -> Data? {
+    private func blocks(_ markdown: String) -> [BlockNoteBlock] {
+        MarkdownYjs.blockNoteBlocks(from: markdown, serverOrigin: origin)
+    }
+
+    private func save(_ state: Data, _ markdown: String, base: String?) throws -> Data? {
         try BlockNoteIncrementalSave.update(
-            serverState: state, newBlocks: MarkdownYjs.blockNoteBlocks(from: markdown, serverOrigin: origin),
-            serverOrigin: origin)
+            serverState: state, newBlocks: blocks(markdown), baseBlocks: base.map(blocks), serverOrigin: origin)
     }
 
     private func project(_ state: Data, after update: Data?) throws -> ProjectedDocument {
@@ -53,14 +59,15 @@ final class BlockNotePreservationTests: XCTestCase {
     /// The web's table reaches the editor as pipe lines, which come back as three plain
     /// paragraphs. Untouched, it must stay the table.
     private var table: BlockNoteBlock {
-        BlockNoteBlock(node: "table", props: [], runs: [InlineRun("Page What it covers Architecture How")], id: idB)
+        BlockNoteBlock(node: "table", props: [], runs: [InlineRun("Page What it covers Architecture -5")], id: idB)
     }
-    private let tableMarkdown = "| Page | What it covers |\n| --- | --- |\n| Architecture | How |"
+    private let tableMarkdown = "| Page | What it covers |\n| --- | --- |\n| Architecture | -5 |"
 
     func testAnUntouchedTableSurvivesAnEditElsewhere() throws {
         let state = served([paragraph("Intro", id: idA), table, paragraph("Outro", id: idC)])
+        let base = "Intro\n\n\(tableMarkdown)\n\nOutro"
 
-        let update = try save(state, "Intro, edited\n\n\(tableMarkdown)\n\nOutro")
+        let update = try save(state, "Intro, edited\n\n\(tableMarkdown)\n\nOutro", base: base)
         let after = try project(state, after: update)
 
         XCTAssertEqual(after.blocks.map(\.id), [idA, idB, idC])
@@ -70,28 +77,54 @@ final class BlockNotePreservationTests: XCTestCase {
 
     func testAnUntouchedTableAloneNeedsNoUpdate() throws {
         let state = served([paragraph("Intro", id: idA), table])
+        let markdown = "Intro\n\n\(tableMarkdown)"
 
-        XCTAssertNil(try save(state, "Intro\n\n\(tableMarkdown)"))
+        XCTAssertNil(try save(state, markdown, base: markdown))
     }
 
-    /// Changed in the app, its words no longer match: it is written from the markdown, as
-    /// before — the user's edit wins.
+    /// Changed in the app, it is written from the markdown, as before — the user's edit wins.
     func testAnEditedTableIsWrittenFromTheMarkdown() throws {
         let state = served([paragraph("Intro", id: idA), table])
 
-        let update = try save(state, "Intro\n\n| Page | What it covers |\n| --- | --- |\n| Features | How |")
+        let update = try save(
+            state, "Intro\n\n| Page | What it covers |\n| --- | --- |\n| Features | -5 |",
+            base: "Intro\n\n\(tableMarkdown)")
         let after = try project(state, after: update)
 
         XCTAssertFalse(after.blocks.contains { $0.node == "table" })
         XCTAssertEqual(after.blocks.first?.id, idA)
     }
 
+    /// An edit the words cannot see — a sign, a bold word — is still an edit.
+    func testAPunctuationOrFormattingOnlyEditIsWritten() throws {
+        let state = served([paragraph("Intro", id: idA), table])
+        let base = "Intro\n\n\(tableMarkdown)"
+
+        for edited in [
+            "| Page | What it covers |\n| --- | --- |\n| Architecture | 5 |",
+            "| Page | What it covers |\n| --- | --- |\n| **Architecture** | -5 |",
+        ] {
+            let after = try project(state, after: try save(state, "Intro\n\n\(edited)", base: base))
+            XCTAssertFalse(after.blocks.contains { $0.node == "table" }, edited)
+        }
+    }
+
     func testADeletedTableIsRemoved() throws {
         let state = served([paragraph("Intro", id: idA), table, paragraph("Outro", id: idC)])
 
-        let after = try project(state, after: try save(state, "Intro\n\nOutro"))
+        let after = try project(
+            state, after: try save(state, "Intro\n\nOutro", base: "Intro\n\n\(tableMarkdown)\n\nOutro"))
 
         XCTAssertEqual(after.blocks.map(\.id), [idA, idC])
+    }
+
+    /// Without a base nothing can be shown to be untouched, so no shadow is matched.
+    func testWithoutABaseNoShadowIsMatched() throws {
+        let state = served([paragraph("Intro", id: idA), table])
+
+        let after = try project(state, after: try save(state, "Intro, edited\n\n\(tableMarkdown)", base: nil))
+
+        XCTAssertFalse(after.blocks.contains { $0.node == "table" })
     }
 
     // MARK: - Callouts, toggles, media
@@ -101,46 +134,129 @@ final class BlockNotePreservationTests: XCTestCase {
             node: "callout", props: [("emoji", .string("💡"))], runs: [InlineRun("Remember this")], id: idB)
         let state = served([paragraph("Intro", id: idA), callout])
 
-        let after = try project(state, after: try save(state, "Intro, edited\n\n💡 Remember this"))
+        let update = try save(state, "Intro, edited\n\n💡 Remember this", base: "Intro\n\n💡 Remember this")
+        let after = try project(state, after: update)
 
         XCTAssertEqual(after.blocks.map(\.node), ["paragraph", "callout"])
         XCTAssertEqual(after.blocks[1].id, idB)
     }
 
-    /// A toggle with a child: the export flattens it to sibling paragraphs.
-    func testAnUntouchedToggleKeepsItsChildren() throws {
+    func testACalloutTurnedIntoAHeadingIsWritten() throws {
+        let callout = BlockNoteBlock(
+            node: "callout", props: [("emoji", .string("💡"))], runs: [InlineRun("Remember this")], id: idB)
+        let state = served([paragraph("Intro", id: idA), callout])
+
+        let after = try project(
+            state, after: try save(state, "Intro\n\n## Remember this", base: "Intro\n\n💡 Remember this"))
+
+        XCTAssertEqual(after.blocks.map(\.node), ["paragraph", "heading"])
+    }
+
+    /// A toggle with a child: the export flattens it to sibling blocks.
+    private var toggle: BlockNoteBlock {
         var toggle = BlockNoteBlock(node: "toggleListItem", props: baseProps, runs: [InlineRun("Parent")], id: idB)
-        toggle.children = [paragraph("Child", id: idC)]
+        toggle.children = [
+            BlockNoteBlock(
+                node: "checkListItem", props: baseProps + [("checked", .bool(false))], runs: [InlineRun("Child")],
+                id: idC)
+        ]
+        return toggle
+    }
+    private let toggleMarkdown = "Parent\n\n- [ ] Child"
+
+    func testAnUntouchedToggleKeepsItsChildren() throws {
         let state = served([paragraph("Intro", id: idA), toggle])
 
-        let after = try project(state, after: try save(state, "Intro, edited\n\nParent\n\nChild"))
+        let update = try save(state, "Intro, edited\n\n\(toggleMarkdown)", base: "Intro\n\n\(toggleMarkdown)")
+        let after = try project(state, after: update)
 
         XCTAssertEqual(after.blocks.map(\.id), [idA, idB])
         XCTAssertEqual(after.blocks[1].fidelity, .opaque(reason: "nested children"))
     }
 
-    func testAnUntouchedVideoIsNotTurnedIntoAnImage() throws {
-        let url = "https://docs.example.test/media/clip.mp4"
-        let video = BlockNoteBlock(
-            node: "video", props: [("url", .string(url)), ("name", .string("clip"))], runs: [], id: idB)
-        let state = served([paragraph("Intro", id: idA), video])
+    /// Ticking the toggle's nested checklist item keeps every word, and must still be written.
+    func testATickInsideAToggleIsWritten() throws {
+        let state = served([paragraph("Intro", id: idA), toggle])
 
-        let after = try project(state, after: try save(state, "Intro, edited\n\n![clip](\(url))"))
+        let after = try project(
+            state, after: try save(state, "Intro\n\nParent\n\n- [x] Child", base: "Intro\n\n\(toggleMarkdown)"))
+
+        XCTAssertFalse(after.blocks.contains { $0.id == idB })
+        XCTAssertEqual(after.blocks.last.flatMap { prop("checked", of: $0) }, .bool(true))
+    }
+
+    /// A photo the user put between the toggle's flattened lines is theirs, never part of the
+    /// shadow.
+    func testABlockInsertedInsideAShadowIsNotSwallowed() throws {
+        let state = served([paragraph("Intro", id: idA), toggle])
+        let photo = "![](https://docs.example.test/media/p.png)"
+
+        let after = try project(
+            state,
+            after: try save(state, "Intro\n\nParent\n\n\(photo)\n\n- [ ] Child", base: "Intro\n\n\(toggleMarkdown)"))
+
+        XCTAssertTrue(after.blocks.contains { $0.node == "image" })
+    }
+
+    private let videoURL = "https://docs.example.test/media/clip.mp4"
+    private var video: BlockNoteBlock {
+        BlockNoteBlock(
+            node: "video", props: [("url", .string(videoURL)), ("name", .string("clip"))], runs: [], id: idB)
+    }
+
+    func testAnUntouchedVideoIsNotTurnedIntoAnImage() throws {
+        let state = served([paragraph("Intro", id: idA), video])
+        let line = "![clip](\(videoURL))"
+
+        let after = try project(state, after: try save(state, "Intro, edited\n\n\(line)", base: "Intro\n\n\(line)"))
 
         XCTAssertEqual(after.blocks.map(\.node), ["paragraph", "video"])
         XCTAssertEqual(after.blocks[1].id, idB)
     }
 
+    /// Deleting the video while a paragraph links to it: the paragraph is not the video's
+    /// shadow, so the video goes and the paragraph stays.
+    func testAParagraphLinkingAMediaURLIsNotItsShadow() throws {
+        let link = "See [clip](\(videoURL))"
+        let state = served([paragraph("Intro", id: idA), video, paragraph("Outro", id: idC)])
+
+        let update = try save(
+            state, "Intro\n\n\(link)\n\nOutro", base: "Intro\n\n![clip](\(videoURL))\n\n\(link)\n\nOutro")
+        let after = try project(state, after: update)
+
+        XCTAssertFalse(after.blocks.contains { $0.node == "video" })
+        XCTAssertEqual(after.blocks.map(\.node), ["paragraph", "paragraph", "paragraph"])
+    }
+
     // MARK: - Blocks the export never spells
 
+    private var pageBreak: BlockNoteBlock { BlockNoteBlock(node: "pageBreak", props: [], runs: [], id: idB) }
+
     func testAPageBreakTheEditorNeverSawIsKeptInPlace() throws {
-        let pageBreak = BlockNoteBlock(node: "pageBreak", props: [], runs: [], id: idB)
         let state = served([paragraph("One", id: idA), pageBreak, paragraph("Two", id: idC)])
 
-        let after = try project(state, after: try save(state, "One\n\nTwo, edited"))
+        let after = try project(state, after: try save(state, "One\n\nTwo, edited", base: "One\n\nTwo"))
 
         XCTAssertEqual(after.blocks.map(\.id), [idA, idB, idC])
         XCTAssertEqual(after.blocks[2].runs, [InlineRun("Two, edited")])
+    }
+
+    /// Editing the block *before* it must not move the page break above that block.
+    func testEditingTheBlockBeforeAPageBreakKeepsItsPlace() throws {
+        let state = served([paragraph("One", id: idA), pageBreak, paragraph("Two", id: idC)])
+
+        let after = try project(state, after: try save(state, "One, edited\n\nTwo", base: "One\n\nTwo"))
+
+        XCTAssertEqual(after.blocks.map(\.id), [idA, idB, idC])
+        XCTAssertEqual(after.blocks[0].runs, [InlineRun("One, edited")])
+    }
+
+    func testAPageBreakIsKeptEvenWithoutABase() throws {
+        let state = served([paragraph("One", id: idA), pageBreak, paragraph("Two", id: idC)])
+
+        let after = try project(state, after: try save(state, "One\n\nTwo, edited", base: nil))
+
+        XCTAssertEqual(after.blocks.map(\.id), [idA, idB, idC])
     }
 
     // MARK: - Props the markdown cannot carry
@@ -155,7 +271,8 @@ final class BlockNotePreservationTests: XCTestCase {
             runs: [InlineRun("Warning")], id: idB)
         let state = served([paragraph("Intro", id: idA), red])
 
-        let after = try project(state, after: try save(state, "Intro, edited\n\nWarning"))
+        let after = try project(
+            state, after: try save(state, "Intro, edited\n\nWarning", base: "Intro\n\nWarning"))
 
         XCTAssertEqual(after.blocks[1].id, idB)
         XCTAssertEqual(prop("textColor", of: after.blocks[1]), .string("red"))
@@ -174,24 +291,24 @@ final class BlockNotePreservationTests: XCTestCase {
             runs: [InlineRun("Task")], id: idB)
         let state = served([paragraph("Intro", id: idA), item])
 
-        let after = try project(state, after: try save(state, "Intro\n\n- [x] Task"))
+        let after = try project(state, after: try save(state, "Intro\n\n- [x] Task", base: "Intro\n\n- [ ] Task"))
 
         XCTAssertEqual(after.blocks.count, 2)
         XCTAssertEqual(prop("checked", of: after.blocks[1]), .bool(true))
     }
 
-    /// The same words under a different heading level are an edit, not a shadow.
     func testChangingAToggleableHeadingsLevelIsWritten() throws {
         let heading = BlockNoteBlock(
             node: "heading", props: baseProps + [("level", .int(2)), ("isToggleable", .bool(true))],
             runs: [InlineRun("Section")], id: idB)
         let state = served([paragraph("Intro", id: idA), heading])
+        let base = "Intro\n\n## Section"
 
-        let unchanged = try project(state, after: try save(state, "Intro, edited\n\n## Section"))
+        let unchanged = try project(state, after: try save(state, "Intro, edited\n\n## Section", base: base))
         XCTAssertEqual(unchanged.blocks[1].id, idB)
         XCTAssertEqual(prop("isToggleable", of: unchanged.blocks[1]), .bool(true))
 
-        let changed = try project(state, after: try save(state, "Intro\n\n### Section"))
+        let changed = try project(state, after: try save(state, "Intro\n\n### Section", base: base))
         XCTAssertEqual(prop("level", of: changed.blocks[1]), .int(3))
     }
 
@@ -206,14 +323,28 @@ final class BlockNotePreservationTests: XCTestCase {
         XCTAssertEqual(BlockNotePreservation.signatureTokens("| --- | :-: |"), [])
     }
 
-    func testAMediaBlockIsFoundByItsURL() {
+    func testOnlyATrueMediaShadowMatchesItsURL() {
         let url = "https://a.example/v.mp4"
+        let link = #"{"href":"https://a.example/v.mp4"}"#
         let image = BlockNoteBlock(node: "image", props: [("url", .string(url))], runs: [], id: "x")
         let html = BlockNoteBlock(
             node: "paragraph", props: [], runs: [InlineRun("<audio src=\"\(url)\"></audio>")], id: "y")
-        let other = BlockNoteBlock(node: "image", props: [("url", .string(url + "2"))], runs: [], id: "z")
-        XCTAssertTrue(BlockNotePreservation.references(image, url: url))
-        XCTAssertTrue(BlockNotePreservation.references(html, url: url))
-        XCTAssertFalse(BlockNotePreservation.references(other, url: url))
+        let bareLink = BlockNoteBlock(
+            node: "paragraph", props: [], runs: [InlineRun("clip", marks: [(key: "link", valueJSON: link)])], id: "z")
+        let mention = BlockNoteBlock(
+            node: "paragraph", props: [],
+            runs: [InlineRun("See "), InlineRun("clip", marks: [(key: "link", valueJSON: link)])], id: "w")
+        let other = BlockNoteBlock(node: "image", props: [("url", .string(url + "2"))], runs: [], id: "v")
+        XCTAssertTrue(BlockNotePreservation.isMediaShadow(image, url: url))
+        XCTAssertTrue(BlockNotePreservation.isMediaShadow(html, url: url))
+        XCTAssertTrue(BlockNotePreservation.isMediaShadow(bareLink, url: url))
+        XCTAssertFalse(BlockNotePreservation.isMediaShadow(mention, url: url))
+        XCTAssertFalse(BlockNotePreservation.isMediaShadow(other, url: url))
+    }
+
+    func testUntouchedIsTheLongestCommonSubsequenceWithTheBase() {
+        let base = blocks("One\n\nTwo\n\nThree")
+        let new = blocks("One\n\nTwo, edited\n\nThree\n\nFour")
+        XCTAssertEqual(BlockNotePreservation.untouched(base: base, new: new), [0, 2])
     }
 }

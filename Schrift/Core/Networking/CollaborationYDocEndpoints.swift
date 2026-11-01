@@ -79,9 +79,13 @@ extension DocsAPIClient {
     /// Writes a document's body through whichever route this server has (see
     /// `ContentSaveRoute`). Throws ⇒ the body was not confirmed; returns ⇒ the server holds
     /// it — `saveDocumentContent`'s half-land contract depends on exactly that.
-    func saveContentBody(documentID: UUID, markdown: String) async throws {
+    ///
+    /// `baseMarkdown` is the server copy the edit started from; only the Docs 6 route uses it,
+    /// to keep the server blocks the user did not touch (see `BlockNotePreservation`).
+    func saveContentBody(documentID: UUID, markdown: String, baseMarkdown: String? = nil) async throws {
         if case .collaborationYDoc(let org) = contentSaveRoute {
-            try await saveContentToCollaborationYDoc(documentID: documentID, org: org, markdown: markdown)
+            try await saveContentToCollaborationYDoc(
+                documentID: documentID, org: org, markdown: markdown, baseMarkdown: baseMarkdown)
             return
         }
         do {
@@ -94,7 +98,8 @@ extension DocsAPIClient {
             // route is safe. Only this error qualifies — `.notFound` (a deleted document),
             // `.forbidden` and everything else are answers about the document, not the route.
             let org = try await fallbackCollaborationOrg()
-            try await saveContentToCollaborationYDoc(documentID: documentID, org: org, markdown: markdown)
+            try await saveContentToCollaborationYDoc(
+                documentID: documentID, org: org, markdown: markdown, baseMarkdown: baseMarkdown)
         }
     }
 
@@ -125,7 +130,9 @@ extension DocsAPIClient {
     /// server already reads that way. Memoizes the route once the GET has answered — but
     /// never over a collaboration route already set (re-read after the await), so a
     /// config-derived org that landed concurrently is not replaced by this save's guess.
-    private func saveContentToCollaborationYDoc(documentID: UUID, org: String, markdown: String) async throws {
+    private func saveContentToCollaborationYDoc(
+        documentID: UUID, org: String, markdown: String, baseMarkdown: String?
+    ) async throws {
         let state = try await collaborationYDocState(documentID: documentID, org: org)
         if case .collaborationYDoc = contentSaveRoute {
             // Already proven (by config, or by an earlier save): keep it.
@@ -137,6 +144,7 @@ extension DocsAPIClient {
         do {
             update = try BlockNoteIncrementalSave.update(
                 serverState: state, newBlocks: MarkdownYjs.blockNoteBlocks(from: markdown, serverOrigin: origin),
+                baseBlocks: baseMarkdown.map { MarkdownYjs.blockNoteBlocks(from: $0, serverOrigin: origin) },
                 serverOrigin: origin)
         } catch {
             throw DocsAPIError.decoding("collaboration document: \(error)")

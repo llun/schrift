@@ -3710,6 +3710,10 @@ final class DocumentSaveCoordinator {
         inFlightContent[documentID] = save
         states[documentID] = .saving
         let taskToken = backgroundTasks.begin("SchriftDocumentSave")
+        // The draft's baseline is the server copy this edit descends from (the draft is
+        // written before any save starts): the Docs 6 save reads it to keep the web blocks the
+        // user left alone (`BlockNotePreservation`).
+        let baseMarkdown = draftStore.draft(for: documentID)?.baseline?.markdown
         inFlight[documentID] = Task {
             do {
                 // A non-nil return means the CONTENT PATCH landed and only the title failed:
@@ -3723,7 +3727,8 @@ final class DocumentSaveCoordinator {
                 } else {
                     // Classic full-overwrite: re-derive Yjs bytes from the markdown.
                     titleFailure = try await client.saveDocumentContent(
-                        documentID: documentID, title: save.title, markdown: save.markdown)
+                        documentID: documentID, title: save.title, markdown: save.markdown,
+                        baseMarkdown: baseMarkdown)
                 }
                 finish(documentID: documentID, save: save, error: titleFailure, contentLanded: true)
             } catch {

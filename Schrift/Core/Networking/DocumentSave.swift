@@ -78,8 +78,13 @@ extension DocsAPIClient {
     /// that route, it is an incremental update diffed against the collaboration server's own
     /// state (a GET, then a PATCH that is skipped when nothing changed). Either way the body
     /// is confirmed before the title is attempted, so the contract below holds unchanged.
-    func saveDocumentContent(documentID: UUID, title: String, markdown: String) async throws -> DocsAPIError? {
-        try await saveContentBody(documentID: documentID, markdown: markdown)
+    ///
+    /// `baseMarkdown` is the server copy the edit started from (the draft's baseline). The
+    /// Docs 6 save uses it to leave untouched the server blocks the markdown cannot spell.
+    func saveDocumentContent(
+        documentID: UUID, title: String, markdown: String, baseMarkdown: String? = nil
+    ) async throws -> DocsAPIError? {
+        try await saveContentBody(documentID: documentID, markdown: markdown, baseMarkdown: baseMarkdown)
         do {
             try await updateTitle(documentID: documentID, title: title)
             return nil

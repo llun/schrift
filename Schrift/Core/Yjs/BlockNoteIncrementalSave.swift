@@ -41,8 +41,12 @@ enum BlockNoteIncrementalSave {
     ///
     /// `serverState` empty means an empty document. `serverOrigin` is used only to recognize
     /// the web's document-link nodes (see `oldBlocks`), never to build anything written.
+    ///
+    /// `baseBlocks` are the blocks parsed from the markdown the edit started from (the server
+    /// copy the editor loaded). They tell `BlockNotePreservation` which new blocks the user did
+    /// not touch; `nil` (no recorded base) keeps only blocks the markdown never shows.
     static func update(
-        serverState: Data, newBlocks: [BlockNoteBlock], serverOrigin: String,
+        serverState: Data, newBlocks: [BlockNoteBlock], baseBlocks: [BlockNoteBlock]? = nil, serverOrigin: String,
         clientID: UInt = UInt(UInt32.random(in: 1...UInt32.max))
     ) throws -> Data? {
         var decoded: YUpdate?
@@ -76,6 +80,7 @@ enum BlockNoteIncrementalSave {
         // shadows (`BlockNotePreservation`), so the write leaves them exactly as they are.
         let preserved = BlockNotePreservation.preserve(
             old: old, rules: BlockNotePreservation.rules(for: old, in: doc), new: newBlocks,
+            untouched: baseBlocks.map { BlockNotePreservation.untouched(base: $0, new: newBlocks) } ?? [],
             anchors: BlockNoteAlignment.anchorPairs(old: old, new: newBlocks))
         let aligned = BlockNoteAlignment.align(old: old, new: preserved.blocks, forced: preserved.forced)
         // The same copy a preserved block is written back as, so the write finds it unchanged.

@@ -20,14 +20,19 @@ import Foundation
 ///
 /// **What this does.** Before alignment, every server block that is not fully `.modeled`
 /// and that the plain alignment would not anchor gets a `Rule` for recognising its shadow
-/// among the editor's new blocks, inside the same gap between anchors:
+/// among the editor's new blocks, inside the same gap between anchors — and only among the
+/// new blocks the user left exactly as they were in the markdown the edit started from
+/// (`untouched(base:new:)`). That base is what makes the words below safe to match on: a
+/// change they cannot see (punctuation, a bold word, a link target, a nested tick) makes the
+/// block touched, so it is written, never preserved away.
 ///
 /// - `.text` — the shortest run of new blocks (starting on one with text) whose words, in
 ///   order, are exactly the old block's words (`signatureTokens`). Punctuation, markdown
 ///   syntax, pipes, emoji and HTML tags carry no words, so a table's pipe lines, a callout's
 ///   emoji paragraph or a toggle heading's plain heading all read as the same words.
-/// - `.media(url)` — one new block that references the same URL (an image line, a file
-///   card, a link, or `<figure>`/`<audio>` HTML naming it).
+/// - `.media(url)` — one new block that is that media's shadow (`isMediaShadow`): an image
+///   or file node with the same URL, a paragraph that is only a link to it, or a paragraph
+///   of `<figure>`/`<audio>` HTML naming it.
 /// - `.invisible` — a node the export never spells (`invisibleNodes`). If no text shadow is
 ///   found it is kept where it was, since the user could not have deleted what they never
 ///   saw.
@@ -38,6 +43,8 @@ import Foundation
 /// writes nothing for it. Anything the user edited no longer reads as the same words, is not
 /// recognised, and is saved from the markdown as before — so this only ever keeps what the
 /// user left alone, and the content the user changed is still exactly what they wrote.
+/// Without a base (a draft from before the base was recorded) no shadow is matched and only
+/// the invisible blocks are kept.
 ///
 /// List items with nested children are left out on purpose: the editor models their
 /// structure, so re-indenting one keeps every word and must still be written.
@@ -233,15 +240,22 @@ enum BlockNotePreservation {
         signatureTokens(block.runs.map(\.text).joined()) + block.children.flatMap { signatureTokens(of: $0) }
     }
 
-    /// Whether a new block names `url`: as its own `url` prop, a link mark, or anywhere in
-    /// its text (a markdown link or an HTML `src`/`href` that reached it verbatim).
-    static func references(_ block: BlockNoteBlock, url: String) -> Bool {
-        if block.props.contains(where: { $0.key == "url" && $0.value == .string(url) }) { return true }
-        for run in block.runs {
-            if run.text.contains(url) { return true }
-            if run.marks.contains(where: { $0.key == "link" && linkHref($0.valueJSON) == url }) { return true }
+    /// Whether a new block is a media block's shadow: an image or file node with that `url`,
+    /// a paragraph that is nothing but one link to it, or a paragraph of raw HTML (the
+    /// export's `<figure>`/`<audio>`/`<video>`) naming it as an attribute. Never just any
+    /// block that mentions the URL, which would swallow a user's paragraph linking to it.
+    static func isMediaShadow(_ block: BlockNoteBlock, url: String) -> Bool {
+        guard block.children.isEmpty else { return false }
+        if block.node == "image" || block.node == "file" {
+            return block.props.contains { $0.key == "url" && $0.value == .string(url) }
         }
-        return false
+        guard block.node == "paragraph", !block.runs.isEmpty else { return false }
+        if block.runs.allSatisfy({ run in run.marks.contains { $0.key == "link" && linkHref($0.valueJSON) == url } }) {
+            return true
+        }
+        let text = block.runs.map(\.text).joined().trimmingCharacters(in: .whitespaces)
+        guard text.hasPrefix("<"), text.hasSuffix(">") else { return false }
+        return text.contains("\"\(url)\"") || text.contains("'\(url)'")
     }
 
     private static func linkHref(_ valueJSON: String) -> String? {
@@ -251,26 +265,106 @@ enum BlockNotePreservation {
         return object["href"] as? String
     }
 
+    /// Defaults for a prop a server block may simply omit (BlockNote leaves defaults out).
+    private static let omittedDefaults: [String: YAnyValue] = ["backgroundColor": .string("default")]
+
     /// Whether `block` is an untouched shadow of a modeled server block (`Rule.exact`).
     static func isExactShadow(
         _ block: BlockNoteBlock, node: String, props: [String: YAnyValue], runs: [InlineRun]
     ) -> Bool {
         guard block.node == node, block.children.isEmpty, block.runs == runs else { return false }
         return block.props.allSatisfy { prop in
-            unexpressibleKeys.contains(prop.key) || props[prop.key].map { $0 == prop.value } ?? true
+            if unexpressibleKeys.contains(prop.key) { return true }
+            // A prop the server block lacks only matches its default: a `checked` or `level`
+            // the user set must never read as untouched.
+            return (props[prop.key] ?? omittedDefaults[prop.key]) == prop.value
         }
+    }
+
+    // MARK: - What the user left alone
+
+    /// Same content: node, props, runs and nested children — everything but the id, which
+    /// every parse mints afresh.
+    static func sameContent(_ lhs: BlockNoteBlock, _ rhs: BlockNoteBlock) -> Bool {
+        lhs.node == rhs.node && lhs.runs == rhs.runs && lhs.children.count == rhs.children.count
+            && lhs.props.map { [$0.key, String(describing: $0.value)] }
+                == rhs.props.map { [$0.key, String(describing: $0.value)] }
+            && zip(lhs.children, rhs.children).allSatisfy { sameContent($0, $1) }
+    }
+
+    /// The indices of `new` blocks the user did not touch: a longest common subsequence with
+    /// `base`, the blocks parsed from the markdown the edit started from. Only these may be a
+    /// server block's shadow, so a change the words cannot see (punctuation, a bold word, a
+    /// link target, a tick on a nested checklist item, a callout turned into a heading) is
+    /// always written. Past `BlockNoteAlignment.maxTableCells` only the common prefix and
+    /// suffix count, which just preserves less.
+    static func untouched(base: [BlockNoteBlock], new: [BlockNoteBlock]) -> Set<Int> {
+        var result: Set<Int> = []
+        var prefix = 0
+        while prefix < base.count, prefix < new.count, sameContent(base[prefix], new[prefix]) {
+            result.insert(prefix)
+            prefix += 1
+        }
+        var suffix = 0
+        while suffix < base.count - prefix, suffix < new.count - prefix,
+            sameContent(base[base.count - 1 - suffix], new[new.count - 1 - suffix])
+        {
+            result.insert(new.count - 1 - suffix)
+            suffix += 1
+        }
+        let rows = base.count - prefix - suffix
+        let columns = new.count - prefix - suffix
+        guard rows > 0, columns > 0, (rows + 1) * (columns + 1) <= BlockNoteAlignment.maxTableCells else {
+            return result
+        }
+        let width = columns + 1
+        var lengths = [Int](repeating: 0, count: (rows + 1) * width)
+        for i in stride(from: rows - 1, through: 0, by: -1) {
+            for j in stride(from: columns - 1, through: 0, by: -1) {
+                if sameContent(base[prefix + i], new[prefix + j]) {
+                    lengths[i * width + j] = lengths[(i + 1) * width + j + 1] + 1
+                } else {
+                    lengths[i * width + j] = max(lengths[(i + 1) * width + j], lengths[i * width + j + 1])
+                }
+            }
+        }
+        var i = 0
+        var j = 0
+        while i < rows, j < columns {
+            if sameContent(base[prefix + i], new[prefix + j]) {
+                result.insert(prefix + j)
+                i += 1
+                j += 1
+            } else if lengths[(i + 1) * width + j] >= lengths[i * width + j + 1] {
+                i += 1
+            } else {
+                j += 1
+            }
+        }
+        return result
     }
 
     // MARK: - Placing preserved blocks
 
+    /// Upper bound on block comparisons the shadow search makes in one save, so a hostile
+    /// replica with many unmatched blocks cannot stall it. Past it, the remaining server
+    /// blocks are left to the plain alignment — exactly the behaviour before preservation.
+    static let maxShadowComparisons = 2_000_000
+
     /// `new` with each recognised shadow replaced by its server block (and each unshadowed
     /// invisible block inserted where it was), plus the forced `(old, new)` pairs that hold
-    /// those blocks in the alignment. `anchors` are the plain alignment's anchors between
-    /// `old` and `new`; each old block is only looked for inside its own gap, so the pairs
-    /// are ascending in both coordinates by construction.
+    /// those blocks in the alignment.
+    ///
+    /// `anchors` are the plain alignment's anchors between `old` and `new`; each old block is
+    /// only looked for inside its own gap, so the pairs are ascending in both coordinates by
+    /// construction. `untouched` (see `untouched(base:new:)`) are the only new blocks a shadow
+    /// may be made of.
     static func preserve(
-        old: [ProjectedBlock], rules: [Rule?], new: [BlockNoteBlock], anchors: [(old: Int, new: Int)]
+        old: [ProjectedBlock], rules: [Rule?], new: [BlockNoteBlock], untouched: Set<Int>,
+        anchors: [(old: Int, new: Int)]
     ) -> (blocks: [BlockNoteBlock], forced: [(old: Int, new: Int)]) {
+        let tokens = new.map { signatureTokens(of: $0) }
+        var budget = maxShadowComparisons
         // Placements in `new` coordinates: replace `range` (empty = insert at its lower bound).
         var placements: [(old: Int, range: Range<Int>)] = []
         var oldStart = 0
@@ -278,13 +372,29 @@ enum BlockNotePreservation {
         for anchor in anchors + [(old: old.count, new: new.count)] {
             var cursor = newStart
             let newEnd = max(anchor.new, newStart)
+            // Old blocks passed since the last placement that the plain alignment will handle;
+            // an unshadowed invisible block goes after as many new blocks, so it stays below
+            // the edited block before it rather than jumping to the top of the gap.
+            var passed = 0
             for oldIndex in oldStart..<max(anchor.old, oldStart) {
-                guard oldIndex < rules.count, let rule = rules[oldIndex] else { continue }
-                if let range = shadow(of: rule, in: new, from: cursor, to: newEnd) {
+                guard oldIndex < rules.count, let rule = rules[oldIndex], budget > 0 else {
+                    passed += 1
+                    continue
+                }
+                if let range = shadow(
+                    of: rule, in: new, tokens: tokens, untouched: untouched, from: cursor, to: newEnd,
+                    budget: &budget)
+                {
                     placements.append((old: oldIndex, range: range))
                     cursor = range.upperBound
+                    passed = 0
                 } else if case .invisible = rule {
-                    placements.append((old: oldIndex, range: cursor..<cursor))
+                    let position = min(cursor + passed, newEnd)
+                    placements.append((old: oldIndex, range: position..<position))
+                    cursor = position
+                    passed = 0
+                } else {
+                    passed += 1
                 }
             }
             oldStart = anchor.old + 1
@@ -311,28 +421,53 @@ enum BlockNotePreservation {
             node: block.node, props: block.props.map { (key: $0.key, value: $0.value) }, runs: block.runs, id: block.id)
     }
 
-    private static func shadow(of rule: Rule, in new: [BlockNoteBlock], from start: Int, to end: Int) -> Range<Int>? {
+    /// A block with no words that may sit inside a multi-block text shadow: a paragraph that
+    /// still has text, such as a table's `| --- |` separator row. Never an image, a file, a
+    /// divider or an empty paragraph, which would be the user's own insertion.
+    private static func isWordlessContinuation(_ block: BlockNoteBlock) -> Bool {
+        block.node == "paragraph" && block.children.isEmpty
+            && !block.runs.map(\.text).joined().trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private static func shadow(
+        of rule: Rule, in new: [BlockNoteBlock], tokens: [[String]], untouched: Set<Int>, from start: Int,
+        to end: Int, budget: inout Int
+    ) -> Range<Int>? {
         guard start < end else { return nil }
         switch rule {
         case .exact(let node, let props, let runs):
-            return (start..<end).first { isExactShadow(new[$0], node: node, props: props, runs: runs) }
-                .map { $0..<($0 + 1) }
+            for index in start..<end where untouched.contains(index) {
+                budget -= 1
+                if isExactShadow(new[index], node: node, props: props, runs: runs) { return index..<(index + 1) }
+            }
+            return nil
         case .media(let url):
-            return (start..<end).first { references(new[$0], url: url) }.map { $0..<($0 + 1) }
-        case .text(let tokens), .invisible(let tokens):
-            guard !tokens.isEmpty else { return nil }
-            for first in start..<end {
-                let firstTokens = signatureTokens(of: new[first])
-                guard !firstTokens.isEmpty, tokens.starts(with: firstTokens) else { continue }
+            for index in start..<end where untouched.contains(index) {
+                budget -= 1
+                if isMediaShadow(new[index], url: url) { return index..<(index + 1) }
+            }
+            return nil
+        case .text(let words), .invisible(let words):
+            guard !words.isEmpty else { return nil }
+            for first in start..<end where untouched.contains(first) {
+                budget -= 1
+                guard budget > 0 else { return nil }
+                let firstTokens = tokens[first]
+                guard !firstTokens.isEmpty, words.starts(with: firstTokens) else { continue }
                 var matched = firstTokens.count
                 var last = first
-                while matched < tokens.count, last + 1 < end {
-                    let more = signatureTokens(of: new[last + 1])
-                    guard tokens[matched...].starts(with: more) else { break }
+                while matched < words.count, last + 1 < end, untouched.contains(last + 1) {
+                    budget -= 1
+                    let more = tokens[last + 1]
+                    if more.isEmpty {
+                        guard isWordlessContinuation(new[last + 1]) else { break }
+                    } else {
+                        guard words[matched...].starts(with: more) else { break }
+                    }
                     matched += more.count
                     last += 1
                 }
-                if matched == tokens.count { return first..<(last + 1) }
+                if matched == words.count { return first..<(last + 1) }
             }
             return nil
         }
