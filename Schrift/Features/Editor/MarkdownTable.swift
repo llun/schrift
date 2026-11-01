@@ -12,7 +12,9 @@ import SwiftUI
 /// editing surface still shows (and edits) the markdown source.
 struct MarkdownTable: Equatable {
     enum Alignment: Equatable {
-        case none, leading, center, trailing
+        /// No colon in the delimiter: drawn leading. Not `none`, which an
+        /// `Alignment?` would read as `nil`.
+        case unspecified, leading, center, trailing
     }
 
     /// Header cells, as inline markdown with `\|` already unescaped.
@@ -69,7 +71,10 @@ private func tableRowCells(_ line: String) -> [String]? {
     var current = ""
     var sawPipe = false
     var escaped = false
+    // Whether the last non-blank character was an unescaped `|` — an outer pipe.
+    var endedOnPipe = false
     for character in line {
+        if character != " ", character != "\t" { endedOnPipe = !escaped && character == "|" }
         if escaped {
             if character != "|" { current.append("\\") }
             current.append(character)
@@ -92,7 +97,7 @@ private func tableRowCells(_ line: String) -> [String]? {
     // last; only those are dropped, so an empty first or last *cell* survives.
     let trimmed = line.trimmingCharacters(in: .whitespaces)
     if trimmed.hasPrefix("|") { cells.removeFirst() }
-    if trimmed.hasSuffix("|"), !trimmed.hasSuffix("\\|"), !cells.isEmpty { cells.removeLast() }
+    if endedOnPipe, !cells.isEmpty { cells.removeLast() }
     guard !cells.isEmpty else { return nil }
     return cells.map { $0.trimmingCharacters(in: .whitespaces) }
 }
@@ -107,7 +112,7 @@ private func delimiterAlignment(_ cell: String) -> MarkdownTable.Alignment? {
     case (true, true): return .center
     case (true, false): return .leading
     case (false, true): return .trailing
-    case (false, false): return .none
+    case (false, false): return .unspecified
     }
 }
 
@@ -270,7 +275,7 @@ struct MarkdownTableView: View {
     }
 
     private func cell(_ text: String, column: Int, isHeader: Bool) -> some View {
-        let alignment = table.alignments.indices.contains(column) ? table.alignments[column] : .none
+        let alignment = table.alignments.indices.contains(column) ? table.alignments[column] : .unspecified
         return Text(markdownInlineText(text, theme: theme, serverHost: documentLinkHost(forOrigin: serverOrigin)))
             .font(DocsFont.body)
             .fontWeight(isHeader ? .semibold : nil)
@@ -281,14 +286,13 @@ struct MarkdownTableView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: frameAlignment(alignment))
             .background(isHeader ? theme.colors.surfaceSunken : Color.clear)
             .border(theme.colors.borderDefault, width: cellBorderWidth)
-            .accessibilityAddTraits(isHeader ? .isHeader : [])
     }
 
     private var cellBorderWidth: CGFloat { 0.5 }
 
     private func textAlignment(_ alignment: MarkdownTable.Alignment) -> TextAlignment {
         switch alignment {
-        case .none, .leading: return .leading
+        case .unspecified, .leading: return .leading
         case .center: return .center
         case .trailing: return .trailing
         }
@@ -296,7 +300,7 @@ struct MarkdownTableView: View {
 
     private func frameAlignment(_ alignment: MarkdownTable.Alignment) -> SwiftUI.Alignment {
         switch alignment {
-        case .none, .leading: return .topLeading
+        case .unspecified, .leading: return .topLeading
         case .center: return .top
         case .trailing: return .topTrailing
         }

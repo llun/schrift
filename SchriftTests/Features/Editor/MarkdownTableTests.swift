@@ -18,7 +18,7 @@ final class MarkdownTableTests: XCTestCase {
                 | ✨ Features          | One page per feature area          |
                 """))
         XCTAssertEqual(table.header, ["Page", "What it covers"])
-        XCTAssertEqual(table.alignments, [.none, .none])
+        XCTAssertEqual(table.alignments, [.unspecified, .unspecified])
         XCTAssertEqual(
             table.rows,
             [["🏗️ Architecture", "How the server is put together"], ["✨ Features", "One page per feature area"]])
@@ -26,7 +26,7 @@ final class MarkdownTableTests: XCTestCase {
 
     func testReadsAlignmentsFromTheDelimiterRow() throws {
         let table = try XCTUnwrap(parseMarkdownTable("| a | b | c | d |\n| :-- | :-: | --: | --- |"))
-        XCTAssertEqual(table.alignments, [.leading, .center, .trailing, .none])
+        XCTAssertEqual(table.alignments, [.leading, .center, .trailing, .unspecified])
         XCTAssertEqual(table.rows, [])
     }
 
@@ -39,6 +39,11 @@ final class MarkdownTableTests: XCTestCase {
     func testAnEscapedPipeStaysInsideItsCell() throws {
         let table = try XCTUnwrap(parseMarkdownTable("| a | b |\n| - | - |\n| x \\| y | `p\\|q` |"))
         XCTAssertEqual(table.rows, [["x | y", "`p|q`"]])
+    }
+
+    func testAnEscapedBackslashBeforeTheOuterPipeIsNotAnExtraCell() throws {
+        let table = try XCTUnwrap(parseMarkdownTable("| a | b \\\\|\n| - | - |"))
+        XCTAssertEqual(table.header, ["a", "b \\\\"])
     }
 
     func testOtherBackslashEscapesAreLeftForTheInlineRenderer() throws {
