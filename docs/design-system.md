@@ -26,6 +26,52 @@
 > since they are not motion. VoiceOver is unaffected: no label, trait or order changed, and the
 > new check shape is hidden like the glyph it replaces.
 
+> **Revised: 2026-11-01 — the Pages drawer follows your finger (Direction D2).** The drawer is no
+> longer a transition that plays on a bool: `PagesDrawerPresentation` (a modifier on the editor)
+> holds a `progress` from 0 to 1, and the panel's offset (`pagesDrawerPanelOffset`) and the scrim's
+> opacity (`pagesDrawerScrimOpacity`, the scrim token scaled from 0 to its full strength) both read
+> it, so the same view serves the toolbar button, a scrim tap and a finger. A pull from the leading
+> edge mounts the drawer and tracks the finger 1:1 (`pagesDrawerProgress`); past fully open the
+> panel stretches by an asymptotic rubber band (`pagesDrawerRubberBand`, never more than 32pt, and
+> the panel's background reaches that far past its leading edge and under the top and bottom safe
+> areas, so no gap shows). On release `pagesDrawerSettle` adds the flick's momentum
+> (`swipeFlickProjection`, the same fast deceleration the swipe rows use) to the position and opens
+> at or past half; the panel then springs (`PagesDrawerMotion.settle`, `.spring(duration: 0.4,
+> bounce: 0.15)`). A drag cannot take hold of the panel while it springs
+> (`pagesDrawerMayBeginDrag`): its model position is then the spring's target, so the panel would
+> jump before following the finger. Dragging the open drawer left — on the scrim or the header's
+> title area — closes it by the same maths; a tap on the scrim still closes it. The list rows are
+> left out of the close drag on purpose: their own leftward swipe reveals Move and Delete, and two
+> recognizers on one drag would do both. So is every `Button` — the header's close button and the
+> New page footer — because a `Button` can still fire on touch-up after a pan, and a close drag
+> begun on New page would create a page. What a release writes and announces, an outside change
+> winning over a drag in flight, and when the drawer view unmounts are pure functions
+> (`pagesDrawerFinish`, `pagesDrawerPresentationStep`, `pagesDrawerShouldUnmount`) that the modifier
+> only applies. **Reduce Motion:** the panel still follows the finger (direct manipulation, not
+> motion), but the release settles with no animation (`DocsMotion.animation`), so there is no
+> overshoot. **VoiceOver:** the toolbar button is unchanged and remains the only path a screen
+> reader needs; a drag that opens the drawer posts the same screen-changed announcement the button
+> does. **System swipes at the edge:** the editor is pushed in a `NavigationStack` on iPhone, where
+> the left edge already means "back", and on iPad a split view with its sidebar hidden shows the
+> sidebar with a swipe from the same edge. The drawer's recognizer
+> (`PagesDrawerPanGestureRecognizer`) therefore only starts a touch in a 36pt strip that is inset
+> 24pt from the edge when either system swipe is possible — the hosting `UINavigationController` can
+> pop (`pagesDrawerCanInteractivePop`: more than one controller and the pop recognizer enabled), or
+> the hosting `UISplitViewController` is expanded, offers `presentsWithGesture` and has its primary
+> column hidden (`pagesDrawerCanRevealSidebar`) — so a swipe from the very edge still goes back or
+> shows the sidebar. Where neither applies — the iPad detail pane beside a visible sidebar — the
+> strip starts at the edge itself. Inside the strip the navigation controller's back swipes
+> (`interactivePopGestureRecognizer` and iOS 26's `interactiveContentPopGestureRecognizer`, matched
+> by identity) wait for the drawer's to fail (`shouldBeRequiredToFailBy`), which is what lets the
+> content back swipe and the drawer pull share that part of the screen; a touch outside the strip
+> fails the drawer's recognizer on the spot, releasing them immediately. Like the swipe rows, the
+> recognizer refuses a vertical or wrong-way drag outright rather than ignoring it
+> (`swipeGestureLatchDecision`), so scrolling is untouched, and it runs alongside only a scroll
+> view's own pan, so text selection keeps exclusive ownership of a touch it has claimed. The gesture
+> is off while anything else is presented or asking to be, and mirrors in right-to-left layouts. The
+> maths and the presentation decisions are unit-tested in `PagesDrawerPanTests`; the feel constants
+> (`PagesDrawerMetrics`) want tuning on a device.
+
 > **Revised: 2026-11-01 — Search finds documents on the device first (Direction B).** As the
 > user types, Search shows matches from the documents already cached on the device at once (no
 > debounce), then merges the server's rows when they arrive: a document both found appears once
@@ -99,7 +145,7 @@
 > the one animation outside the editor that lacked a fallback — slides up normally but only
 > crossfades (`DocsMotion.crossfade`) under Reduce Motion. Home, Shared and the swipe row's
 > settle already gated their `.snappy` list/banner animations; the swipe row now goes through
-> `DocsMotion`. The Pages drawer is covered separately (D2).
+> `DocsMotion`. The Pages drawer is covered separately (D2, above).
 
 > **Revised: 2026-11-01 — outline and other sheets.** The outline keeps the canvas interactive, so
 > a second sheet cannot be stacked on it. Every other presentation the editor owns — Share and
