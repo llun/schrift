@@ -94,6 +94,7 @@ struct SharedScreen: View {
                                         }
                                     }
                                 )
+                                .documentZoomSource(document: document.id, surface: .shared)
                             }
                         }
                         // Rows glide when a revalidation changes the list rather than snapping.
