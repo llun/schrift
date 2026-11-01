@@ -13,14 +13,7 @@ let searchHighlightMaxTerms = 8
 /// whole word. Pure, so the Search rows and their tests share one rule.
 func searchHighlightRanges(in text: String, query: String, locale: Locale = .current) -> [Range<String.Index>] {
     guard !text.isEmpty else { return [] }
-    var seen = Set<String>()
-    var terms: [String] = []
-    for term in query.split(whereSeparator: { $0.isWhitespace }).map(String.init) {
-        let key = term.lowercased()
-        guard seen.insert(key).inserted else { continue }
-        terms.append(term)
-        if terms.count == searchHighlightMaxTerms { break }
-    }
+    let terms = searchQueryTerms(query)
     guard !terms.isEmpty else { return [] }
 
     var found: [Range<String.Index>] = []
@@ -37,6 +30,28 @@ func searchHighlightRanges(in text: String, query: String, locale: Locale = .cur
         }
     }
     return mergedSearchHighlightRanges(found)
+}
+
+/// The distinct whitespace-separated terms of `query` (compared case-insensitively, first spelling
+/// kept), at most `searchHighlightMaxTerms`. The one tokenisation the highlights and the
+/// on-device search share, so a row is found by exactly the words it then highlights.
+func searchQueryTerms(_ query: String) -> [String] {
+    var seen = Set<String>()
+    var terms: [String] = []
+    for term in query.split(whereSeparator: { $0.isWhitespace }).map(String.init) {
+        let key = term.lowercased()
+        guard seen.insert(key).inserted else { continue }
+        terms.append(term)
+        if terms.count == searchHighlightMaxTerms { break }
+    }
+    return terms
+}
+
+/// Whether `text` contains `term`, with the same case- and diacritic-insensitive, `locale`-aware
+/// substring match `searchHighlightRanges` uses.
+func searchTextContains(_ text: String, term: String, locale: Locale = .current) -> Bool {
+    guard !text.isEmpty, !term.isEmpty else { return false }
+    return text.range(of: term, options: [.caseInsensitive, .diacriticInsensitive], locale: locale) != nil
 }
 
 /// Sorts ranges and joins any that overlap or touch.

@@ -727,8 +727,39 @@ new code reads like the surrounding code.
     results and recent terms survive navigation and tab switches.
   - Search uses `.searchable` with `.navigationBarDrawer(displayMode: .always)`;
     do not rely on a search-role tab to reveal its field. Home's shortcut remains
-    one localized accessibility button; both it and the regular-width field disable
-    offline with an explanation and recover on reconnect.
+    one localized accessibility button and stays enabled offline (Search then looks
+    through this device's documents); the regular-width inline field is the
+    server's search and disables offline with an explanation, recovering on
+    reconnect.
+  - **Search is on-device first, then server** (`LocalSearch.swift`,
+    `SearchViewModel.search()`). Every keystroke matches the cached documents at once,
+    with no debounce, off the main actor and cancelled with the task; the server is
+    asked after the debounce and `mergeSearchResults` shows its rows in its order, then
+    the on-device matches it did not return under an "On this device" label (deduped by
+    id). The index is only `DocumentCacheStore.documents(fetchedFor: <signed-in user>)`
+    (lists stamped for another account or unstamped never appear; nothing without a
+    known account) plus `DocumentChildrenCacheStore.children(ofParents:)` of exactly
+    those documents, with `DocumentContentCacheStore` body text attached only to
+    documents so listed. Matching is `searchQueryTerms`/`searchTextContains` from
+    `DocHighlight.swift` (every term must appear in the title, excerpt or body), ranked
+    title matches first, then recency. Offline the server's retained rows are ignored,
+    no request is made, and the banner says results are from this device only; results
+    already on screen are never replaced by a skeleton while the server or the device is
+    working (offline too, `isSearching` holds until the device answers), and the server's
+    rows for the previous query stay in their section until its new answer lands, but only
+    while the current query is theirs or refines it (`showsServerRows`); a failed request
+    drops another query's rows. On-device rows record the account they were found for and
+    are hidden from any other; server and Quick access rows record the sign-in session
+    (`signInGeneration`, passed by `SearchScreen` and set by `beginSession`) and the account
+    known when they landed, so an answer that lands before a re-login learns the id is kept,
+    and rows known to be another account's are hidden at once. `SearchScreen` keys its tasks
+    on `signInGeneration`, and the search task also on `signedInUserID` (observed through
+    `pins.revision`), so the device is searched again once a re-login learns the id. The
+    on-device index lives for one session: one build at a time (later keystrokes await it),
+    dropped when the query is cleared, when Search appears or on re-login
+    (`beginSession`/`invalidateLocalIndex`), and rebuilt for another account or availability
+    token; a build that finishes after its session was reset is discarded. Every non-empty
+    search clears `errorKey` first.
   - Home (including Search) and Shared share one `editorScreen(for:path:)`
     builder. `.toolbar(.hidden, for: .tabBar)` hides the native bar while an
     editor is pushed and restores it on pop. Keep Profile's account destination.
@@ -3697,10 +3728,12 @@ markdown write endpoint**. Understand this before touching the save path:
   `OnlineAvailability`, serves its cache with no request or error while
   offline, discards a response whose token no longer permits it, and
   `SharedScreen` keys its load on `availability.token` so a reconnect reloads.
-  Search is server-backed, so disable both Home's compact shortcut and iPad inline
-  field with visible/accessibility explanations. Keep PR #148's pushed Home Search
-  route and retain its model/query. Search and Quick Access reads are withheld at
-  the VM boundary too; do not rely on a disabled view to suppress requests.
+  The iPad inline field is the server's search, so it is disabled with visible/accessibility
+  explanations; the compact shortcut stays enabled because the pushed Search screen also
+  searches the documents saved on this device (see "Search is on-device first, then
+  server"). Keep PR #148's pushed Home Search route and retain its model/query. The
+  server half of Search and Quick Access reads are withheld at the VM boundary too; do
+  not rely on a disabled view to suppress requests.
   Reads capture an availability token (path and preference revisions) alongside
   their load/query generations. A response crossing offline/reconnect cannot
   install content/results/errors, even if availability has returned before it lands.
