@@ -183,9 +183,12 @@ amendment above; when this was written, editing offline was still blocked.)
   configured with `YHUB_JWT_PRIVATE_KEY` — without it `updated_at` stops following
   editor edits and the conflict check goes blind, so it is a **deployment
   requirement**. Only blocks the alignment can anchor are left untouched (unchanged
-  non-opaque blocks, plus `unknownNode:*` and document-link blocks); an untouched
-  opaque block — a table, which parses as `.unknown` — and an untouched nested list
-  are still rewritten from markdown on every save, same as the classic save. A server
+  non-opaque blocks, plus `unknownNode:*` and document-link blocks), and so is every
+  server block the markdown cannot spell that the user did not touch — a table, a
+  callout, a toggle, a video, a coloured paragraph, a PDF preview or page break
+  (`BlockNotePreservation`, which recognises each one's markdown shadow and puts the
+  original back). An untouched nested list is still rewritten from markdown on every
+  save, same as the classic save. A server
   state the app cannot safely
   diff (undecodable, incomplete, non-canonical) fails the save as `.decoding` — not
   retryable, so it lands on `.failed` with the draft kept, never on a guess.

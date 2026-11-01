@@ -41,8 +41,12 @@ enum BlockNoteIncrementalSave {
     ///
     /// `serverState` empty means an empty document. `serverOrigin` is used only to recognize
     /// the web's document-link nodes (see `oldBlocks`), never to build anything written.
+    ///
+    /// `baseBlocks` are the blocks parsed from the markdown the edit started from (the server
+    /// copy the editor loaded). They tell `BlockNotePreservation` which new blocks the user did
+    /// not touch; `nil` (no recorded base) keeps only blocks the markdown never shows.
     static func update(
-        serverState: Data, newBlocks: [BlockNoteBlock], serverOrigin: String,
+        serverState: Data, newBlocks: [BlockNoteBlock], baseBlocks: [BlockNoteBlock]? = nil, serverOrigin: String,
         clientID: UInt = UInt(UInt32.random(in: 1...UInt32.max))
     ) throws -> Data? {
         var decoded: YUpdate?
@@ -72,12 +76,21 @@ enum BlockNoteIncrementalSave {
         }
 
         let old = try oldBlocks(of: doc, serverOrigin: serverOrigin)
-        let aligned = BlockNoteAlignment.align(old: old, new: newBlocks)
-        let oldForWrite = old.map { block in
-            BlockNoteBlock(
-                node: block.node, props: block.props.map { (key: $0.key, value: $0.value) }, runs: block.runs,
-                id: block.id)
+        // Server blocks the markdown cannot spell are put back in place of their untouched
+        // shadows (`BlockNotePreservation`), so the write leaves them exactly as they are.
+        let rules = BlockNotePreservation.rules(for: old, in: doc)
+        let untouched = baseBlocks.map { BlockNotePreservation.untouched(base: $0, new: newBlocks) } ?? [:]
+        let tokens = newBlocks.map { BlockNotePreservation.signatureTokens(of: $0) }
+        // A server block's untouched shadow anchors to it, so a plain duplicate cannot take it.
+        let anchors = BlockNoteAlignment.anchorPairs(old: old, new: newBlocks) { oldIndex, newIndex in
+            guard untouched[newIndex] != nil, let rule = rules[oldIndex] else { return false }
+            return BlockNotePreservation.isSingleShadow(newBlocks[newIndex], tokens: tokens[newIndex], of: rule)
         }
+        let preserved = BlockNotePreservation.preserve(
+            old: old, rules: rules, new: newBlocks, untouched: untouched, anchors: anchors, tokens: tokens)
+        let aligned = BlockNoteAlignment.align(old: old, new: preserved.blocks, forced: preserved.forced)
+        // The same copy a preserved block is written back as, so the write finds it unchanged.
+        let oldForWrite = old.map(BlockNotePreservation.writableCopy(of:))
 
         let stateBefore = doc.store.getStateVector()
         let deletesBefore = YStateEncoder.deleteBlocks(YDeleteSet.from(store: doc.store))

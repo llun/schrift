@@ -16,8 +16,9 @@ import Foundation
 /// keyed on `updated_at`) catch it first — and those need the Docs 6 collaboration server to
 /// be configured with `YHUB_JWT_PRIVATE_KEY`, without which `updated_at` stops following
 /// editor edits. Only anchored blocks survive untouched (unchanged non-opaque blocks, plus
-/// `unknownNode:*` and document-link blocks); an untouched opaque block (a table, parsed as
-/// `.unknown`) or nested list is still rewritten from markdown, as in the classic save. That
+/// `unknownNode:*` and document-link blocks, and — through `align(old:new:forced:)` — the
+/// server blocks `BlockNotePreservation` recognised as untouched (a table, a callout, …); an
+/// untouched nested list is still rewritten from markdown, as in the classic save. That
 /// includes a list item with a photo or file nested under it: the parent projects opaque, so
 /// it and its nested media are rebuilt on every save, which resets anything the web set on
 /// that media and the markdown does not carry (an image's `caption`, `previewWidth` and
@@ -53,6 +54,42 @@ enum BlockNoteAlignment {
         var result = new
         for (oldIndex, newIndex) in matches(old: old, new: new) {
             result[newIndex].id = old[oldIndex].id
+        }
+        return result
+    }
+
+    /// `align(old:new:)` with `forced` pairs fixed first — the server blocks
+    /// `BlockNotePreservation` put back in place of their markdown shadows, which the plain
+    /// rules cannot anchor (an opaque table is never `sameVisibleContent`). `forced` must be
+    /// ascending in both coordinates; each stretch between two forced pairs is matched by the
+    /// plain rules on its own, so no other pair can cross one.
+    static func align(
+        old: [ProjectedBlock], new: [BlockNoteBlock], forced: [(old: Int, new: Int)]
+    ) -> [BlockNoteBlock] {
+        var result = new
+        for (oldIndex, newIndex) in matches(old: old, new: new, forced: forced) {
+            result[newIndex].id = old[oldIndex].id
+        }
+        return result
+    }
+
+    /// `matches(old:new:)` split at `forced`, which are kept as they are.
+    static func matches(
+        old: [ProjectedBlock], new: [BlockNoteBlock], forced: [(old: Int, new: Int)]
+    ) -> [(old: Int, new: Int)] {
+        var result: [(old: Int, new: Int)] = []
+        var oldStart = 0
+        var newStart = 0
+        for pair in forced + [(old: old.count, new: new.count)] {
+            let oldEnd = max(pair.old, oldStart)
+            let newEnd = max(pair.new, newStart)
+            let segment = matches(old: Array(old[oldStart..<oldEnd]), new: Array(new[newStart..<newEnd]))
+            result += segment.map { (old: $0.old + oldStart, new: $0.new + newStart) }
+            if pair.old < old.count {
+                result.append(pair)
+            }
+            oldStart = pair.old + 1
+            newStart = pair.new + 1
         }
         return result
     }
@@ -122,14 +159,23 @@ enum BlockNoteAlignment {
 
     /// The anchors: a longest common subsequence under `sameVisibleContent`, after trimming
     /// the common prefix and suffix (a typical save changes a few blocks in the middle).
-    private static func anchorPairs(old: [ProjectedBlock], new: [BlockNoteBlock]) -> [(old: Int, new: Int)] {
+    ///
+    /// `alsoMatches(oldIndex, newIndex)`, when given, counts as a match too: the save passes
+    /// "this new block is the untouched shadow of that server block" (`BlockNotePreservation`),
+    /// so a plain duplicate cannot claim a preserved block's shadow first.
+    static func anchorPairs(
+        old: [ProjectedBlock], new: [BlockNoteBlock], alsoMatches: ((Int, Int) -> Bool)? = nil
+    ) -> [(old: Int, new: Int)] {
+        func same(_ i: Int, _ j: Int) -> Bool {
+            sameVisibleContent(old: old[i], new: new[j]) || alsoMatches?(i, j) == true
+        }
         var prefix = 0
-        while prefix < old.count, prefix < new.count, sameVisibleContent(old: old[prefix], new: new[prefix]) {
+        while prefix < old.count, prefix < new.count, same(prefix, prefix) {
             prefix += 1
         }
         var suffix = 0
         while suffix < old.count - prefix, suffix < new.count - prefix,
-            sameVisibleContent(old: old[old.count - 1 - suffix], new: new[new.count - 1 - suffix])
+            same(old.count - 1 - suffix, new.count - 1 - suffix)
         {
             suffix += 1
         }
@@ -146,7 +192,7 @@ enum BlockNoteAlignment {
             var lengths = [Int](repeating: 0, count: (rows + 1) * width)
             for i in stride(from: rows - 1, through: 0, by: -1) {
                 for j in stride(from: columns - 1, through: 0, by: -1) {
-                    if sameVisibleContent(old: old[oldMiddle.lowerBound + i], new: new[newMiddle.lowerBound + j]) {
+                    if same(oldMiddle.lowerBound + i, newMiddle.lowerBound + j) {
                         lengths[i * width + j] = lengths[(i + 1) * width + j + 1] + 1
                     } else {
                         lengths[i * width + j] = max(lengths[(i + 1) * width + j], lengths[i * width + j + 1])
@@ -156,7 +202,7 @@ enum BlockNoteAlignment {
             var i = 0
             var j = 0
             while i < rows, j < columns {
-                if sameVisibleContent(old: old[oldMiddle.lowerBound + i], new: new[newMiddle.lowerBound + j]) {
+                if same(oldMiddle.lowerBound + i, newMiddle.lowerBound + j) {
                     pairs.append((old: oldMiddle.lowerBound + i, new: newMiddle.lowerBound + j))
                     i += 1
                     j += 1
