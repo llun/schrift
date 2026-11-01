@@ -1,5 +1,16 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — The theme picker previews each theme as a small document.** The
+> "Aa" swatch per theme is replaced by a specimen drawn through that theme's own
+> `DocsColors` in the current light/dark appearance: a bold sample title, two placeholder
+> lines (`textPrimary` at 35%) and a page chip that mirrors `DocumentLinkChip`
+> (`brandFillSubtle` background, `textBrand` title, `description` glyph). The selected theme
+> keeps its check and gains a 2pt `brandFill` border. The specimen is decorative
+> (`accessibilityHidden`); each option stays one button with name, description and the
+> selected trait. At accessibility Dynamic Type sizes the specimen stacks above the name
+> (`themePickerStacksRows`). No colour values or typography tokens changed; the paired
+> `ThemeSwatch` remains for the design-system catalogue.
+
 > **Revised: 2026-10-17 — Links to other documents are page chips.** A markdown link
 > to another document on the user's server (`[Title](https://<host>/docs/<uuid>/)`, the
 > links `documentLinkAction` opens in the app) is drawn as a **page chip** on both the

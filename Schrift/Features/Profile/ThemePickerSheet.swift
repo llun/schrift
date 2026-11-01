@@ -16,6 +16,15 @@ func themeDescriptionKey(_ theme: AppTheme) -> L10nKey {
     }
 }
 
+/// Relative widths of the specimen's two placeholder text lines (full, then shorter).
+let themeSpecimenLineFractions: [CGFloat] = [1, 0.62]
+
+/// At accessibility Dynamic Type sizes the specimen sits above the name instead of beside it,
+/// so the text keeps the full row width.
+func themePickerStacksRows(_ size: DynamicTypeSize) -> Bool {
+    size.isAccessibilitySize
+}
+
 /// Changes only the local palette. Keeping the sheet open makes choices comparable
 /// and preserves presentation identity while the entire app repaints underneath it.
 struct ThemePickerSheet: View {
@@ -23,6 +32,7 @@ struct ThemePickerSheet: View {
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.docsTheme) private var theme
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,21 +43,42 @@ struct ThemePickerSheet: View {
                         Button {
                             store.selected = option
                         } label: {
-                            HStack(spacing: DocsSpacing.spaceBase) {
-                                ThemeSwatch(theme: option)
-                                VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
-                                    Text(loc[themeValueKey(option)])
-                                        .font(DocsFont.body.weight(.semibold))
-                                        .foregroundStyle(theme.colors.textPrimary)
-                                    Text(loc[themeDescriptionKey(option)])
-                                        .font(DocsFont.footnote)
-                                        .foregroundStyle(theme.colors.textSecondary)
+                            let isSelected = store.selected == option
+                            let specimen = ThemeSpecimen(
+                                theme: option,
+                                title: loc[.theme_specimen_title],
+                                chipTitle: loc[.theme_specimen_chip],
+                                isSelected: isSelected)
+                            let name = VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
+                                Text(loc[themeValueKey(option)])
+                                    .font(DocsFont.body.weight(.semibold))
+                                    .foregroundStyle(theme.colors.textPrimary)
+                                Text(loc[themeDescriptionKey(option)])
+                                    .font(DocsFont.footnote)
+                                    .foregroundStyle(theme.colors.textSecondary)
+                            }
+                            let check = MaterialSymbol(.check, size: 20)
+                                .foregroundStyle(theme.colors.textBrand)
+                                .opacity(isSelected ? 1 : 0)
+                                .accessibilityHidden(true)
+                            Group {
+                                if themePickerStacksRows(typeSize) {
+                                    VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+                                        specimen
+                                        HStack(alignment: .top, spacing: DocsSpacing.spaceBase) {
+                                            name
+                                            Spacer(minLength: 0)
+                                            check
+                                        }
+                                    }
+                                } else {
+                                    HStack(spacing: DocsSpacing.spaceBase) {
+                                        specimen
+                                        name
+                                        Spacer(minLength: 0)
+                                        check
+                                    }
                                 }
-                                Spacer(minLength: 0)
-                                MaterialSymbol(.check, size: 20)
-                                    .foregroundStyle(theme.colors.textBrand)
-                                    .opacity(store.selected == option ? 1 : 0)
-                                    .accessibilityHidden(true)
                             }
                             .padding(.vertical, DocsSpacing.spaceXS)
                             .frame(minHeight: DocsSpacing.rowMinHeight)
@@ -98,6 +129,63 @@ struct ThemeSwatch: View {
         .padding(DocsSpacing.space2xs)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(hex: palette.surfacePage))
+    }
+}
+
+/// A small document drawn through `theme`'s own palette in the surrounding light/dark appearance:
+/// a bold title, two placeholder lines and a page chip mirroring `DocumentLinkChip`. Decorative —
+/// the option button carries the name and selected trait.
+struct ThemeSpecimen: View {
+    let theme: AppTheme
+    let title: String
+    let chipTitle: String
+    var isSelected = false
+
+    @ScaledMetric(relativeTo: .caption) private var width: CGFloat = 124
+
+    var body: some View {
+        let colors = theme.colors
+        VStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
+            Text(title)
+                .font(DocsFont.caption.weight(.bold))
+                .foregroundStyle(colors.textPrimary)
+                .lineLimit(1)
+            VStack(alignment: .leading, spacing: DocsSpacing.space3xs) {
+                ForEach(Array(themeSpecimenLineFractions.enumerated()), id: \.offset) { _, fraction in
+                    SpecimenLine(fraction: fraction, color: colors.textPrimary.opacity(0.35))
+                }
+            }
+            HStack(spacing: DocsSpacing.space4xs) {
+                MaterialSymbol(.description, size: 11, relativeTo: .caption)
+                Text(chipTitle)
+                    .font(DocsFont.caption.weight(.semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(colors.textBrand)
+            .padding(.horizontal, DocsSpacing.space3xs)
+            .padding(.vertical, DocsSpacing.space4xs)
+            .background(colors.brandFillSubtle, in: RoundedRectangle(cornerRadius: DocsRadius.sm))
+        }
+        .padding(DocsSpacing.spaceXS)
+        .frame(width: width, alignment: .leading)
+        .background(colors.surfacePage, in: RoundedRectangle(cornerRadius: DocsRadius.lg))
+        .overlay(
+            RoundedRectangle(cornerRadius: DocsRadius.lg)
+                .strokeBorder(isSelected ? colors.brandFill : colors.borderStrong, lineWidth: isSelected ? 2 : 1)
+        )
+        .accessibilityHidden(true)
+    }
+}
+
+private struct SpecimenLine: View {
+    let fraction: CGFloat
+    let color: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            Capsule().fill(color).frame(width: proxy.size.width * fraction)
+        }
+        .frame(height: 5)
     }
 }
 
