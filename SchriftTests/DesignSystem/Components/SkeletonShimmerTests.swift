@@ -10,29 +10,6 @@ final class SkeletonShimmerTests: XCTestCase {
         XCTAssertTrue(skeletonShimmerIsEnabled(reduceMotion: false))
     }
 
-    func testPhaseWrapsOncePerPeriod() {
-        XCTAssertEqual(skeletonShimmerPhase(at: 0, period: 2), 0, accuracy: 0.0001)
-        XCTAssertEqual(skeletonShimmerPhase(at: 0.5, period: 2), 0.25, accuracy: 0.0001)
-        XCTAssertEqual(skeletonShimmerPhase(at: 2, period: 2), 0, accuracy: 0.0001)
-        XCTAssertEqual(skeletonShimmerPhase(at: 3, period: 2), 0.5, accuracy: 0.0001)
-    }
-
-    func testPhaseIsAlwaysWithinOnePass() {
-        for time in stride(from: -5.0, through: 5.0, by: 0.37) {
-            let phase = skeletonShimmerPhase(at: time)
-            XCTAssertGreaterThanOrEqual(phase, 0)
-            XCTAssertLessThan(phase, 1)
-        }
-    }
-
-    func testAZeroPeriodHasNoPhase() {
-        XCTAssertEqual(skeletonShimmerPhase(at: 3, period: 0), 0)
-    }
-
-    func testEveryBarReadsTheSameClockSoTheyShimmerTogether() {
-        XCTAssertEqual(skeletonShimmerPhase(at: 123.4), skeletonShimmerPhase(at: 123.4))
-    }
-
     func testTheBandStartsOffTheLeadingEdgeAndEndsOffTheTrailingEdge() {
         let width: CGFloat = 100
         let band = width * 0.6

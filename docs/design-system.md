@@ -8,9 +8,10 @@
 > stutter, and a drag that starts on an already-open row begins past the threshold so grabbing
 > it is silent. Haptics are not motion, so Reduce Motion does not gate them. `Skeleton` swaps
 > its opacity blink for a shimmer: a highlight band (`surfacePage` at 70% in light, `textPrimary`
-> at 10% in dark — theme tokens only) sweeping across the bar every 1.6s, driven by the wall
-> clock (`skeletonShimmerPhase`) so every bar in a `SkeletonList` sweeps together rather than
-> each running its own repeating animation. Under Reduce Motion there is no timeline at all and
+> at 10% in dark — theme tokens only) sweeping across the bar every 1.6s, driven by one
+> `.linear` repeating offset animation per bar, started on appear, so the render server
+> interpolates it and the view body is not re-evaluated per frame (bars in a `SkeletonList`
+> appear together, so they sweep in step). Under Reduce Motion there is no shimmer view at all and
 > the bars are static (`skeletonShimmerIsEnabled`). New `DocsMotion` maps Reduce Motion to
 > animations: `animation(_:reduceMotion:)` is `nil` (instant) when reduced, and the toast —
 > the one animation outside the editor that lacked a fallback — slides up normally but only
