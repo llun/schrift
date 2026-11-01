@@ -165,6 +165,7 @@ enum Strings_fr {
         .editor_update_available_a11y: "Document mis à jour. Appuyez pour actualiser.",
         .editor_back_to_top: "Retour en haut",
         .editor_back_to_top_a11y: "Retour au début du document",
+        .editor_continued_reading: "Reprise là où vous vous étiez arrêté",
         .editor_uploading_photo: "Envoi de la photo…",
         .editor_attachment_pending: "En attente d'envoi",
         .editor_attachment_pending_a11y: "Photo en attente d'envoi",

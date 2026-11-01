@@ -396,6 +396,27 @@ final class ReadingPositionTests: XCTestCase {
         XCTAssertFalse(session.offersBackToTop)
     }
 
+    func testTheOfferAutoDismissesOnlyWithoutVoiceOver() {
+        XCTAssertTrue(backToTopAutoDismisses(voiceOverEnabled: false))
+        XCTAssertFalse(backToTopAutoDismisses(voiceOverEnabled: true))
+    }
+
+    @MainActor func testTheOfferStaysWhileVoiceOverIsRunning() async {
+        let blocks = paragraphs(10)
+        let (session, store, id) = makeSession(duration: .milliseconds(20))
+        store.save(
+            blockID: UUID(), fingerprint: readingPositionFingerprint(of: blocks[6]), blockIndex: 6,
+            serverOrigin: origin, documentID: id)
+        XCTAssertEqual(
+            session.beginRestore(blocks: blocks, userHasScrolled: false, voiceOverEnabled: true), blocks[6].id)
+
+        try? await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(session.offersBackToTop)
+
+        session.dismissBackToTop()
+        XCTAssertFalse(session.offersBackToTop)
+    }
+
     @MainActor func testPersistIsIgnoredUntilTheRestoreWasDecided() {
         let blocks = paragraphs(10)
         let (session, store, id) = makeSession()

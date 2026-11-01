@@ -221,6 +221,7 @@ struct EditorView: View {
     /// sync caption keep their own signals; Work Offline is a choice, so it shows immediately.
     @State private var offlineBannerStatus = DebouncedStatus()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     private var showsOfflineBanner: Bool {
         offlineOverride || viewModel.availability.isWorkOffline || offlineBannerStatus.value
     }
@@ -1107,6 +1108,12 @@ struct EditorView: View {
             // content the user didn't type, and the sheets keep the system behavior.
             .environment(\.openURL, OpenURLAction(handler: openLink))
             .overlay(alignment: .bottom) { backToTopOffer }
+            // Keeps "Back to top" reachable from the VoiceOver actions rotor on the reading surface.
+            .accessibilityActions {
+                if readingPosition.offersBackToTop {
+                    Button(loc[.editor_back_to_top]) { backToTop() }
+                }
+            }
         }
     }
 
@@ -1117,9 +1124,21 @@ struct EditorView: View {
     private func restoreReadingPosition(_ proxy: ScrollViewProxy) {
         guard
             let blockID = readingPosition.beginRestore(
-                blocks: viewModel.blocks, userHasScrolled: scrollAnchor.currentOffsetY > 8)
+                blocks: viewModel.blocks, userHasScrolled: scrollAnchor.currentOffsetY > 8,
+                voiceOverEnabled: voiceOverEnabled)
         else { return }
         proxy.scrollTo(EditorScrollTarget.block(blockID), anchor: .top)
+        // The jump is silent for VoiceOver users otherwise, like the Toast announcement.
+        AccessibilityNotification.Announcement(loc[.editor_continued_reading]).post()
+    }
+
+    private func backToTop() {
+        readingPosition.dismissBackToTop()
+        if reduceMotion {
+            readingScrollPosition.scrollTo(y: 0)
+        } else {
+            withAnimation(.snappy) { readingScrollPosition.scrollTo(y: 0) }
+        }
     }
 
     private func persistReadingPosition() {
@@ -1132,12 +1151,7 @@ struct EditorView: View {
         ZStack {
             if readingPosition.offersBackToTop {
                 BackToTopPill(title: loc[.editor_back_to_top], accessibilityLabel: loc[.editor_back_to_top_a11y]) {
-                    readingPosition.dismissBackToTop()
-                    if reduceMotion {
-                        readingScrollPosition.scrollTo(y: 0)
-                    } else {
-                        withAnimation(.snappy) { readingScrollPosition.scrollTo(y: 0) }
-                    }
+                    backToTop()
                 }
                 .padding(.bottom, DocsSpacing.spaceBase)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))

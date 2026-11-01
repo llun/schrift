@@ -194,6 +194,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_update_available_a11y = "editor.update_available_a11y"  // "Document updated. Tap to refresh."
     case editor_back_to_top = "editor.back_to_top"  // "Back to top"
     case editor_back_to_top_a11y = "editor.back_to_top_a11y"  // "Back to top of the document"
+    case editor_continued_reading = "editor.continued_reading"  // "Continued where you left off"
     case editor_uploading_photo = "editor.uploading_photo"  // "Uploading photo…"
     case editor_attachment_pending = "editor.attachment_pending"  // "Waiting to upload"
     case editor_attachment_pending_a11y = "editor.attachment_pending_a11y"  // "Photo waiting to upload"

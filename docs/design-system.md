@@ -7,7 +7,10 @@
 > time. A small glass **Back to top** pill (`BackToTopPill`, text only, 44pt minimum
 > height, Dynamic Type via `DocsFont.footnote`) floats near the bottom edge for about
 > six seconds after such a restore and goes away on its own, on the first scroll, or
-> when tapped (which scrolls to the top). Nothing is restored when the saved block is
+> when tapped (which scrolls to the top). With VoiceOver running the restore is announced
+> ("Continued where you left off", `editor.continued_reading`), the pill does not time out
+> (it stays until a scroll, a tap or leaving), and "Back to top" is also an accessibility
+> action on the reading surface. Nothing is restored when the saved block is
 > within the first two blocks (the first screenful already shows it, and being back
 > there clears the saved position), when the block can no longer be found, or once the
 > reader has started scrolling before the content arrived. The restore is instant, never

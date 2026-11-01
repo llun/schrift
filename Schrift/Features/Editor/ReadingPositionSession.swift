@@ -1,6 +1,10 @@
 import Foundation
 import Observation
 
+/// Whether the "Back to top" offer should remove itself after a few seconds. It must not while
+/// VoiceOver is running: the user may not have reached the pill before it would vanish.
+func backToTopAutoDismisses(voiceOverEnabled: Bool) -> Bool { !voiceOverEnabled }
+
 /// One open document's "continue reading" state: restores the saved position once when the
 /// content first appears, remembers where the reader is when they leave, and owns the
 /// short-lived "Back to top" offer that follows a restore.
@@ -40,7 +44,11 @@ import Observation
     /// `userHasScrolled` spends the decision without restoring: content that arrives after the
     /// reader has already started scrolling must not yank the page out from under them.
     /// A restore raises the "Back to top" offer, which dismisses itself after `offerDuration`.
-    func beginRestore(blocks: [EditorBlock], userHasScrolled: Bool) -> UUID? {
+    ///
+    /// With VoiceOver running the offer does not time out (`backToTopAutoDismisses`): a
+    /// screen-reader user needs longer than six seconds to find it, so it stays until they
+    /// scroll, activate it or leave.
+    func beginRestore(blocks: [EditorBlock], userHasScrolled: Bool, voiceOverEnabled: Bool = false) -> UUID? {
         guard !hasDecidedRestore, !blocks.isEmpty else { return nil }
         hasDecidedRestore = true
         guard !userHasScrolled else { return nil }
@@ -48,6 +56,8 @@ import Observation
         guard case .restore(let blockID) = readingPositionRestore(saved: saved, blocks: blocks) else { return nil }
         offersBackToTop = true
         offerTask?.cancel()
+        offerTask = nil
+        guard backToTopAutoDismisses(voiceOverEnabled: voiceOverEnabled) else { return blockID }
         offerTask = Task { [offerDuration] in
             try? await Task.sleep(for: offerDuration)
             guard !Task.isCancelled else { return }

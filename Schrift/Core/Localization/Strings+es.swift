@@ -168,6 +168,7 @@ enum Strings_es {
         .editor_update_available_a11y: "Documento actualizado. Toca para actualizar.",
         .editor_back_to_top: "Volver arriba",
         .editor_back_to_top_a11y: "Volver al principio del documento",
+        .editor_continued_reading: "Continuando donde lo dejaste",
         .editor_uploading_photo: "Subiendo foto…",
         .editor_attachment_pending: "Esperando para subir",
         .editor_attachment_pending_a11y: "Foto esperando para subir",
