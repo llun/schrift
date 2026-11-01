@@ -134,6 +134,45 @@ final class EditorChecklistFilterTests: XCTestCase {
         XCTAssertEqual(model.checklistReadingPresentation.rows.map(\.id), [id])
     }
 
+    /// A tick while hiding keeps its row, checked, until the settle finishes; an untick mid-settle
+    /// keeps the row for good; a peer unticking it ends the settle.
+    func testATickWhileHidingSettlesBeforeTheRowHides() async throws {
+        let model = try await load("- [ ] First\n- [ ] Second")
+        let ids = model.blocks.map(\.id)
+        model.setHidesCompletedChecklistItems(true)
+
+        let token = try XCTUnwrap(model.toggleChecklistSettling(blockID: ids[0]))
+        XCTAssertEqual(model.blocks[0].kind, .checklistItem(checked: true))
+        XCTAssertEqual(model.checklistReadingPresentation.rows.map(\.id), ids)
+        XCTAssertEqual(model.checklistReadingPresentation.rows[0].block.kind, .checklistItem(checked: true))
+        XCTAssertEqual(model.checklistReadingPresentation.hiddenCount, 0)
+        XCTAssertTrue(model.finishChecklistSettling(blockID: ids[0], token: token))
+        XCTAssertEqual(model.checklistReadingPresentation.rows.map(\.id), [ids[1]])
+        XCTAssertEqual(model.checklistReadingPresentation.hiddenCount, 1)
+
+        // Ticked, then unticked before the beat is over: the row stays and the late finish is a no-op.
+        let stale = try XCTUnwrap(model.toggleChecklistSettling(blockID: ids[1]))
+        XCTAssertNil(model.toggleChecklistSettling(blockID: ids[1]))
+        XCTAssertTrue(model.checklistSettling.isEmpty)
+        XCTAssertFalse(model.finishChecklistSettling(blockID: ids[1], token: stale))
+        XCTAssertEqual(model.checklistReadingPresentation.rows.map(\.id), [ids[1]])
+        XCTAssertEqual(model.blocks[1].kind, .checklistItem(checked: false))
+
+        // A peer unticks a settling item: nothing is left to settle and the row stays.
+        _ = try XCTUnwrap(model.toggleChecklistSettling(blockID: ids[1]))
+        model.applyLiveRemoteChange(
+            LiveChangeSet(changes: [.update(id: ids[1], kind: .checklistItem(checked: false), text: "Second")]),
+            projectedMarkdown: "- [x] First\n- [ ] Second")
+        XCTAssertTrue(model.checklistSettling.isEmpty)
+        XCTAssertEqual(model.checklistReadingPresentation.rows.map(\.id), [ids[1]])
+
+        // The screen going away ends any settle at once.
+        _ = try XCTUnwrap(model.toggleChecklistSettling(blockID: ids[1]))
+        model.clearChecklistSettling()
+        XCTAssertTrue(model.checklistSettling.isEmpty)
+        XCTAssertTrue(model.checklistReadingPresentation.rows.isEmpty)
+    }
+
     func testPreferenceNeverForwardsALiveEditOrFlushesALiveSnapshot() async throws {
         let model = try await load("- [x] Finished\n- [ ] Next")
         let live = FilterLiveWriteSpy()

@@ -68,13 +68,44 @@ final class EditorViewModel {
     var blocks: [EditorBlock] = []
     /// Session-local presentation only. Never persisted or passed to a save/live edit.
     private(set) var hidesCompletedChecklistItems = false
+    /// Items ticked from the reading surface that stay on screen, checked, for a beat before
+    /// they hide — see `ChecklistSettling`. Session-local presentation, like the switch above.
+    private(set) var checklistSettling = ChecklistSettling()
     var checklistReadingPresentation: ChecklistReadingPresentation {
-        ChecklistReadingPresentation(blocks: blocks, hidingCompleted: hidesCompletedChecklistItems && !isEditing)
+        ChecklistReadingPresentation(
+            blocks: blocks, hidingCompleted: hidesCompletedChecklistItems && !isEditing,
+            settling: checklistSettling.ids)
     }
 
     func setHidesCompletedChecklistItems(_ hidden: Bool) {
         guard hidesCompletedChecklistItems != hidden else { return }
         hidesCompletedChecklistItems = hidden
+        // Flipping the switch decides every row at once; a pending settle has nothing left to do.
+        checklistSettling.removeAll()
+    }
+
+    /// A tick or untick from the reading surface while completed items are hidden. A tick keeps
+    /// its row on screen, checked, and returns the token to end that with
+    /// (`finishChecklistSettling`); an untick — including one that lands mid-settle — returns
+    /// nil, and its row simply stays.
+    func toggleChecklistSettling(blockID: UUID) -> Int? {
+        toggleChecklist(blockID: blockID)
+        guard let index = blockIndex(blockID), case .checklistItem(checked: true) = blocks[index].kind else {
+            checklistSettling.cancel(blockID)
+            return nil
+        }
+        return checklistSettling.begin(blockID)
+    }
+
+    /// Lets a settled tick hide. Returns whether its row is now leaving the reading list.
+    @discardableResult
+    func finishChecklistSettling(blockID: UUID, token: Int) -> Bool {
+        checklistSettling.finish(blockID, token: token)
+    }
+
+    /// Ends every pending settle at once, without animating — the view is going away.
+    func clearChecklistSettling() {
+        checklistSettling.removeAll()
     }
 
     var rawMarkdown: String = ""
@@ -1538,6 +1569,8 @@ final class EditorViewModel {
         let parsed = reusingBlockIDs(from: blocks, into: parseEditorBlocks(markdown, serverOrigin: serverOrigin))
         if parsed != blocks {
             blocks = parsed
+            // A settling tick whose block went away or came back unticked has nothing to settle.
+            if !checklistSettling.isEmpty { checklistSettling.prune(keeping: blocks) }
         }
         // `inputRowIDs` is deliberately kept. A surviving block keeps the native text view
         // it had; an id that did not survive keeps its entry reserved, so a block that later
@@ -3913,6 +3946,8 @@ final class EditorViewModel {
                 }
             }
         }
+        // A settling tick a peer just removed or unticked has nothing left to settle.
+        if !checklistSettling.isEmpty { checklistSettling.prune(keeping: blocks) }
 
         if let focusedID {
             if let index = blockIndex(focusedID) {

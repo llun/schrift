@@ -66,6 +66,10 @@ struct EditorFormattingBar: View {
     /// same plain buttons as every other formatting action and nothing new competes with
     /// the text view for first responder mid-edit.
     @State private var choosingFamily: Family?
+    /// How many times a press on the bar swapped its set — the selection haptic's trigger. Not
+    /// `choosingFamily` itself: the caret moving to another block also ends a choice, and that
+    /// must stay silent rather than tick while the person types or taps text.
+    @State private var setSwitchPresses = 0
 
     /// Which edges have hidden content, from the row's scroll geometry — drives the fade.
     @State private var fadeEdges = ScrollFadeEdges()
@@ -118,10 +122,10 @@ struct EditorFormattingBar: View {
         }
         .scrollIndicators(.hidden)
         .animation(DocsMotion.formattingBarSwitchAnimation(reduceMotion: reduceMotion), value: choosingFamily)
-        // A selection tick when the row swaps sets (opening one, or closing it by picking or
-        // pressing Close). Not motion, so Reduce Motion leaves it on. The state only changes
-        // from a press — or when the caret moves to another block, which ends the choice.
-        .sensoryFeedback(.selection, trigger: choosingFamily)
+        // A selection tick when a press swaps the row's set (opening one, or closing it by
+        // picking or pressing Close) — see `switchSet(to:)`. Not motion, so Reduce Motion leaves
+        // it on.
+        .sensoryFeedback(.selection, trigger: setSwitchPresses)
         .onScrollGeometryChange(for: ScrollFadeEdges.self) { geometry in
             scrollFadeEdges(
                 contentOffsetX: geometry.contentOffset.x, contentWidth: geometry.contentSize.width,
@@ -139,8 +143,17 @@ struct EditorFormattingBar: View {
         // The bar floats over the canvas, which is exactly the functional layer
         // glass is meant for.
         .glassEffect(.regular, in: Capsule())
-        // The choices act on the focused block; moving the caret elsewhere ends the choice.
+        // The choices act on the focused block; moving the caret elsewhere ends the choice —
+        // silently, so this sets the state directly rather than through `switchSet(to:)`.
         .onChange(of: viewModel.focusedBlockID) { choosingFamily = nil }
+    }
+
+    /// Swaps the row's set in answer to a press on the bar, and counts the press for the
+    /// selection haptic. Every press path goes through here; nothing else bumps the count.
+    private func switchSet(to family: Family?) {
+        guard choosingFamily != family else { return }
+        choosingFamily = family
+        setSwitchPresses += 1
     }
 
     private var switchTransition: AnyTransition {
@@ -172,7 +185,7 @@ struct EditorFormattingBar: View {
     ) -> some View {
         HStack(spacing: DocsSpacing.space4xs) {
             barButton(icon: .close, label: loc[.common_close], disabled: false) {
-                choosingFamily = nil
+                switchSet(to: nil)
             }
             ForEach(Choice.allCases, id: \.self) { choice in
                 barButton(
@@ -180,7 +193,7 @@ struct EditorFormattingBar: View {
                     disabled: isDisabled?(choice)
                 ) {
                     pick(choice)
-                    choosingFamily = nil
+                    switchSet(to: nil)
                 }
                 // The brand colour marks the default for sighted users; VoiceOver gets the trait.
                 .accessibilityAddTraits(choice == current ? .isSelected : [])
@@ -202,14 +215,14 @@ struct EditorFormattingBar: View {
     private var attachChoices: some View {
         HStack(spacing: DocsSpacing.space4xs) {
             barButton(icon: .close, label: loc[.common_close], disabled: false) {
-                choosingFamily = nil
+                switchSet(to: nil)
             }
             barButton(icon: .image, label: loc[.editor_format_insert_photo], disabled: !canOfferPhoto) {
-                choosingFamily = nil
+                switchSet(to: nil)
                 viewModel.requestPhotoInsertion()
             }
             barButton(icon: .description, label: loc[.editor_format_insert_file], disabled: !canOfferFile) {
-                choosingFamily = nil
+                switchSet(to: nil)
                 viewModel.requestAttachmentInsertion()
             }
         }
@@ -227,7 +240,7 @@ struct EditorFormattingBar: View {
                 icon: defaultTextStyle.icon, label: loc[defaultTextStyle.labelKey],
                 disabled: !viewModel.canEditLink,
                 longPressLabel: loc[.editor_format_change_text_style],
-                longPressAction: { choosingFamily = .textStyle }
+                longPressAction: { switchSet(to: .textStyle) }
             ) {
                 guard choosingFamily == nil else { return }
                 viewModel.applyTextStyle(defaultTextStyle)
@@ -237,7 +250,7 @@ struct EditorFormattingBar: View {
             barButton(
                 icon: defaultListFormat.icon, label: loc[defaultListFormat.labelKey],
                 longPressLabel: loc[.editor_format_change_list_type],
-                longPressAction: { choosingFamily = .list }
+                longPressAction: { switchSet(to: .list) }
             ) {
                 guard choosingFamily == nil else { return }
                 viewModel.tapFormat(defaultListFormat)
@@ -264,7 +277,7 @@ struct EditorFormattingBar: View {
             barButton(
                 icon: defaultQuoteFormat.icon, label: loc[defaultQuoteFormat.labelKey],
                 longPressLabel: loc[.editor_format_change_quote_type],
-                longPressAction: { choosingFamily = .quote }
+                longPressAction: { switchSet(to: .quote) }
             ) {
                 guard choosingFamily == nil else { return }
                 viewModel.tapFormat(defaultQuoteFormat)
@@ -277,7 +290,7 @@ struct EditorFormattingBar: View {
                 icon: .attach_file, label: loc[.editor_format_attach],
                 disabled: !canOfferAttach(photo: canOfferPhoto, file: canOfferFile)
             ) {
-                choosingFamily = .attach
+                switchSet(to: .attach)
             }
         }
     }

@@ -20,6 +20,16 @@ final class DocsMotionEditorTests: XCTestCase {
         XCTAssertFalse(DocsMotion.checklistCollapseMoves(reduceMotion: true))
     }
 
+    /// A tick under Hide completed is seen to land before the row goes: never instant, about the
+    /// pulse without Reduce Motion, and a shorter beat (no pulse to wait for) with it.
+    func testATickedRowSettlesBeforeItLeaves() {
+        let full = DocsMotion.checklistSettleDelay(reduceMotion: false)
+        let reduced = DocsMotion.checklistSettleDelay(reduceMotion: true)
+        XCTAssertGreaterThan(reduced, .zero)
+        XCTAssertLessThan(reduced, full)
+        XCTAssertLessThanOrEqual(full, .milliseconds(400))
+    }
+
     func testTheCollapseCrossfadesUnderReduceMotion() {
         XCTAssertEqual(DocsMotion.checklistCollapseAnimation(reduceMotion: true), DocsMotion.crossfade)
         XCTAssertNotEqual(DocsMotion.checklistCollapseAnimation(reduceMotion: false), DocsMotion.crossfade)

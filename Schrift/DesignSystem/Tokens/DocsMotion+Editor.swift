@@ -29,8 +29,17 @@ extension DocsMotion {
         !reduceMotion
     }
 
-    /// The animation a tick runs under while "Hide completed" is on: the row leaving and the
-    /// rows below closing the gap. A plain crossfade under Reduce Motion.
+    /// How long a ticked row stays on screen, checked, before it leaves while "Hide completed"
+    /// is on (`ChecklistSettling`) — long enough to see the tick land. Without Reduce Motion it
+    /// is about the pulse, so the row starts to go as the swell settles; under Reduce Motion
+    /// there is no pulse to wait for, so it is a shorter beat, just enough to read the ticked
+    /// box before it fades.
+    static func checklistSettleDelay(reduceMotion: Bool) -> Duration {
+        reduceMotion ? .milliseconds(150) : .milliseconds(300)
+    }
+
+    /// The animation a settled tick's row leaves under while "Hide completed" is on: the row
+    /// leaving and the rows below closing the gap. A plain crossfade under Reduce Motion.
     static func checklistCollapseAnimation(reduceMotion: Bool) -> Animation {
         reduceMotion ? crossfade : .snappy(duration: 0.28)
     }

@@ -1840,6 +1840,10 @@ that are easy to violate and expensive to discover:
   ending it), while the count stays items-only; never
   replace the model array or feed that projection to the serializer, save coordinator
   or collaboration bridge. Toggling must not call a dirty/save/live-write funnel.
+  A tick made on the reading surface while hiding stays on screen, checked, for a
+  short beat (`ChecklistSettling`, honoured by the presentation's `settling` ids) and
+  only then hides inside the collapse animation — never tick and hide in one
+  transaction, or the row animates out still drawn unticked.
   Editing always exposes every block. The reading controls remain reachable when
   all items are hidden; an all-hidden list is not an empty document. Preserve
   `EditorBlockAdornment`'s first-line alignment and dense hit-target rules.
