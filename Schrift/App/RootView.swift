@@ -246,6 +246,9 @@ struct RootView: View {
                     // same reason.
                     AttachmentCacheStore().removeAll()
                     ImageCacheStore().removeAll()
+                    // "Continue reading" positions are per-account reading history (they name
+                    // blocks of documents only that account could open), not unsynced work.
+                    ReadingPositionStore().removeAll()
                     // The account id goes with the session. Pending-create records
                     // deliberately survive — for a document that exists nowhere else the
                     // record and its draft are the only copies — and what keeps that safe is

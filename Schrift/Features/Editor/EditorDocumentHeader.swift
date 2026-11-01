@@ -51,8 +51,19 @@ enum EditorScrollTarget: Hashable {
     private var blockFrames: [UUID: CGRect] = [:]
     private var pendingBlockID: UUID?
 
+    /// The block that was at the top of the screen when the surface last reported frames.
+    /// Kept across the surface's teardown for the same reason the offset is snapshotted at the
+    /// swap: by the time a screen disappears its frames report nothing, and "continue reading"
+    /// needs the place the reader was, not the place the teardown left. An empty report never
+    /// overwrites it.
+    private(set) var lastTopVisibleBlockID: UUID?
+
+    /// Where the surface on screen is scrolled to right now.
+    var currentOffsetY: CGFloat { liveOffsetY }
+
     func noteBlockFrames(_ frames: [UUID: CGRect]) {
         blockFrames = frames
+        if let top = topVisibleBlockID(in: frames) { lastTopVisibleBlockID = top }
     }
 
     func noteScrolled(to offsetY: CGFloat) {

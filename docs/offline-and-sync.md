@@ -3056,3 +3056,22 @@ XCTest, mirroring the source tree. New/updated:
   2026-08-02 — see "Documents created on this device".
 - `README.md` reviewed — it makes no offline/loading claims, so no change.
 - This document is a living design doc — kept current as behavior changes.
+
+### 10. Reading positions: `ReadingPositionStore` (2026-11-01)
+
+Not content and not unsynced work: a small per-document record of the block that was at
+the top of the screen when the document was left, so reopening — online or offline,
+from the content cache or the network — scrolls back to where the reader was.
+
+`ReadingPositionStore` (`dev.llun.Schrift.readingPositions`, one JSON dictionary in
+UserDefaults) is keyed by server origin and document id and capped at 200 entries, least
+recently read first. An entry is a block id, a hash of the block's normalised text and its
+index; block ids are re-minted by every parse, so after a relaunch the hash (not the id)
+finds the block, and a document edited elsewhere still resolves as long as that passage
+survives. Anything that cannot be matched, or lies in the first two blocks, restores nothing.
+
+It is **cleared on sign-out** (RootView's `onSignOut`, with the content caches) and is not
+touched by the revalidation, delete or cache-eviction paths: a position for a document that
+is gone is inert and ages out of the cap. Nothing is written until the reopened document's
+restore has been decided (`ReadingPositionSession`), so an early background or navigation
+cannot replace the saved position with the top of the page.
