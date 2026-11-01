@@ -67,6 +67,8 @@ enum Strings_nl {
         .docrow_pinned: "Vastgezet",
         .docrow_shared_with_organization: "Gedeeld met organisatie",
         .docrow_public: "Openbaar",
+        .docrow_pages_one: "%d pagina",
+        .docrow_pages_other: "%d pagina's",
         .docrow_available_offline: "Offline beschikbaar",
 
         .docrow_pending_delete: "Wacht op verwijdering",

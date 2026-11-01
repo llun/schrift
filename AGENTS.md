@@ -547,7 +547,7 @@ Schrift/
 │   ├── Tokens/          DocsColor, DocsTypography (DocsFont/DocsTracking),
 │   │                    DocsSpacing, DocsRadius, HexColor (light+dark adaptive),
 │   │                    MaterialIcon (the app's icon set — Material Symbols)
-│   └── Components/      Avatar, AvatarGroup, Badge, Button, DocIcon, DocRow,
+│   └── Components/      Avatar, AvatarGroup, Badge, Button, DocIcon, DocIdentity, DocRow, PinnedCard,
 │                        IconButton, LinkReachPill, ListRow, ListSection,
 │                        MaterialSymbol, OfflineBanner, SearchField, SheetHeader,
 │                        ShareMemberRow, Skeleton, SwipeRevealRow, Switch, TextField,

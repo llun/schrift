@@ -111,6 +111,23 @@ struct ComponentCatalogPreview: View {
                         DocRow(emoji: "📄", title: "Q3 Planning", pinned: true, reach: .restricted, date: "3 days ago")
                         DocRow(emoji: "📊", title: "Roadmap", reach: .authenticated, date: "Yesterday")
                         DocRow(title: "Public notes", reach: .public, date: "Last week")
+                        DocRow(
+                            title: "Trip to Chiang Mai", date: "Thu",
+                            excerpt: "Flights booked, need hotel near Nimman", pageCount: 4,
+                            tintSeed: UUID(uuidString: "00000000-0000-0000-0000-000000000002"))
+                    }
+                }
+
+                catalogSection("Pinned Cards") {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: DocsSpacing.spaceXS) {
+                            PinnedCard(
+                                emoji: "🚀", title: "Schrift release checklist",
+                                excerpt: "TestFlight build 214, check fastlane")
+                            PinnedCard(
+                                title: "Q4 roadmap", excerpt: "Offline search, outline, iPad shortcuts",
+                                tintSeed: UUID(uuidString: "00000000-0000-0000-0000-000000000002"))
+                        }
                     }
                 }
 
