@@ -387,6 +387,8 @@ enum L10nKey: String, CaseIterable, Sendable {
     case theme_mist_description = "theme.mist.description"
     case theme_paper_description = "theme.paper.description"
     case theme_footer = "theme.footer"
+    case theme_specimen_title = "theme.specimen.title"
+    case theme_specimen_chip = "theme.specimen.chip"
     case profile_appearance = "profile.appearance"  // "Appearance"
     case profile_language = "profile.language"  // "Language"
     case profile_notifications = "profile.notifications"  // "Notifications"
