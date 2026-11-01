@@ -61,6 +61,10 @@ enum EditorScrollTarget: Hashable {
     /// Where the surface on screen is scrolled to right now.
     var currentOffsetY: CGFloat { liveOffsetY }
 
+    /// The blocks whose rows reported a frame in the latest layout: a row in here has been
+    /// laid out, so a `scrollTo` can find it.
+    var laidOutBlockIDs: Set<UUID> { Set(blockFrames.keys) }
+
     func noteBlockFrames(_ frames: [UUID: CGRect]) {
         blockFrames = frames
         if let top = topVisibleBlockID(in: frames) { lastTopVisibleBlockID = top }

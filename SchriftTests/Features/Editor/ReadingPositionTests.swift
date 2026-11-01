@@ -327,6 +327,14 @@ final class ReadingPositionTests: XCTestCase {
         return (session, store, documentID)
     }
 
+    /// Decides the restore and lands it, as the reading surface does once its rows are laid out.
+    @MainActor private func restoreAndLand(
+        _ session: ReadingPositionSession, blocks: [EditorBlock], voiceOverEnabled: Bool = false
+    ) -> UUID? {
+        session.beginRestore(blocks: blocks, userHasScrolled: false)
+        return session.takeRestoreScroll(laidOutBlockIDs: Set(blocks.map(\.id)), voiceOverEnabled: voiceOverEnabled)
+    }
+
     @MainActor func testSessionRestoresOnceAndOffersBackToTop() {
         let blocks = paragraphs(10)
         let (session, store, id) = makeSession()
@@ -334,9 +342,10 @@ final class ReadingPositionTests: XCTestCase {
             blockID: UUID(), fingerprint: readingPositionFingerprint(of: blocks[6]), blockIndex: 6,
             serverOrigin: origin, documentID: id)
 
-        XCTAssertEqual(session.beginRestore(blocks: blocks, userHasScrolled: false), blocks[6].id)
+        XCTAssertEqual(restoreAndLand(session, blocks: blocks), blocks[6].id)
         XCTAssertTrue(session.offersBackToTop)
         XCTAssertNil(session.beginRestore(blocks: blocks, userHasScrolled: false))
+        XCTAssertNil(session.takeRestoreScroll(laidOutBlockIDs: Set(blocks.map(\.id))))
     }
 
     @MainActor func testSessionDoesNotSpendItsDecisionOnAnEmptyDocument() {
@@ -374,7 +383,7 @@ final class ReadingPositionTests: XCTestCase {
         store.save(
             blockID: UUID(), fingerprint: readingPositionFingerprint(of: blocks[6]), blockIndex: 6,
             serverOrigin: origin, documentID: id)
-        _ = session.beginRestore(blocks: blocks, userHasScrolled: false)
+        _ = restoreAndLand(session, blocks: blocks)
 
         session.dismissBackToTop()
 
@@ -387,7 +396,7 @@ final class ReadingPositionTests: XCTestCase {
         store.save(
             blockID: UUID(), fingerprint: readingPositionFingerprint(of: blocks[6]), blockIndex: 6,
             serverOrigin: origin, documentID: id)
-        _ = session.beginRestore(blocks: blocks, userHasScrolled: false)
+        _ = restoreAndLand(session, blocks: blocks)
         XCTAssertTrue(session.offersBackToTop)
 
         for _ in 0..<200 where session.offersBackToTop {
@@ -407,8 +416,7 @@ final class ReadingPositionTests: XCTestCase {
         store.save(
             blockID: UUID(), fingerprint: readingPositionFingerprint(of: blocks[6]), blockIndex: 6,
             serverOrigin: origin, documentID: id)
-        XCTAssertEqual(
-            session.beginRestore(blocks: blocks, userHasScrolled: false, voiceOverEnabled: true), blocks[6].id)
+        XCTAssertEqual(restoreAndLand(session, blocks: blocks, voiceOverEnabled: true), blocks[6].id)
 
         try? await Task.sleep(for: .milliseconds(150))
         XCTAssertTrue(session.offersBackToTop)
@@ -423,7 +431,7 @@ final class ReadingPositionTests: XCTestCase {
         store.save(
             blockID: UUID(), fingerprint: readingPositionFingerprint(of: blocks[6]), blockIndex: 6,
             serverOrigin: origin, documentID: id)
-        _ = session.beginRestore(blocks: blocks, userHasScrolled: false, voiceOverEnabled: true)
+        _ = restoreAndLand(session, blocks: blocks, voiceOverEnabled: true)
         XCTAssertTrue(session.offersBackToTop)
 
         // The reading surface disappearing (or swapping to the editing surface) dismisses.
@@ -469,7 +477,7 @@ final class ReadingPositionTests: XCTestCase {
         store.save(
             blockID: UUID(), fingerprint: readingPositionFingerprint(of: blocks[6]), blockIndex: 6,
             serverOrigin: origin, documentID: id)
-        _ = session.beginRestore(blocks: blocks, userHasScrolled: false, voiceOverEnabled: true)
+        _ = restoreAndLand(session, blocks: blocks, voiceOverEnabled: true)
         XCTAssertTrue(session.offersBackToTop)
 
         session.noteDeliberateJump(blocks: blocks)
@@ -504,5 +512,115 @@ final class ReadingPositionTests: XCTestCase {
         session.noteDeliberateJump(blocks: [])
 
         XCTAssertEqual(session.beginRestore(blocks: blocks, userHasScrolled: false), blocks[6].id)
+    }
+    // MARK: - Cached open: the restore waits for the rows
+
+    func testTheRestoreScrollWaitsUntilARowHasBeenLaidOut() {
+        let target = UUID()
+        XCTAssertEqual(readingRestoreScrollStep(target: target, laidOutBlockIDs: []), .wait)
+        XCTAssertEqual(readingRestoreScrollStep(target: target, laidOutBlockIDs: [UUID(), target]), .scroll)
+        XCTAssertEqual(readingRestoreScrollStep(target: target, laidOutBlockIDs: [UUID()]), .abandon)
+    }
+
+    /// A cached document: the content lands in the same update that inserts its rows, before
+    /// they are laid out. The decision is made then, but the scroll and the offer wait for the
+    /// layout — scrolling at the decision found no row and left the page at the top.
+    @MainActor func testACachedOpenScrollsOnceItsRowsAreLaidOut() {
+        let blocks = paragraphs(10)
+        let (session, store, id) = makeSession()
+        store.save(
+            blockID: UUID(), fingerprint: readingPositionFingerprint(of: blocks[6]), blockIndex: 6,
+            serverOrigin: origin, documentID: id)
+
+        // The surface appears over an empty page: nothing to decide yet.
+        XCTAssertNil(session.beginRestore(blocks: [], userHasScrolled: false))
+        // The cached body arrives: decided, but nothing is laid out yet.
+        XCTAssertEqual(session.beginRestore(blocks: blocks, userHasScrolled: false), blocks[6].id)
+        XCTAssertTrue(session.hasPendingRestoreScroll)
+        XCTAssertFalse(session.offersBackToTop)
+        XCTAssertNil(session.takeRestoreScroll(laidOutBlockIDs: []))
+        XCTAssertTrue(session.hasPendingRestoreScroll)
+
+        // The rows are laid out: scroll there, once, and offer the way back.
+        XCTAssertEqual(session.takeRestoreScroll(laidOutBlockIDs: Set(blocks.map(\.id))), blocks[6].id)
+        XCTAssertTrue(session.offersBackToTop)
+        XCTAssertFalse(session.hasPendingRestoreScroll)
+        XCTAssertNil(session.takeRestoreScroll(laidOutBlockIDs: Set(blocks.map(\.id))))
+    }
+
+    @MainActor func testAContentFirstOpenScrollsStraightAway() {
+        // The surface appears with its rows already laid out (a body fetched behind the loading
+        // placeholder): the decision and the scroll happen together.
+        let blocks = paragraphs(10)
+        let (session, store, id) = makeSession()
+        store.save(
+            blockID: UUID(), fingerprint: readingPositionFingerprint(of: blocks[6]), blockIndex: 6,
+            serverOrigin: origin, documentID: id)
+
+        XCTAssertEqual(restoreAndLand(session, blocks: blocks), blocks[6].id)
+        XCTAssertTrue(session.offersBackToTop)
+    }
+
+    @MainActor func testNothingIsPersistedWhileTheRestoreWaitsForLayout() {
+        let blocks = paragraphs(10)
+        let (session, store, id) = makeSession()
+        store.save(
+            blockID: UUID(), fingerprint: readingPositionFingerprint(of: blocks[6]), blockIndex: 6,
+            serverOrigin: origin, documentID: id)
+        session.beginRestore(blocks: blocks, userHasScrolled: false)
+
+        // Still at the top: recording that would clear the place about to be restored.
+        session.persist(blocks: blocks, topVisibleBlockID: blocks[0].id)
+        XCTAssertEqual(store.position(serverOrigin: origin, documentID: id)?.blockIndex, 6)
+
+        _ = session.takeRestoreScroll(laidOutBlockIDs: Set(blocks.map(\.id)))
+        session.persist(blocks: blocks, topVisibleBlockID: blocks[7].id)
+        XCTAssertEqual(store.position(serverOrigin: origin, documentID: id)?.blockIndex, 7)
+    }
+
+    @MainActor func testAScrollBeforeTheRowsAreLaidOutCancelsTheRestore() {
+        let blocks = paragraphs(10)
+        let (session, store, id) = makeSession()
+        store.save(
+            blockID: UUID(), fingerprint: readingPositionFingerprint(of: blocks[6]), blockIndex: 6,
+            serverOrigin: origin, documentID: id)
+        session.beginRestore(blocks: blocks, userHasScrolled: false)
+
+        session.cancelPendingRestore()
+
+        XCTAssertNil(session.takeRestoreScroll(laidOutBlockIDs: Set(blocks.map(\.id))))
+        XCTAssertFalse(session.offersBackToTop)
+        // Where the reader went is remembered as usual.
+        session.persist(blocks: blocks, topVisibleBlockID: blocks[4].id)
+        XCTAssertEqual(store.position(serverOrigin: origin, documentID: id)?.blockIndex, 4)
+    }
+
+    @MainActor func testAnOutlineJumpBeforeTheRowsAreLaidOutCancelsTheRestore() {
+        let blocks = paragraphs(10)
+        let (session, store, id) = makeSession()
+        store.save(
+            blockID: UUID(), fingerprint: readingPositionFingerprint(of: blocks[6]), blockIndex: 6,
+            serverOrigin: origin, documentID: id)
+        session.beginRestore(blocks: blocks, userHasScrolled: false)
+
+        session.noteDeliberateJump(blocks: blocks)
+
+        XCTAssertNil(session.takeRestoreScroll(laidOutBlockIDs: Set(blocks.map(\.id))))
+        XCTAssertFalse(session.offersBackToTop)
+    }
+
+    @MainActor func testARestoreToARowThatIsNotShownIsDropped() {
+        // The saved block is a completed checklist item that "Hide completed" leaves out.
+        let blocks = paragraphs(10)
+        let (session, store, id) = makeSession()
+        store.save(
+            blockID: UUID(), fingerprint: readingPositionFingerprint(of: blocks[6]), blockIndex: 6,
+            serverOrigin: origin, documentID: id)
+        session.beginRestore(blocks: blocks, userHasScrolled: false)
+
+        let shown = Set(blocks.map(\.id)).subtracting([blocks[6].id])
+        XCTAssertNil(session.takeRestoreScroll(laidOutBlockIDs: shown))
+        XCTAssertFalse(session.offersBackToTop)
+        XCTAssertFalse(session.hasPendingRestoreScroll)
     }
 }

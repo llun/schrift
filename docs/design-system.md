@@ -1,5 +1,19 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — Continue reading also restores a document opened from its cache.**
+> A document whose body was already on the device reopened at the top: its cached body is
+> installed by `load()` after the reading surface has appeared over an empty page, so the restore
+> was decided and scrolled in the same update that inserted the rows, before any was laid out,
+> and the scroll had nothing to reach. Only a body fetched from the network (which arrives behind
+> the loading placeholder and brings a fresh surface) restored. `ReadingPositionSession` now
+> decides (`beginRestore`) and scrolls (`takeRestoreScroll`) separately: the scroll waits for the
+> target row to report a laid-out frame (`readingRestoreScrollStep`), and the Back to top pill
+> appears at that moment, when the reader lands. A finger on the page, an outline jump, switching
+> to editing or leaving drops a restore that has not landed yet; nothing is saved while one is
+> waiting; a target row that is not shown (a completed item under "Hide completed") is dropped
+> rather than offering Back to top from the top. No visual, motion or string change: the scroll
+> is still instant, Reduce Motion and the VoiceOver announcement and pill behave as before.
+
 > **Revised: 2026-11-01 — Editor micro-motion (Direction D3).** Four small pieces of motion in the
 > editor, all with their rules in `DocsMotion+Editor.swift` (pure functions of Reduce Motion,
 > unit-tested) and all built on `DocsMotion.crossfade`. **Checklist:** ticking or unticking a

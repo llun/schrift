@@ -4374,7 +4374,11 @@ markdown write endpoint**. Understand this before touching the save path:
   reading history, not unsynced work, so unlike drafts it does not outlive the session).
   `ReadingPositionSession` (in `EditorView`'s `@State`) decides the restore once per open
   and **writes nothing until it has** — before then the viewport is at the top and
-  persisting would overwrite the very position about to be restored. The top block is
+  persisting would overwrite the very position about to be restored. Deciding and scrolling
+  are separate (`beginRestore`, then `takeRestoreScroll` once the target row reports a frame,
+  gated by the pure `readingRestoreScrollStep`): a **cached** open installs its body from
+  `.task` after the reading surface appeared empty, so the restore is decided in the update
+  that inserts the rows, and a `scrollTo` there has nothing laid out to reach. The top block is
   tracked continuously in `EditorScrollAnchorStore.lastTopVisibleBlockID` because a
   disappearing screen reports no frames. No deep link addresses a position inside a
   document today; one would need to bypass the restore.
