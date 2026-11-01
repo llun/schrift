@@ -68,7 +68,7 @@ struct SkeletonRow: View {
         }
     }
 
-    private var tileSize: CGFloat { 24 * scale + 14 }
+    private var tileSize: CGFloat { docIconBoxSize(scale: scale, tinted: true) }
 
     private var ledgerBody: some View {
         HStack(spacing: DocsSpacing.spaceSM) {
