@@ -590,7 +590,8 @@ Schrift/
 │                        leaf nesting restored from the block tree (LeafNestingOverlay),
 │                        in-app document links (DocumentLink),
 │                        inline rendering (BlockTextView glyph suppression, HiddenSyntaxSelection,
-│                        InlineTextStyle) + link authoring (MarkdownLinkEditing, LinkEditorSheet),
+│                        InlineTextStyle) + link authoring (MarkdownLinkEditing, LinkEditorSheet,
+│                        the `[[` page picker: PageLinkPicker + PageLinkPickerView),
 │                        the one style table BOTH surfaces draw from (EditorBlockStyle:
 │                        EditorBlockMetrics, blockTextAppearance, editorBlockDecoration,
 │                        EditorBlockAdornment) + the shared EditorDocumentHeader and the
@@ -854,7 +855,9 @@ new code reads like the surrounding code.
   (`HomeViewModel.loadIfStale()`, `SharedViewModel.loadIfStale(sessionGeneration:)`,
   `ProfileViewModel.loadIfStale(sessionGeneration:)`): keyed on the availability token and, for Shared and
   Profile, the sign-in generation (`SessionStore.signInGeneration`), so a re-login never reads the previous
-  account's list as fresh. Pull-to-refresh, replay, migration and delete reloads call `load()` and always fetch,
+  account's list as fresh. Shared's passive freshness also compares `lastFetchedOwner` against
+  `signedInUser.userID`, so a fetch stamped before the id was known is not fresh however recent it is.
+  Pull-to-refresh, replay, migration and delete reloads call `load()` and always fetch,
   and so does returning from a pushed screen: `MainTabView` reacts when the compact docs `NavigationPath`
   shrinks, and `HomeSplitView` when the selection switches from one document to another (a deletion reloads
   through `onDeleted`), by calling `HomeViewModel.markListStale()` and then `loadIfStale()` — one fetch even if
@@ -4028,6 +4031,51 @@ markdown write endpoint**. Understand this before touching the save path:
   along with any unsaved edit — over a dead link. `.sessionExpired` stays
   silent, because the shared client's `onSessionExpired` hook has already raised
   the re-login sheet.
+- **Typing `[[` links a page; the editor has two typed triggers, not one.** The slash
+  menu opens on a *paragraph whose text starts with* `/` (`slashQuery`); the page
+  picker opens wherever the caret sits right after `[[` plus a query
+  (`pageLinkTrigger(in:caret:)`, `Features/Editor/PageLinkPicker.swift` — pure, UTF-16,
+  tested) in any block that renders inline markdown, and never while the slash menu is
+  up. It is **derived, not stored**: `EditorViewModel.pageLinkPicker` recomputes from the
+  focused block's text and `selection`, so backspacing past the `[[`, typing `]`, moving
+  the caret out of the query, a ranged selection, or leaving the block closes it with
+  no state to unwind. The only stored state is an Escape dismissal keyed to that `[[`'s
+  offset (lapses once those brackets are gone) and the arrow-key highlight (reset by any
+  new query). A query that has grown a space and matches nothing closes it too — the
+  user is typing literal brackets. Choosing a row (tap, Return, or a hardware Up/Down
+  then Return — `EditorUITextView` claims Escape as a key command **only while the card
+  is up**, and Up/Down only while it also has rows (`pageLinkPickerClaims`), so caret
+  movement is otherwise untouched, the empty state included) replaces `[[query` with
+  `[Title](https://<host>/docs/<uuid>/)` built by `documentShareURL` +
+  `insertMarkdownLink` — byte-for-byte the shape `isDocumentLink` matches, so it draws
+  as a page chip — with the caret after it. Return with nothing to pick still splits.
+  **Never during input-method composition**: while the focused block's text view holds
+  marked text (reported by `BlockTextView.onMarkedTextChange`, and by
+  `updateComposition`'s `isMarked` on the hand-off path, into `markedTextBlockID`) the
+  card is hidden and nothing can be picked — `reconcile` leaves UIKit's buffer alone
+  until commit, and the commit would overwrite an inserted link.
+  **Candidates are this device's caches only, and only what this account is known to
+  see** — neither metadata cache is cleared on sign-out and the children cache is not
+  account- or server-scoped, so reading them wholesale would offer the previous user's
+  titles (and write a dangling link into this account's document). So: `subpages`; Home's
+  cached lists (`DocumentCacheStore`, injected as `listCache`) only where a fetch for the
+  signed-in account wrote them — each list carries a `fetchedFor` stamp, set by Home's and
+  Shared's successful loads, cleared by a save without an account or a local insertion,
+  read via `documents(fetchedFor:)`. A Home load captures the owner when it *starts*, so a
+  load started before the signed-in id is known saves both lists unstamped; therefore
+  `HomeViewModel.refreshSignedInUser()` runs `load()` whenever the id changes (`refresh()` and
+  `reauthenticated()` then pay one redundant fetch). And the cached children
+  (`children(ofParents:)`) of exactly those pages plus this document. No children list under any other parent is
+  read. It works offline and makes no request; the cache reads are memoized per `[[` so a
+  keystroke never decodes `UserDefaults`. The current document, untitled documents,
+  pending creates (their id is re-keyed when the create syncs, so a link would dangle)
+  and pending deletes are never offered. Ranking (`rankedPageLinkCandidates`) folds
+  case and diacritics, requires every query word, and orders title-prefix, word-prefix,
+  then contains, newest first within each, six rows at most. The card
+  (`PageLinkPickerView`) is the slash menu's glass sibling in the same
+  `GlassEffectContainer`, hosted by `PageLinkPickerHost` so a caret move re-renders only
+  the card; VoiceOver hears "Link a page" when it opens and "No matching pages" when the
+  query stops matching.
 
 ### Persistence (`*Store` types)
 

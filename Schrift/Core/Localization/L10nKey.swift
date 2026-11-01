@@ -283,6 +283,10 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_slash_photo = "editor.slash.photo"  // "Photo"
     case editor_slash_file = "editor.slash.file"  // "File"
 
+    // Editor - `[[` page-link picker (see PageLinkPicker.swift)
+    case editor_page_link_title = "editor.page_link.title"  // "Link a page"
+    case editor_page_link_empty = "editor.page_link.empty"  // "No matching pages"
+
     // Editor - formatting bar (icon-only buttons; accessibility labels)
     case editor_format_add_block = "editor.format.add_block"  // "Add block"
     case editor_format_bold = "editor.format.bold"  // "Bold"

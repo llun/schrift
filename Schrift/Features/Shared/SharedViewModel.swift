@@ -48,6 +48,10 @@ final class SharedViewModel {
     /// The sign-in generation the last `loadIfStale` was asked under; a success recorded by any
     /// load is keyed on it, so a re-login never reads the previous account's list as fresh.
     @ObservationIgnored private var sessionGeneration = 0
+    /// The account the last successful fetch was stamped for. A fetch that ran before the signed-in
+    /// id was known cached its rows unstamped, so the editor's `[[` picker offered none of them;
+    /// once the id arrives that fetch is no longer "fresh" for this account, whatever its age.
+    @ObservationIgnored private var lastFetchedOwner: UUID?
 
     /// What a recorded success is valid for: the availability token and the session.
     struct LoadKey: Equatable {
@@ -152,7 +156,7 @@ final class SharedViewModel {
     func loadIfStale(sessionGeneration: Int) async {
         self.sessionGeneration = sessionGeneration
         let key = LoadKey(token: availability.token, sessionGeneration: sessionGeneration)
-        if freshness.isFresh(token: key, at: now()) { return }
+        if freshness.isFresh(token: key, at: now()), lastFetchedOwner == signedInUser.userID { return }
         await load()
     }
 
@@ -223,11 +227,15 @@ final class SharedViewModel {
         cache.saveSharedWithMeDocuments(
             saveCoordinator?.pins.applyingFlags(
                 surviving, ownerUserID: signedInUser.userID, fetchedAt: fetchedPinRevision, includePending: false)
-                ?? surviving)
+                ?? surviving,
+            // The account this load ran under: what lets the editor's `[[` picker offer these
+            // rows to that account only.
+            fetchedFor: pinOwner)
         hasLoaded = true
         loadFailedOffline = false
         errorKey = nil
         isLoading = false
+        lastFetchedOwner = pinOwner
         freshness.noteSuccess(
             token: LoadKey(token: availabilityToken, sessionGeneration: sessionGeneration), at: now())
         // Prune enrichment to the current list: a document that is no longer

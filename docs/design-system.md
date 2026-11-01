@@ -1,5 +1,22 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — Typing `[[` links a page.** In edit mode, `[[` opens a
+> floating **"Link a page"** card above the keyboard — the slash menu's sibling: the same
+> `.glassEffect(.regular)` surface in the same `GlassEffectContainer` as the formatting
+> bar, `DocsRadius.lg` corners, and the same four-row `@ScaledMetric` height cap. A
+> `caption` heading in `textTertiary`, then up to six documents matching what was typed
+> after `[[` (case- and diacritic-insensitive), each a `description` glyph on a
+> `brandFillSubtle` tile in `textBrand`, the title in `body` `textPrimary` with the
+> matched part bold. The row Return picks has a `brandFillSubtle` fill (`DocsRadius.md`);
+> hardware Up/Down move it. No match shows "No matching pages" in `textSecondary`.
+> Choosing a row inserts an ordinary page chip (`[Title](https://<host>/docs/<uuid>/)`).
+> No new token, so it follows every theme and both modes; it lists only documents
+> already cached on the device that the signed-in account is known to see, so it works
+> offline. It stays hidden while an input method is composing, and with no matches Up and
+> Down keep moving the caret. Behaviour and rules: the `[[`
+> bullet in `AGENTS.md` and `Schrift/Features/Editor/PageLinkPicker.swift`.
+>
+
 > **Revised: 2026-11-01 — Ledger rows on Home and Search (Direction A).** A document row
 > now has a tile, a title that may use two lines, one line of the document's text and a
 > sub-page count. `DocRow` takes an optional `excerpt` (`footnote`, `textSecondary`, one line,
