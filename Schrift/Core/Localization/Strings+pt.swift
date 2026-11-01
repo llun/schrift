@@ -43,6 +43,8 @@ enum Strings_pt {
         .search_empty_title: "Nenhum documento encontrado",
         .search_empty_body: "Nada corresponde a \u{201C}%@\u{201D}. Tente outro título ou palavra-chave.",
         .search_offline_explanation: "A pesquisa está disponível quando estiver online.",
+        .search_offline_local_only: "Apenas resultados deste dispositivo",
+        .search_on_this_device: "Neste dispositivo",
         .versions_offline_explanation: "O histórico de versões está disponível quando estiver online.",
         .editor_offline_unavailable_title: "Indisponível offline",
         .editor_offline_open_online: "Abra este documento online primeiro para guardar uma cópia neste dispositivo.",

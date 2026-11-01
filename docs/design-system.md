@@ -26,6 +26,32 @@
 > since they are not motion. VoiceOver is unaffected: no label, trait or order changed, and the
 > new check shape is hidden like the glyph it replaces.
 
+> **Revised: 2026-11-01 — Search finds documents on the device first (Direction B).** As the
+> user types, Search shows matches from the documents already cached on the device at once (no
+> debounce), then merges the server's rows when they arrive: a document both found appears once
+> in the server's position, and the device's matches the server did not return follow under an
+> "ON THIS DEVICE" section label (the existing `sectionLabel` style, no new token). Results on
+> screen stay while a refined query loads — the server's section keeps the previous answer's
+> rows until the new one lands, with the device's new matches deduped against them, so the list
+> does not collapse and re-expand per keystroke; those rows are kept only while the query
+> refines theirs (not for a recent term, a deleted character or another word typed offline
+> before a reconnect) and a failed request drops them. The skeleton shows when there is nothing
+> from the device or the server yet, offline too until the device has answered, so the empty
+> state never flashes before the device's rows. A new query clears the previous one's error
+> (offline too). Rows found for one account are never shown to another after a re-login; the
+> server's rows and Quick access belong to the sign-in session that fetched them, so an answer
+> landing before the re-login has learned the account is kept, and the device is searched again
+> once it is known. Offline, Search
+> stays usable: the `OfflineBanner` reads "Results from this device only", the search field is
+> enabled (Home's compact shortcut too), the server's retained rows are ignored and Quick access
+> is hidden. Matching reuses
+> `searchHighlightRanges`' rule (case- and diacritic-insensitive, substring, every term must
+> match) over title, excerpt and cached body text, ranked title matches first and then recency;
+> a body-only match shows the matching line as the row's excerpt so the highlight is visible.
+> Only lists stamped for the signed-in account are read. Two new strings
+> (`search_offline_local_only`, `search_on_this_device`) in all 11 languages; no new colour,
+> spacing or motion.
+
 > **Revised: 2026-11-01 — Documents reopen where you left off reading.** Leaving a
 > document (the screen disappears, or the app moves to the background) records the
 > block at the top of the screen; reopening scrolls the reading surface straight to it

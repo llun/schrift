@@ -40,7 +40,9 @@ final class SearchScreenNavigationTests: XCTestCase {
                 Text("Home")
                     .navigationTitle(loc[.home_title])
                     .navigationDestination(for: HomeRoute.self) { _ in
-                        SearchScreen(viewModel: viewModel, serverHost: "docs.example.org") { document in
+                        SearchScreen(
+                            viewModel: viewModel, serverHost: "docs.example.org", signInGeneration: 0
+                        ) { document in
                             navigation.path.append(DocumentEditorRoute(document: document))
                         }
                     }

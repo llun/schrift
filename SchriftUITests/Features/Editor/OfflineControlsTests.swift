@@ -6,9 +6,18 @@ final class OfflineControlsTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--offline-controls"] + (uncached ? ["--uncached"] : [])
         app.launch()
-        XCTAssertTrue(app.staticTexts["Search is available when online."].firstMatch.waitForExistence(timeout: 10))
-        app.absorbFirstTouch(on: app.staticTexts["Search is available when online."].firstMatch)
+        // Home's offline banner: on every size class, and it shows only once the fixture's path
+        // is down. (The compact Search shortcut no longer carries an offline footnote: offline it
+        // opens Search over this device's documents.)
+        let banner = offlineBanner(app, note: "All documents saved on this device")
+        XCTAssertTrue(banner.waitForExistence(timeout: 10))
+        app.absorbFirstTouch(on: banner)
         return app
+    }
+
+    /// `OfflineBanner` combines its status and note into one element labelled "Offline. <note>".
+    private func offlineBanner(_ app: XCUIApplication, note: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Offline. \(note)")).firstMatch
     }
 
     private func capture(_ app: XCUIApplication, _ name: String) {
@@ -77,24 +86,34 @@ final class OfflineControlsTests: XCTestCase {
         let shortcut = app.buttons["Search docs.example.org"]
         if shortcut.exists {
             XCTAssertEqual(app.buttons.matching(identifier: "Search docs.example.org").count, 1)
-            XCTAssertFalse(shortcut.isEnabled)
-            capture(app, "iphone-home-search-offline")
-            app.buttons["fixture.online"].tap()
-            XCTAssertTrue(shortcut.waitForExistence(timeout: 5))
+            // Offline the shortcut still opens Search, which looks through this device's documents.
             XCTAssertTrue(shortcut.isEnabled)
+            XCTAssertFalse(app.staticTexts["Search is available when online."].exists)
+            capture(app, "iphone-home-search-offline")
             shortcut.tap()
-            XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout: 5))
-            app.searchFields.firstMatch.tap()
-            app.searchFields.firstMatch.typeText("Roadmap")
-            app.buttons["fixture.offline"].tap()
-            XCTAssertTrue(app.textFields.firstMatch.waitForExistence(timeout: 5))
-            XCTAssertFalse(app.textFields.firstMatch.isEnabled)
+            let field = app.searchFields.firstMatch
+            XCTAssertTrue(field.waitForExistence(timeout: 5))
+            XCTAssertTrue(field.isEnabled)
+            let localOnly = offlineBanner(app, note: "Results from this device only")
+            XCTAssertTrue(localOnly.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.staticTexts["Search is available when online."].exists)
+            field.tap()
+            field.typeText("Roadmap")
             XCTAssertTrue(app.navigationBars.buttons.firstMatch.isEnabled, "Back remains available")
             capture(app, "iphone-pushed-search-offline")
             app.buttons["fixture.online"].tap()
-            XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout: 5))
-            XCTAssertEqual(app.searchFields.firstMatch.value as? String, "Roadmap")
+            let noteGone = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == false"), object: localOnly)
+            XCTAssertEqual(XCTWaiter.wait(for: [noteGone], timeout: 5), .completed)
+            XCTAssertTrue(field.isEnabled)
+            XCTAssertEqual(field.value as? String, "Roadmap")
             capture(app, "iphone-search-reconnected")
+            app.buttons["fixture.offline"].tap()
+            XCTAssertTrue(localOnly.waitForExistence(timeout: 5))
+            XCTAssertTrue(field.isEnabled, "Search keeps working offline, on this device's documents")
+            XCTAssertEqual(field.value as? String, "Roadmap")
+            XCTAssertTrue(app.navigationBars.buttons.firstMatch.isEnabled, "Back remains available")
+            capture(app, "iphone-pushed-search-offline-again")
         } else {
             XCTAssertTrue(app.textFields.firstMatch.exists)
             XCTAssertFalse(app.textFields.firstMatch.isEnabled)
