@@ -89,12 +89,34 @@ final class DocHighlightTests: XCTestCase {
         XCTAssertEqual(window, "…agreed the hotel near Nimman is the pick")
     }
 
-    func testAccessibilitySizeLeadingContextWindowsEarlierMatch() {
-        // Two lines at accessibility sizes still window a match that a one-line budget would hide.
+    func testShortExcerptWindowAtOneLineBudget() {
         let excerpt = "Notes from the call: hotel near Nimman is the pick"
         XCTAssertEqual(
             searchExcerptWindow(excerpt, query: "hotel", locale: en, leadingContext: docRowExcerptLeadingCharacters),
-            "…call: hotel near Nimman is the pick")
+            "…the call: hotel near Nimman is the pick")
+    }
+
+    func testAccessibilitySizeTwoLineBudgetWindowsMatchBeyondOffset24() {
+        // The match starts at offset 34, past the two-line budget of 24, so it is windowed.
+        let excerpt = "Notes from the planning call: the hotel near Nimman is the pick"
+        XCTAssertEqual(
+            searchExcerptWindow(
+                excerpt, query: "hotel", locale: en, leadingContext: docRowExcerptLeadingCharacters * 2),
+            "…the planning call: the hotel near Nimman is the pick")
+    }
+
+    func testSingleLongWordBeforeMatchIsLeftUnchanged() {
+        XCTAssertEqual(
+            searchExcerptWindow("Supercalifragilistic hotel", query: "hotel", locale: en), "Supercalifragilistic hotel")
+        XCTAssertEqual(
+            searchExcerptWindow("abcdefghijklmnopqrstuvwxyz hotel", query: "hotel", locale: en),
+            "abcdefghijklmnopqrstuvwxyz hotel")
+    }
+
+    func testLongWordNotAtStartKeepsMidWordCut() {
+        XCTAssertEqual(
+            searchExcerptWindow("xx Supercalifragilisticexpialidocious hotel", query: "hotel", locale: en),
+            "…ialidocious hotel")
     }
 
     func testWindowHandlesCJKWithoutSpaces() {

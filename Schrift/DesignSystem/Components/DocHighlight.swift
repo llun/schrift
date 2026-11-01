@@ -60,9 +60,10 @@ func mergedSearchHighlightRanges(_ ranges: [Range<String.Index>]) -> [Range<Stri
 /// Type, the script (CJK glyphs are about twice as wide) and the device, so no character budget
 /// can say whether a match is in sight. Instead the excerpt is windowed whenever its first match
 /// starts beyond `leadingContext` characters: it then starts about `leadingContext` characters
-/// before the match, moved forward to a word boundary when there is one, and a leading ellipsis
-/// marks the cut. An excerpt whose first match is within the leading context, or that has no
-/// match, is returned unchanged.
+/// before the match, moved forward to a word boundary when that leaves at least half the context,
+/// and a leading ellipsis marks the cut. When the boundary is too close to the match and the cut
+/// word begins the excerpt, the excerpt is returned unchanged. An excerpt whose first match is
+/// within the leading context, or that has no match, is returned unchanged.
 func searchExcerptWindow(
     _ excerpt: String, query: String, locale: Locale = .current, leadingContext: Int = 12
 ) -> String {
@@ -73,12 +74,30 @@ func searchExcerptWindow(
     // Begin on a word: when the cut lands inside one (or on the space after one), skip ahead to
     // the next word, but never past the match itself.
     let cutInsideWord = start > excerpt.startIndex && !excerpt[excerpt.index(before: start)].isWhitespace
-    if excerpt[start].isWhitespace || cutInsideWord,
-        let gap = excerpt[start..<first.lowerBound].firstIndex(where: { $0.isWhitespace })
-    {
-        var next = excerpt.index(after: gap)
-        while next < first.lowerBound, excerpt[next].isWhitespace { next = excerpt.index(after: next) }
-        start = next
+    if excerpt[start].isWhitespace || cutInsideWord {
+        var forward: String.Index?
+        if let gap = excerpt[start..<first.lowerBound].firstIndex(where: { $0.isWhitespace }) {
+            var next = excerpt.index(after: gap)
+            while next < first.lowerBound, excerpt[next].isWhitespace { next = excerpt.index(after: next) }
+            forward = next
+        }
+        if let forward, excerpt.distance(from: forward, to: first.lowerBound) >= leadingContext / 2 {
+            start = forward
+        } else if forward != nil {
+            // Skipping ahead would leave (almost) no context before the match. Look at the word the
+            // cut is in instead: when it begins the excerpt there is nothing to trim, so return the
+            // excerpt as is; otherwise keep the mid-word cut.
+            var wordStart = start
+            if excerpt[wordStart].isWhitespace, wordStart > excerpt.startIndex,
+                !excerpt[excerpt.index(before: wordStart)].isWhitespace
+            {
+                wordStart = excerpt.index(before: wordStart)
+            }
+            while wordStart > excerpt.startIndex, !excerpt[excerpt.index(before: wordStart)].isWhitespace {
+                wordStart = excerpt.index(before: wordStart)
+            }
+            if wordStart == excerpt.startIndex { return excerpt }
+        }
     }
     return "…" + String(excerpt[start...])
 }

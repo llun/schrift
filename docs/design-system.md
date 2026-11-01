@@ -11,7 +11,8 @@
 > app locale, substring based so CJK works, overlapping or touching ranges merged. When the first
 > match starts beyond ~12 characters (per excerpt line; independent of Dynamic Type and script
 > width), `searchExcerptWindow` starts the excerpt on a word about that far before it with a
-> leading "…". Pending-delete rows are never highlighted (`docRowHighlightQuery`), keeping their
+> leading "…" (skipping ahead to the next word is only done when at least half the context remains before
+> the match; otherwise a cut word that begins the excerpt leaves it unchanged). Pending-delete rows are never highlighted (`docRowHighlightQuery`), keeping their
 > dimmed strikethrough uniform. VoiceOver is unchanged: the row label
 > is composed from plain text and never carries the highlight. No new colour token or string.
 
