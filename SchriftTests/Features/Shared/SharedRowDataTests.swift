@@ -80,4 +80,17 @@ final class SharedRowDataTests: XCTestCase {
             sharedRowFaces(sharedByName: nil, memberNames: []),
             SharedRowFaces(leading: nil, trailing: []))
     }
+
+    /// The leading Avatar is sized from `docIconBoxSize` and told not to scale again, so it
+    /// matches the tinted DocIcon box at every Dynamic Type scale.
+    func testAvatarMatchesTintedDocIconBoxAtEveryScale() {
+        for scale: CGFloat in [0.82, 1, 1.35, 2.1, 3.1] {
+            let box = docIconBoxSize(scale: scale, tinted: true)
+            XCTAssertEqual(box, 24 * scale + 14, accuracy: 0.001)
+            let avatar = Avatar(name: "Amandine Salambo", size: box, scaleOverride: 1)
+            XCTAssertEqual(avatar.scaledSize, box, accuracy: 0.001)
+        }
+        XCTAssertEqual(docIconBoxSize(scale: 1, tinted: true), 38)
+        XCTAssertEqual(docIconBoxSize(scale: 2, tinted: false), 48)
+    }
 }

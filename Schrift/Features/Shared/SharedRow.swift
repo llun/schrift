@@ -17,16 +17,22 @@ struct SharedRow: View {
     var pendingDeleteLabel: String = ""
     var onTap: (() -> Void)? = nil
 
+    /// Same base and `relativeTo:` as `DocIcon`'s own scale, so the two leading states measure
+    /// the same box at every Dynamic Type category.
+    @ScaledMetric(relativeTo: .body) private var scale: CGFloat = 1
+
     var body: some View {
         let faces = sharedRowFaces(sharedByName: sharedByName, memberNames: memberNames)
         Button {
             onTap?()
         } label: {
             HStack(spacing: DocsSpacing.spaceSM) {
-                // Both states are 38pt (`DocIcon`'s tinted box = 24 + 14), so the row's height
-                // and its text origin do not move when the enrichment lands.
+                // Both states occupy `DocIcon`'s tinted box (38pt at default size), so the row's
+                // height and its text origin do not move when the enrichment lands. The avatar is
+                // sized from that box at the row's scale and told not to scale again.
                 if let leading = faces.leading {
-                    Avatar(name: leading, size: 38)
+                    Avatar(
+                        name: leading, size: docIconBoxSize(scale: scale, tinted: true), scaleOverride: 1)
                 } else {
                     DocIcon(emoji: nil, tinted: true)
                 }
