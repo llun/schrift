@@ -66,6 +66,67 @@ final class HomeViewModelSignedInUserTests: HomeViewModelTestCase {
         XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "users/me/"), 1)
     }
 
+    /// On a fresh sign-in the first load races `refreshSignedInUser` (`RootView`'s `.task`), so it
+    /// can capture no owner and cache both lists unstamped — which the editor's `[[` picker reads
+    /// as nobody's, so it offers no Home documents until something else reloads. Learning the id
+    /// has to be followed by a load that re-stamps them. Sequenced rather than raced: the load
+    /// below *is* the one that captured no owner, and the refresh that arrives afterwards is the
+    /// id landing.
+    func testALoadStartedBeforeTheIdIsKnownIsRestampedOnceItArrives() async {
+        let documentID = "33333333-3333-4333-8333-333333333333"
+        let userID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let page = Self.paginatedFixture(id: documentID, title: "Home doc", isFavorite: false)
+        MockURLProtocol.stubHandler = { request in
+            let path = request.url?.path ?? ""
+            if path.contains("users/me") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data(#"{"id":"11111111-1111-4111-8111-111111111111","email":"ada@example.org"}"#.utf8),
+                    error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: page, error: nil)
+        }
+        let cache = makeCache()
+        let signedIn = makeSignedInUser(userID: nil)
+        let viewModel = makeViewModel(cache: cache, signedInUser: signedIn)
+
+        await viewModel.load()
+        XCTAssertTrue(
+            cache.documents(fetchedFor: userID).isEmpty,
+            "precondition: a load that ran with no known account stamps nothing")
+
+        await viewModel.refreshSignedInUser()
+
+        XCTAssertEqual(signedIn.userID, userID)
+        XCTAssertEqual(
+            cache.documents(fetchedFor: userID).map { $0.id.uuidString.lowercased() }.first, documentID,
+            "learning the id must be followed by a load, or the picker offers no Home documents")
+    }
+
+    /// …and only when the id actually changed: the ordinary launch, where the account is already
+    /// remembered, must not pay a list fetch for confirming it.
+    func testRefreshingAnAlreadyKnownIdDoesNotLoad() async {
+        let log = RequestRecorder()
+        let empty = Self.emptyFixture
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let path = request.url?.path ?? ""
+            if path.contains("users/me") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data(#"{"id":"11111111-1111-4111-8111-111111111111","email":"ada@example.org"}"#.utf8),
+                    error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: empty, error: nil)
+        }
+        let viewModel = makeViewModel(signedInUser: makeSignedInUser())
+
+        await viewModel.refreshSignedInUser()
+
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "users/me/"), 1)
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "documents/"), 0)
+    }
+
     /// The passive half: reconnect and foreground both land here, so a session left without an
     /// identity recovers without the user having to know to pull.
     func testAReconnectSyncReAsksWhoIsSignedInWhenNothingKnows() async {

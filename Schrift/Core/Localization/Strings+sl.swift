@@ -310,6 +310,8 @@ enum Strings_sl {
         .editor_error_add_file: "Datoteke ni bilo mogoče dodati. Poskusite znova.",
         .editor_error_file_too_large: "Ta datoteka je prevelika.",
         .editor_slash_file: "Datoteka",
+        .editor_page_link_title: "Poveži stran",
+        .editor_page_link_empty: "Ni ujemajočih se strani",
         .editor_uploading_file: "Nalaganje datoteke…",
         .editor_uploading_file_a11y: "Nalaganje datoteke",
 

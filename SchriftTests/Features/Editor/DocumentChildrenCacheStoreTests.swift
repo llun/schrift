@@ -42,6 +42,27 @@ final class DocumentChildrenCacheStoreTests: XCTestCase {
         )
     }
 
+    /// The `[[` picker's read: only the named parents' lists, newest sync first — never a
+    /// list under any other parent, which may be another account's.
+    func testChildrenOfParentsReadsOnlyTheNamedParents() {
+        var clock = Date(timeIntervalSince1970: 1000)
+        let store = makeStore(now: { clock })
+        let older = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let newer = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        let unrelated = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let first = makeDocument(id: "44444444-4444-4444-8444-444444444444", title: "First")
+        let second = makeDocument(id: "55555555-5555-4555-8555-555555555555", title: "Second")
+        let foreign = makeDocument(id: "66666666-6666-4666-8666-666666666666", title: "Foreign")
+        store.save([first], for: older)
+        clock = clock.addingTimeInterval(10)
+        store.save([second], for: newer)
+        store.save([foreign], for: unrelated)
+
+        XCTAssertEqual(store.children(ofParents: [older, newer]).map(\.id), [second.id, first.id])
+        XCTAssertEqual(store.children(ofParents: [UUID()]), [])
+        XCTAssertEqual(store.children(ofParents: []), [])
+    }
+
     func testChildrenReturnsNilWhenParentNeverCached() {
         let store = makeStore()
 

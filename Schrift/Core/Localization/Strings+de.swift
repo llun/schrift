@@ -302,6 +302,8 @@ enum Strings_de {
         .editor_error_add_file: "Datei konnte nicht hinzugefügt werden. Bitte erneut versuchen.",
         .editor_error_file_too_large: "Diese Datei ist zu groß.",
         .editor_slash_file: "Datei",
+        .editor_page_link_title: "Seite verlinken",
+        .editor_page_link_empty: "Keine passenden Seiten",
         .editor_uploading_file: "Datei wird hochgeladen…",
         .editor_uploading_file_a11y: "Datei wird hochgeladen",
 

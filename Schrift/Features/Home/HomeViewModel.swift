@@ -419,8 +419,10 @@ final class HomeViewModel {
             let cacheProjection = saveCoordinator.pins.resolve(
                 pinned: overlaid.pinned, recent: moved.recent, ownerUserID: signedInUser.userID,
                 fetchedAt: pinRevision, includePending: false)
-            cache.savePinnedDocuments(cacheProjection.pinned)
-            cache.saveRecentDocuments(cacheProjection.recent)
+            // Stamped with the account this load ran under, so a reader that must not cross
+            // accounts (the editor's `[[` picker) can tell these rows from a previous user's.
+            cache.savePinnedDocuments(cacheProjection.pinned, fetchedFor: pinOwner)
+            cache.saveRecentDocuments(cacheProjection.recent, fetchedFor: pinOwner)
             saveCoordinator.pins.didCacheFreshLists(
                 pinned: overlaid.pinned, recent: moved.recent, ownerUserID: pinOwner, fetchedAt: pinRevision)
             hasKnownFetchedList = true
@@ -490,22 +492,21 @@ final class HomeViewModel {
         // work can send four identical requests. The fix would be a write-through in the
         // coordinator rather than a reordering here.
         //
-        // **And a re-learn has to be followed by a load.** `SignedInUserStore` is deliberately
-        // neither `@Observable` nor cached, so reading it registers no SwiftUI dependency:
-        // learning the id un-hides this device's local rows in `recentDocuments` without
+        // **A re-learn is followed by a load, and `refreshSignedInUser` does it.** `SignedInUserStore`
+        // is deliberately neither `@Observable` nor cached, so reading it registers no SwiftUI
+        // dependency: learning the id un-hides this device's local rows in `recentDocuments` without
         // invalidating anything that would draw them. That is the same trap this function's own
         // comment below describes for a migrated row — the reconnect and foreground edges call
-        // this and not `load()` — so it takes the same answer. Gated on having actually learned
-        // something, which is rare, rather than on having asked.
+        // this and not `load()` — so it takes the same answer, inside the learning call so every
+        // caller gets it. Gated on having actually learned something, which is rare, rather than
+        // on having asked.
         //
         // It can therefore double up with the `onDocumentMigrated` load below when a create
         // pass migrates during the replay above and the identity was unknown — both are
         // generation-guarded and latest-wins, so that costs one redundant list fetch, not a
         // wrong list. Note `load()` also clears any undismissed error banner, which is new on
         // the foreground path but identical to what the migrated-row load already does.
-        if await refreshSignedInUserIfUnknown() {
-            await load()
-        }
+        await refreshSignedInUserIfUnknown()
         // **A migrated document must not vanish from a live Home.** The replay drops the
         // record, so the local row is correctly withheld the instant it migrates — but the
         // *real* row only exists in `fetchedRecentDocuments`, which still holds the fetch from
@@ -589,11 +590,21 @@ final class HomeViewModel {
         // A launch/reconnect may have skipped replay while identity was unknown.
         // Learning it is the trigger that resumes the account-scoped pin queue.
         await saveCoordinator.syncPendingPins()
+        // **A newly learned id has to be followed by a load.** `load()` captures the account it
+        // runs under when it *starts*, and on a fresh sign-in the list's first load races this
+        // very call (`RootView`'s `.task` runs it concurrently), so it can capture no owner and
+        // save both lists unstamped — which the editor's `[[` picker treats as nobody's, and
+        // offers no Home documents until something else reloads. This load starts with the id
+        // known, supersedes the racing one (latest wins) and re-stamps the cache. Gated on the
+        // id actually changing, so the ordinary launch with a known account costs nothing.
+        // Callers that load next anyway (`refresh()`, `reauthenticated()`) pay one redundant
+        // fetch, only on the rare change.
+        if previousOwner != user.id { await load() }
     }
 
-    /// Ask who this session belongs to, but only when nothing on the device knows. Returns
-    /// whether the answer was actually learned, so a caller that renders local rows can decide
-    /// whether it now has something new to show.
+    /// Ask who this session belongs to, but only when nothing on the device knows. Learning the
+    /// id is all this does; the reload that a newly learned id needs happens in
+    /// `refreshSignedInUser()`, which both callers reach through this function.
     ///
     /// Failing closed is right; *staying* closed is not. `SessionStore.noteSessionCookiesReplaced`
     /// deliberately leaves the identity unknown when a login hands its cookies over and the
@@ -655,12 +666,10 @@ final class HomeViewModel {
     /// three (a pull-to-refresh can join them), self-limiting — the next caller finds the id
     /// known — and latest-wins on the loads that follow, so the cost is redundant traffic
     /// rather than a wrong list.
-    @discardableResult
-    private func refreshSignedInUserIfUnknown() async -> Bool {
-        guard signedInUser.userID == nil else { return false }
-        guard !userDefaults.bool(forKey: "schrift.workOffline") else { return false }
+    private func refreshSignedInUserIfUnknown() async {
+        guard signedInUser.userID == nil else { return }
+        guard !userDefaults.bool(forKey: "schrift.workOffline") else { return }
         await refreshSignedInUser()
-        return signedInUser.userID != nil
     }
 
     /// Whether this document's deletion is queued and unsent, so its row draws struck through
