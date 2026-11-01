@@ -7,12 +7,14 @@ import XCTest
 ///
 /// Real touches cannot be synthesized here, so everything that decides what the drawer does is a
 /// value function and is driven directly: how far a translation opens it, the rubber band past
-/// open, the scrim that follows, the settle decision from position plus predicted velocity, and
-/// the edge strip that keeps the drawer out of the system back swipe's way. The recognizer is
-/// read through the production factory.
+/// open, the scrim that follows, the settle decision from position plus predicted velocity, the
+/// edge strip that keeps the drawer out of the system back swipe's and the split view's sidebar
+/// swipe's way, and the presentation decisions (what a release writes and announces, an outside
+/// change winning over a drag, when the view unmounts, no grab mid-spring). The recognizer is read
+/// through the production factory.
 ///
-/// Not reachable from here, and not claimed: the recognizer's touch bookkeeping, the responder-
-/// chain walk to the hosting navigation controller, and the spring itself.
+/// Not reachable from here, and not claimed: the recognizer's touch bookkeeping, reading the
+/// split view's live state, and the spring itself.
 @MainActor
 final class PagesDrawerPanTests: XCTestCase {
     private let width: CGFloat = 306
@@ -156,18 +158,18 @@ final class PagesDrawerPanTests: XCTestCase {
     // MARK: - The edge strip and the back swipe
 
     func testWithoutABackSwipeTheStripStartsAtTheEdge() {
-        XCTAssertTrue(pagesDrawerEdgeZoneContains(0, canInteractivePop: false))
-        XCTAssertTrue(pagesDrawerEdgeZoneContains(PagesDrawerMetrics.edgeZoneWidth, canInteractivePop: false))
-        XCTAssertFalse(pagesDrawerEdgeZoneContains(PagesDrawerMetrics.edgeZoneWidth + 1, canInteractivePop: false))
+        XCTAssertTrue(pagesDrawerEdgeZoneContains(0, edgeHasSystemSwipe: false))
+        XCTAssertTrue(pagesDrawerEdgeZoneContains(PagesDrawerMetrics.edgeZoneWidth, edgeHasSystemSwipe: false))
+        XCTAssertFalse(pagesDrawerEdgeZoneContains(PagesDrawerMetrics.edgeZoneWidth + 1, edgeHasSystemSwipe: false))
     }
 
     func testWithABackSwipeTheEdgeIsLeftToTheSystem() {
-        XCTAssertFalse(pagesDrawerEdgeZoneContains(0, canInteractivePop: true))
-        XCTAssertFalse(pagesDrawerEdgeZoneContains(PagesDrawerMetrics.backSwipeInset - 1, canInteractivePop: true))
-        XCTAssertTrue(pagesDrawerEdgeZoneContains(PagesDrawerMetrics.backSwipeInset, canInteractivePop: true))
+        XCTAssertFalse(pagesDrawerEdgeZoneContains(0, edgeHasSystemSwipe: true))
+        XCTAssertFalse(pagesDrawerEdgeZoneContains(PagesDrawerMetrics.backSwipeInset - 1, edgeHasSystemSwipe: true))
+        XCTAssertTrue(pagesDrawerEdgeZoneContains(PagesDrawerMetrics.backSwipeInset, edgeHasSystemSwipe: true))
         let end = PagesDrawerMetrics.backSwipeInset + PagesDrawerMetrics.edgeZoneWidth
-        XCTAssertTrue(pagesDrawerEdgeZoneContains(end, canInteractivePop: true))
-        XCTAssertFalse(pagesDrawerEdgeZoneContains(end + 1, canInteractivePop: true))
+        XCTAssertTrue(pagesDrawerEdgeZoneContains(end, edgeHasSystemSwipe: true))
+        XCTAssertFalse(pagesDrawerEdgeZoneContains(end + 1, edgeHasSystemSwipe: true))
     }
 
     func testTheStripIsNarrowEnoughNotToSwallowTheScreen() {
@@ -175,6 +177,23 @@ final class PagesDrawerPanTests: XCTestCase {
         // sliver, not a region.
         XCTAssertLessThanOrEqual(
             PagesDrawerMetrics.backSwipeInset + PagesDrawerMetrics.edgeZoneWidth, 64)
+    }
+
+    func testTheSidebarSwipeClaimsTheEdgeOnlyWhileTheSidebarIsHidden() {
+        XCTAssertTrue(
+            pagesDrawerCanRevealSidebar(isCollapsed: false, presentsWithGesture: true, displayMode: .secondaryOnly))
+        // The sidebar is already showing: the detail pane's edge is not the screen's.
+        XCTAssertFalse(
+            pagesDrawerCanRevealSidebar(isCollapsed: false, presentsWithGesture: true, displayMode: .oneBesideSecondary)
+        )
+        XCTAssertFalse(
+            pagesDrawerCanRevealSidebar(isCollapsed: false, presentsWithGesture: true, displayMode: .oneOverSecondary))
+        // No swipe offered.
+        XCTAssertFalse(
+            pagesDrawerCanRevealSidebar(isCollapsed: false, presentsWithGesture: false, displayMode: .secondaryOnly))
+        // Collapsed into one stack: the back swipe decides instead.
+        XCTAssertFalse(
+            pagesDrawerCanRevealSidebar(isCollapsed: true, presentsWithGesture: true, displayMode: .secondaryOnly))
     }
 
     func testTheBackSwipeIsPossibleOnlyWithSomethingToPopTo() {
@@ -279,7 +298,7 @@ final class PagesDrawerPanTests: XCTestCase {
         XCTAssertFalse(coordinator.gestureRecognizer(recognizer, shouldBeRequiredToFailBy: UIPanGestureRecognizer()))
     }
 
-    func testTheNavigationControllersPansWaitOnTheOpeningRecognizerOnly() {
+    func testTheNavigationControllersBackSwipesWaitOnTheOpeningRecognizerOnly() throws {
         let coordinator = PagesDrawerPanGesture.Coordinator()
         let root = UIViewController()
         let pushed = UIViewController()
@@ -295,13 +314,106 @@ final class PagesDrawerPanTests: XCTestCase {
         pushed.view.addGestureRecognizer(opening)
         pushed.view.addGestureRecognizer(closing)
 
-        let systemPan = UIPanGestureRecognizer()
-        navigation.view.addGestureRecognizer(systemPan)
+        // The navigation controller's real recognizers, matched by identity.
+        let backSwipe = try XCTUnwrap(navigation.interactivePopGestureRecognizer)
+        XCTAssertTrue(coordinator.gestureRecognizer(opening, shouldBeRequiredToFailBy: backSwipe))
+        XCTAssertFalse(coordinator.gestureRecognizer(closing, shouldBeRequiredToFailBy: backSwipe))
+        if let contentBackSwipe = navigation.interactiveContentPopGestureRecognizer {
+            XCTAssertTrue(coordinator.gestureRecognizer(opening, shouldBeRequiredToFailBy: contentBackSwipe))
+            XCTAssertFalse(coordinator.gestureRecognizer(closing, shouldBeRequiredToFailBy: contentBackSwipe))
+        }
+
+        // Any other pan — even one on the navigation controller's own view — does not wait.
+        let panOnNavigationView = UIPanGestureRecognizer()
+        navigation.view.addGestureRecognizer(panOnNavigationView)
         let unrelatedPan = UIPanGestureRecognizer()
         pushed.view.addGestureRecognizer(unrelatedPan)
-
-        XCTAssertTrue(coordinator.gestureRecognizer(opening, shouldBeRequiredToFailBy: systemPan))
+        XCTAssertFalse(coordinator.gestureRecognizer(opening, shouldBeRequiredToFailBy: panOnNavigationView))
         XCTAssertFalse(coordinator.gestureRecognizer(opening, shouldBeRequiredToFailBy: unrelatedPan))
-        XCTAssertFalse(coordinator.gestureRecognizer(closing, shouldBeRequiredToFailBy: systemPan))
+    }
+
+    // MARK: - Presentation decisions
+
+    func testAReleaseThatOpensAClosedDrawerPresentsItAndAnnounces() {
+        XCTAssertEqual(
+            pagesDrawerFinish(settle: .open, wasPresented: false),
+            PagesDrawerFinish(presented: true, announces: true, target: 1))
+    }
+
+    func testAReleaseThatClosesAnOpenDrawerDismissesItSilently() {
+        XCTAssertEqual(
+            pagesDrawerFinish(settle: .closed, wasPresented: true),
+            PagesDrawerFinish(presented: false, announces: false, target: 0))
+    }
+
+    func testAReleaseThatLeavesTheDrawerWhereItWasWritesNothingAndSaysNothing() {
+        // An edge pull let go too early, and a close drag on the open drawer that springs back:
+        // `isPresented` is not rewritten, and VoiceOver is not told the screen changed.
+        XCTAssertEqual(
+            pagesDrawerFinish(settle: .closed, wasPresented: false),
+            PagesDrawerFinish(presented: nil, announces: false, target: 0))
+        XCTAssertEqual(
+            pagesDrawerFinish(settle: .open, wasPresented: true),
+            PagesDrawerFinish(presented: nil, announces: false, target: 1))
+    }
+
+    func testTheButtonMountsTheDrawerClosedAndSpringsItIn() {
+        XCTAssertEqual(
+            pagesDrawerPresentationStep(presented: true, progress: 0, isMounted: false, reduceMotion: false),
+            .mountForEntrance)
+    }
+
+    func testUnderReduceMotionTheButtonMountsTheDrawerAlreadyOpen() {
+        XCTAssertEqual(
+            pagesDrawerPresentationStep(presented: true, progress: 0, isMounted: false, reduceMotion: true),
+            .mountOpen)
+    }
+
+    func testADragsOwnReleaseLeavesNothingForThePresentationChangeToDo() {
+        // The release already sprang the panel to its target before `isPresented` changed.
+        XCTAssertEqual(
+            pagesDrawerPresentationStep(presented: true, progress: 1, isMounted: true, reduceMotion: false),
+            .unchanged)
+        XCTAssertEqual(
+            pagesDrawerPresentationStep(presented: false, progress: 0, isMounted: true, reduceMotion: false),
+            .unchanged)
+    }
+
+    func testAnOutsideChangeWinsOverADragInFlight() {
+        // A finger holds the open drawer mostly open (0.8) when a row closes it: the panel heads
+        // closed, though the finger alone would have settled it open.
+        XCTAssertEqual(pagesDrawerSettle(progress: 0.8, velocity: 0, panelWidth: width), .open)
+        XCTAssertEqual(
+            pagesDrawerPresentationStep(presented: false, progress: 0.8, isMounted: true, reduceMotion: false),
+            .animate(to: 0))
+        // An edge pull barely started (0.1) when the button opens it: the panel heads open.
+        XCTAssertEqual(
+            pagesDrawerPresentationStep(presented: true, progress: 0.1, isMounted: true, reduceMotion: false),
+            .animate(to: 1))
+    }
+
+    func testReopeningWhileTheCloseSpringRunsTurnsThePanelAround() {
+        // Still mounted, its model progress already 0: no second mount, just a spring back.
+        XCTAssertEqual(
+            pagesDrawerPresentationStep(presented: true, progress: 0, isMounted: true, reduceMotion: false),
+            .animate(to: 1))
+    }
+
+    func testOnlyTheSpringThatClosedTheDrawerUnmountsIt() {
+        XCTAssertTrue(pagesDrawerShouldUnmount(target: 0, progress: 0, isPresented: false, isTracking: false))
+        // An opening spring never unmounts.
+        XCTAssertFalse(pagesDrawerShouldUnmount(target: 1, progress: 1, isPresented: true, isTracking: false))
+        // Reopened by the button while it closed.
+        XCTAssertFalse(pagesDrawerShouldUnmount(target: 0, progress: 1, isPresented: true, isTracking: false))
+        XCTAssertFalse(pagesDrawerShouldUnmount(target: 0, progress: 0, isPresented: true, isTracking: false))
+        // Grabbed by a new drag while it closed.
+        XCTAssertFalse(pagesDrawerShouldUnmount(target: 0, progress: 0.2, isPresented: false, isTracking: true))
+        XCTAssertFalse(pagesDrawerShouldUnmount(target: 0, progress: 0, isPresented: false, isTracking: true))
+    }
+
+    func testADragCannotTakeHoldWhileThePanelSprings() {
+        XCTAssertTrue(pagesDrawerMayBeginDrag(isTracking: false, isSettling: false))
+        XCTAssertFalse(pagesDrawerMayBeginDrag(isTracking: false, isSettling: true))
+        XCTAssertFalse(pagesDrawerMayBeginDrag(isTracking: true, isSettling: false))
     }
 }

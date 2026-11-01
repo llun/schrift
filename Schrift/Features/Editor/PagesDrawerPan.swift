@@ -17,9 +17,10 @@ enum PagesDrawerMetrics {
     static let rubberBandCoefficient: CGFloat = 0.55
     /// Width of the strip, along the leading edge, in which a touch may start pulling the drawer.
     static let edgeZoneWidth: CGFloat = 36
-    /// How far the strip sits in from the edge when the system back swipe is possible, so the
-    /// two never contend for the same touch. The system's edge recognizer claims roughly the
-    /// outer 20 points; this clears it.
+    /// How far the strip sits in from the edge when a system swipe starts there (the back swipe,
+    /// or the iPad split view's swipe that shows a hidden sidebar), so the two never contend for
+    /// the same touch. The system's edge recognizers claim roughly the outer 20 points; this
+    /// clears them.
     static let backSwipeInset: CGFloat = 24
 }
 
@@ -96,18 +97,31 @@ func pagesDrawerCanInteractivePop(viewControllerCount: Int, popGestureEnabled: B
     viewControllerCount > 1 && popGestureEnabled
 }
 
+/// Whether the split view hosting this screen can show its hidden sidebar with a swipe from the
+/// screen's leading edge: it is expanded (not collapsed into one stack, where the back swipe rules
+/// instead), it offers the swipe, and the sidebar is hidden — iPad portrait, or any width at which
+/// the split view tucks the primary column away.
+@MainActor
+func pagesDrawerCanRevealSidebar(
+    isCollapsed: Bool, presentsWithGesture: Bool, displayMode: UISplitViewController.DisplayMode
+) -> Bool {
+    !isCollapsed && presentsWithGesture && displayMode == .secondaryOnly
+}
+
 /// The strip, measured from the leading edge, in which a touch may start pulling the drawer open.
 ///
-/// With the back swipe available it sits just inside the system's own edge zone, so the edge
-/// still goes back and the drawer takes the strip beside it. With no back swipe — the editor in
-/// the iPad detail pane, or a root screen — it starts at the edge itself.
-func pagesDrawerEdgeZone(canInteractivePop: Bool) -> ClosedRange<CGFloat> {
-    let start = canInteractivePop ? PagesDrawerMetrics.backSwipeInset : 0
+/// When a system swipe already starts at the edge — the back swipe, or the split view's swipe that
+/// shows a hidden sidebar — the strip sits just inside the system's own edge zone, so the very
+/// edge keeps its system meaning and the drawer takes the strip beside it. With neither — the
+/// editor in the iPad detail pane beside a visible sidebar, or a root screen — it starts at the
+/// edge itself.
+func pagesDrawerEdgeZone(edgeHasSystemSwipe: Bool) -> ClosedRange<CGFloat> {
+    let start = edgeHasSystemSwipe ? PagesDrawerMetrics.backSwipeInset : 0
     return start...(start + PagesDrawerMetrics.edgeZoneWidth)
 }
 
-func pagesDrawerEdgeZoneContains(_ leadingX: CGFloat, canInteractivePop: Bool) -> Bool {
-    pagesDrawerEdgeZone(canInteractivePop: canInteractivePop).contains(leadingX)
+func pagesDrawerEdgeZoneContains(_ leadingX: CGFloat, edgeHasSystemSwipe: Bool) -> Bool {
+    pagesDrawerEdgeZone(edgeHasSystemSwipe: edgeHasSystemSwipe).contains(leadingX)
 }
 
 /// Whether a drag travelling `travelX` across the screen is the direction this gesture takes:
@@ -161,11 +175,7 @@ final class PagesDrawerPanGestureRecognizer: UIPanGestureRecognizer {
         if requiresEdgeZone, let view {
             let x = touch.location(in: view).x
             let leadingX = isRightToLeft ? view.bounds.width - x : x
-            let navigationController = view.pagesDrawerNavigationController
-            let canPop = pagesDrawerCanInteractivePop(
-                viewControllerCount: navigationController?.viewControllers.count ?? 0,
-                popGestureEnabled: navigationController?.interactivePopGestureRecognizer?.isEnabled ?? false)
-            guard pagesDrawerEdgeZoneContains(leadingX, canInteractivePop: canPop) else {
+            guard pagesDrawerEdgeZoneContains(leadingX, edgeHasSystemSwipe: view.pagesDrawerEdgeHasSystemSwipe) else {
                 state = .failed
                 return
             }
@@ -199,15 +209,39 @@ final class PagesDrawerPanGestureRecognizer: UIPanGestureRecognizer {
 }
 
 extension UIView {
-    /// The navigation controller this view's screen is pushed in, if any.
+    /// The view controller this view belongs to: the first one up the responder chain.
     @MainActor
-    fileprivate var pagesDrawerNavigationController: UINavigationController? {
+    fileprivate var pagesDrawerViewController: UIViewController? {
         var responder: UIResponder? = self
         while let current = responder {
-            if let controller = current as? UIViewController { return controller.navigationController }
+            if let controller = current as? UIViewController { return controller }
             responder = current.next
         }
         return nil
+    }
+
+    /// The navigation controller this view's screen is pushed in, if any.
+    @MainActor
+    fileprivate var pagesDrawerNavigationController: UINavigationController? {
+        pagesDrawerViewController?.navigationController
+    }
+
+    /// Whether a system swipe already starts at this screen's leading edge: the navigation
+    /// controller's back swipe, or the split view's swipe that shows its hidden sidebar. That
+    /// second recognizer belongs to the split view, has no public handle to wait on, and would
+    /// otherwise race the drawer for the same rightward drag, so the strip steps aside for it
+    /// exactly as it does for the back swipe.
+    @MainActor
+    fileprivate var pagesDrawerEdgeHasSystemSwipe: Bool {
+        let controller = pagesDrawerViewController
+        let navigation = controller?.navigationController
+        let canPop = pagesDrawerCanInteractivePop(
+            viewControllerCount: navigation?.viewControllers.count ?? 0,
+            popGestureEnabled: navigation?.interactivePopGestureRecognizer?.isEnabled ?? false)
+        guard !canPop, let split = controller?.splitViewController else { return canPop }
+        return pagesDrawerCanRevealSidebar(
+            isCollapsed: split.isCollapsed, presentsWithGesture: split.presentsWithGesture,
+            displayMode: split.displayMode)
     }
 }
 
@@ -297,19 +331,20 @@ struct PagesDrawerPanGesture: UIGestureRecognizerRepresentable {
             pagesDrawerRunsAlongside(otherGestureRecognizer)
         }
 
-        /// While a touch in the edge strip is still undecided, the navigation controller's pan
-        /// recognizers (the edge back swipe and, on iOS 26, the content back swipe) wait for this
-        /// one. A touch outside the strip fails this recognizer on the spot, which releases them
-        /// at once, so the real edge keeps going back.
+        /// While a touch in the edge strip is still undecided, the navigation controller's back
+        /// swipes (the edge one and iOS 26's content one) wait for this one. A touch outside the
+        /// strip fails this recognizer on the spot, which releases them at once, so the real edge
+        /// keeps going back. They are matched by identity — the navigation controller's own
+        /// properties — not by guessing their class or the view they sit on.
         func gestureRecognizer(
             _ gestureRecognizer: UIGestureRecognizer,
             shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
         ) -> Bool {
             guard (gestureRecognizer as? PagesDrawerPanGestureRecognizer)?.requiresEdgeZone == true,
-                otherGestureRecognizer is UIPanGestureRecognizer,
-                let navigationView = gestureRecognizer.view?.pagesDrawerNavigationController?.view
+                let navigation = gestureRecognizer.view?.pagesDrawerNavigationController
             else { return false }
-            return otherGestureRecognizer.view === navigationView
+            return otherGestureRecognizer === navigation.interactivePopGestureRecognizer
+                || otherGestureRecognizer === navigation.interactiveContentPopGestureRecognizer
         }
     }
 }
@@ -321,6 +356,65 @@ struct PagesDrawerPanGesture: UIGestureRecognizerRepresentable {
 func pagesDrawerRunsAlongside(_ other: UIGestureRecognizer) -> Bool {
     guard let scrollView = other.view as? UIScrollView else { return false }
     return other === scrollView.panGestureRecognizer
+}
+
+// MARK: - Presentation decisions
+
+/// What a released — or system-cancelled — drag does to the presentation.
+struct PagesDrawerFinish: Equatable {
+    /// The value to write to `isPresented`, or nil when it already says so.
+    var presented: Bool?
+    /// Whether to tell VoiceOver the screen changed: only when the drag opened a closed drawer.
+    /// A drag that leaves the drawer where it was, or closes it, says nothing.
+    var announces: Bool
+    /// Where the panel springs to.
+    var target: CGFloat
+}
+
+func pagesDrawerFinish(settle: PagesDrawerSettle, wasPresented: Bool) -> PagesDrawerFinish {
+    let opens = settle == .open
+    return PagesDrawerFinish(
+        presented: opens == wasPresented ? nil : opens, announces: opens && !wasPresented, target: opens ? 1 : 0)
+}
+
+/// What a change to `isPresented` does to the panel.
+enum PagesDrawerPresentationStep: Equatable {
+    /// The panel already sits at the target: a drag's release put it there.
+    case unchanged
+    /// Mount the drawer already open, with no entrance (Reduce Motion).
+    case mountOpen
+    /// Mount the drawer closed and spring it open once it has been drawn there.
+    case mountForEntrance
+    /// Spring the mounted panel to `target`.
+    case animate(to: CGFloat)
+}
+
+/// The step for a change to `isPresented`, from wherever it came: the button, a scrim tap, a row,
+/// the outline taking over, or a drag's own release.
+///
+/// A change from outside the drag wins over one in flight: the modifier stops tracking before it
+/// asks, and the answer heads for the new value wherever the finger had the panel — the settle
+/// threshold is not consulted.
+func pagesDrawerPresentationStep(
+    presented: Bool, progress: CGFloat, isMounted: Bool, reduceMotion: Bool
+) -> PagesDrawerPresentationStep {
+    let target: CGFloat = presented ? 1 : 0
+    guard progress != target else { return .unchanged }
+    if presented, !isMounted { return reduceMotion ? .mountOpen : .mountForEntrance }
+    return .animate(to: target)
+}
+
+/// Whether a finished spring may take the drawer view down. Only the one that closed it: a reopen,
+/// or a new drag, since then has taken over and needs the view.
+func pagesDrawerShouldUnmount(target: CGFloat, progress: CGFloat, isPresented: Bool, isTracking: Bool) -> Bool {
+    target == 0 && progress == 0 && !isPresented && !isTracking
+}
+
+/// Whether a drag may take hold of the panel. Not while one already has it, and not while the panel
+/// is springing: `progress` then holds where the spring is heading, not where the panel is on
+/// screen, so a drag started from it would make the panel jump before following the finger.
+func pagesDrawerMayBeginDrag(isTracking: Bool, isSettling: Bool) -> Bool {
+    !isTracking && !isSettling
 }
 
 // MARK: - Presentation
@@ -353,6 +447,10 @@ struct PagesDrawerPresentation<Drawer: View>: ViewModifier {
     /// Whether the drawer view exists. It outlives `isPresented` by the closing animation.
     @State private var isMounted = false
     @State private var isTracking = false
+    /// A spring is moving the panel. Cleared by the completion of the latest one only, which
+    /// `settleGeneration` tells apart from an earlier one it took over from.
+    @State private var isSettling = false
+    @State private var settleGeneration = 0
     @State private var dragStartProgress: CGFloat = 0
     /// The drawer has just been mounted closed and should spring open once it has drawn once.
     @State private var pendingEntrance = false
@@ -400,7 +498,7 @@ struct PagesDrawerPresentation<Drawer: View>: ViewModifier {
     private var handlers: PagesDrawerPanHandlers {
         PagesDrawerPanHandlers(
             began: {
-                guard !isTracking else { return }
+                guard pagesDrawerMayBeginDrag(isTracking: isTracking, isSettling: isSettling) else { return }
                 isTracking = true
                 dragStartProgress = progress
                 pendingEntrance = false
@@ -428,11 +526,10 @@ struct PagesDrawerPresentation<Drawer: View>: ViewModifier {
 
     private func finish(_ settle: PagesDrawerSettle) {
         isTracking = false
-        let opens = settle == .open
-        let wasPresented = isPresented
-        if wasPresented != opens { isPresented = opens }
-        if opens, !wasPresented { onPresentedByDrag() }
-        animate(to: opens ? 1 : 0)
+        let outcome = pagesDrawerFinish(settle: settle, wasPresented: isPresented)
+        if let presented = outcome.presented { isPresented = presented }
+        if outcome.announces { onPresentedByDrag() }
+        animate(to: outcome.target)
     }
 
     // MARK: Button and other presenters
@@ -441,13 +538,18 @@ struct PagesDrawerPresentation<Drawer: View>: ViewModifier {
         // A change from outside the drag (the button, a row, the outline taking over) wins over a
         // drag in flight, whose remaining callbacks are then ignored.
         isTracking = false
-        let target: CGFloat = presented ? 1 : 0
-        // A drag already left the panel at its target; there is nothing more to do.
-        guard progress != target else { return }
-        if presented, !isMounted {
+        let step = pagesDrawerPresentationStep(
+            presented: presented, progress: progress, isMounted: isMounted, reduceMotion: reduceMotion)
+        switch step {
+        case .unchanged:
+            break
+        case .mountOpen:
             isMounted = true
-            if reduceMotion { progress = 1 } else { pendingEntrance = true }
-        } else {
+            progress = 1
+        case .mountForEntrance:
+            isMounted = true
+            pendingEntrance = true
+        case .animate(let target):
             animate(to: target)
         }
     }
@@ -460,17 +562,24 @@ struct PagesDrawerPresentation<Drawer: View>: ViewModifier {
     }
 
     private func animate(to target: CGFloat) {
+        settleGeneration += 1
         guard let animation = DocsMotion.animation(PagesDrawerMotion.settle, reduceMotion: reduceMotion) else {
+            isSettling = false
             progress = target
             if target == 0 { isMounted = false }
             return
         }
+        let generation = settleGeneration
+        isSettling = true
         withAnimation(animation) {
             progress = target
         } completion: {
-            // Only the animation that closed it unmounts it: a reopen or a new drag since then
-            // has taken over.
-            if target == 0, progress == 0, !isPresented, !isTracking { isMounted = false }
+            if generation == settleGeneration { isSettling = false }
+            if pagesDrawerShouldUnmount(
+                target: target, progress: progress, isPresented: isPresented, isTracking: isTracking)
+            {
+                isMounted = false
+            }
         }
     }
 }
@@ -479,16 +588,4 @@ enum PagesDrawerMotion {
     /// A touch of overshoot on release. Reduce Motion replaces it with no animation at all
     /// (`DocsMotion.animation`), while the panel still follows the finger.
     static let settle: Animation = .spring(duration: 0.4, bounce: 0.15)
-}
-
-extension View {
-    func pagesDrawerPresentation<Drawer: View>(
-        isPresented: Binding<Bool>, isGestureEnabled: Bool, onPresentedByDrag: @escaping () -> Void,
-        @ViewBuilder drawer: @escaping (_ progress: CGFloat, _ pan: PagesDrawerPanHandlers) -> Drawer
-    ) -> some View {
-        modifier(
-            PagesDrawerPresentation(
-                isPresented: isPresented, isGestureEnabled: isGestureEnabled, onPresentedByDrag: onPresentedByDrag,
-                drawer: drawer))
-    }
 }

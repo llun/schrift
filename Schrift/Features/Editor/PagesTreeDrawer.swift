@@ -43,8 +43,11 @@ struct PagesTreeDrawer: View {
     /// How open the drawer is, 0 to 1 (a little over while it stretches past open). The panel's
     /// position and the scrim's opacity both follow it, so a finger can hold it anywhere between.
     var progress: CGFloat = 1
-    /// What a drag on the scrim, the header or the footer reports — the open drawer pushed back
-    /// out. The rows are left out on purpose: their own leftward swipe reveals Move and Delete.
+    /// What a drag on the scrim or the header's title reports — the open drawer pushed back out.
+    /// The rows are left out on purpose: their own leftward swipe reveals Move and Delete. So is
+    /// every `Button` (the close button, the New page footer): a `Button` tracks from touch-down
+    /// and can still fire on touch-up after a pan, and the finger lifts over whatever it started
+    /// on, since the panel moves with it — a close drag begun on New page would create a page.
     var pan = PagesDrawerPanHandlers()
 
     @Environment(LocalizationStore.self) private var loc
@@ -128,14 +131,15 @@ struct PagesTreeDrawer: View {
             }
 
             newPageButton
-                .gesture(closeGesture)
         }
         .frame(width: width)
         .frame(maxHeight: .infinity)
         // Reaches past the leading edge by the most the panel can stretch, so pulling it past
         // open never shows a gap between it and the screen edge.
         .background {
-            theme.colors.surfacePage.padding(.leading, -PagesDrawerMetrics.overshootLimit)
+            theme.colors.surfacePage
+                .padding(.leading, -PagesDrawerMetrics.overshootLimit)
+                .ignoresSafeArea()
         }
         .overlay(alignment: .trailing) {
             Rectangle().fill(theme.colors.borderDefault).frame(width: 0.5)
@@ -143,17 +147,26 @@ struct PagesTreeDrawer: View {
     }
 
     private var header: some View {
-        HStack {
-            Text(loc[.pages_title])
-                .font(DocsFont.headline)
-                .foregroundStyle(theme.colors.textPrimary)
-            Spacer()
+        HStack(spacing: 0) {
+            // The close drag covers the title and the space beside it, padding included, but not
+            // the close button (see `pan`). The title area is as tall as the button, so the
+            // header is draggable top to bottom everywhere except the button itself.
+            HStack {
+                Text(loc[.pages_title])
+                    .font(DocsFont.headline)
+                    .foregroundStyle(theme.colors.textPrimary)
+                Spacer()
+            }
+            .padding(.leading, DocsSpacing.spaceBase)
+            .frame(minHeight: DocsSpacing.rowMinHeight)
+            .padding(.vertical, DocsSpacing.space2xs)
+            .contentShape(Rectangle())
+            .gesture(closeGesture)
+
             IconButton(icon: .left_panel_close, label: loc[.pages_close], action: onClose)
+                .padding(.trailing, DocsSpacing.space2xs)
+                .padding(.vertical, DocsSpacing.space2xs)
         }
-        .padding(.leading, DocsSpacing.spaceBase)
-        .padding(.trailing, DocsSpacing.space2xs)
-        .padding(.vertical, DocsSpacing.space2xs)
-        .gesture(closeGesture)
     }
 
     /// The open document, pinned above its subpages and always selected — it is
