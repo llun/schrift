@@ -150,6 +150,7 @@ struct WebLoginView: UIViewRepresentable {
 /// page's JavaScript errors (the llun.social `/auth/signin` crash, say) can be read from
 /// Safari > Develop; Release and TestFlight builds never are, so an attached inspector cannot
 /// see the login page.
+@MainActor
 func makeLoginWebView() -> WKWebView {
     let webView = WKWebView()
     #if DEBUG

@@ -4700,6 +4700,9 @@ Do **not** do any of the following without explicit human sign-off:
   is delete-then-add, the attribute must be re-applied on **every** write or an
   overwrite silently downgrades to the default. `KeychainStoreTests` reads the
   stored attributes back rather than trusting the save query.
+- **Never make a `WKWebView` inspectable outside `#if DEBUG`.** `makeLoginWebView()` is
+  the only place that sets `isInspectable`, so Release (TestFlight) builds never expose
+  the login page or its cookies to an attached Web Inspector.
 - **Never loosen server-URL or login-host validation.** Keep `normalizedServerURL`
   restricted to `http`/`https` (rejecting `javascript:`/`file:`/`data:`) and keep
   `isLoginNavigationComplete` bound to the exact `serverHost`, so a captured
