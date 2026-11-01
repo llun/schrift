@@ -1,5 +1,23 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — Tactile polish: swipe haptics, shimmering skeletons, Reduce Motion
+> coverage (Direction D4).** `SwipeRevealRow` fires a light impact (`.sensoryFeedback`) each
+> time a live drag crosses the open threshold (the point `swipeRevealSettle` opens at), and
+> again each time it crosses back; `swipeRevealThresholdUpdate` is the pure decision, with a
+> 6pt re-arm band (`SwipeRevealMetrics.thresholdHysteresis`) so a finger on the line does not
+> stutter, and a drag that starts on an already-open row begins past the threshold so grabbing
+> it is silent. Haptics are not motion, so Reduce Motion does not gate them. `Skeleton` swaps
+> its opacity blink for a shimmer: a highlight band (`surfacePage` at 70% in light, `textPrimary`
+> at 10% in dark — theme tokens only) sweeping across the bar every 1.6s, driven by the wall
+> clock (`skeletonShimmerPhase`) so every bar in a `SkeletonList` sweeps together rather than
+> each running its own repeating animation. Under Reduce Motion there is no timeline at all and
+> the bars are static (`skeletonShimmerIsEnabled`). New `DocsMotion` maps Reduce Motion to
+> animations: `animation(_:reduceMotion:)` is `nil` (instant) when reduced, and the toast —
+> the one animation outside the editor that lacked a fallback — slides up normally but only
+> crossfades (`DocsMotion.crossfade`) under Reduce Motion. Home, Shared and the swipe row's
+> settle already gated their `.snappy` list/banner animations; the swipe row now goes through
+> `DocsMotion`. The Pages drawer is covered separately (D2).
+
 > **Revised: 2026-11-01 — Ledger rows on Home and Search (Direction A).** A document row
 > now has a tile, a title that may use two lines, one line of the document's text and a
 > sub-page count. `DocRow` takes an optional `excerpt` (`footnote`, `textSecondary`, one line,

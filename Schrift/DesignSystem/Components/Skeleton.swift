@@ -1,6 +1,39 @@
 import SwiftUI
 
-/// A placeholder shape with a gentle opacity pulse.
+/// The shimmer's pure pieces: when it runs, where the sweep is, and where its band sits.
+enum SkeletonShimmer {
+    /// One full sweep, in seconds.
+    static let period: TimeInterval = 1.6
+    /// The highlight band's width as a share of the bar it crosses.
+    static let bandFraction: CGFloat = 0.6
+}
+
+/// Whether skeletons shimmer. Under Reduce Motion they are plain static bars.
+func skeletonShimmerIsEnabled(reduceMotion: Bool) -> Bool {
+    !reduceMotion
+}
+
+/// Where the sweep is, as a fraction `0..<1` of one pass.
+///
+/// A function of the wall clock rather than per-bar state, so every bar on screen reads the same
+/// phase and the whole column sweeps together — one shared clock instead of a repeating
+/// animation per bar.
+func skeletonShimmerPhase(at time: TimeInterval, period: TimeInterval = SkeletonShimmer.period) -> CGFloat {
+    guard period > 0 else { return 0 }
+    let fraction = time.truncatingRemainder(dividingBy: period) / period
+    return CGFloat(fraction < 0 ? fraction + 1 : fraction)
+}
+
+/// The band's leading x-offset for `phase`: it starts fully off the leading edge and ends fully
+/// off the trailing edge, so the bar rests plain between sweeps.
+func skeletonShimmerBandOffset(
+    phase: CGFloat, width: CGFloat, bandFraction: CGFloat = SkeletonShimmer.bandFraction
+) -> CGFloat {
+    let band = width * bandFraction
+    return -band + phase * (width + band)
+}
+
+/// A placeholder shape with a soft highlight sweeping across it.
 ///
 /// The handoff's loading rule: *skeletons for lists, not spinners* — a spinner
 /// says "something is happening", a skeleton says "rows are coming, and roughly
@@ -8,30 +41,48 @@ import SwiftUI
 /// revalidation behind existing rows stays silent (see
 /// `shouldShowLoadingPlaceholder`), because replacing real content with
 /// placeholders would be a downgrade.
+///
+/// The shimmer replaces the old opacity blink. It is off under Reduce Motion
+/// (`skeletonShimmerIsEnabled`), leaving the static bar.
 struct Skeleton: View {
     @Environment(\.docsTheme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var width: CGFloat? = nil
     var height: CGFloat = 12
     var cornerRadius: CGFloat = DocsRadius.sm
-
-    @State private var isPulsing = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius)
             .fill(theme.colors.surfaceMuted)
             .frame(width: width, height: height)
+            .overlay {
+                // Gate the view, not just an animation: with Reduce Motion on there is no
+                // timeline at all, so the bar is exactly the static placeholder.
+                if skeletonShimmerIsEnabled(reduceMotion: reduceMotion) { shimmer }
+            }
             .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
-            .opacity(isPulsing ? 0.45 : 1)
-            .animation(
-                reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
-                value: isPulsing
-            )
-            // Gate the state, not just the animation: suppressing only the
-            // animation would snap it to the dimmed end value and leave it
-            // there, which is dimmer than the static placeholder intended.
-            .onAppear { if !reduceMotion { isPulsing = true } }
             .accessibilityHidden(true)
+    }
+
+    /// Brighter than the bar in light, lighter than it in dark; both from the theme's tokens.
+    private var highlight: Color {
+        colorScheme == .dark ? theme.colors.textPrimary.opacity(0.1) : theme.colors.surfacePage.opacity(0.7)
+    }
+
+    private var shimmer: some View {
+        TimelineView(.animation) { context in
+            let phase = skeletonShimmerPhase(at: context.date.timeIntervalSinceReferenceDate)
+            GeometryReader { proxy in
+                LinearGradient(
+                    colors: [Color.clear, highlight, Color.clear], startPoint: .leading, endPoint: .trailing
+                )
+                .frame(width: proxy.size.width * SkeletonShimmer.bandFraction)
+                .offset(x: skeletonShimmerBandOffset(phase: phase, width: proxy.size.width))
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        .allowsHitTesting(false)
     }
 }
 

@@ -56,6 +56,7 @@ extension View {
 
 private struct ToastPresenter: ViewModifier {
     @Environment(\.docsTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var message: ToastMessage?
     let bottomInset: CGFloat
 
@@ -69,9 +70,10 @@ private struct ToastPresenter: ViewModifier {
                 if let message {
                     Toast(message: message.text)
                         .padding(.bottom, DocsSpacing.spaceLG + bottomInset)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        // Slides up normally; under Reduce Motion it only crossfades.
+                        .transition(DocsMotion.toastTransition(reduceMotion: reduceMotion))
                         .id(message.id)
-                        .animation(.snappy, value: message.id)
+                        .animation(DocsMotion.toastAnimation(reduceMotion: reduceMotion), value: message.id)
                         .task(id: message.id) {
                             // Spoken, not just labelled: the toast dismisses
                             // itself in two seconds and never takes focus, so a
