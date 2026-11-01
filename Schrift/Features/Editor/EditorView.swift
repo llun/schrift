@@ -1212,9 +1212,18 @@ struct EditorView: View {
                                         numberedIndex: numbering[index],
                                         isOffline: isOffline,
                                         onToggleChecklist: {
-                                            viewModel.toggleChecklist(blockID: block.id)
                                             if viewModel.hidesCompletedChecklistItems {
+                                                // The ticked row is about to leave the list: let it
+                                                // collapse away (a fade under Reduce Motion) rather
+                                                // than cut, and the rows below close up with it.
+                                                withAnimation(
+                                                    DocsMotion.checklistCollapseAnimation(reduceMotion: reduceMotion)
+                                                ) {
+                                                    viewModel.toggleChecklist(blockID: block.id)
+                                                }
                                                 checklistRevealFocusRequest += 1
+                                            } else {
+                                                viewModel.toggleChecklist(blockID: block.id)
                                             }
                                         },
                                         onTapText: {
@@ -1240,6 +1249,10 @@ struct EditorView: View {
                             }
                             .id(EditorScrollTarget.block(block.id))
                             .recordingEditorBlockFrame(block.id)
+                            // Plays only inside the animated tick above; everywhere else a row
+                            // appearing or going (a remote edit, the Hide completed switch) is
+                            // unchanged.
+                            .transition(DocsMotion.checklistCollapseTransition(reduceMotion: reduceMotion))
                         }
                     }
 

@@ -15,15 +15,27 @@ struct PresenceBar: View {
     var max: Int = 3
 
     @Environment(LocalizationStore.self) private var loc
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         if !peers.isEmpty {
-            AvatarGroup(names: peers.map(\.name), size: size, max: max)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(
-                    loc.plural(
-                        peers.count, one: .editor_presence_count_one, other: .editor_presence_count_other,
-                        two: .editor_presence_count_two, few: .editor_presence_count_few))
+            // Each face is tracked by its collaborator, so a newcomer springs in (a fade under
+            // Reduce Motion) and the others stay put. The disc colour is still derived from the
+            // name, exactly as before. The animation itself is attached by the header's row,
+            // which is always in the tree (see `EditorDocumentHeader`).
+            AvatarGroup(
+                names: peers.map(\.name), size: size, max: max, identities: peers.map(\.clientID),
+                arrivalTransition: DocsMotion.presenceArrivalTransition(reduceMotion: reduceMotion)
+            )
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                loc.plural(
+                    peers.count, one: .editor_presence_count_one, other: .editor_presence_count_other,
+                    two: .editor_presence_count_two, few: .editor_presence_count_few)
+            )
+            // The first peer arrives as the whole group appearing (a child's own
+            // transition does not play when its parent is inserted with it).
+            .transition(DocsMotion.presenceArrivalTransition(reduceMotion: reduceMotion))
         }
     }
 }

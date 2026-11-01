@@ -1,5 +1,27 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — Editor micro-motion (Direction D3).** Four small pieces of motion in the
+> editor, all with their rules in `DocsMotion+Editor.swift` (pure functions of Reduce Motion,
+> unit-tested) and all built on `DocsMotion.crossfade`. **Checklist:** ticking or unticking a
+> checkbox fires a selection haptic (`.sensoryFeedback` triggered by the person's own tap count,
+> so the first render and a collaborator's edit arriving over sync stay silent) and swells the
+> glyph 1.18x with a short overshoot (`scaleEffect`, so layout is untouched); with "Hide
+> completed" on, the ticked row slides out to the leading edge while fading and the rows below
+> close the gap (`withAnimation` around the tick only, so a remote edit or the Hide completed
+> switch still cuts). **Save status:** "Saving…", "Saved" and the other states crossfade with a
+> slight blur inside a `ZStack` in the slot the indicator already reserves (every state keeps its
+> `rowMinHeight` floor, so nothing around it moves); the "Saved" check is a stroked shape that
+> draws itself in; the animation is an ease, never a spring, because it runs on every autosave.
+> **Formatting bar:** the row of actions and the Photo/File or style/list/quote choices
+> crossfade with a slight grow from the leading edge (in a `ZStack`, so the outgoing and incoming
+> sets overlap rather than stack) and a selection haptic marks the swap. **Presence:**
+> `AvatarGroup` takes optional per-face `identities` (the collaborator's client id) and an
+> `arrivalTransition`, so a newly joined avatar springs in (scale from 0.4 with opacity) while the
+> others stay put; the disc colour is unchanged. **Reduce Motion:** no scale, slide, spring or
+> blur — each piece is a plain opacity crossfade (the check is simply drawn); **haptics stay on**,
+> since they are not motion. VoiceOver is unaffected: no label, trait or order changed, and the
+> new check shape is hidden like the glyph it replaces.
+
 > **Revised: 2026-11-01 — Documents reopen where you left off reading.** Leaving a
 > document (the screen disappears, or the app moves to the background) records the
 > block at the top of the screen; reopening scrolls the reading surface straight to it

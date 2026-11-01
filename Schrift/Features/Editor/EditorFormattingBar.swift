@@ -45,6 +45,7 @@ struct EditorFormattingBar: View {
     let isOffline: Bool
 
     @Environment(LocalizationStore.self) private var loc
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Each family button's default kind — local preferences, see `FormattingBarFormat`.
     @AppStorage(TextStyleFormat.preferenceKey) private var defaultTextStyleRaw = TextStyleFormat.fallback.rawValue
@@ -80,32 +81,47 @@ struct EditorFormattingBar: View {
         // Keep every action circular and 44pt square. A horizontal scroll view
         // contains the row on narrow screens without widening the editor.
         ScrollView(.horizontal) {
-            switch choosingFamily {
-            case .textStyle:
-                choices(
-                    current: defaultTextStyle,
-                    isDisabled: { _ in !viewModel.canEditLink }
-                ) {
-                    viewModel.applyTextStyle($0)
-                    defaultTextStyleRaw = $0.rawValue
+            // A stack, so the set leaving and the set arriving overlap instead of stacking
+            // vertically in the scroll view while they crossfade. Each set carries the same
+            // transition (a fade under Reduce Motion, with a slight grow otherwise).
+            ZStack(alignment: .leading) {
+                switch choosingFamily {
+                case .textStyle:
+                    choices(
+                        current: defaultTextStyle,
+                        isDisabled: { _ in !viewModel.canEditLink }
+                    ) {
+                        viewModel.applyTextStyle($0)
+                        defaultTextStyleRaw = $0.rawValue
+                    }
+                    .transition(switchTransition)
+                case .list:
+                    choices(current: defaultListFormat) {
+                        viewModel.chooseFormat($0)
+                        defaultListFormatRaw = $0.rawValue
+                    }
+                    .transition(switchTransition)
+                case .quote:
+                    choices(current: defaultQuoteFormat) {
+                        viewModel.chooseFormat($0)
+                        defaultQuoteFormatRaw = $0.rawValue
+                    }
+                    .transition(switchTransition)
+                case .attach:
+                    attachChoices
+                        .transition(switchTransition)
+                case nil:
+                    actions
+                        .transition(switchTransition)
                 }
-            case .list:
-                choices(current: defaultListFormat) {
-                    viewModel.chooseFormat($0)
-                    defaultListFormatRaw = $0.rawValue
-                }
-            case .quote:
-                choices(current: defaultQuoteFormat) {
-                    viewModel.chooseFormat($0)
-                    defaultQuoteFormatRaw = $0.rawValue
-                }
-            case .attach:
-                attachChoices
-            case nil:
-                actions
             }
         }
         .scrollIndicators(.hidden)
+        .animation(DocsMotion.formattingBarSwitchAnimation(reduceMotion: reduceMotion), value: choosingFamily)
+        // A selection tick when the row swaps sets (opening one, or closing it by picking or
+        // pressing Close). Not motion, so Reduce Motion leaves it on. The state only changes
+        // from a press — or when the caret moves to another block, which ends the choice.
+        .sensoryFeedback(.selection, trigger: choosingFamily)
         .onScrollGeometryChange(for: ScrollFadeEdges.self) { geometry in
             scrollFadeEdges(
                 contentOffsetX: geometry.contentOffset.x, contentWidth: geometry.contentSize.width,
@@ -125,6 +141,10 @@ struct EditorFormattingBar: View {
         .glassEffect(.regular, in: Capsule())
         // The choices act on the focused block; moving the caret elsewhere ends the choice.
         .onChange(of: viewModel.focusedBlockID) { choosingFamily = nil }
+    }
+
+    private var switchTransition: AnyTransition {
+        DocsMotion.formattingBarSwitchTransition(reduceMotion: reduceMotion)
     }
 
     /// Short gradient at each edge that has hidden content, so the row reads as scrollable.

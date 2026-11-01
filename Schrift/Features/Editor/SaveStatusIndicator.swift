@@ -70,8 +70,24 @@ struct SaveStatusIndicator: View {
     var onTap: () -> Void
 
     @Environment(LocalizationStore.self) private var loc
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// A stack, so a state leaving and the next arriving overlap in the one slot rather than
+    /// stacking in the parent's layout — and no state's own height floor changes, so nothing
+    /// around the slot moves while "Saving…" settles into "Saved". The crossfade is an ease
+    /// (never a spring): it runs on every autosave and has to stay quiet.
     var body: some View {
+        ZStack(alignment: .leading) {
+            statusContent
+        }
+        .animation(DocsMotion.saveStatusAnimation(reduceMotion: reduceMotion), value: display)
+    }
+
+    private var statusTransition: AnyTransition {
+        DocsMotion.saveStatusTransition(reduceMotion: reduceMotion)
+    }
+
+    @ViewBuilder private var statusContent: some View {
         switch display {
         case .none:
             EmptyView()
@@ -109,6 +125,7 @@ struct SaveStatusIndicator: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(loc[.editor_save_now_a11y])
+            .transition(statusTransition)
 
         case .saving:
             HStack(spacing: DocsSpacing.space3xs) {
@@ -126,16 +143,18 @@ struct SaveStatusIndicator: View {
             // text-sized again, which is the right trade — capping it would clip
             // the text.
             .frame(minHeight: DocsSpacing.rowMinHeight)
+            .transition(statusTransition)
 
         case .saved:
             HStack(spacing: DocsSpacing.space3xs) {
-                MaterialSymbol(.check, size: 11)
+                SavedCheckmark()
                 Text(loc[.editor_saved])
                     .font(DocsFont.footnote)
             }
             .foregroundStyle(theme.colors.textTertiary)
             // The shared floor, as in `.saving`.
             .frame(minHeight: DocsSpacing.rowMinHeight)
+            .transition(statusTransition)
 
         case .savedOnDevice:
             // The width-constrained editing status uses the compact "Saved on this
@@ -151,6 +170,7 @@ struct SaveStatusIndicator: View {
             .foregroundStyle(theme.colors.textTertiary)
             // The shared floor, as in `.saving`.
             .frame(minHeight: DocsSpacing.rowMinHeight)
+            .transition(statusTransition)
 
         case .retry:
             Button(action: onTap) {
@@ -170,7 +190,46 @@ struct SaveStatusIndicator: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(loc[.editor_save_failed_a11y])
+            .transition(statusTransition)
         }
+    }
+}
+
+/// The "Saved" check, drawn as a stroke so it can draw itself in: the trim runs from nothing to
+/// the whole tick when the status settles. Sized and tinted like the 11pt glyph it replaces
+/// (it scales with Dynamic Type alongside the footnote beside it). Under Reduce Motion it is
+/// just there. Decorative — the "Saved" text carries the meaning.
+private struct SavedCheckmark: View {
+    @Environment(\.docsTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ScaledMetric(relativeTo: .footnote) private var size: CGFloat = 11
+    @State private var drawn = false
+
+    var body: some View {
+        let drawsIn = DocsMotion.saveCheckDrawsIn(reduceMotion: reduceMotion)
+        SavedCheckShape()
+            .trim(from: 0, to: drawsIn && !drawn ? 0.001 : 1)
+            .stroke(
+                theme.colors.textTertiary,
+                style: StrokeStyle(lineWidth: size * 0.14, lineCap: .round, lineJoin: .round)
+            )
+            .frame(width: size, height: size)
+            .onAppear {
+                guard drawsIn else { return }
+                withAnimation(DocsMotion.saveCheckDraw) { drawn = true }
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+/// The tick's path, in a unit square: down to the elbow, then up to the right.
+private struct SavedCheckShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX + rect.width * 0.1, y: rect.minY + rect.height * 0.55))
+        path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.4, y: rect.minY + rect.height * 0.85))
+        path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.92, y: rect.minY + rect.height * 0.2))
+        return path
     }
 }
 
