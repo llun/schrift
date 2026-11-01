@@ -25,13 +25,19 @@ func avatarInitials(for name: String) -> String {
     return String(first).uppercased()
 }
 
-func avatarColorHexPair(for name: String) -> (light: UInt32, dark: UInt32) {
+/// The palette index a string hashes to. Shared with the document tile
+/// (`docTileTint(for:)`), which keys the same palette off the document id.
+func avatarColorIndex(for name: String) -> Int {
     // Mirror the prototype: h = (h * 31 + charCode) >>> 0, index = h % count.
     var hash: UInt32 = 0
     for scalar in name.unicodeScalars {
         hash = hash &* 31 &+ scalar.value
     }
-    return avatarColorPalette[Int(hash % UInt32(avatarColorPalette.count))]
+    return Int(hash % UInt32(avatarColorPalette.count))
+}
+
+func avatarColorHexPair(for name: String) -> (light: UInt32, dark: UInt32) {
+    avatarColorPalette[avatarColorIndex(for: name)]
 }
 
 /// The light hex for a name — the value the light-mode appearance keys off, kept

@@ -1,5 +1,26 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-01 — Ledger rows on Home and Search (Direction A).** A document row
+> now has a tile, a title that may use two lines, one line of the document's text and a
+> sub-page count. `DocRow` takes an optional `excerpt` (`footnote`, `textSecondary`, one line,
+> whitespace collapsed by `docRowExcerptText`) and `pageCount` (`Document.numchild`; a
+> `surfaceMuted` capsule "4 pages" trailing the excerpt line, plural-aware through the
+> `docrow.pages.*` keys including the Slovene dual/few forms). The date stays trailing on the
+> title's first line; the title's line limit is 2 when a second line exists
+> (`docRowTitleLineLimit`), and the accessibility-size stacked layout is unchanged (excerpt
+> up to two lines, date and badge below). The composed VoiceOver label reads
+> title, excerpt, state/reach, date, page count. The tile: a title that *starts with an emoji*
+> shows it as the tile and displays the title without it (`docTitleParts`; digits and `#`
+> are not emoji, an emoji-only title is left whole); otherwise the page glyph sits on a soft
+> tint (the accent at 16%) picked by hashing the document id into the Avatar palette
+> (`docTileTint`) — stable across launches and renames. No new colour token. **Pinned** is a
+> horizontal shelf of `PinnedCard`s (168pt wide, scaled with Dynamic Type; `brandFillSubtle`
+> surface, `DocsRadius.lg`, title ≤ 2 lines, excerpt ≤ 2 lines) on the compact/page canvas
+> only; the iPad sidebar (`DocsCanvasRole.sidebar`) and accessibility text sizes keep vertical
+> rows (`pinnedShelfIsEnabled`). A card's swipe actions are its context menu and VoiceOver
+> actions. `SkeletonRow` now has the same shape (tile, title with trailing date, excerpt
+> line) and the same padding, so loading → content does not shift. `SharedRow` is unchanged.
+
 > **Revised: 2026-10-17 — Links to other documents are page chips.** A markdown link
 > to another document on the user's server (`[Title](https://<host>/docs/<uuid>/)`, the
 > links `documentLinkAction` opens in the app) is drawn as a **page chip** on both the

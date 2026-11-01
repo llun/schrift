@@ -76,6 +76,11 @@ enum L10nKey: String, CaseIterable, Sendable {
     case docrow_pinned = "docrow.pinned"  // "Pinned"
     case docrow_shared_with_organization = "docrow.shared_with_organization"  // "Shared with organization"
     case docrow_public = "docrow.public"  // "Public"
+    case docrow_pages_one = "docrow.pages.one"  // "%d page"
+    case docrow_pages_other = "docrow.pages.other"  // "%d pages"
+    // Slovene dual/few forms (see PluralRule); only the Slovene table defines these.
+    case docrow_pages_two = "docrow.pages.two"  // "%d strani"
+    case docrow_pages_few = "docrow.pages.few"  // "%d strani"
     case docrow_available_offline = "docrow.available_offline"  // "Available offline"
     case docrow_on_this_device = "docrow.on_this_device"  // "On this device, waiting to sync"
     /// Spoken and shown for a row whose deletion is queued but unsent, and reused as the

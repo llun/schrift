@@ -20,6 +20,7 @@ final class StringsCompletenessTests: XCTestCase {
         .shared_count_two, .shared_count_few,
         .share_members_two, .share_members_few,
         .editor_presence_count_two, .editor_presence_count_few,
+        .docrow_pages_two, .docrow_pages_few,
     ]
 
     /// The English `other` form each extended key is a plural sibling of — used
@@ -30,6 +31,7 @@ final class StringsCompletenessTests: XCTestCase {
         .share_members_two: .share_members_other, .share_members_few: .share_members_other,
         .editor_presence_count_two: .editor_presence_count_other,
         .editor_presence_count_few: .editor_presence_count_other,
+        .docrow_pages_two: .docrow_pages_other, .docrow_pages_few: .docrow_pages_other,
     ]
 
     /// The argument list a string implies — which position takes an object, an

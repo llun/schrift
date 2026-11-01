@@ -13,8 +13,10 @@ func docRowReachIndicatorIcon(reach: LinkReach) -> MaterialIcon? {
 /// ordering logic, not the translation lookup.
 func docRowAccessibilityLabel(
     title: String,
+    excerpt: String = "",
     reach: LinkReach,
     date: String,
+    pageCountLabel: String = "",
     pinned: Bool,
     pendingSync: Bool = false,
     pendingSyncLabel: String = "",
@@ -25,6 +27,9 @@ func docRowAccessibilityLabel(
     publicLabel: String
 ) -> String {
     var parts = [title]
+    if !excerpt.isEmpty {
+        parts.append(excerpt)
+    }
     if pinned {
         parts.append(pinnedLabel)
     }
@@ -50,7 +55,20 @@ func docRowAccessibilityLabel(
     if !date.isEmpty {
         parts.append(date)
     }
+    if !pageCountLabel.isEmpty {
+        parts.append(pageCountLabel)
+    }
     return parts.joined(separator: ", ")
+}
+
+/// "4 pages" for a document with sub-pages, `nil` when it has none. Plural-aware through
+/// `LocalizationStore.plural` (Slovene dual/few included).
+@MainActor
+func docRowPageCountLabel(_ count: Int, loc: LocalizationStore) -> String? {
+    guard count > 0 else { return nil }
+    return loc.plural(
+        count, one: .docrow_pages_one, other: .docrow_pages_other,
+        two: .docrow_pages_two, few: .docrow_pages_few)
 }
 
 /// Whether a document row stacks its title above its metadata instead of sharing
@@ -87,26 +105,58 @@ struct DocRow: View {
     /// a `pendingSync` row a client-minted one. The ordering below states the precedence
     /// anyway rather than relying on that.
     var pendingDelete: Bool = false
+    /// A line of the document's text under the title. Blank or whitespace-only is treated as absent.
+    var excerpt: String? = nil
+    /// The document's sub-page count (`Document.numchild`); a badge shows when it is above zero.
+    var pageCount: Int = 0
+    /// Seeds the tile's soft tint (the document id); nil keeps the single brand tint.
+    var tintSeed: UUID? = nil
     var onOpen: (() -> Void)? = nil
 
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var isStacked: Bool { rowUsesStackedLayout(dynamicTypeSize) }
+    private var excerptText: String? { docRowExcerptText(excerpt) }
+    private var pageCountText: String? { docRowPageCountLabel(pageCount, loc: loc) }
+    /// A second line exists (excerpt and/or page count), so the title may wrap to two lines.
+    private var hasDetailLine: Bool { excerptText != nil || pageCountText != nil }
 
     var body: some View {
         HStack(alignment: isStacked ? .top : .center, spacing: DocsSpacing.spaceSM) {
-            DocIcon(emoji: emoji, tinted: true, pinned: pinned)
+            DocIcon(emoji: emoji, tinted: true, pinned: pinned, tintSeed: tintSeed)
 
             if isStacked {
                 VStack(alignment: .leading, spacing: DocsSpacing.space3xs) {
                     titleLine
+                    if let excerptText {
+                        excerptLabel(excerptText, lines: 2)
+                    }
                     HStack(spacing: DocsSpacing.space2xs) {
                         offlineIndicator
                         dateLabel
+                        pageCountBadge
                     }
                 }
                 Spacer(minLength: 0)
+            } else if hasDetailLine {
+                // Ledger shape: the date stays trailing on the title's first line; the
+                // excerpt fills the second line with the page badge trailing it.
+                VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
+                    HStack(alignment: .firstTextBaseline, spacing: DocsSpacing.spaceXS) {
+                        titleLine
+                        Spacer(minLength: DocsSpacing.spaceXS)
+                        offlineIndicator
+                        dateLabel
+                    }
+                    HStack(spacing: DocsSpacing.spaceXS) {
+                        if let excerptText {
+                            excerptLabel(excerptText, lines: 1)
+                        }
+                        Spacer(minLength: 0)
+                        pageCountBadge
+                    }
+                }
             } else {
                 titleLine
                 Spacer(minLength: DocsSpacing.spaceXS)
@@ -125,7 +175,8 @@ struct DocRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
             docRowAccessibilityLabel(
-                title: title, reach: reach, date: date, pinned: pinned,
+                title: title, excerpt: excerptText ?? "", reach: reach, date: date,
+                pageCountLabel: pageCountText ?? "", pinned: pinned,
                 pendingSync: pendingSync, pendingSyncLabel: loc[.docrow_on_this_device],
                 pendingDelete: pendingDelete, pendingDeleteLabel: loc[.docrow_pending_delete],
                 pinnedLabel: loc[.docrow_pinned],
@@ -144,12 +195,35 @@ struct DocRow: View {
                 .font(DocsFont.body)
                 .foregroundStyle(pendingDelete ? theme.colors.textTertiary : theme.colors.textPrimary)
                 .strikethrough(pendingDelete)
-                .lineLimit(isStacked ? 3 : 1)
+                .lineLimit(docRowTitleLineLimit(hasDetailLine: hasDetailLine, isStacked: isStacked))
+                .fixedSize(horizontal: false, vertical: true)
 
             if let indicatorIcon = docRowReachIndicatorIcon(reach: reach) {
                 MaterialSymbol(indicatorIcon, size: 16)
                     .foregroundStyle(theme.colors.textTertiary)
             }
+        }
+    }
+
+    private func excerptLabel(_ text: String, lines: Int) -> some View {
+        Text(text)
+            .font(DocsFont.footnote)
+            .foregroundStyle(theme.colors.textSecondary)
+            .lineLimit(lines)
+            .truncationMode(.tail)
+    }
+
+    @ViewBuilder
+    private var pageCountBadge: some View {
+        if let pageCountText {
+            Text(pageCountText)
+                .font(DocsFont.caption)
+                .foregroundStyle(theme.colors.textSecondary)
+                .lineLimit(1)
+                .padding(.horizontal, DocsSpacing.spaceXS)
+                .padding(.vertical, DocsSpacing.space4xs)
+                .background(theme.colors.surfaceMuted, in: Capsule())
+                .layoutPriority(1)
         }
     }
 
@@ -231,4 +305,50 @@ struct DocRow: View {
     .background(DocsColor.surfacePage)
     .environment(LocalizationStore())
     .preferredColorScheme(.dark)
+}
+
+/// The Ledger rows: tinted tile, a title that may use two lines, one line of the document's
+/// text, and the sub-page count badge.
+#Preview("Ledger rows") {
+    VStack(spacing: 0) {
+        DocRow(
+            emoji: "📝", title: "Meeting notes 31 Oct", reach: .restricted, date: "Yesterday",
+            excerpt: "Decided to ship page chips on Friday, then revisit the theme picker.",
+            tintSeed: UUID(uuidString: "00000000-0000-0000-0000-000000000001"))
+        DocRow(
+            title: "Trip to Chiang Mai: flights, hotels, the long list of things to book before December",
+            reach: .authenticated, date: "Thu", excerpt: "Flights booked, need hotel near Nimman", pageCount: 4,
+            tintSeed: UUID(uuidString: "00000000-0000-0000-0000-000000000002"))
+        DocRow(
+            title: "Reading notes", pinned: true, reach: .public, date: "Wed", pageCount: 1,
+            tintSeed: UUID(uuidString: "00000000-0000-0000-0000-000000000003"))
+        DocRow(
+            emoji: "🗑️", title: "Deleted while offline", date: "Just now", pendingDelete: true,
+            excerpt: "Struck through", pageCount: 2)
+    }
+    .environment(LocalizationStore())
+}
+
+#Preview("Ledger rows (dark)") {
+    VStack(spacing: 0) {
+        DocRow(
+            title: "Trip to Chiang Mai", date: "Thu", excerpt: "Flights booked, need hotel near Nimman",
+            pageCount: 4, tintSeed: UUID(uuidString: "00000000-0000-0000-0000-000000000002"))
+        DocRow(
+            emoji: "📝", title: "Meeting notes 31 Oct", date: "Yesterday",
+            excerpt: "Decided to ship page chips on Friday",
+            tintSeed: UUID(uuidString: "00000000-0000-0000-0000-000000000001"))
+    }
+    .background(DocsColor.surfacePage)
+    .environment(LocalizationStore())
+    .preferredColorScheme(.dark)
+}
+
+#Preview("Ledger rows (accessibility size)") {
+    DocRow(
+        title: "Trip to Chiang Mai", date: "Thu", excerpt: "Flights booked, need hotel near Nimman",
+        pageCount: 4, tintSeed: UUID(uuidString: "00000000-0000-0000-0000-000000000002")
+    )
+    .environment(LocalizationStore())
+    .dynamicTypeSize(.accessibility3)
 }

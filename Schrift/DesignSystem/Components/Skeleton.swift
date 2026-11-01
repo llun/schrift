@@ -35,8 +35,10 @@ struct Skeleton: View {
     }
 }
 
-/// One placeholder document row: leading icon block, a title line, and a
-/// shorter second line — the shape of the rows it stands in for.
+/// One placeholder document row, shaped like the Ledger `DocRow` it stands in for: the tinted
+/// tile, a title line with the trailing date, and an excerpt line. Heights and padding follow
+/// the real row (tile 38pt, title and excerpt lines at body/footnote leading, the same
+/// vertical padding) so loading → content does not shift the list.
 struct SkeletonRow: View {
     @Environment(\.docsTheme) private var theme
     /// Varies the title width per row so a column of them doesn't read as a
@@ -44,22 +46,34 @@ struct SkeletonRow: View {
     var titleWidthFraction: CGFloat = 0.6
     var showsSubtitle: Bool = true
 
+    /// The tile scales with Dynamic Type exactly as `DocIcon`'s does (24pt glyph + 14pt tint box).
+    @ScaledMetric(relativeTo: .body) private var scale: CGFloat = 1
+
     var body: some View {
         HStack(spacing: DocsSpacing.spaceSM) {
-            Skeleton(width: 36, height: 36, cornerRadius: DocsRadius.md)
+            Skeleton(width: 24 * scale + 14, height: 24 * scale + 14, cornerRadius: DocsRadius.md)
 
-            VStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
-                GeometryReader { proxy in
-                    Skeleton(width: proxy.size.width * titleWidthFraction, height: 13)
+            VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
+                HStack(spacing: DocsSpacing.spaceXS) {
+                    GeometryReader { proxy in
+                        Skeleton(width: proxy.size.width * titleWidthFraction, height: 13)
+                            .frame(maxHeight: .infinity)
+                    }
+                    Skeleton(width: 40, height: 11)
                 }
-                .frame(height: 13)
+                .frame(height: 22)
 
                 if showsSubtitle {
-                    Skeleton(width: 96, height: 11)
+                    GeometryReader { proxy in
+                        Skeleton(width: proxy.size.width * min(titleWidthFraction + 0.25, 0.95), height: 11)
+                            .frame(maxHeight: .infinity)
+                    }
+                    .frame(height: 16)
                 }
             }
         }
-        .padding(.vertical, DocsSpacing.spaceXS)
+        .padding(.horizontal, DocsSpacing.spaceSM)
+        .padding(.vertical, DocsSpacing.spaceSM - DocsSpacing.space4xs)
         .frame(minHeight: DocsSpacing.rowMinHeight)
         .accessibilityHidden(true)
     }
