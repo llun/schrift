@@ -26,7 +26,7 @@ struct WebLoginView: UIViewRepresentable {
     var onProgress: (@MainActor (WebLoginProgress) -> Void)? = nil
 
     func makeUIView(context: Context) -> WKWebView {
-        let webView = WKWebView()
+        let webView = makeLoginWebView()
         webView.navigationDelegate = context.coordinator
         webView.load(URLRequest(url: url))
         return webView
@@ -144,6 +144,19 @@ struct WebLoginView: UIViewRepresentable {
             }
         }
     }
+}
+
+/// Creates the web view that hosts the login. Debug builds make it inspectable, so a login
+/// page's JavaScript errors (the llun.social `/auth/signin` crash, say) can be read from
+/// Safari > Develop; Release and TestFlight builds never are, so an attached inspector cannot
+/// see the login page.
+@MainActor
+func makeLoginWebView() -> WKWebView {
+    let webView = WKWebView()
+    #if DEBUG
+        webView.isInspectable = true
+    #endif
+    return webView
 }
 
 /// How far a `WebLoginView` login has got, for a caller that cannot watch the page.
