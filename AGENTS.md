@@ -4474,7 +4474,9 @@ markdown write endpoint**. Understand this before touching the save path:
   guidance.** Put agent-facing conventions, workflow, and safety rules **here**,
   and here only. Everything in this file applies to every agent and new
   contributor, including Claude Code, Codex, and Cursor. Never duplicate this
-  guidance in a separate agent-specific file. If an `AGENTS.override.md` is added
+  guidance in a separate agent-specific file. The one
+  exception is delegation and model routing, which
+  [Working with Sub-Agents](#working-with-sub-agents) takes from `llun/labs`. If an `AGENTS.override.md` is added
   later, it layers **on top of** this file (it augments this guidance; it does not
   wholesale replace it).
 - **Design and architecture decisions live in the living docs under `docs/`**
