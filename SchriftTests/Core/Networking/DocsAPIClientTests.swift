@@ -163,7 +163,12 @@ final class DocsAPIClientTests: XCTestCase {
     private final class AttemptCounter: @unchecked Sendable {
         private let lock = NSLock()
         private var value = 0
-        func next() -> Int { lock.withLock { value += 1; return value } }
+        func next() -> Int {
+            lock.withLock {
+                value += 1
+                return value
+            }
+        }
         var count: Int { lock.withLock { value } }
     }
 
