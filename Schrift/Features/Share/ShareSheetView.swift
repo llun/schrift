@@ -77,7 +77,8 @@ struct ShareSheetView: View {
                     .padding(.top, DocsSpacing.space3xs)
                 }
             }
-            .refreshable { await viewModel.load() }
+            // Unstructured so SwiftUI cancelling the action's own task cannot cancel the fetch.
+            .refreshable { await Task { await viewModel.load() }.value }
         }
         .background(theme.colors.surfacePage)
         .task {

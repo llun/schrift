@@ -128,6 +128,24 @@ actor DocsAPIClient {
         }
     }
 
+    /// One quiet retry for a `GET` whose pooled connection had already died.
+    ///
+    /// `URLError.networkConnectionLost` (-1005) is what the first request after a resume
+    /// typically gets on a perfectly good Wi-Fi: the keep-alive connection it was handed went
+    /// stale while the app slept. Reporting that as a failure turned a pull-to-refresh into
+    /// "Couldn't load documents" and the Offline banner. A `GET` is safe to send twice, and the
+    /// retry opens a fresh connection; a second failure is a real one and is thrown as before.
+    /// Unsafe methods are never retried — the server may have acted on the first attempt.
+    private func dataRetryingDroppedConnection(for request: URLRequest) async throws -> (Data, URLResponse) {
+        do {
+            return try await session.data(for: request)
+        } catch {
+            let lostConnection = (error as? URLError)?.code == .networkConnectionLost
+            guard lostConnection, request.httpMethod == "GET", !Task.isCancelled else { throw error }
+            return try await session.data(for: request)
+        }
+    }
+
     func sendVoid(path: String, method: String, body: Data?, contentType: String? = "application/json") async throws {
         _ = try await performRequest(path: path, method: method, body: body, contentType: contentType)
     }
@@ -173,7 +191,7 @@ actor DocsAPIClient {
         // timeout fires, and the monitor needs to know it began long before that.
         let startedAt = ContinuousClock.now
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await dataRetryingDroppedConnection(for: request)
         } catch {
             if isConnectivityFailure(error) {
                 onTransportOutcome(.unreachable, startedAt)

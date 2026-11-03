@@ -99,6 +99,83 @@ final class DocsAPIClientTests: XCTestCase {
         XCTAssertEqual(box.outcomes, [.unreachable])
     }
 
+    /// A stale keep-alive connection after resume fails the first request with -1005 on a working
+    /// network. A `GET` gets one fresh attempt instead of surfacing that as a failure.
+    func testGetRetriesOnceWhenThePooledConnectionWasLost() async throws {
+        struct Config: Decodable, Equatable { let theme: String }
+        let attempts = AttemptCounter()
+        let box = OutcomeBox()
+        MockURLProtocol.stubHandler = { _ in
+            if attempts.next() == 1 {
+                return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.networkConnectionLost))
+            }
+            return .init(statusCode: 200, headers: [:], body: #"{"theme": "indigo"}"#.data(using: .utf8)!, error: nil)
+        }
+        let client = DocsAPIClient(
+            baseURL: baseURL,
+            session: MockURLProtocol.makeSession(),
+            cookieProvider: { [] },
+            onTransportOutcome: { box.record($0, $1) }
+        )
+
+        let config: Config = try await client.get("config/")
+
+        XCTAssertEqual(config, Config(theme: "indigo"))
+        XCTAssertEqual(attempts.count, 2)
+        XCTAssertEqual(box.outcomes, [.reachedServer], "The recovered request is no evidence of being offline")
+    }
+
+    func testGetThatLosesItsConnectionTwiceStillFails() async {
+        struct Config: Decodable {}
+        let attempts = AttemptCounter()
+        MockURLProtocol.stubHandler = { _ in
+            _ = attempts.next()
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.networkConnectionLost))
+        }
+        let client = makeClient()
+
+        do {
+            let _: Config = try await client.get("config/")
+            XCTFail("Expected error to be thrown")
+        } catch let error as DocsAPIError {
+            guard case .network = error else { return XCTFail("Expected .network, got \(error)") }
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
+        XCTAssertEqual(attempts.count, 2, "Retried exactly once")
+    }
+
+    func testMutatingRequestIsNeverRetriedAfterALostConnection() async {
+        let attempts = AttemptCounter()
+        MockURLProtocol.stubHandler = { _ in
+            _ = attempts.next()
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.networkConnectionLost))
+        }
+        let client = makeClient()
+
+        do {
+            try await client.sendVoid(path: "documents/", method: "POST", body: Data("{}".utf8))
+            XCTFail("Expected error to be thrown")
+        } catch let error as DocsAPIError {
+            guard case .network = error else { return XCTFail("Expected .network, got \(error)") }
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
+        XCTAssertEqual(attempts.count, 1, "The server may have acted on the first POST")
+    }
+
+    private final class AttemptCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = 0
+        func next() -> Int {
+            lock.withLock {
+                value += 1
+                return value
+            }
+        }
+        var count: Int { lock.withLock { value } }
+    }
+
     func testUnauthorizedResponseThrowsSessionExpired() async {
         struct Config: Decodable {}
         MockURLProtocol.stubHandler = { _ in

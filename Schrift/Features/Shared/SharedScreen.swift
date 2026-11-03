@@ -114,7 +114,10 @@ struct SharedScreen: View {
                 .padding(.bottom, DocsSpacing.spaceBase)
             }
             .refreshable {
-                await viewModel.refresh()
+                // Unstructured on purpose: SwiftUI can cancel the refresh action's own task while
+                // the list updates under it, and a cancelled fetch is no answer at all. The pull
+                // still awaits the load, so the spinner holds until it lands.
+                await Task { await viewModel.refresh() }.value
             }
         }
         .animation(reduceMotion ? nil : .snappy, value: showsOfflineBanner)
