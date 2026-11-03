@@ -1,0 +1,37 @@
+SchriftUITests/Features/Editor/OfflineControlsTests.swift
+  s_4a583b4b36edcc::t_b03f1c82b3ecac 175-176,178-181
+  s_4a583b4b36edcc::t_07460a439a9b40 138-174,177,182-183,189-194,200,207,213-215
+  s_4a583b4b36edcc::t_8f5b1d449d92f6 5,7-8,184-188,195-199,201-206,208-212
+AGENTS.md
+  s_4a583b4b36edcc::t_7e911bfd2157b2 632-640
+Schrift/Features/Shared/SharedScreen.swift
+  s_4a583b4b36edcc::t_b03f1c82b3ecac 30-38,40-41,43-62,64-70,72-87,89-91,94-98,100-104,106-110,115-119
+  s_4a583b4b36edcc::t_6a1d0d3a3941e3 111-114
+SchriftUITests/Support/OfflineControlsTestHost.swift
+  s_4a583b4b36edcc::t_111be0f66f9aaa 166
+  s_4a583b4b36edcc::t_174ce2c71dbedd 48,51-52,54,161-165,167-174
+Schrift/Features/Search/SearchScreen.swift
+  s_4a583b4b36edcc::t_b03f1c82b3ecac 23-39
+docs/design-system.md
+  s_4a583b4b36edcc::t_fa0c7aa73f52c8 3-8,14
+Schrift/Features/Home/DocumentListView.swift
+  s_4a583b4b36edcc::t_6a1d0d3a3941e3 89-92
+  s_4a583b4b36edcc::t_b03f1c82b3ecac 43-45,47-55,57,60-69,71-73,76-78,80-88,93-103
+  s_4a583b4b36edcc::t_855d6a19dec11a 42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bea090cc8b3f3b5a24018602a317a7c48e337cc2",
+  "prompts": {},
+  "sessions": {
+    "s_4a583b4b36edcc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e0458bec-f1b0-4198-979e-8268c34d822f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
