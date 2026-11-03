@@ -34,14 +34,6 @@ struct MainTabView: View {
     @State private var selectedTab: AppTab = .docs
     @State private var docsPath = NavigationPath()
     @State private var sharedPath = NavigationPath()
-    /// Where a document zooms open from, one namespace per stack (a tab's rows are never the
-    /// source for another tab's pushes). Which pushed editors came from a row travels on the
-    /// path elements — see `DocumentPush`. The iPad split view pushes nothing and so registers
-    /// no sources.
-    @Namespace private var docsZoom
-    @Namespace private var sharedZoom
-    /// Read once per push (see `push`), never by a destination.
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -123,13 +115,12 @@ struct MainTabView: View {
                 DocumentListView(
                     viewModel: viewModel,
                     serverHost: serverHost,
-                    onSelect: { push(DocumentEditorRoute(document: $0), from: .home, path: $docsPath) },
+                    onSelect: { push(DocumentEditorRoute(document: $0), path: $docsPath) },
                     onSearchTap: { docsPath.append(HomeRoute.search) },
                     onNewDocument: createDocument
                 )
-                .navigationDestination(for: DocumentPush.self) { element in
-                    editorScreen(for: element.route, path: $docsPath)
-                        .documentZoomDestination(source: element.zoomSource, in: docsZoom)
+                .navigationDestination(for: DocumentEditorRoute.self) { route in
+                    editorScreen(for: route, path: $docsPath)
                 }
                 .navigationDestination(for: HomeRoute.self) { route in
                     switch route {
@@ -137,12 +128,11 @@ struct MainTabView: View {
                         SearchScreen(
                             viewModel: searchViewModel, serverHost: serverHost,
                             signInGeneration: signInGeneration,
-                            onOpenDocument: { push(DocumentEditorRoute(document: $0), from: .search, path: $docsPath) }
+                            onOpenDocument: { push(DocumentEditorRoute(document: $0), path: $docsPath) }
                         )
                     }
                 }
             }
-            .environment(\.documentZoomNamespace, docsZoom)
             // Popping back from an editor (or Search) may leave a rename the list has not seen,
             // so a shrinking path marks the list stale and fetches once regardless of the 30 s freshness window.
             .onChange(of: docsPath.count) { old, new in
@@ -158,14 +148,12 @@ struct MainTabView: View {
         NavigationStack(path: $sharedPath) {
             SharedScreen(
                 viewModel: sharedViewModel, serverHost: serverHost, signInGeneration: signInGeneration,
-                onOpenDocument: { push(DocumentEditorRoute(document: $0), from: .shared, path: $sharedPath) }
+                onOpenDocument: { push(DocumentEditorRoute(document: $0), path: $sharedPath) }
             )
-            .navigationDestination(for: DocumentPush.self) { element in
-                editorScreen(for: element.route, path: $sharedPath)
-                    .documentZoomDestination(source: element.zoomSource, in: sharedZoom)
+            .navigationDestination(for: DocumentEditorRoute.self) { route in
+                editorScreen(for: route, path: $sharedPath)
             }
         }
-        .environment(\.documentZoomNamespace, sharedZoom)
     }
 
     /// Profile pushes its account detail and the attachments list. No explicit
@@ -235,8 +223,8 @@ struct MainTabView: View {
                 Task { await viewModel.load() }
             },
             // Page chips and "new page" are not opened from a row: no zoom source.
-            onOpenDocument: { push(DocumentEditorRoute(document: $0), from: nil, path: path) },
-            onCreatedDocument: { push(DocumentEditorRoute(createdDocument: $0), from: nil, path: path) }
+            onOpenDocument: { push(DocumentEditorRoute(document: $0), path: path) },
+            onCreatedDocument: { push(DocumentEditorRoute(createdDocument: $0), path: path) }
         )
         // The editor is a full-screen surface: the tab bar steps aside for it,
         // and returns when the stack pops. Its navigation bar is the system's
@@ -248,16 +236,17 @@ struct MainTabView: View {
     private func createDocument() {
         Task {
             if let document = await viewModel.createDocument() {
-                push(DocumentEditorRoute(createdDocument: document), from: nil, path: $docsPath)
+                push(DocumentEditorRoute(createdDocument: document), path: $docsPath)
             }
         }
     }
 
-    /// Push an editor onto a stack. The path element carries the row it came from (see
-    /// `DocumentPush`), and Reduce Motion is read here, at push time, so the destination never
-    /// depends on the live setting. Every editor append goes through here.
-    private func push(_ route: DocumentEditorRoute, from surface: DocumentZoomSurface?, path: Binding<NavigationPath>) {
-        path.wrappedValue.append(documentPush(for: route, from: surface, reduceMotion: reduceMotion))
+    /// Push an editor onto a stack with the system's standard slide. Documents used to zoom open
+    /// from their row, but popping the zoom on iOS 26 intermittently left the bar in its collapsed
+    /// state, so Home's large title went missing on return until the list was dragged; the slide
+    /// never does. Every editor append goes through here.
+    private func push(_ route: DocumentEditorRoute, path: Binding<NavigationPath>) {
+        path.wrappedValue.append(route)
     }
 
     private func pop(_ path: Binding<NavigationPath>) {

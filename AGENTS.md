@@ -647,6 +647,10 @@ new code reads like the surrounding code.
     title and subtitle when the screen launched offline (a grey band under "+",
     read as blank in White); the `VStack` insertion above is what hid them when the
     banner arrived later.
+  - Editors are pushed with the system's standard slide, never
+    `.navigationTransition(.zoom)`: popping a zoomed editor on iOS 26 intermittently
+    leaves the bar in its collapsed large-title state, so Home's title goes missing on
+    return, and no app-side repair held (docs/design-system.md, 2026-11-03).
   - Home's circular create action uses a Material Symbols template `Image`
     and `.buttonBorderShape(.circle)`. A `MaterialSymbol` text label is sized
     as a wider text action by the native toolbar, making its glass surface oval.
