@@ -809,6 +809,10 @@ new code reads like the surrounding code.
   intentional exception: absolute document images use `ImageLoader` and
   `ImageTransport`, whose ephemeral, origin-pinned session supports explicitly
   consented external URLs without sharing credentials.)
+- `performRequest` retries a `GET` **once** on `URLError.networkConnectionLost`
+  (-1005: a pooled connection that went stale while the app slept, common on the
+  first request after a resume). Unsafe methods are never retried, since the server
+  may have acted on the first attempt; a second failure throws as before.
 - Add each feature's endpoints as an `extension DocsAPIClient` in **its own file**.
 - **Repeat reads are de-duplicated, not cached.** Only `serverConfig()` shares a request already on the wire
   (`inFlightServerConfig`; the slot clears when it settles), so the launch task, Profile and favorites route
@@ -3653,9 +3657,7 @@ markdown write endpoint**. Understand this before touching the save path:
   `catch` on `Task.isCancelled` before touching `loadFailedOffline` or the error
   (`URLError.cancelled` reaches them wrapped as `.network`), and their `.refreshable`
   runs `refresh()` in an unstructured `Task` it awaits, so SwiftUI cancelling the
-  action's own task cannot fail the fetch. `DocsAPIClient` also retries a `GET` once
-  on `URLError.networkConnectionLost` (a pooled connection that went stale while the
-  app slept); unsafe methods are never retried.
+  action's own task cannot fail the fetch (the Share sheet's member list does the same).
   `OnlineAvailability.showsOfflineStatus` adds transport evidence (connectivity-class
   `URLError`s reported by `DocsAPIClient` — a connection that black-holes requests, such as
   plane Wi-Fi without a purchase; a captive portal's TLS failures are deliberately not

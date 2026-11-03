@@ -31,7 +31,9 @@ final class ShareViewModel {
             let invitations = try await invitationsPage.results
             members = shareMembers(accesses: accesses, invitations: invitations)
         } catch {
-            errorKey = .share_error_load
+            // A cancelled load (a pull SwiftUI cancelled, or the sheet's `.task` as it closes)
+            // learned nothing, so it must not claim the members couldn't be loaded.
+            if !Task.isCancelled { errorKey = .share_error_load }
         }
         isLoading = false
     }

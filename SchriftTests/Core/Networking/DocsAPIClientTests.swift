@@ -156,7 +156,11 @@ final class DocsAPIClientTests: XCTestCase {
         do {
             try await client.sendVoid(path: "documents/", method: "POST", body: Data("{}".utf8))
             XCTFail("Expected error to be thrown")
-        } catch {}
+        } catch let error as DocsAPIError {
+            guard case .network = error else { return XCTFail("Expected .network, got \(error)") }
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
         XCTAssertEqual(attempts.count, 1, "The server may have acted on the first POST")
     }
 

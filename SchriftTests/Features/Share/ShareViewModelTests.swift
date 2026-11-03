@@ -124,6 +124,20 @@ final class ShareViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorKey)
     }
 
+    func testCancelledLoadDoesNotClaimTheMembersFailedToLoad() async {
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.cancelled))
+        }
+
+        let load = Task { await viewModel.load() }
+        load.cancel()
+        await load.value
+
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertFalse(viewModel.isLoading)
+    }
+
     func testLoadFailureSetsErrorMessage() async {
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 500, headers: [:], body: Data(), error: nil) }
