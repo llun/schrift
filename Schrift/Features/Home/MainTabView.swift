@@ -222,7 +222,6 @@ struct MainTabView: View {
                 pop(path)
                 Task { await viewModel.load() }
             },
-            // Page chips and "new page" are not opened from a row: no zoom source.
             onOpenDocument: { push(DocumentEditorRoute(document: $0), path: path) },
             onCreatedDocument: { push(DocumentEditorRoute(createdDocument: $0), path: path) }
         )
