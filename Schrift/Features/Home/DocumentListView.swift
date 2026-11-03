@@ -92,7 +92,10 @@ struct DocumentListView: View {
                 .padding(.bottom, DocsSpacing.spaceBase)
             }
             .refreshable {
-                await viewModel.refresh()
+                // Unstructured on purpose: SwiftUI can cancel the refresh action's own task while
+                // the list updates under it, and a cancelled fetch is no answer at all. The pull
+                // still awaits the load, so the spinner holds until it lands.
+                await Task { await viewModel.refresh() }.value
             }
             // Scrolling dismisses an open strip, as it does in a system list. Guarded inside
             // `swipeRevealAfterScrollInteraction` so a swipe that nudges the scroll view —

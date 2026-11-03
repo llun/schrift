@@ -192,6 +192,11 @@ final class SharedViewModel {
             withMe = try await client.listDocuments(isCreatorMe: false, ordering: "-updated_at").results
         } catch {
             guard generation == loadGeneration else { return }
+            // A cancelled load learned nothing: not offline, not an error (see Home's `load`).
+            if Task.isCancelled {
+                isLoading = false
+                return
+            }
             guard availability.permitsResponse(for: availabilityToken) else {
                 isLoading = false
                 return

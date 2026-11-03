@@ -355,6 +355,31 @@ final class HomeViewModelLoadTests: HomeViewModelTestCase {
         XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Offline Recent"])
     }
 
+    /// SwiftUI may cancel a pull-to-refresh's task mid-fetch; `URLSession` then throws
+    /// `URLError.cancelled`, which the client wraps as `.network`. That must read as "no answer",
+    /// not as offline or as a failed load.
+    func testCancelledRefreshIsNeitherAnErrorNorOffline() async {
+        let cache = makeCache()
+        let cachedRecentBody = Self.paginatedFixture(
+            id: "14141414-1414-4141-8141-141414141414", title: "Cached Recent", isFavorite: false)
+        cache.saveRecentDocuments(
+            try! JSONDecoder.docsAPI.decode(PaginatedResponse<Document>.self, from: cachedRecentBody).results)
+        let viewModel = makeViewModel(cache: cache)
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.cancelled))
+        }
+
+        let refresh = Task { await viewModel.refresh() }
+        refresh.cancel()
+        await refresh.value
+
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertFalse(viewModel.isOffline)
+        XCTAssertFalse(viewModel.offlineStatusEvidence)
+        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertEqual(viewModel.recentDocuments.map(\.title), ["Cached Recent"])
+    }
+
     func testTransportFailureSetsIsOffline() async {
         let viewModel = makeViewModel()
         MockURLProtocol.stubHandler = { _ in

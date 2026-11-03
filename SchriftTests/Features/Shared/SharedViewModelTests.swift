@@ -253,6 +253,24 @@ final class SharedViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isOffline)
     }
 
+    /// A pull-to-refresh whose task SwiftUI cancels learned nothing: no error, not offline.
+    func testCancelledRefreshIsNeitherAnErrorNorOffline() async {
+        cache.saveSharedWithMeDocuments([
+            decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Cached Doc")
+        ])
+        let viewModel = makeViewModel()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.cancelled))
+        }
+        let refresh = Task { await viewModel.refresh() }
+        refresh.cancel()
+        await refresh.value
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertFalse(viewModel.isOffline)
+        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertEqual(viewModel.documents.map(\.title), ["Cached Doc"])
+    }
+
     func testWorkOfflineServesCacheWithoutNetwork() async {
         cache.saveSharedWithMeDocuments([
             decodeDocument(id: "11111111-1111-4111-8111-111111111111", title: "Offline Doc")

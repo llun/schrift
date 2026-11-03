@@ -431,6 +431,15 @@ final class HomeViewModel {
             freshness.noteSuccess(token: availabilityToken, at: now())
         } catch {
             guard generation == loadGeneration else { return }
+            // **A cancelled load is not a failed one.** `URLSession` answers a cancelled task with
+            // `URLError.cancelled`, which the client wraps as `.network` like any transport error,
+            // so this used to read as "offline" and, on a pull-to-refresh, as "Couldn't load
+            // documents" — on a working connection. Nothing was learned about the server or the
+            // list, so leave both exactly as they were.
+            if Task.isCancelled {
+                isLoading = false
+                return
+            }
             guard availability.permitsResponse(for: availabilityToken) else {
                 isLoading = false
                 return
