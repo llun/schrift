@@ -643,9 +643,10 @@ new code reads like the surrounding code.
     paints up through the whole bar. Use
     `.background(color, ignoresSafeAreaEdges: .horizontal)` (and give a hairline
     `.ignoresSafeArea(edges: .horizontal)`), which keeps the top bounded while the
-    strip still runs edge to edge in landscape. That bleed, not the banner's
-    placement, is what hid Home's large title and subtitle offline (a grey band
-    under "+", read as blank in White).
+    strip still runs edge to edge in landscape. That bleed is what hid Home's large
+    title and subtitle when the screen launched offline (a grey band under "+",
+    read as blank in White); the `VStack` insertion above is what hid them when the
+    banner arrived later.
   - Home's circular create action uses a Material Symbols template `Image`
     and `.buttonBorderShape(.circle)`. A `MaterialSymbol` text label is sized
     as a wider text action by the native toolbar, making its glass surface oval.
