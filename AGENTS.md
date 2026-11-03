@@ -629,18 +629,24 @@ new code reads like the surrounding code.
   no destination uses `role: .search`. Screens set `.navigationTitle` /
   `.navigationSubtitle` and put actions in `.toolbar` — they do not draw a `NavBar`.
   Keep native Liquid Glass, minimize-on-scroll, scroll-edge effects and safe areas.
-  - A strip under the bar (the offline banner on Home, Shared and Search, and the
-    editor's `bannerStack`) sits above the `ScrollView` in a `VStack(spacing: 0)`,
-    so the scroll view starts below it: collapsed, rows scroll under the strip and
-    never show between the bar and the strip. Never let such a strip's fill bleed
+  - The offline banner on Home, Shared and Search goes on the list's `ScrollView`
+    as `.safeAreaInset(edge: .top, spacing: 0)`, never as a `VStack` sibling above
+    it. In a `VStack`, inserting the banner while the screen is up (it is debounced,
+    so it typically lands after a pull to refresh) moved the scroll view down, and
+    the bar stopped drawing the large title and subtitle — a blank band under "+"
+    until the screen was rebuilt. The inset keeps the scroll view against the bar;
+    collapsed, the opaque strip sits flush under the bar and rows only pass under
+    the bar's glass, as online. Not `.safeAreaBar`: rows showed between the
+    collapsed bar and the strip. Never let such a strip's fill bleed
     through the top edge: the bare `.background(color)` is the ShapeStyle overload
     that ignores the safe area on every edge, so a strip against the bar's safe area
     paints up through the whole bar. Use
     `.background(color, ignoresSafeAreaEdges: .horizontal)` (and give a hairline
     `.ignoresSafeArea(edges: .horizontal)`), which keeps the top bounded while the
-    strip still runs edge to edge in landscape. That bleed, not the banner's
-    placement, is what hid Home's large title and subtitle offline (a grey band
-    under "+", read as blank in White).
+    strip still runs edge to edge in landscape. That bleed is what hid Home's large
+    title and subtitle when the screen launched offline (a grey band under "+",
+    read as blank in White); the `VStack` insertion above is what hid them when the
+    banner arrived later.
   - Home's circular create action uses a Material Symbols template `Image`
     and `.buttonBorderShape(.circle)`. A `MaterialSymbol` text label is sized
     as a wider text action by the native toolbar, making its glass surface oval.

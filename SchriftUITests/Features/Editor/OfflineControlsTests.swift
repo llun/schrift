@@ -2,9 +2,10 @@ import XCTest
 
 @MainActor
 final class OfflineControlsTests: XCTestCase {
-    private func launch(uncached: Bool = false) -> XCUIApplication {
+    private func launch(uncached: Bool = false, longList: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["--offline-controls"] + (uncached ? ["--uncached"] : [])
+        app.launchArguments =
+            ["--offline-controls"] + (uncached ? ["--uncached"] : []) + (longList ? ["--long-list"] : [])
         app.launch()
         // Home's offline banner: on every size class, and it shows only once the fixture's path
         // is down. (The compact Search shortcut no longer carries an offline footnote: offline it
@@ -131,6 +132,84 @@ final class OfflineControlsTests: XCTestCase {
             colorDistance(aboveBanner, insideBanner), 6,
             "The banner's fill \(insideBanner) stops at its top edge instead of reaching up the bar")
         capture(app, "iphone-home-offline-large-title")
+        app.terminate()
+    }
+
+    /// Whether any pixel inside `element`'s frame differs from `background` by more than a glyph
+    /// would: the element can exist in the accessibility tree while the bar no longer draws it.
+    private func isDrawn(_ element: XCUIElement, in screenshot: XCUIScreenshot, over background: [Int]) throws -> Bool {
+        let frame = element.frame
+        for y in stride(from: frame.minY + 2, to: frame.maxY - 1, by: 2) {
+            for x in stride(from: frame.minX + 1, to: frame.maxX - 1, by: 2)
+            where try colorDistance(screenshot.rgb(x: x, y: y), background) > 60 {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// The banner arriving while Home is already on screen, online, after a pull to refresh: the
+    /// bar used to stop drawing the large title and subtitle, leaving a blank band under "+".
+    func testHomeKeepsLargeTitleWhenTheBannerAppearsAfterARefresh() throws {
+        let app = launch()
+        guard app.buttons["Search docs.example.org"].exists else {
+            app.terminate()
+            throw XCTSkip("Home's large title belongs to the compact navigation stack.")
+        }
+        let banner = offlineBanner(app, note: "All documents saved on this device")
+        let bar = app.navigationBars.firstMatch
+        let title = bar.staticTexts["Schrift"].firstMatch
+        let subtitle = bar.staticTexts["docs.example.org"].firstMatch
+        let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Offline fixture")).firstMatch
+        app.buttons["fixture.online"].tap()
+        let bannerGone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: banner)
+        XCTAssertEqual(XCTWaiter.wait(for: [bannerGone], timeout: 5), .completed)
+        XCTAssertTrue(row.waitForStableFrame())
+        let start = row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 300)))
+        app.buttons["fixture.offline"].tap()
+        XCTAssertTrue(banner.waitForExistence(timeout: 5))
+        XCTAssertTrue(banner.waitForStableFrame())
+        XCTAssertTrue(title.waitForStableFrame())
+        let screenshot = app.screenshot()
+        let page = try screenshot.rgb(
+            x: banner.frame.maxX - 24, y: (row.frame.maxY + app.tabBars.firstMatch.frame.minY) / 2)
+        capture(app, "iphone-home-banner-after-refresh")
+        XCTAssertTrue(
+            try isDrawn(title, in: screenshot, over: page), "The large title is drawn under the banner's arrival")
+        XCTAssertTrue(
+            try isDrawn(subtitle, in: screenshot, over: page), "The subtitle is drawn under the banner's arrival")
+        app.terminate()
+    }
+
+    /// Collapsed, the strip sits right under the bar: no row shows between the two (why #217 kept
+    /// the banner out of `.safeAreaBar`).
+    func testCollapsedHomeKeepsTheBannerUnderTheBar() throws {
+        let app = launch(longList: true)
+        guard app.buttons["Search docs.example.org"].exists else {
+            app.terminate()
+            throw XCTSkip("Home's large title belongs to the compact navigation stack.")
+        }
+        let banner = offlineBanner(app, note: "All documents saved on this device")
+        let bar = app.navigationBars.firstMatch
+        let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Long list row 2")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "The long list is on screen")
+        let expandedBarHeight = bar.frame.height
+        app.swipeUp()
+        app.swipeUp()
+        XCTAssertTrue(banner.waitForStableFrame())
+        XCTAssertTrue(bar.waitForStableFrame())
+        capture(app, "iphone-home-offline-collapsed")
+        XCTAssertLessThan(bar.frame.height, expandedBarHeight - 20, "The large title collapsed")
+        XCTAssertEqual(banner.frame.minY, bar.frame.maxY, accuracy: 1, "The strip starts where the bar ends")
+        // Rows pass under the bar's glass as they do online, but the opaque strip hides them from
+        // its very top edge: the fill just under the bar matches the fill at the strip's middle.
+        let screenshot = app.screenshot()
+        let x = banner.frame.maxX - 24
+        XCTAssertLessThanOrEqual(
+            colorDistance(
+                try screenshot.rgb(x: x, y: banner.frame.minY + 1), try screenshot.rgb(x: x, y: banner.frame.midY)),
+            4, "No row shows between the collapsed bar and the strip")
         app.terminate()
     }
 

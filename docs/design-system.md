@@ -1,12 +1,17 @@
 # iOS design update — tab pages, dark mode, localization
 
+> **Revised: 2026-11-03 — The large title stays drawn when the offline banner arrives.** Inserted
+> while Home was already up (after a pull to refresh, once the debounced banner showed), the banner
+> pushed the list's scroll view down and the bar stopped drawing the large title and subtitle. On
+> Home, Shared and Search the banner is now a top safe-area inset of the scroll view instead of a
+> sibling above it. Collapsed, it still sits flush under the bar. No colour, spacing or string change.
+
 > **Revised: 2026-11-01 — The offline banner no longer covers the large title.** `OfflineBanner`
 > filled itself with the bare `.background(gray050)`, the ShapeStyle overload that ignores the safe
 > area on every edge; set right against the navigation bar, the fill reached up through the whole
 > bar and painted over Home's large title and subtitle (and Search's and Shared's). The fill is now
 > kept from bleeding through the top edge (`ignoresSafeAreaEdges: .horizontal`, so it and its
-> hairline still run edge to edge in landscape). The banner stays where it was, above the scroll
-> view, so the large title collapses as before and rows never show between the bar and the strip.
+> hairline still run edge to edge in landscape).
 > No colour, spacing or string change.
 
 > **Revised: 2026-11-01 — Continue reading also restores a document opened from its cache.**

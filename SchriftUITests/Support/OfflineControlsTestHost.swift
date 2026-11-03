@@ -45,12 +45,13 @@ struct OfflineControlsTestHost: View {
                     syncedAt: Date()))
         }
         let lists = DocumentCacheStore(userDefaults: defaults)
-        let document = try! JSONDecoder.docsAPI.decode(
+        let documents = try! JSONDecoder.docsAPI.decode(
             PaginatedResponse<Document>.self, from: OfflineFixtureProtocol.page
         )
-        .results[0]
+        .results
+        let document = documents[0]
         lists.savePinnedDocuments([])
-        lists.saveRecentDocuments([document])
+        lists.saveRecentDocuments(documents)
         let children = DocumentChildrenCacheStore(userDefaults: defaults)
         children.save([], for: document.id)
         let coordinator = DocumentSaveCoordinator(
@@ -157,13 +158,20 @@ private final class OfflineFixtureProtocol: URLProtocol, @unchecked Sendable {
             : "Cached readable body"
     }
 
-    static let page = Data(
-        """
-        {"count":1,"results":[{"id":"11111111-1111-4111-8111-111111111111","title":"Offline fixture",
-         "abilities":{"partial_update":true,"destroy":true},"link_reach":"restricted","link_role":"reader",
-         "is_favorite":false,"depth":1,"numchild":0,"path":"0001","created_at":"2026-01-15T10:30:00Z",
-         "updated_at":"2026-01-15T10:30:00Z"}]}
-        """.utf8)
+    /// `--long-list` adds enough rows for Home's large title to collapse on scroll.
+    static let page: Data = {
+        let count = ProcessInfo.processInfo.arguments.contains("--long-list") ? 31 : 1
+        let rows = (1...count).map { index in
+            """
+            {"id":"11111111-1111-4111-8111-\(String(format: "%012ld", index == 1 ? 111_111_111_111 : index))",
+             "title":"\(index == 1 ? "Offline fixture" : "Long list row \(index)")",
+             "abilities":{"partial_update":true,"destroy":true},"link_reach":"restricted","link_role":"reader",
+             "is_favorite":false,"depth":1,"numchild":0,"path":"\(String(format: "%04d", index))",
+             "created_at":"2026-01-15T10:30:00Z","updated_at":"2026-01-15T10:30:00Z"}
+            """
+        }
+        return Data("{\"count\":\(count),\"results\":[\(rows.joined(separator: ","))]}".utf8)
+    }()
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
