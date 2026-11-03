@@ -39,69 +39,68 @@ struct DocumentListView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                searchField
+                    .padding(.bottom, DocsSpacing.spaceBase + DocsSpacing.space4xs)
+
+                Group {
+                    if let errorKey = viewModel.errorKey {
+                        HStack(alignment: .firstTextBaseline, spacing: DocsSpacing.spaceXS) {
+                            VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
+                                Text(loc[errorKey])
+                                    .font(DocsFont.footnote)
+                                    .foregroundStyle(theme.colors.danger)
+                                if let errorDetail = viewModel.errorDetail {
+                                    Text(errorDetail)
+                                        .font(DocsFont.footnote)
+                                        .foregroundStyle(theme.colors.textSecondary)
+                                }
+                            }
+                            Spacer(minLength: 0)
+                            // Through `IconButton` rather than a bare 13pt glyph:
+                            // it keeps the small visual box but floors the tap
+                            // target at 44pt, which a footnote-sized close cross
+                            // came nowhere near on its own.
+                            IconButton(
+                                icon: .close,
+                                label: loc[.home_dismiss_error],
+                                size: .small,
+                                action: viewModel.dismissError)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, DocsSpacing.spaceXS)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
+                .animation(reduceMotion ? nil : .snappy, value: viewModel.errorKey)
+
+                content
+            }
+            // Rows glide when a revalidation adds, removes or reorders them (and when the
+            // Pinned header appears) instead of snapping. Keyed on the fetched lists only —
+            // never on search results, which change per keystroke and would feel laggy.
+            .animation(reduceMotion ? nil : .snappy, value: listIDs)
+            .padding(.top, DocsSpacing.space3xs)
+            .padding(.horizontal, DocsSpacing.gutter)
+            .padding(.bottom, DocsSpacing.spaceBase)
+        }
+        .refreshable {
+            // Unstructured on purpose: SwiftUI can cancel the refresh action's own task while
+            // the list updates under it, and a cancelled fetch is no answer at all. The pull
+            // still awaits the load, so the spinner holds until it lands.
+            await Task { await viewModel.refresh() }.value
+        }
+        // Scrolling dismisses an open strip, as it does in a system list. Guarded inside
+        // `swipeRevealAfterScrollInteraction` so a swipe that nudges the scroll view —
+        // which it will, the two gestures being simultaneous — does not close its own.
+        .onScrollPhaseChange { _, phase in
+            if phase == .interacting { swipe = swipeRevealAfterScrollInteraction(swipe) }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
             if showsOfflineBanner {
                 OfflineBanner(note: loc[.offline_note])
                     .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    searchField
-                        .padding(.bottom, DocsSpacing.spaceBase + DocsSpacing.space4xs)
-
-                    Group {
-                        if let errorKey = viewModel.errorKey {
-                            HStack(alignment: .firstTextBaseline, spacing: DocsSpacing.spaceXS) {
-                                VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
-                                    Text(loc[errorKey])
-                                        .font(DocsFont.footnote)
-                                        .foregroundStyle(theme.colors.danger)
-                                    if let errorDetail = viewModel.errorDetail {
-                                        Text(errorDetail)
-                                            .font(DocsFont.footnote)
-                                            .foregroundStyle(theme.colors.textSecondary)
-                                    }
-                                }
-                                Spacer(minLength: 0)
-                                // Through `IconButton` rather than a bare 13pt glyph:
-                                // it keeps the small visual box but floors the tap
-                                // target at 44pt, which a footnote-sized close cross
-                                // came nowhere near on its own.
-                                IconButton(
-                                    icon: .close,
-                                    label: loc[.home_dismiss_error],
-                                    size: .small,
-                                    action: viewModel.dismissError)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.bottom, DocsSpacing.spaceXS)
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                        }
-                    }
-                    .animation(reduceMotion ? nil : .snappy, value: viewModel.errorKey)
-
-                    content
-                }
-                // Rows glide when a revalidation adds, removes or reorders them (and when the
-                // Pinned header appears) instead of snapping. Keyed on the fetched lists only —
-                // never on search results, which change per keystroke and would feel laggy.
-                .animation(reduceMotion ? nil : .snappy, value: listIDs)
-                .padding(.top, DocsSpacing.space3xs)
-                .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.bottom, DocsSpacing.spaceBase)
-            }
-            .refreshable {
-                // Unstructured on purpose: SwiftUI can cancel the refresh action's own task while
-                // the list updates under it, and a cancelled fetch is no answer at all. The pull
-                // still awaits the load, so the spinner holds until it lands.
-                await Task { await viewModel.refresh() }.value
-            }
-            // Scrolling dismisses an open strip, as it does in a system list. Guarded inside
-            // `swipeRevealAfterScrollInteraction` so a swipe that nudges the scroll view —
-            // which it will, the two gestures being simultaneous — does not close its own.
-            .onScrollPhaseChange { _, phase in
-                if phase == .interacting { swipe = swipeRevealAfterScrollInteraction(swipe) }
             }
         }
         .animation(reduceMotion ? nil : .snappy, value: showsOfflineBanner)
