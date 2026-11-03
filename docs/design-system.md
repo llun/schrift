@@ -213,6 +213,14 @@
 > Matches are not highlighted inside the text. Implementation:
 > `Schrift/Features/Editor/DocumentOutline.swift` and `DocumentOutlineSheet.swift`.
 
+> **Revised: 2026-11-03 — Documents slide open again; the zoom below is withdrawn.** Popping the
+> zoom transition on iOS 26 intermittently left the navigation bar in its collapsed large-title
+> state, so Home's "Schrift" title and server subtitle were missing on return (a blank band under
+> "+", or an inline title until the list was dragged). App-side repairs (scrolling to top, toggling
+> the title display mode, a new scroll view identity, a different editor title mode) did not hold,
+> while the standard push never showed it, so every editor push now uses the system slide and
+> `DocumentZoom.swift` is gone. The note below is kept as history.
+
 > **Revised: 2026-11-01 — Documents zoom open from their row (Direction D, Tactile).** On a
 > compact-width stack, opening a document from Home (a row or a pinned card), Search results or
 > Shared uses the iOS 18+ zoom transition: each row is a `matchedTransitionSource` and the
