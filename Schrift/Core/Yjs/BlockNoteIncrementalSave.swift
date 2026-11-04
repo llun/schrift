@@ -62,7 +62,7 @@ enum BlockNoteIncrementalSave {
         defer { doc.destroy() }
         if let decoded {
             do {
-                try doc.applyUpdate(decoded)
+                try doc.applyUpdate(decoded, origin: .remote)
             } catch {
                 throw BlockNoteIncrementalSaveError.malformedServerState
             }

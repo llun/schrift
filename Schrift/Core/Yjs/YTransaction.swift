@@ -2,19 +2,19 @@ import Foundation
 
 // MARK: - Transaction
 
+/// The origin bookkeeping values Schrift currently needs from yjs transactions.
+enum YTransactionOrigin: Equatable {
+    case localUser
+    case remote
+}
+
 /// One unit of change against a `YDoc` — yjs `Transaction` (@3081).
 ///
 /// Reduced to the fields the struct store actually reads. Deliberately **not**
 /// modelled: `changedParentTypes` and the observer machinery (no observers in
 /// this milestone), `subdocsAdded/Removed/Loaded` (Schrift's schema has no
-/// subdocuments), and `meta` (caller bookkeeping with no effect on state).
-/// yjs `origin` (any caller value); nil = no origin, like yjs's default `null`.
-enum YTransactionOrigin: Equatable {
-    case localUser
-    case remote
-    case formatCleanup
-}
-
+/// subdocuments), and `meta` (caller bookkeeping with no effect on state). The
+/// optional `origin` is retained as caller bookkeeping, matching yjs `Transaction`.
 final class YTransaction {
     let doc: YDoc
     /// yjs `Transaction.origin` (@3087); caller bookkeeping, not encoded state.
