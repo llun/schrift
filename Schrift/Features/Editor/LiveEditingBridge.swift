@@ -277,8 +277,8 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
         // is no trustworthy full state — never PATCH, or a half-synced replica would wipe the
         // document. Re-check `isFullyModeled` here too: the projection can have gone lossy
         // between the forward and this fire. `snapshot` and `markdown` are both read from the
-        // replica (not the editor), so the persisted body is exactly what the server renders
-        // from the bytes. If either fails, skip — the un-snapshotted work is still on screen
+        // replica (not the editor), so the persisted body is exactly our replica's render
+        // of the bytes. If either fails, skip — the un-snapshotted work is still on screen
         // and a later classic downgrade save persists it.
         guard let snapshot = collaboration.encodeSnapshotForSave(for: documentID),
             let projection = collaboration.projectedReplica(for: documentID, interlinkingOrigin: serverOrigin),

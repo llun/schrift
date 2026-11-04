@@ -462,8 +462,8 @@ it succeeds, `EditorViewModel.persistLiveSnapshot` calls `enqueueLiveSnapshot` â
   false (the default) the classic content body is byte-identical to before.
 - **`DocumentSaveCoordinator.enqueueLiveSnapshot(documentID:snapshot:projectedMarkdown:title:baseline:)`**
   queues that save. A live snapshot pushes CRDT **bytes**, but the reconcile machinery is
-  markdown-based, so the coordinator carries the **projected markdown** (what the server
-  renders from the snapshot) as the `PendingSave.markdown` and the draft body. That single
+  markdown-based, so the coordinator carries the **projected markdown** (our replica's
+  render of the snapshot) as the `PendingSave.markdown` and the draft body. That single
   choice makes `finish` unable to tell the two paths apart: the write-ahead draft, the
   enqueue-hold + single-writer conflict rule, latest-wins coalescing, the
   `lastConfirmedPushMarkdown` stamp, the content-cache write, and `.pendingSync`/`.failed`

@@ -961,7 +961,7 @@ server is about to hold.
   markdown-derived bytes. Docs 6 has no live session today (`ServerConfig.supportsLiveCollaboration`
   stays false until a y-websocket client lands), so this route is groundwork for that client; its
   PATCH carries the whole snapshot and is subject to the deployment's request-size limit. It
-  carries the **projected markdown** (what the server renders from
+  carries the **projected markdown** (our replica's render of
   the snapshot) as the draft body
   and the `lastConfirmedPushMarkdown` stamp, so the write-ahead draft, the conflict
   hold, latest-wins coalescing, `draftSyncDecision`, and the content cache behave

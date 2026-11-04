@@ -41,8 +41,8 @@ final class DocumentSaveCoordinator {
         /// Non-nil ⇒ a **live-collaboration full-state Yjs snapshot** to write verbatim via
         /// `client.saveLiveSnapshot` (yhub on Docs 6, the legacy `"websocket": true` PATCH
         /// before it), instead of re-deriving bytes from `markdown` through
-        /// `MarkdownYjs.encode`. `markdown` still carries the **projected** markdown (what the
-        /// server renders from the snapshot), so every reconcile/baseline/cache rule in
+        /// `MarkdownYjs.encode`. `markdown` still carries the **projected** markdown (our replica's
+        /// render of the snapshot), so every reconcile/baseline/cache rule in
         /// `finish` is byte-for-byte identical between the
         /// two paths — only which network primitive `start` calls differs.
         let liveSnapshot: Data?
