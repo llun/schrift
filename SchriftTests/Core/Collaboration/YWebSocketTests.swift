@@ -228,4 +228,29 @@ final class YWebSocketTests: DocumentCollaborationManagerTestCase {
         XCTAssertTrue(syncMessages(socket, step: .update).isEmpty)
         XCTAssertEqual(manager.localEditVersion(for: docID), 0)
     }
+    func testDowngradeToReaderDropsTheReplicaSoStep2CarriesNoWriterEdits() async throws {
+        let spy = ManagerSocketFactorySpy()
+        let manager = await yhubManager(spy)
+        _ = try XCTUnwrap(manager.session(for: docID, canUpdate: true))
+        defer { manager.suspend() }
+        let writer = spy.sockets[0]
+        await waitUntil { writer.sentFrames.count == 2 }
+        let blocks = [para("server", id: blockID)]
+        writer.deliver(message: frame(.step2, BlockNoteYjs.encode(blocks, clientID: 1)))
+        await waitUntil { manager.canWriteReplica(for: self.docID) }
+        _ = try manager.applyLocalEdit(old: blocks, new: blocks + [para("writer only", id: "writer-block")], for: docID)
+
+        _ = try XCTUnwrap(manager.session(for: docID, canUpdate: false))
+        await waitUntil { spy.sockets.count == 2 }
+        let reader = spy.sockets[1]
+        await waitUntil { reader.sentFrames.count == 1 }
+        let version = manager.replicaVersion(for: docID)
+        reader.deliver(message: frame(.step1, Data([0])))
+        // Frames are handled in order, so once this step2 lands the step1 reply (if any) was sent.
+        reader.deliver(message: frame(.step2, BlockNoteYjs.encode(blocks, clientID: 1)))
+        await waitUntil { manager.replicaVersion(for: self.docID) > version }
+        let marker = Data("writer only".utf8)
+        XCTAssertFalse(reader.sentFrames.contains { $0.range(of: marker) != nil })
+        XCTAssertFalse(manager.canWriteReplica(for: docID))
+    }
 }

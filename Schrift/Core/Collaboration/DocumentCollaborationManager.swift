@@ -354,6 +354,13 @@ final class DocumentCollaborationManager {
                 entry.session?.stop()
                 entry.session = nil
                 entry.canUpdate = canUpdate
+                // A reader's step2 must only echo what the server sent, never writer
+                // edits still in the replica, so a downgrade starts from an empty one.
+                if !canUpdate {
+                    entry.replica?.destroy()
+                    entry.replica = nil
+                    entry.initialSyncApplied = false
+                }
             }
             if entry.session == nil { entry.session = makeSession(for: documentID, canUpdate: canUpdate) }
             entries[documentID] = entry
