@@ -172,6 +172,17 @@ final class EditorViewModel {
     /// overwrites it — so the `[[` picker neither shows nor picks in that block. Observed, so
     /// the card appears once the composition commits.
     private(set) var markedTextBlockID: UUID?
+    /// The block whose model text holds input-method characters nothing has published yet.
+    /// `text` is what the replica (peers, saves, drafts) holds for it: the text it had before the
+    /// composition, moved to a peer's text when a peer edits the block meanwhile. `original` is the
+    /// text the composition began from, which the user's edit is measured against at the commit.
+    /// While marked, the model keeps the new characters so the row can lay them out, but
+    /// `markDirty` is not called and `publishableBlocks` swaps `text` back in for everything that
+    /// serializes the document (the live bridge, `currentMarkdown`, hence every save and draft) —
+    /// so even an unrelated edit or a flush mid-composition cannot carry them out. The commit
+    /// publishes the characters, even when they equal the last marked text (`updateText` would
+    /// otherwise see no change), and clears this.
+    @ObservationIgnored private var compositionBaseText: (id: UUID, text: String, original: String)?
 
     let client: DocsAPIClient
     let documentID: UUID
@@ -1556,6 +1567,7 @@ final class EditorViewModel {
     /// authoritative reading-mode source (`rawMarkdown`) are never bypassed — skipping
     /// them risks a destructive full-overwrite save of non-round-trippable content.
     private func install(markdown: String, title contentTitle: String?, syncedAt: Date?) {
+        resetComposition()
         if let contentTitle {
             title = contentTitle
         }
@@ -2021,6 +2033,7 @@ final class EditorViewModel {
 
     func startEditing(focusing blockID: UUID? = nil, focusingTitle: Bool = false) {
         guard canStartEditing else { return }
+        resetComposition()
         clearError()
         // Hide the banner while the caret is in the document (`applyPendingUpdate` is guarded
         // on `!isEditing` anyway) — but **keep the stash, and record nothing**. Entering edit
@@ -2046,6 +2059,10 @@ final class EditorViewModel {
 
     func finishEditing() {
         initialTitleFocusPending = false
+        // Done mid-composition: the model holds what the user typed and the text view is about to
+        // go away, so treat it as committed — the flush below must publish it, not skip it.
+        if markedTextBlockID != nil { markedTextBlockID = nil }
+        settleComposition()
         flushPendingChanges()
         // Sync the reading-mode source to the edited blocks so its consumers (Options
         // "copy markdown", a late photo insert) reflect the session's work — but *only*
@@ -2075,7 +2092,7 @@ final class EditorViewModel {
     /// while reading (a late photo insert) must carry the source, not the
     /// serialization.
     func currentMarkdown() -> String {
-        mode == .blocks ? serializeMarkdown(blocks) : rawMarkdown
+        mode == .blocks ? serializeMarkdown(publishableBlocks) : rawMarkdown
     }
 
     // MARK: - Block mutations
@@ -2128,10 +2145,12 @@ final class EditorViewModel {
             cursorRequest = CursorRequest(blockID: blockID, offset: selection.location, length: selection.length)
         }
         if isMarked {
+            // Display and layout only: the characters are uncommitted, so nothing is published,
+            // saved or drafted until the commit below.
             if blocks[index].text != text {
+                holdComposition(of: blockID, publishedText: blocks[index].text)
                 blocks[index].text = text
                 detachBlocksThatNoLongerNest([blockID])
-                markDirty()
             }
         } else {
             updateText(blockID: blockID, text: text, committingComposition: true)
@@ -2141,10 +2160,18 @@ final class EditorViewModel {
     func updateText(blockID: UUID, text: String, committingComposition: Bool = false) {
         guard let index = blockIndex(blockID) else { return }
         let charactersChanged = blocks[index].text != text
-        guard charactersChanged || committingComposition else { return }
+        // The text view reports marked text before the characters (`noteMarkedText`), so a
+        // block still marked here holds an uncommitted composition: keep it for display, publish
+        // nothing. A committing call is never held, and a commit that ends with the characters
+        // last marked still publishes them (`publishesComposition`).
+        let composing = markedTextBlockID == blockID && !committingComposition
+        let publishesComposition = !composing && compositionBaseText?.id == blockID
+        guard charactersChanged || committingComposition || publishesComposition else { return }
+        if composing, charactersChanged { holdComposition(of: blockID, publishedText: blocks[index].text) }
 
-        // Markdown typing shortcuts convert a paragraph as soon as its prefix lands.
-        if blocks[index].kind == .paragraph, let match = detectMarkdownShortcut(text: text) {
+        // Markdown typing shortcuts convert a paragraph as soon as its prefix lands — on the
+        // commit when an input method is composing: UIKit owns the marked characters until then.
+        if !composing, blocks[index].kind == .paragraph, let match = detectMarkdownShortcut(text: text) {
             blocks[index].kind = match.kind
             blocks[index].text = match.remainderText
             slashQueryText = nil
@@ -2155,7 +2182,7 @@ final class EditorViewModel {
             let caret = min(max(0, caretBefore - prefixLength), (match.remainderText as NSString).length)
             focusBlock(blockID, cursorAt: caret)
             detachBlocksThatNoLongerNest([blockID])
-            markDirty()
+            markDirtyUnlessComposing(blockID, composing: composing)
             return
         }
 
@@ -2166,10 +2193,101 @@ final class EditorViewModel {
         {
             dismissedPageLink = nil
         }
-        if charactersChanged {
-            detachBlocksThatNoLongerNest([blockID])
-            markDirty()
+        if charactersChanged || publishesComposition {
+            if charactersChanged { detachBlocksThatNoLongerNest([blockID]) }
+            markDirtyUnlessComposing(blockID, composing: composing)
         }
+    }
+
+    /// Publishes an edit to `blockID` through `markDirty`, unless an input method still holds
+    /// marked text there: then the block's `compositionBaseText` is kept and the commit publishes.
+    private func markDirtyUnlessComposing(_ blockID: UUID, composing: Bool) {
+        guard !composing else { return }
+        publishComposition(of: blockID)
+    }
+
+    /// Remembers the text `blockID` had before its composition so nothing serializes the marked
+    /// characters. A second block's composition settles a first one nobody finished.
+    private func holdComposition(of blockID: UUID, publishedText: String) {
+        if let held = compositionBaseText, held.id != blockID { settleComposition() }
+        if compositionBaseText?.id != blockID {
+            compositionBaseText = (id: blockID, text: publishedText, original: publishedText)
+        }
+    }
+
+    /// The edit to `blockID` is committed: stop substituting its old text, rebase the edit onto a
+    /// peer's concurrent change to it, and publish.
+    private func publishComposition(of blockID: UUID) {
+        if let held = compositionBaseText, held.id == blockID {
+            compositionBaseText = nil
+            rebaseComposition(held)
+        }
+        markDirty()
+    }
+
+    /// A peer edited the block while its composition was held (`held.text` is theirs, and what the
+    /// replica holds). The user's edit is merged into the peer's text (`rebasedCompositionText`
+    /// says how, and where the caret lands), so the bridge forwards peer text -> merged text from
+    /// the baseline the replica really has. Only when the peer deleted or edited inside the text
+    /// the edit was made to (`nil`) does the committed text stand: it overwrites the peer's text,
+    /// consistently from that baseline.
+    private func rebaseComposition(_ held: (id: UUID, text: String, original: String)) {
+        guard held.text != held.original, let index = blockIndex(held.id) else { return }
+        let committed = blocks[index].text
+        let caret = selection?.location ?? (committed as NSString).length
+        guard
+            let merged = rebasedCompositionText(
+                original: held.original, committed: committed, caret: caret, onto: held.text),
+            merged.text != committed
+        else { return }
+        blocks[index].text = merged.text
+        if focusedBlockID == held.id {
+            cursorRequest = CursorRequest(blockID: held.id, offset: merged.caret)
+            selection = NSRange(location: merged.caret, length: 0)
+        }
+    }
+
+    /// The text views moved focus: a composition left behind on the old block (its unmark never
+    /// arrived) is published now rather than waiting for a timer live editing does not have.
+    func noteFocusChange() {
+        settleComposition()
+    }
+
+    /// A new editing session or freshly installed content has no composition in progress.
+    private func resetComposition() {
+        compositionBaseText = nil
+        if markedTextBlockID != nil { markedTextBlockID = nil }
+    }
+
+    /// Whether uncommitted marked text sits in the model right now: the block is focused in
+    /// editing mode and its text view still reports marked text. A flag outliving that (a missed
+    /// unmark, a mode change) must not disable the autosave, so this checks each part.
+    private var holdsUnpublishedComposition: Bool {
+        guard let held = compositionBaseText else { return false }
+        return mode == .blocks && markedTextBlockID == held.id && focusedBlockID == held.id
+            && blockIndex(held.id) != nil
+    }
+
+    /// Ends a composition that is no longer held without its commit having reached `updateText`
+    /// (the text view reported only a selection change, Done, a lost focus): what the model holds
+    /// is what the user typed, so publish it.
+    private func settleComposition() {
+        guard let held = compositionBaseText, !holdsUnpublishedComposition else { return }
+        if markedTextBlockID == held.id { markedTextBlockID = nil }
+        guard blockIndex(held.id) != nil else {
+            compositionBaseText = nil
+            return
+        }
+        publishComposition(of: held.id)
+    }
+
+    /// The blocks as every peer, save and draft may see them: the composing block (if any) with
+    /// the text it had before its uncommitted characters. Equal to `blocks` outside a composition.
+    var publishableBlocks: [EditorBlock] {
+        guard let held = compositionBaseText, let index = blockIndex(held.id) else { return blocks }
+        var published = blocks
+        published[index].text = held.text
+        return published
     }
 
     /// A Return or prefix shortcut can move the caret before UIKit realizes that
@@ -2787,6 +2905,12 @@ final class EditorViewModel {
             if markedTextBlockID != blockID { markedTextBlockID = blockID }
         } else if markedTextBlockID == blockID {
             markedTextBlockID = nil
+            // A commit through `textViewDidChange` reports the characters right after this, in the
+            // same call, and publishes them. A selection-only unmark has no such event: settle on
+            // the next main-actor turn, once that has had its chance.
+            if compositionBaseText?.id == blockID {
+                Task { [weak self] in self?.settleComposition() }
+            }
         }
     }
 
@@ -3398,6 +3522,8 @@ final class EditorViewModel {
     /// coordinator, which persists a draft immediately and saves in the
     /// background, outliving this screen.
     func flushPendingChanges() {
+        // A composition that is no longer held still has characters nothing published.
+        settleComposition()
         // Fire any pending live snapshot first. In live mode `isDirty` is false, so the classic
         // guard below early-returns; this line is what makes Done / background / onDisappear (all
         // funnel through here) persist the debounced live snapshot. A no-op when nothing is
@@ -3747,6 +3873,10 @@ final class EditorViewModel {
     }
 
     private func markDirty(forcesClassicPath: Bool = false) {
+        // Live editing has no autosave timer to notice a composition whose block lost focus
+        // without an unmark: the next edit anywhere publishes it first (`publishComposition`
+        // clears the held text before it re-enters here, so this cannot recurse).
+        settleComposition()
         // Every edit funnels here, so this is where a stranded indent (a parent
         // deleted, converted or moved away) is put right. Written only when it
         // changes anything, so an ordinary keystroke doesn't rewrite the array.
@@ -3802,7 +3932,9 @@ final class EditorViewModel {
         }
         abandonPendingFreshContent()
         isDirty = true
-        if let dirtySince, now.timeIntervalSince(dirtySince) >= Self.maxAutosaveDeferral {
+        if let dirtySince, now.timeIntervalSince(dirtySince) >= Self.maxAutosaveDeferral,
+            !holdsUnpublishedComposition
+        {
             flushPendingChanges()
             return
         }
@@ -3811,7 +3943,10 @@ final class EditorViewModel {
         autosaveTask = Task { [weak self] in
             try? await Task.sleep(for: interval)
             guard !Task.isCancelled else { return }
-            self?.flushPendingChanges()
+            // A composition in progress is not saved by the timer; this attempt is dropped. The
+            // commit reaches `markDirty` (or `settleComposition` does) and arms a fresh timer.
+            guard let self, !self.holdsUnpublishedComposition else { return }
+            self.flushPendingChanges()
         }
     }
 
@@ -3926,6 +4061,16 @@ final class EditorViewModel {
             switch step {
             case .update(let id, let kind, let text):
                 guard let index = blockIndex(id) else { continue }
+                // Not over uncommitted characters: UIKit owns them and the commit would overwrite
+                // this anyway. The replica now holds the peer's text, so that becomes the baseline
+                // the bridge diffs against, and the commit rebases the user's edit onto it
+                // (`rebaseComposition`).
+                if var held = compositionBaseText, held.id == id {
+                    held.text = text
+                    compositionBaseText = held
+                    blocks[index].kind = kind
+                    continue
+                }
                 blocks[index].kind = kind
                 blocks[index].text = text
             case .insert(let id, let kind, let text, let afterID):

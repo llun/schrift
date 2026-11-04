@@ -190,7 +190,7 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
             reseedMap(against: rendered)
         }
 
-        let (change, newMap) = liveChangeSet(current: viewModel.blocks, projected: rendered, map: map)
+        let (change, newMap) = liveChangeSet(current: viewModel.publishableBlocks, projected: rendered, map: map)
         map = newMap
 
         // An empty diff means the editor already shows exactly what the
@@ -206,7 +206,7 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
         // every remote apply, so `old` always describes the replica's current projection.
         // A local forward advances this itself; a remote apply lands here and re-syncs it,
         // which is why a peer's edit never desyncs the next local diff.
-        lastAppliedBlocks = MarkdownYjs.blockNoteBlocks(from: viewModel.blocks)
+        lastAppliedBlocks = MarkdownYjs.blockNoteBlocks(from: viewModel.publishableBlocks)
     }
 
     // MARK: - Live write path (C2c)
@@ -231,7 +231,7 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
 
         // `new` is built from the editor's own id-stable blocks (Task 1) — NOT re-parsed
         // markdown, which would mint fresh ids and force a whole-document rebuild each edit.
-        let new = MarkdownYjs.blockNoteBlocks(from: viewModel.blocks)
+        let new = MarkdownYjs.blockNoteBlocks(from: viewModel.publishableBlocks)
         guard (try? collaboration.applyLocalEdit(old: old, new: new, for: documentID)) != nil else {
             // notWritable, or a malformed replica that just fail-safed. Downgrade to
             // classic for this edit; the classic save persists the current content, and

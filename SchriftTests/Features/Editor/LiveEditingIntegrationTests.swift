@@ -93,7 +93,8 @@ private final class SocketFactorySpy: @unchecked Sendable {
 /// const p2 = makeContainer(P2_ID, "paragraph", "Second");
 /// blockGroup.insert(0, [h.container, p1.container, p2.container]);
 ///
-/// console.log("INITIAL", hex(Y.encodeStateAsUpdate(doc, sv0)));
+/// const initialUpdate = Y.encodeStateAsUpdate(doc, sv0);
+/// console.log("INITIAL", hex(initialUpdate));
 /// const sv1 = Y.encodeStateVector(doc);
 ///
 /// p1.xmlText.delete(0, p1.xmlText.length);
@@ -223,6 +224,20 @@ final class LiveEditingIntegrationTests: XCTestCase {
     /// local edit. Regeneration (appended to the script above):
     /// `blockGroup.delete(1, 1); hex(Y.encodeStateAsUpdate(doc, sv1))`.
     private let removeFirstParagraphHex = "000101010d0c"
+
+    /// Real yjs@13.6.31 deltas against `initialHex`, from a second client (id 2) editing "First"
+    /// (the first paragraph's `Y.XmlText`). Regeneration, appended to the script above (which keeps
+    /// `initialUpdate`; `Buffer.from(initialHex, "hex")` is the same bytes):
+    /// ```js
+    /// const peer = new Y.Doc(); peer.clientID = 2; Y.applyUpdate(peer, initialUpdate);
+    /// const sv = Y.encodeStateVector(peer);
+    /// const first = peer.getXmlFragment("document-store").get(0).get(1).get(0).get(0);
+    /// first.insert(0, "X");      // peerInsertHex
+    /// // or: first.delete(0, first.length);   // peerDeleteHex
+    /// hex(Y.encodeStateAsUpdate(peer, sv));
+    /// ```
+    private let peerInsertHex = "01010200440110015800"
+    private let peerDeleteHex = "000101011005"
 
     // MARK: - Tests
 
@@ -683,6 +698,93 @@ final class LiveEditingIntegrationTests: XCTestCase {
             rendered.blocks.map(\.text), ["Doc", "Second!"],
             "the shared replica is the correct merge -- the local edit reached the right container")
         XCTAssertEqual(rendered.blocks.map(\.kind), [.heading(level: 1), .paragraph])
+
+        session?.stop()
+        withExtendedLifetime(bridge) {}
+    }
+
+    // MARK: - Composition and a concurrent peer edit (real replica)
+
+    /// Opens "First" in a real stack, composes marked text there, and lets a peer edit it.
+    private func composeInFirstWhilePeerEdits(peerHex: String) async throws -> (
+        viewModel: EditorViewModel, manager: DocumentCollaborationManager, bridge: LiveEditingBridge,
+        session: DocumentCollaborationSession?, firstID: UUID, spy: SocketFactorySpy
+    ) {
+        let (viewModel, _, _) = makeEnvironment()
+        await viewModel.load()
+        let spy = SocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        let session = manager.session(for: documentID)
+        await waitUntil { spy.sockets.count == 1 }
+        let bridge = LiveEditingBridge(
+            documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil)
+        viewModel.liveWrite = bridge
+        bridge.registerReplicaObserver()
+        spy.sockets[0].deliver(message: syncStep2Frame(hex: initialHex))
+        await waitUntil { manager.replicaVersion(for: self.documentID) == 1 }
+        bridge.replicaDidChange()
+        XCTAssertTrue(bridge.isEngaged)
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Doc", "First", "Second"])
+        let firstID = viewModel.blocks[1].id
+        viewModel.startEditing()
+        viewModel.focusedBlockID = firstID
+
+        // The input method marks "に" after "First"; nothing may reach the replica.
+        let marked = "Firstに"
+        viewModel.updateComposition(
+            blockID: firstID, text: marked, selection: NSRange(location: (marked as NSString).length, length: 0),
+            isMarked: true)
+        XCTAssertEqual(manager.replicaVersion(for: documentID), 1)
+
+        spy.sockets[0].deliver(message: syncUpdateFrame(hex: peerHex))
+        await waitUntil { manager.replicaVersion(for: self.documentID) == 2 }
+        return (viewModel, manager, bridge, session, firstID, spy)
+    }
+
+    private func replicaTexts(_ manager: DocumentCollaborationManager) throws -> [String] {
+        let projected = manager.projectedReplica(for: documentID, interlinkingOrigin: nil)
+        let rendered = try XCTUnwrap(projected.flatMap { YBlockProjection.renderedEditorDocument($0) })
+        return rendered.blocks.map(\.text)
+    }
+
+    /// A peer inserts before the caret while the user is composing: the replica must end up with
+    /// both, spliced where the user typed -- not at a stale offset in the peer's text.
+    func testCommitAfterAPeerInsertMergesIntoTheReplica() async throws {
+        let (viewModel, manager, bridge, session, firstID, _) =
+            try await composeInFirstWhilePeerEdits(peerHex: peerInsertHex)
+
+        XCTAssertEqual(viewModel.blocks[1].text, "Firstに", "the marked characters are still on screen")
+        XCTAssertEqual(try replicaTexts(manager), ["Doc", "XFirst", "Second"], "…and not in the replica")
+
+        let committed = "Firstに"
+        viewModel.updateComposition(
+            blockID: firstID, text: committed, selection: NSRange(location: (committed as NSString).length, length: 0),
+            isMarked: false)
+
+        XCTAssertEqual(try replicaTexts(manager), ["Doc", "XFirstに", "Second"], "peer's X and the user's に")
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Doc", "XFirstに", "Second"], "the model matches the replica")
+        XCTAssertFalse(manager.replicaIsFailSafe(for: documentID))
+
+        session?.stop()
+        withExtendedLifetime(bridge) {}
+    }
+
+    /// A peer deletes the text the composition was measured against: the committed text wins, and
+    /// the write lands from the peer's baseline without tearing the session down.
+    func testCommitAfterAPeerDeleteFallsBackToTheCommittedText() async throws {
+        let (viewModel, manager, bridge, session, firstID, _) =
+            try await composeInFirstWhilePeerEdits(peerHex: peerDeleteHex)
+
+        XCTAssertEqual(try replicaTexts(manager), ["Doc", "", "Second"])
+
+        let committed = "Firstに"
+        viewModel.updateComposition(
+            blockID: firstID, text: committed, selection: NSRange(location: (committed as NSString).length, length: 0),
+            isMarked: false)
+
+        XCTAssertEqual(try replicaTexts(manager), ["Doc", "Firstに", "Second"])
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Doc", "Firstに", "Second"])
+        XCTAssertFalse(manager.replicaIsFailSafe(for: documentID), "nothing threw")
 
         session?.stop()
         withExtendedLifetime(bridge) {}
