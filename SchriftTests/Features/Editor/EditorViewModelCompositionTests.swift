@@ -91,13 +91,21 @@ final class EditorViewModelCompositionTests: EditorViewModelTestCase {
         viewModel.updateText(blockID: blockID, text: "Alpha!")
         compose("Alpha!に", marked: true, in: blockID, of: viewModel)
 
+        let contentSavesBeforeComposition = log.count(ofMethod: "PATCH", urlContaining: "/content/")
         await waitAndConfirmNever { coordinator.pendingSave(documentID: self.documentID) != nil }
         XCTAssertTrue(viewModel.isDirty, "the earlier keystroke is still unsaved")
+        // The PATCH count is monotonic, so a save that came and went between polls still shows.
+        XCTAssertEqual(
+            log.count(ofMethod: "PATCH", urlContaining: "/content/"), contentSavesBeforeComposition,
+            "no save ran while the text was marked")
 
+        let contentSavesBeforeCommit = log.count(ofMethod: "PATCH", urlContaining: "/content/")
         compose("Alpha!日", marked: false, in: blockID, of: viewModel)
-        await waitUntil { coordinator.pendingSave(documentID: self.documentID) != nil }
+        await waitUntil {
+            log.count(ofMethod: "PATCH", urlContaining: "/content/") > contentSavesBeforeCommit
+        }
 
-        XCTAssertEqual(coordinator.pendingSave(documentID: documentID)?.markdown.contains("Alpha!日"), true)
+        XCTAssertEqual(coordinator.storedDraft(documentID: documentID)?.markdown.contains("Alpha!日"), true)
     }
 
     /// The flush itself still runs (background, Done, onDisappear): it saves what was typed
@@ -281,11 +289,15 @@ final class EditorViewModelCompositionTests: EditorViewModelTestCase {
         let log = RequestRecorder()
         let (viewModel, coordinator, blockID) = await makeEditingEnvironment(
             autosaveInterval: .milliseconds(50), log: log)
+        let contentSavesBeforeEdit = log.count(ofMethod: "PATCH", urlContaining: "/content/")
         viewModel.updateText(blockID: blockID, text: "Alpha!")
         compose("Alpha!に", marked: true, in: blockID, of: viewModel)
         viewModel.focusedBlockID = nil
 
-        await waitUntil { coordinator.pendingSave(documentID: self.documentID) != nil }
+        await waitUntil {
+            log.count(ofMethod: "PATCH", urlContaining: "/content/") > contentSavesBeforeEdit
+        }
+        XCTAssertEqual(coordinator.storedDraft(documentID: documentID)?.markdown.contains("Alpha!"), true)
     }
 
     // MARK: - Peers
