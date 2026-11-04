@@ -4141,7 +4141,7 @@ final class EditorViewModel {
 
     /// Persist a live-collaboration full-state snapshot (C2c). Called by the bridge when the
     /// ~60 s debounce fires (or is flushed via `flushPendingLiveSnapshot`). `projectedMarkdown`
-    /// is what the server renders from `snapshot`, so it is the body every reconcile/baseline/
+    /// is our replica's render of `snapshot`, so it is the body every reconcile/baseline/
     /// cache rule keys off — exactly as a classic save's markdown. Advancing the dirty baseline
     /// to it keeps the classic machinery coherent for a later **downgrade**: a subsequent classic
     /// save sees `draftSyncDecision` rule 1 (`lastConfirmedPush` == the server body this snapshot

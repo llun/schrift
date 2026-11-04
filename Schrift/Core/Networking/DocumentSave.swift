@@ -19,6 +19,10 @@ extension DocsAPIClient {
     /// full-overwrite. It defaults to `false`, and when false the body is byte-identical
     /// to what it has always been (`{"content":"<base64>"}` via `JSONEncoder`), so every
     /// existing caller and golden expectation is unchanged.
+    ///
+    /// Docs 6 removed this route (content lives in yhub), so a Docs 6 server answers it with
+    /// Django's HTML 404. `saveLiveSnapshot` therefore writes through the collaboration
+    /// server there; this method is the legacy half of `ContentSaveRoute`.
     func setContent(documentID: UUID, yjsUpdate: Data, viaWebSocket: Bool = false) async throws {
         let body: Data
         if viaWebSocket {
@@ -99,22 +103,39 @@ extension DocsAPIClient {
         }
     }
 
-    /// Full-state live-collaboration snapshot save: PATCH the caller's Yjs bytes (tagged
-    /// `"websocket": true`) then the title. Mirrors `saveDocumentContent`'s **half-land
-    /// contract exactly** — it is two requests and can half-land — but the content bytes
-    /// are a full-state Yjs snapshot the caller already holds
-    /// (`DocumentCollaborationManager.encodeSnapshotForSave`), **not** re-derived from
-    /// markdown via `MarkdownYjs.encode`:
+    /// Full-state live-collaboration snapshot save: write the caller's Yjs bytes, then the
+    /// title. Mirrors `saveDocumentContent`'s **half-land contract exactly** — it is two
+    /// requests and can half-land — but the content bytes are a full-state Yjs snapshot the
+    /// caller already holds (`DocumentCollaborationManager.encodeSnapshotForSave`), **not**
+    /// re-derived from markdown via `MarkdownYjs.encode`:
     ///
     /// - **throws** ⇒ the *content* PATCH was not confirmed;
     /// - **returns non-nil** ⇒ the content landed and only the *title* PATCH failed;
     /// - **returns nil** ⇒ both landed.
     ///
+    /// **Two body routes, exactly like `saveContentBody`** (`ContentSaveRoute`,
+    /// `saveContentViaRoute`): on Docs 6 the bytes are PATCHed to the collaboration server as
+    /// `{"update": base64}` — a full-state Yjs update is a valid incremental update for yhub,
+    /// and the bytes are already the replica's own state, so no GET/diff is needed — while a
+    /// pre-Docs 6 server takes the legacy `documents/{id}/content/` PATCH tagged
+    /// `"websocket": true`. With nothing known the legacy route is tried first and only its
+    /// `.routeNotFound` falls back, learning the org from config.
+    ///
+    /// Docs 6 has no live session today (`ServerConfig.supportsLiveCollaboration` remains false
+    /// until a y-websocket client lands), so its yhub route is groundwork for that client. The
+    /// PATCH carries the whole snapshot and is subject to the deployment's request-size limit.
     /// The `draftSyncDecision` rule-0/rule-1 backstop covers the unconfirmed-but-applied
     /// case exactly as it does for `saveDocumentContent`, which is why the result is **not**
     /// discardable — a caller that ignores it loses the fact that the server holds its bytes.
     func saveLiveSnapshot(documentID: UUID, title: String, yjsUpdate: Data) async throws -> DocsAPIError? {
-        try await setContent(documentID: documentID, yjsUpdate: yjsUpdate, viaWebSocket: true)
+        try await saveContentViaRoute {
+            try await setContent(documentID: documentID, yjsUpdate: yjsUpdate, viaWebSocket: true)
+        } collaboration: { org in
+            try await applyCollaborationYDocUpdate(documentID: documentID, org: org, update: yjsUpdate)
+            // The PATCH answering is this path's proof the route exists — there is no GET to
+            // prove it first — so the memo waits for it.
+            rememberCollaborationRoute(org: org)
+        }
         do {
             try await updateTitle(documentID: documentID, title: title)
             return nil

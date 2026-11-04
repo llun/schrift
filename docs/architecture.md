@@ -447,15 +447,23 @@ it succeeds, `EditorViewModel.persistLiveSnapshot` calls `enqueueLiveSnapshot` �
 - **`DocsAPIClient.saveLiveSnapshot(documentID:title:yjsUpdate:)`** mirrors
   `saveDocumentContent` exactly — two requests, the same half-land `DocsAPIError?` contract
   (throws ⇒ content unconfirmed; non-nil ⇒ content landed / title failed; nil ⇒ both landed)
-  — but the content PATCH sends the caller's snapshot **bytes verbatim** (never
-  `MarkdownYjs.encode`) and tags the JSON body with **`"websocket": true`**, which the docs
-  backend uses to distinguish a live-collab snapshot from a REST full-overwrite. It reuses
-  `setContent(…, viaWebSocket:)`; with `viaWebSocket` false (the default) the classic content
-  body is byte-identical to before.
+  — but the content write sends the caller's snapshot **bytes verbatim** (never
+  `MarkdownYjs.encode`). It routes exactly like the classic body save (`ContentSaveRoute`,
+  `saveContentViaRoute`): on Docs 6 the bytes are PATCHed to yhub as `{"update": base64}` — a
+  full-state Yjs update is a valid incremental update, and the bytes are already the replica's
+  own state, so no GET/diff is needed — while a pre-Docs 6 server takes the legacy
+  `documents/{id}/content/` PATCH tagged **`"websocket": true`**, which the docs backend uses
+  to distinguish a live-collab snapshot from a REST full-overwrite. With nothing known the
+  legacy route is tried first and only its `.routeNotFound` falls back, learning the org from
+  config; the route is memoized once the collaboration PATCH succeeds. Docs 6 has no live
+  session today (`ServerConfig.supportsLiveCollaboration` stays false until a y-websocket client
+  lands), so this route is groundwork for that client; its PATCH carries the whole snapshot and
+  is subject to the deployment's request-size limit. With `viaWebSocket`
+  false (the default) the classic content body is byte-identical to before.
 - **`DocumentSaveCoordinator.enqueueLiveSnapshot(documentID:snapshot:projectedMarkdown:title:baseline:)`**
   queues that save. A live snapshot pushes CRDT **bytes**, but the reconcile machinery is
-  markdown-based, so the coordinator carries the **projected markdown** (what the server
-  renders from the snapshot) as the `PendingSave.markdown` and the draft body. That single
+  markdown-based, so the coordinator carries the **projected markdown** (our replica's
+  render of the snapshot) as the `PendingSave.markdown` and the draft body. That single
   choice makes `finish` unable to tell the two paths apart: the write-ahead draft, the
   enqueue-hold + single-writer conflict rule, latest-wins coalescing, the
   `lastConfirmedPushMarkdown` stamp, the content-cache write, and `.pendingSync`/`.failed`
