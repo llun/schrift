@@ -581,8 +581,10 @@ new code reads like the surrounding code.
     (`this.left.right = this`, `Set<Item>` membership, `o !== this.right`) and
     value types cannot express that. It keeps the no-concurrency-annotations rule
     and stays synchronous, but it is **not `Sendable`** and must not be made so:
-    a replica is mutable shared state, so exactly one owner may touch it (the
-    collaboration session actor, C1). Pass updates and projections across
+    a replica is mutable shared state, so exactly one owner may touch it — the
+    **main actor**, through `DocumentCollaborationManager` (`@MainActor final
+    class`, `Schrift/Core/Collaboration/DocumentCollaborationManager.swift`),
+    which holds one `YDoc` per document (C1). Pass updates and projections across
     isolation domains — never the `YDoc`. Its inputs/outputs stay value types
     (`YUpdate`, `YContentRecord`), which is what keeps the boundary honest.
 - Value types that cross task/actor boundaries adopt `Sendable`; injected
@@ -3242,14 +3244,26 @@ markdown write endpoint**. Understand this before touching the save path:
   coordinator carries the **projected markdown** as the `PendingSave.markdown` / draft body /
   `lastConfirmedPushMarkdown` stamp, so `finish`, the enqueue-hold, latest-wins coalescing,
   `draftSyncDecision`, and the content cache are all **reused unchanged** — the only branch is
-  in `start` (non-nil `PendingSave.liveSnapshot` ⇒ `saveLiveSnapshot`). **The accepted v1
-  trade:** the persisted `PendingDraft` carries only `projectedMarkdown`, never the snapshot
-  bytes, so a transiently-failed live save that `syncPendingDrafts` later replays goes through
-  the classic `enqueue`/`saveDocumentContent` path — re-encoding the same rendered markdown via
+  in `start` (non-nil `PendingSave.liveSnapshot` ⇒ `saveLiveSnapshot`). **Drafts may also
+  carry the replica bytes — approved 2026-11-04, not implemented yet.** Today the persisted
+  `PendingDraft` carries only `projectedMarkdown`, never the snapshot bytes, so a
+  transiently-failed live save that `syncPendingDrafts` later replays goes through the
+  classic `enqueue`/`saveDocumentContent` path — re-encoding the same rendered markdown via
   `MarkdownYjs.encode` rather than resending the original CRDT bytes. Content is preserved
-  (same markdown), CRDT history for that one save is flattened, and the replay is still
-  conflict-checked like any other. **C2c wires this in** (below); never bypass the
-  coordinator to persist a live edit.
+  (same markdown) and the replay is still conflict-checked like any other, but CRDT history
+  for that one save is flattened; **that flattening is no longer a rule to preserve**.
+  Persisting the raw replica bytes in the draft is approved and is the planned direction
+  (lossless offline rich edits), and it carries three constraints. The new field must stay
+  **Optional-on-decode** until `PendingDraftStore` quarantine lands — the standing rule is
+  the on-device create bullet's ("every field added to `PendingDraft`/`DraftBaseline` must
+  stay Optional-on-decode"), because a non-optional addition gates the replay on every
+  existing device and then un-gates it destructively on the first keystroke. The bytes are
+  document content, so they take the content cache's privacy rules (never logged, scoped to
+  the account whose session wrote them) while following the draft's **existing** backup and
+  sign-out policy rather than the cache's: `PendingDraftStore` is backup-included and retained
+  on sign-out. And **the replay must resend those bytes, not flatten** — once a draft carries
+  them, `syncPendingDrafts` resending markdown would reintroduce exactly the history loss this
+  removes. **C2c wires this in** (below); never bypass the coordinator to persist a live edit.
 - **C2c wires the write path into the editor, behind the same weak-delegate seam C1 used
   for reads.** `EditorLiveWriteCoordinating` (`forwardLocalEdit() -> Bool`,
   `flushPendingLiveSnapshot()`) is implemented by `LiveEditingBridge` and held as `weak var

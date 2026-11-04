@@ -464,7 +464,13 @@ it succeeds, `EditorViewModel.persistLiveSnapshot` calls `enqueueLiveSnapshot` �
   `saveDocumentContent`. On success the projected markdown is stamped as
   `lastConfirmedPushMarkdown`, so a later **downgrade to a classic markdown save of the same
   body** reconciles via rule 1 (or rule 2's body fallback), never a false conflict against
-  pre-live state.
+  pre-live state. **Revised 2026-11-04:** the persisted draft carrying only projected markdown
+  (never the snapshot bytes) is today's behaviour, not a rule to preserve. Persisting the raw
+  replica bytes in the draft is approved and is the planned direction — lossless offline rich
+  edits — so a replay would resend those bytes instead of re-encoding markdown and flattening
+  CRDT history. That field must stay Optional-on-decode until `PendingDraftStore` quarantine
+  lands, the bytes follow the content cache's privacy rules, and they keep the draft's existing
+  backup-included, sign-out-retained policy.
 
 ### Editor wiring — the write path complete (C2c)
 
@@ -829,7 +835,8 @@ The item graph is a mesh of strong cycles — `item.left ⇄ item.right`, and
 `type.start`/`type.map` ⇄ `item.parent` — because yjs assumes a tracing collector.
 ARC collects none of it, so **releasing a `YDoc` frees nothing**; a live session
 opens one replica per document. `YDoc.destroy()` breaks the cycles and must be
-called by whatever owns the replica (the collaboration session, C1). No edge can be
+called by the replica's owner — the main actor, through
+`DocumentCollaborationManager` (C1) — when it tears that document's entry down. No edge can be
 `unowned` instead: the algorithm reads all of them in both directions, and none has
 a target that provably outlives its source.
 
