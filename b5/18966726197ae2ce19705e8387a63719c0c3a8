@@ -1,0 +1,43 @@
+SchriftTests/Core/Yjs/YTransactionEncoderTests.swift
+  s_649973bee2ae5b::t_41bb7ea9a34e76 17-19
+  s_649973bee2ae5b::t_bfa6b851ea851f 138-139,205
+  s_649973bee2ae5b::t_b13c4b4e2a0a76 140,173
+  s_649973bee2ae5b::t_1fc4c1c8fb218f 88,91
+  s_649973bee2ae5b::t_bdd6107f026a42 1-16,20-87,89-90,92-137,141-172,181-182,189-190,192,195,198-199,207-242
+  s_649973bee2ae5b::t_88faa5645fe1cc 174-180,183-188,191,193-194,196-197,200-204,206
+AGENTS.md
+  s_649973bee2ae5b::t_c70c0230be1ce5 1708-1720,1755-1756
+  s_649973bee2ae5b::t_ed2be0775a34fa 2251-2253
+Schrift/Core/Yjs/YStateEncoder.swift
+  s_649973bee2ae5b::t_bdd6107f026a42 43-44
+Schrift/Core/Yjs/YTransactionEncoder.swift
+  s_649973bee2ae5b::t_bdd6107f026a42 1-13,15-40
+  s_649973bee2ae5b::t_9c05d7f17d374b 14
+Schrift/Core/Yjs/BlockNoteIncrementalSave.swift
+  s_649973bee2ae5b::t_bdd6107f026a42 104-105
+Schrift/Core/Yjs/BlockNoteWrite.swift
+  s_649973bee2ae5b::t_a1aba4e6bb072a 35-37
+  s_649973bee2ae5b::t_bdd6107f026a42 59-61,65,67-68
+docs/architecture.md
+  s_649973bee2ae5b::t_a1aba4e6bb072a 161,293-295
+  s_649973bee2ae5b::t_c70c0230be1ce5 287-292,389-390
+SchriftTests/Core/Yjs/BlockNoteIncrementalSaveTests.swift
+  s_649973bee2ae5b::t_ed2be0775a34fa 66-74,77-78
+  s_649973bee2ae5b::t_bfa6b851ea851f 75-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b518966726197ae2ce19705e8387a63719c0c3a8",
+  "prompts": {},
+  "sessions": {
+    "s_649973bee2ae5b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1a636-d8f0-7060-8afb-71695a0eb255",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
