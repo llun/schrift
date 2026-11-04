@@ -3,6 +3,30 @@ import XCTest
 @testable import Schrift
 
 final class LiveEditingTests: XCTestCase {
+    func testPendingFrameInputPreservesDisjointPeerReplacements() {
+        let merged = rebasedLiveInput(original: "Alpha", committed: "Alpha!", caret: 6, onto: "AlpXa")
+        XCTAssertEqual(merged.text, "AlpXa!")
+        XCTAssertEqual(merged.caret, 6)
+    }
+
+    func testPendingFrameReplacementRetainsConcurrentPeerInsertions() {
+        let merged = rebasedLiveInput(original: "abc", committed: "ac", caret: 1, onto: "aXbc")
+        XCTAssertEqual(merged.text, "aXc")
+        XCTAssertEqual(merged.caret, 2)
+    }
+
+    func testPendingFrameInputKeepsEmojiIntactAndUsesUTF16CaretOffsets() {
+        let merged = rebasedLiveInput(original: "A👩🏽‍💻B", committed: "A🚀B", caret: 3, onto: "Peer A👩🏽‍💻B")
+        XCTAssertEqual(merged.text, "Peer A🚀B")
+        XCTAssertEqual(merged.caret, 8)
+    }
+
+    func testPendingFrameInputAfterPeerDeletesTheBaseKeepsTheLocalInsertion() {
+        let merged = rebasedLiveInput(original: "Alpha", committed: "Alpha!", caret: 6, onto: "")
+        XCTAssertEqual(merged.text, "!")
+        XCTAssertEqual(merged.caret, 1)
+    }
+
     // MARK: - transformedCaret
 
     func testInsertionBeforeCaretShiftsItRightByInsertedLength() {

@@ -2,9 +2,9 @@ import SwiftUI
 import UIKit
 
 enum BlockTextEvent {
-    case textChanged(String)
+    case textChanged(String, selection: NSRange? = nil)
     /// Return was pressed in a single-line block; the block should split at the offset.
-    case insertNewline(cursorOffset: Int)
+    case insertNewline(cursorOffset: Int, sourceText: String? = nil)
     /// Backspace with the caret at offset 0; the block should merge with its predecessor.
     case deleteAtStart
     case selectionChanged(NSRange)
@@ -925,9 +925,14 @@ struct BlockTextView: UIViewRepresentable {
 
             if text == "\n" {
                 if range.length > 0 {
-                    parent.onEvent(.textChanged(current.replacingCharacters(in: range, with: "")))
+                    parent.onEvent(
+                        .textChanged(
+                            current.replacingCharacters(in: range, with: ""),
+                            selection: NSRange(location: range.location, length: 0)))
                 }
-                parent.onEvent(.insertNewline(cursorOffset: range.location))
+                parent.onEvent(
+                    .insertNewline(
+                        cursorOffset: range.location, sourceText: current.replacingCharacters(in: range, with: "")))
                 return false
             }
 
@@ -941,7 +946,7 @@ struct BlockTextView: UIViewRepresentable {
                     parent.restyleInlineMarkdown(in: editor, coordinator: self)
                 }
                 textView.invalidateIntrinsicContentSize()
-                parent.onEvent(.textChanged(updated))
+                parent.onEvent(.textChanged(updated, selection: textView.selectedRange))
                 return false
             }
 
@@ -967,7 +972,7 @@ struct BlockTextView: UIViewRepresentable {
                 // Before the text: the model must already know these characters may be an
                 // uncommitted composition when it reads them.
                 parent.onMarkedTextChange(textView.markedTextRange != nil)
-                parent.onEvent(.textChanged(textView.text ?? ""))
+                parent.onEvent(.textChanged(textView.text ?? "", selection: textView.selectedRange))
             }
             // Only blocks that render inline markdown need a per-keystroke
             // restyle. Code and `.unknown` blocks style nothing and hide nothing,

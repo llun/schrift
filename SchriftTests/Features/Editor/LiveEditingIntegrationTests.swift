@@ -252,7 +252,8 @@ final class LiveEditingIntegrationTests: XCTestCase {
         await waitUntil { spy.sockets.count == 1 }
 
         let bridge = LiveEditingBridge(
-            documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil)
+            documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil,
+            remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler())
 
         // -- Initial sync: the manager's replica integrates a real 3-block
         // document (heading "Doc" + two paragraphs) delivered over the socket.
@@ -332,7 +333,8 @@ final class LiveEditingIntegrationTests: XCTestCase {
         await waitUntil { spy.sockets.count == 1 }
 
         let bridge = LiveEditingBridge(
-            documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil)
+            documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil,
+            remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler())
         spy.sockets[0].deliver(message: syncStep2Frame(hex: initialHex))
         await waitUntil { manager.replicaVersion(for: self.documentID) == 1 }
         bridge.replicaDidChange()
@@ -370,7 +372,8 @@ final class LiveEditingIntegrationTests: XCTestCase {
         await waitUntil { spy.sockets.count == 1 }
 
         let bridge = LiveEditingBridge(
-            documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil)
+            documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil,
+            remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler())
         spy.sockets[0].deliver(message: syncStep2Frame(hex: initialHex))
         await waitUntil { manager.replicaVersion(for: self.documentID) == 1 }
         bridge.replicaDidChange()
@@ -533,7 +536,8 @@ final class LiveEditingIntegrationTests: XCTestCase {
         provider.setProjection(projection, for: documentID)
         let bridge = LiveEditingBridge(
             documentID: documentID, viewModel: viewModel, collaboration: provider,
-            serverOrigin: nil, snapshotInterval: .milliseconds(20))
+            serverOrigin: nil, remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler(),
+            snapshotInterval: .milliseconds(20))
         viewModel.liveWrite = bridge
         bridge.replicaDidChange()
         XCTAssertTrue(bridge.isEngaged)
@@ -659,15 +663,9 @@ final class LiveEditingIntegrationTests: XCTestCase {
     /// removed, shifting the one the user edits from index 2 to index 1) the edit is
     /// mis-positioned, corrupting the very replica peers receive the broadcast from.
     ///
-    /// The fix makes the read-apply synchronous with the integrate: the manager fires
-    /// the bridge's registered observer in the same turn it bumps the version, so by the
-    /// time any keystroke runs, the editor and `lastAppliedBlocks` already reflect the
-    /// remote change. This test drives the **real** stack and deliberately does NOT call
-    /// `bridge.replicaDidChange()` after delivering the remote update — that manual call
-    /// stands in for the *deferred* `.onChange` the other tests model, and withholding it
-    /// leaves the synchronous observer the fix adds as the only thing that can re-sync the
-    /// baseline before the keystroke. Against the pre-fix code both assertions fail: the
-    /// editor never merges the remote remove, and the shared replica ends up corrupt.
+    /// The observer invalidates the baseline synchronously, but the display frame is held.
+    /// A local mutation must flush that frame BEFORE changing blocks, so its forward uses
+    /// the latest structural order and cannot broadcast a phantom duplicate to peers.
     func testLocalForwardAfterRemoteUpdateForwardsAgainstTheMergedReplicaNotAStaleBaseline() async throws {
         let (viewModel, _, _) = makeEnvironment()
         await viewModel.load()
@@ -678,8 +676,10 @@ final class LiveEditingIntegrationTests: XCTestCase {
         let session = manager.session(for: documentID)
         await waitUntil { spy.sockets.count == 1 }
 
+        let scheduler = ManualLiveRemoteApplyScheduler()
         let bridge = LiveEditingBridge(
-            documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil)
+            documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil,
+            remoteApplyScheduler: scheduler)
         viewModel.liveWrite = bridge
         // The view registers the synchronous read-apply observer on session acquisition
         // (`EditorView.requestCollaborationSessionIfNeeded`); model that here since this test
@@ -690,7 +690,8 @@ final class LiveEditingIntegrationTests: XCTestCase {
         // -- Initial sync: engage on the real 3-block document [Doc, First, Second].
         spy.sockets[0].deliver(message: syncStep2Frame(hex: initialHex))
         await waitUntil { manager.replicaVersion(for: self.documentID) == 1 }
-        bridge.replicaDidChange()  // models the deferred `.onChange` firing normally
+        bridge.replicaDidChange()
+        scheduler.advanceFrame()
         XCTAssertTrue(bridge.isEngaged)
         XCTAssertEqual(viewModel.blocks.map(\.text), ["Doc", "First", "Second"])
         let secondID = viewModel.blocks[2].id
@@ -705,10 +706,9 @@ final class LiveEditingIntegrationTests: XCTestCase {
         spy.sockets[0].deliver(message: syncUpdateFrame(hex: removeFirstParagraphHex))
         await waitUntil { manager.replicaVersion(for: self.documentID) == 2 }
 
-        // -- The keystroke lands in that window. With the fix, delivering the remote
-        // update above already fired the synchronous observer, so the editor and write
-        // baseline are caught up to [Doc, Second] and this forwards correctly. Without it,
-        // `old` still describes [Doc, First, Second] and the edit is mis-positioned.
+        XCTAssertNotNil(scheduler.pending, "the remote structural apply is still deferred")
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Doc", "First", "Second"])
+        // The keystroke must flush the peer's removal before it changes the surviving row.
         viewModel.updateText(blockID: secondID, text: "Second!")
 
         // 1. The editor merged the remote remove AND kept the local edit.
@@ -726,6 +726,12 @@ final class LiveEditingIntegrationTests: XCTestCase {
             "the shared replica is the correct merge -- the local edit reached the right container")
         XCTAssertEqual(rendered.blocks.map(\.kind), [.heading(level: 1), .paragraph])
 
+        XCTAssertEqual(manager.localEditVersion(for: documentID), 1)
+        XCTAssertEqual(manager.replicaVersion(for: documentID), 2, "local edits never echo as remote applies")
+        XCTAssertNil(scheduler.pending)
+        scheduler.advanceFrame()
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Doc", "Second!"])
+        bridge.stopRemoteApplies()
         session?.stop()
         withExtendedLifetime(bridge) {}
     }
@@ -743,13 +749,16 @@ final class LiveEditingIntegrationTests: XCTestCase {
         let manager = makeManager(spy: spy)
         let session = manager.session(for: documentID)
         await waitUntil { spy.sockets.count == 1 }
+        let scheduler = ManualLiveRemoteApplyScheduler()
         let bridge = LiveEditingBridge(
-            documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil)
+            documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil,
+            remoteApplyScheduler: scheduler)
         viewModel.liveWrite = bridge
         bridge.registerReplicaObserver()
         spy.sockets[0].deliver(message: syncStep2Frame(hex: initialHex))
         await waitUntil { manager.replicaVersion(for: self.documentID) == 1 }
         bridge.replicaDidChange()
+        scheduler.advanceFrame()
         XCTAssertTrue(bridge.isEngaged)
         XCTAssertEqual(viewModel.blocks.map(\.text), ["Doc", "First", "Second"])
         let firstID = viewModel.blocks[1].id
@@ -765,6 +774,7 @@ final class LiveEditingIntegrationTests: XCTestCase {
 
         spy.sockets[0].deliver(message: syncUpdateFrame(hex: peerHex))
         await waitUntil { manager.replicaVersion(for: self.documentID) == 2 }
+        XCTAssertNotNil(scheduler.pending)
         return (viewModel, manager, bridge, session, firstID, spy)
     }
 

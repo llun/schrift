@@ -2032,6 +2032,7 @@ final class EditorViewModel {
     }
 
     func startEditing(focusing blockID: UUID? = nil, focusingTitle: Bool = false) {
+        liveWrite?.prepareForLocalEdit()
         guard canStartEditing else { return }
         resetComposition()
         clearError()
@@ -2058,6 +2059,7 @@ final class EditorViewModel {
     }
 
     func finishEditing() {
+        liveWrite?.prepareForLocalEdit()
         initialTitleFocusPending = false
         // Done mid-composition: the model holds what the user typed and the text view is about to
         // go away, so treat it as committed — the flush below must publish it, not skip it.
@@ -2157,14 +2159,42 @@ final class EditorViewModel {
         }
     }
 
-    func updateText(blockID: UUID, text: String, committingComposition: Bool = false) {
+    func updateText(
+        blockID: UUID, text: String, committingComposition: Bool = false, inputSelection: NSRange? = nil
+    ) {
+        guard let originalIndex = blockIndex(blockID) else { return }
+        let original = blocks[originalIndex].text
+        let originalCaret = inputSelection?.location ?? selection?.location ?? (text as NSString).length
+        if let inputSelection, focusedBlockID == blockID { selection = inputSelection }
+        let hadLocalChange = original != text
+        let composing = markedTextBlockID == blockID && !committingComposition
+        // Marked characters remain display-only. A committed callback can still carry
+        // UIKit's pre-frame buffer, so flush before mutation and rebase that local intent.
+        // An existing composition already owns its original/base pair and rebases at publish.
+        let hasComposition = compositionBaseText?.id == blockID
+        if !composing { liveWrite?.prepareForLocalEdit() }
         guard let index = blockIndex(blockID) else { return }
+        var text = text
+        if !composing, !hasComposition, original != blocks[index].text,
+            hadLocalChange
+        {
+            let merged = rebasedLiveInput(
+                original: original, committed: text, caret: originalCaret, onto: blocks[index].text)
+            text = merged.text
+            if focusedBlockID == blockID {
+                selection = NSRange(location: merged.caret, length: 0)
+                cursorRequest = CursorRequest(blockID: blockID, offset: merged.caret)
+            }
+        }
+        if !composing, !hasComposition, !hadLocalChange {
+            guard committingComposition else { return }
+            text = blocks[index].text
+        }
         let charactersChanged = blocks[index].text != text
         // The text view reports marked text before the characters (`noteMarkedText`), so a
         // block still marked here holds an uncommitted composition: keep it for display, publish
         // nothing. A committing call is never held, and a commit that ends with the characters
         // last marked still publishes them (`publishesComposition`).
-        let composing = markedTextBlockID == blockID && !committingComposition
         let publishesComposition = !composing && compositionBaseText?.id == blockID
         guard charactersChanged || committingComposition || publishesComposition else { return }
         if composing, charactersChanged { holdComposition(of: blockID, publishedText: blocks[index].text) }
@@ -2218,6 +2248,7 @@ final class EditorViewModel {
     /// The edit to `blockID` is committed: stop substituting its old text, rebase the edit onto a
     /// peer's concurrent change to it, and publish.
     private func publishComposition(of blockID: UUID) {
+        liveWrite?.prepareForLocalEdit()
         if let held = compositionBaseText, held.id == blockID {
             compositionBaseText = nil
             rebaseComposition(held)
@@ -2294,9 +2325,14 @@ final class EditorViewModel {
     /// change. Apply only those in-flight keystrokes to the authoritative target;
     /// the old row's buffer and replacement range still describe the source block.
     func applyPendingKeyboardInput(from sourceID: UUID, text input: String, consumedCursorToken: UUID?) -> Bool {
-        guard mode == .blocks, let targetID = focusedBlockID, let index = blockIndex(targetID) else { return false }
+        guard mode == .blocks, let targetID = focusedBlockID else { return false }
+        let pending = cursorRequest?.blockID == targetID ? cursorRequest : nil
+        guard targetID != sourceID || (pending != nil && pending?.token != consumedCursorToken) else { return false }
+        // A probe for an ordinary UIKit edit must leave its buffer/baseline alone;
+        // updateText will flush and rebase when that edit is actually published.
+        liveWrite?.prepareForLocalEdit()
+        guard let index = blockIndex(targetID) else { return true }
         let request = cursorRequest?.blockID == targetID ? cursorRequest : nil
-        guard targetID != sourceID || (request != nil && request?.token != consumedCursorToken) else { return false }
         let block = blocks[index]
         switch block.kind {
         case .divider, .image, .attachment: return false
@@ -2345,12 +2381,12 @@ final class EditorViewModel {
     func applyPendingSourceReplacement(
         blockID: UUID, range originalRange: NSRange, text: String, sourceText: String, consumedCursorToken: UUID?
     ) -> Bool {
-        guard mode == .blocks, let focusedBlockID, let index = blockIndex(blockID) else {
-            return false
-        }
+        guard mode == .blocks, let focusedBlockID else { return false }
         let sameTarget = focusedBlockID == blockID
         let request = cursorRequest?.blockID == blockID ? cursorRequest : nil
         guard !sameTarget || (request != nil && request?.token != consumedCursorToken) else { return false }
+        liveWrite?.prepareForLocalEdit()
+        guard let index = blockIndex(blockID) else { return true }
         switch blocks[index].kind {
         case .divider, .image, .attachment: return true
         default: break
@@ -2397,7 +2433,9 @@ final class EditorViewModel {
         return true
     }
 
-    func splitBlock(blockID: UUID, at offset: Int) {
+    func splitBlock(blockID: UUID, at offset: Int, sourceText: String? = nil) {
+        let original = sourceText ?? blocks.first { $0.id == blockID }?.text
+        liveWrite?.prepareForLocalEdit()
         guard let index = blockIndex(blockID) else { return }
         let block = blocks[index]
         slashQueryText = nil
@@ -2436,6 +2474,7 @@ final class EditorViewModel {
         }
 
         let text = block.text as NSString
+        let offset = original.map { transformedCaret(old: $0, new: block.text, caret: offset) } ?? offset
         let splitOffset = min(max(0, offset), text.length)
         blocks[index].text = text.substring(to: splitOffset)
         // A new list item keeps its level, and so does whatever a nested leaf (a link line under
@@ -2457,6 +2496,7 @@ final class EditorViewModel {
     }
 
     func mergeBlockWithPrevious(blockID: UUID) {
+        liveWrite?.prepareForLocalEdit()
         guard let index = blockIndex(blockID) else { return }
         let block = blocks[index]
 
@@ -2519,6 +2559,7 @@ final class EditorViewModel {
     }
 
     func toggleChecklist(blockID: UUID) {
+        liveWrite?.prepareForLocalEdit()
         guard let index = blockIndex(blockID),
             case .checklistItem(let checked) = blocks[index].kind
         else { return }
@@ -2527,6 +2568,7 @@ final class EditorViewModel {
     }
 
     func convertBlock(blockID: UUID, to kind: BlockKind) {
+        liveWrite?.prepareForLocalEdit()
         guard let index = blockIndex(blockID) else { return }
         // An image's or attachment's data lives in its kind's associated values;
         // converting would silently destroy it, so leaves are never converted.
@@ -2561,6 +2603,7 @@ final class EditorViewModel {
     /// `indent` overrides that choice (for a drop that states its own level),
     /// clamped into what the landing position allows.
     func moveBlock(blockID: UUID, to destination: Int, indent: Int? = nil) {
+        liveWrite?.prepareForLocalEdit()
         guard let index = blockIndex(blockID), !blocks.isEmpty else { return }
         let target = min(max(destination, 0), blocks.count - 1)
         let originalIndent = blocks[index].indent
@@ -2578,6 +2621,7 @@ final class EditorViewModel {
     }
 
     func insertBlock(after blockID: UUID?, kind: BlockKind) {
+        liveWrite?.prepareForLocalEdit()
         var newBlock = EditorBlock(kind: kind)
         let insertionIndex: Int
         if let blockID, let index = blockIndex(blockID) {
@@ -2635,6 +2679,7 @@ final class EditorViewModel {
     }
 
     private func shiftListItem(blockID: UUID, by delta: Int) -> Bool {
+        liveWrite?.prepareForLocalEdit()
         guard let index = blockIndex(blockID), isListKind(blocks[index].kind) else { return false }
         guard let shifted = shiftingListItem(at: index, by: delta, in: blocks) else { return true }
         blocks = shifted
@@ -2646,6 +2691,7 @@ final class EditorViewModel {
     /// above it (`indentingLeaf`). Returns whether anything changed.
     @discardableResult
     func indentLeaf(blockID: UUID) -> Bool {
+        liveWrite?.prepareForLocalEdit()
         guard let index = blockIndex(blockID), let shifted = indentingLeaf(at: index, in: blocks) else {
             return false
         }
@@ -2659,6 +2705,7 @@ final class EditorViewModel {
     /// lose their parent. Returns whether anything changed.
     @discardableResult
     func outdentLeaf(blockID: UUID) -> Bool {
+        liveWrite?.prepareForLocalEdit()
         guard let index = blockIndex(blockID), let shifted = outdentingLeaf(at: index, in: blocks) else {
             return false
         }
@@ -2672,6 +2719,7 @@ final class EditorViewModel {
     /// Wraps (or unwraps) the current selection in an inline markdown marker.
     /// With no selection, inserts a marker pair and places the caret between.
     func applyInlineMarker(_ marker: String) {
+        liveWrite?.prepareForLocalEdit()
         guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
         switch blocks[index].kind {
         case .codeBlock, .unknown, .divider, .image, .attachment:
@@ -2692,6 +2740,7 @@ final class EditorViewModel {
     /// A tap on a family button (list, quote/code): toggles the default kind — see
     /// `blockKindAfterTapping`.
     func tapFormat<Format: FormattingBarFormat>(_ format: Format) {
+        liveWrite?.prepareForLocalEdit()
         guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
         // Never equal to the current kind (a block already in the format's family member
         // goes to `.paragraph`, anything else to that member), so `convertBlock`'s
@@ -2703,6 +2752,7 @@ final class EditorViewModel {
     /// which toggles), choosing the kind the block already has leaves it alone — see
     /// `blockKindAfterChoosing`.
     func chooseFormat<Format: FormattingBarFormat>(_ format: Format) {
+        liveWrite?.prepareForLocalEdit()
         guard let focusedBlockID, let index = blockIndex(focusedBlockID),
             let kind = blockKindAfterChoosing(format, current: blocks[index].kind)
         else { return }
@@ -2734,6 +2784,7 @@ final class EditorViewModel {
     /// The link button. Retargets the link under the caret if there is one,
     /// otherwise creates one from the selection (whose text becomes the label).
     func beginLinkEditing() {
+        liveWrite?.prepareForLocalEdit()
         guard canEditLink, let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
         let text = blocks[index].text
         let source = text as NSString
@@ -2756,6 +2807,7 @@ final class EditorViewModel {
 
     /// A tap on a link's label.
     func beginLinkEditing(blockID: UUID, span: InlineLinkSpan) {
+        liveWrite?.prepareForLocalEdit()
         guard hasLoadedContent, blockIndex(blockID) != nil else { return }
         linkEditor = LinkEditorRequest(
             blockID: blockID, span: span, label: span.label, url: span.url, range: span.range)
@@ -2771,6 +2823,7 @@ final class EditorViewModel {
     /// label falls back to the destination, since `[](url)` is not a link.
     @discardableResult
     func commitLinkEditing(label: String, url: String) -> Bool {
+        liveWrite?.prepareForLocalEdit()
         guard let request = linkEditor, let index = blockIndex(request.blockID) else { return false }
         guard let safeURL = sanitizedLinkURL(url) else { return false }
         let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2806,6 +2859,7 @@ final class EditorViewModel {
 
     /// "Remove link" — keeps the label, drops the syntax.
     func removeLink(blockID: UUID, span: InlineLinkSpan) {
+        liveWrite?.prepareForLocalEdit()
         guard let index = blockIndex(blockID) else { return }
         let text = blocks[index].text
         guard let current = linkSpan(in: text, containing: span.range.location), current == span else { return }
@@ -2868,6 +2922,7 @@ final class EditorViewModel {
 
     /// Replaces the open `[[query` with a link to `document` and puts the caret after it.
     func selectPageLink(_ document: Document) {
+        liveWrite?.prepareForLocalEdit()
         guard let active = activePageLink, let index = blockIndex(active.blockID),
             let edit = pageLinkInsertion(
                 in: blocks[index].text, trigger: active.trigger, document: document, serverHost: pageLinkServerHost)
@@ -2959,6 +3014,7 @@ final class EditorViewModel {
     /// Inserts a divider below the focused block (or at the end), keeping an
     /// editable paragraph after it.
     func insertDividerBelowFocused() {
+        liveWrite?.prepareForLocalEdit()
         let anchorID = focusedBlockID ?? blocks.last?.id
         let insertionIndex: Int
         if let anchorID, let index = blockIndex(anchorID) {
@@ -2979,6 +3035,7 @@ final class EditorViewModel {
     /// Applies a block type chosen from the slash menu to the focused block,
     /// consuming the "/query" text.
     func applySlashSelection(_ item: SlashMenuItem) {
+        liveWrite?.prepareForLocalEdit()
         guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
         // The uploading items can decline: while an upload is in flight the
         // picker won't open. Bail out *before* consuming the typed "/photo" or
@@ -3115,6 +3172,7 @@ final class EditorViewModel {
     /// A `nil` delegate — every screen without a live session, and every existing test — reads
     /// false, so this is the ordinary path.
     private func queuePendingPhoto(_ jpegData: Data) {
+        liveWrite?.prepareForLocalEdit()
         guard hasLoadedContent, !isDocumentDiscarded else { return }
         guard liveWrite?.isHandlingLocalEditsLive != true else {
             reportPhotoFailure()
@@ -3151,6 +3209,7 @@ final class EditorViewModel {
     /// does **not** call `markDirty` — the draft already holds the resolved URL, so dirtying
     /// would enqueue a save that says nothing new.
     func adoptResolvedAttachmentURL(placeholder: String, resolved: String) {
+        liveWrite?.prepareForLocalEdit()
         guard let localID = pendingAttachmentID(fromPlaceholderURL: placeholder) else { return }
         for index in blocks.indices {
             guard case .image(let alt, let url) = blocks[index].kind,
@@ -3235,6 +3294,7 @@ final class EditorViewModel {
     /// is what makes the placeholder resolvable, so it must outlive any state that still refers
     /// to one.
     func removePendingAttachment(blockID: UUID) {
+        liveWrite?.prepareForLocalEdit()
         guard let index = blocks.firstIndex(where: { $0.id == blockID }) else { return }
         guard case .image(_, let url) = blocks[index].kind,
             let localID = pendingAttachmentID(fromPlaceholderURL: url)
@@ -3282,6 +3342,7 @@ final class EditorViewModel {
     /// for it (a queued photo's record) can drop that state rather than leave it naming nothing.
     @discardableResult
     private func insertImageBlock(url: String) -> Bool {
+        liveWrite?.prepareForLocalEdit()
         // The document may have been deleted, or gone 404, while the photo was
         // uploading. Saving now would resurrect it — `discardPendingWork` has
         // already removed its draft, and `enqueue` would write a fresh one.
@@ -3395,6 +3456,7 @@ final class EditorViewModel {
     /// forward clobber a peer), and verifying against the saved representation
     /// applies here for the same reasons.
     private func insertAttachmentBlock(name: String, url: String) {
+        liveWrite?.prepareForLocalEdit()
         guard hasLoadedContent, !isDocumentDiscarded else { return }
         defer { flushPendingChanges() }
 
@@ -3503,6 +3565,7 @@ final class EditorViewModel {
     /// Tap on the empty canvas below the last block: reuse a trailing empty
     /// paragraph if there is one, otherwise append a new one.
     func appendParagraphAtEnd() {
+        liveWrite?.prepareForLocalEdit()
         if let last = blocks.last, last.kind == .paragraph, last.text.isEmpty {
             focusBlock(last.id, cursorAt: 0)
             return
@@ -3511,6 +3574,7 @@ final class EditorViewModel {
     }
 
     func updateTitle(_ text: String) {
+        liveWrite?.prepareForLocalEdit()
         guard title != text else { return }
         title = text
         markDirty()
@@ -3522,6 +3586,7 @@ final class EditorViewModel {
     /// coordinator, which persists a draft immediately and saves in the
     /// background, outliving this screen.
     func flushPendingChanges() {
+        liveWrite?.prepareForLocalEdit()
         // A composition that is no longer held still has characters nothing published.
         settleComposition()
         // Fire any pending live snapshot first. In live mode `isDirty` is false, so the classic

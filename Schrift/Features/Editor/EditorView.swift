@@ -564,9 +564,8 @@ struct EditorView: View {
             .onChange(of: collaboration.availability) { _, _ in
                 requestCollaborationSessionIfNeeded()
             }
-            // C1: a replica update integrated cleanly — hand it to the bridge, which
-            // diffs the projection against the editor's blocks and applies it in place
-            // (when engagement allows) so live edits land under the user's own cursor.
+            // Backstop for the synchronous replica observer: both notifications share
+            // one display-frame projection/apply of the latest replica state.
             .onChange(of: collaboration.replicaVersion(for: viewModel.documentID)) { _, _ in
                 liveEditingBridge?.replicaDidChange()
             }
@@ -586,6 +585,7 @@ struct EditorView: View {
                 // must not re-key a document whose screen is about to come back. It is
                 // released when the view model is deallocated — see `noteEditorAppeared`.
                 viewModel.flushPendingChanges()
+                liveEditingBridge?.stopRemoteApplies()
                 persistReadingPosition()
                 // Leaving ends the Back to top offer (it never auto-dismisses under VoiceOver) and
                 // drops a restore announcement still waiting for the transition to settle.

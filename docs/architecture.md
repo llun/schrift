@@ -233,7 +233,8 @@ The pieces live across `Core/Collaboration` and `Features/Editor`:
   and while `pendingStructs` are outstanding.
 - **`LiveEditingBridge`** (`@MainActor`, one per editor) owns the BlockNote-id ⇄
   `EditorBlock.id` identity map. On each `replicaVersion` change the view calls
-  `replicaDidChange()`, which — only when the editor is engageable — resolves the replica to
+  `replicaDidChange()`, which coalesces notifications to one display-frame apply. That
+  apply — only when the editor is engageable — resolves the latest replica to
   `(rendered blocks, markdown)` via `YBlockProjection.renderedEditorDocument` (the escalated
   rendering `projectedMarkdown` settled on, so the applied blocks and the baseline are
   consistent by construction), diffs it against the current blocks by BlockNote id
@@ -573,47 +574,53 @@ graceful downgrade) is wired end to end, still entirely behind the default-off
   never loops back through `replicaDidChange()` and re-applies the user's own edit to
   themselves.
 - **The `old` baseline (`lastAppliedBlocks`) is captured only when the editor is known
-  to equal the projection**, and nowhere else: on every engage (`replicaDidChange`,
-  including a no-op empty diff) and again after every `applyLiveRemoteChange`. A local
+  to equal the projection**, and nowhere else: on every successful remote frame
+  (including a no-op empty diff) and again after every `applyLiveRemoteChange`. A local
   forward advances it itself (to `new`). This is why a peer's edit landing between two
   of the user's own keystrokes never desyncs the next local diff — the baseline is
   re-synced the moment the remote change is folded in, before the next keystroke can
   read it.
-- **That "before the next keystroke" guarantee needs the read-apply to be _synchronous_
-  with the integrate — a deferred re-apply is a correctness bug.** `replicaDidChange` is
-  driven two ways. The obvious one is the view's `.onChange(of: collaboration
-  .replicaVersion(for:))`, but that fires on a *later* SwiftUI turn than the one in which
-  `DocumentCollaborationManager.applyReplicaUpdate` integrated the update and bumped the
-  version. A keystroke slotting into that gap runs `forwardLocalEdit` with `old` still
-  describing the *pre-update* projection while the replica has already moved — and
-  `BlockNoteWrite.applyEdit` maps each `old[index]` to the replica's live container **by
-  position**, so a structural remote change in the window (a block removed or inserted,
-  shifting positions) mis-applies the local edit and broadcasts a corrupt update to every
-  peer (concretely, a phantom duplicate block). The fix makes the re-apply run in the
-  **same main-actor turn** as the integrate: the bridge registers a per-document observer
-  with the manager (`setReplicaObserver`), and `applyReplicaUpdate` fires it immediately
-  after bumping `replicaVersion`, so the editor and `lastAppliedBlocks` are caught up to
-  the integrated replica before any keystroke can run. Approaches that instead "catch up
-  the remote change first, then forward" were rejected: a `replicaDidChange` run *after*
-  the keystroke would overwrite `blocks` with the projection and lose the un-forwarded
-  keystroke (`applyLiveRemoteChange` is a server-wins fold, not a three-way merge); the
-  synchronous re-apply avoids the merge entirely because it always runs while the editor
-  holds no un-forwarded local edit. The observer fires only on a clean integrate (never a
-  fail-safed/non-bumped update), holds the bridge weakly (no retain cycle), and is cleared
-  on the document's teardown; the deferred `.onChange` is retained as an idempotent
-  backstop (firing `replicaDidChange` twice is a proven empty-diff no-op). Its lifecycle is
-  the **per-document entry's**, not the bridge's: the bridge registers it
-  (`registerReplicaObserver`) on every live-session **(re)acquisition** from
-  `EditorView.requestCollaborationSessionIfNeeded` — deliberately *not* at construction —
-  and `teardownIfIdle` drops it, so it exists exactly while a live entry does. Registering
-  at construction would be wrong at both ends: the bridge lives in the view's `@State` and
-  outlives a linger-teardown, so a reopen would keep a now-dropped observer and silently
-  degrade to the deferred path (reopening the race); and a document that never opens a
-  session (the default flag-off path) would register an observer no teardown ever clears (a
-  leak). This lifecycle contract is pinned by a manager test (teardown clears it, a bare
-  reopen fires nothing, re-registration restores it) and the boundary between read-live and
-  write-live by a bridge test (a lossy-but-renderable projection engages the read side yet
-  downgrades a local edit to classic).
+- **Remote UI work is frame-coalesced; baseline protection is synchronous.**
+  `DocumentCollaborationManager.applyReplicaUpdate` integrates every inbound update
+  immediately, bumps `replicaVersion`, and fires its per-document observer in that same
+  main-actor turn. The bridge synchronously invalidates `lastAppliedBlocks` and marks a
+  frame pending: a pre-update baseline is never eligible for forwarding. The expensive
+  projection/render, diff and `applyLiveRemoteChange` wait for one display-frame callback,
+  reading the latest replica rather than capturing each message's intermediate state.
+  `LiveRemoteApplyScheduling` is injected: a one-shot `CADisplayLink` in common run-loop
+  modes in production, immediate/manual delivery in tests. No sleep or timer debounce is
+  used. The observer and SwiftUI `.onChange` share a pending callback; a late duplicate
+  for the applied version is ignored. UI/read-write gates use the last applied fidelity
+  plus fresh safety flags, without projecting again. While a frame is pending the REST
+  fallback is held; if that frame cannot render, the bridge requests A5 revalidation so
+  an opaque update cannot strand the editor without either path.
+- **A local mutation flushes a pending frame before it changes content.** The protocol's
+  `prepareForLocalEdit` hook runs before local block/index/range mutations and composition
+  publication. It is the only exception to waiting for the next frame. This restores the
+  editor and `lastAppliedBlocks` to the integrated replica before `BlockNoteWrite` uses
+  its positional alignment. `forwardLocalEdit` runs *after* mutation and must never flush
+  there: a server-wins fold at that point would overwrite the un-forwarded keystroke.
+  A UIKit text callback can still carry its pre-frame buffer; `rebasedLiveInput` replays
+  its local replacement onto the flushed peer text while retaining concurrent peer
+  insertions/replacements, using Characters for edits and UTF-16 for the caret. Return
+  similarly transforms its offset. Pending-input and correction probes that decline
+  leave the frame pending for the actual text callback. Composition (#226) retains its
+  existing hold/rebase policy: a frame updates the held peer base, never the marked
+  characters; a commit before the frame flushes before publishing from that base.
+  Local forwards advance only `localEditVersions`, never inbound `replicaVersion` or
+  `remoteChangeTokens`, preserving local-echo suppression.
+- **The observer belongs to the per-document entry; the pending frame belongs to the
+  editor bridge.** The weak observer is registered on every session (re)acquisition,
+  never at construction, and removed at manager teardown. On disappearance, after
+  flushing local durability work, `stopRemoteApplies` cancels the callback, invalidates
+  its generation, clears the observer and write baseline, and disables delivery until
+  reacquisition. This also neutralizes an already-delivered obsolete callback. The
+  Registration also schedules catch-up for a lingered replica without waiting for a new
+  version edge. The retained SwiftUI bridge can therefore reopen after teardown without leaking
+  observers for documents that never acquired sessions or losing its synchronous hook.
+  Manual-frame tests pin burst/across-frame projection counts, cancellation, buffered
+  text and marked-text commits; the real-replica structural-removal race test holds the
+  frame until a local edit and checks the merged replica and local/inbound counters.
 - **The snapshot debounce is bridge-owned, cancel-and-reschedule, ~60 s** (injectable
   for tests), mirroring the autosave debounce pattern elsewhere in the editor. When it
   fires (`fireSnapshot`) it re-derives everything fresh from the replica rather than
@@ -638,14 +645,12 @@ graceful downgrade) is wired end to end, still entirely behind the default-off
   A separate deterministic **stale-baseline race regression** drives the *real* stack
   (`FakeWebSocket → session → manager → real replica → bridge → view model`): it delivers
   a remote update that removes a block (shifting the one the user edits), withholds the
-  deferred `.onChange` re-sync, then forwards a local edit and asserts the manager's own
-  replica projects to the correctly merged document — no corruption reaching peers. It
-  fails against a deferred-only re-apply (editor `[Doc, First, Second!]`, replica `[Doc,
-  Second, Second!]`) and passes with the synchronous observer. Manager- and bridge-level
-  unit tests pin the two halves (the manager fires the observer in the same turn it bumps
-  the version and stays silent on a fail-safe; the bridge registers it in `init` and a
-  remote change delivered *only* through the observer re-syncs `old` before the next
-  forward). Every pre-existing `EditorViewModel*Tests` test passes unchanged, which is the
+  display frame and deferred `.onChange`, then mutates locally and asserts the manager's
+  replica projects to the correctly merged document — no corruption reaching peers.
+  A pending frame must flush before mutation; an unprotected stale baseline would produce
+  editor `[Doc, First, Second!]` and replica `[Doc, Second, Second!]`. Manager tests pin
+  same-turn observer delivery and silence on fail-safe; bridge tests pin synchronous
+  baseline invalidation, pre-mutation flushing and one latest-state apply per frame. Every pre-existing `EditorViewModel*Tests` test passes unchanged, which is the
   standing proof that the classic path is untouched when `liveWrite` is `nil`.
 
 **Docs 6 transport exists, switched off (A4).** Docs 6 replaced Hocuspocus with yhub.
