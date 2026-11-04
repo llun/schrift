@@ -3244,7 +3244,10 @@ markdown write endpoint**. Understand this before touching the save path:
   to yhub as `{"update": base64}` (a full-state Yjs update is a valid incremental one, so no
   GET/diff is needed), while a pre-Docs 6 server takes the legacy
   `documents/{id}/content/` PATCH tagged `"websocket": true` (through
-  `setContent(…, viaWebSocket:)`; the classic body stays byte-identical when false). Because
+  `setContent(…, viaWebSocket:)`; the classic body stays byte-identical when false). Docs 6 has
+  no live session today (`ServerConfig.supportsLiveCollaboration` stays false until a y-websocket
+  client lands), so this route is groundwork for that client; its PATCH carries the whole snapshot
+  and is subject to the deployment's request-size limit. Because
   reconcile is markdown-based, the coordinator carries the **projected markdown** as the
   `PendingSave.markdown` / draft body /
   `lastConfirmedPushMarkdown` stamp, so `finish`, the enqueue-hold, latest-wins coalescing,

@@ -455,7 +455,10 @@ it succeeds, `EditorViewModel.persistLiveSnapshot` calls `enqueueLiveSnapshot` â
   `documents/{id}/content/` PATCH tagged **`"websocket": true`**, which the docs backend uses
   to distinguish a live-collab snapshot from a REST full-overwrite. With nothing known the
   legacy route is tried first and only its `.routeNotFound` falls back, learning the org from
-  config; the route is memoized once the collaboration PATCH succeeds. With `viaWebSocket`
+  config; the route is memoized once the collaboration PATCH succeeds. Docs 6 has no live
+  session today (`ServerConfig.supportsLiveCollaboration` stays false until a y-websocket client
+  lands), so this route is groundwork for that client; its PATCH carries the whole snapshot and
+  is subject to the deployment's request-size limit. With `viaWebSocket`
   false (the default) the classic content body is byte-identical to before.
 - **`DocumentSaveCoordinator.enqueueLiveSnapshot(documentID:snapshot:projectedMarkdown:title:baseline:)`**
   queues that save. A live snapshot pushes CRDT **bytes**, but the reconcile machinery is

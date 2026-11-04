@@ -42,9 +42,9 @@ private let html404 = MockURLProtocol.Stub(
     body: Data("<html><body>Not Found</body></html>".utf8), error: nil)
 
 /// The Docs 6 save route (`ContentSaveRoute`): which route a save takes, the exact requests
-/// the collaboration route makes, and that `saveDocumentContent`'s half-land contract holds on
-/// it. The update a save sends is checked at the document level — applied to a replica of the
-/// served state, it must read exactly like the saved markdown.
+/// the collaboration route makes, and that `saveDocumentContent` and `saveLiveSnapshot` routing
+/// and half-land contracts hold on it. The update a save sends is checked at the document level —
+/// applied to a replica of the served state, it must read exactly like the saved markdown.
 final class CollaborationYDocSaveClientTests: XCTestCase {
     private let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
     private let documentID = UUID(uuidString: "ABCDEF12-1111-4111-8111-111111111111")!
@@ -489,7 +489,8 @@ final class CollaborationYDocSaveClientTests: XCTestCase {
     }
 
     /// With nothing known, the live snapshot tries the legacy route; its HTML 404 means nothing
-    /// was written, so it falls back to yhub with the org the config names — and remembers it.
+    /// was written, so it falls back to yhub with the org the config names; the config fetch
+    /// already set that route.
     func testALiveSnapshotFallsBackOnTheLegacyRoutes404IntoTheOrgTheConfigNames() async throws {
         let log = CapturedRequests()
         let acmePath = "/collaboration/ydoc/v1/acme/abcdef12-1111-4111-8111-111111111111"
@@ -520,7 +521,78 @@ final class CollaborationYDocSaveClientTests: XCTestCase {
             log.trail,
             ["PATCH \(legacyPath)", "GET /api/v1.0/config/", "PATCH \(acmePath)", "PATCH \(titlePath)"])
         let route = await client.contentSaveRoute
-        XCTAssertEqual(route, .collaborationYDoc(org: "acme"), "the fallback's org is remembered")
+        XCTAssertEqual(route, .collaborationYDoc(org: "acme"), "the config's collaboration org is retained")
+    }
+
+    /// When config has no collaboration URL, a legacy HTML 404 falls back to the default `docs`
+    /// org. The route is memoized only after the yhub PATCH succeeds.
+    func testALiveSnapshotFallsBackToDefaultDocsOrgAndMemoizesAfterSuccessfulPatch() async throws {
+        let log = CapturedRequests()
+        let yDocPath = "/collaboration/ydoc/v1/docs/abcdef12-1111-4111-8111-111111111111"
+        let client = makeClient()
+        let legacyPath = self.legacyPath
+        let titlePath = self.titlePath
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            switch (request.httpMethod ?? "", requestPath(request)) {
+            case ("GET", "/api/v1.0/config/"):
+                return jsonStub([:])
+            case ("PATCH", legacyPath):
+                return html404
+            case ("PATCH", yDocPath):
+                return jsonStub(["success": true])
+            case ("PATCH", titlePath):
+                return jsonStub(["id": "x"])
+            default:
+                return html404
+            }
+        }
+
+        let titleFailure = try await client.saveLiveSnapshot(
+            documentID: documentID, title: "Notes", yjsUpdate: Data([0xAA]))
+
+        XCTAssertNil(titleFailure)
+        XCTAssertEqual(
+            log.trail,
+            ["PATCH \(legacyPath)", "GET /api/v1.0/config/", "PATCH \(yDocPath)", "PATCH \(titlePath)"])
+        let route = await client.contentSaveRoute
+        XCTAssertEqual(route, .collaborationYDoc(org: "docs"))
+    }
+
+    /// A failed yhub fallback does not memoize the route and does not attempt the title.
+    func testALiveSnapshotFailedDefaultDocsFallbackDoesNotMemoizeOrAttemptTitle() async throws {
+        let log = CapturedRequests()
+        let yDocPath = "/collaboration/ydoc/v1/docs/abcdef12-1111-4111-8111-111111111111"
+        let legacyPath = self.legacyPath
+        let titlePath = self.titlePath
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            switch (request.httpMethod ?? "", requestPath(request)) {
+            case ("GET", "/api/v1.0/config/"):
+                return jsonStub([:])
+            case ("PATCH", legacyPath):
+                return html404
+            case ("PATCH", yDocPath):
+                return jsonStub(["error": "failure"], status: 500)
+            default:
+                return html404
+            }
+        }
+        let client = makeClient()
+
+        do {
+            _ = try await client.saveLiveSnapshot(
+                documentID: documentID, title: "Notes", yjsUpdate: Data([0xAA]))
+            XCTFail("a failed yhub PATCH must throw")
+        } catch let error as DocsAPIError {
+            XCTAssertEqual(error, .server(statusCode: 500))
+        } catch {
+            XCTFail("expected DocsAPIError, got \(error)")
+        }
+
+        XCTAssertFalse(log.trail.contains("PATCH \(titlePath)"))
+        let route = await client.contentSaveRoute
+        XCTAssertNil(route)
     }
 
     /// A pre-Docs 6 server keeps the legacy live-snapshot body byte-for-byte: the snapshot
