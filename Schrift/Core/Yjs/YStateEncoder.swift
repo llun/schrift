@@ -3,7 +3,7 @@ import Foundation
 // MARK: - Encoding the live store (Yjs v1)
 
 /// Serializes the live struct store as a Yjs v1 update / state vector — the write
-/// side of the `YDoc` facade (B3). Transliterates yjs 13.6.31's
+/// side of the `YDoc` facade (B3). Transliterates yjs 13.6.33's
 /// `writeStateAsUpdate`/`writeClientsStructs`/`writeStructs` and the structs'
 /// `write(encoder, offset)` methods; reuses `YUpdateReencoder`'s delete-set and
 /// state-vector writers (offset-free, already fuzz-pinned).
@@ -78,9 +78,9 @@ enum YStateEncoder {
         }
     }
 
-    /// Dispatch to the struct's `write(encoder, offset)` — yjs `GC.write` (@8532),
-    /// `Skip.write` (@10285; unreachable from a settled store, kept for parity),
-    /// `Item.write` (@10180).
+    /// Dispatch to the struct's `write(encoder, offset)` — yjs `GC.write` (@8535),
+    /// `Skip.write` (@10288; unreachable from a settled store, kept for parity),
+    /// `Item.write` (@10183).
     private static func write(_ s: YStruct, _ e: inout Lib0Encoder, offset: UInt) throws {
         if let item = s as? YItem {
             try writeItem(item, &e, offset: offset)
@@ -95,7 +95,7 @@ enum YStateEncoder {
         }
     }
 
-    /// yjs `Item.write` (@10180). The info byte is **derived** here — never from
+    /// yjs `Item.write` (@10183). The info byte is **derived** here — never from
     /// `YItem.info`, which holds runtime flags (keep/countable/deleted/marker),
     /// not the wire byte. On `offset > 0` the origin is substituted with the id
     /// of the unit just before the cut — the line that makes diffs work.
@@ -148,12 +148,12 @@ enum YStateEncoder {
 
     // MARK: - Content
 
-    /// The per-kind `content.write(encoder, offset)` — yjs ContentDeleted @8688,
-    /// ContentJSON @9120, ContentBinary @8800, ContentString @9350 (a raw
+    /// The per-kind `content.write(encoder, offset)` — yjs ContentDeleted @8691,
+    /// ContentJSON @9123, ContentBinary @8803, ContentString @9353 (a raw
     /// `str.slice(offset)`: a lone leading surrogate becomes U+FFFD through the
     /// UTF-8 encoder, which `String(decoding:as: UTF16.self)` matches), ContentEmbed
-    /// @8910, ContentFormat @8995, ContentType @9440, ContentAny @9259,
-    /// ContentDoc @8590. Internal (not private) so a per-content payload can be
+    /// @8913, ContentFormat @8998, ContentType @9443, ContentAny @9262,
+    /// ContentDoc @8593. Internal (not private) so a per-content payload can be
     /// encoded in isolation for testing, not only as part of a whole struct.
     static func writeContent(_ content: YContent, _ e: inout Lib0Encoder, offset: UInt = 0) throws {
         switch content {

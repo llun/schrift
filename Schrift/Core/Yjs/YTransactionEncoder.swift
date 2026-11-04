@@ -5,16 +5,16 @@ import Foundation
 /// Encodes only a transaction's new structs and own deletes, without scanning the
 /// store for historical tombstones. For live edits; snapshots and peer state-vector
 /// replies still use `YStateEncoder.encodeStateAsUpdate` (the full delete set).
-/// Transliterates yjs 13.6.31 `writeUpdateMessageFromTransaction` (@3163).
+/// Transliterates yjs 13.6.33 `writeUpdateMessageFromTransaction` (@3163).
 enum YTransactionEncoder {
     /// Call immediately after the outermost `doc.transact` returns successfully,
     /// before another transaction changes the store. Return the transaction from
     /// its closure to retain it without changing `YDoc.transact`'s behavior. Cleanup
     /// must have filled `afterState` and finished gc/merging, as it has when yjs
-    /// emits its `update` event (@3389). Nested transact returns do not suffice.
+    /// emits its `update` event (@3392). Nested transact returns do not suffice.
     ///
     /// `duringCleanup` is the one exception, and only `YDoc.onUpdate` passes it:
-    /// yjs emits `'update'` from inside `cleanupTransactions` (@3385-3389), where
+    /// yjs emits `'update'` from inside `cleanupTransactions` (@3388-3392), where
     /// the queue is still non-empty but *this* transaction's own gc/merge has
     /// finished. Every other caller keeps the stricter "queue must be empty" gate.
     ///

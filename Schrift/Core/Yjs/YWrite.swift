@@ -5,8 +5,8 @@ import Foundation
 /// The first local mutation primitive (B6): mint local `YItem`s and integrate them
 /// as consecutive list children of a `YType`.
 ///
-/// A reduction of yjs 13.6.31's `typeListInsertGenericsAfter` (@5404) and
-/// `typeListInsertGenerics` (@5470) to Schrift's needs:
+/// A reduction of yjs 13.6.33's `typeListInsertGenericsAfter` (@5407) and
+/// `typeListInsertGenerics` (@5473) to Schrift's needs:
 ///
 /// - **We already hold built `YContent`.** yjs's `typeListInsertGenericsAfter`
 ///   takes a JS value array and *classifies* each element — batching runs of
@@ -32,13 +32,13 @@ enum YWrite {
 
     /// Insert `contents` as consecutive list children immediately after `left`
     /// (nil = at the head), returning the last item minted (nil if `contents` was
-    /// empty). yjs `typeListInsertGenericsAfter` (@5404).
+    /// empty). yjs `typeListInsertGenericsAfter` (@5407).
     @discardableResult
     static func insertAfter(
         _ transaction: YTransaction, into parentType: YType, after left: YItem?,
         _ contents: [YContent]
     ) throws -> YItem? {
-        // yjs @5405-5409: `left` walks forward as items are minted; `right` and the
+        // yjs @5408-5412: `left` walks forward as items are minted; `right` and the
         // client id/store are captured once. `right` is `referenceItem.right` (or the
         // type's head when there is no reference item) — never re-read from the moving
         // `left`, so a whole batch chains between the original `left` and `right`.
@@ -47,8 +47,8 @@ enum YWrite {
         var left = left
         let right = left == nil ? parentType.start : left?.right
 
-        // yjs @5421-5456 forEach, reduced: no json batching, no per-constructor
-        // classification — each pre-built `YContent` is one item. yjs @5416 is the
+        // yjs @5424-5459 forEach, reduced: no json batching, no per-constructor
+        // classification — each pre-built `YContent` is one item. yjs @5419 is the
         // Item constructor + `integrate(transaction, 0)` this mirrors.
         for content in contents {
             let id = YID(client: doc.clientID, clock: store.getState(doc.clientID))
@@ -68,36 +68,36 @@ enum YWrite {
     }
 
     /// Insert `contents` as consecutive list children starting at countable visible
-    /// index `index`. yjs `typeListInsertGenerics` (@5470), minus search markers.
+    /// index `index`. yjs `typeListInsertGenerics` (@5473), minus search markers.
     static func insert(
         _ transaction: YTransaction, into parentType: YType, at index: UInt,
         _ contents: [YContent]
     ) throws {
-        // yjs @5471: reject an index past the visible length. Without this a too-large
+        // yjs @5474: reject an index past the visible length. Without this a too-large
         // index falls through the position walk with `n == nil` and silently inserts
         // at the head instead of erroring — corruption, not a caught mistake. yjs
         // raises a distinct `Length exceeded!`; Schrift folds it into the store's one
         // malformed-state signal.
         guard index <= parentType.length else { throw YIntegrationError.unexpectedCase }
 
-        // yjs @5474-5479: `index === 0` inserts at the head. (`updateMarkerChanges` is
+        // yjs @5477-5482: `index === 0` inserts at the head. (`updateMarkerChanges` is
         // a no-op with no markers.)
         if index == 0 {
             _ = try insertAfter(transaction, into: parentType, after: nil, contents)
             return
         }
 
-        // yjs @5480-5504: walk the child list, counting down `index` over undeleted
+        // yjs @5483-5507: walk the child list, counting down `index` over undeleted
         // countable items, until it lands inside one — splitting that item clean at
         // the boundary so the insert falls exactly between two items. `findMarker`
-        // (@5481) returns nil with no markers, so the walk starts at `_start`.
+        // (@5484) returns nil with no markers, so the walk starts at `_start`.
         var remaining = index
         var n = parentType.start
         while let cur = n {
             if !cur.deleted, cur.countable {
                 if remaining <= cur.length {
                     if remaining < cur.length {
-                        // yjs @5498: `getItemCleanStart(transaction, createID(n.id.client,
+                        // yjs @5501: `getItemCleanStart(transaction, createID(n.id.client,
                         // n.id.clock + index))` — split `cur` at the boundary. The right
                         // half is discarded here; `cur` is truncated in place to the left
                         // half, so `n` still names the item the insert goes after.
@@ -111,21 +111,21 @@ enum YWrite {
             n = cur.right
         }
 
-        // yjs @5508. The length guard above guarantees the walk broke at a real item,
+        // yjs @5511. The length guard above guarantees the walk broke at a real item,
         // so `n` is non-nil here for every in-range index.
         _ = try insertAfter(transaction, into: parentType, after: n, contents)
     }
 
     /// Delete `length` countable units starting at visible index `index` from
     /// `parentType`'s children, splitting the boundary items clean. yjs
-    /// `typeListDelete` (@5543).
+    /// `typeListDelete` (@5546).
     ///
     /// Two passes over the child list, mirroring yjs exactly:
     ///
-    /// 1. **Find start** (yjs @5554-5561) — walk forward, counting `index` down over
+    /// 1. **Find start** (yjs @5557-5564) — walk forward, counting `index` down over
     ///    undeleted *countable* items until it lands inside one, splitting that item
     ///    at the boundary so the deletion begins between two whole items.
-    /// 2. **Delete** (yjs @5563-5572) — from there, delete undeleted items until
+    /// 2. **Delete** (yjs @5566-5575) — from there, delete undeleted items until
     ///    `length` countable units are gone, splitting the trailing boundary item so
     ///    only the in-range prefix is removed. `YItem.delete` marks the item deleted,
     ///    shrinks the parent length, records the range on `transaction.deleteSet`, and
@@ -143,7 +143,7 @@ enum YWrite {
     ///   is underflow insurance against a malformed shape, matching how `insert` guards
     ///   the same walk.
     /// - **The delete-pass accounting is gated on `countable`.** Literal `typeListDelete`
-    ///   does `length -= n.length` for *every* undeleted item (@5569). That is correct
+    ///   does `length -= n.length` for *every* undeleted item (@5572). That is correct
     ///   for the types it serves — a `YArray`/`YXmlFragment` child list contains no
     ///   undeleted *non-countable* item (the only non-countable content is `ContentDeleted`,
     ///   which is `deleted`, and `ContentFormat`, which exists only in text types), so the
@@ -151,57 +151,57 @@ enum YWrite {
     ///   Gating the subtraction (and the boundary split) on `countable` keeps that identity
     ///   while ensuring a `ContentFormat` — were this ever called on a text child list —
     ///   is stepped past without wrongly consuming the deletion budget (yjs's own text
-    ///   delete, `deleteText` @6774, likewise only counts `ContentString`/`Type`/`Embed`).
+    ///   delete, `deleteText` @6777, likewise only counts `ContentString`/`Type`/`Embed`).
     ///   The `delete(transaction)` call itself stays unconditional-within-`!deleted`, exactly
-    ///   as yjs @5568.
+    ///   as yjs @5571.
     static func delete(
         _ transaction: YTransaction, from parentType: YType, at index: UInt, length: UInt
     ) throws {
-        // yjs @5544: a zero-length delete is a no-op. (Also keeps the two walks below
+        // yjs @5547: a zero-length delete is a no-op. (Also keeps the two walks below
         // from doing any work.)
         if length == 0 { return }
 
         var remaining = length
         var idx = index
-        // yjs @5547-5552: `findMarker` returns nil with no search markers, so the walk
+        // yjs @5550-5555: `findMarker` returns nil with no search markers, so the walk
         // starts at `_start`.
         var n = parentType.start
 
-        // yjs @5554-5561: compute the first item to delete. Only undeleted countable
+        // yjs @5557-5564: compute the first item to delete. Only undeleted countable
         // items consume `idx`; a non-countable `ContentFormat` between strings is
         // skipped without decrementing the visible index.
         while let cur = n, idx > 0 {
             if !cur.deleted, cur.countable {
                 if idx < cur.length {
-                    // yjs @5557: split `cur` at the boundary; it is truncated in place to
+                    // yjs @5560: split `cur` at the boundary; it is truncated in place to
                     // the left half, so `cur.length` becomes `idx` and the next line
                     // drives `idx` to exactly 0.
                     _ = try YStructStore.getItemCleanStart(
                         transaction, YID(client: cur.id.client, clock: cur.id.clock + idx))
                 }
-                idx -= min(idx, cur.length)  // yjs @5559 `index -= n.length`, trap-safe
+                idx -= min(idx, cur.length)  // yjs @5562 `index -= n.length`, trap-safe
             }
             n = cur.right
         }
 
-        // yjs @5563-5572: delete undeleted items until `remaining` countable units are
+        // yjs @5566-5575: delete undeleted items until `remaining` countable units are
         // gone, splitting the trailing boundary so only the in-range prefix goes.
         while remaining > 0, let cur = n {
             if !cur.deleted {
                 if cur.countable, remaining < cur.length {
-                    // yjs @5566: split the trailing boundary item at `remaining`.
+                    // yjs @5569: split the trailing boundary item at `remaining`.
                     _ = try YStructStore.getItemCleanStart(
                         transaction, YID(client: cur.id.client, clock: cur.id.clock + remaining))
                 }
-                cur.delete(transaction)  // yjs @5568, unconditional within `!deleted`
+                cur.delete(transaction)  // yjs @5571, unconditional within `!deleted`
                 if cur.countable {
-                    remaining -= min(remaining, cur.length)  // yjs @5569, trap-safe
+                    remaining -= min(remaining, cur.length)  // yjs @5572, trap-safe
                 }
             }
             n = cur.right
         }
 
-        // yjs @5573-5575 throws `lengthExceeded` when `remaining > 0` here — the range
+        // yjs @5576-5578 throws `lengthExceeded` when `remaining > 0` here — the range
         // ran past the end of the child list. Fold it into the store's one
         // malformed-state signal, matching `insert`'s out-of-range guard.
         if remaining > 0 { throw YIntegrationError.unexpectedCase }
@@ -210,7 +210,7 @@ enum YWrite {
     // MARK: Local map set
 
     /// Set map key `key` on `parentType` to `content` (typically a `.any([value])`
-    /// wrapping one BlockNote prop or the `id` field). yjs `typeMapSet` (@5605).
+    /// wrapping one BlockNote prop or the `id` field). yjs `typeMapSet` (@5608).
     ///
     /// Reduced exactly as `insertAfter`'s doc-comment describes for list inserts:
     /// yjs's `typeMapSet` takes a raw JS value and classifies it (`ContentAny` for

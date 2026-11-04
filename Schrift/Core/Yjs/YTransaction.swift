@@ -138,7 +138,7 @@ final class YTransaction {
 // MARK: - Running a transaction
 
 extension YDoc {
-    /// yjs `transact` (@3434) — run `body` inside a transaction, then clean up.
+    /// yjs `transact` (@3437) — run `body` inside a transaction, then clean up.
     ///
     /// The nesting/re-entrancy dance is preserved: a transaction opened while one
     /// is already running joins it, and cleanup runs once, at the outermost exit,
@@ -291,7 +291,7 @@ extension YDoc {
                 clientID = YDoc.generateClientID()
             }
 
-            // yjs @3385-3389: emit `'update'` for every transaction with content,
+            // yjs @3388-3392: emit `'update'` for every transaction with content,
             // after gc/merge and the client-id re-roll, before the next queued
             // cleanup. This is what lets a provider broadcast the formatting-cleanup
             // transaction (origin nil) that the observer phase just opened. A nil

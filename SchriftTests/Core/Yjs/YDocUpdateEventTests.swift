@@ -2,9 +2,8 @@ import XCTest
 
 @testable import Schrift
 
-/// Golden fixtures captured from yjs 13.6.33 in node (its `'update'` emit point and
-/// bytes match the pinned 13.6.31 cited here) for `Doc`'s `'update'` event
-/// (`cleanupTransactions` @3385-3389): every transaction with content emits its
+/// Golden fixtures captured from the pinned yjs 13.6.33 in node for `Doc`'s
+/// `'update'` event (`cleanupTransactions` @3388-3392): every transaction with content emits its
 /// own v1 update, including the formatting-cleanup transaction the observer phase
 /// opens with origin `null`.
 final class YDocUpdateEventTests: XCTestCase {

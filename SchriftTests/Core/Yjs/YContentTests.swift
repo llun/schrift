@@ -15,7 +15,7 @@ final class YContentTests: XCTestCase {
     // MARK: - The per-kind table
 
     func testOnlyDeletedAndFormatAreNotCountable() {
-        // yjs: ContentDeleted @8644 and ContentFormat @8970 return false; every other
+        // yjs: ContentDeleted @8647 and ContentFormat @8973 return false; every other
         // content kind returns true. Getting this wrong silently corrupts parent
         // lengths rather than failing loudly.
         XCTAssertFalse(YContent.deleted(len: 3).isCountable)
@@ -52,7 +52,7 @@ final class YContentTests: XCTestCase {
     }
 
     func testSpliceBetweenSurrogatePairsReplacesBothHalvesWithReplacementChar() {
-        // yjs ContentString.splice @9335 / yjs#248: splitting a surrogate pair would
+        // yjs ContentString.splice @9338 / yjs#248: splitting a surrogate pair would
         // leave a lone surrogate on each side — an unencodable string — so yjs
         // replaces each orphan with U+FFFD. This is the one case a Swift `String`
         // could not represent mid-operation, which is why the live model stores

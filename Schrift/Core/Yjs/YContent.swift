@@ -42,7 +42,7 @@ enum YIntegrationError: Error, Equatable {
 ///
 /// A faithful transliteration of yjs's `AbstractContent` subclasses
 /// (`ContentDeleted`/`JSON`/`Binary`/`String`/`Embed`/`Format`/`Type`/`Any`/`Doc`,
-/// yjs.cjs @8557–9470). Content that is really JSON text on the wire
+/// yjs.cjs @8560–9470). Content that is really JSON text on the wire
 /// (embed/format value/doc options) stays a **raw string**, exactly as in
 /// `YContentRecord`, so nothing hinges on JSON canonicalization.
 ///
@@ -97,8 +97,8 @@ enum YContent {
 
     /// yjs `isCountable()` — whether this content contributes to its parent
     /// type's `_length`. **Only `ContentDeleted` and `ContentFormat` are not
-    /// countable**; every other kind is (yjs.cjs: ContentDeleted @8644,
-    /// ContentFormat @8970). This drives `YItem.info` bit 2 at construction.
+    /// countable**; every other kind is (yjs.cjs: ContentDeleted @8647,
+    /// ContentFormat @8973). This drives `YItem.info` bit 2 at construction.
     var isCountable: Bool {
         switch self {
         case .deleted, .format: return false
@@ -116,7 +116,7 @@ enum YContent {
     mutating func splice(_ offset: UInt) throws -> YContent {
         switch self {
         case .deleted(let len):
-            // ContentDeleted @8684. yjs does not range-check; a bogus offset would
+            // ContentDeleted @8687. yjs does not range-check; a bogus offset would
             // make `len - offset` negative (harmless in JS, a trap in Swift), so
             // guard it as the malformed input it is.
             guard offset <= len else { throw YIntegrationError.unexpectedCase }
@@ -124,34 +124,34 @@ enum YContent {
             return .deleted(len: len - offset)
 
         case .json(let items):
-            // ContentJSON @9112
+            // ContentJSON @9115
             let o = try sliceIndex(offset, count: items.count)
             self = .json(Array(items[..<o]))
             return .json(Array(items[o...]))
 
         case .any(let values):
-            // ContentAny @9227
+            // ContentAny @9230
             let o = try sliceIndex(offset, count: values.count)
             self = .any(Array(values[..<o]))
             return .any(Array(values[o...]))
 
         case .string(let units):
-            // ContentString @9335 — see spliceString for the surrogate repair.
+            // ContentString @9338 — see spliceString for the surrogate repair.
             let o = try sliceIndex(offset, count: units.count)
             let (left, right) = Self.spliceString(units, at: o)
             self = .string(left)
             return .string(right)
 
         case .binary, .embed, .format, .type, .doc:
-            // ContentBinary @8809, ContentEmbed @8918, ContentFormat @9466,
-            // ContentType @9466, ContentDoc @8597 — all `methodUnimplemented()`.
+            // ContentBinary @8812, ContentEmbed @8921, ContentFormat @9469,
+            // ContentType @9469, ContentDoc @8600 — all `methodUnimplemented()`.
             throw YIntegrationError.methodUnimplemented
         }
     }
 
     /// Splits a UTF-16 code-unit sequence, repairing a surrogate pair broken by
     /// the split — a literal transliteration of yjs `ContentString.splice`
-    /// (yjs.cjs @9335, yjs issue #248).
+    /// (yjs.cjs @9338, yjs issue #248).
     ///
     /// When the split lands *between* a high and a low surrogate, both halves
     /// would otherwise end/begin with a lone surrogate — an ill-formed string
@@ -229,15 +229,15 @@ enum YContent {
     func integrate(_ transaction: YTransaction, item: YItem) {
         switch self {
         case .deleted(let len):
-            // ContentDeleted @8700: the item arrives already-deleted, so its range
+            // ContentDeleted @8703: the item arrives already-deleted, so its range
             // joins the transaction's delete set and the item is marked immediately.
             transaction.deleteSet.add(client: item.id.client, clock: item.id.clock, length: len)
             item.markDeleted()
         case .type(let type):
-            // ContentType @9438
+            // ContentType @9441
             type.integrate(doc: transaction.doc, item: item)
         case .format:
-            // ContentFormat @8988. Search markers are unsupported for rich text, so
+            // ContentFormat @8991. Search markers are unsupported for rich text, so
             // yjs drops the parent's marker cache and flags it as formatted. We keep
             // no markers (see YType._searchMarker), so only the flag is meaningful —
             // it is what B4's `cleanupYTextAfterTransaction` will key off.
@@ -265,7 +265,7 @@ enum YContent {
     /// other kind is a no-op (yjs.cjs: ContentDeleted/JSON/Binary/String/Embed/
     /// Format/Any/Doc each `gc (store) {}`).
     ///
-    /// `ContentType.gc` (yjs.cjs @9517): recursively gc every child
+    /// `ContentType.gc` (yjs.cjs @9520): recursively gc every child
     /// — walking the child list rightwards and each map column leftwards — with
     /// `parentGCd: true`, so each child is replaced by a `GC` struct, then clears
     /// the type's `start`/`map`. Non-mutating on the `YContent` value: it only

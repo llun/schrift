@@ -251,7 +251,7 @@ final class YStructStore {
 
     // MARK: Splitting
 
-    /// yjs `splitItem` (@9610) — cut `leftItem` at `diff`, returning the new right
+    /// yjs `splitItem` (@9613) — cut `leftItem` at `diff`, returning the new right
     /// half already wired into the linked list.
     ///
     /// It does **not** insert the right half into the store's array: every caller
