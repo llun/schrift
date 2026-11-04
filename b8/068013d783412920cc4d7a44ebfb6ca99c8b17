@@ -1,0 +1,46 @@
+Schrift/Core/Yjs/YTextCleanup.swift
+  s_33b0bc59fa349b::t_2f4a326f9bec16 217
+SchriftTests/Core/Yjs/YTransactionOriginTests.swift
+  s_33b0bc59fa349b::t_add4983a813a65 1-8,10-29,54
+  s_dc239db0cc1c9d::t_e28ad4c98b3c36 9
+  s_33b0bc59fa349b::t_c6268cda506e7f 30-53
+Schrift/Core/Yjs/BlockNoteWrite.swift
+  s_33b0bc59fa349b::t_c755b58f72dfd0 61
+Schrift/Core/Yjs/YTransaction.swift
+  s_dc239db0cc1c9d::t_c8a48817282b68 48
+  s_33b0bc59fa349b::t_c755b58f72dfd0 154
+  s_33b0bc59fa349b::t_c6268cda506e7f 202
+  s_dc239db0cc1c9d::t_e28ad4c98b3c36 11,148
+  s_dc239db0cc1c9d::t_343f7d867289aa 149-150
+  s_33b0bc59fa349b::t_2f4a326f9bec16 10,12-17,20-21,52,141
+AGENTS.md
+  s_33b0bc59fa349b::t_86f13f22a6889f 1603-1604
+Schrift/Core/Yjs/YType.swift
+  s_33b0bc59fa349b::t_c6268cda506e7f 123-124
+Schrift/Core/Yjs/YStructIntegration.swift
+  s_33b0bc59fa349b::t_2f4a326f9bec16 399
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b8068013d783412920cc4d7a44ebfb6ca99c8b17",
+  "prompts": {},
+  "sessions": {
+    "s_33b0bc59fa349b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1a685-beb4-7272-84ae-56d97f704de6",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
