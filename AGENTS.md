@@ -1607,6 +1607,22 @@ that are easy to violate and expensive to discover:
   `transact` is untagged unless its caller tags it — B4's format cleanup keeps yjs's null
   origin. Nested transactions keep the outer origin. `lastTransactionOrigin` is an internal
   test seam for the most recently cleaned transaction.
+- **`YDoc.onUpdate` mirrors yjs's `'update'` event, and it is how the replica's own
+  cleanup reaches peers.** yjs emits `'update'` from `cleanupTransactions`'s `finally`
+  block (@3385-3389) for **every** transaction with content — after gc/merge and the
+  client-id re-roll, before the next queued cleanup — and a provider broadcasts every
+  update whose origin is not itself. Schrift's hook fires at that exact point with the
+  transaction's origin and a lazy `encode` closure over
+  `YTransactionEncoder.encodeUpdate(transaction, duringCleanup: true)` (the same encoder
+  the local-edit path uses; `duringCleanup` is the one caller allowed while the queue is
+  still non-empty). Encoding is lazy so origins the listener ignores (a whole-document
+  sync, every keystroke) cost nothing; `encode` is valid only during the call. A nil hook
+  runs nothing, so no golden output moves. An encode failure is **swallowed**, never thrown out of cleanup: the event
+  is a best-effort broadcast mirror; a store holding pending structs/deletes (which the
+  encoder refuses) emits nothing for that transaction. `DocumentCollaborationManager` sets it per replica and
+  broadcasts only origin `nil` (the B4 cleanup); `.remote` is an echo and `.localUser` is
+  already broadcast by `applyLocalEdit`, and a reader (`canUpdate == false`) never
+  publishes.
 - **`pendingStructs`/`pendingDs` hold decoded refs, where yjs holds V2 bytes.** A
   deliberate, documented internal deviation — V2 is, in yjs, only a container for
   these two fields, and Schrift's wire is v1 end to end. Nothing stashed is ever
@@ -3439,6 +3455,14 @@ markdown write endpoint**. Understand this before touching the save path:
   server-support seam to exercise yhub. A **future switch-on PR** must verify the real
   yhub/editor path end to end, then flip `ServerConfig.yWebSocketLiveCollaborationEnabled`;
   it must retain the independent default-off `schrift.liveCollaboration` user preference.
+- **The replica broadcasts the formatting-cleanup update it makes on its own.** An inbound
+  update that touches a formatted text makes `cleanupTransactions` open a second, local
+  transaction with origin `nil` (B4). yjs providers broadcast that transaction's update like
+  any other, so `DocumentCollaborationManager` wires `YDoc.onUpdate` on each replica and
+  sends origin-`nil` updates through the entry's session exactly like `applyLocalEdit`
+  (fire-and-forget on the main actor, entry re-read at fire time). It never bumps
+  `replicaVersions`/`remoteChangeTokens`/`localEditVersions` — the cleanup is derived from
+  an inbound update, not a new remote change or a local edit — and a reader never publishes.
 - **The 404/403 sweep has a third suppression, and it is keyed on the *server* id.**
   `isPendingCreate` covers the local id only, so it misses the draft the migration writes
   under `serverID` before removing the local one — which in that window is the **only

@@ -13,11 +13,16 @@ enum YTransactionEncoder {
     /// must have filled `afterState` and finished gc/merging, as it has when yjs
     /// emits its `update` event (@3389). Nested transact returns do not suffice.
     ///
+    /// `duringCleanup` is the one exception, and only `YDoc.onUpdate` passes it:
+    /// yjs emits `'update'` from inside `cleanupTransactions` (@3385-3389), where
+    /// the queue is still non-empty but *this* transaction's own gc/merge has
+    /// finished. Every other caller keeps the stricter "queue must be empty" gate.
+    ///
     /// Like `YStateEncoder`, deliberately refuses a replica with pending state.
     /// Returns nil when neither deletes nor changed clocks need to be sent.
-    static func encodeUpdate(_ transaction: YTransaction) throws -> Data? {
+    static func encodeUpdate(_ transaction: YTransaction, duringCleanup: Bool = false) throws -> Data? {
         let doc = transaction.doc
-        guard doc.transaction == nil, doc.transactionCleanups.isEmpty,
+        guard doc.transaction == nil, duringCleanup || doc.transactionCleanups.isEmpty,
             doc.store.pendingStructs == nil, doc.store.pendingDs == nil
         else { throw YIntegrationError.unexpectedCase }
 

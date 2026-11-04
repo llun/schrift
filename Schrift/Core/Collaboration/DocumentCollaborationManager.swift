@@ -458,7 +458,7 @@ final class DocumentCollaborationManager {
     /// fallback (silent revalidation) still fires even after fail-safe.
     private func applyReplicaUpdate(_ data: Data, for documentID: UUID) {
         guard var entry = entries[documentID], !entry.replicaFailSafe else { return }
-        let replica = entry.replica ?? YDoc(clientID: UInt(replicaClientIDProvider()), gc: true)
+        let replica = entry.replica ?? makeReplica(for: documentID)
         entry.replica = replica
         do {
             try replica.applyUpdate(try YUpdateDecoder.decode(data), origin: .remote)
@@ -477,6 +477,39 @@ final class DocumentCollaborationManager {
             entry.initialSyncApplied = false
             entries[documentID] = entry
         }
+    }
+
+    /// Builds a document's replica with the yjs `'update'` hook wired.
+    ///
+    /// yjs emits `'update'` for **every** transaction with content, including the
+    /// formatting-cleanup transaction `cleanupTransactions` opens on its own
+    /// (origin `null`). A provider broadcasts every update whose origin is not
+    /// itself, so the cleanup update must reach peers too — otherwise each peer
+    /// keeps the redundant `ContentFormat` items this replica just deleted.
+    ///
+    /// Only the cleanup update is broadcast here: `.remote` is the peer's own
+    /// bytes (an echo) and `.localUser` is already broadcast by `applyLocalEdit`,
+    /// so re-sending either would double-send. The send reads the entry fresh at
+    /// fire time and requires it to still hold *this* replica, writable and not
+    /// fail-safed: a cleanup from a replica that was destroyed (a rejected update,
+    /// teardown) or replaced is dropped, and a reader never publishes (A4). It never
+    /// bumps `replicaVersions`/`remoteChangeTokens`/`localEditVersions`: the cleanup is
+    /// derived from an inbound update, not a new remote change or a local edit.
+    private func makeReplica(for documentID: UUID) -> YDoc {
+        let replica = YDoc(clientID: UInt(replicaClientIDProvider()), gc: true)
+        replica.onUpdate = { [weak self, weak replica] origin, encode in
+            // nil origin is only ever the B4 cleanup: every other transact on a live
+            // replica is tagged (.remote on ingest, .localUser in BlockNoteWrite). An
+            // untagged transact added later would be published as a cleanup.
+            guard origin == nil, let update = encode() else { return }
+            Task { @MainActor [weak self, weak replica] in
+                guard let self, let replica, let entry = self.entries[documentID], entry.replica === replica,
+                    entry.canUpdate, !entry.replicaFailSafe
+                else { return }
+                await entry.session?.broadcast(update: update)
+            }
+        }
+        return replica
     }
 
     /// The replica's current state vector, for our own SyncStep1 handshake — a

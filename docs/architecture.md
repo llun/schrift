@@ -158,7 +158,7 @@ whenever an integrated item resolves to no parent (a neighbour was collected), a
 | `Lib0Decoder` / `Lib0Encoder` | lib0 binary primitives (varint, varString, `any`), shared with the collaboration wire codecs |
 | `YUpdateDecoder` / `YUpdateReencoder` | the v1 wire model — decodes updates, delete sets, and state vectors, and re-encodes them **byte-identically** |
 | `YStateEncoder` | the **store** encode side (B3): `encodeStateAsUpdate(doc, since:)` (full snapshot / diff against a state vector) and `encodeStateVector(doc)`, byte-identical to yjs's `writeClientsStructs`/`writeStructs`/`Item.write`. Derives each item's wire info byte from the live item (never `YItem.info`); writes clients **descending** everywhere; reuses `YUpdateReencoder`'s delete-set/state-vector writers. **Throws** while `pendingStructs`/`pendingDs` are non-nil — yjs folds pending state in, but a pending replica must never be snapshotted (see "Pending structs and delete sets") |
-| `YTransactionEncoder` | the **transaction** encode side (A3): `encodeUpdate(transaction)` transliterates yjs 13.6.31 `writeUpdateMessageFromTransaction` (@3163) / `writeStructsFromTransaction` (@1674). Reuses the state encoder's struct writer and descending delete-set writer, but sends only this transaction's deletes, avoiding a whole-store tombstone scan per edit. Returns nil for no change; refuses pending state or active transactions/cleanup. Capture `tx` via the existing `transact` return and encode immediately after the outermost call succeeds, after `afterState`, gc and merging, before any further edit. Use `YStateEncoder` for snapshots and peer state-vector replies (whole delete set) |
+| `YTransactionEncoder` | the **transaction** encode side (A3): `encodeUpdate(transaction)` transliterates yjs 13.6.31 `writeUpdateMessageFromTransaction` (@3163) / `writeStructsFromTransaction` (@1674). Reuses the state encoder's struct writer and descending delete-set writer, but sends only this transaction's deletes, avoiding a whole-store tombstone scan per edit. Returns nil for no change; refuses pending state or active transactions/cleanup. Capture `tx` via the existing `transact` return and encode immediately after the outermost call succeeds, after `afterState`, gc and merging, before any further edit. `duringCleanup: true` is the one exception, used only by `YDoc.onUpdate` (yjs emits `'update'` from inside `cleanupTransactions`, @3385-3389). Use `YStateEncoder` for snapshots and peer state-vector replies (whole delete set) |
 | `YContent` | the live, mutable content model (splice, merge) |
 | `YStruct` / `YItem` / `YGC` / `YSkip`, `YType`, `YDoc` | the document graph |
 | `YStructStore` | structs per client, binary search, splits |
@@ -395,6 +395,19 @@ one and adds the outbound write path on top of it.
   would read as "a remote peer changed the document" — bumping them for our own edit
   would make something read-apply the keystroke we just made ourselves. This is
   local-echo suppression, and it is the load-bearing rule of the whole write path.
+- **The replica also broadcasts the formatting-cleanup update it makes on its own.**
+  yjs emits `'update'` for every transaction with content, including the second, local
+  transaction `cleanupTransactions` opens with origin `null` when a remote update touches
+  a formatted text (B4), and a provider broadcasts every update whose origin is not
+  itself. `YDoc.onUpdate` mirrors that event at the yjs emit point (@3385-3389), with
+  the origin and a lazy `encode` (`YTransactionEncoder.encodeUpdate(..., duringCleanup:
+  true)`) so ignored origins are never encoded; the manager wires it per
+  replica and sends origin-`nil` updates through the entry's session, re-reading the
+  entry at fire time (it must still hold that replica, writable and not fail-safed). `.remote` is an echo and `.localUser` is already broadcast by
+  `applyLocalEdit`, so neither is re-sent; a reader (`canUpdate == false`) never
+  publishes; and the cleanup bumps none of `replicaVersion`/`remoteChangeToken`/
+  `localEditVersion` — it is derived from an inbound update, not a new remote change or
+  a local edit. A nil hook runs nothing, so every existing golden output is unchanged.
 - **One health gate, shared by read and write.** `canProjectReplica` — a
   replica exists, its initial sync has landed, it carries no unintegrated
   `pendingStructs`/`pendingDs`, and it hasn't fail-safed — already gated
@@ -933,7 +946,11 @@ blockContainer > XmlText`, bold/italic/link are `ContentFormat` items inside tho
 texts, and nested `XmlText` types arrive as real `YText` subclasses — so the trigger
 (`YText._callObserver`, gated on `!transaction.local && _hasFormatting`) fires. **B4
 was a prerequisite for the live write path (C2), not an optimization**, and it lands
-together with gc (`YTextCleanup.swift`, `cleanupTransactions`'s observer phase).
+together with gc (`YTextCleanup.swift`, `cleanupTransactions`'s observer phase). The
+cleanup transaction is local with origin `null`, so yjs's `'update'` event fires for it
+too and a provider broadcasts it; `YDoc.onUpdate` + the manager's origin-`nil` broadcast
+do the same (see "Live editing (C1)" above), so peers delete the same redundant
+`ContentFormat` items instead of each keeping their own copy.
 
 Two subtleties the transliteration had to get right, both proven against the yjs
 oracle by the differential fuzz's dedicated formatting lane (nested text, concurrent

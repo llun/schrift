@@ -291,6 +291,18 @@ extension YDoc {
                 clientID = YDoc.generateClientID()
             }
 
+            // yjs @3385-3389: emit `'update'` for every transaction with content,
+            // after gc/merge and the client-id re-roll, before the next queued
+            // cleanup. This is what lets a provider broadcast the formatting-cleanup
+            // transaction (origin nil) that the observer phase just opened. A nil
+            // hook runs nothing. An encode failure is swallowed, never thrown out of
+            // cleanup: the event is a best-effort broadcast mirror, and a store with
+            // pending structs/deletes (which the encoder refuses) emits nothing.
+            // The listener encodes lazily, so origins it ignores cost nothing.
+            if let onUpdate = transaction.doc.onUpdate {
+                onUpdate(transaction.origin) { try? YTransactionEncoder.encodeUpdate(transaction, duringCleanup: true) }
+            }
+
             if transactionCleanups.count <= i + 1 {
                 transactionCleanups = []
             } else {
