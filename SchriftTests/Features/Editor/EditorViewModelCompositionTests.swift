@@ -14,6 +14,7 @@ final class EditorViewModelCompositionTests: EditorViewModelTestCase {
         stubLoadAndSavePipeline(content: "Alpha", log: log, contentStatus: 503)
         await viewModel.load()
         viewModel.liveWrite = live
+        live?.viewModel = viewModel
         viewModel.startEditing()
         let blockID = viewModel.blocks[0].id
         viewModel.focusedBlockID = blockID
@@ -81,7 +82,8 @@ final class EditorViewModelCompositionTests: EditorViewModelTestCase {
     }
 
     /// An autosave armed by an earlier keystroke fires mid-composition: it must not serialize
-    /// the marked characters. The commit then publishes them.
+    /// the marked characters. The commit then publishes them, and its `markDirty` arms a fresh
+    /// 50 ms timer whose flush is the save.
     func testAnAutosaveDuringACompositionDoesNotSaveTheMarkedText() async {
         let log = RequestRecorder()
         let (viewModel, coordinator, blockID) = await makeEditingEnvironment(
@@ -96,6 +98,46 @@ final class EditorViewModelCompositionTests: EditorViewModelTestCase {
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) != nil }
 
         XCTAssertEqual(coordinator.pendingSave(documentID: documentID)?.markdown.contains("Alpha!日"), true)
+    }
+
+    /// The flush itself still runs (background, Done, onDisappear): it saves what was typed
+    /// before the composition and leaves the marked characters out of the save and the draft.
+    func testFlushDuringACompositionSavesTheCommittedTextOnly() async {
+        let (viewModel, coordinator, blockID) = await makeEditingEnvironment(log: RequestRecorder())
+        viewModel.updateText(blockID: blockID, text: "Alpha!")
+        compose("Alpha!に", marked: true, in: blockID, of: viewModel)
+        XCTAssertTrue(viewModel.isDirty)
+
+        viewModel.flushPendingChanges()
+
+        let save = coordinator.pendingSave(documentID: documentID)
+        XCTAssertEqual(save?.markdown.contains("Alpha!"), true, "the flush was not skipped")
+        XCTAssertEqual(save?.markdown.contains("に"), false, "…but it left the marked characters out")
+        let draft = coordinator.storedDraft(documentID: documentID)
+        XCTAssertEqual(draft?.markdown.contains("Alpha!"), true)
+        XCTAssertEqual(draft?.markdown.contains("に"), false)
+        XCTAssertEqual(viewModel.currentMarkdown().contains("に"), false)
+        XCTAssertEqual(viewModel.blocks[0].text, "Alpha!に", "the model still holds them for display")
+        await waitUntil { coordinator.state(for: self.documentID) != .saving }
+    }
+
+    /// Another edit mid-composition (a format change, a checklist toggle) forwards every block;
+    /// the composing one goes out with the text it had before the composition.
+    func testAnUnrelatedEditDuringACompositionForwardsThePublishedText() async {
+        let live = CompositionLiveWriteSpy()
+        live.handleLive = true
+        let (viewModel, _, blockID) = await makeEditingEnvironment(live: live, log: RequestRecorder())
+        compose("Alphaに", marked: true, in: blockID, of: viewModel)
+
+        viewModel.convertBlock(blockID: blockID, to: .checklistItem(checked: false))
+
+        XCTAssertEqual(live.forwardCount, 1)
+        XCTAssertEqual(live.forwardedTexts.last, ["Alpha"], "the marked characters did not go out")
+        XCTAssertEqual(viewModel.blocks[0].text, "Alphaに")
+
+        compose("Alphaに", marked: false, in: blockID, of: viewModel)
+
+        XCTAssertEqual(live.forwardedTexts.last, ["Alphaに"], "the commit publishes them")
     }
 
     // MARK: - The commit publishes
@@ -176,6 +218,114 @@ final class EditorViewModelCompositionTests: EditorViewModelTestCase {
         XCTAssertEqual(live.forwardCount, 1)
     }
 
+    /// Done mid-composition: the held text counts as committed, is published, and no
+    /// composition state survives the session.
+    func testDoneDuringACompositionPublishesAndClearsTheState() async {
+        let live = CompositionLiveWriteSpy()
+        live.handleLive = true
+        let (viewModel, _, blockID) = await makeEditingEnvironment(live: live, log: RequestRecorder())
+        compose("Alphaに", marked: true, in: blockID, of: viewModel)
+        XCTAssertEqual(live.forwardCount, 0)
+
+        viewModel.finishEditing()
+
+        XCTAssertEqual(live.forwardedTexts.last, ["Alphaに"])
+        XCTAssertNil(viewModel.markedTextBlockID)
+        XCTAssertEqual(viewModel.publishableBlocks.map(\.text), ["Alphaに"])
+        XCTAssertEqual(viewModel.mode, .reading)
+    }
+
+    func testDoneDuringACompositionSavesTheTextOnAClassicDocument() async {
+        let (viewModel, coordinator, blockID) = await makeEditingEnvironment(log: RequestRecorder())
+        compose("Alphaに", marked: true, in: blockID, of: viewModel)
+
+        viewModel.finishEditing()
+
+        XCTAssertEqual(coordinator.pendingSave(documentID: documentID)?.markdown.contains("Alphaに"), true)
+        XCTAssertNil(viewModel.markedTextBlockID)
+        await waitUntil { coordinator.state(for: self.documentID) != .saving }
+    }
+
+    /// An unmark the text view reports through a selection change alone has no text event after
+    /// it, so the held characters are published on their own.
+    func testAnUnmarkReportedBySelectionAloneStillPublishes() async {
+        let live = CompositionLiveWriteSpy()
+        live.handleLive = true
+        let (viewModel, _, blockID) = await makeEditingEnvironment(live: live, log: RequestRecorder())
+        compose("Alphaに", marked: true, in: blockID, of: viewModel)
+
+        viewModel.noteMarkedText(false, in: blockID)
+
+        await waitUntil { live.forwardCount == 1 }
+        XCTAssertEqual(live.forwardedTexts.last, ["Alphaに"])
+    }
+
+    /// A commit that does arrive through `updateText` is published once, not also by the
+    /// selection-only fallback.
+    func testACommitThroughATextEventPublishesOnlyOnce() async {
+        let live = CompositionLiveWriteSpy()
+        live.handleLive = true
+        let (viewModel, _, blockID) = await makeEditingEnvironment(live: live, log: RequestRecorder())
+        viewModel.noteMarkedText(true, in: blockID)
+        viewModel.updateText(blockID: blockID, text: "Alphaに")
+
+        viewModel.noteMarkedText(false, in: blockID)
+        viewModel.updateText(blockID: blockID, text: "Alpha日")
+        await waitAndConfirmNever(timeout: 0.1) { live.forwardCount > 1 }
+
+        XCTAssertEqual(live.forwardedTexts, [["Alpha日"]])
+    }
+
+    /// A stale flag (the block lost focus without an unmark) must not stop the autosave.
+    func testALostFocusDoesNotDisableTheAutosave() async {
+        let log = RequestRecorder()
+        let (viewModel, coordinator, blockID) = await makeEditingEnvironment(
+            autosaveInterval: .milliseconds(50), log: log)
+        viewModel.updateText(blockID: blockID, text: "Alpha!")
+        compose("Alpha!に", marked: true, in: blockID, of: viewModel)
+        viewModel.focusedBlockID = nil
+
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) != nil }
+    }
+
+    // MARK: - Peers
+
+    /// A peer's edit to the composing block does not replace the marked characters; the commit
+    /// then asks the live delegate to bring the peer's change in.
+    func testAPeerUpdateDuringACompositionDoesNotClobberTheBlock() async {
+        let live = CompositionLiveWriteSpy()
+        live.handleLive = true
+        let (viewModel, _, blockID) = await makeEditingEnvironment(live: live, log: RequestRecorder())
+        compose("Alphaに", marked: true, in: blockID, of: viewModel)
+
+        viewModel.applyLiveRemoteChange(
+            LiveChangeSet(changes: [.update(id: blockID, kind: .paragraph, text: "Alpha peer")]),
+            projectedMarkdown: "Alpha peer")
+
+        XCTAssertEqual(viewModel.blocks[0].text, "Alphaに", "the marked characters are untouched")
+        XCTAssertEqual(live.reconcileCount, 0, "nothing to reconcile until the commit")
+
+        compose("Alpha日", marked: false, in: blockID, of: viewModel)
+
+        XCTAssertEqual(live.forwardedTexts.last, ["Alpha日"])
+        XCTAssertEqual(live.reconcileCount, 1, "the held peer change is picked up after the commit")
+    }
+
+    func testAPeerUpdateToAnotherBlockStillApplies() async {
+        let live = CompositionLiveWriteSpy()
+        live.handleLive = true
+        let (viewModel, _, blockID) = await makeEditingEnvironment(live: live, log: RequestRecorder())
+        let other = EditorBlock(kind: .paragraph, text: "Beta")
+        viewModel.blocks.append(other)
+        compose("Alphaに", marked: true, in: blockID, of: viewModel)
+
+        viewModel.applyLiveRemoteChange(
+            LiveChangeSet(changes: [.update(id: other.id, kind: .paragraph, text: "Beta peer")]),
+            projectedMarkdown: "Alpha\n\nBeta peer")
+
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Alphaに", "Beta peer"])
+    }
+
     // MARK: - Existing behaviour
 
     /// A composition that stops a nested link line being one still steps it out past its nested
@@ -206,11 +356,17 @@ final class EditorViewModelCompositionTests: EditorViewModelTestCase {
 @MainActor
 private final class CompositionLiveWriteSpy: EditorLiveWriteCoordinating {
     var handleLive = false
+    /// What the real bridge reads on a forward: the blocks every peer may see.
+    weak var viewModel: EditorViewModel?
     private(set) var forwardCount = 0
+    private(set) var forwardedTexts: [[String]] = []
+    private(set) var reconcileCount = 0
     var isHandlingLocalEditsLive: Bool { handleLive }
     func forwardLocalEdit() -> Bool {
         forwardCount += 1
+        forwardedTexts.append(viewModel?.publishableBlocks.map(\.text) ?? [])
         return handleLive
     }
     func flushPendingLiveSnapshot() {}
+    func reconcileWithReplica() { reconcileCount += 1 }
 }

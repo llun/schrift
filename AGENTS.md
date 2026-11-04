@@ -3924,16 +3924,32 @@ markdown write endpoint**. Understand this before touching the save path:
 - **Uncommitted marked text is never published.** While an input method holds marked
   text (`markedTextBlockID`), the model may hold those characters so the row can lay
   them out (`updateComposition(isMarked: true)`, or `updateText` on a block reported
-  marked), but nothing calls `markDirty`: no live push to peers, no autosave, no
-  draft. Otherwise the commit's stale buffer overwrites a peer's concurrent edit.
-  The commit (`updateText(..., committingComposition: true)`, or the first
-  `updateText` after `noteMarkedText(false)`) publishes, **even when its text equals
-  the last marked text**: `unpublishedCompositionBlockID` records that the model
-  holds unpublished characters, and the autosave timer skips while they are marked.
-  `flushPendingChanges` settles a composition that ended without a text event.
-  Nesting detachment still runs on marked text. Cover marked updates (no dirty, no
-  push, no save, no draft), the commit, and an unchanged commit in
-  `EditorViewModelCompositionTests`.
+  marked), but nothing calls `markDirty` for them: no live push to peers, no autosave,
+  no draft. The commit's stale buffer would otherwise overwrite a peer's concurrent
+  edit. The first marked write records the block's last published text in
+  `compositionBaseText`, and `publishableBlocks` swaps it back in. Everything that
+  serializes the document reads that, never `blocks`: the live bridge
+  (`forwardLocalEdit`, its diff baseline and `liveChangeSet`) and `currentMarkdown()`
+  (so every save and draft). An unrelated edit or a flush mid-composition therefore
+  cannot carry the marked characters out, and the flush itself is not skipped.
+  - The commit (`updateText(..., committingComposition: true)`, or the first
+    `updateText` after `noteMarkedText(false)`) publishes **even when its text equals
+    the last marked text**, clears the base text and runs the markdown shortcuts then
+    (never while marked). The autosave timer drops its attempt while the composition is
+    held (`holdsUnpublishedComposition`: editing mode, focused, still marked), and the
+    commit re-arms it.
+  - An unmark with no text event after it (a selection change) is settled on the next
+    main-actor turn (`settleComposition`); `flushPendingChanges` and `finishEditing`
+    settle too, and Done mid-composition counts as committed. `startEditing` and
+    `install` reset the state.
+  - A peer's `.update` to the composing block is not applied over the marked
+    characters (`applyLiveRemoteChange`); the commit calls
+    `EditorLiveWriteCoordinating.reconcileWithReplica()`, which re-diffs against the
+    replica so the change is not lost.
+  - Nesting detachment still runs on marked text. Cover marked updates (no dirty, no
+    push, no save, no draft), the commit, an unchanged commit, a flush, an unrelated
+    edit, Done, a selection-only unmark and a peer update in
+    `EditorViewModelCompositionTests`.
 - **One inline scanner, not two.** `InlineMarkdown.layout(of:)` partitions a
   block's source into visible `spans` (styled) and hidden `syntax` (the
   complement of the spans, so the two cannot drift), plus its `links`.

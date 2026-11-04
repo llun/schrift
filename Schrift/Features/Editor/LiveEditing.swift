@@ -200,4 +200,12 @@ protocol EditorLiveWriteCoordinating: AnyObject {
     /// Fire any pending debounced live snapshot immediately (Done / background /
     /// disappear). A no-op when nothing is pending.
     func flushPendingLiveSnapshot()
+    /// Diff the editor against the replica and apply what differs, as for a replica update. The
+    /// editor asks after an input-method composition commits: a peer's change to that block
+    /// arrived while its uncommitted characters were on screen and was held back.
+    func reconcileWithReplica()
+}
+
+extension EditorLiveWriteCoordinating {
+    func reconcileWithReplica() {}
 }
