@@ -3418,8 +3418,9 @@ markdown write endpoint**. Understand this before touching the save path:
   suspend/resume. Reconnect answers a server's step1 with the retained replica's step2 diff,
   **including the delete set**: a deletion-only suspended edit does not change its state
   vector and must still reach the server. Do not gate state replies on replica health. Readers
-  send none: an entry keeps one ability (the latest caller's) and keeps its replica across a
-  writer→reader flip, so it may hold writer edits whose broadcast failed, and they must not leave.
+  send none: a reader must not publish, whatever its replica holds. An entry keeps one ability
+  (the latest caller's) and keeps its replica across a writer→reader flip, so that replica may
+  carry edits whose broadcast failed; they go out again only if a writer reopens it.
   Production still stops at server availability: only tests override the manager's existing
   server-support seam to exercise yhub. A **future switch-on PR** must verify the real
   yhub/editor path end to end, then flip `ServerConfig.yWebSocketLiveCollaborationEnabled`;

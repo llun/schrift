@@ -515,8 +515,8 @@ final class DocumentCollaborationManager {
     /// make `encodeStateAsUpdate` throw) yields `nil` rather than trapping — the
     /// peer will still send us their state, so the room converges regardless.
     private func stateReply(to peerVector: Data, for documentID: UUID) -> Data? {
-        // A reader has nothing to contribute, and a replica kept across a writer→reader
-        // flip may hold writer edits whose broadcast failed: those must not leave.
+        // A reader must not publish, whatever its replica holds (one kept across a
+        // writer→reader flip may carry edits whose broadcast failed).
         guard let entry = entries[documentID], entry.canUpdate, let replica = entry.replica else { return nil }
         guard let vectorEntries = try? YUpdateDecoder.decodeStateVector(peerVector) else { return nil }
         // `uniquingKeysWith` (never `uniqueKeysWithValues`) — the peer vector is
