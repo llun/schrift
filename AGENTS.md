@@ -3262,10 +3262,13 @@ markdown write endpoint**. Understand this before touching the save path:
     `PendingDraft`/`DraftBaseline` must stay Optional-on-decode").
   - The draft **keeps `markdown`** beside the bytes: `draftSyncDecision` compares canonical
     markdown, and the classic paths still need a body.
-  - The bytes are resent **only while the draft's markdown is exactly their projection**.
-    `enqueue` rebuilds the whole draft (the same trap as the conflict-stamp carry rule), and
-    `runSyncPass`'s `.push` replay and `commitResolvedAttachment` rebuild a save classic — every
-    such rewrite must update the bytes or drop them, never resend stale bytes over newer
+  - The bytes are resent **only while the draft's markdown is canonically equal to their
+    projection** — the same `canonicalMarkdown` test `draftSyncDecision` uses, not byte
+    equality. **Every `PendingDraft(...)` reconstruction** in `DocumentSaveCoordinator` (nine
+    today: `enqueue`'s whole-draft rebuild — the trap the conflict-stamp carry rule already
+    guards — plus the conflict stamp, `adoptServerTitle`, `finish`'s stamp,
+    `commitResolvedAttachment`'s in-place draft rewrite, and the rest) must carry, update or
+    drop the bytes, and the classic `.push` replay must never resend stale bytes over newer
     keystrokes.
   - The bytes are document content: **never logged**, and they follow the draft's existing
     store policy — backup-included and **retained on sign-out**, never purged with the content
