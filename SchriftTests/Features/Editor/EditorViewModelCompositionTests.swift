@@ -89,9 +89,10 @@ final class EditorViewModelCompositionTests: EditorViewModelTestCase {
         let (viewModel, coordinator, blockID) = await makeEditingEnvironment(
             autosaveInterval: .milliseconds(50), log: log)
         viewModel.updateText(blockID: blockID, text: "Alpha!")
+        // Sampled before the marked update, so a save the composition itself triggers is counted.
+        let contentSavesBeforeComposition = log.count(ofMethod: "PATCH", urlContaining: "/content/")
         compose("Alpha!に", marked: true, in: blockID, of: viewModel)
 
-        let contentSavesBeforeComposition = log.count(ofMethod: "PATCH", urlContaining: "/content/")
         await waitAndConfirmNever { coordinator.pendingSave(documentID: self.documentID) != nil }
         XCTAssertTrue(viewModel.isDirty, "the earlier keystroke is still unsaved")
         // The PATCH count is monotonic, so a save that came and went between polls still shows.
