@@ -23,6 +23,9 @@ protocol LiveReplicaProviding: AnyObject {
 
     // MARK: - Write side (C2c)
 
+    /// Includes abilities.update as well as replica health and initial sync.
+    func canWriteReplica(for documentID: UUID) -> Bool
+
     /// Applies one local BlockNote edit to the replica and broadcasts the resulting
     /// incremental Yjs update; throws when the replica is not writable or malformed
     /// (which latches fail-safe). `old` must be the replica's current projection.
@@ -219,13 +222,15 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
     /// photo-insert path needs to ask before it acts rather than after.
     var isHandlingLocalEditsLive: Bool {
         let projection = collaboration.projectedReplica(for: documentID, interlinkingOrigin: serverOrigin)
-        return canEngageLiveWrite(canEngageLiveEditing: viewModel.canEngageLiveEditing, projection: projection)
+        return collaboration.canWriteReplica(for: documentID)
+            && canEngageLiveWrite(canEngageLiveEditing: viewModel.canEngageLiveEditing, projection: projection)
             && lastAppliedBlocks != nil
     }
 
     func forwardLocalEdit() -> Bool {
         let projection = collaboration.projectedReplica(for: documentID, interlinkingOrigin: serverOrigin)
-        guard canEngageLiveWrite(canEngageLiveEditing: viewModel.canEngageLiveEditing, projection: projection),
+        guard collaboration.canWriteReplica(for: documentID),
+            canEngageLiveWrite(canEngageLiveEditing: viewModel.canEngageLiveEditing, projection: projection),
             let old = lastAppliedBlocks
         else { return false }  // not engaged / lossy / no baseline yet ⇒ classic
 

@@ -10,14 +10,21 @@ import Foundation
 /// serialises them and protects `didSelfClose`.
 actor CollaborationTransport {
     private let socket: WebSocketConnecting
+    private let wireProtocol: CollaborationWireProtocol
+    private let documentName: String
     private var pumpTask: Task<Void, Never>?
     private var continuation: AsyncStream<CollaborationEvent>.Continuation?
     /// Set when *we* initiate the close, so the pump reports `.selfClosed`
     /// rather than trying to classify our own 1001 as a peer close.
     private var didSelfClose = false
 
-    init(socket: WebSocketConnecting) {
+    init(
+        socket: WebSocketConnecting, wireProtocol: CollaborationWireProtocol = .hocuspocus,
+        documentName: String = ""
+    ) {
         self.socket = socket
+        self.wireProtocol = wireProtocol
+        self.documentName = documentName
     }
 
     /// Resumes the socket and returns the inbound event stream. Call once; the
@@ -33,9 +40,9 @@ actor CollaborationTransport {
         return stream
     }
 
-    /// Sends one Hocuspocus frame.
+    /// Sends one logical frame with the selected wire framing.
     func send(_ message: HocuspocusMessage) async throws {
-        try await socket.send(message.encoded())
+        try await socket.send(wireProtocol.encode(message))
     }
 
     /// Sends a keep-alive ping.
@@ -56,7 +63,7 @@ actor CollaborationTransport {
                 let data = try await socket.receiveData()
                 // Tolerate an undecodable / unknown frame rather than tearing the
                 // stream down — the protocol rule is to ignore what we don't model.
-                if let message = try? HocuspocusMessage(decoding: data) {
+                if let message = try? wireProtocol.decode(data, documentName: documentName) {
                     continuation?.yield(.message(message))
                 }
             } catch {

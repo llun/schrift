@@ -100,6 +100,60 @@ final class CollaborationEndpointTests: XCTestCase {
                 serverBaseURL: URL(string: "ftp://docs.example.org/")!, documentID: docID, cookies: []))
     }
 
+    func testYHubPinsOriginAndAcceptsOnlySafeOrganizationSegments() throws {
+        let base = URL(string: "https://[::1]:8443/api/v1.0/")!
+        let upperID = UUID(uuidString: "ABCDEF01-1111-4111-8111-111111111111")!
+        for (segment, expected) in [
+            ("team_1.~prod-2", "team_1.~prod-2"), ("..", "docs"), (".", "docs"),
+            ("bad%2Forg", "docs"), ("bad%3Forg", "docs"), ("bad%23org", "docs"),
+            ("bad%5Corg", "docs"), ("bad%20org", "docs"), ("bad%0A", "docs"),
+            ("%E2%98%83", "docs"),
+        ] {
+            let config = ServerConfig(
+                releaseVersion: "6.0.0",
+                collaborationWsUrl: "ws://other.example:9999/collaboration/ws/v1/\(segment)?redirect=evil")
+            let request = try XCTUnwrap(
+                CollaborationEndpoint.webSocketRequest(
+                    serverBaseURL: base, documentID: upperID, cookies: [makeCookie(name: "sessionid", value: "abc")],
+                    config: config))
+            XCTAssertEqual(
+                request.url?.absoluteString,
+                "wss://[::1]:8443/collaboration/ws/v1/\(expected)/abcdef01-1111-4111-8111-111111111111",
+                segment)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Origin"), "https://[::1]:8443")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "sessionid=abc")
+            XCTAssertFalse(request.httpShouldHandleCookies)
+        }
+    }
+
+    func testYHubHTTPAndInvalidBaseSchemes() {
+        let config = ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: "wss://other.example/ws/v1/team")
+        XCTAssertEqual(
+            CollaborationEndpoint.webSocketURL(
+                serverBaseURL: URL(string: "http://localhost:8000/api/")!, documentID: docID, config: config
+            )?.absoluteString,
+            "ws://localhost:8000/collaboration/ws/v1/team/\(docID.uuidString.lowercased())")
+        for base in ["ftp://example.com", "file:///x", "javascript:alert(1)"] {
+            XCTAssertNil(
+                CollaborationEndpoint.webSocketRequest(
+                    serverBaseURL: URL(string: base)!, documentID: docID, cookies: [], config: config))
+        }
+    }
+
+    func testYHubSelectionDoesNotEnableLiveCollaboration() {
+        for config in [
+            ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: "wss://example.com/collaboration/ws/v1/team"),
+            ServerConfig(releaseVersion: "v7.0.0", collaborationWsUrl: "wss://example.com/legacy"),
+            ServerConfig(collaborationWsUrl: "wss://example.com/collaboration/ws/v1/team"),
+        ] {
+            XCTAssertEqual(CollaborationWireProtocol(config: config), .yWebSocket)
+            XCTAssertFalse(config.supportsLiveCollaboration)
+        }
+        let legacy = ServerConfig(releaseVersion: "5.7.0", collaborationWsUrl: "wss://example.com/collaboration/ws/")
+        XCTAssertEqual(CollaborationWireProtocol(config: legacy), .hocuspocus)
+        XCTAssertTrue(legacy.supportsLiveCollaboration)
+    }
+
     private func makeCookie(name: String, value: String) -> HTTPCookie {
         HTTPCookie(properties: [
             .domain: "docs.example.org", .path: "/", .name: name, .value: value,

@@ -383,7 +383,7 @@ Schrift/
 │   │                    exposes needsReauthentication), SessionCookies (Codable
 │   │                    HTTPCookie snapshot), WebLogin (WKWebView cookie login),
 │   │                    KeychainStore
-│   ├── Collaboration/   Hocuspocus/Yjs live-collaboration layer — pure wire
+│   ├── Collaboration/   Hocuspocus + y-websocket/Yjs layer — pure wire
 │   │                    codecs (HocuspocusMessage, SyncMessage, AwarenessCodec),
 │   │                    origin-pinned endpoint builders (CollaborationEndpoint),
 │   │                    the WebSocket transport (WebSocketConnecting seam +
@@ -3259,9 +3259,9 @@ markdown write endpoint**. Understand this before touching the save path:
   GET/diff is needed), while a pre-Docs 6 server takes the legacy
   `documents/{id}/content/` PATCH tagged `"websocket": true` (through
   `setContent(…, viaWebSocket:)`; the classic body stays byte-identical when false). Docs 6 has
-  no live session today (`ServerConfig.supportsLiveCollaboration` stays false until a y-websocket
-  client lands), so this route is groundwork for that client; its PATCH carries the whole snapshot
-  and is subject to the deployment's request-size limit. Because
+  no live session today (`ServerConfig.yWebSocketLiveCollaborationEnabled` stays false),
+  so the y-websocket transport and this route remain switched-off groundwork. Its PATCH
+  carries the whole snapshot and is subject to the deployment's request-size limit. Because
   reconcile is markdown-based, the coordinator carries the **projected markdown** as the
   `PendingSave.markdown` / draft body /
   `lastConfirmedPushMarkdown` stamp, so `finish`, the enqueue-hold, latest-wins coalescing,
@@ -3384,11 +3384,37 @@ markdown write endpoint**. Understand this before touching the save path:
     collaboration-capable server (non-gating follow-up); the flag is read lazily, so a
     flip affects newly requested sessions, not screens already open.** **Unavailable on
     Docs 6**: its collaboration server (yhub) speaks plain y-websocket at
-    `/collaboration/ws/v1/{org}`, not Hocuspocus, so `ServerConfig.supportsLiveCollaboration`
-    is false for a release major ≥ 6 or a `…/ws/v1/{org}` URL and the toggle has no effect
-    there until a y-websocket client exists. See
+    `/collaboration/ws/v1/{org}/{documentID}`, not Hocuspocus. The A4 transport now exists,
+    but `ServerConfig.yWebSocketLiveCollaborationEnabled` is **false**, so
+    `ServerConfig.supportsLiveCollaboration` remains false for a release major ≥ 6 or a
+    `…/ws/v1/{org}` URL and the user toggle still has no effect there. See
     `docs/architecture.md` ("Editor wiring — the write path complete (C2c)" and the
     "C3 (shipped)" paragraph).
+- **A4 adds yhub framing beside Hocuspocus, merged switched off.**
+  `CollaborationWireProtocol(config:)` selects `.yWebSocket` when
+  `ServerConfig.usesCollaborationYDocServer`, otherwise `.hocuspocus`. The transport alone
+  adds/removes the document-name prefix; the session shares `SyncMessage` and
+  `AwarenessCodec` payload handling. y-websocket uses type 0 sync (step 0/1/2), type 1
+  awareness, and type 3 query-awareness, with **no auth message**; Hocuspocus's type 4
+  SyncReply is not a y-websocket sync frame. The empty awareness keepalive (`AQEA`) is
+  valid and leaves peers/replica unchanged. The new endpoint is
+  `/collaboration/ws/v1/{org}/{lowercase UUID}` with no trailing slash: use
+  `CollaborationEndpoint`'s API-origin scheme/host/port and explicit `Origin`/cookies.
+  Only the validated org comes from config (the Networking rule above), never its host.
+  y-websocket awareness nests the name/color in `user`; Hocuspocus keeps its flat shape.
+  The editor passes **`Document.abilities.update`**, never inferred link role, into session
+  acquisition (both navigation surfaces already carry the document as `pinRow`). Missing
+  metadata fails closed. Readers receive/project updates but publish no awareness (including
+  replies to query-awareness), cannot broadcast edits, and cannot snapshot or report an edit
+  handled live. `canProjectReplica` checks sync/replica health; `canWriteReplica(for:)` adds
+  the update ability and is checked by the bridge before forwarding. Retain permission across
+  suspend/resume. Reconnect answers a server's step1 with the retained replica's step2 diff,
+  **including the delete set**: a deletion-only suspended edit does not change its state
+  vector and must still reach the server. Do not gate state replies on write eligibility.
+  Production still stops at server availability: only tests override the manager's existing
+  server-support seam to exercise yhub. A **future switch-on PR** must verify the real
+  yhub/editor path end to end, then flip `ServerConfig.yWebSocketLiveCollaborationEnabled`;
+  it must retain the independent default-off `schrift.liveCollaboration` user preference.
 - **The 404/403 sweep has a third suppression, and it is keyed on the *server* id.**
   `isPendingCreate` covers the local id only, so it misses the draft the migration writes
   under `serverID` before removing the local one — which in that window is the **only

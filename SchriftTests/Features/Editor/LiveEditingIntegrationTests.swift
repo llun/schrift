@@ -444,6 +444,7 @@ final class LiveEditingIntegrationTests: XCTestCase {
     /// version counter and projection the test controls directly, plus the C2c write
     /// seam (`applyLocalEdit`/`encodeSnapshotForSave`/`replicaIsFailSafe`/`hasPendingStructs`).
     private final class FakeReplicaProvider: LiveReplicaProviding {
+        func canWriteReplica(for documentID: UUID) -> Bool { true }
         private var versions: [UUID: Int] = [:]
         private var projections: [UUID: ProjectedDocument] = [:]
 
@@ -641,6 +642,32 @@ final class LiveEditingIntegrationTests: XCTestCase {
     /// leaves the synchronous observer the fix adds as the only thing that can re-sync the
     /// baseline before the keystroke. Against the pre-fix code both assertions fail: the
     /// editor never merges the remote remove, and the shared replica ends up corrupt.
+    func testReaderBridgeAppliesContentButNeverHandlesAnEditLive() async throws {
+        let (viewModel, _, _) = makeEnvironment()
+        await viewModel.load()
+        let spy = SocketFactorySpy()
+        let config = ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: "wss://example.com/ws/v1/docs")
+        let manager = DocumentCollaborationManager(
+            serverBaseURL: baseURL, cookieProvider: { [] }, featureEnabled: { true }, isOffline: { false },
+            serverConfigProvider: { config }, socketFactory: spy.factory)
+        await manager.refreshServerSupport()
+        manager.serverSupportsLiveCollaboration = true  // test-only override of the release capability
+        _ = try XCTUnwrap(manager.session(for: documentID, canUpdate: false))
+        defer { manager.suspend() }
+        let bridge = LiveEditingBridge(
+            documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil)
+        var frame = Data([0])
+        frame.append(SyncMessage(step: .step2, data: Data(hex: initialHex)).encodedPayload())
+        spy.sockets[0].deliver(message: frame)
+        await waitUntil { manager.replicaVersion(for: self.documentID) == 1 }
+        bridge.replicaDidChange()
+        XCTAssertTrue(bridge.isApplyingLiveContent)
+        XCTAssertFalse(bridge.isHandlingLocalEditsLive)
+        XCTAssertFalse(bridge.forwardLocalEdit())
+        XCTAssertEqual(manager.localEditVersion(for: documentID), 0)
+        XCTAssertNil(manager.encodeSnapshotForSave(for: documentID))
+    }
+
     func testLocalForwardAfterRemoteUpdateForwardsAgainstTheMergedReplicaNotAStaleBaseline() async throws {
         let (viewModel, _, _) = makeEnvironment()
         await viewModel.load()
