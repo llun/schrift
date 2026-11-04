@@ -13,7 +13,7 @@ import XCTest
 /// collided on that key and the second was filtered as a "duplicate." Schrift then
 /// kept whichever was stashed first, while yjs deterministically keeps the
 /// representation carried by the run that reaches the clock first (`mergeUpdatesV2`'s
-/// coverage discard, yjs.cjs@4200) — so the settled store diverged from yjs by
+/// coverage discard, yjs.cjs@4203) — so the settled store diverged from yjs by
 /// **network delivery order**, violating the store's "converges exactly when yjs
 /// converges" invariant.
 ///
