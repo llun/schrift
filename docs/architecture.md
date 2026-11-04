@@ -372,7 +372,7 @@ one and adds the outbound write path on top of it.
   `.step1` through `onStateRequest`, which the manager wires to `stateReply(to:for:)`:
   decode the peer's state vector, `YStateEncoder.encodeStateAsUpdate(replica, since:)` a
   diff of everything they're missing, and send it back as a `.step2` frame. `stateReply`
-  is deliberately **ungated on write eligibility** — offering a subset of our own
+  is deliberately **ungated on replica health** (only readers, without `abilities.update`, send no reply) — offering a subset of our own
   monotonic CRDT state is always safe, even mid-sync, so the room keeps converging
   regardless; only the save-snapshot path needs the stronger gate (below). Because an
   entry's replica survives session rebuilds, `stateReply` re-offers a reconnecting peer

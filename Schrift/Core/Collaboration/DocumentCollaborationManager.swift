@@ -34,7 +34,9 @@ final class DocumentCollaborationManager {
     private struct Entry {
         /// The live session, or nil while suspended (app backgrounded).
         var session: DocumentCollaborationSession?
-        /// The document's abilities.update, supplied by the editor's metadata.
+        /// The document's abilities.update, supplied by the editor's metadata. One per
+        /// entry: the latest `session(for:canUpdate:)` caller wins, and the replica is
+        /// kept across a flip (a reader just stops writing and answering step1).
         var canUpdate: Bool
         var refCount: Int
         var lingerTask: Task<Void, Never>?
@@ -355,13 +357,6 @@ final class DocumentCollaborationManager {
                 entry.session?.stop()
                 entry.session = nil
                 entry.canUpdate = canUpdate
-                // A reader's step2 must only echo what the server sent, never writer
-                // edits still in the replica, so a downgrade starts from an empty one.
-                if !canUpdate {
-                    entry.replica?.destroy()
-                    entry.replica = nil
-                    entry.initialSyncApplied = false
-                }
             }
             if entry.session == nil { entry.session = makeSession(for: documentID, canUpdate: canUpdate) }
             entries[documentID] = entry
@@ -511,7 +506,7 @@ final class DocumentCollaborationManager {
     /// this is what re-offers our local edits to a peer or the relay when they
     /// (re)connect and ask for our state (peer step1 → our step2). Decodes the
     /// peer's state vector and encodes only the structs past it; `nil` (send
-    /// nothing) when we hold no replica to offer.
+    /// nothing) when we hold no replica to offer or the document is read-only.
     ///
     /// Runs synchronously on the main actor inside the session's inbound-frame
     /// handler, so it must stay cheap — a state-vector-diff encode is fine, and no
@@ -520,7 +515,9 @@ final class DocumentCollaborationManager {
     /// make `encodeStateAsUpdate` throw) yields `nil` rather than trapping — the
     /// peer will still send us their state, so the room converges regardless.
     private func stateReply(to peerVector: Data, for documentID: UUID) -> Data? {
-        guard let replica = entries[documentID]?.replica else { return nil }
+        // A reader has nothing to contribute, and a replica kept across a writer→reader
+        // flip may hold writer edits whose broadcast failed: those must not leave.
+        guard let entry = entries[documentID], entry.canUpdate, let replica = entry.replica else { return nil }
         guard let vectorEntries = try? YUpdateDecoder.decodeStateVector(peerVector) else { return nil }
         // `uniquingKeysWith` (never `uniqueKeysWithValues`) — the peer vector is
         // attacker-influenced wire data and a duplicate client id would trap. yjs

@@ -404,7 +404,7 @@ Schrift/
 │   │                    apply). C2a makes the handshake real (SyncStep1 now carries
 │   │                    the replica's actual state vector; a peer's SyncStep1 is
 │   │                    answered with a SyncStep2 diff via onStateRequest →
-│   │                    stateReply, deliberately ungated on write eligibility so the
+│   │                    stateReply, deliberately ungated on replica health so the
 │   │                    room always converges and a reconnect re-offers everything
 │   │                    accumulated so far) and adds the outbound write path:
 │   │                    applyLocalEdit(old:new:for:) wraps B6's
@@ -3410,7 +3410,9 @@ markdown write endpoint**. Understand this before touching the save path:
   the update ability and is checked by the bridge before forwarding. Retain permission across
   suspend/resume. Reconnect answers a server's step1 with the retained replica's step2 diff,
   **including the delete set**: a deletion-only suspended edit does not change its state
-  vector and must still reach the server. Do not gate state replies on write eligibility.
+  vector and must still reach the server. Do not gate state replies on replica health. Readers
+  send none: an entry keeps one ability (the latest caller's) and keeps its replica across a
+  writer→reader flip, so it may hold writer edits whose broadcast failed, and they must not leave.
   Production still stops at server availability: only tests override the manager's existing
   server-support seam to exercise yhub. A **future switch-on PR** must verify the real
   yhub/editor path end to end, then flip `ServerConfig.yWebSocketLiveCollaborationEnabled`;
