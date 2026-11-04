@@ -123,6 +123,24 @@ final class YDoc {
     /// Test seam: origin of the most recently cleaned transaction, including nested cleanup transactions.
     var lastTransactionOrigin: YTransactionOrigin?
 
+    /// yjs `Doc`'s `'update'` event (@3385-3389), reduced to the one listener the
+    /// live replica needs: fired once per cleaned transaction that has content,
+    /// with the v1 update bytes and that transaction's origin.
+    ///
+    /// yjs emits from `cleanupTransactions`'s `finally` block — after gc/merge and
+    /// the client-id re-roll, before the next queued cleanup — so the bytes are
+    /// exactly `writeUpdateMessageFromTransaction`'s output (the same
+    /// `YTransactionEncoder.encodeUpdate` the local-edit path uses). This is what
+    /// makes the formatting-cleanup transaction (origin `null`) visible to a
+    /// provider, which broadcasts every update whose origin is not itself.
+    ///
+    /// A nil hook runs nothing: no encoding, no behavior change. The hook cannot
+    /// throw, and an encode failure is swallowed rather than thrown out of
+    /// cleanup — the event is a best-effort broadcast mirror. The encoder refuses a
+    /// store holding pending structs/deletes, so such a transaction emits nothing;
+    /// the peer converges anyway, since it runs the same cleanup. Never traps.
+    var onUpdate: ((Data, YTransactionOrigin?) -> Void)?
+
     init(clientID: UInt, gc: Bool = true) {
         self.clientID = clientID
         self.gc = gc
