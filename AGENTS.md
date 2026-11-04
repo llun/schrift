@@ -3921,6 +3921,19 @@ markdown write endpoint**. Understand this before touching the save path:
   Native regression tests must include commit, cancel, unchanged commits, ranged
   corrections after commit, same-row pending carets, and real canvas reconciliation
   with the same native view, marked range, and first responder.
+- **Uncommitted marked text is never published.** While an input method holds marked
+  text (`markedTextBlockID`), the model may hold those characters so the row can lay
+  them out (`updateComposition(isMarked: true)`, or `updateText` on a block reported
+  marked), but nothing calls `markDirty`: no live push to peers, no autosave, no
+  draft. Otherwise the commit's stale buffer overwrites a peer's concurrent edit.
+  The commit (`updateText(..., committingComposition: true)`, or the first
+  `updateText` after `noteMarkedText(false)`) publishes, **even when its text equals
+  the last marked text**: `unpublishedCompositionBlockID` records that the model
+  holds unpublished characters, and the autosave timer skips while they are marked.
+  `flushPendingChanges` settles a composition that ended without a text event.
+  Nesting detachment still runs on marked text. Cover marked updates (no dirty, no
+  push, no save, no draft), the commit, and an unchanged commit in
+  `EditorViewModelCompositionTests`.
 - **One inline scanner, not two.** `InlineMarkdown.layout(of:)` partitions a
   block's source into visible `spans` (styled) and hidden `syntax` (the
   complement of the spans, so the two cannot drift), plus its `links`.

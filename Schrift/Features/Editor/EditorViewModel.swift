@@ -172,6 +172,14 @@ final class EditorViewModel {
     /// overwrites it — so the `[[` picker neither shows nor picks in that block. Observed, so
     /// the card appears once the composition commits.
     private(set) var markedTextBlockID: UUID?
+    /// The block whose model text holds input-method characters nothing has published yet.
+    /// While marked, the model keeps the text so the row can lay it out, but `markDirty` is
+    /// not called: a live push would hand peers an uncommitted composition (and the commit
+    /// could then overwrite their concurrent edit), and a save or draft would persist it.
+    /// The commit publishes it, even when it ends with the very characters last marked
+    /// (`updateText` would otherwise see no change); `flushPendingChanges` settles a
+    /// composition whose commit never reached `updateText`.
+    @ObservationIgnored private var unpublishedCompositionBlockID: UUID?
 
     let client: DocsAPIClient
     let documentID: UUID
@@ -2128,10 +2136,12 @@ final class EditorViewModel {
             cursorRequest = CursorRequest(blockID: blockID, offset: selection.location, length: selection.length)
         }
         if isMarked {
+            // Display and layout only: the characters are uncommitted, so nothing is published,
+            // saved or drafted until the commit below.
             if blocks[index].text != text {
                 blocks[index].text = text
                 detachBlocksThatNoLongerNest([blockID])
-                markDirty()
+                unpublishedCompositionBlockID = blockID
             }
         } else {
             updateText(blockID: blockID, text: text, committingComposition: true)
@@ -2141,7 +2151,13 @@ final class EditorViewModel {
     func updateText(blockID: UUID, text: String, committingComposition: Bool = false) {
         guard let index = blockIndex(blockID) else { return }
         let charactersChanged = blocks[index].text != text
-        guard charactersChanged || committingComposition else { return }
+        // The text view reports marked text before the characters (`noteMarkedText`), so a
+        // block still marked here holds an uncommitted composition: keep it for display, publish
+        // nothing. A committing call is never held, and a commit that ends with the characters
+        // last marked still publishes them (`publishesComposition`).
+        let composing = markedTextBlockID == blockID && !committingComposition
+        let publishesComposition = !composing && unpublishedCompositionBlockID == blockID
+        guard charactersChanged || committingComposition || publishesComposition else { return }
 
         // Markdown typing shortcuts convert a paragraph as soon as its prefix lands.
         if blocks[index].kind == .paragraph, let match = detectMarkdownShortcut(text: text) {
@@ -2155,7 +2171,7 @@ final class EditorViewModel {
             let caret = min(max(0, caretBefore - prefixLength), (match.remainderText as NSString).length)
             focusBlock(blockID, cursorAt: caret)
             detachBlocksThatNoLongerNest([blockID])
-            markDirty()
+            markDirtyUnlessComposing(blockID, composing: composing)
             return
         }
 
@@ -2166,10 +2182,27 @@ final class EditorViewModel {
         {
             dismissedPageLink = nil
         }
-        if charactersChanged {
-            detachBlocksThatNoLongerNest([blockID])
-            markDirty()
+        if charactersChanged || publishesComposition {
+            if charactersChanged { detachBlocksThatNoLongerNest([blockID]) }
+            markDirtyUnlessComposing(blockID, composing: composing)
         }
+    }
+
+    /// Publishes an edit to `blockID` through `markDirty`, unless an input method still holds
+    /// marked text there: then only remembers that the block has text to publish at the commit.
+    private func markDirtyUnlessComposing(_ blockID: UUID, composing: Bool) {
+        if composing {
+            unpublishedCompositionBlockID = blockID
+            return
+        }
+        if unpublishedCompositionBlockID == blockID { unpublishedCompositionBlockID = nil }
+        markDirty()
+    }
+
+    /// Whether uncommitted marked text sits in the model right now, which no save may serialize.
+    private var holdsUnpublishedComposition: Bool {
+        guard let id = unpublishedCompositionBlockID else { return false }
+        return markedTextBlockID == id && blockIndex(id) != nil
     }
 
     /// A Return or prefix shortcut can move the caret before UIKit realizes that
@@ -3398,6 +3431,12 @@ final class EditorViewModel {
     /// coordinator, which persists a draft immediately and saves in the
     /// background, outliving this screen.
     func flushPendingChanges() {
+        // A composition that ended without its commit reaching `updateText` (the text view only
+        // reported a selection change) still has characters nothing published.
+        if let id = unpublishedCompositionBlockID, markedTextBlockID != id {
+            unpublishedCompositionBlockID = nil
+            if blockIndex(id) != nil { markDirty() }
+        }
         // Fire any pending live snapshot first. In live mode `isDirty` is false, so the classic
         // guard below early-returns; this line is what makes Done / background / onDisappear (all
         // funnel through here) persist the debounced live snapshot. A no-op when nothing is
@@ -3802,7 +3841,9 @@ final class EditorViewModel {
         }
         abandonPendingFreshContent()
         isDirty = true
-        if let dirtySince, now.timeIntervalSince(dirtySince) >= Self.maxAutosaveDeferral {
+        if let dirtySince, now.timeIntervalSince(dirtySince) >= Self.maxAutosaveDeferral,
+            !holdsUnpublishedComposition
+        {
             flushPendingChanges()
             return
         }
@@ -3811,7 +3852,10 @@ final class EditorViewModel {
         autosaveTask = Task { [weak self] in
             try? await Task.sleep(for: interval)
             guard !Task.isCancelled else { return }
-            self?.flushPendingChanges()
+            // A composition in progress is not saved; its commit reaches `markDirty` and
+            // schedules the next attempt (still overdue, so it flushes at once).
+            guard let self, !self.holdsUnpublishedComposition else { return }
+            self.flushPendingChanges()
         }
     }
 
