@@ -1,0 +1,34 @@
+Schrift/Core/Yjs/YTransaction.swift
+  s_33b0bc59fa349b::t_cbe7e21f61e6ef 5
+  s_33b0bc59fa349b::t_c1c0d16872c813 16-17
+  s_33b0bc59fa349b::t_d05c6b9c4a0520 13-15
+  s_33b0bc59fa349b::t_ef06fb4706e2fc 11-12
+Schrift/Core/Yjs/YTextCleanup.swift
+  s_33b0bc59fa349b::t_cbe7e21f61e6ef 217
+SchriftTests/Core/Yjs/YTransactionOriginTests.swift
+  s_33b0bc59fa349b::t_3502c35dc259c0 17,24,26-39,42,48-56,60,69,72-74
+Schrift/Core/Collaboration/DocumentCollaborationManager.swift
+  s_33b0bc59fa349b::t_cbe7e21f61e6ef 447
+Schrift/Core/Yjs/YStructIntegration.swift
+  s_33b0bc59fa349b::t_cbe7e21f61e6ef 398-399
+Schrift/Core/Yjs/BlockNoteIncrementalSave.swift
+  s_33b0bc59fa349b::t_cbe7e21f61e6ef 65
+AGENTS.md
+  s_33b0bc59fa349b::t_127041b0e483e6 1603-1606
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "94d9108548acae926f2cd0c0e1ecfd88d6740b66",
+  "prompts": {},
+  "sessions": {
+    "s_33b0bc59fa349b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1a685-beb4-7272-84ae-56d97f704de6",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
