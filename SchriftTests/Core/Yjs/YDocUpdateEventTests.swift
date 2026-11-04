@@ -2,20 +2,21 @@ import XCTest
 
 @testable import Schrift
 
-/// Golden fixtures captured from **yjs@13.6.31** for `Doc`'s `'update'` event
+/// Golden fixtures captured from yjs 13.6.33 in node (its `cleanupTransactions` is
+/// unchanged from the pinned 13.6.31 cited here) for `Doc`'s `'update'` event
 /// (`cleanupTransactions` @3385-3389): every transaction with content emits its
 /// own v1 update, including the formatting-cleanup transaction the observer phase
 /// opens with origin `null`.
 final class YDocUpdateEventTests: XCTestCase {
     func testRemoteFormattingCleanupEmitsItsOwnUpdateAfterThePeerUpdate() throws {
-        // gc on: the expected full-state snapshot below is the gc:true one (the
-        // cleaned-up format is a `ContentDeleted` tombstone, not a live format).
-        let doc = YDoc(clientID: 9)
+        let doc = YDoc(clientID: 9, gc: false)
         // yjs only cleans an *instantiated* text — `getText('t')` is what makes the
         // root a concrete YText there; `get` is the same root here.
         _ = doc.get("t")
         var events: [(Data, YTransactionOrigin?)] = []
-        doc.onUpdate = { events.append(($0, $1)) }
+        doc.onUpdate = { origin, encode in
+            if let update = encode() { events.append((update, origin)) }
+        }
 
         let updates = [
             "01010100040101740b68656c6c6f20776f726c6400",  // t = "hello world"
@@ -39,7 +40,7 @@ final class YDocUpdateEventTests: XCTestCase {
             try YStateEncoder.encodeStateAsUpdate(doc),
             Data(
                 hex:
-                    "0202020046010004626f6c640474727565c60104010504626f6c64046e756c6c040100040101740568656c6c6f8401040620776f726c6441010001c60104010504626f6c64046e756c6c0101010b01"
+                    "0202020046010004626f6c640474727565c60104010504626f6c64046e756c6c040100040101740568656c6c6f8401040620776f726c6446010004626f6c640474727565c60104010504626f6c64046e756c6c0101010b01"
             ))
     }
 }

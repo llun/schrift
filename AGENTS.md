@@ -1611,11 +1611,13 @@ that are easy to violate and expensive to discover:
   cleanup reaches peers.** yjs emits `'update'` from `cleanupTransactions`'s `finally`
   block (@3385-3389) for **every** transaction with content — after gc/merge and the
   client-id re-roll, before the next queued cleanup — and a provider broadcasts every
-  update whose origin is not itself. Schrift's hook fires at that exact point with
+  update whose origin is not itself. Schrift's hook fires at that exact point with the
+  transaction's origin and a lazy `encode` closure over
   `YTransactionEncoder.encodeUpdate(transaction, duringCleanup: true)` (the same encoder
   the local-edit path uses; `duringCleanup` is the one caller allowed while the queue is
-  still non-empty) and the transaction's origin. A nil hook runs nothing, so no golden
-  output moves. An encode failure is **swallowed**, never thrown out of cleanup: the event
+  still non-empty). Encoding is lazy so origins the listener ignores (a whole-document
+  sync, every keystroke) cost nothing; `encode` is valid only during the call. A nil hook
+  runs nothing, so no golden output moves. An encode failure is **swallowed**, never thrown out of cleanup: the event
   is a best-effort broadcast mirror; a store holding pending structs/deletes (which the
   encoder refuses) emits nothing for that transaction. `DocumentCollaborationManager` sets it per replica and
   broadcasts only origin `nil` (the B4 cleanup); `.remote` is an echo and `.localUser` is

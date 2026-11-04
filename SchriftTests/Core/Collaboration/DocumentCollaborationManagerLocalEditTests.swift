@@ -37,6 +37,8 @@ final class DocumentCollaborationManagerLocalEditTests: DocumentCollaborationMan
         let sync = try SyncMessage(decodingPayload: frame.payload)
         XCTAssertEqual(sync.step, .update)
         XCTAssertEqual(sync.data, update, "the broadcast frame must carry exactly the returned update bytes")
+        // The replica's update hook must not send the local edit a second time.
+        await waitAndConfirmNever { spy.sockets[0].sentFrames.count > framesBefore + 1 }
         session?.stop()
     }
 

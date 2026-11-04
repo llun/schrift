@@ -489,29 +489,27 @@ final class DocumentCollaborationManager {
     ///
     /// Only the cleanup update is broadcast here: `.remote` is the peer's own
     /// bytes (an echo) and `.localUser` is already broadcast by `applyLocalEdit`,
-    /// so re-sending either would double-send. The hook reads the entry fresh at
-    /// fire time (the document may have flipped to read-only, the session may have
-    /// been replaced, or the replica may have fail-safed) and never bumps
-    /// `replicaVersions`/`remoteChangeTokens`/`localEditVersions`: the cleanup is
+    /// so re-sending either would double-send. The send reads the entry fresh at
+    /// fire time and requires it to still hold *this* replica, writable and not
+    /// fail-safed: a cleanup from a replica that was destroyed (a rejected update,
+    /// teardown) or replaced is dropped, and a reader never publishes (A4). It never
+    /// bumps `replicaVersions`/`remoteChangeTokens`/`localEditVersions`: the cleanup is
     /// derived from an inbound update, not a new remote change or a local edit.
     private func makeReplica(for documentID: UUID) -> YDoc {
         let replica = YDoc(clientID: UInt(replicaClientIDProvider()), gc: true)
-        replica.onUpdate = { [weak self] update, origin in
-            guard origin == nil else { return }
-            Task { @MainActor [weak self] in
-                self?.broadcastCleanupUpdate(update, for: documentID)
+        replica.onUpdate = { [weak self, weak replica] origin, encode in
+            // nil origin is only ever the B4 cleanup: every other transact on a live
+            // replica is tagged (.remote on ingest, .localUser in BlockNoteWrite). An
+            // untagged transact added later would be published as a cleanup.
+            guard origin == nil, let update = encode() else { return }
+            Task { @MainActor [weak self, weak replica] in
+                guard let self, let replica, let entry = self.entries[documentID], entry.replica === replica,
+                    entry.canUpdate, !entry.replicaFailSafe
+                else { return }
+                await entry.session?.broadcast(update: update)
             }
         }
         return replica
-    }
-
-    /// Broadcasts one cleanup update through the entry's current session, exactly
-    /// like `applyLocalEdit`'s own broadcast. A reader must never publish (A4), so
-    /// `canUpdate` is re-read here rather than captured when the replica was built.
-    private func broadcastCleanupUpdate(_ update: Data, for documentID: UUID) {
-        guard let entry = entries[documentID], entry.canUpdate, !entry.replicaFailSafe else { return }
-        let session = entry.session
-        Task { await session?.broadcast(update: update) }
     }
 
     /// The replica's current state vector, for our own SyncStep1 handshake — a

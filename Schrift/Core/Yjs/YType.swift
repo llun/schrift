@@ -96,7 +96,8 @@ final class YArraySearchMarker {
 /// A Yjs document replica — yjs `Doc` (@455), reduced to what the struct store
 /// needs.
 ///
-/// Deliberately **not** modelled: observers/events (`ObservableV2`), subdocuments
+/// Deliberately **not** modelled: observers/events (`ObservableV2`) beyond the single
+/// `onUpdate` listener the live replica needs, subdocuments
 /// (Schrift's BlockNote schema is a single `document-store` XmlFragment with no
 /// nested docs), and undo/redo. The roadmap adds the `YDocument` facade
 /// (`applyUpdate`/`encodeStateVector`/`encodeStateAsUpdate`) in B3 on top of this.
@@ -124,22 +125,22 @@ final class YDoc {
     var lastTransactionOrigin: YTransactionOrigin?
 
     /// yjs `Doc`'s `'update'` event (@3385-3389), reduced to the one listener the
-    /// live replica needs: fired once per cleaned transaction that has content,
-    /// with the v1 update bytes and that transaction's origin.
+    /// live replica needs: fired once per cleaned transaction with that transaction's
+    /// origin and an `encode` closure returning its v1 update bytes
+    /// (`writeUpdateMessageFromTransaction`, the same `YTransactionEncoder.encodeUpdate`
+    /// the local-edit path uses), or nil when it has no content.
     ///
-    /// yjs emits from `cleanupTransactions`'s `finally` block — after gc/merge and
-    /// the client-id re-roll, before the next queued cleanup — so the bytes are
-    /// exactly `writeUpdateMessageFromTransaction`'s output (the same
-    /// `YTransactionEncoder.encodeUpdate` the local-edit path uses). This is what
-    /// makes the formatting-cleanup transaction (origin `null`) visible to a
-    /// provider, which broadcasts every update whose origin is not itself.
+    /// yjs emits from `cleanupTransactions`'s `finally` block, after gc/merge and the
+    /// client-id re-roll, before the next queued cleanup. That is what makes the
+    /// formatting-cleanup transaction (origin `null`) visible to a provider, which
+    /// broadcasts every update whose origin is not itself.
     ///
-    /// A nil hook runs nothing: no encoding, no behavior change. The hook cannot
-    /// throw, and an encode failure is swallowed rather than thrown out of
-    /// cleanup — the event is a best-effort broadcast mirror. The encoder refuses a
-    /// store holding pending structs/deletes, so such a transaction emits nothing;
-    /// the peer converges anyway, since it runs the same cleanup. Never traps.
-    var onUpdate: ((Data, YTransactionOrigin?) -> Void)?
+    /// Unlike yjs, encoding is lazy: the listener calls `encode` only for origins it
+    /// wants, so the hot paths (a whole-document sync step 2, every keystroke) pay
+    /// nothing. `encode` is valid only during the call. A nil hook runs nothing. An
+    /// encode refusal (a store holding pending structs/deletes) is swallowed as nil,
+    /// never thrown out of cleanup or trapped.
+    var onUpdate: ((_ origin: YTransactionOrigin?, _ encode: () -> Data?) -> Void)?
 
     init(clientID: UInt, gc: Bool = true) {
         self.clientID = clientID

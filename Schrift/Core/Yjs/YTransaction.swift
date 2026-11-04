@@ -298,10 +298,9 @@ extension YDoc {
             // hook runs nothing. An encode failure is swallowed, never thrown out of
             // cleanup: the event is a best-effort broadcast mirror, and a store with
             // pending structs/deletes (which the encoder refuses) emits nothing.
-            if let onUpdate = transaction.doc.onUpdate,
-                let update = try? YTransactionEncoder.encodeUpdate(transaction, duringCleanup: true)
-            {
-                onUpdate(update, transaction.origin)
+            // The listener encodes lazily, so origins it ignores cost nothing.
+            if let onUpdate = transaction.doc.onUpdate {
+                onUpdate(transaction.origin) { try? YTransactionEncoder.encodeUpdate(transaction, duringCleanup: true) }
             }
 
             if transactionCleanups.count <= i + 1 {

@@ -399,8 +399,9 @@ one and adds the outbound write path on top of it.
   yjs emits `'update'` for every transaction with content, including the second, local
   transaction `cleanupTransactions` opens with origin `null` when a remote update touches
   a formatted text (B4), and a provider broadcasts every update whose origin is not
-  itself. `YDoc.onUpdate` mirrors that event (`YTransactionEncoder.encodeUpdate(...,
-  duringCleanup: true)` at the yjs emit point, @3385-3389); the manager wires it per
+  itself. `YDoc.onUpdate` mirrors that event at the yjs emit point (@3385-3389), with
+  the origin and a lazy `encode` (`YTransactionEncoder.encodeUpdate(..., duringCleanup:
+  true)`) so ignored origins are never encoded; the manager wires it per
   replica and sends origin-`nil` updates through the entry's session exactly like
   `applyLocalEdit`. `.remote` is an echo and `.localUser` is already broadcast by
   `applyLocalEdit`, so neither is re-sent; a reader (`canUpdate == false`) never
