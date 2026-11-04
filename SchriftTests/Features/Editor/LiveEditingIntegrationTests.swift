@@ -622,26 +622,6 @@ final class LiveEditingIntegrationTests: XCTestCase {
         withExtendedLifetime(bridge) {}
     }
 
-    /// Regression for the C2c stale-`lastAppliedBlocks` race — the write path's one
-    /// genuine correctness hazard. `applyReplicaUpdate` integrates a remote update and
-    /// bumps `replicaVersion` in a single main-actor turn, but the read-apply that
-    /// re-syncs the bridge's write baseline used to be *deferred* to a later turn
-    /// (SwiftUI `.onChange(of: replicaVersion)`). A keystroke landing in that gap
-    /// forwarded a local edit diffed against the *pre-update* projection, and
-    /// `BlockNoteWrite.applyEdit` maps each `old[index].id` to the replica's live
-    /// container **by position** — so after a structural remote change (here: a block
-    /// removed, shifting the one the user edits from index 2 to index 1) the edit is
-    /// mis-positioned, corrupting the very replica peers receive the broadcast from.
-    ///
-    /// The fix makes the read-apply synchronous with the integrate: the manager fires
-    /// the bridge's registered observer in the same turn it bumps the version, so by the
-    /// time any keystroke runs, the editor and `lastAppliedBlocks` already reflect the
-    /// remote change. This test drives the **real** stack and deliberately does NOT call
-    /// `bridge.replicaDidChange()` after delivering the remote update — that manual call
-    /// stands in for the *deferred* `.onChange` the other tests model, and withholding it
-    /// leaves the synchronous observer the fix adds as the only thing that can re-sync the
-    /// baseline before the keystroke. Against the pre-fix code both assertions fail: the
-    /// editor never merges the remote remove, and the shared replica ends up corrupt.
     func testReaderBridgeAppliesContentButNeverHandlesAnEditLive() async throws {
         let (viewModel, _, _) = makeEnvironment()
         await viewModel.load()
@@ -668,6 +648,26 @@ final class LiveEditingIntegrationTests: XCTestCase {
         XCTAssertNil(manager.encodeSnapshotForSave(for: documentID))
     }
 
+    /// Regression for the C2c stale-`lastAppliedBlocks` race — the write path's one
+    /// genuine correctness hazard. `applyReplicaUpdate` integrates a remote update and
+    /// bumps `replicaVersion` in a single main-actor turn, but the read-apply that
+    /// re-syncs the bridge's write baseline used to be *deferred* to a later turn
+    /// (SwiftUI `.onChange(of: replicaVersion)`). A keystroke landing in that gap
+    /// forwarded a local edit diffed against the *pre-update* projection, and
+    /// `BlockNoteWrite.applyEdit` maps each `old[index].id` to the replica's live
+    /// container **by position** — so after a structural remote change (here: a block
+    /// removed, shifting the one the user edits from index 2 to index 1) the edit is
+    /// mis-positioned, corrupting the very replica peers receive the broadcast from.
+    ///
+    /// The fix makes the read-apply synchronous with the integrate: the manager fires
+    /// the bridge's registered observer in the same turn it bumps the version, so by the
+    /// time any keystroke runs, the editor and `lastAppliedBlocks` already reflect the
+    /// remote change. This test drives the **real** stack and deliberately does NOT call
+    /// `bridge.replicaDidChange()` after delivering the remote update — that manual call
+    /// stands in for the *deferred* `.onChange` the other tests model, and withholding it
+    /// leaves the synchronous observer the fix adds as the only thing that can re-sync the
+    /// baseline before the keystroke. Against the pre-fix code both assertions fail: the
+    /// editor never merges the remote remove, and the shared replica ends up corrupt.
     func testLocalForwardAfterRemoteUpdateForwardsAgainstTheMergedReplicaNotAStaleBaseline() async throws {
         let (viewModel, _, _) = makeEnvironment()
         await viewModel.load()

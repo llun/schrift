@@ -8,7 +8,8 @@ import Foundation
 /// It joins the selected collaboration room, sends SyncStep1 with the state vector the
 /// manager supplies (`initialSyncStep1` — the real replica's state once one
 /// exists, else the signal-only one-byte empty vector), answers a peer's own
-/// SyncStep1 with a SyncStep2 diff the manager computes (`onStateRequest`), and
+/// SyncStep1 with a SyncStep2 diff the manager computes (`onStateRequest`; nil for a
+/// reader, which sends nothing), and
 /// signals initial sync completion (`onInitialSync`) on the first inbound
 /// SyncStep2. Inbound sync bytes (`.step2`/`.update`) are handed to the manager
 /// via `onSyncUpdate`, and `broadcast(update:)` sends the manager's own local
@@ -57,8 +58,8 @@ final class DocumentCollaborationSession {
     /// A fresh random client id for this session — never persisted (reuse risks
     /// duplicate ids = silent corruption), 32-bit to match yjs's clientID range.
     private let clientID: UInt
-    /// Our awareness state (`{name, color}`) broadcast to peers, or nil to join
-    /// as an observer without announcing presence.
+    /// Our awareness state (name and color: flat on Hocuspocus, nested under `user` on
+    /// y-websocket) broadcast to peers, or nil to join as an observer (always for a reader).
     private let localState: LocalAwarenessState?
     /// Fired on the main actor when a peer's change signal (a sync update)
     /// arrives. Signal-only: the payload is not applied, only noted.
