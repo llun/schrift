@@ -137,7 +137,7 @@ final class YWriteTests: XCTestCase {
         try doc.transact { tx in try YWrite.insert(tx, into: root, at: 0, [.string(Array("abcdef".utf16))]) }
         do {
             // Delete starting at the very end for more units than remain — the range
-            // runs past the child list, which yjs (`typeListDelete` @5573) rejects.
+            // runs past the child list, which yjs (`typeListDelete` @5576) rejects.
             try doc.transact { tx in try YWrite.delete(tx, from: root, at: 6, length: 5) }
             XCTFail("expected a delete past the end to throw")
         } catch let error as YIntegrationError {

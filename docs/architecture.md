@@ -158,7 +158,7 @@ whenever an integrated item resolves to no parent (a neighbour was collected), a
 | `Lib0Decoder` / `Lib0Encoder` | lib0 binary primitives (varint, varString, `any`), shared with the collaboration wire codecs |
 | `YUpdateDecoder` / `YUpdateReencoder` | the v1 wire model — decodes updates, delete sets, and state vectors, and re-encodes them **byte-identically** |
 | `YStateEncoder` | the **store** encode side (B3): `encodeStateAsUpdate(doc, since:)` (full snapshot / diff against a state vector) and `encodeStateVector(doc)`, byte-identical to yjs's `writeClientsStructs`/`writeStructs`/`Item.write`. Derives each item's wire info byte from the live item (never `YItem.info`); writes clients **descending** everywhere; reuses `YUpdateReencoder`'s delete-set/state-vector writers. **Throws** while `pendingStructs`/`pendingDs` are non-nil — yjs folds pending state in, but a pending replica must never be snapshotted (see "Pending structs and delete sets") |
-| `YTransactionEncoder` | the **transaction** encode side (A3): `encodeUpdate(transaction)` transliterates yjs 13.6.31 `writeUpdateMessageFromTransaction` (@3163) / `writeStructsFromTransaction` (@1674). Reuses the state encoder's struct writer and descending delete-set writer, but sends only this transaction's deletes, avoiding a whole-store tombstone scan per edit. Returns nil for no change; refuses pending state or active transactions/cleanup. Capture `tx` via the existing `transact` return and encode immediately after the outermost call succeeds, after `afterState`, gc and merging, before any further edit. `duringCleanup: true` is the one exception, used only by `YDoc.onUpdate` (yjs emits `'update'` from inside `cleanupTransactions`, @3385-3389). Use `YStateEncoder` for snapshots and peer state-vector replies (whole delete set) |
+| `YTransactionEncoder` | the **transaction** encode side (A3): `encodeUpdate(transaction)` transliterates yjs 13.6.33 `writeUpdateMessageFromTransaction` (@3163) / `writeStructsFromTransaction` (@1674). Reuses the state encoder's struct writer and descending delete-set writer, but sends only this transaction's deletes, avoiding a whole-store tombstone scan per edit. Returns nil for no change; refuses pending state or active transactions/cleanup. Capture `tx` via the existing `transact` return and encode immediately after the outermost call succeeds, after `afterState`, gc and merging, before any further edit. `duringCleanup: true` is the one exception, used only by `YDoc.onUpdate` (yjs emits `'update'` from inside `cleanupTransactions`, @3388-3392). Use `YStateEncoder` for snapshots and peer state-vector replies (whole delete set) |
 | `YContent` | the live, mutable content model (splice, merge) |
 | `YStruct` / `YItem` / `YGC` / `YSkip`, `YType`, `YDoc` | the document graph |
 | `YStructStore` | structs per client, binary search, splits |
@@ -399,7 +399,7 @@ one and adds the outbound write path on top of it.
   yjs emits `'update'` for every transaction with content, including the second, local
   transaction `cleanupTransactions` opens with origin `null` when a remote update touches
   a formatted text (B4), and a provider broadcasts every update whose origin is not
-  itself. `YDoc.onUpdate` mirrors that event at the yjs emit point (@3385-3389), with
+  itself. `YDoc.onUpdate` mirrors that event at the yjs emit point (@3388-3392), with
   the origin and a lazy `encode` (`YTransactionEncoder.encodeUpdate(..., duringCleanup:
   true)`) so ignored origins are never encoded; the manager wires it per
   replica and sends origin-`nil` updates through the entry's session, re-reading the
@@ -737,9 +737,10 @@ mistake:
 
 ### Transliterated, not reinterpreted
 
-The store is a deliberately literal transliteration of **yjs 13.6.31** (the version
-the docs v5.4.1 lockfile resolves). Every non-obvious branch carries the yjs
-function and line it mirrors. This is not stylistic: the output of this code
+The store is a deliberately literal transliteration of **yjs 13.6.33** (the version
+the Docs 6 frontend lockfile resolves; it was 13.6.31 under docs v5.4.1). Every
+non-obvious branch carries the yjs function and its `yjs.cjs` line in 13.6.33
+numbering. This is not stylistic: the output of this code
 eventually becomes document state that real web clients render, so a "cleaner"
 rewrite that disagrees with yjs about one ordering is silent corruption. **Do not
 tidy `YItem.integrate`.** If a change seems warranted, it needs the differential
@@ -1245,9 +1246,8 @@ they touch a nested placeholder line and no other indented one.
 `BlockNoteBlock.children`, and the encoder needed no change, since a nested
 `blockGroup` of leaves is just a nested group
 (`YjsEncoderTests.testListItemLeafChildrenGoInANestedBlockGroup`, generated with
-`@blocknote/server-util@0.51.4` and yjs 13.6.33 rather than the pinned 13.6.31; that
-the patch releases share the v1 encoding is an assumption, corroborated by the
-13.6.31 goldens covering the same nested-group and media-prop paths).
+`@blocknote/server-util@0.51.4` and yjs 13.6.33, the pinned version; the 13.6.31
+goldens cover the same nested-group and media-prop paths with identical encoding).
 
 **The server's export flattens it; the block tree restores it.** BlockNote 0.51.4's
 `blocksToMarkdownLossy` prints a nested leaf at column zero after a blank line and

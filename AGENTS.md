@@ -449,7 +449,7 @@ Schrift/
 │                        (B3: encode the live store → v1 update / state vector,
 │                        byte-identical to yjs), YTextCleanup (B4: remote-change
 │                        format cleanup) — a literal transliteration of
-│                        yjs 13.6.31, gc on by default — and YBlockProjection +
+│                        yjs 13.6.33, gc on by default — and YBlockProjection +
 │                        InlineMarkdownWriter (B5: total, never-trapping read-out of
 │                        an integrated replica → BlockNote-vocabulary blocks →
 │                        editor markdown, with per-block fidelity flags); plus the
@@ -1575,9 +1575,11 @@ Separate from the from-scratch save encoder below, `Core/Yjs` holds a hand-writt
 Yjs **replica** (struct store + YATA integration) for live collaboration. Rules
 that are easy to violate and expensive to discover:
 
-- **Transliterate yjs; do not reinterpret it.** The store mirrors **yjs 13.6.31**
-  (the version docs v5.4.1 pins) line for line, with the mirrored function/line in
-  a comment. Its output becomes document state real web clients render, so a
+- **Transliterate yjs; do not reinterpret it.** The store mirrors **yjs 13.6.33**
+  (the version the Docs 6 frontend lockfile resolves) line for line, with the mirrored
+  function and its `yjs.cjs` line (`@N`, 13.6.33 numbering) in a comment. Fixtures
+  captured with 13.6.31 stay valid: the two releases share the v1 encoding and every
+  cited function body except the `cleanupTransactions` deep-observer ordering fix. Its output becomes document state real web clients render, so a
   tidier rewrite that disagrees on one ordering is silent corruption. **Never
   "clean up" `YItem.integrate`** — the YATA conflict loop is the algorithm. A
   change there needs differential-fuzz evidence *and* human sign-off.
@@ -1609,7 +1611,7 @@ that are easy to violate and expensive to discover:
   test seam for the most recently cleaned transaction.
 - **`YDoc.onUpdate` mirrors yjs's `'update'` event, and it is how the replica's own
   cleanup reaches peers.** yjs emits `'update'` from `cleanupTransactions`'s `finally`
-  block (@3385-3389) for **every** transaction with content — after gc/merge and the
+  block (@3388-3392) for **every** transaction with content — after gc/merge and the
   client-id re-roll, before the next queued cleanup — and a provider broadcasts every
   update whose origin is not itself. Schrift's hook fires at that exact point with the
   transaction's origin and a lazy `encode` closure over

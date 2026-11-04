@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Base struct
 
-/// A struct in the live store — yjs `AbstractStruct` (@8456).
+/// A struct in the live store — yjs `AbstractStruct` (@8459).
 ///
 /// A class hierarchy rather than an enum because the algorithm wires structs to
 /// one another **by identity** (`this.left.right = this`, `Set<Item>` membership,
@@ -24,7 +24,7 @@ class YStruct {
     /// yjs: `GC`/`Skip` both `return true`; `Item` reads its info bit.
     var deleted: Bool { true }
 
-    /// yjs `AbstractStruct.mergeWith` (@8484) — "does *not* remove right from
+    /// yjs `AbstractStruct.mergeWith` (@8487) — "does *not* remove right from
     /// StructStore"; the caller does that.
     func mergeWith(_ right: YStruct) -> Bool { false }
 
@@ -42,7 +42,7 @@ class YStruct {
 
 // MARK: - GC
 
-/// A garbage-collected span — yjs `GC` (@8507). Content ref 0.
+/// A garbage-collected span — yjs `GC` (@8510). Content ref 0.
 ///
 /// GCs exist in this milestone even though `YDoc.gc` is off: they arrive on the
 /// wire from peers that *do* collect, and `YItem.integrate` mints one whenever an
@@ -68,7 +68,7 @@ final class YGC: YStruct {
 
 // MARK: - Skip
 
-/// A gap the sender knows nothing about — yjs `Skip` (@10256). Content ref 10.
+/// A gap the sender knows nothing about — yjs `Skip` (@10259). Content ref 10.
 ///
 /// Skips are never integrated: the driver tests for them explicitly
 /// (`integrateStructs`: `if (stackHead.constructor !== Skip)`) and steps over
@@ -96,7 +96,7 @@ enum YItemParent {
     case id(YID)
 }
 
-/// A single YATA operation — yjs `Item` (@9775).
+/// A single YATA operation — yjs `Item` (@9778).
 final class YItem: YStruct {
     /// The item originally to the left when this was created. Immutable identity
     /// for conflict resolution — not the same as `left`.
@@ -165,14 +165,14 @@ final class YItem: YStruct {
         return nil
     }
 
-    /// yjs `get lastId` (@9822) — the id of this item's final unit.
+    /// yjs `get lastId` (@9825) — the id of this item's final unit.
     var lastId: YID {
         length == 1 ? id : YID(client: id.client, clock: id.clock + length - 1)
     }
 
     // MARK: Dependencies
 
-    /// yjs `Item.getMissing` (@9880): report the client whose update we are still
+    /// yjs `Item.getMissing` (@9883): report the client whose update we are still
     /// waiting on, or resolve `origin`/`rightOrigin`/`parent` into live references
     /// and return nil.
     ///
@@ -249,7 +249,7 @@ final class YItem: YStruct {
 
     // MARK: Integration — the YATA conflict loop
 
-    /// yjs `Item.integrate` (@9944).
+    /// yjs `Item.integrate` (@9947).
     ///
     /// **This is the algorithm.** It is transliterated line for line and must stay
     /// that way: every branch below decides where a concurrent insert lands, and a
@@ -405,7 +405,7 @@ final class YItem: YStruct {
 
     // MARK: Merging
 
-    /// yjs `Item.mergeWith` (@9827) — absorb the immediately following item.
+    /// yjs `Item.mergeWith` (@9830) — absorb the immediately following item.
     ///
     /// Every clause is load-bearing: two items merge only when they are the same
     /// client's adjacent clocks, agree on both integration points, share a delete
@@ -447,7 +447,7 @@ final class YItem: YStruct {
 
     // MARK: Deletion
 
-    /// yjs `Item.delete` (@9908) — mark deleted, shrink the parent, record the
+    /// yjs `Item.delete` (@9911) — mark deleted, shrink the parent, record the
     /// range on the transaction, and let the content tear down its sub-tree.
     ///
     /// yjs recurses through the content (`content.delete` → `ContentType.delete` →
@@ -484,7 +484,7 @@ final class YItem: YStruct {
 
     // MARK: Garbage collection
 
-    /// yjs `Item.gc(store, parentGCd)` (yjs.cjs @10159) — collect a *deleted* item.
+    /// yjs `Item.gc(store, parentGCd)` (yjs.cjs @10162) — collect a *deleted* item.
     ///
     /// `content.gc` recurses into a `ContentType`'s children (each becomes a `GC`
     /// via `parentGCd: true`). When `parentGCd`, this item is itself replaced by a

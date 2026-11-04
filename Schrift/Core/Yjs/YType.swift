@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Type
 
-/// A Yjs shared type — yjs `AbstractType` (@5045).
+/// A Yjs shared type — yjs `AbstractType` (@5048).
 ///
 /// **One class covers every type ref.** yjs subclasses `AbstractType` into
 /// `YArray`/`YMap`/`YText`/`YXmlElement`/… because each exposes a different
@@ -45,13 +45,13 @@ final class YType {
         self.typeRef = typeRef
     }
 
-    /// yjs `_integrate(y, item)` (@5155).
+    /// yjs `_integrate(y, item)` (@5158).
     func integrate(doc: YDoc, item: YItem?) {
         self.doc = doc
         self.item = item
     }
 
-    /// yjs `ContentType.delete` (@9445) — delete every child, recursively.
+    /// yjs `ContentType.delete` (@9448) — delete every child, recursively.
     ///
     /// Deleted children whose clock predates the transaction are pushed onto
     /// `mergeStructs` instead: they are already deleted so there is nothing to
@@ -78,7 +78,7 @@ final class YType {
     }
 }
 
-/// yjs `ArraySearchMarker` (@4966). Never constructed in this milestone — see
+/// yjs `ArraySearchMarker` (@4969). Never constructed in this milestone — see
 /// `YType._searchMarker`. Declared so the two call sites that consult markers can
 /// be transliterated as written rather than silently dropped.
 final class YArraySearchMarker {
@@ -124,7 +124,7 @@ final class YDoc {
     /// Test seam: origin of the most recently cleaned transaction, including nested cleanup transactions.
     var lastTransactionOrigin: YTransactionOrigin?
 
-    /// yjs `Doc`'s `'update'` event (@3385-3389), reduced to the one listener the
+    /// yjs `Doc`'s `'update'` event (@3388-3392), reduced to the one listener the
     /// live replica needs: fired once per cleaned transaction with that transaction's
     /// origin and an `encode` closure returning its v1 update bytes
     /// (`writeUpdateMessageFromTransaction`, the same `YTransactionEncoder.encodeUpdate`
@@ -161,7 +161,7 @@ final class YDoc {
         return type
     }
 
-    /// yjs `findRootTypeKey` (@5027) — the `share` key a root type is filed under.
+    /// yjs `findRootTypeKey` (@5030) — the `share` key a root type is filed under.
     /// Needed by B3's serializer; here it keeps `YType` from having to store a
     /// back-pointer that could disagree with `share`.
     func findRootTypeKey(_ type: YType) throws -> String {

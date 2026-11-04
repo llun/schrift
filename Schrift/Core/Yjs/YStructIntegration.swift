@@ -301,17 +301,17 @@ enum YStructIntegrator {
 
     /// Merge two ascending-by-clock runs of one client's stashed structs into a
     /// single ascending run, reproducing yjs `mergeUpdatesV2`'s struct writer
-    /// (@4166-4260) on decoded refs instead of re-encoded V2 bytes.
+    /// (@4169-4263) on decoded refs instead of re-encoded V2 bytes.
     ///
     /// **The rule is coverage, not content.** yjs writes the run that reaches a
     /// clock first — the lowest-clock contiguous run — and **discards a later
     /// struct whose clock range is already fully covered** by what has been
-    /// written (`curr.id.clock + curr.length <= currWrite end`, @4200). A struct
+    /// written (`curr.id.clock + curr.length <= currWrite end`, @4203). A struct
     /// that merely *extends* past the covered end is kept: the driver's `offset`
-    /// logic slices it, exactly as yjs's `sliceStruct` (@4114) would, so
+    /// logic slices it, exactly as yjs's `sliceStruct` (@4117) would, so
     /// genuinely-overlapping different-range structs still reach the driver. When
     /// two runs start at the very same clock (a true tie, which yjs's sort at
-    /// @4171-4180 breaks content-blindly), the first array element wins, and yjs's
+    /// @4174-4183 breaks content-blindly), the first array element wins, and yjs's
     /// array is always `[pending.update, restStructs.update]` — so `existing`
     /// (the stash) wins the tie.
     ///
@@ -325,7 +325,7 @@ enum YStructIntegrator {
     /// differential fuzz (seeds 7/12/140).
     ///
     /// `Skip`s are filtered out of the merge in yjs (`LazyStructReader(_,
-    /// filterSkips: true)`, @3919), so a Skip must never cover or drop a real
+    /// filterSkips: true)`, @3922), so a Skip must never cover or drop a real
     /// struct. Here they are carried through untouched on a **separate** coverage
     /// cursor from real structs (Item/GC): a Skip can only be covered by a Skip
     /// and a real struct only by a real struct. That keeps an exact-duplicate Skip
@@ -358,7 +358,7 @@ enum YStructIntegrator {
                     pickExisting = false
                 } else if let realEnd, realEnd == existingClock {
                     // Same clock: whichever real run is *continuing* (its last write
-                    // ends exactly here) keeps writing; yjs @4200 consumes the other.
+                    // ends exactly here) keeps writing; yjs @4203 consumes the other.
                     pickExisting = lastRealFromExisting
                 } else {
                     // A genuine same-start tie: the first array element (the stash) wins.
