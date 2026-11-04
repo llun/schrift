@@ -1,0 +1,39 @@
+AGENTS.md
+  s_fc5abb89750ebc::t_38c7fbb842f318 1823-1824
+docs/architecture.md
+  s_fc5abb89750ebc::t_472cb36abc431d 1782-1783
+SchriftTests/Core/Yjs/BlockNote056ChangeBlockTypesTests.swift
+  s_fc5abb89750ebc::t_d32cda2ab793c7 1-50
+SchriftTests/Core/Yjs/BlockNote056MergeParagraphsTests.swift
+  s_fc5abb89750ebc::t_4aee85c935a1ec 1-41
+SchriftTests/Core/Yjs/BlockNote056MixedInlineEditTests.swift
+  s_fc5abb89750ebc::t_efee14596d10c5 1-41
+SchriftTests/Core/Yjs/BlockNote056SinkBulletTests.swift
+  s_fc5abb89750ebc::t_83e11d74418e27 1-42
+SchriftTests/Core/Yjs/BlockNote056SplitParagraphTests.swift
+  s_fc5abb89750ebc::t_af07644aadb25a 1-42
+SchriftTests/Core/Yjs/BlockNote056TableOperationsTests.swift
+  s_fc5abb89750ebc::t_c1dcb668b80237 1-73
+SchriftTests/Core/Yjs/BlockNote056ToggleBoldOnOffTests.swift
+  s_fc5abb89750ebc::t_58af6fe58d9cb4 1-48
+SchriftTests/Core/Yjs/BlockNote056TypingMarksLinkColorTests.swift
+  s_fc5abb89750ebc::t_10f2a1ca0de086 1-64
+SchriftTests/Support/YXMLString.swift
+  s_fc5abb89750ebc::t_47e1aa9685ad7b 1-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "60287867eedceb65cca986ee4638592fe0613ff7",
+  "prompts": {},
+  "sessions": {
+    "s_fc5abb89750ebc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1a8f2-ad0b-72c2-a0dd-346abce7a418",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
