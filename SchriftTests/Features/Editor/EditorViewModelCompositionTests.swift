@@ -298,7 +298,8 @@ final class EditorViewModelCompositionTests: EditorViewModelTestCase {
         await waitUntil {
             log.count(ofMethod: "PATCH", urlContaining: "/content/") > contentSavesBeforeEdit
         }
-        XCTAssertEqual(coordinator.storedDraft(documentID: documentID)?.markdown.contains("Alpha!"), true)
+        // Losing focus settles the composition, so the autosave publishes the held characters.
+        XCTAssertEqual(coordinator.storedDraft(documentID: documentID)?.markdown.contains("Alpha!に"), true)
     }
 
     // MARK: - Peers
