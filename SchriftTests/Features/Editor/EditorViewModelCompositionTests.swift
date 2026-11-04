@@ -330,17 +330,49 @@ final class EditorViewModelCompositionTests: EditorViewModelTestCase {
     }
 
     func testRebasedCompositionText() {
-        XCTAssertEqual(rebasedCompositionText(original: "abc", committed: "ab日c", onto: "Xabc"), "Xab日c")
-        XCTAssertEqual(rebasedCompositionText(original: "abc", committed: "abc日", onto: "abcY"), "abc日Y")
-        XCTAssertEqual(rebasedCompositionText(original: "abc", committed: "aXc", onto: "1abc2"), "1aXc2")
-        XCTAssertEqual(rebasedCompositionText(original: "abc", committed: "abc", onto: "Xabc"), "Xabc")
-        XCTAssertNil(rebasedCompositionText(original: "abc", committed: "ab日c", onto: "ac"), "touched")
-        XCTAssertNil(rebasedCompositionText(original: "abc", committed: "ab日c", onto: ""), "deleted")
-        XCTAssertNil(rebasedCompositionText(original: "ab", committed: "ab日", onto: "abab"), "ambiguous")
-        XCTAssertNil(rebasedCompositionText(original: "", committed: "日", onto: "x"), "nothing to anchor on")
+        func rebase(_ original: String, _ committed: String, onto peer: String) -> (text: String, caret: Int)? {
+            rebasedCompositionText(
+                original: original, committed: committed, caret: committed.utf16.count, onto: peer)
+        }
+        // The original sits once in the peer's text: the edit lands there, the caret moves with it.
+        XCTAssertEqual(rebase("abc", "ab日c", onto: "Xabc")?.text, "Xab日c")
+        XCTAssertEqual(rebase("abc", "abc日", onto: "abcY")?.text, "abc日Y")
+        XCTAssertEqual(rebase("abc", "aXc", onto: "1abc2")?.text, "1aXc2")
+        XCTAssertEqual(rebase("abc", "abc", onto: "Xabc")?.text, "Xabc")
+        XCTAssertEqual(rebase("abc", "abc日", onto: "**abc**")?.text, "**abc日**")
+        XCTAssertEqual(rebase("abc", "abc日", onto: "**abc**")?.caret, 6, "inside the wrapper")
         XCTAssertEqual(
-            rebasedCompositionText(original: "e\u{301}a", committed: "e\u{301}a日", onto: "Xe\u{301}a"),
-            "Xe\u{301}a日", "graphemes are kept whole")
+            rebasedCompositionText(original: "abc", committed: "abc日", caret: 2, onto: "**abc**")?.caret, 4)
+        XCTAssertEqual(
+            rebase("e\u{301}a", "e\u{301}a日", onto: "Xe\u{301}a")?.text, "Xe\u{301}a日", "graphemes are kept whole")
+        // Nothing to anchor on: the peer deleted or edited inside the original.
+        XCTAssertNil(rebase("abc", "ab日c", onto: "ac"))
+        XCTAssertNil(rebase("abc", "ab日c", onto: ""))
+        // An empty original: the peer typed into the line meanwhile. Both stay, peer first.
+        XCTAssertEqual(rebase("", "日", onto: "hi")?.text, "hi日")
+        XCTAssertEqual(rebase("", "日", onto: "hi")?.caret, 3)
+        // An ambiguous original: the peer's text, then what the user inserted, after a space.
+        XCTAssertEqual(rebase("ab", "ab日", onto: "abab")?.text, "abab 日")
+        XCTAssertEqual(rebase("ab", "ab日", onto: "abab")?.caret, 6)
+        XCTAssertEqual(rebase("a ", "a 日", onto: "a a ")?.text, "a a 日", "no second space")
+        XCTAssertEqual(rebase("ab", "ab", onto: "abab")?.text, "abab", "nothing inserted, nothing added")
+    }
+
+    /// The caret stays inside the user's text when the peer edited on both sides of it.
+    func testTheCaretStaysInsideTheUsersTextWhenAPeerWrapsIt() async {
+        let live = CompositionLiveWriteSpy()
+        live.handleLive = true
+        let (viewModel, _, blockID) = await makeEditingEnvironment(live: live, log: RequestRecorder())
+        compose("Alphaに", marked: true, in: blockID, of: viewModel)
+        viewModel.applyLiveRemoteChange(
+            LiveChangeSet(changes: [.update(id: blockID, kind: .paragraph, text: "**Alpha**")]),
+            projectedMarkdown: "**Alpha**")
+
+        compose("Alpha日", marked: false, in: blockID, of: viewModel)
+
+        XCTAssertEqual(viewModel.blocks[0].text, "**Alpha日**")
+        XCTAssertEqual(viewModel.selection, NSRange(location: 8, length: 0), "after 日, before the closing **")
+        XCTAssertEqual(viewModel.cursorRequest?.offset, 8)
     }
 
     // MARK: - Focus

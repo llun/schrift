@@ -2226,22 +2226,24 @@ final class EditorViewModel {
     }
 
     /// A peer edited the block while its composition was held (`held.text` is theirs, and what the
-    /// replica holds). The user's edit is one splice from `held.original` to the committed text;
-    /// applying it to the peer's text keeps both, so the bridge forwards peer text -> merged text
-    /// from the baseline the replica really has. When the peer's change touched the text the splice
-    /// is measured against (`rebasedCompositionText` finds no single place for it) the committed
-    /// text stands: it overwrites the peer's text, consistently from that baseline.
+    /// replica holds). The user's edit is merged into the peer's text (`rebasedCompositionText`
+    /// says how, and where the caret lands), so the bridge forwards peer text -> merged text from
+    /// the baseline the replica really has. Only when the peer deleted or edited inside the text
+    /// the edit was made to (`nil`) does the committed text stand: it overwrites the peer's text,
+    /// consistently from that baseline.
     private func rebaseComposition(_ held: (id: UUID, text: String, original: String)) {
         guard held.text != held.original, let index = blockIndex(held.id) else { return }
         let committed = blocks[index].text
-        guard let merged = rebasedCompositionText(original: held.original, committed: committed, onto: held.text),
-            merged != committed
+        let caret = selection?.location ?? (committed as NSString).length
+        guard
+            let merged = rebasedCompositionText(
+                original: held.original, committed: committed, caret: caret, onto: held.text),
+            merged.text != committed
         else { return }
-        blocks[index].text = merged
+        blocks[index].text = merged.text
         if focusedBlockID == held.id {
-            let caret = transformedCaret(old: committed, new: merged, caret: selection?.location ?? 0)
-            cursorRequest = CursorRequest(blockID: held.id, offset: caret)
-            selection = NSRange(location: caret, length: 0)
+            cursorRequest = CursorRequest(blockID: held.id, offset: merged.caret)
+            selection = NSRange(location: merged.caret, length: 0)
         }
     }
 

@@ -3946,12 +3946,16 @@ markdown write endpoint**. Understand this before touching the save path:
     characters (`applyLiveRemoteChange`). The replica now holds the peer's text, so
     that becomes the held base (`compositionBaseText.text`; `publishableBlocks` and the
     bridge's `lastAppliedBlocks` then match the replica) while `original` keeps the
-    text the composition began from. At the commit `rebaseComposition` applies the
-    user's edit, one splice `original` -> committed (`rebasedCompositionText`), to the
-    peer's text when `original` still sits whole and unambiguously inside it, and
-    writes the merge to the model before publishing, so the bridge forwards peer text
-    -> merge. Otherwise the committed text overwrites the peer's, consistently from the
-    peer baseline. Never diff a composing block against a stale base: `applyEdit`
+    text the composition began from. At the commit `rebaseComposition` merges the
+    user's edit into the peer's text (`rebasedCompositionText`) and writes the merge to
+    the model before publishing, so the bridge forwards peer text -> merge. Where `original`
+    sits whole and once in the peer's text (a peer insert before, after or around it, such
+    as `**…**`), the committed text replaces that occurrence and the caret moves by its
+    offset. If `original` is empty, the peer's text then the committed text. If it occurs
+    more than once, the peer's text then the characters the user inserted, after one space
+    unless the join already has whitespace. Only when the peer deleted or edited inside
+    `original` does the committed text overwrite the peer's, consistently from the peer
+    baseline. Never diff a composing block against a stale base: `applyEdit`
     splices at base-relative offsets, and a shorter replica text throws and tears the
     session down.
   - A composition whose block lost focus without an unmark is also settled by the next

@@ -451,34 +451,54 @@ func detachingUnnestableBlocks(_ ids: Set<UUID>, in blocks: [EditorBlock]) -> [E
     return result
 }
 
-/// A user's edit measured against `original` (the one splice from `original` to `committed`:
-/// their common prefix and suffix are kept, the middle replaced), applied to `peer`, a text
-/// another author changed `original` into meanwhile. Merges both when `original` still sits whole
-/// and unambiguously inside `peer` (a peer insert before, after or around it); `nil` when it does
-/// not (the peer touched inside it, or deleted it, or it occurs more than once, or it is empty),
-/// where the caller keeps `committed`. Compared by `Character`, so no grapheme is split.
-func rebasedCompositionText(original: String, committed: String, onto peer: String) -> String? {
+/// A user's edit to `original` (it became `committed`, with the caret at UTF-16 offset `caret`
+/// in it) applied to `peer`, a text another author changed `original` into meanwhile. Returns the
+/// merged text and the caret in it, or `nil` where the caller keeps `committed` (it overwrites the
+/// peer's text): the peer deleted or edited inside `original`, so there is nothing to anchor on.
+/// Compared by `Character`, so no grapheme is split. The rules never drop a character the peer
+/// wrote unless the last case applies:
+/// - `original` sits whole, once, inside `peer` (a peer insert before, after or around it, such
+///   as wrapping it in `**…**`): `committed` replaces that occurrence, so the peer's text on both
+///   sides stays and the caret moves by the offset the occurrence starts at.
+/// - `original` is empty (composing on an empty line a peer typed into): the peer's text, then
+///   `committed`.
+/// - `original` occurs more than once (the place is ambiguous): the peer's text, then the
+///   characters the user inserted (`committed` minus the prefix and suffix it shares with
+///   `original`), after one space unless either side is empty or already has whitespace at the
+///   join. The caret ends up after them.
+func rebasedCompositionText(
+    original: String, committed: String, caret: Int, onto peer: String
+) -> (text: String, caret: Int)? {
     let old = Array(original)
     let new = Array(committed)
     let target = Array(peer)
-    guard !old.isEmpty, target.count >= old.count else { return nil }
-    let shortest = min(old.count, new.count)
-    var prefix = 0
-    while prefix < shortest, old[prefix] == new[prefix] { prefix += 1 }
-    var suffix = 0
-    while suffix < shortest - prefix, old[old.count - 1 - suffix] == new[new.count - 1 - suffix] { suffix += 1 }
-    var anchor: Int?
+    let userCaret = min(max(0, caret), committed.utf16.count)
+    guard !old.isEmpty else { return (text: peer + committed, caret: peer.utf16.count + userCaret) }
+    guard target.count >= old.count else { return nil }
+    var anchors: [Int] = []
     for start in 0...(target.count - old.count) where target[start..<(start + old.count)].elementsEqual(old) {
-        if anchor != nil { return nil }
-        anchor = start
+        anchors.append(start)
     }
-    guard let anchor else { return nil }
-    let spliceStart = anchor + prefix
-    let spliceEnd = anchor + old.count - suffix
-    var merged = String(target[..<spliceStart])
-    merged += String(new[prefix..<(new.count - suffix)])
-    merged += String(target[spliceEnd...])
-    return merged
+    switch anchors.count {
+    case 0:
+        return nil
+    case 1:
+        let anchor = anchors[0]
+        let before = String(target[..<anchor])
+        let after = String(target[(anchor + old.count)...])
+        return (text: before + committed + after, caret: before.utf16.count + userCaret)
+    default:
+        let shortest = min(old.count, new.count)
+        var prefix = 0
+        while prefix < shortest, old[prefix] == new[prefix] { prefix += 1 }
+        var suffix = 0
+        while suffix < shortest - prefix, old[old.count - 1 - suffix] == new[new.count - 1 - suffix] { suffix += 1 }
+        let inserted = String(new[prefix..<(new.count - suffix)])
+        let needsSpace =
+            !inserted.isEmpty && target.last.map { !$0.isWhitespace } == true && inserted.first?.isWhitespace == false
+        let merged = peer + (needsSpace ? " " : "") + inserted
+        return (text: merged, caret: merged.utf16.count)
+    }
 }
 
 /// Whether a block's text is read as inline markdown — styled while editing,

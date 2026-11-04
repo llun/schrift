@@ -93,7 +93,8 @@ private final class SocketFactorySpy: @unchecked Sendable {
 /// const p2 = makeContainer(P2_ID, "paragraph", "Second");
 /// blockGroup.insert(0, [h.container, p1.container, p2.container]);
 ///
-/// console.log("INITIAL", hex(Y.encodeStateAsUpdate(doc, sv0)));
+/// const initialUpdate = Y.encodeStateAsUpdate(doc, sv0);
+/// console.log("INITIAL", hex(initialUpdate));
 /// const sv1 = Y.encodeStateVector(doc);
 ///
 /// p1.xmlText.delete(0, p1.xmlText.length);
@@ -225,7 +226,8 @@ final class LiveEditingIntegrationTests: XCTestCase {
     private let removeFirstParagraphHex = "000101010d0c"
 
     /// Real yjs@13.6.31 deltas against `initialHex`, from a second client (id 2) editing "First"
-    /// (the first paragraph's `Y.XmlText`). Regeneration, appended to the script above:
+    /// (the first paragraph's `Y.XmlText`). Regeneration, appended to the script above (which keeps
+    /// `initialUpdate`; `Buffer.from(initialHex, "hex")` is the same bytes):
     /// ```js
     /// const peer = new Y.Doc(); peer.clientID = 2; Y.applyUpdate(peer, initialUpdate);
     /// const sv = Y.encodeStateVector(peer);
