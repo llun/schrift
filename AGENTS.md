@@ -3244,26 +3244,34 @@ markdown write endpoint**. Understand this before touching the save path:
   coordinator carries the **projected markdown** as the `PendingSave.markdown` / draft body /
   `lastConfirmedPushMarkdown` stamp, so `finish`, the enqueue-hold, latest-wins coalescing,
   `draftSyncDecision`, and the content cache are all **reused unchanged** — the only branch is
-  in `start` (non-nil `PendingSave.liveSnapshot` ⇒ `saveLiveSnapshot`). **Drafts may also
-  carry the replica bytes — approved 2026-11-04, not implemented yet.** Today the persisted
+  in `start` (non-nil `PendingSave.liveSnapshot` ⇒ `saveLiveSnapshot`). Today the persisted
   `PendingDraft` carries only `projectedMarkdown`, never the snapshot bytes, so a
-  transiently-failed live save that `syncPendingDrafts` later replays goes through the
-  classic `enqueue`/`saveDocumentContent` path — re-encoding the same rendered markdown via
-  `MarkdownYjs.encode` rather than resending the original CRDT bytes. Content is preserved
-  (same markdown) and the replay is still conflict-checked like any other, but CRDT history
-  for that one save is flattened; **that flattening is no longer a rule to preserve**.
-  Persisting the raw replica bytes in the draft is approved and is the planned direction
-  (lossless offline rich edits), and it carries three constraints. The new field must stay
-  **Optional-on-decode** until `PendingDraftStore` quarantine lands — the standing rule is
-  the on-device create bullet's ("every field added to `PendingDraft`/`DraftBaseline` must
-  stay Optional-on-decode"), because a non-optional addition gates the replay on every
-  existing device and then un-gates it destructively on the first keystroke. The bytes are
-  document content, so they take the content cache's privacy rules (never logged, scoped to
-  the account whose session wrote them) while following the draft's **existing** backup and
-  sign-out policy rather than the cache's: `PendingDraftStore` is backup-included and retained
-  on sign-out. And **the replay must resend those bytes, not flatten** — once a draft carries
-  them, `syncPendingDrafts` resending markdown would reintroduce exactly the history loss this
-  removes. **C2c wires this in** (below); never bypass the coordinator to persist a live edit.
+  transiently-failed live save that `syncPendingDrafts` later replays goes through the classic
+  `enqueue`/`saveDocumentContent` path, which re-derives the bytes from the markdown
+  (`MarkdownYjs.encode` on the legacy route, a `BlockNoteIncrementalSave` diff against the
+  server's state on Docs 6). Content is preserved and the replay is still conflict-checked like
+  any other, but CRDT history for that one save is flattened. C2c wires this live-snapshot save
+  into the editor (below); never bypass the coordinator to persist a live edit.
+- **Drafts will carry the replica bytes — approved 2026-11-04, not implemented yet.** The
+  markdown-only draft above is today's behaviour, **no longer a rule to preserve**: persisting
+  the raw Yjs replica bytes in `PendingDraft` is the planned direction (lossless offline rich
+  edits). This bullet is the one place its constraints live (`docs/architecture.md` and
+  `docs/offline-and-sync.md` only point here):
+  - The field stays **Optional-on-decode** until `PendingDraftStore` quarantine lands — the
+    standing rule in the on-device create bullet ("every field added to
+    `PendingDraft`/`DraftBaseline` must stay Optional-on-decode").
+  - The draft **keeps `markdown`** beside the bytes: `draftSyncDecision` compares canonical
+    markdown, and the classic paths still need a body.
+  - The bytes are resent **only while the draft's markdown is exactly their projection**.
+    `enqueue` rebuilds the whole draft (the same trap as the conflict-stamp carry rule), and
+    `runSyncPass`'s `.push` replay and `commitResolvedAttachment` rebuild a save classic — every
+    such rewrite must update the bytes or drop them, never resend stale bytes over newer
+    keystrokes.
+  - The bytes are document content: **never logged**, and they follow the draft's existing
+    store policy — backup-included and **retained on sign-out**, never purged with the content
+    cache. `PendingDraft` has no owner field today; if replay must be limited to the account
+    that wrote the bytes, that needs an owner stamp and a replay gate like the create records'
+    `isReplayable`, not a sign-out purge.
 - **C2c wires the write path into the editor, behind the same weak-delegate seam C1 used
   for reads.** `EditorLiveWriteCoordinating` (`forwardLocalEdit() -> Bool`,
   `flushPendingLiveSnapshot()`) is implemented by `LiveEditingBridge` and held as `weak var

@@ -973,14 +973,9 @@ server is about to hold.
   PATCH is sent, and the editor either stays read-live (never engaging writes) or its
   next keystroke downgrades to a classic autosave of the on-screen content. The server
   document is never overwritten from a half-synced or lossy replica. **Revised 2026-11-04:**
-  the draft carrying only projected markdown, so a failed live snapshot replays as a classic
-  markdown save, is today's behaviour and no longer a rule to preserve. Persisting the raw
-  replica bytes in the draft is approved and is the planned direction (lossless offline rich
-  edits). Any such field must stay Optional-on-decode until `PendingDraftStore` quarantine
-  lands (see the "`PendingDraftStore` still has no quarantine" bullet below), the bytes
-  follow the content cache's privacy rules (never logged, account-scoped) while keeping the
-  draft's existing backup-included, sign-out-retained policy, and the replay must resend those
-  bytes rather than flattening CRDT history once a draft carries them.
+  a failed live snapshot replaying as a classic markdown save is today's behaviour, no longer a
+  rule to preserve; persisting the raw replica bytes in the draft is approved and planned. Its
+  constraints live in `AGENTS.md` ("Drafts will carry the replica bytes").
 
 ### 4. UI changes in `EditorView`
 
