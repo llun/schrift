@@ -1,0 +1,69 @@
+Schrift/Core/Collaboration/CollaborationEndpoint.swift
+  s_676d7820c97ec7::t_a3767c9ff0f916 35-36
+  s_676d7820c97ec7::t_9d4eccbdbf771c 3,21,31-34,37,64-69
+  s_676d7820c97ec7::t_cbb8f9b4f86418 11-13
+Schrift/Core/Networking/ServerConfigEndpoints.swift
+  s_676d7820c97ec7::t_9d4eccbdbf771c 23-25,27-28,31-33
+  s_676d7820c97ec7::t_721fb16796fc6b 51
+  s_676d7820c97ec7::t_cbb8f9b4f86418 49
+  s_676d7820c97ec7::t_85b374c8cd7f5d 34
+Schrift/Core/Collaboration/DocumentCollaborationSession.swift
+  s_676d7820c97ec7::t_9d4eccbdbf771c 55-56,97-98,108-110,127,143,171,200-201,239-240,242-249
+  s_676d7820c97ec7::t_99853fbc8bac70 8,17-19
+Schrift/Core/Collaboration/CollaborationWireProtocol.swift
+  s_676d7820c97ec7::t_9d4eccbdbf771c 1-30
+docs/architecture.md
+  s_676d7820c97ec7::t_99853fbc8bac70 466,648-674
+  s_676d7820c97ec7::t_cbb8f9b4f86418 467-468
+SchriftTests/Core/Collaboration/YWebSocketTests.swift
+  s_676d7820c97ec7::t_e331877561082e 173-205
+  s_676d7820c97ec7::t_9d87fde3a6e92d 1-15,18-81,89-122,126-165,171-172,206-231
+  s_676d7820c97ec7::t_a3767c9ff0f916 16-17,82-88,123-125,166-170
+AGENTS.md
+  s_676d7820c97ec7::t_99853fbc8bac70 386,3262,3387-3390,3393-3417
+  s_676d7820c97ec7::t_cbb8f9b4f86418 3263-3264
+SchriftTests/Core/Collaboration/CollaborationEndpointTests.swift
+  s_676d7820c97ec7::t_721fb16796fc6b 103-156
+Schrift/Core/Collaboration/CollaborationEvents.swift
+  s_676d7820c97ec7::t_99853fbc8bac70 31-33
+Schrift/Core/Collaboration/DocumentCollaborationManager.swift
+  s_676d7820c97ec7::t_a3767c9ff0f916 36-37,74-75,155-157,249,255-261,266,304-305,342-345,353-358,362-363,428,431,433-435,438,549-550,564
+  s_676d7820c97ec7::t_99853fbc8bac70 242,247-248,264
+SchriftTests/Features/Editor/LiveEditingIntegrationTests.swift
+  s_676d7820c97ec7::t_a3767c9ff0f916 447
+  s_676d7820c97ec7::t_721fb16796fc6b 645-670
+Schrift/Core/Networking/DocumentSave.swift
+  s_676d7820c97ec7::t_99853fbc8bac70 124
+  s_676d7820c97ec7::t_e331877561082e 125
+Schrift/Features/Editor/EditorView.swift
+  s_676d7820c97ec7::t_a3767c9ff0f916 284,404-406,1553
+Schrift/Features/Editor/LiveEditingBridge.swift
+  s_676d7820c97ec7::t_a3767c9ff0f916 26-28,225-226,232-233
+SchriftTests/Features/Editor/LiveEditingBridgeTests.swift
+  s_676d7820c97ec7::t_a3767c9ff0f916 123
+Schrift/Core/Collaboration/CollaborationTransport.swift
+  s_676d7820c97ec7::t_9d4eccbdbf771c 13-14,21-24,26-27,43,45,66
+SchriftTests/Core/Collaboration/CollaborationPresenceTests.swift
+  s_676d7820c97ec7::t_e331877561082e 33-45
+Schrift/Core/Collaboration/CollaborationPresence.swift
+  s_676d7820c97ec7::t_99853fbc8bac70 3-4
+  s_676d7820c97ec7::t_cbb8f9b4f86418 10
+  s_676d7820c97ec7::t_9d4eccbdbf771c 14-16,37,41-43,56-57
+  s_676d7820c97ec7::t_a3767c9ff0f916 61-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d624ada48630f6d9cc29a75909c7f177bd6efdd3",
+  "prompts": {},
+  "sessions": {
+    "s_676d7820c97ec7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1a67c-c4e0-7d63-9f31-036e39284223",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
