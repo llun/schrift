@@ -20,13 +20,17 @@ struct ServerConfig: Codable, Equatable, Sendable {
     /// never from this value, so a cross-origin config can't redirect the socket
     /// or leak the session cookie off-origin.
     ///
-    /// **False on a Docs 6 server.** Docs 6 replaced the Hocuspocus collaboration server
-    /// with yhub, which speaks plain y-websocket at `/collaboration/ws/v1/{org}`; the app's
-    /// collaboration layer speaks Hocuspocus and cannot join such a room, so advertising it
-    /// would only open a socket that never syncs.
+    /// **Still false on Docs 6.** The y-websocket transport exists, but its separate
+    /// capability switch remains off pending the future switch-on PR. The user
+    /// preference `schrift.liveCollaboration` cannot bypass this server gate.
     var supportsLiveCollaboration: Bool {
-        collaborationWsUrl?.isEmpty == false && !usesCollaborationYDocServer
+        collaborationWsUrl?.isEmpty == false
+            && (!usesCollaborationYDocServer || Self.yWebSocketLiveCollaborationEnabled)
     }
+
+    /// Internal release capability, deliberately not a user preference. A later
+    /// switch-on PR flips this only after end-to-end yhub/editor verification.
+    static let yWebSocketLiveCollaborationEnabled = false
 
     /// Whether this is a Docs 6+ deployment, whose document content lives in the yhub
     /// collaboration server rather than behind `documents/{id}/content/` — known from the
@@ -42,8 +46,9 @@ struct ServerConfig: Codable, Equatable, Sendable {
     /// default). Only the *org segment* is ever taken from config — never the host — and it
     /// is character-validated because it is interpolated into a request path.
     var collaborationOrg: String {
+        // Absolute anchors also reject a final newline (regex `$` accepts one).
         guard let segment = collaborationOrgPathSegment,
-            segment.range(of: #"^[A-Za-z0-9._~-]+$"#, options: .regularExpression) != nil,
+            segment.range(of: #"\A[A-Za-z0-9._~-]+\z"#, options: .regularExpression) != nil,
             segment != ".", segment != ".."
         else { return "docs" }
         return segment

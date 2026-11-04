@@ -121,8 +121,8 @@ extension DocsAPIClient {
     /// `"websocket": true`. With nothing known the legacy route is tried first and only its
     /// `.routeNotFound` falls back, learning the org from config.
     ///
-    /// Docs 6 has no live session today (`ServerConfig.supportsLiveCollaboration` remains false
-    /// until a y-websocket client lands), so its yhub route is groundwork for that client. The
+    /// Docs 6 has no live session today (`ServerConfig.yWebSocketLiveCollaborationEnabled` remains false
+    /// pending the future switch-on PR), so its yhub route remains groundwork. The
     /// PATCH carries the whole snapshot and is subject to the deployment's request-size limit.
     /// The `draftSyncDecision` rule-0/rule-1 backstop covers the unconfirmed-but-applied
     /// case exactly as it does for `saveDocumentContent`, which is why the result is **not**

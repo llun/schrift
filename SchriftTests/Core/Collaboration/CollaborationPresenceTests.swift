@@ -30,6 +30,19 @@ final class CollaborationPresenceTests: XCTestCase {
         XCTAssertFalse(json.contains("a\\/b"))
     }
 
+    func testNestedAwarenessIsProtocolSpecificAndEscapesUserName() throws {
+        let state = LocalAwarenessState(name: "A\"da\\B", color: "#123456")
+        let json = state.json(wireProtocol: .yWebSocket)
+        let peer = try XCTUnwrap(CollaborationPeer(clientID: 7, stateJSON: json, wireProtocol: .yWebSocket))
+        XCTAssertEqual(peer.name, state.name)
+        XCTAssertEqual(peer.color, state.color)
+        XCTAssertNil(CollaborationPeer(clientID: 7, stateJSON: json), "Hocuspocus keeps its flat shape")
+        XCTAssertNil(CollaborationPeer(clientID: 7, stateJSON: state.json(), wireProtocol: .yWebSocket))
+        for invalid in ["null", "{}", "{\"user\":null}", "{\"user\":{\"name\":\"\",\"color\":\"red\"}}"] {
+            XCTAssertNil(CollaborationPeer(clientID: 7, stateJSON: invalid, wireProtocol: .yWebSocket))
+        }
+    }
+
     // MARK: - CollaborationPeer parsing
 
     func testParsesAValidPeer() throws {

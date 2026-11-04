@@ -120,6 +120,7 @@ final class LiveEditingBridgeTests: XCTestCase {
     /// A scripted `LiveReplicaProviding`: no socket, no real replica — just a
     /// per-document version counter and projection the test controls directly.
     private final class FakeReplicaProvider: LiveReplicaProviding {
+        func canWriteReplica(for documentID: UUID) -> Bool { true }
         private var versions: [UUID: Int] = [:]
         private var projections: [UUID: ProjectedDocument] = [:]
 

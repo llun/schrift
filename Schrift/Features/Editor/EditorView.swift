@@ -281,6 +281,7 @@ struct EditorView: View {
     @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: EditorViewModel
     let reach: LinkReach
+    private let canUpdateLiveDocument: Bool
     let serverHost: String
     /// Origin the reading/editing surfaces gate embedded images against
     /// (`imageLoadPolicy`) — off-origin images are tap-to-load.
@@ -400,6 +401,9 @@ struct EditorView: View {
     ) {
         self.viewModel = viewModel
         self.reach = reach
+        // Both navigation surfaces pass the server Document as pinRow. Missing
+        // metadata fails closed; linkRole is not an authorization decision.
+        self.canUpdateLiveDocument = pinRow?.abilities.update == true
         self.serverHost = serverHost
         self.serverOrigin = serverOrigin
         self.linkRole = linkRole
@@ -1546,7 +1550,7 @@ struct EditorView: View {
             viewModel.liveWrite = bridge
         }
         guard !holdsCollaborationSession else { return }
-        if collaboration.session(for: viewModel.documentID) != nil {
+        if collaboration.session(for: viewModel.documentID, canUpdate: canUpdateLiveDocument) != nil {
             holdsCollaborationSession = true
             // Register the bridge's synchronous read-apply observer on every session
             // (re)acquisition, NOT once at bridge construction. The manager drops it when

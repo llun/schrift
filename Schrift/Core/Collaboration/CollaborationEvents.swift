@@ -28,9 +28,9 @@ enum CollaborationDisconnect: Equatable, Sendable {
 
 /// One event surfaced by `CollaborationTransport.start()`.
 enum CollaborationEvent: Equatable, Sendable {
-    /// A decoded inbound Hocuspocus frame. Undecodable frames are dropped by the
-    /// transport (unknown types are tolerated, never fatal), so this only ever
-    /// carries a well-formed frame.
+    /// A decoded logical frame. The transport removes the selected wire framing
+    /// (Hocuspocus document prefix or plain y-websocket type). Undecodable frames
+    /// are dropped; unknown types are tolerated, never fatal.
     case message(HocuspocusMessage)
     /// The socket ended; the stream finishes immediately after this event.
     case disconnected(CollaborationDisconnect)

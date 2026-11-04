@@ -372,7 +372,7 @@ one and adds the outbound write path on top of it.
   `.step1` through `onStateRequest`, which the manager wires to `stateReply(to:for:)`:
   decode the peer's state vector, `YStateEncoder.encodeStateAsUpdate(replica, since:)` a
   diff of everything they're missing, and send it back as a `.step2` frame. `stateReply`
-  is deliberately **ungated on `canWriteReplica`** — offering a subset of our own
+  is deliberately **ungated on replica health** (only readers, without `abilities.update`, send no reply) — offering a subset of our own
   monotonic CRDT state is always safe, even mid-sync, so the room keeps converging
   regardless; only the save-snapshot path needs the stronger gate (below). Because an
   entry's replica survives session rebuilds, `stateReply` re-offers a reconnecting peer
@@ -394,12 +394,14 @@ one and adds the outbound write path on top of it.
   would read as "a remote peer changed the document" — bumping them for our own edit
   would make something read-apply the keystroke we just made ourselves. This is
   local-echo suppression, and it is the load-bearing rule of the whole write path.
-- **One write-eligibility gate, shared by read and write.** `canWriteReplica` — a
+- **One health gate, shared by read and write.** `canProjectReplica` — a
   replica exists, its initial sync has landed, it carries no unintegrated
   `pendingStructs`/`pendingDs`, and it hasn't fail-safed — already gated
   `projectedReplica` (C1/B5); C2a reuses the identical predicate for `applyLocalEdit`
   (throws `CollaborationWriteError.notWritable`, mutating nothing, when it fails) and for
-  `encodeSnapshotForSave(for:)` (returns `nil` instead of a snapshot). A
+  `encodeSnapshotForSave(for:)` (returns `nil` instead of a snapshot); those two
+  write paths also require the document's `abilities.update` (`canWriteReplica(for:)`),
+  which projection does not. A
   `BlockNoteWrite.applyEdit` throw — a malformed replica — is handled exactly like an
   inbound decode/apply failure: the replica is destroyed, `replicaFailSafe` latches
   permanently (so this document's replica is never rebuilt or trusted again this
@@ -417,7 +419,7 @@ one and adds the outbound write path on top of it.
   than broadcasting a subtree.
 - **`encodeSnapshotForSave(for:)`** is the other half of the eventual live-snapshot save
   path: a full `YStateEncoder.encodeStateAsUpdate(replica, since: [:])` of the document
-  when `canWriteReplica` holds, `nil` otherwise ("no trustworthy snapshot"). Nothing
+  when `canWriteReplica(for:)` holds, `nil` otherwise ("no trustworthy snapshot"). Nothing
   calls it yet — the classic full-overwrite markdown-encode save is completely unchanged
   until C2c wires this in as its replacement source of truth.
 - **Verification.** Deterministic two-peer integration tests (`LiveSyncConvergenceTests`)
@@ -463,8 +465,9 @@ it succeeds, `EditorViewModel.persistLiveSnapshot` calls `enqueueLiveSnapshot` �
   to distinguish a live-collab snapshot from a REST full-overwrite. With nothing known the
   legacy route is tried first and only its `.routeNotFound` falls back, learning the org from
   config; the route is memoized once the collaboration PATCH succeeds. Docs 6 has no live
-  session today (`ServerConfig.supportsLiveCollaboration` stays false until a y-websocket client
-  lands), so this route is groundwork for that client; its PATCH carries the whole snapshot and
+  session today (`ServerConfig.yWebSocketLiveCollaborationEnabled` stays false), so the
+  y-websocket transport and this route remain switched-off groundwork. Its PATCH carries
+  the whole snapshot and
   is subject to the deployment's request-size limit. With `viaWebSocket`
   false (the default) the classic content body is byte-identical to before.
 - **`DocumentSaveCoordinator.enqueueLiveSnapshot(documentID:snapshot:projectedMarkdown:title:baseline:)`**
@@ -517,8 +520,9 @@ graceful downgrade) is wired end to end, still entirely behind the default-off
   `canEngageLiveEditing` (loaded, clean, no dirty/pending-save/draft/conflict,
   idle/saved) is necessary but not sufficient for writing: a `nil` projection already
   folds in "no replica / not initial-synced / pending structs / fail-safed" (the
-  manager only returns a projection when `canWriteReplica` holds), and on top of that
-  the write path additionally requires `projection.isFullyModeled` — a document with
+  manager only returns a projection when `canProjectReplica` holds), and on top of that
+  the write path additionally requires `canWriteReplica(for:)` (the update ability) and
+  `projection.isFullyModeled` — a document with
   any lossy or opaque block (an `.unknown` block, a prop type mismatch, …) stays
   **read**-live but never engages the write path, because such a projection can't
   round-trip back through `blockNoteBlocks(from:)` without the tracked `old` baseline
@@ -644,12 +648,33 @@ graceful downgrade) is wired end to end, still entirely behind the default-off
   forward). Every pre-existing `EditorViewModel*Tests` test passes unchanged, which is the
   standing proof that the classic path is untouched when `liveWrite` is `nil`.
 
-**Not on Docs 6.** Docs 6 replaced Hocuspocus with yhub, which speaks plain y-websocket at
-`/collaboration/ws/v1/{org}`; this layer speaks Hocuspocus and cannot join such a room.
-`ServerConfig.supportsLiveCollaboration` is therefore false for a release major ≥ 6 or a
-`…/ws/v1/{org}` collaboration URL, the manager never opens a socket there, and saves take
-the incremental collaboration-server route (see "Editing & save mechanism"). Live
-collaboration on Docs 6 waits for a y-websocket client.
+**Docs 6 transport exists, switched off (A4).** Docs 6 replaced Hocuspocus with yhub.
+`CollaborationWireProtocol(config:)` selects plain y-websocket for
+`usesCollaborationYDocServer`; all other servers retain Hocuspocus framing. The transport
+uses `varUint(type) + payload` with no document-name prefix for yhub; the same session
+handles sync step1/step2/update and awareness payloads. There is no auth message.
+Hocuspocus's `SyncReply` type 4 remains Hocuspocus-only. yhub's empty awareness keepalive
+is accepted without changing the replica or clearing known peers.
+
+`CollaborationEndpoint` builds
+`ws(s)://{API host}[:port]/collaboration/ws/v1/{org}/{lowercase document UUID}`, no trailing
+slash, with the existing explicit origin and cookie headers. Only the validated org is
+read from `COLLABORATION_WS_URL`; its host never determines the socket destination.
+Awareness for yhub reads/writes `{"user":{"name":…, "color":…}}` (cursor fields are
+ignored); the legacy Hocuspocus shape stays flat. The editor supplies the document's
+`abilities.update` from its existing metadata. Readers can receive/project updates but
+never publish awareness, broadcast local edits, produce save snapshots, or report local
+edits handled live. Replica read safety remains independent of write authorization.
+Permission and replica survive suspension; a reconnect's step2 diff includes deletions,
+even when a deletion-only edit left the state vector unchanged.
+
+**The production gate remains closed:** `ServerConfig.yWebSocketLiveCollaborationEnabled`
+is false, so `supportsLiveCollaboration` remains false on Docs 6 and the manager never
+opens its socket there. Saves continue through the incremental HTTP collaboration-server
+route. Tests alone override the manager's existing support seam to drive captured yhub
+frames and fake-socket sync/reconnect cases. A future switch-on PR must verify the real
+yhub/editor interaction end to end before flipping that internal capability; the separate
+user preference `schrift.liveCollaboration` remains default off.
 
 **C3 (shipped):** the user-facing toggle is a **Profile → Preferences → "Live
 collaboration"** switch (`ProfileScreen`, a `ProfileTrailingRow` + `Switch` exactly like

@@ -5,17 +5,19 @@ import Foundation
 /// **Pure transport/state machine — the manager owns the replica (C2a).** This
 /// class never decodes or applies a CRDT itself; it carries the real Yjs sync
 /// protocol over the wire and hands the manager everything it needs to do so.
-/// It joins the Hocuspocus room, sends SyncStep1 with the state vector the
+/// It joins the selected collaboration room, sends SyncStep1 with the state vector the
 /// manager supplies (`initialSyncStep1` — the real replica's state once one
 /// exists, else the signal-only one-byte empty vector), answers a peer's own
-/// SyncStep1 with a SyncStep2 diff the manager computes (`onStateRequest`), and
+/// SyncStep1 with a SyncStep2 diff the manager computes (`onStateRequest`; nil for a
+/// reader, which sends nothing), and
 /// signals initial sync completion (`onInitialSync`) on the first inbound
 /// SyncStep2. Inbound sync bytes (`.step2`/`.update`) are handed to the manager
 /// via `onSyncUpdate`, and `broadcast(update:)` sends the manager's own local
 /// edits (encoded upstream by B6) out to the room. `onRemoteChange` also still
 /// fires on every inbound sync frame, as a change-signal fallback independent of
-/// whether the replica integrates it. **Presence is real:** it broadcasts our
-/// `{name, color}` awareness and tracks peers' awareness into `peers`.
+/// whether the replica integrates it. Presence tracks peers' awareness into
+/// `peers`; writers announce flat `{name, color}` on Hocuspocus, nested `user`
+/// on y-websocket. Readers never announce awareness or broadcast local edits.
 /// Disconnects are classified into terminal vs. reconnect-eligible states so the
 /// manager can decide whether to retry.
 ///
@@ -51,11 +53,13 @@ final class DocumentCollaborationSession {
     /// The room UUID (lowercase v4), which is also the Hocuspocus `documentName`.
     private let documentName: String
     private let transport: CollaborationTransport
+    private let wireProtocol: CollaborationWireProtocol
+    private let canUpdate: Bool
     /// A fresh random client id for this session — never persisted (reuse risks
     /// duplicate ids = silent corruption), 32-bit to match yjs's clientID range.
     private let clientID: UInt
-    /// Our awareness state (`{name, color}`) broadcast to peers, or nil to join
-    /// as an observer without announcing presence.
+    /// Our awareness state (name and color: flat on Hocuspocus, nested under `user` on
+    /// y-websocket) broadcast to peers, or nil to join as an observer (always for a reader).
     private let localState: LocalAwarenessState?
     /// Fired on the main actor when a peer's change signal (a sync update)
     /// arrives. Signal-only: the payload is not applied, only noted.
@@ -91,6 +95,8 @@ final class DocumentCollaborationSession {
         transport: CollaborationTransport,
         clientID: UInt = UInt(UInt32.random(in: 1..<UInt32.max)),
         localState: LocalAwarenessState? = nil,
+        wireProtocol: CollaborationWireProtocol = .hocuspocus,
+        canUpdate: Bool = true,
         onRemoteChange: @escaping @MainActor () -> Void = {},
         onSyncUpdate: @escaping @MainActor (Data) -> Void = { _ in },
         initialSyncStep1: @escaping @MainActor () -> Data = { Data([0x00]) },
@@ -100,7 +106,9 @@ final class DocumentCollaborationSession {
         self.documentName = documentName
         self.transport = transport
         self.clientID = clientID
-        self.localState = localState
+        self.localState = canUpdate ? localState : nil
+        self.wireProtocol = wireProtocol
+        self.canUpdate = canUpdate
         self.onRemoteChange = onRemoteChange
         self.onSyncUpdate = onSyncUpdate
         self.initialSyncStep1 = initialSyncStep1
@@ -117,6 +125,7 @@ final class DocumentCollaborationSession {
         let documentName = self.documentName
         let clientID = self.clientID
         let localState = self.localState
+        let wireProtocol = self.wireProtocol
         let initialSyncStep1 = self.initialSyncStep1
         pumpTask = Task { [weak self] in
             let events = await transport.start()
@@ -132,7 +141,7 @@ final class DocumentCollaborationSession {
             // Announce our presence, so peers show our avatar.
             if let localState {
                 let awareness = AwarenessCodec.encodePayload([
-                    AwarenessEntry(clientID: clientID, clock: 1, stateJSON: localState.json())
+                    AwarenessEntry(clientID: clientID, clock: 1, stateJSON: localState.json(wireProtocol: wireProtocol))
                 ])
                 try? await transport.send(
                     HocuspocusMessage(documentName: documentName, type: .awareness, payload: awareness))
@@ -160,6 +169,7 @@ final class DocumentCollaborationSession {
     /// same way the handshake's is — the pump's disconnect event reclassifies
     /// the state, so there is nothing more to do here.
     func broadcast(update: Data) async {
+        guard canUpdate else { return }
         let payload = SyncMessage(step: .update, data: update).encodedPayload()
         let frame = HocuspocusMessage(documentName: documentName, type: .sync, payload: payload)
         try? await transport.send(frame)
@@ -188,6 +198,8 @@ final class DocumentCollaborationSession {
         switch event {
         case .message(let message):
             guard message.documentName == documentName else { return }
+            // Type 4 is Hocuspocus-only; it is not a y-websocket sync reply.
+            if wireProtocol == .yWebSocket && ![0, 1, 3].contains(message.type) { return }
             switch message.knownType {
             case .sync, .syncReply:
                 // A `Sync`(0) frame (a peer's own edit / SyncStep1) or a
@@ -225,8 +237,17 @@ final class DocumentCollaborationSession {
             case .awareness:
                 // Peers' presence: fold it into `peers` (never including us).
                 if let entries = try? AwarenessCodec.decodePayload(message.payload) {
-                    peers = updatedPeers(peers, applying: entries, excludingLocalClientID: clientID)
+                    peers = updatedPeers(
+                        peers, applying: entries, excludingLocalClientID: clientID, wireProtocol: wireProtocol)
                 }
+            case .queryAwareness where wireProtocol == .yWebSocket:
+                guard let localState else { return }  // readers never publish, even on query
+                let payload = AwarenessCodec.encodePayload([
+                    AwarenessEntry(clientID: clientID, clock: 1, stateJSON: localState.json(wireProtocol: wireProtocol))
+                ])
+                let frame = HocuspocusMessage(documentName: documentName, type: .awareness, payload: payload)
+                let transport = self.transport
+                Task { try? await transport.send(frame) }
             default:
                 return  // unknown / other types are tolerated
             }

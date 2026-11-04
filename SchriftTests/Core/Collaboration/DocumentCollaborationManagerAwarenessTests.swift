@@ -20,6 +20,20 @@ final class DocumentCollaborationManagerAwarenessTests: DocumentCollaborationMan
         session?.stop()
     }
 
+    func testHocuspocusReaderJoinsSilentlyAndNeverBroadcasts() async {
+        let spy = ManagerSocketFactorySpy()
+        let manager = makeAwarenessManager(
+            provider: { LocalAwarenessState(name: "Ada", color: "#30bced") }, spy: spy)
+        await manager.refreshLocalAwareness()
+
+        let session = manager.session(for: docID, canUpdate: false)
+        await waitUntil { spy.sockets.count == 1 && spy.sockets[0].sentFrames.count == 1 }
+        await session?.broadcast(update: Data([0, 0]))
+        // Only the handshake: a reader announces no presence and sends no update.
+        await waitAndConfirmNever { spy.sockets[0].sentFrames.count > 1 }
+        session?.stop()
+    }
+
     func testWithoutRefreshSessionsJoinAsSilentObservers() async {
         let spy = ManagerSocketFactorySpy()
         // A provider exists, but refreshLocalAwareness() is never called.

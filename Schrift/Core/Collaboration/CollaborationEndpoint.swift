@@ -1,6 +1,6 @@
 import Foundation
 
-/// Pure, origin-pinned builders for the Hocuspocus collaboration WebSocket.
+/// Pure, origin-pinned builders for the collaboration WebSocket protocols.
 ///
 /// Every dialed URL is derived from the user's own server origin — never from a
 /// server-supplied config value — so a captured session cookie stays scoped to
@@ -8,7 +8,9 @@ import Foundation
 /// enforce for REST. Side-effect-free value code; no concurrency annotations.
 enum CollaborationEndpoint {
     /// `ws(s)://<host>[:port]/collaboration/ws/?room=<doc-uuid>` derived from the
-    /// REST `baseURL`. `https`→`wss`, `http`→`ws`; any other scheme (or a
+    /// REST `baseURL` for Hocuspocus. Docs 6 instead uses
+    /// `/collaboration/ws/v1/{validated org}/{doc-uuid}` with no query or trailing
+    /// slash. `https`→`wss`, `http`→`ws`; any other scheme (or a
     /// scheme/host-less URL) yields nil, so a `javascript:`/`file:`/`data:` base
     /// can never be dialed. The room UUID is lowercased to match the Django
     /// backend and is also the Hocuspocus `documentName` inside every frame.
@@ -16,7 +18,7 @@ enum CollaborationEndpoint {
     /// The origin (scheme mapping aside) comes straight from `siteOrigin(for:)`,
     /// so host lowercasing, port, and IPv6 bracketing stay identical to the REST
     /// CSRF origin.
-    static func webSocketURL(serverBaseURL: URL, documentID: UUID) -> URL? {
+    static func webSocketURL(serverBaseURL: URL, documentID: UUID, config: ServerConfig? = nil) -> URL? {
         guard let origin = siteOrigin(for: serverBaseURL) else { return nil }
         let wsOrigin: String
         if origin.hasPrefix("https://") {
@@ -25,6 +27,13 @@ enum CollaborationEndpoint {
             wsOrigin = "ws://" + origin.dropFirst("http://".count)
         } else {
             return nil
+        }
+        if let config, config.usesCollaborationYDocServer {
+            // Only the validated org comes from config. Its host/scheme/query
+            // never influence the dialed origin or the handshake's credentials.
+            return URL(
+                string:
+                    "\(wsOrigin)/collaboration/ws/v1/\(config.collaborationOrg)/\(documentID.uuidString.lowercased())")
         }
         // The room value is a UUID, which is already URL-safe.
         return URL(string: "\(wsOrigin)/collaboration/ws/?room=\(documentID.uuidString.lowercased())")
@@ -52,8 +61,12 @@ enum CollaborationEndpoint {
     /// turned **off** so URLSession does not *also* attach cookies (which would
     /// duplicate them); we forward exactly the origin's cookies ourselves.
     /// Returns nil when the base URL can't be pinned to a `ws(s)` origin.
-    static func webSocketRequest(serverBaseURL: URL, documentID: UUID, cookies: [HTTPCookie]) -> URLRequest? {
-        guard let url = webSocketURL(serverBaseURL: serverBaseURL, documentID: documentID) else { return nil }
+    static func webSocketRequest(
+        serverBaseURL: URL, documentID: UUID, cookies: [HTTPCookie], config: ServerConfig? = nil
+    ) -> URLRequest? {
+        guard let url = webSocketURL(serverBaseURL: serverBaseURL, documentID: documentID, config: config) else {
+            return nil
+        }
         var request = URLRequest(url: url)
         request.httpShouldHandleCookies = false
         if let origin = originHeader(serverBaseURL: serverBaseURL) {

@@ -7,7 +7,8 @@ import Foundation
 enum CollaborationWriteError: Error, Equatable {
     /// The document's replica is not in a writable state — there is no replica,
     /// the initial sync has not landed, it carries unintegrated pending structs,
-    /// or it has fail-safed (see `canWriteReplica`). Nothing was mutated.
+    /// or it has fail-safed (see `canProjectReplica`), or the document is read-only
+    /// (`canWriteReplica(for:)`). Nothing was mutated.
     case notWritable
 }
 
@@ -33,6 +34,10 @@ final class DocumentCollaborationManager {
     private struct Entry {
         /// The live session, or nil while suspended (app backgrounded).
         var session: DocumentCollaborationSession?
+        /// The document's abilities.update, supplied by the editor's metadata. One per
+        /// entry: the latest `session(for:canUpdate:)` caller wins, and the replica is
+        /// kept across a flip (a reader just stops writing and answering step1).
+        var canUpdate: Bool
         var refCount: Int
         var lingerTask: Task<Void, Never>?
         /// The document's live Yjs replica (C1), built lazily on the first
@@ -45,7 +50,7 @@ final class DocumentCollaborationManager {
         /// True once the room's **initial full state** has landed — set *only* by
         /// `markInitialSyncApplied`, fired by the session's `onInitialSync` on the
         /// first inbound `.step2` (the reply to our SyncStep1). Gates
-        /// `canWriteReplica` (projection + the local-edit write path + the save
+        /// `canProjectReplica` (projection + the local-edit write path + the save
         /// snapshot). An inbound `.update` interleaved *before* that reply builds
         /// the replica and bumps `replicaVersion`, but must leave this false: a
         /// replica assembled from a partial incremental update is not the full
@@ -69,6 +74,8 @@ final class DocumentCollaborationManager {
     /// .supportsLiveCollaboration`); a server fact, so a stored flag rather than
     /// a live closure. Defaults false, so nothing connects before it is known.
     var serverSupportsLiveCollaboration = false
+    private var serverConfig: ServerConfig?
+    private var wireProtocol: CollaborationWireProtocol { CollaborationWireProtocol(config: serverConfig) }
 
     /// Our own awareness (`{name, color}`) broadcast to every session, learned once
     /// via `refreshLocalAwareness()`. nil until then (and if the current-user fetch
@@ -148,7 +155,9 @@ final class DocumentCollaborationManager {
     /// `GET /config/`), so the view doesn't reach past its view model to do
     /// networking. Best-effort — a failed fetch leaves live collaboration off.
     func refreshServerSupport() async {
-        serverSupportsLiveCollaboration = await serverConfigProvider()?.supportsLiveCollaboration ?? false
+        let config = await serverConfigProvider()
+        serverConfig = config
+        serverSupportsLiveCollaboration = config?.supportsLiveCollaboration ?? false
     }
 
     /// Learns our own awareness (display name + colour) once, so new sessions
@@ -224,7 +233,7 @@ final class DocumentCollaborationManager {
     /// structs/deletes stashed (`YStructStore.pendingStructs`/`pendingDs`), or
     /// there is no replica at all — in both cases there is nothing safe to
     /// write on top of. The write path itself gates on the private
-    /// `canWriteReplica` (which already subsumes this check), so this stays
+    /// `canProjectReplica` (which already subsumes this check), so this stays
     /// public for the not-yet-wired editor live-entry gate (C2b/C2c), which will
     /// consult it to decide whether the editor may engage live editing on a
     /// half-synced replica.
@@ -233,25 +242,31 @@ final class DocumentCollaborationManager {
         return replica.store.pendingStructs != nil || replica.store.pendingDs != nil
     }
 
-    /// Whether an entry's replica is safe to project *or* write to: it exists,
+    /// Whether an entry's replica is safe to project: it exists,
     /// at least one update has integrated (`initialSyncApplied`), it hasn't
     /// fail-safed, and it carries no unintegrated pending structs/deletes
     /// (`YStructStore.pendingStructs`/`pendingDs`) — writing on top of a
     /// partially-synced store would build on content that is about to change
-    /// shape the moment the missing dependency arrives. The single
-    /// write-eligibility predicate shared by `projectedReplica` (read) and the
-    /// local-edit write path (C2).
-    private func canWriteReplica(_ entry: Entry) -> Bool {
+    /// shape the moment the missing dependency arrives. Writes additionally
+    /// require the document's update ability (`canWriteReplica(for:)`).
+    private func canProjectReplica(_ entry: Entry) -> Bool {
         guard let replica = entry.replica else { return false }
         return entry.initialSyncApplied && !entry.replicaFailSafe && replica.store.pendingStructs == nil
             && replica.store.pendingDs == nil
     }
 
+    /// Write eligibility includes the document's server-authorized update ability.
+    /// Readers can still project inbound content, but cannot handle edits live.
+    func canWriteReplica(for documentID: UUID) -> Bool {
+        guard let entry = entries[documentID] else { return false }
+        return entry.canUpdate && canProjectReplica(entry)
+    }
+
     /// The document's live replica projected into BlockNote-vocabulary blocks
     /// (B5's `YBlockProjection.project`), or `nil` when there is nothing safe to
-    /// project — see `canWriteReplica`.
+    /// project — see `canProjectReplica`.
     func projectedReplica(for documentID: UUID, interlinkingOrigin: String?) -> ProjectedDocument? {
-        guard let entry = entries[documentID], canWriteReplica(entry), let replica = entry.replica else {
+        guard let entry = entries[documentID], canProjectReplica(entry), let replica = entry.replica else {
             return nil
         }
         return YBlockProjection.project(replica, interlinkingOrigin: interlinkingOrigin)
@@ -283,13 +298,14 @@ final class DocumentCollaborationManager {
     /// read-apply it.
     ///
     /// Throws `CollaborationWriteError.notWritable` when the replica is not writable
-    /// (`canWriteReplica`) — nothing is mutated or broadcast. A malformed replica
+    /// (`canWriteReplica(for:)`) — nothing is mutated or broadcast. A malformed replica
     /// that makes `BlockNoteWrite.applyEdit` throw `YIntegrationError` (an integration
     /// or encode failure leaves a corrupt store) latches `replicaFailSafe` and tears
     /// the replica down exactly as the inbound apply path does, then **rethrows** the
     /// underlying error — it never traps.
     func applyLocalEdit(old: [BlockNoteBlock], new: [BlockNoteBlock], for documentID: UUID) throws -> Data {
-        guard var entry = entries[documentID], canWriteReplica(entry), let replica = entry.replica else {
+        guard var entry = entries[documentID], entry.canUpdate, canProjectReplica(entry), let replica = entry.replica
+        else {
             throw CollaborationWriteError.notWritable
         }
         let update: Data
@@ -326,7 +342,10 @@ final class DocumentCollaborationManager {
     /// A live session for the document, creating and connecting one on first
     /// request (reference-counted). Returns nil when live editing is unavailable
     /// or the socket URL can't be pinned to the server origin.
-    func session(for documentID: UUID) -> DocumentCollaborationSession? {
+    func session(for documentID: UUID, canUpdate: Bool? = nil) -> DocumentCollaborationSession? {
+        // Existing Hocuspocus-only callers keep their historical behavior. yhub
+        // fails closed without explicit abilities.update; the app always passes it.
+        let canUpdate = canUpdate ?? (wireProtocol == .hocuspocus)
         // Never open a socket while backgrounded — `resume()` is the only rebuild
         // path when suspended (upholds the same invariant as `reconnect()`).
         guard !isSuspended, availability == .available else { return nil }
@@ -334,12 +353,17 @@ final class DocumentCollaborationManager {
             entry.lingerTask?.cancel()  // a re-open cancels the pending teardown
             entry.lingerTask = nil
             entry.refCount += 1
-            if entry.session == nil { entry.session = makeSession(for: documentID) }
+            if entry.canUpdate != canUpdate {
+                entry.session?.stop()
+                entry.session = nil
+                entry.canUpdate = canUpdate
+            }
+            if entry.session == nil { entry.session = makeSession(for: documentID, canUpdate: canUpdate) }
             entries[documentID] = entry
             return entry.session
         }
-        guard let session = makeSession(for: documentID) else { return nil }
-        entries[documentID] = Entry(session: session, refCount: 1, lingerTask: nil)
+        guard let session = makeSession(for: documentID, canUpdate: canUpdate) else { return nil }
+        entries[documentID] = Entry(session: session, canUpdate: canUpdate, refCount: 1, lingerTask: nil)
         return session
     }
 
@@ -404,14 +428,17 @@ final class DocumentCollaborationManager {
 
     // MARK: - internals
 
-    private func makeSession(for documentID: UUID) -> DocumentCollaborationSession? {
+    private func makeSession(for documentID: UUID, canUpdate: Bool) -> DocumentCollaborationSession? {
         guard
             let request = CollaborationEndpoint.webSocketRequest(
-                serverBaseURL: serverBaseURL, documentID: documentID, cookies: cookieProvider())
+                serverBaseURL: serverBaseURL, documentID: documentID, cookies: cookieProvider(), config: serverConfig)
         else { return nil }
-        let transport = CollaborationTransport(socket: socketFactory(request))
+        let transport = CollaborationTransport(
+            socket: socketFactory(request), wireProtocol: wireProtocol, documentName: documentID.uuidString.lowercased()
+        )
         let session = DocumentCollaborationSession(
             documentName: documentID.uuidString.lowercased(), transport: transport, localState: localAwareness,
+            wireProtocol: wireProtocol, canUpdate: canUpdate,
             onRemoteChange: { [weak self] in self?.remoteChangeTokens[documentID, default: 0] += 1 },
             onSyncUpdate: { [weak self] data in self?.applyReplicaUpdate(data, for: documentID) },
             initialSyncStep1: { [weak self] in self?.currentStateVector(for: documentID) ?? Data([0x00]) },
@@ -429,7 +456,7 @@ final class DocumentCollaborationManager {
     /// `initialSyncApplied` — that is the sole province of `markInitialSyncApplied`
     /// (the session's `onInitialSync`, fired on the first `.step2`). An `.update`
     /// interleaved before our SyncStep1 reply therefore builds the replica but
-    /// leaves it un-synced (`canWriteReplica` stays false) until the real initial
+    /// leaves it un-synced (`canProjectReplica` stays false) until the real initial
     /// sync lands.
     ///
     /// A decode/integrate failure destroys the replica and latches
@@ -479,7 +506,7 @@ final class DocumentCollaborationManager {
     /// this is what re-offers our local edits to a peer or the relay when they
     /// (re)connect and ask for our state (peer step1 → our step2). Decodes the
     /// peer's state vector and encodes only the structs past it; `nil` (send
-    /// nothing) when we hold no replica to offer.
+    /// nothing) when we hold no replica to offer or the document is read-only.
     ///
     /// Runs synchronously on the main actor inside the session's inbound-frame
     /// handler, so it must stay cheap — a state-vector-diff encode is fine, and no
@@ -488,7 +515,9 @@ final class DocumentCollaborationManager {
     /// make `encodeStateAsUpdate` throw) yields `nil` rather than trapping — the
     /// peer will still send us their state, so the room converges regardless.
     private func stateReply(to peerVector: Data, for documentID: UUID) -> Data? {
-        guard let replica = entries[documentID]?.replica else { return nil }
+        // A reader must not publish, whatever its replica holds (one kept across a
+        // writer→reader flip may carry edits whose broadcast failed).
+        guard let entry = entries[documentID], entry.canUpdate, let replica = entry.replica else { return nil }
         guard let vectorEntries = try? YUpdateDecoder.decodeStateVector(peerVector) else { return nil }
         // `uniquingKeysWith` (never `uniqueKeysWithValues`) — the peer vector is
         // attacker-influenced wire data and a duplicate client id would trap. yjs
@@ -503,7 +532,7 @@ final class DocumentCollaborationManager {
     /// inbound `.update` interleaved before that reply builds the replica but must
     /// not mark it synced: a replica assembled from a partial incremental update
     /// is not the room's full state and must not be writable/snapshottable.
-    /// Idempotent. Safe on a fail-safed/torn-down entry — `canWriteReplica` still
+    /// Idempotent. Safe on a fail-safed/torn-down entry — `canProjectReplica` still
     /// gates on `replica != nil` and `!replicaFailSafe`, so the flag alone never
     /// makes a dead replica writable.
     private func markInitialSyncApplied(for documentID: UUID) {
@@ -514,15 +543,16 @@ final class DocumentCollaborationManager {
 
     /// A full-snapshot Yjs v1 update of the document's replica for the classic
     /// full-overwrite save path — or `nil` when the replica is not writable
-    /// (`canWriteReplica`: no replica, the initial sync hasn't landed, it carries
+    /// (`canWriteReplica(for:)`: a read-only document, no replica, the initial sync hasn't landed, it carries
     /// unintegrated pending structs, or it has fail-safed). This is the one gate
     /// the save path checks before snapshotting a live replica instead of
     /// re-encoding the editor's markdown; a `nil` return means "no trustworthy
     /// snapshot — fall back to the classic encode." `encodeStateAsUpdate` can only
-    /// throw here on a pending replica, which `canWriteReplica` already excludes,
+    /// throw here on a pending replica, which `canProjectReplica` already excludes,
     /// so `try?`'s `nil` is a belt-and-braces guard that never traps.
     func encodeSnapshotForSave(for documentID: UUID) -> Data? {
-        guard let entry = entries[documentID], canWriteReplica(entry), let replica = entry.replica else {
+        guard let entry = entries[documentID], entry.canUpdate, canProjectReplica(entry), let replica = entry.replica
+        else {
             return nil
         }
         return try? YStateEncoder.encodeStateAsUpdate(replica, since: [:])
@@ -536,7 +566,7 @@ final class DocumentCollaborationManager {
         let available = availability == .available
         for (id, entry) in entries where entry.refCount > 0 {
             entry.session?.stop()
-            entries[id]?.session = available ? makeSession(for: id) : nil
+            entries[id]?.session = available ? makeSession(for: id, canUpdate: entry.canUpdate) : nil
         }
     }
 
