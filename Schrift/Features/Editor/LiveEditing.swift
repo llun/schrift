@@ -163,8 +163,9 @@ func transformedCaret(old: String, new: String, caret: Int) -> Int {
 /// dirty/pending-save/stored-draft/conflict, idle/saved) with the replica being
 /// **fully modeled**. A `nil` projection already encodes "no replica / not
 /// initial-synced / has pending structs / fail-safed" (the manager returns nil
-/// from `projectedReplica` unless `canWriteReplica`), so those facts fold into the
-/// single `projection != nil` check; `isFullyModeled` is the extra write-only
+/// from `projectedReplica` unless `canProjectReplica`), so those facts fold into the
+/// single `projection != nil` check — but a reader's projection is not writable, so
+/// the bridge also asks `canWriteReplica(for:)`; `isFullyModeled` is the extra write-only
 /// requirement, so the tracked `old` baseline can never desync from a lossy/opaque
 /// projection. A document with any non-modeled block stays read-live.
 func canEngageLiveWrite(canEngageLiveEditing: Bool, projection: ProjectedDocument?) -> Bool {

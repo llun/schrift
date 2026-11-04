@@ -7,7 +7,8 @@ import Foundation
 enum CollaborationWriteError: Error, Equatable {
     /// The document's replica is not in a writable state — there is no replica,
     /// the initial sync has not landed, it carries unintegrated pending structs,
-    /// or it has fail-safed (see `canWriteReplica`). Nothing was mutated.
+    /// or it has fail-safed (see `canProjectReplica`), or the document is read-only
+    /// (`canWriteReplica(for:)`). Nothing was mutated.
     case notWritable
 }
 
@@ -47,7 +48,7 @@ final class DocumentCollaborationManager {
         /// True once the room's **initial full state** has landed — set *only* by
         /// `markInitialSyncApplied`, fired by the session's `onInitialSync` on the
         /// first inbound `.step2` (the reply to our SyncStep1). Gates
-        /// `canWriteReplica` (projection + the local-edit write path + the save
+        /// `canProjectReplica` (projection + the local-edit write path + the save
         /// snapshot). An inbound `.update` interleaved *before* that reply builds
         /// the replica and bumps `replicaVersion`, but must leave this false: a
         /// replica assembled from a partial incremental update is not the full
@@ -230,7 +231,7 @@ final class DocumentCollaborationManager {
     /// structs/deletes stashed (`YStructStore.pendingStructs`/`pendingDs`), or
     /// there is no replica at all — in both cases there is nothing safe to
     /// write on top of. The write path itself gates on the private
-    /// `canWriteReplica` (which already subsumes this check), so this stays
+    /// `canProjectReplica` (which already subsumes this check), so this stays
     /// public for the not-yet-wired editor live-entry gate (C2b/C2c), which will
     /// consult it to decide whether the editor may engage live editing on a
     /// half-synced replica.
@@ -295,7 +296,7 @@ final class DocumentCollaborationManager {
     /// read-apply it.
     ///
     /// Throws `CollaborationWriteError.notWritable` when the replica is not writable
-    /// (`canWriteReplica`) — nothing is mutated or broadcast. A malformed replica
+    /// (`canWriteReplica(for:)`) — nothing is mutated or broadcast. A malformed replica
     /// that makes `BlockNoteWrite.applyEdit` throw `YIntegrationError` (an integration
     /// or encode failure leaves a corrupt store) latches `replicaFailSafe` and tears
     /// the replica down exactly as the inbound apply path does, then **rethrows** the
@@ -460,7 +461,7 @@ final class DocumentCollaborationManager {
     /// `initialSyncApplied` — that is the sole province of `markInitialSyncApplied`
     /// (the session's `onInitialSync`, fired on the first `.step2`). An `.update`
     /// interleaved before our SyncStep1 reply therefore builds the replica but
-    /// leaves it un-synced (`canWriteReplica` stays false) until the real initial
+    /// leaves it un-synced (`canProjectReplica` stays false) until the real initial
     /// sync lands.
     ///
     /// A decode/integrate failure destroys the replica and latches
@@ -534,7 +535,7 @@ final class DocumentCollaborationManager {
     /// inbound `.update` interleaved before that reply builds the replica but must
     /// not mark it synced: a replica assembled from a partial incremental update
     /// is not the room's full state and must not be writable/snapshottable.
-    /// Idempotent. Safe on a fail-safed/torn-down entry — `canWriteReplica` still
+    /// Idempotent. Safe on a fail-safed/torn-down entry — `canProjectReplica` still
     /// gates on `replica != nil` and `!replicaFailSafe`, so the flag alone never
     /// makes a dead replica writable.
     private func markInitialSyncApplied(for documentID: UUID) {
@@ -545,12 +546,12 @@ final class DocumentCollaborationManager {
 
     /// A full-snapshot Yjs v1 update of the document's replica for the classic
     /// full-overwrite save path — or `nil` when the replica is not writable
-    /// (`canWriteReplica`: no replica, the initial sync hasn't landed, it carries
+    /// (`canWriteReplica(for:)`: a read-only document, no replica, the initial sync hasn't landed, it carries
     /// unintegrated pending structs, or it has fail-safed). This is the one gate
     /// the save path checks before snapshotting a live replica instead of
     /// re-encoding the editor's markdown; a `nil` return means "no trustworthy
     /// snapshot — fall back to the classic encode." `encodeStateAsUpdate` can only
-    /// throw here on a pending replica, which `canWriteReplica` already excludes,
+    /// throw here on a pending replica, which `canProjectReplica` already excludes,
     /// so `try?`'s `nil` is a belt-and-braces guard that never traps.
     func encodeSnapshotForSave(for documentID: UUID) -> Data? {
         guard let entry = entries[documentID], entry.canUpdate, canProjectReplica(entry), let replica = entry.replica

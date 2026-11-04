@@ -250,7 +250,8 @@ final class YWebSocketTests: DocumentCollaborationManagerTestCase {
         reader.deliver(message: frame(.step2, BlockNoteYjs.encode(blocks, clientID: 1)))
         await waitUntil { manager.replicaVersion(for: self.docID) > version }
         let marker = Data("writer only".utf8)
-        XCTAssertFalse(reader.sentFrames.contains { $0.range(of: marker) != nil })
+        // The step2 reply is sent from an unstructured task, so keep watching for it.
+        await waitAndConfirmNever { reader.sentFrames.contains { $0.range(of: marker) != nil } }
         XCTAssertFalse(manager.canWriteReplica(for: docID))
     }
 }

@@ -404,7 +404,7 @@ Schrift/
 │   │                    apply). C2a makes the handshake real (SyncStep1 now carries
 │   │                    the replica's actual state vector; a peer's SyncStep1 is
 │   │                    answered with a SyncStep2 diff via onStateRequest →
-│   │                    stateReply, deliberately ungated on canWriteReplica so the
+│   │                    stateReply, deliberately ungated on write eligibility so the
 │   │                    room always converges and a reconnect re-offers everything
 │   │                    accumulated so far) and adds the outbound write path:
 │   │                    applyLocalEdit(old:new:for:) wraps B6's
@@ -416,7 +416,7 @@ Schrift/
 │   │                    first inbound SyncStep2 (an earlier .update still builds
 │   │                    the replica but leaves it non-writable), and
 │   │                    encodeSnapshotForSave(for:) returns nil unless
-│   │                    canWriteReplica. C2b adds the save mechanism
+│   │                    canWriteReplica(for:). C2b adds the save mechanism
 │   │                    (enqueueLiveSnapshot/saveLiveSnapshot) through the existing
 │   │                    save coordinator. C2c (Features/Editor) is what finally
 │   │                    calls both: LiveEditingBridge.forwardLocalEdit forwards a

@@ -372,7 +372,7 @@ one and adds the outbound write path on top of it.
   `.step1` through `onStateRequest`, which the manager wires to `stateReply(to:for:)`:
   decode the peer's state vector, `YStateEncoder.encodeStateAsUpdate(replica, since:)` a
   diff of everything they're missing, and send it back as a `.step2` frame. `stateReply`
-  is deliberately **ungated on `canWriteReplica`** — offering a subset of our own
+  is deliberately **ungated on write eligibility** — offering a subset of our own
   monotonic CRDT state is always safe, even mid-sync, so the room keeps converging
   regardless; only the save-snapshot path needs the stronger gate (below). Because an
   entry's replica survives session rebuilds, `stateReply` re-offers a reconnecting peer
@@ -394,12 +394,14 @@ one and adds the outbound write path on top of it.
   would read as "a remote peer changed the document" — bumping them for our own edit
   would make something read-apply the keystroke we just made ourselves. This is
   local-echo suppression, and it is the load-bearing rule of the whole write path.
-- **One write-eligibility gate, shared by read and write.** `canWriteReplica` — a
+- **One health gate, shared by read and write.** `canProjectReplica` — a
   replica exists, its initial sync has landed, it carries no unintegrated
   `pendingStructs`/`pendingDs`, and it hasn't fail-safed — already gated
   `projectedReplica` (C1/B5); C2a reuses the identical predicate for `applyLocalEdit`
   (throws `CollaborationWriteError.notWritable`, mutating nothing, when it fails) and for
-  `encodeSnapshotForSave(for:)` (returns `nil` instead of a snapshot). A
+  `encodeSnapshotForSave(for:)` (returns `nil` instead of a snapshot); those two
+  write paths also require the document's `abilities.update` (`canWriteReplica(for:)`),
+  which projection does not. A
   `BlockNoteWrite.applyEdit` throw — a malformed replica — is handled exactly like an
   inbound decode/apply failure: the replica is destroyed, `replicaFailSafe` latches
   permanently (so this document's replica is never rebuilt or trusted again this
@@ -417,7 +419,7 @@ one and adds the outbound write path on top of it.
   than broadcasting a subtree.
 - **`encodeSnapshotForSave(for:)`** is the other half of the eventual live-snapshot save
   path: a full `YStateEncoder.encodeStateAsUpdate(replica, since: [:])` of the document
-  when `canWriteReplica` holds, `nil` otherwise ("no trustworthy snapshot"). Nothing
+  when `canWriteReplica(for:)` holds, `nil` otherwise ("no trustworthy snapshot"). Nothing
   calls it yet — the classic full-overwrite markdown-encode save is completely unchanged
   until C2c wires this in as its replacement source of truth.
 - **Verification.** Deterministic two-peer integration tests (`LiveSyncConvergenceTests`)
@@ -518,8 +520,9 @@ graceful downgrade) is wired end to end, still entirely behind the default-off
   `canEngageLiveEditing` (loaded, clean, no dirty/pending-save/draft/conflict,
   idle/saved) is necessary but not sufficient for writing: a `nil` projection already
   folds in "no replica / not initial-synced / pending structs / fail-safed" (the
-  manager only returns a projection when `canWriteReplica` holds), and on top of that
-  the write path additionally requires `projection.isFullyModeled` — a document with
+  manager only returns a projection when `canProjectReplica` holds), and on top of that
+  the write path additionally requires `canWriteReplica(for:)` (the update ability) and
+  `projection.isFullyModeled` — a document with
   any lossy or opaque block (an `.unknown` block, a prop type mismatch, …) stays
   **read**-live but never engages the write path, because such a projection can't
   round-trip back through `blockNoteBlocks(from:)` without the tracked `old` baseline
