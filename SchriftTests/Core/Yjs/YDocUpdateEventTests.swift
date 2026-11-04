@@ -2,17 +2,14 @@ import XCTest
 
 @testable import Schrift
 
-/// Golden fixtures captured from yjs 13.6.33 in node (its `cleanupTransactions` is
-/// unchanged from the pinned 13.6.31 cited here) for `Doc`'s `'update'` event
+/// Golden fixtures captured from yjs 13.6.33 in node (its `'update'` emit point and
+/// bytes match the pinned 13.6.31 cited here) for `Doc`'s `'update'` event
 /// (`cleanupTransactions` @3385-3389): every transaction with content emits its
 /// own v1 update, including the formatting-cleanup transaction the observer phase
 /// opens with origin `null`.
 final class YDocUpdateEventTests: XCTestCase {
     func testRemoteFormattingCleanupEmitsItsOwnUpdateAfterThePeerUpdate() throws {
         let doc = YDoc(clientID: 9, gc: false)
-        // yjs only cleans an *instantiated* text — `getText('t')` is what makes the
-        // root a concrete YText there; `get` is the same root here.
-        _ = doc.get("t")
         var events: [(Data, YTransactionOrigin?)] = []
         doc.onUpdate = { origin, encode in
             if let update = encode() { events.append((update, origin)) }

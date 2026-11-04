@@ -402,8 +402,8 @@ one and adds the outbound write path on top of it.
   itself. `YDoc.onUpdate` mirrors that event at the yjs emit point (@3385-3389), with
   the origin and a lazy `encode` (`YTransactionEncoder.encodeUpdate(..., duringCleanup:
   true)`) so ignored origins are never encoded; the manager wires it per
-  replica and sends origin-`nil` updates through the entry's session exactly like
-  `applyLocalEdit`. `.remote` is an echo and `.localUser` is already broadcast by
+  replica and sends origin-`nil` updates through the entry's session, re-reading the
+  entry at fire time (it must still hold that replica, writable and not fail-safed). `.remote` is an echo and `.localUser` is already broadcast by
   `applyLocalEdit`, so neither is re-sent; a reader (`canUpdate == false`) never
   publishes; and the cleanup bumps none of `replicaVersion`/`remoteChangeToken`/
   `localEditVersion` — it is derived from an inbound update, not a new remote change or

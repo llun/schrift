@@ -38,6 +38,12 @@ final class DocumentCollaborationManagerCleanupBroadcastTests: DocumentCollabora
         let sync = try SyncMessage(decodingPayload: frame.payload)
         XCTAssertEqual(sync.step, .update)
         XCTAssertEqual(sync.data, Data(hex: cleanupUpdate))
+        // The cleanup is derived from the inbound update: no counter moves for it.
+        let token = manager.remoteChangeToken(for: docID)
+        await waitAndConfirmNever {
+            manager.replicaVersion(for: self.docID) != 3 || manager.localEditVersion(for: self.docID) != 0
+                || manager.remoteChangeToken(for: self.docID) != token
+        }
         session?.stop()
     }
 
