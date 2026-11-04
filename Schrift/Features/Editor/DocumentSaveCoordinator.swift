@@ -3727,7 +3727,8 @@ final class DocumentSaveCoordinator {
                 // error) but the server holds our body, so `finish` must record the push.
                 let titleFailure: DocsAPIError?
                 if let snapshot = save.liveSnapshot {
-                    // Live-collaboration snapshot: PATCH the CRDT bytes verbatim (websocket:true).
+                    // Live-collaboration snapshot: write the CRDT bytes verbatim, through the same route as
+                    // the classic body (`saveContentViaRoute`).
                     titleFailure = try await client.saveLiveSnapshot(
                         documentID: documentID, title: save.title, yjsUpdate: snapshot)
                 } else {

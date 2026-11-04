@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Where a document's body is saved
 
-/// Which route `saveDocumentContent` writes a document's body through.
+/// Which route `saveDocumentContent` and `saveLiveSnapshot` write a document's body through.
 ///
 /// Docs 6 removed `GET`/`PATCH documents/{id}/content/` (the Django route is gone, so it
 /// answers Django's HTML 404 → `.routeNotFound`). Content now lives in the collaboration

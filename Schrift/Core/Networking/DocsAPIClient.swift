@@ -39,11 +39,12 @@ actor DocsAPIClient {
     /// discarded on a later 404 so a server upgrade can be detected without signing out.
     var favoriteListPath: String?
 
-    /// Where `saveDocumentContent` writes a document's body on this server: the legacy
-    /// `documents/{id}/content/` PATCH, or Docs 6's collaboration server
-    /// (`/collaboration/ydoc/v1/{org}/{id}`). nil until something proved which one —
-    /// `serverConfig()` (release version / collaboration URL shape), or a legacy PATCH
-    /// answering Django's HTML 404 followed by a collaboration GET that answered. See
+    /// Where `saveDocumentContent` and `saveLiveSnapshot` write a document's body on this
+    /// server (both through `saveContentViaRoute`): the legacy `documents/{id}/content/`
+    /// PATCH, or Docs 6's collaboration server (`/collaboration/ydoc/v1/{org}/{id}`). nil
+    /// until something proved which one — `serverConfig()` (release version / collaboration
+    /// URL shape), or a legacy PATCH answering Django's HTML 404 followed by a collaboration
+    /// request that answered (the classic save's GET, or the live snapshot's PATCH). See
     /// `ContentSaveRoute` (`CollaborationYDocEndpoints.swift`).
     var contentSaveRoute: ContentSaveRoute?
 
