@@ -32,8 +32,9 @@ enum BlockNoteWrite {
 
     /// Diff `old` → `new` BlockNote blocks, apply the difference as local ops inside
     /// one local transaction against `doc`, and return the incremental v1 update
-    /// (only structs/clocks minted by this transaction). `old == []` ⇒ from-empty,
-    /// whose bytes equal `BlockNoteYjs.encode(new, clientID: doc.clientID)`.
+    /// (only structs/clocks minted and ranges deleted by this transaction).
+    /// `old == []` ⇒ from-empty, whose bytes equal
+    /// `BlockNoteYjs.encode(new, clientID: doc.clientID)`.
     ///
     /// Throws `YIntegrationError` if integration or encoding hits a malformed state;
     /// the caller (the collaboration session, C2) turns that into `failSafe`.
@@ -55,16 +56,16 @@ enum BlockNoteWrite {
         guard allowsNestedInserts || !new.contains(where: { !$0.children.isEmpty }) else {
             throw YIntegrationError.unexpectedCase
         }
-        // Snapshot the state vector *before* the transaction so the returned update
-        // is a diff of exactly what this edit minted. From-empty ⇒ empty vector ⇒
-        // full snapshot, which is what makes the bytes equal the golden encoder.
-        let before = doc.store.getStateVector()
-        try doc.transact(local: true) { tx in
+        // Retain the existing transaction, then encode only after cleanup has
+        // filled afterState and finished gc/merging (yjs's update-event timing).
+        let transaction = try doc.transact(local: true) { tx in
             let root = doc.get(fragmentField)
             let group = try ensureBlockGroup(tx, root: root)
             try applyBlocks(tx, group: group, old: old, new: new)
+            return tx
         }
-        return try YStateEncoder.encodeStateAsUpdate(doc, since: before)
+        // Preserve the Data API: no change is the canonical empty v1 update.
+        return try YTransactionEncoder.encodeUpdate(transaction) ?? Data([0, 0])
     }
 
     // MARK: - Block subtree builder

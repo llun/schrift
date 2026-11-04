@@ -271,8 +271,10 @@ final class DocumentCollaborationManager {
     ///
     /// `old` must be the replica's current projection (`projectedReplica`), `new`
     /// the edited blocks. `BlockNoteWrite.applyEdit` diffs them, mutates the replica
-    /// in place inside its own local transaction, and returns only the structs this
-    /// edit minted; those bytes are returned to the caller *and* broadcast to peers.
+    /// in place inside its own local transaction, and returns that transaction's own
+    /// update — the structs it minted and the ranges it deleted (`YTransactionEncoder`),
+    /// or the canonical empty update `0000` when nothing changed; those bytes are
+    /// returned to the caller *and* broadcast to peers.
     ///
     /// **Local-echo suppression is the load-bearing rule.** It bumps
     /// `localEditVersions` only — never `replicaVersions`/`remoteChangeTokens`, which

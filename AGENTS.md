@@ -1705,7 +1705,19 @@ that are easy to violate and expensive to discover:
   `pendingStructs`/`pendingDs` are non-nil (a deliberate narrowing: yjs folds pending
   in via `diffUpdateV2`, but a pending replica must never be snapshotted). Reuse
   `YUpdateReencoder`'s delete-set/state-vector writers (offset-free, proven);
-  transliterate the rest.
+  transliterate the rest. **`YTransactionEncoder.encodeUpdate(transaction)`**
+  transliterates `writeUpdateMessageFromTransaction` (@3163) and
+  `writeStructsFromTransaction` (@1674), reusing that same struct writer. Use it for
+  local edits: it writes only new structs and the transaction's own sorted/merged
+  delete set, never scans the whole store for historical tombstones, and returns
+  nil when neither deletes nor clocks changed. It shares the pending-state refusal
+  and descending client order. Return `tx` from the existing generic `doc.transact`
+  closure and encode **immediately after the outermost call succeeds**, before
+  another edit: cleanup must have filled `afterState` and finished gc/merging
+  (yjs's update-event timing). Encoding while a transaction/cleanup is active throws.
+  Keep `YStateEncoder` for full snapshots and peer state-vector replies, which need
+  the whole delete set. `BlockNoteWrite` retains its `Data` API by mapping nil to
+  the canonical empty v1 update `0000`.
 - **The projection (`YBlockProjection`, B5) is total and reads *web-authored*
   replicas — it never authors content.** `project(_:interlinkingOrigin:)` folds an
   integrated replica back into `ProjectedBlock`s (the inverse of
@@ -1740,8 +1752,8 @@ that are easy to violate and expensive to discover:
   faithful transliteration that mints local `YItem`s and integrates them through the
   existing YATA loop inside `doc.transact(local: true)`. `BlockNoteWrite.applyEdit(
   old:new:to:)` diffs two BlockNote block lists by id (insert/remove/kind-change/
-  prop-change/move) and returns `YStateEncoder.encodeStateAsUpdate(doc, since:
-  <pre-transaction state vector>)` — only the structs the edit minted. **Its
+  prop-change/move) and returns `YTransactionEncoder.encodeUpdate(tx)` after
+  cleanup — only the structs and deletes this edit made (`0000` if unchanged). **Its
   strongest correctness gate is from-empty byte identity**:
   `applyEdit(old: [], new: blocks)` must be byte-identical to the shipping
   `BlockNoteYjs.encode(blocks)` golden encoder, which holds because `insertBlock`
@@ -2236,9 +2248,9 @@ markdown write endpoint**. Understand this before touching the save path:
   blocks untouched — a lossy block's unmodeled props/marks survive — then gaps are
   paired positionally only where the old block is `.modeled` and the new has no
   children; the rest is removed/inserted) → `BlockNoteWrite.applyEdit` → `PATCH
-  {"update": base64}` — **skipped** when nothing was minted or deleted (the update
-  always carries the whole delete set, so emptiness is read off the store, never
-  the bytes) — then the title PATCH. The **content written is exactly the markdown**,
+  {"update": base64}` — **skipped** when nothing was minted or deleted (emptiness
+  is read off the store, independently of the transaction encoder's update size)
+  — then the title PATCH. The **content written is exactly the markdown**,
   the same overwrite semantics as the classic save. **This is not a merge of
   co-author edits:** the save diffs the editor's *whole* document against the
   server's state *at save time*, so a concurrent edit survives only if it lands inside
