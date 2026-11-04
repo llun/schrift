@@ -395,8 +395,8 @@ extension YDoc {
     /// `store.pendingDs`. When a later update supplies what was missing, the stash
     /// is replayed (the `retry` path) — which is what makes out-of-order delivery,
     /// the normal case over a relay like hocuspocus, converge.
-    func applyUpdate(_ update: YUpdate) throws {
-        try transact(local: false) { transaction in
+    func applyUpdate(_ update: YUpdate, origin: YTransactionOrigin? = nil) throws {
+        try transact(local: false, origin: origin) { transaction in
             var clientsStructRefs = try YStructRefs.build(from: update, doc: self)
             try apply(transaction, refs: &clientsStructRefs, deleteSet: update.deleteSet)
         }

@@ -471,7 +471,7 @@ final class DocumentCollaborationManager {
         let replica = entry.replica ?? YDoc(clientID: UInt(replicaClientIDProvider()), gc: true)
         entry.replica = replica
         do {
-            try replica.applyUpdate(try YUpdateDecoder.decode(data))
+            try replica.applyUpdate(try YUpdateDecoder.decode(data), origin: .remote)
             entries[documentID] = entry
             replicaVersions[documentID, default: 0] += 1
             // Synchronous read-apply (C2c): hand the freshly-integrated replica to the

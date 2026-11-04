@@ -58,7 +58,7 @@ enum BlockNoteWrite {
         }
         // Retain the existing transaction, then encode only after cleanup has
         // filled afterState and finished gc/merging (yjs's update-event timing).
-        let transaction = try doc.transact(local: true) { tx in
+        let transaction = try doc.transact(local: true, origin: .localUser) { tx in
             let root = doc.get(fragmentField)
             let group = try ensureBlockGroup(tx, root: root)
             try applyBlocks(tx, group: group, old: old, new: new)
