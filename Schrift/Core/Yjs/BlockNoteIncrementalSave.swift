@@ -101,8 +101,8 @@ enum BlockNoteIncrementalSave {
         } catch {
             throw BlockNoteIncrementalSaveError.nonCanonicalDocument
         }
-        // `encodeStateAsUpdate` always carries the document's whole delete set, so "nothing
-        // changed" is read off the store, never off the update's size.
+        // Keep "nothing changed" defined by the store's clocks and deletes, independent
+        // of how applyEdit encodes its transaction (including the empty-update fallback).
         if doc.store.getStateVector() == stateBefore,
             YStateEncoder.deleteBlocks(YDeleteSet.from(store: doc.store)) == deletesBefore
         {

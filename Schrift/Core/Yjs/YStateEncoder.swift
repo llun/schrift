@@ -40,8 +40,8 @@ enum YStateEncoder {
     /// yjs `writeClientsStructs` (@1387): keep `since` entries with new structs,
     /// add store clients absent from `since` at clock 0, then write blocks with
     /// **higher client ids first** ("This heavily improves the conflict
-    /// algorithm").
-    private static func writeClientsStructs(
+    /// algorithm"). Shared with `YTransactionEncoder` (yjs writeStructsFromTransaction @1674).
+    static func writeClientsStructs(
         _ e: inout Lib0Encoder, _ store: YStructStore, _ since: [UInt: UInt]
     ) throws {
         var sm: [UInt: UInt] = [:]

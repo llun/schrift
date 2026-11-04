@@ -158,6 +158,7 @@ whenever an integrated item resolves to no parent (a neighbour was collected), a
 | `Lib0Decoder` / `Lib0Encoder` | lib0 binary primitives (varint, varString, `any`), shared with the collaboration wire codecs |
 | `YUpdateDecoder` / `YUpdateReencoder` | the v1 wire model — decodes updates, delete sets, and state vectors, and re-encodes them **byte-identically** |
 | `YStateEncoder` | the **store** encode side (B3): `encodeStateAsUpdate(doc, since:)` (full snapshot / diff against a state vector) and `encodeStateVector(doc)`, byte-identical to yjs's `writeClientsStructs`/`writeStructs`/`Item.write`. Derives each item's wire info byte from the live item (never `YItem.info`); writes clients **descending** everywhere; reuses `YUpdateReencoder`'s delete-set/state-vector writers. **Throws** while `pendingStructs`/`pendingDs` are non-nil — yjs folds pending state in, but a pending replica must never be snapshotted (see "Pending structs and delete sets") |
+| `YTransactionEncoder` | the **transaction** encode side (A3): `encodeUpdate(transaction)` transliterates yjs 13.6.31 `writeUpdateMessageFromTransaction` (@3163) / `writeStructsFromTransaction` (@1674). Reuses the state encoder's struct writer and descending delete-set writer, but sends only this transaction's deletes, avoiding a whole-store tombstone scan per edit. Returns nil for no change; refuses pending state or active transactions/cleanup. Capture `tx` via the existing `transact` return and encode immediately after the outermost call succeeds, after `afterState`, gc and merging, before any further edit. Use `YStateEncoder` for snapshots and peer state-vector replies (whole delete set) |
 | `YContent` | the live, mutable content model (splice, merge) |
 | `YStruct` / `YItem` / `YGC` / `YSkip`, `YType`, `YDoc` | the document graph |
 | `YStructStore` | structs per client, binary search, splits |
@@ -283,10 +284,15 @@ the collaboration session, transport, and save coordinator.
 - **`BlockNoteWrite.applyEdit(old:new:to:)`** is the entry point: it diffs `old` →
   `new` BlockNote blocks by id (insert / remove / kind-change / prop-change /
   in-place-survivor / moved-survivor), applies the difference as local `YWrite` ops
-  inside one transaction, and returns `YStateEncoder.encodeStateAsUpdate(doc, since:
-  <the state vector snapshotted before the transaction>)` — an update containing only
-  the structs this edit minted. **Move is v1-coarse**: a survivor whose relative order
-  changed is rebuilt whole (delete + re-insert after its new `left`) rather than
+  inside one transaction, and returns `YTransactionEncoder.encodeUpdate(tx)` after
+  the outermost `transact` returns successfully — an update containing only the
+  structs and deletes this edit made. Cleanup must have filled `afterState` and
+  completed gc/merging, matching yjs's update-event timing. This avoids rebuilding
+  the whole store's delete set on every keystroke. The existing `Data` API maps a
+  nil (unchanged) transaction to the canonical empty update `0000`. The Docs 6
+  incremental save continues to decide "nothing changed" from store clocks/deletes,
+  independently of the encoded update size. **Move is v1-coarse**: a survivor whose
+  relative order changed is rebuilt whole (delete + re-insert after its new `left`) rather than
   relocated in place; reorders are rare in practice and remain covered by
   full-snapshot fixtures, so this trades minimality for simplicity.
 - **The from-empty byte-identity anchor.** `applyEdit(old: [], new: blocks)` must be
@@ -380,7 +386,8 @@ one and adds the outbound write path on top of it.
   is not yet safe to project, write to, or snapshot.
 - **`DocumentCollaborationManager.applyLocalEdit(old:new:for:)` is the outbound write
   path.** It wraps B6's `BlockNoteWrite.applyEdit(old:new:to:)` on the manager-owned
-  replica (inside that call's own local transaction), broadcasts the returned
+  replica (inside that call's own local transaction), encodes only that finished
+  transaction's structs and deletes with `YTransactionEncoder`, broadcasts the returned
   incremental update via the session's `broadcast(update:)`, and bumps a counter that is
   **deliberately separate from the inbound signals**: `localEditVersion`, never
   `replicaVersion`/`remoteChangeToken`. Those two are what a future editor integration

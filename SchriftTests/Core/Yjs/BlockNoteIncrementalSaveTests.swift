@@ -63,6 +63,19 @@ final class BlockNoteIncrementalSaveTests: XCTestCase {
         XCTAssertNil(update)
     }
 
+    func testAnUnchangedDocumentWithHistoricalTombstonesNeedsNoUpdate() throws {
+        let doc = YDoc(clientID: 7)
+        defer { doc.destroy() }
+        let original = paragraph("hello", id: idA)
+        let shortened = paragraph("ho", id: idA)
+        _ = try BlockNoteWrite.applyEdit(old: [], new: [original], to: doc)
+        _ = try BlockNoteWrite.applyEdit(old: [original], new: [shortened], to: doc)
+        XCTAssertFalse(YDeleteSet.from(store: doc.store).isEmpty)
+        let state = try YStateEncoder.encodeStateAsUpdate(doc)
+        XCTAssertNil(
+            try BlockNoteIncrementalSave.update(serverState: state, newBlocks: [shortened], serverOrigin: origin))
+    }
+
     func testAnEditLandsInPlaceAndUntouchedBlocksKeepTheirIDs() throws {
         let state = served([paragraph("One", id: idA), paragraph("Two", id: idB), paragraph("Three", id: idC)])
         let markdown = "One\n\nTwo, edited\n\nThree\n\nFour"
