@@ -83,24 +83,48 @@ extension DocsAPIClient {
     /// `baseMarkdown` is the server copy the edit started from; only the Docs 6 route uses it,
     /// to keep the server blocks the user did not touch (see `BlockNotePreservation`).
     func saveContentBody(documentID: UUID, markdown: String, baseMarkdown: String? = nil) async throws {
-        if case .collaborationYDoc(let org) = contentSaveRoute {
-            try await saveContentToCollaborationYDoc(
-                documentID: documentID, org: org, markdown: markdown, baseMarkdown: baseMarkdown)
-            return
-        }
-        do {
+        try await saveContentViaRoute {
             // The one production full-overwrite encode site; it runs on the client actor, so
             // the origin is read straight off `baseURL`.
             let update = MarkdownYjs.encode(markdown: markdown, serverOrigin: serverOrigin)
             try await setContent(documentID: documentID, yjsUpdate: update)
+        } collaboration: { org in
+            try await saveContentToCollaborationYDoc(
+                documentID: documentID, org: org, markdown: markdown, baseMarkdown: baseMarkdown)
+        }
+    }
+
+    /// Writes a document's body through whichever route this server has, shared by the classic
+    /// body save and the live-snapshot save so both route identically: a known collaboration
+    /// route goes straight there, otherwise the legacy route is tried and **only** Django's own
+    /// route 404 falls back to the collaboration server.
+    ///
+    /// `legacy` performs the legacy write; `collaboration` performs the Docs 6 write for the
+    /// org it is given. Throws ⇒ the body was not confirmed; returns ⇒ the server holds it.
+    func saveContentViaRoute(
+        legacy: () async throws -> Void, collaboration: (String) async throws -> Void
+    ) async throws {
+        if case .collaborationYDoc(let org) = contentSaveRoute {
+            try await collaboration(org)
+            return
+        }
+        do {
+            try await legacy()
         } catch DocsAPIError.routeNotFound {
             // Django's own route 404: the legacy PATCH wrote nothing, so trying the Docs 6
             // route is safe. Only this error qualifies — `.notFound` (a deleted document),
             // `.forbidden` and everything else are answers about the document, not the route.
             let org = try await fallbackCollaborationOrg()
-            try await saveContentToCollaborationYDoc(
-                documentID: documentID, org: org, markdown: markdown, baseMarkdown: baseMarkdown)
+            try await collaboration(org)
         }
+    }
+
+    /// Pins the collaboration route once it has answered, never over a route already set
+    /// (re-read after the await), so a config-derived org that landed concurrently is not
+    /// replaced by this save's guess.
+    func rememberCollaborationRoute(org: String) {
+        if case .collaborationYDoc = contentSaveRoute { return }
+        contentSaveRoute = .collaborationYDoc(org: org)
     }
 
     /// The yhub org for a save that fell back off the legacy route's 404. A deployment may
@@ -134,11 +158,7 @@ extension DocsAPIClient {
         documentID: UUID, org: String, markdown: String, baseMarkdown: String?
     ) async throws {
         let state = try await collaborationYDocState(documentID: documentID, org: org)
-        if case .collaborationYDoc = contentSaveRoute {
-            // Already proven (by config, or by an earlier save): keep it.
-        } else {
-            contentSaveRoute = .collaborationYDoc(org: org)
-        }
+        rememberCollaborationRoute(org: org)
         let origin = serverOrigin
         let update: Data?
         do {

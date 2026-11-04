@@ -452,4 +452,141 @@ final class CollaborationYDocSaveClientTests: XCTestCase {
         }
         XCTAssertFalse(log.trail.contains("PATCH \(titlePath)"))
     }
+
+    // MARK: - The live-snapshot save routes exactly like the classic body save
+
+    /// A live snapshot on a Docs 6 server writes the replica's own bytes to yhub as a plain
+    /// incremental update — no GET/diff, no legacy content route — then the title. The bytes
+    /// are passed through verbatim, never re-derived from markdown.
+    func testALiveSnapshotOnADocs6ServerPatchesTheBytesToTheCollaborationServer() async throws {
+        let log = CapturedRequests()
+        stubDocs6(log: log, state: servedState)
+        let cookie = HTTPCookie(properties: [
+            .domain: "docs.example.org", .path: "/", .name: "csrftoken", .value: "tok123",
+        ])!
+        let client = DocsAPIClient(
+            baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [cookie] })
+        _ = try await client.serverConfig()
+        // Deliberately NOT a real Yjs update — proves the bytes are sent verbatim.
+        let snapshot = Data([0xAA, 0xBB, 0xCC])
+
+        let titleFailure = try await client.saveLiveSnapshot(
+            documentID: documentID, title: "Notes", yjsUpdate: snapshot)
+
+        XCTAssertNil(titleFailure)
+        XCTAssertEqual(log.trail, ["GET /api/v1.0/config/", "PATCH \(yDocPath)", "PATCH \(titlePath)"])
+        let patch = try XCTUnwrap(
+            log.all.first { $0.request.httpMethod == "PATCH" && requestPath($0.request) == yDocPath })
+        XCTAssertEqual(patch.request.url?.absoluteString, "https://docs.example.org\(yDocPath)")
+        XCTAssertEqual(patch.request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        XCTAssertEqual(patch.request.value(forHTTPHeaderField: "X-CSRFToken"), "tok123")
+        XCTAssertEqual(patch.request.value(forHTTPHeaderField: "Origin"), "https://docs.example.org")
+        XCTAssertEqual(patch.request.value(forHTTPHeaderField: "Referer"), "https://docs.example.org/")
+        let body = try XCTUnwrap(patch.body)
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: body) as? [String: String])
+        XCTAssertEqual(object, ["update": snapshot.base64EncodedString()])
+        XCTAssertFalse(log.trail.contains { $0.contains(legacyPath) }, "never the removed legacy route")
+    }
+
+    /// With nothing known, the live snapshot tries the legacy route; its HTML 404 means nothing
+    /// was written, so it falls back to yhub with the org the config names — and remembers it.
+    func testALiveSnapshotFallsBackOnTheLegacyRoutes404IntoTheOrgTheConfigNames() async throws {
+        let log = CapturedRequests()
+        let acmePath = "/collaboration/ydoc/v1/acme/abcdef12-1111-4111-8111-111111111111"
+        let legacyPath = legacyPath
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            switch (request.httpMethod ?? "", requestPath(request)) {
+            case ("GET", "/api/v1.0/config/"):
+                return jsonStub(["COLLABORATION_WS_URL": "wss://docs.example.org/collaboration/ws/v1/acme"])
+            case ("PATCH", acmePath):
+                return jsonStub(["success": true])
+            case ("PATCH", legacyPath):
+                return html404
+            case ("PATCH", _):
+                return jsonStub(["id": "x"])
+            default:
+                return html404
+            }
+        }
+        let client = makeClient()
+        let snapshot = Data([0xAA, 0xBB, 0xCC])
+
+        let titleFailure = try await client.saveLiveSnapshot(
+            documentID: documentID, title: "Notes", yjsUpdate: snapshot)
+
+        XCTAssertNil(titleFailure)
+        XCTAssertEqual(
+            log.trail,
+            ["PATCH \(legacyPath)", "GET /api/v1.0/config/", "PATCH \(acmePath)", "PATCH \(titlePath)"])
+        let route = await client.contentSaveRoute
+        XCTAssertEqual(route, .collaborationYDoc(org: "acme"), "the fallback's org is remembered")
+    }
+
+    /// A pre-Docs 6 server keeps the legacy live-snapshot body byte-for-byte: the snapshot
+    /// bytes plus `"websocket": true`, and nothing is sent to the collaboration server.
+    func testALiveSnapshotOnAPreDocs6ServerKeepsTheLegacyWebsocketBody() async throws {
+        let log = CapturedRequests()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            if requestPath(request) == "/api/v1.0/config/" {
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"5.7.0"}"#.utf8), error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        let client = makeClient()
+        _ = try await client.serverConfig()
+        let snapshot = Data([0xAA, 0xBB, 0xCC])
+
+        let titleFailure = try await client.saveLiveSnapshot(
+            documentID: documentID, title: "Notes", yjsUpdate: snapshot)
+
+        XCTAssertNil(titleFailure)
+        XCTAssertEqual(log.trail, ["GET /api/v1.0/config/", "PATCH \(legacyPath)", "PATCH \(titlePath)"])
+        let patch = try XCTUnwrap(
+            log.all.first { $0.request.httpMethod == "PATCH" && requestPath($0.request) == legacyPath })
+        let body = try XCTUnwrap(patch.body)
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(Set(object.keys), ["content", "websocket"])
+        XCTAssertEqual(object["content"] as? String, snapshot.base64EncodedString())
+        XCTAssertEqual(object["websocket"] as? Bool, true)
+        XCTAssertFalse(log.trail.contains { $0.contains("/collaboration/") })
+    }
+
+    /// A failed yhub PATCH throws — the bytes are not confirmed — and the title is never
+    /// attempted.
+    func testALiveSnapshotUpdateFailureThrowsAndNeverAttemptsTheTitle() async throws {
+        let log = CapturedRequests()
+        stubDocs6(log: log, state: servedState, updateStatus: 500)
+        let client = makeClient()
+        _ = try await client.serverConfig()
+
+        do {
+            _ = try await client.saveLiveSnapshot(
+                documentID: documentID, title: "Notes", yjsUpdate: Data([0xAA]))
+            XCTFail("a failed update PATCH must throw")
+        } catch let error as DocsAPIError {
+            XCTAssertEqual(error, .server(statusCode: 500))
+        } catch {
+            XCTFail("expected DocsAPIError, got \(error)")
+        }
+        XCTAssertFalse(log.trail.contains("PATCH \(titlePath)"))
+    }
+
+    /// The bytes landed and only the title failed: report the title error as a value, never
+    /// throw — the half-land contract the offline stack depends on.
+    func testALiveSnapshotTitleOnlyFailureReturnsTheErrorInsteadOfThrowing() async throws {
+        let log = CapturedRequests()
+        stubDocs6(log: log, state: servedState, titleStatus: 500)
+        let client = makeClient()
+        _ = try await client.serverConfig()
+
+        let titleFailure = try await client.saveLiveSnapshot(
+            documentID: documentID, title: "Notes", yjsUpdate: Data([0xAA]))
+
+        XCTAssertEqual(
+            titleFailure, .server(statusCode: 500), "the bytes landed — report the title, do not throw")
+        XCTAssertEqual(log.trail, ["GET /api/v1.0/config/", "PATCH \(yDocPath)", "PATCH \(titlePath)"])
+    }
 }

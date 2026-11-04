@@ -955,9 +955,11 @@ server is about to hold.
 
 - **Live-collaboration snapshot saves reuse this exact pipeline (C2b), and C2c is
   what actually enqueues one.** `DocumentSaveCoordinator.enqueueLiveSnapshot(...)`
-  queues a full-state Yjs snapshot (PATCHed verbatim with `"websocket": true` via
-  `DocsAPIClient.saveLiveSnapshot`) rather than markdown-derived bytes. It carries the
-  **projected markdown** (what the server renders from the snapshot) as the draft body
+  queues a full-state Yjs snapshot (PATCHed verbatim via
+  `DocsAPIClient.saveLiveSnapshot` — to yhub as `{"update": base64}` on Docs 6, or to the
+  legacy `documents/{id}/content/` route tagged `"websocket": true` before it) rather than
+  markdown-derived bytes. It carries the **projected markdown** (what the server renders from
+  the snapshot) as the draft body
   and the `lastConfirmedPushMarkdown` stamp, so the write-ahead draft, the conflict
   hold, latest-wins coalescing, `draftSyncDecision`, and the content cache behave
   identically to a classic save — only the network primitive differs. So there are now

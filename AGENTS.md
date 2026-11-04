@@ -870,9 +870,11 @@ new code reads like the surrounding code.
   `…/ws/v1/{org}` path only when it matches `^[A-Za-z0-9._~-]+$` and is not
   `.`/`..`, else `docs`. The **host is never taken from config.** Keep that
   validation if you touch it; the PATCH carries the CSRF token and `Origin`.
-- **Docs 6 moved document content to the collaboration server ("yhub"), and the
-  save picks its route per server** (`ContentSaveRoute`,
-  `CollaborationYDocEndpoints.swift`, memoized as `DocsAPIClient.contentSaveRoute`).
+- **Docs 6 moved document content to the collaboration server ("yhub"), and every
+  content save picks its route per server** (`ContentSaveRoute`,
+  `CollaborationYDocEndpoints.swift`, memoized as `DocsAPIClient.contentSaveRoute`;
+  `saveContentViaRoute` is the one routing helper, shared by the classic body save and
+  the live snapshot).
   Docs 6 removed `GET`/`PATCH documents/{id}/content/` (Django HTML 404 →
   `.routeNotFound`); `formatted-content/` (the read path) and the title `PATCH
   documents/{id}/` still work. Content now lives at
@@ -895,11 +897,12 @@ new code reads like the surrounding code.
   to learn the org (`fallbackCollaborationOrg`; only a 404 of `config/` itself means
   `docs` — every other failure propagates, retryably for transport/5xx, rather than
   guess an org that could then be memoized), because a save into the wrong org lands
-  in a room nobody reads, silently. It is memoized only once the collaboration GET has
-  **answered** — a server with neither route must not be pinned to one that cannot
-  answer (the `prefersLegacyContentRoute` lesson) — and never over a
-  `.collaborationYDoc` route already set (re-read after the await), so a
-  config-derived org that landed concurrently is not replaced. The release
+  in a room nobody reads, silently. It is memoized only once the collaboration route has
+  **answered** — the classic save's GET, or the live snapshot's successful PATCH — a server
+  with neither route must not be pinned to one that cannot answer (the
+  `prefersLegacyContentRoute` lesson) — and never over a `.collaborationYDoc` route
+  already set (re-read after the await), so a config-derived org that landed
+  concurrently is not replaced. The release
   version parse is the shared `releaseVersionComponents` (favorites uses it too).
 - **Attachments** (`AttachmentEndpoints.swift`): `POST documents/{id}/attachment-upload/`
   is multipart with **exactly one field, `file`** — `file_name`/`content_type`/
@@ -3236,10 +3239,14 @@ markdown write endpoint**. Understand this before touching the save path:
   `DocumentSaveCoordinator.enqueueLiveSnapshot(documentID:snapshot:projectedMarkdown:title:baseline:)`
   (C2b) PATCHes a full-state Yjs snapshot verbatim via
   `DocsAPIClient.saveLiveSnapshot(documentID:title:yjsUpdate:)` — bytes the collaboration
-  manager already holds (`encodeSnapshotForSave`), **not** re-derived from markdown — tagging
-  the content body with `"websocket": true` (through `setContent(…, viaWebSocket:)`; the
-  classic body stays byte-identical when false). Because reconcile is markdown-based, the
-  coordinator carries the **projected markdown** as the `PendingSave.markdown` / draft body /
+  manager already holds (`encodeSnapshotForSave`), **not** re-derived from markdown. It routes
+  exactly like the classic body save (`saveContentViaRoute`): on Docs 6 the bytes are PATCHed
+  to yhub as `{"update": base64}` (a full-state Yjs update is a valid incremental one, so no
+  GET/diff is needed), while a pre-Docs 6 server takes the legacy
+  `documents/{id}/content/` PATCH tagged `"websocket": true` (through
+  `setContent(…, viaWebSocket:)`; the classic body stays byte-identical when false). Because
+  reconcile is markdown-based, the coordinator carries the **projected markdown** as the
+  `PendingSave.markdown` / draft body /
   `lastConfirmedPushMarkdown` stamp, so `finish`, the enqueue-hold, latest-wins coalescing,
   `draftSyncDecision`, and the content cache are all **reused unchanged** — the only branch is
   in `start` (non-nil `PendingSave.liveSnapshot` ⇒ `saveLiveSnapshot`). **The accepted v1

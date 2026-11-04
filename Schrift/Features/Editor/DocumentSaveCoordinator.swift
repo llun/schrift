@@ -38,11 +38,12 @@ final class DocumentSaveCoordinator {
     struct PendingSave: Equatable, Sendable {
         let title: String
         let markdown: String
-        /// Non-nil ⇒ a **live-collaboration full-state Yjs snapshot** to PATCH verbatim
-        /// (tagged `"websocket": true`) via `client.saveLiveSnapshot`, instead of re-deriving
-        /// bytes from `markdown` through `MarkdownYjs.encode`. `markdown` still carries the
-        /// **projected** markdown (what the server renders from the snapshot), so every
-        /// reconcile/baseline/cache rule in `finish` is byte-for-byte identical between the
+        /// Non-nil ⇒ a **live-collaboration full-state Yjs snapshot** to write verbatim via
+        /// `client.saveLiveSnapshot` (yhub on Docs 6, the legacy `"websocket": true` PATCH
+        /// before it), instead of re-deriving bytes from `markdown` through
+        /// `MarkdownYjs.encode`. `markdown` still carries the **projected** markdown (what the
+        /// server renders from the snapshot), so every reconcile/baseline/cache rule in
+        /// `finish` is byte-for-byte identical between the
         /// two paths — only which network primitive `start` calls differs.
         let liveSnapshot: Data?
 
@@ -2386,9 +2387,10 @@ final class DocumentSaveCoordinator {
     }
 
     /// Queue a **live-collaboration full-state snapshot** save. `snapshot` is the Yjs bytes
-    /// to PATCH verbatim (tagged `"websocket": true`); `projectedMarkdown` is what the server
-    /// will render from them and is the value **every** reconcile/baseline/cache rule keys
-    /// off — it becomes the write-ahead draft body, the `lastConfirmedPushMarkdown` stamp on
+    /// to write verbatim (yhub on Docs 6, the legacy `"websocket": true` PATCH before it);
+    /// `projectedMarkdown` is what the server will render from them and is the value **every**
+    /// reconcile/baseline/cache rule keys off — it becomes the write-ahead draft body, the
+    /// `lastConfirmedPushMarkdown` stamp on
     /// success, and the content-cache body, exactly as a classic save's markdown does. This
     /// reuses the identical write-ahead draft, enqueue-hold, single-writer, and latest-wins
     /// machinery as the classic `enqueue` (they share the private core below); the only
