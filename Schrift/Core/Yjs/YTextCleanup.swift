@@ -214,7 +214,7 @@ enum YTextCleanup {
             }
         }
         // Clean up in a new (local) transaction.
-        try doc.transact(local: true) { t in
+        try doc.transact(local: true, origin: .formatCleanup) { t in
             try YStructStore.iterateDeletedStructs(transaction, transaction.deleteSet) { s in
                 guard let item = s as? YItem else { return }  // a GC struct → skip
                 guard let parent = item.parentType, parent._hasFormatting else { return }

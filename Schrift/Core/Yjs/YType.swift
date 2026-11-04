@@ -120,6 +120,8 @@ final class YDoc {
 
     var transaction: YTransaction?
     var transactionCleanups: [YTransaction] = []
+    /// Test seam: origin of the most recently cleaned transaction, including nested cleanup transactions.
+    var lastTransactionOrigin: YTransactionOrigin?
 
     init(clientID: UInt, gc: Bool = true) {
         self.clientID = clientID

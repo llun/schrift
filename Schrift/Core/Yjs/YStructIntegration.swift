@@ -396,7 +396,7 @@ extension YDoc {
     /// is replayed (the `retry` path) — which is what makes out-of-order delivery,
     /// the normal case over a relay like hocuspocus, converge.
     func applyUpdate(_ update: YUpdate) throws {
-        try transact(local: false) { transaction in
+        try transact(local: false, origin: .remote) { transaction in
             var clientsStructRefs = try YStructRefs.build(from: update, doc: self)
             try apply(transaction, refs: &clientsStructRefs, deleteSet: update.deleteSet)
         }

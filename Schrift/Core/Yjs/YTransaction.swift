@@ -7,9 +7,18 @@ import Foundation
 /// Reduced to the fields the struct store actually reads. Deliberately **not**
 /// modelled: `changedParentTypes` and the observer machinery (no observers in
 /// this milestone), `subdocsAdded/Removed/Loaded` (Schrift's schema has no
-/// subdocuments), `origin`/`meta` (caller bookkeeping with no effect on state).
+/// subdocuments), and `meta` (caller bookkeeping with no effect on state).
+/// yjs `origin` (any caller value); nil = no origin, like yjs's default `null`.
+enum YTransactionOrigin: Equatable {
+    case localUser
+    case remote
+    case formatCleanup
+}
+
 final class YTransaction {
     let doc: YDoc
+    /// yjs `Transaction.origin` (@3087); caller bookkeeping, not encoded state.
+    let origin: YTransactionOrigin?
     /// Ranges deleted during this transaction.
     var deleteSet = YDeleteSet()
     /// The state vector before the transaction started.
@@ -36,10 +45,11 @@ final class YTransaction {
     /// is what arms the client-id collision check in `cleanup()`.
     var local: Bool
 
-    init(doc: YDoc, local: Bool) {
+    init(doc: YDoc, local: Bool, origin: YTransactionOrigin? = nil) {
         self.doc = doc
         self.beforeState = doc.store.getStateVector()
         self.local = local
+        self.origin = origin
     }
 
     /// yjs `addChangedTypeToTransaction` (@3181).
@@ -128,18 +138,20 @@ final class YTransaction {
 // MARK: - Running a transaction
 
 extension YDoc {
-    /// yjs `transact` (@3434) — run `body` inside a transaction, then clean up.
+    /// yjs `transact` (@3437) — run `body` inside a transaction, then clean up.
     ///
     /// The nesting/re-entrancy dance is preserved: a transaction opened while one
     /// is already running joins it, and cleanup runs once, at the outermost exit,
     /// over every transaction queued in the meantime (an observer can open more —
     /// which is why yjs iterates rather than recurses over a fixed list).
     @discardableResult
-    func transact<T>(local: Bool = true, _ body: (YTransaction) throws -> T) throws -> T {
+    func transact<T>(local: Bool = true, origin: YTransactionOrigin? = nil, _ body: (YTransaction) throws -> T) throws
+        -> T
+    {
         var initialCall = false
         if transaction == nil {
             initialCall = true
-            let newTransaction = YTransaction(doc: self, local: local)
+            let newTransaction = YTransaction(doc: self, local: local, origin: origin)
             transaction = newTransaction
             transactionCleanups.append(newTransaction)
         }
@@ -187,6 +199,7 @@ extension YDoc {
     private func cleanupTransactions(_ i: Int) throws {
         guard i < transactionCleanups.count else { return }
         let transaction = transactionCleanups[i]
+        transaction.doc.lastTransactionOrigin = transaction.origin
         let store = transaction.doc.store
 
         // A delete cascade in this transaction hit `maxTypeNestingDepth` and

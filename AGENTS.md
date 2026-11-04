@@ -1600,6 +1600,8 @@ that are easy to violate and expensive to discover:
 - **Merge cleanup is mandatory.** yjs merges adjacent items on every transaction
   cleanup, so skipping it diverges from yjs's store after the first update. It is
   independent of gc: merging always runs, whether or not `doc.gc` is set.
+- Transactions retain `YTransactionOrigin` bookkeeping; peer updates and B4 format
+  cleanup are tagged explicitly, and nested transactions keep the outer origin.
 - **`pendingStructs`/`pendingDs` hold decoded refs, where yjs holds V2 bytes.** A
   deliberate, documented internal deviation — V2 is, in yjs, only a container for
   these two fields, and Schrift's wire is v1 end to end. Nothing stashed is ever
