@@ -119,9 +119,10 @@ extension DocsAPIClient {
         }
     }
 
-    /// Pins the collaboration route once it has answered, never over a route already set
-    /// (re-read after the await), so a config-derived org that landed concurrently is not
-    /// replaced by this save's guess.
+    /// Pins the collaboration route once a collaboration request has answered. It never replaces
+    /// a collaboration route already set (callers run it after their own await, so a
+    /// config-derived org that landed concurrently is kept), but it does replace a legacy
+    /// route: reaching here means the legacy route just answered Django's route 404.
     func rememberCollaborationRoute(org: String) {
         if case .collaborationYDoc = contentSaveRoute { return }
         contentSaveRoute = .collaborationYDoc(org: org)

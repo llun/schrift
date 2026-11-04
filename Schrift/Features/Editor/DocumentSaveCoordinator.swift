@@ -2388,7 +2388,7 @@ final class DocumentSaveCoordinator {
 
     /// Queue a **live-collaboration full-state snapshot** save. `snapshot` is the Yjs bytes
     /// to write verbatim (yhub on Docs 6, the legacy `"websocket": true` PATCH before it);
-    /// `projectedMarkdown` is what the server will render from them and is the value **every**
+    /// `projectedMarkdown` is our replica's render of them and is the value **every**
     /// reconcile/baseline/cache rule keys off — it becomes the write-ahead draft body, the
     /// `lastConfirmedPushMarkdown` stamp on
     /// success, and the content-cache body, exactly as a classic save's markdown does. This
