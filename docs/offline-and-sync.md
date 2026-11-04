@@ -977,7 +977,10 @@ server is about to hold.
   `isFullyModeled` — either failing means the debounce fire is skipped outright, no
   PATCH is sent, and the editor either stays read-live (never engaging writes) or its
   next keystroke downgrades to a classic autosave of the on-screen content. The server
-  document is never overwritten from a half-synced or lossy replica.
+  document is never overwritten from a half-synced or lossy replica. **Revised 2026-11-04:**
+  a failed live snapshot replaying as a classic markdown save is today's behaviour, no longer a
+  rule to preserve; persisting the raw replica bytes in the draft is approved and planned. Its
+  constraints live in `AGENTS.md` ("Drafts will carry the replica bytes").
 
 ### 4. UI changes in `EditorView`
 
