@@ -332,6 +332,9 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
     private func fireSnapshot() {
         hasPendingSnapshot = false
         snapshotTask = nil
+        // Apply a frame-pending peer change first: once the save starts, that frame would
+        // find live editing paused and drop it, leaving the editor on pre-peer content.
+        prepareForLocalEdit()
         // TOP SAFETY: a nil snapshot (un-synced / pending structs / fail-safed) means there
         // is no trustworthy full state — never PATCH, or a half-synced replica would wipe the
         // document. Re-check `isFullyModeled` here too: the projection can have gone lossy

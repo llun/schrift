@@ -2330,8 +2330,10 @@ final class EditorViewModel {
         guard targetID != sourceID || (pending != nil && pending?.token != consumedCursorToken) else { return false }
         // A probe for an ordinary UIKit edit must leave its buffer/baseline alone;
         // updateText will flush and rebase when that edit is actually published.
+        let targetExisted = blockIndex(targetID) != nil
         liveWrite?.prepareForLocalEdit()
-        guard let index = blockIndex(targetID) else { return true }
+        // Consume the input only when the flush removed its target; otherwise fall through as before.
+        guard let index = blockIndex(targetID) else { return targetExisted }
         let request = cursorRequest?.blockID == targetID ? cursorRequest : nil
         let block = blocks[index]
         switch block.kind {
@@ -2385,8 +2387,9 @@ final class EditorViewModel {
         let sameTarget = focusedBlockID == blockID
         let request = cursorRequest?.blockID == blockID ? cursorRequest : nil
         guard !sameTarget || (request != nil && request?.token != consumedCursorToken) else { return false }
+        let targetExisted = blockIndex(blockID) != nil
         liveWrite?.prepareForLocalEdit()
-        guard let index = blockIndex(blockID) else { return true }
+        guard let index = blockIndex(blockID) else { return targetExisted }
         switch blocks[index].kind {
         case .divider, .image, .attachment: return true
         default: break

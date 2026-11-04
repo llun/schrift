@@ -153,7 +153,10 @@ func transformedCaret(old: String, new: String, caret: Int) -> Int {
         result = prefix
     }
 
-    return min(max(result, 0), newLength)
+    let clamped = min(max(result, 0), newLength)
+    // A shared prefix can end inside a surrogate pair or grapheme; never land there.
+    guard clamped < newLength else { return clamped }
+    return (new as NSString).rangeOfComposedCharacterSequence(at: clamped).location
 }
 
 /// Replays a single buffered UIKit replacement after a pending remote frame was flushed.

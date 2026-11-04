@@ -335,4 +335,9 @@ final class LiveEditingTests: XCTestCase {
             canEngageLiveWrite(canEngageLiveEditing: true, projection: nil),
             "nil projection ⇒ no replica / not synced / pending / fail-safed")
     }
+
+    func testTransformedCaretNeverLandsInsideASurrogatePair() {
+        // "😀" and "😁" share their high surrogate, so the common prefix ends mid-emoji.
+        XCTAssertEqual(transformedCaret(old: "😀x", new: "😁y", caret: 2), 0)
+    }
 }

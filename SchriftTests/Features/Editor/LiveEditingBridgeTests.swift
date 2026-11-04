@@ -556,6 +556,37 @@ final class LiveEditingBridgeTests: XCTestCase {
         return (viewModel, provider, bridge, scheduler, initial)
     }
 
+    func testClassicPathStillFallsThroughWhenThePendingTargetBlockIsGone() async {
+        let (viewModel, _) = await loadDocument(content: "Alpha")
+        let id = viewModel.blocks[0].id
+        viewModel.startEditing(focusing: id)
+        let missing = UUID()
+        viewModel.focusedBlockID = missing
+        viewModel.cursorRequest = .init(blockID: missing, offset: 0)
+        // No live bridge: UIKit must keep its edit, as before the frame flush existed.
+        XCTAssertFalse(viewModel.applyPendingKeyboardInput(from: id, text: "x", consumedCursorToken: nil))
+        XCTAssertFalse(
+            viewModel.applyPendingSourceReplacement(
+                blockID: missing, range: NSRange(location: 0, length: 0), text: "x", sourceText: "",
+                consumedCursorToken: nil))
+    }
+
+    func testSnapshotAppliesAFramePendingPeerChangeBeforeItsSaveStarts() async throws {
+        let (viewModel, provider, bridge, scheduler, initial) = try await frameBridge()
+        provider.snapshotData = Data([0xBE, 0xEF])
+        let id = viewModel.blocks[0].id
+        viewModel.startEditing(focusing: id)
+        viewModel.updateText(blockID: id, text: "Alpha!")
+        provider.setProjection(
+            try projectedDoc(fromMarkdown: "Alpha!\n\nPeer Beta", carryingIDsFrom: initial), for: documentID)
+        provider.setVersion(1, for: documentID)
+        provider.fireReplicaObserver()
+        bridge.flushPendingLiveSnapshot()
+        // A frame arriving while that save runs must not be what delivers the peer text.
+        scheduler.advanceFrame()
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Alpha!", "Peer Beta"])
+    }
+
     func testRemoteBurstProjectsAndAppliesOnlyTheLatestContentInOneFrame() async throws {
         let (viewModel, provider, bridge, scheduler, initial) = try await frameBridge()
         let projectionsBefore = provider.projectionCount
