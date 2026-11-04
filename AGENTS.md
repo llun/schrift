@@ -1600,10 +1600,13 @@ that are easy to violate and expensive to discover:
 - **Merge cleanup is mandatory.** yjs merges adjacent items on every transaction
   cleanup, so skipping it diverges from yjs's store after the first update. It is
   independent of gc: merging always runs, whether or not `doc.gc` is set.
-- Transactions retain `YTransactionOrigin` bookkeeping: local writes use `.localUser`,
-  and the collaboration manager tags peer bytes `.remote`. B4 format cleanup keeps
-  yjs's null origin; nested transactions keep the outer origin. `lastTransactionOrigin`
-  is an internal test seam for the most recently cleaned transaction.
+- Transactions retain `YTransactionOrigin` bookkeeping, transliterating yjs: the origin is
+  whatever the caller passes, nil by default (yjs `null`). `BlockNoteWrite.applyEdit` tags its
+  edits `.localUser`; the callers that apply peer or server bytes (the collaboration manager,
+  the Docs 6 server-state import in `BlockNoteIncrementalSave`) pass `.remote`. Any other
+  `transact` is untagged unless its caller tags it — B4's format cleanup keeps yjs's null
+  origin. Nested transactions keep the outer origin. `lastTransactionOrigin` is an internal
+  test seam for the most recently cleaned transaction.
 - **`pendingStructs`/`pendingDs` hold decoded refs, where yjs holds V2 bytes.** A
   deliberate, documented internal deviation — V2 is, in yjs, only a container for
   these two fields, and Schrift's wire is v1 end to end. Nothing stashed is ever

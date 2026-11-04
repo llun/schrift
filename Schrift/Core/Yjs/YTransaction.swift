@@ -17,7 +17,7 @@ enum YTransactionOrigin: Equatable {
 /// optional `origin` is retained as caller bookkeeping, matching yjs `Transaction`.
 final class YTransaction {
     let doc: YDoc
-    /// yjs `Transaction.origin` (@3087); caller bookkeeping, not encoded state.
+    /// yjs `Transaction.origin` (@3128); caller bookkeeping, not encoded state.
     let origin: YTransactionOrigin?
     /// Ranges deleted during this transaction.
     var deleteSet = YDeleteSet()
@@ -138,7 +138,7 @@ final class YTransaction {
 // MARK: - Running a transaction
 
 extension YDoc {
-    /// yjs `transact` (@3437) — run `body` inside a transaction, then clean up.
+    /// yjs `transact` (@3434) — run `body` inside a transaction, then clean up.
     ///
     /// The nesting/re-entrancy dance is preserved: a transaction opened while one
     /// is already running joins it, and cleanup runs once, at the outermost exit,
