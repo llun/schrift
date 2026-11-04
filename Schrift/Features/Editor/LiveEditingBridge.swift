@@ -223,11 +223,6 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
             && lastAppliedBlocks != nil
     }
 
-    /// Re-diffs the editor against the replica now (see `EditorLiveWriteCoordinating`).
-    func reconcileWithReplica() {
-        replicaDidChange()
-    }
-
     func forwardLocalEdit() -> Bool {
         let projection = collaboration.projectedReplica(for: documentID, interlinkingOrigin: serverOrigin)
         guard canEngageLiveWrite(canEngageLiveEditing: viewModel.canEngageLiveEditing, projection: projection),

@@ -290,8 +290,9 @@ final class EditorViewModelCompositionTests: EditorViewModelTestCase {
 
     // MARK: - Peers
 
-    /// A peer's edit to the composing block does not replace the marked characters; the commit
-    /// then asks the live delegate to bring the peer's change in.
+    /// A peer's edit to the composing block does not replace the marked characters. The replica
+    /// now holds the peer's text, so that is what the bridge diffs against; the commit rebases
+    /// the user's edit onto it and forwards the merge.
     func testAPeerUpdateDuringACompositionDoesNotClobberTheBlock() async {
         let live = CompositionLiveWriteSpy()
         live.handleLive = true
@@ -299,16 +300,82 @@ final class EditorViewModelCompositionTests: EditorViewModelTestCase {
         compose("Alphaに", marked: true, in: blockID, of: viewModel)
 
         viewModel.applyLiveRemoteChange(
-            LiveChangeSet(changes: [.update(id: blockID, kind: .paragraph, text: "Alpha peer")]),
-            projectedMarkdown: "Alpha peer")
+            LiveChangeSet(changes: [.update(id: blockID, kind: .paragraph, text: "XAlpha")]),
+            projectedMarkdown: "XAlpha")
 
         XCTAssertEqual(viewModel.blocks[0].text, "Alphaに", "the marked characters are untouched")
-        XCTAssertEqual(live.reconcileCount, 0, "nothing to reconcile until the commit")
+        XCTAssertEqual(viewModel.publishableBlocks.map(\.text), ["XAlpha"], "the baseline is the peer's text")
+
+        compose("Alpha日", marked: false, in: blockID, of: viewModel)
+
+        XCTAssertEqual(live.forwardedTexts.last, ["XAlpha日"], "the user's edit landed in the peer's text")
+        XCTAssertEqual(viewModel.blocks[0].text, "XAlpha日")
+    }
+
+    /// The peer changed the text the edit is measured against: the committed text stands, and it
+    /// overwrites the peer's text consistently from the peer's baseline.
+    func testAPeerUpdateThatTouchesTheEditedTextFallsBackToTheCommittedText() async {
+        let live = CompositionLiveWriteSpy()
+        live.handleLive = true
+        let (viewModel, _, blockID) = await makeEditingEnvironment(live: live, log: RequestRecorder())
+        compose("Alphaに", marked: true, in: blockID, of: viewModel)
+        viewModel.applyLiveRemoteChange(
+            LiveChangeSet(changes: [.update(id: blockID, kind: .paragraph, text: "Be")]),
+            projectedMarkdown: "Be")
 
         compose("Alpha日", marked: false, in: blockID, of: viewModel)
 
         XCTAssertEqual(live.forwardedTexts.last, ["Alpha日"])
-        XCTAssertEqual(live.reconcileCount, 1, "the held peer change is picked up after the commit")
+        XCTAssertEqual(viewModel.blocks[0].text, "Alpha日")
+    }
+
+    func testRebasedCompositionText() {
+        XCTAssertEqual(rebasedCompositionText(original: "abc", committed: "ab日c", onto: "Xabc"), "Xab日c")
+        XCTAssertEqual(rebasedCompositionText(original: "abc", committed: "abc日", onto: "abcY"), "abc日Y")
+        XCTAssertEqual(rebasedCompositionText(original: "abc", committed: "aXc", onto: "1abc2"), "1aXc2")
+        XCTAssertEqual(rebasedCompositionText(original: "abc", committed: "abc", onto: "Xabc"), "Xabc")
+        XCTAssertNil(rebasedCompositionText(original: "abc", committed: "ab日c", onto: "ac"), "touched")
+        XCTAssertNil(rebasedCompositionText(original: "abc", committed: "ab日c", onto: ""), "deleted")
+        XCTAssertNil(rebasedCompositionText(original: "ab", committed: "ab日", onto: "abab"), "ambiguous")
+        XCTAssertNil(rebasedCompositionText(original: "", committed: "日", onto: "x"), "nothing to anchor on")
+        XCTAssertEqual(
+            rebasedCompositionText(original: "e\u{301}a", committed: "e\u{301}a日", onto: "Xe\u{301}a"),
+            "Xe\u{301}a日", "graphemes are kept whole")
+    }
+
+    // MARK: - Focus
+
+    /// Live editing has no autosave timer: a composition whose block lost focus without an
+    /// unmark is published by the next edit anywhere.
+    func testALostFocusCompositionIsPublishedByTheNextLiveEdit() async {
+        let live = CompositionLiveWriteSpy()
+        live.handleLive = true
+        let (viewModel, _, blockID) = await makeEditingEnvironment(live: live, log: RequestRecorder())
+        let other = EditorBlock(kind: .paragraph, text: "Beta")
+        viewModel.blocks.append(other)
+        compose("Alphaに", marked: true, in: blockID, of: viewModel)
+        viewModel.focusedBlockID = other.id
+
+        viewModel.updateText(blockID: other.id, text: "Beta!")
+
+        XCTAssertGreaterThan(live.forwardCount, 0)
+        XCTAssertTrue(live.forwardedTexts.allSatisfy { $0 == ["Alphaに", "Beta!"] }, "A's text went out with B's")
+        XCTAssertNil(viewModel.markedTextBlockID)
+    }
+
+    func testAFocusChangeNotificationPublishesTheLeftBehindComposition() async {
+        let live = CompositionLiveWriteSpy()
+        live.handleLive = true
+        let (viewModel, _, blockID) = await makeEditingEnvironment(live: live, log: RequestRecorder())
+        let other = EditorBlock(kind: .paragraph, text: "Beta")
+        viewModel.blocks.append(other)
+        compose("Alphaに", marked: true, in: blockID, of: viewModel)
+        XCTAssertEqual(live.forwardCount, 0)
+        viewModel.focusedBlockID = other.id
+
+        viewModel.noteFocusChange()
+
+        XCTAssertEqual(live.forwardedTexts, [["Alphaに", "Beta"]])
     }
 
     func testAPeerUpdateToAnotherBlockStillApplies() async {
@@ -360,7 +427,6 @@ private final class CompositionLiveWriteSpy: EditorLiveWriteCoordinating {
     weak var viewModel: EditorViewModel?
     private(set) var forwardCount = 0
     private(set) var forwardedTexts: [[String]] = []
-    private(set) var reconcileCount = 0
     var isHandlingLocalEditsLive: Bool { handleLive }
     func forwardLocalEdit() -> Bool {
         forwardCount += 1
@@ -368,5 +434,4 @@ private final class CompositionLiveWriteSpy: EditorLiveWriteCoordinating {
         return handleLive
     }
     func flushPendingLiveSnapshot() {}
-    func reconcileWithReplica() { reconcileCount += 1 }
 }

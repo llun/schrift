@@ -172,19 +172,17 @@ final class EditorViewModel {
     /// overwrites it — so the `[[` picker neither shows nor picks in that block. Observed, so
     /// the card appears once the composition commits.
     private(set) var markedTextBlockID: UUID?
-    /// The block whose model text holds input-method characters nothing has published yet, with
-    /// the text it had before the composition began (the last text any peer, save or draft saw).
+    /// The block whose model text holds input-method characters nothing has published yet.
+    /// `text` is what the replica (peers, saves, drafts) holds for it: the text it had before the
+    /// composition, moved to a peer's text when a peer edits the block meanwhile. `original` is the
+    /// text the composition began from, which the user's edit is measured against at the commit.
     /// While marked, the model keeps the new characters so the row can lay them out, but
-    /// `markDirty` is not called and `publishableBlocks` swaps this text back in for everything
-    /// that serializes the document (the live bridge, `currentMarkdown`, hence every save and
-    /// draft) — so even an unrelated edit or a flush mid-composition cannot carry them out. The
-    /// commit publishes the characters, even when they equal the last marked text (`updateText`
-    /// would otherwise see no change), and clears this.
-    @ObservationIgnored private var compositionBaseText: (id: UUID, text: String)?
-    /// Whether a peer's edit to the composing block arrived while it was held (it is not applied
-    /// over the marked characters). The commit asks the live delegate to reconcile once the
-    /// block is published, so the peer's change is not lost.
-    @ObservationIgnored private var remoteUpdateDeferredByComposition = false
+    /// `markDirty` is not called and `publishableBlocks` swaps `text` back in for everything that
+    /// serializes the document (the live bridge, `currentMarkdown`, hence every save and draft) —
+    /// so even an unrelated edit or a flush mid-composition cannot carry them out. The commit
+    /// publishes the characters, even when they equal the last marked text (`updateText` would
+    /// otherwise see no change), and clears this.
+    @ObservationIgnored private var compositionBaseText: (id: UUID, text: String, original: String)?
 
     let client: DocsAPIClient
     let documentID: UUID
@@ -2212,23 +2210,50 @@ final class EditorViewModel {
     /// characters. A second block's composition settles a first one nobody finished.
     private func holdComposition(of blockID: UUID, publishedText: String) {
         if let held = compositionBaseText, held.id != blockID { settleComposition() }
-        if compositionBaseText?.id != blockID { compositionBaseText = (id: blockID, text: publishedText) }
+        if compositionBaseText?.id != blockID {
+            compositionBaseText = (id: blockID, text: publishedText, original: publishedText)
+        }
     }
 
-    /// The edit to `blockID` is committed: stop substituting its old text, publish, and let the
-    /// live delegate pick up a peer's change to it that was held back meanwhile.
+    /// The edit to `blockID` is committed: stop substituting its old text, rebase the edit onto a
+    /// peer's concurrent change to it, and publish.
     private func publishComposition(of blockID: UUID) {
-        if compositionBaseText?.id == blockID { compositionBaseText = nil }
+        if let held = compositionBaseText, held.id == blockID {
+            compositionBaseText = nil
+            rebaseComposition(held)
+        }
         markDirty()
-        guard remoteUpdateDeferredByComposition, compositionBaseText == nil else { return }
-        remoteUpdateDeferredByComposition = false
-        liveWrite?.reconcileWithReplica()
+    }
+
+    /// A peer edited the block while its composition was held (`held.text` is theirs, and what the
+    /// replica holds). The user's edit is one splice from `held.original` to the committed text;
+    /// applying it to the peer's text keeps both, so the bridge forwards peer text -> merged text
+    /// from the baseline the replica really has. When the peer's change touched the text the splice
+    /// is measured against (`rebasedCompositionText` finds no single place for it) the committed
+    /// text stands: it overwrites the peer's text, consistently from that baseline.
+    private func rebaseComposition(_ held: (id: UUID, text: String, original: String)) {
+        guard held.text != held.original, let index = blockIndex(held.id) else { return }
+        let committed = blocks[index].text
+        guard let merged = rebasedCompositionText(original: held.original, committed: committed, onto: held.text),
+            merged != committed
+        else { return }
+        blocks[index].text = merged
+        if focusedBlockID == held.id {
+            let caret = transformedCaret(old: committed, new: merged, caret: selection?.location ?? 0)
+            cursorRequest = CursorRequest(blockID: held.id, offset: caret)
+            selection = NSRange(location: caret, length: 0)
+        }
+    }
+
+    /// The text views moved focus: a composition left behind on the old block (its unmark never
+    /// arrived) is published now rather than waiting for a timer live editing does not have.
+    func noteFocusChange() {
+        settleComposition()
     }
 
     /// A new editing session or freshly installed content has no composition in progress.
     private func resetComposition() {
         compositionBaseText = nil
-        remoteUpdateDeferredByComposition = false
         if markedTextBlockID != nil { markedTextBlockID = nil }
     }
 
@@ -3846,6 +3871,10 @@ final class EditorViewModel {
     }
 
     private func markDirty(forcesClassicPath: Bool = false) {
+        // Live editing has no autosave timer to notice a composition whose block lost focus
+        // without an unmark: the next edit anywhere publishes it first (`publishComposition`
+        // clears the held text before it re-enters here, so this cannot recurse).
+        settleComposition()
         // Every edit funnels here, so this is where a stranded indent (a parent
         // deleted, converted or moved away) is put right. Written only when it
         // changes anything, so an ordinary keystroke doesn't rewrite the array.
@@ -4031,10 +4060,13 @@ final class EditorViewModel {
             case .update(let id, let kind, let text):
                 guard let index = blockIndex(id) else { continue }
                 // Not over uncommitted characters: UIKit owns them and the commit would overwrite
-                // this anyway. The commit publishes the block and `reconcileWithReplica` then
-                // brings the peer's change in.
-                if compositionBaseText?.id == id {
-                    remoteUpdateDeferredByComposition = true
+                // this anyway. The replica now holds the peer's text, so that becomes the baseline
+                // the bridge diffs against, and the commit rebases the user's edit onto it
+                // (`rebaseComposition`).
+                if var held = compositionBaseText, held.id == id {
+                    held.text = text
+                    compositionBaseText = held
+                    blocks[index].kind = kind
                     continue
                 }
                 blocks[index].kind = kind

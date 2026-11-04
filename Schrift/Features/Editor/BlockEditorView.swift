@@ -518,11 +518,13 @@ struct BlockEditorRow: View {
             if viewModel.focusedBlockID != blockID {
                 viewModel.focusedBlockID = blockID
                 viewModel.slashQueryText = nil
+                viewModel.noteFocusChange()
             }
         case .endedEditing:
             if viewModel.focusedBlockID == blockID {
                 viewModel.focusedBlockID = nil
                 viewModel.slashQueryText = nil
+                viewModel.noteFocusChange()
             }
         case .editLink(let span):
             viewModel.beginLinkEditing(blockID: blockID, span: span)

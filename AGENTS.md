@@ -3943,13 +3943,25 @@ markdown write endpoint**. Understand this before touching the save path:
     settle too, and Done mid-composition counts as committed. `startEditing` and
     `install` reset the state.
   - A peer's `.update` to the composing block is not applied over the marked
-    characters (`applyLiveRemoteChange`); the commit calls
-    `EditorLiveWriteCoordinating.reconcileWithReplica()`, which re-diffs against the
-    replica so the change is not lost.
+    characters (`applyLiveRemoteChange`). The replica now holds the peer's text, so
+    that becomes the held base (`compositionBaseText.text`; `publishableBlocks` and the
+    bridge's `lastAppliedBlocks` then match the replica) while `original` keeps the
+    text the composition began from. At the commit `rebaseComposition` applies the
+    user's edit, one splice `original` -> committed (`rebasedCompositionText`), to the
+    peer's text when `original` still sits whole and unambiguously inside it, and
+    writes the merge to the model before publishing, so the bridge forwards peer text
+    -> merge. Otherwise the committed text overwrites the peer's, consistently from the
+    peer baseline. Never diff a composing block against a stale base: `applyEdit`
+    splices at base-relative offsets, and a shorter replica text throws and tears the
+    session down.
+  - A composition whose block lost focus without an unmark is also settled by the next
+    `markDirty` (live editing has no autosave timer) and by `noteFocusChange()`, which
+    `BlockEditorView` calls when the text views move focus.
   - Nesting detachment still runs on marked text. Cover marked updates (no dirty, no
     push, no save, no draft), the commit, an unchanged commit, a flush, an unrelated
-    edit, Done, a selection-only unmark and a peer update in
-    `EditorViewModelCompositionTests`.
+    edit, Done, a selection-only unmark, a lost focus and a peer update in
+    `EditorViewModelCompositionTests`, and the merge against a real replica (peer insert, and
+    a peer delete that takes the fallback) in `LiveEditingIntegrationTests`.
 - **One inline scanner, not two.** `InlineMarkdown.layout(of:)` partitions a
   block's source into visible `spans` (styled) and hidden `syntax` (the
   complement of the spans, so the two cannot drift), plus its `links`.
