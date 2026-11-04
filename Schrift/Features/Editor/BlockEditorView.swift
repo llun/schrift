@@ -501,13 +501,13 @@ struct BlockEditorRow: View {
         // the destination of a merge. Its native identity no longer owns that ID.
         if let inputRowID, viewModel.inputRowID(for: blockID) != inputRowID { return }
         switch event {
-        case .textChanged(let text):
-            viewModel.updateText(blockID: blockID, text: text)
-        case .insertNewline(let cursorOffset):
+        case .textChanged(let text, let selection):
+            viewModel.updateText(blockID: blockID, text: text, inputSelection: selection)
+        case .insertNewline(let cursorOffset, let sourceText):
             // While the `[[` picker is up, Return picks its highlighted page rather than
             // splitting the block — the same key a hardware keyboard confirms a menu with.
             if viewModel.commitHighlightedPageLink(in: blockID) { return }
-            viewModel.splitBlock(blockID: blockID, at: cursorOffset)
+            viewModel.splitBlock(blockID: blockID, at: cursorOffset, sourceText: sourceText)
         case .deleteAtStart:
             viewModel.mergeBlockWithPrevious(blockID: blockID)
         case .selectionChanged(let range):

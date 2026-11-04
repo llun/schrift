@@ -95,25 +95,15 @@ final class DocumentCollaborationManager {
     /// work, already on screen, and must never masquerade as an inbound remote change.
     private var localEditVersions: [UUID: Int] = [:]
 
-    /// Per-document synchronous "replica changed" observers (C2c). Fired inside
-    /// `applyReplicaUpdate` on the **same main-actor turn** it bumps `replicaVersion`,
-    /// so the editor bridge's write baseline (`LiveEditingBridge.lastAppliedBlocks`) is
-    /// re-synced to the integrated replica *before* any keystroke can run. Without this
-    /// synchronous hook the read-apply is deferred to a later turn (the view's
-    /// `.onChange(of: replicaVersion)`), leaving a window in which a local forward diffs
-    /// its edit against the pre-update projection — and `BlockNoteWrite.applyEdit` maps
-    /// `old` to the replica's containers by position, so a structural remote change in
-    /// that window corrupts the broadcast. The stored closure captures the bridge
-    /// weakly (a dead bridge self-neutralises). Its lifecycle is kept aligned with the
-    /// per-document entry: the bridge registers via `setReplicaObserver` on every live
-    /// **session (re)acquisition** (`EditorView.requestCollaborationSessionIfNeeded`, not
-    /// at bridge construction), and `teardownIfIdle` drops it — so it exists exactly while
-    /// a live entry does. That symmetry is load-bearing: registering at construction
-    /// instead would both leak (a document that never opens a session — the default
-    /// feature-off path — would register an observer no teardown ever clears) and go stale
-    /// (a reopen after the entry was torn down would keep the reused bridge's now-dropped
-    /// observer, silently degrading back to the deferred `.onChange`). Not the
-    /// awareness/change-signal path — this is strictly the replica-integrated edge.
+    /// Per-document synchronous "replica changed" observers. Integration and the inbound
+    /// version bump stay immediate. The editor observer invalidates its writable baseline
+    /// in this SAME main-actor turn, then schedules projection/UI apply for a display frame.
+    /// Local mutations flush that frame BEFORE changing blocks, so BlockNoteWrite's
+    /// positional alignment can never consume a stale baseline. A post-mutation flush
+    /// would overwrite the un-forwarded keystroke and is not safe.
+    /// Registered weakly by the bridge on each session (re)acquisition, never construction;
+    /// cleared on teardown. This avoids leaks for documents with no session and restores
+    /// the observer when a SwiftUI-retained bridge outlives its previous entry.
     private var replicaObservers: [UUID: () -> Void] = [:]
 
     private let serverBaseURL: URL
@@ -474,9 +464,9 @@ final class DocumentCollaborationManager {
             try replica.applyUpdate(try YUpdateDecoder.decode(data), origin: .remote)
             entries[documentID] = entry
             replicaVersions[documentID, default: 0] += 1
-            // Synchronous read-apply (C2c): hand the freshly-integrated replica to the
-            // editor bridge *now*, in the same turn as the version bump, so a keystroke
-            // can never race in and forward a local edit against a stale projection.
+            // Synchronous baseline invalidation: notify in the integrate turn, even though
+            // the bridge coalesces projection/UI work until a display frame. A local mutation
+            // must flush that frame before changing blocks, never after the keystroke.
             // The entry/version are already consistent above; a nil observer (no editor
             // open, or a non-live document) is a no-op. See `replicaObservers`.
             replicaObservers[documentID]?()

@@ -14,11 +14,9 @@ protocol LiveReplicaProviding: AnyObject {
     /// or `nil` when there is nothing safe to project yet (no replica, not
     /// synced, fail-safed, or still holding unintegrated pending structs/deletes).
     func projectedReplica(for documentID: UUID, interlinkingOrigin: String?) -> ProjectedDocument?
-    /// Registers a synchronous observer fired the instant an inbound update integrates
-    /// (or clears it with `nil`). The bridge registers `replicaDidChange` so its write
-    /// baseline is re-synced in the **same turn** the replica changes — never left stale
-    /// for a racing local forward (see `replicaVersion` and `forwardLocalEdit`). The
-    /// view's deferred `.onChange(of: replicaVersion)` alone would leave that window open.
+    /// Fires synchronously with integration. The bridge invalidates its write baseline
+    /// immediately, then coalesces projection/UI work until the next frame. Local mutations
+    /// flush that pending frame before reading indices or forwarding an edit.
     func setReplicaObserver(_ observer: (() -> Void)?, for documentID: UUID)
 
     // MARK: - Write side (C2c)
@@ -58,10 +56,17 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
     private let viewModel: EditorViewModel
     private let collaboration: LiveReplicaProviding
     private let serverOrigin: String?
+    private let remoteApplyScheduler: LiveRemoteApplyScheduling
+    private var hasPendingRemoteApply = false
+    private var remoteApplyGeneration = 0
+    private var remoteAppliesStopped = false
+    private var observesReplica = false
+    private var appliedReplicaVersion: Int?
+    private var projectionIsFullyModeled = false
 
     /// BlockNote id -> `EditorBlock.id`. Rebuilt (via `reseedMap`) whenever it
     /// no longer covers the editor's current blocks — checked fresh on every
-    /// `replicaDidChange()` by comparing `map`'s value set against
+    /// remote apply by comparing `map`'s value set against
     /// `viewModel.blocks`' id set, rather than tracked with a separate "is this
     /// stale" flag. In steady state after an engaged apply the two sets are
     /// equal (`applyLiveRemoteChange` leaves `blocks` holding exactly the ids
@@ -77,10 +82,11 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
 
     /// The replica's current projection expressed as `[BlockNoteBlock]` (the `old` for
     /// the next `applyLocalEdit`). Built from the editor's own blocks the moment they
-    /// reflect the projection — captured on every engage (`replicaDidChange`) and
-    /// re-synced after every `applyLiveRemoteChange`. `nil` while disengaged, which
-    /// keeps writes from flowing before the read side has aligned the editor with the
-    /// replica. Editor ids are stable within a session, so a survivor keeps its id across
+    /// reflect the projection — captured on every successful remote frame and
+    /// re-synced after every `applyLiveRemoteChange`. Invalidated synchronously on each
+    /// remote notification (`nil` while a frame is pending or the bridge is disengaged),
+    /// so no forward can read a pre-update baseline. Local mutations flush first.
+    /// Editor ids are stable within a session, so a survivor keeps its id across
     /// forwards and reconciles in place instead of a whole-document rebuild.
     private var lastAppliedBlocks: [BlockNoteBlock]?
 
@@ -91,66 +97,116 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
     private var hasPendingSnapshot = false
     private let snapshotInterval: Duration
 
-    /// Whether the last `replicaDidChange()` call found a usable projection
+    /// Whether the last remote frame found a usable projection
     /// and (if engagement allowed it) is actively driving the editor. Exposed
     /// for the view to gate any "live" UI affordance and for tests.
     private(set) var isEngaged = false
 
-    /// Whether this document is currently being driven by the live stream — the
-    /// engagement condition evaluated FRESH (not the last-apply flag). The view gates
-    /// the A5 fallback refetch on this so a stale REST body can't install over (and
-    /// reset the caret of) content the bridge is keeping live.
+    /// Suppresses stale REST installs while engaged or awaiting a remote frame. Fidelity
+    /// is checked by the frame, not re-projected by every SwiftUI read of this gate. Unsafe
+    /// replicas and local work release the gate immediately; unrenderable content releases
+    /// it when the frame resolves and falls back to A5.
     var isApplyingLiveContent: Bool {
-        viewModel.canEngageLiveEditing && resolvedLiveDocument() != nil
+        // Never project from a SwiftUI gate: that would undo the frame coalescing.
+        // While a frame is pending, reserve the screen for it; the frame re-checks fidelity.
+        viewModel.canEngageLiveEditing && !remoteAppliesStopped
+            && (isEngaged || hasPendingRemoteApply)
+            && !collaboration.replicaIsFailSafe(for: documentID)
+            && !collaboration.hasPendingStructs(for: documentID)
     }
 
     init(
         documentID: UUID, viewModel: EditorViewModel, collaboration: LiveReplicaProviding,
-        serverOrigin: String?, snapshotInterval: Duration = .seconds(60)
+        serverOrigin: String?, remoteApplyScheduler: LiveRemoteApplyScheduling? = nil,
+        snapshotInterval: Duration = .seconds(60)
     ) {
         self.documentID = documentID
         self.viewModel = viewModel
         self.collaboration = collaboration
         self.serverOrigin = serverOrigin
         self.snapshotInterval = snapshotInterval
+        self.remoteApplyScheduler = remoteApplyScheduler ?? DisplayLinkRemoteApplyScheduler()
     }
 
-    /// (Re)registers the SYNCHRONOUS read-apply observer with the collaboration manager, so
-    /// an inbound update re-syncs the write baseline in the **same main-actor turn** it
-    /// integrates — rather than a `.onChange(of: replicaVersion)` turn later, which would
-    /// leave a window in which `lastAppliedBlocks` is stale relative to the replica and a
-    /// keystroke there forwards a local edit diffed against the wrong projection, corrupting
-    /// the broadcast (see `forwardLocalEdit`). `EditorView` calls this on **every live-session
-    /// (re)acquisition** — deliberately NOT once at construction. The manager drops the
-    /// observer when the document's entry is torn down after linger, but this bridge instance
-    /// outlives that teardown (the view holds it in `@State` across navigation), so a reopen
-    /// must re-register or the race reopens; and keying registration to *acquisition* means a
-    /// document that never opens a session (the default feature-off path, an unsupported
-    /// server, offline) never registers one, so nothing accumulates. Registration is
-    /// idempotent (the manager replaces by document id). `[weak self]` so the manager's stored
-    /// closure never keeps this bridge alive.
+    /// Registers on every live-session (re)acquisition, not at construction. The
+    /// observer synchronously invalidates the writable baseline in the integrate turn;
+    /// only projection, diffing and UI apply wait for a frame. A local mutation flushes
+    /// that frame first (`prepareForLocalEdit`), before it can change the editor's blocks.
+    /// The manager owns the per-document observer and drops it at linger teardown. This
+    /// bridge can outlive that entry in SwiftUI @State, so reopening must register again.
+    /// A weak capture avoids retaining the editor through the manager.
     func registerReplicaObserver() {
+        remoteAppliesStopped = false
+        observesReplica = true
+        appliedReplicaVersion = nil
         collaboration.setReplicaObserver({ [weak self] in self?.replicaDidChange() }, for: documentID)
+        // A lingered entry may already have a replica without another version edge
+        // on reopening. Catch up before the retained bridge can forward local edits.
+        if collaboration.replicaVersion(for: documentID) > 0 { replicaDidChange() }
     }
 
-    /// The current replica projected + rendered to editor blocks and markdown, or nil
-    /// if the document isn't live-appliable right now (no replica / not synced / opaque /
-    /// not round-trippable). The SINGLE engagement condition — `replicaDidChange` applies
-    /// exactly this, and `isApplyingLiveContent` reports whether it exists, so the A5
-    /// suppression gate can never disagree with what the bridge actually does.
+    /// Project/render once per remote frame. The result must be safe to round-trip
+    /// through the editor before it can engage; only fully modeled content can write.
     private func resolvedLiveDocument() -> (blocks: [ProjectedEditorBlock], markdown: String)? {
         guard let projected = collaboration.projectedReplica(for: documentID, interlinkingOrigin: serverOrigin),
             projected.isFullyRenderable,
             let rendered = YBlockProjection.renderedEditorDocument(projected)
         else { return nil }
+        projectionIsFullyModeled = projected.isFullyModeled
         return rendered
     }
 
-    /// Called by the view whenever `collaboration.replicaVersion(for:)`
-    /// changes. Pulls the current projection and, only if engagement is
-    /// allowed and the projection is safe to show, diffs it against the
-    /// editor's current blocks and applies the result.
+    /// Called synchronously by the replica observer and again by SwiftUI's deferred
+    /// version notification. Invalidate writes now; queue at most one latest-state apply.
     func replicaDidChange() {
+        guard !remoteAppliesStopped else { return }
+        // The observer and SwiftUI's later notification describe the same integration.
+        if observesReplica, appliedReplicaVersion == collaboration.replicaVersion(for: documentID),
+            isEngaged, lastAppliedBlocks != nil
+        {
+            return
+        }
+        // This bookkeeping MUST run synchronously with the integrate. The old baseline
+        // is no longer writable, even though its projection/UI apply waits for a frame.
+        lastAppliedBlocks = nil
+        guard !hasPendingRemoteApply else { return }
+        hasPendingRemoteApply = true
+        remoteApplyGeneration += 1
+        let generation = remoteApplyGeneration
+        remoteApplyScheduler.schedule { [weak self] in
+            guard let self, self.remoteApplyGeneration == generation else { return }
+            self.applyPendingRemoteChange()
+        }
+    }
+
+    /// Runs before any editor mutation, never from the post-mutation forward. A local
+    /// action is the sole exception to waiting for the next display frame.
+    func prepareForLocalEdit() {
+        guard hasPendingRemoteApply else { return }
+        remoteApplyScheduler.cancel()
+        applyPendingRemoteChange()
+    }
+
+    /// Navigation teardown cancels the frame and ignores later notifications. It leaves the
+    /// manager's observer slot alone: another screen on the same document may already have
+    /// registered there, and the manager clears it on idle teardown. Reacquisition
+    /// re-registers the observer on the existing bridge and re-enables frame delivery.
+    func stopRemoteApplies() {
+        remoteApplyScheduler.cancel()
+        remoteApplyGeneration += 1
+        hasPendingRemoteApply = false
+        remoteAppliesStopped = true
+        observesReplica = false
+        isEngaged = false
+        lastAppliedBlocks = nil
+        appliedReplicaVersion = nil
+    }
+
+    private func applyPendingRemoteChange() {
+        guard hasPendingRemoteApply, !remoteAppliesStopped else { return }
+        hasPendingRemoteApply = false
+        remoteApplyGeneration += 1
+        projectionIsFullyModeled = false
         // The user's own local work always wins — a live apply must never
         // race or clobber it (see `canEngageLiveEditing`'s doc comment for the
         // exhaustive list of what "local work" covers). On pause the map is
@@ -172,10 +228,14 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
         guard let (rendered, markdown) = resolvedLiveDocument() else {
             isEngaged = false
             lastAppliedBlocks = nil
+            // The remote-change signal may have suppressed A5 while this frame was
+            // pending. Re-open that path if the latest projection cannot drive the UI.
+            if observesReplica { viewModel.noteRemoteChange() }
             return
         }
 
         isEngaged = true
+        appliedReplicaVersion = collaboration.replicaVersion(for: documentID)
 
         // Re-seed when the identity map no longer matches the editor's current
         // blocks — e.g. `install(...)` (a pull-to-refresh / server-wins
@@ -207,32 +267,27 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
         // Capture the write baseline once the editor reflects the projection — the `old`
         // for the next forward. Done on every engage (including an empty diff) and after
         // every remote apply, so `old` always describes the replica's current projection.
-        // A local forward advances this itself; a remote apply lands here and re-syncs it,
-        // which is why a peer's edit never desyncs the next local diff.
+        // A local forward advances this itself. Remote notifications invalidate it in the
+        // integrate turn, and a pre-mutation flush restores it before the next local diff.
         lastAppliedBlocks = MarkdownYjs.blockNoteBlocks(from: viewModel.publishableBlocks)
     }
 
     // MARK: - Live write path (C2c)
 
-    /// Forward one local edit to the shared replica (see `EditorLiveWriteCoordinating`).
-    /// Returns `true` when the edit was integrated live (peers notified + a snapshot
-    /// scheduled) so the classic REST autosave must NOT run; `false` downgrades to
-    /// classic, which persists the same on-screen content — the edit is never lost.
-    /// `forwardLocalEdit`'s guard, minus every side effect — see the protocol for why the
-    /// photo-insert path needs to ask before it acts rather than after.
+    /// The last applied projection's modeled flag is valid until the next synchronous
+    /// remote notification invalidates the baseline. Local forwards do not change inbound
+    /// versions (echo suppression); fail-safe/pending-struct gates are always read fresh.
+    /// The photo-insert path asks this before acting, without projecting or mutating.
     var isHandlingLocalEditsLive: Bool {
-        let projection = collaboration.projectedReplica(for: documentID, interlinkingOrigin: serverOrigin)
-        return collaboration.canWriteReplica(for: documentID)
-            && canEngageLiveWrite(canEngageLiveEditing: viewModel.canEngageLiveEditing, projection: projection)
-            && lastAppliedBlocks != nil
+        viewModel.canEngageLiveEditing && projectionIsFullyModeled
+            && !hasPendingRemoteApply && lastAppliedBlocks != nil
+            && collaboration.canWriteReplica(for: documentID)
+            && !collaboration.replicaIsFailSafe(for: documentID)
+            && !collaboration.hasPendingStructs(for: documentID)
     }
 
     func forwardLocalEdit() -> Bool {
-        let projection = collaboration.projectedReplica(for: documentID, interlinkingOrigin: serverOrigin)
-        guard collaboration.canWriteReplica(for: documentID),
-            canEngageLiveWrite(canEngageLiveEditing: viewModel.canEngageLiveEditing, projection: projection),
-            let old = lastAppliedBlocks
-        else { return false }  // not engaged / lossy / no baseline yet ⇒ classic
+        guard isHandlingLocalEditsLive, let old = lastAppliedBlocks else { return false }
 
         // `new` is built from the editor's own id-stable blocks (Task 1) — NOT re-parsed
         // markdown, which would mint fresh ids and force a whole-document rebuild each edit.
@@ -278,6 +333,9 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
     private func fireSnapshot() {
         hasPendingSnapshot = false
         snapshotTask = nil
+        // Apply a frame-pending peer change first: once the save starts, that frame would
+        // find live editing paused and drop it, leaving the editor on pre-peer content.
+        prepareForLocalEdit()
         // TOP SAFETY: a nil snapshot (un-synced / pending structs / fail-safed) means there
         // is no trustworthy full state — never PATCH, or a half-synced replica would wipe the
         // document. Re-check `isFullyModeled` here too: the projection can have gone lossy

@@ -123,6 +123,7 @@ final class LiveEditingBridgeTests: XCTestCase {
         func canWriteReplica(for documentID: UUID) -> Bool { true }
         private var versions: [UUID: Int] = [:]
         private var projections: [UUID: ProjectedDocument] = [:]
+        private(set) var projectionCount = 0
 
         func setVersion(_ version: Int, for documentID: UUID) {
             versions[documentID] = version
@@ -141,7 +142,8 @@ final class LiveEditingBridgeTests: XCTestCase {
         }
 
         func projectedReplica(for documentID: UUID, interlinkingOrigin: String?) -> ProjectedDocument? {
-            projections[documentID]
+            projectionCount += 1
+            return projections[documentID]
         }
 
         /// The bridge's registered synchronous read-apply observer. Stored (not
@@ -187,7 +189,8 @@ final class LiveEditingBridgeTests: XCTestCase {
         let originalIDs = viewModel.blocks.map(\.id)
         let provider = FakeReplicaProvider()
         let bridge = LiveEditingBridge(
-            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil)
+            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil,
+            remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler())
 
         // First engage: matching content, seeds the map, no diff to apply.
         let initialProjection = try projectedDoc(fromMarkdown: "Alpha\n\nBeta\n\nGamma")
@@ -212,7 +215,8 @@ final class LiveEditingBridgeTests: XCTestCase {
         let (viewModel, _) = await loadDocument(content: "Alpha\\n\\nBeta")
         let provider = FakeReplicaProvider()
         let bridge = LiveEditingBridge(
-            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil)
+            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil,
+            remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler())
         provider.setProjection(try projectedDoc(fromMarkdown: "Alpha\n\nBeta"), for: documentID)
         bridge.replicaDidChange()
         XCTAssertTrue(bridge.isEngaged)
@@ -235,7 +239,8 @@ final class LiveEditingBridgeTests: XCTestCase {
         let blocksBefore = viewModel.blocks
         let provider = FakeReplicaProvider()
         let bridge = LiveEditingBridge(
-            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil)
+            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil,
+            remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler())
 
         // No projection at all (not synced yet).
         bridge.replicaDidChange()
@@ -271,7 +276,8 @@ final class LiveEditingBridgeTests: XCTestCase {
         let blocksBefore = viewModel.blocks
         let provider = FakeReplicaProvider()
         let bridge = LiveEditingBridge(
-            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil)
+            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil,
+            remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler())
 
         let block = ProjectedBlock(
             id: "x", node: "paragraph", props: [], runs: [InlineRun("a\nb")], fidelity: .modeled)
@@ -281,14 +287,14 @@ final class LiveEditingBridgeTests: XCTestCase {
             YBlockProjection.renderedEditorDocument(notRoundTrippable),
             "sanity: it's the round-trip verification that actually fails")
 
+        provider.pendingStructsFlag = false
         provider.setProjection(notRoundTrippable, for: documentID)
+
+        bridge.replicaDidChange()
 
         XCTAssertFalse(
             bridge.isApplyingLiveContent,
             "the A5 suppression gate must not claim live content is being applied when it isn't")
-
-        bridge.replicaDidChange()
-
         XCTAssertFalse(bridge.isEngaged)
         XCTAssertEqual(viewModel.blocks, blocksBefore, "an unrenderable projection must never touch the editor")
     }
@@ -331,7 +337,8 @@ final class LiveEditingBridgeTests: XCTestCase {
 
         let provider = FakeReplicaProvider()
         let bridge = LiveEditingBridge(
-            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil)
+            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil,
+            remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler())
         let initialProjection = try projectedDoc(fromMarkdown: "Alpha\n\nBeta")
         provider.setProjection(initialProjection, for: documentID)
         bridge.replicaDidChange()
@@ -377,7 +384,8 @@ final class LiveEditingBridgeTests: XCTestCase {
 
         let provider = FakeReplicaProvider()
         let bridge = LiveEditingBridge(
-            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil)
+            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil,
+            remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler())
         let initialProjection = try projectedDoc(fromMarkdown: "Alpha\n\nBeta\n\nGamma")
         provider.setProjection(initialProjection, for: documentID)
         bridge.replicaDidChange()
@@ -402,7 +410,8 @@ final class LiveEditingBridgeTests: XCTestCase {
 
         let provider = FakeReplicaProvider()
         let bridge = LiveEditingBridge(
-            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil)
+            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil,
+            remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler())
         // Same content the editor is already showing.
         provider.setProjection(try projectedDoc(fromMarkdown: "Alpha\n\nBeta"), for: documentID)
         bridge.replicaDidChange()
@@ -448,7 +457,8 @@ final class LiveEditingBridgeTests: XCTestCase {
         let idsBeforeRefresh = viewModel.blocks.map(\.id)
         let provider = FakeReplicaProvider()
         let bridge = LiveEditingBridge(
-            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil)
+            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil,
+            remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler())
 
         // First engage: matching content, seeds the map against the loaded blocks.
         let initialProjection = try projectedDoc(fromMarkdown: "Alpha\n\nBeta")
@@ -495,7 +505,8 @@ final class LiveEditingBridgeTests: XCTestCase {
         let originalIDs = viewModel.blocks.map(\.id)
         let provider = FakeReplicaProvider()
         let bridge = LiveEditingBridge(
-            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil)
+            documentID: documentID, viewModel: viewModel, collaboration: provider, serverOrigin: nil,
+            remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler())
 
         let initialProjection = try projectedDoc(fromMarkdown: "Alpha\n\nBeta\n\nGamma")
         provider.setProjection(initialProjection, for: documentID)
@@ -523,6 +534,313 @@ final class LiveEditingBridgeTests: XCTestCase {
         XCTAssertEqual(viewModel.blocks.map(\.text), ["Alpha", "Beta3", "Gamma"])
     }
 
+    // MARK: - Display-frame coalescing
+
+    private func frameBridge() async throws -> (
+        EditorViewModel, FakeReplicaProvider, LiveEditingBridge, ManualLiveRemoteApplyScheduler, ProjectedDocument
+    ) {
+        let (viewModel, _) = await loadDocument(content: "Alpha\\n\\nBeta")
+        let provider = FakeReplicaProvider()
+        provider.pendingStructsFlag = false
+        let scheduler = ManualLiveRemoteApplyScheduler()
+        let bridge = LiveEditingBridge(
+            documentID: documentID, viewModel: viewModel, collaboration: provider,
+            serverOrigin: nil, remoteApplyScheduler: scheduler)
+        viewModel.liveWrite = bridge
+        bridge.registerReplicaObserver()
+        let initial = try projectedDoc(fromMarkdown: "Alpha\n\nBeta")
+        provider.setProjection(initial, for: documentID)
+        bridge.replicaDidChange()
+        scheduler.advanceFrame()
+        XCTAssertTrue(bridge.isEngaged)
+        return (viewModel, provider, bridge, scheduler, initial)
+    }
+
+    func testClassicPathStillFallsThroughWhenThePendingTargetBlockIsGone() async {
+        let (viewModel, _) = await loadDocument(content: "Alpha")
+        let id = viewModel.blocks[0].id
+        viewModel.startEditing(focusing: id)
+        let missing = UUID()
+        viewModel.focusedBlockID = missing
+        viewModel.cursorRequest = .init(blockID: missing, offset: 0)
+        // No live bridge: UIKit must keep its edit, as before the frame flush existed.
+        XCTAssertFalse(viewModel.applyPendingKeyboardInput(from: id, text: "x", consumedCursorToken: nil))
+        XCTAssertFalse(
+            viewModel.applyPendingSourceReplacement(
+                blockID: missing, range: NSRange(location: 0, length: 0), text: "x", sourceText: "",
+                consumedCursorToken: nil))
+    }
+
+    func testSnapshotAppliesAFramePendingPeerChangeBeforeItsSaveStarts() async throws {
+        let (viewModel, provider, bridge, scheduler, initial) = try await frameBridge()
+        provider.snapshotData = Data([0xBE, 0xEF])
+        let id = viewModel.blocks[0].id
+        viewModel.startEditing(focusing: id)
+        viewModel.updateText(blockID: id, text: "Alpha!")
+        provider.setProjection(
+            try projectedDoc(fromMarkdown: "Alpha!\n\nPeer Beta", carryingIDsFrom: initial), for: documentID)
+        provider.setVersion(1, for: documentID)
+        provider.fireReplicaObserver()
+        bridge.flushPendingLiveSnapshot()
+        // A frame arriving while that save runs must not be what delivers the peer text.
+        scheduler.advanceFrame()
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Alpha!", "Peer Beta"])
+    }
+
+    func testRemoteBurstProjectsAndAppliesOnlyTheLatestContentInOneFrame() async throws {
+        let (viewModel, provider, bridge, scheduler, initial) = try await frameBridge()
+        let projectionsBefore = provider.projectionCount
+        let schedulesBefore = scheduler.scheduleCount
+        for version in 1...10 {
+            provider.setProjection(
+                try projectedDoc(fromMarkdown: "Alpha \(version)\n\nBeta", carryingIDsFrom: initial),
+                for: documentID)
+            provider.setVersion(version, for: documentID)
+            provider.fireReplicaObserver()
+            bridge.replicaDidChange()  // the deferred SwiftUI notification must share the same apply
+            XCTAssertTrue(bridge.isApplyingLiveContent)
+            XCTAssertFalse(bridge.isHandlingLocalEditsLive, "invalidation is synchronous with the observer")
+        }
+        XCTAssertEqual(provider.projectionCount, projectionsBefore, "no projection in the integrate turn or UI gate")
+        XCTAssertEqual(scheduler.scheduleCount, schedulesBefore + 1)
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Alpha", "Beta"])
+        scheduler.advanceFrame()
+        XCTAssertEqual(provider.projectionCount, projectionsBefore + 1)
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Alpha 10", "Beta"])
+        XCTAssertTrue(bridge.isHandlingLocalEditsLive, "the frame restored the current write baseline")
+        bridge.replicaDidChange()  // a late duplicate after the frame is also a no-op
+        scheduler.advanceFrame()
+        XCTAssertEqual(provider.projectionCount, projectionsBefore + 1)
+    }
+
+    func testRemoteUpdatesAcrossFramesApplyOncePerFrame() async throws {
+        let (viewModel, provider, bridge, scheduler, initial) = try await frameBridge()
+        let projectionsBefore = provider.projectionCount
+        for frame in 1...3 {
+            for update in 1...3 {
+                provider.setProjection(
+                    try projectedDoc(fromMarkdown: "Alpha \(frame).\(update)\n\nBeta", carryingIDsFrom: initial),
+                    for: documentID)
+                provider.setVersion(frame * 3 + update, for: documentID)
+                provider.fireReplicaObserver()
+            }
+            scheduler.advanceFrame()
+            XCTAssertEqual(provider.projectionCount, projectionsBefore + frame)
+            XCTAssertEqual(viewModel.blocks[0].text, "Alpha \(frame).3")
+        }
+        withExtendedLifetime(bridge) {}
+    }
+
+    func testLocalTextBeforeTheFrameFlushesAndRebasesOntoPeerText() async throws {
+        let (viewModel, provider, bridge, scheduler, initial) = try await frameBridge()
+        let id = viewModel.blocks[0].id
+        // UIKit reports text from the focused row; only that row's caret is moved.
+        viewModel.startEditing(focusing: id)
+        provider.setProjection(
+            try projectedDoc(fromMarkdown: "Peer Alpha\n\nBeta", carryingIDsFrom: initial), for: documentID)
+        provider.setVersion(1, for: documentID)
+        provider.fireReplicaObserver()
+        // UIKit probes the row-transition route before publishing an ordinary edit.
+        XCTAssertFalse(
+            viewModel.applyPendingKeyboardInput(
+                from: id, text: "!", consumedCursorToken: viewModel.cursorRequest?.token))
+        // UIKit's buffer still describes the pre-frame text.
+        viewModel.updateText(blockID: id, text: "Alpha!", inputSelection: NSRange(location: 6, length: 0))
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Peer Alpha!", "Beta"])
+        XCTAssertEqual(provider.appliedEdits.count, 1)
+        XCTAssertEqual(provider.appliedEdits.first?.old.first?.runs, InlineMarkdown.parse("Peer Alpha"))
+        XCTAssertEqual(provider.appliedEdits.first?.new.first?.runs, InlineMarkdown.parse("Peer Alpha!"))
+        XCTAssertFalse(viewModel.isDirty)
+        XCTAssertEqual(viewModel.selection, NSRange(location: 11, length: 0))
+        XCTAssertEqual(viewModel.cursorRequest?.offset, 11)
+        let count = provider.projectionCount
+        scheduler.advanceFrame()
+        XCTAssertEqual(provider.projectionCount, count, "the flushed callback was cancelled")
+        withExtendedLifetime(bridge) {}
+    }
+
+    func testBufferedSelectionDeleteThenReturnSplitsAtTheRebasedCaret() async throws {
+        let (viewModel, provider, bridge, scheduler, initial) = try await frameBridge()
+        viewModel.startEditing()
+        let id = viewModel.blocks[0].id
+        provider.setProjection(
+            try projectedDoc(fromMarkdown: "Peer Alpha\n\nBeta", carryingIDsFrom: initial), for: documentID)
+        provider.setVersion(1, for: documentID)
+        provider.fireReplicaObserver()
+        // UIKit publishes selection deletion, then Return, within one delegate callback.
+        viewModel.updateText(blockID: id, text: "Alp", inputSelection: NSRange(location: 3, length: 0))
+        viewModel.splitBlock(blockID: id, at: 3, sourceText: "Alp")
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Peer Alp", "", "Beta"])
+        XCTAssertEqual(provider.appliedEdits.count, 2)
+        XCTAssertEqual(provider.appliedEdits.last?.old.first?.runs, InlineMarkdown.parse("Peer Alp"))
+        XCTAssertNil(scheduler.pending)
+        withExtendedLifetime(bridge) {}
+    }
+
+    func testBufferedDeletionCanRestoreThePreFrameTextWithoutDroppingTheLocalEdit() async throws {
+        let (viewModel, provider, bridge, scheduler, initial) = try await frameBridge()
+        viewModel.startEditing()
+        let id = viewModel.blocks[0].id
+        provider.setProjection(
+            try projectedDoc(fromMarkdown: "Alphaa\n\nBeta", carryingIDsFrom: initial), for: documentID)
+        provider.setVersion(1, for: documentID)
+        provider.fireReplicaObserver()
+        viewModel.updateText(blockID: id, text: "Alph")
+        XCTAssertEqual(viewModel.blocks[0].text, "Alpha", "local deletion keeps the peer's added a")
+        XCTAssertEqual(provider.appliedEdits.first?.old.first?.runs, InlineMarkdown.parse("Alphaa"))
+        XCTAssertEqual(provider.appliedEdits.first?.new.first?.runs, InlineMarkdown.parse("Alpha"))
+        XCTAssertNil(scheduler.pending)
+        withExtendedLifetime(bridge) {}
+    }
+
+    func testUnrenderableFrameReleasesTheRESTFallback() async throws {
+        let (viewModel, provider, bridge, scheduler, _) = try await frameBridge()
+        let log = RequestRecorder()
+        let body = formattedBody(content: "Alpha\\n\\nBeta")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 200, headers: [:], body: body, error: nil)
+        }
+        provider.setProjection(nil, for: documentID)
+        provider.setVersion(1, for: documentID)
+        provider.fireReplicaObserver()
+        XCTAssertTrue(bridge.isApplyingLiveContent, "the pending frame owns the screen until checked")
+        scheduler.advanceFrame()
+        XCTAssertFalse(bridge.isApplyingLiveContent)
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Alpha", "Beta"])
+        await waitUntil { log.count(ofMethod: "GET", urlContaining: "formatted-content") > 0 }
+    }
+
+    func testCompositionHoldsRemoteTextThroughAFrameAndReleasesOnCommit() async throws {
+        let (viewModel, provider, bridge, scheduler, initial) = try await frameBridge()
+        viewModel.startEditing()
+        let id = viewModel.blocks[0].id
+        viewModel.focusedBlockID = id
+        viewModel.updateComposition(
+            blockID: id, text: "Alphaに", selection: NSRange(location: 6, length: 0), isMarked: true)
+        for version in 1...3 {
+            provider.setProjection(
+                try projectedDoc(fromMarkdown: "Peer \(version) Alpha\n\nBeta", carryingIDsFrom: initial),
+                for: documentID)
+            provider.setVersion(version, for: documentID)
+            provider.fireReplicaObserver()
+        }
+        scheduler.advanceFrame()
+        XCTAssertEqual(viewModel.blocks[0].text, "Alphaに", "marked characters remain owned by UIKit")
+        XCTAssertEqual(viewModel.publishableBlocks[0].text, "Peer 3 Alpha")
+        XCTAssertTrue(provider.appliedEdits.isEmpty)
+        viewModel.updateComposition(
+            blockID: id, text: "Alpha日本", selection: NSRange(location: 7, length: 0), isMarked: false)
+        XCTAssertEqual(viewModel.blocks[0].text, "Peer 3 Alpha日本")
+        XCTAssertEqual(provider.appliedEdits.first?.old.first?.runs, InlineMarkdown.parse("Peer 3 Alpha"))
+        XCTAssertEqual(provider.appliedEdits.first?.new.first?.runs, InlineMarkdown.parse("Peer 3 Alpha日本"))
+        withExtendedLifetime(bridge) {}
+    }
+
+    func testCompositionInASecondBlockFlushesBeforeItWritesByIndex() async throws {
+        let (viewModel, provider, bridge, _, initial) = try await frameBridge()
+        viewModel.startEditing()
+        let alpha = viewModel.blocks[0].id
+        let beta = viewModel.blocks[1].id
+        viewModel.focusedBlockID = alpha
+        viewModel.updateComposition(
+            blockID: alpha, text: "Alphaに", selection: NSRange(location: 6, length: 0), isMarked: true)
+        // A peer inserts a block above both; it waits for the frame.
+        var inserted = try projectedDoc(fromMarkdown: "Peer\n\nAlpha\n\nBeta")
+        inserted.blocks[1].id = initial.blocks[0].id
+        inserted.blocks[2].id = initial.blocks[1].id
+        provider.setProjection(inserted, for: documentID)
+        provider.setVersion(1, for: documentID)
+        provider.fireReplicaObserver()
+        viewModel.focusedBlockID = beta
+        // Settling Alpha's composition flushes the frame; Beta's index must be read after that.
+        viewModel.updateComposition(
+            blockID: beta, text: "Betaに", selection: NSRange(location: 5, length: 0), isMarked: true)
+        XCTAssertEqual(viewModel.blocks.first { $0.id == beta }?.text, "Betaに")
+        XCTAssertEqual(viewModel.blocks.first?.text, "Peer")
+        XCTAssertTrue(viewModel.blocks.first { $0.id == alpha }?.text.hasPrefix("Alpha") == true)
+        withExtendedLifetime(bridge) {}
+    }
+
+    func testSettlingACompositionWhosePendingPeerDeletedItsBlockPublishesNothing() async throws {
+        let (viewModel, provider, bridge, _, initial) = try await frameBridge()
+        viewModel.startEditing()
+        let alpha = viewModel.blocks[0].id
+        viewModel.focusedBlockID = alpha
+        viewModel.updateComposition(
+            blockID: alpha, text: "Alphaに", selection: NSRange(location: 6, length: 0), isMarked: true)
+        let survivor = try projectedDoc(fromMarkdown: "Alpha\n\nBeta", carryingIDsFrom: initial).blocks[1]
+        provider.setProjection(
+            ProjectedDocument(blocks: [survivor], isFullyRenderable: true, isFullyModeled: true), for: documentID)
+        provider.setVersion(1, for: documentID)
+        provider.fireReplicaObserver()
+        viewModel.focusedBlockID = viewModel.blocks[1].id
+        viewModel.noteFocusChange()
+        XCTAssertNil(viewModel.blocks.first { $0.id == alpha })
+        XCTAssertTrue(provider.appliedEdits.isEmpty, "nothing to publish for a block the peer deleted")
+        XCTAssertFalse(viewModel.isDirty)
+        withExtendedLifetime(bridge) {}
+    }
+
+    func testAnOutgoingScreenDoesNotUnregisterTheIncomingScreensObserver() async throws {
+        let (_, provider, bridge, _, _) = try await frameBridge()
+        let (other, _) = await loadDocument(content: "Alpha\n\nBeta")
+        let otherScheduler = ManualLiveRemoteApplyScheduler()
+        let otherBridge = LiveEditingBridge(
+            documentID: documentID, viewModel: other, collaboration: provider, serverOrigin: nil,
+            remoteApplyScheduler: otherScheduler)
+        other.liveWrite = otherBridge
+        // SwiftUI can run the incoming screen's onAppear before the outgoing one's onDisappear.
+        otherBridge.registerReplicaObserver()
+        bridge.stopRemoteApplies()
+        provider.setProjection(try projectedDoc(fromMarkdown: "Peer Alpha\n\nBeta"), for: documentID)
+        provider.setVersion(1, for: documentID)
+        provider.fireReplicaObserver()
+        otherScheduler.advanceFrame()
+        XCTAssertEqual(other.blocks.map(\.text), ["Peer Alpha", "Beta"])
+    }
+
+    func testCompositionCommitBeforeTheFrameFlushesTheHeldPeerBaseline() async throws {
+        let (viewModel, provider, bridge, scheduler, initial) = try await frameBridge()
+        viewModel.startEditing()
+        let id = viewModel.blocks[0].id
+        viewModel.focusedBlockID = id
+        viewModel.updateComposition(
+            blockID: id, text: "Alphaに", selection: NSRange(location: 6, length: 0), isMarked: true)
+        provider.setProjection(
+            try projectedDoc(fromMarkdown: "Peer Alpha\n\nBeta", carryingIDsFrom: initial), for: documentID)
+        provider.setVersion(1, for: documentID)
+        provider.fireReplicaObserver()
+        viewModel.updateComposition(
+            blockID: id, text: "Alpha日本", selection: NSRange(location: 7, length: 0), isMarked: false)
+        XCTAssertEqual(viewModel.blocks[0].text, "Peer Alpha日本")
+        XCTAssertEqual(provider.appliedEdits.first?.old.first?.runs, InlineMarkdown.parse("Peer Alpha"))
+        XCTAssertNil(scheduler.pending)
+        withExtendedLifetime(bridge) {}
+    }
+
+    func testStoppingRemoteAppliesCancelsThePendingFrameAndCanReacquire() async throws {
+        let (viewModel, provider, bridge, scheduler, initial) = try await frameBridge()
+        provider.setProjection(
+            try projectedDoc(fromMarkdown: "Peer Alpha\n\nBeta", carryingIDsFrom: initial), for: documentID)
+        provider.setVersion(1, for: documentID)
+        provider.fireReplicaObserver()
+        let obsoleteCallback = scheduler.pending
+        let projectionsBefore = provider.projectionCount
+        bridge.stopRemoteApplies()
+        obsoleteCallback?()  // even an already-delivered callback must be harmless
+        scheduler.advanceFrame()
+        provider.fireReplicaObserver()
+        XCTAssertEqual(provider.projectionCount, projectionsBefore)
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Alpha", "Beta"])
+        XCTAssertFalse(bridge.isEngaged)
+        bridge.registerReplicaObserver()
+        obsoleteCallback?()  // an old generation cannot consume the reacquired frame
+        XCTAssertEqual(provider.projectionCount, projectionsBefore)
+        scheduler.advanceFrame()
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["Peer Alpha", "Beta"])
+    }
+
     // MARK: - Write side (C2c)
 
     /// Engage read-mode first (so `lastAppliedBlocks` is captured), then return the bridge.
@@ -537,7 +855,8 @@ final class LiveEditingBridgeTests: XCTestCase {
         provider.setProjection(projection, for: documentID)
         let bridge = LiveEditingBridge(
             documentID: documentID, viewModel: viewModel, collaboration: provider,
-            serverOrigin: nil, snapshotInterval: .milliseconds(20))
+            serverOrigin: nil, remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler(),
+            snapshotInterval: .milliseconds(20))
         viewModel.liveWrite = bridge
         bridge.replicaDidChange()  // engage read-side ⇒ captures the write baseline
         XCTAssertTrue(bridge.isEngaged)
@@ -601,7 +920,8 @@ final class LiveEditingBridgeTests: XCTestCase {
         provider.snapshotData = Data([0xAA])
         let bridge = LiveEditingBridge(
             documentID: documentID, viewModel: viewModel, collaboration: provider,
-            serverOrigin: nil, snapshotInterval: .milliseconds(20))
+            serverOrigin: nil, remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler(),
+            snapshotInterval: .milliseconds(20))
         viewModel.liveWrite = bridge
 
         // 1. Engage read-mode and establish the initial write baseline (mirrors
@@ -655,7 +975,8 @@ final class LiveEditingBridgeTests: XCTestCase {
         provider.pendingStructsFlag = false
         let bridge = LiveEditingBridge(
             documentID: documentID, viewModel: viewModel, collaboration: provider,
-            serverOrigin: nil, snapshotInterval: .milliseconds(20))
+            serverOrigin: nil, remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler(),
+            snapshotInterval: .milliseconds(20))
         viewModel.liveWrite = bridge
         // The view registers the observer on session acquisition, not at bridge init; model
         // that so `provider.fireReplicaObserver()` below has an observer to fire.
@@ -707,7 +1028,8 @@ final class LiveEditingBridgeTests: XCTestCase {
         provider.pendingStructsFlag = false
         let bridge = LiveEditingBridge(
             documentID: documentID, viewModel: viewModel, collaboration: provider,
-            serverOrigin: nil, snapshotInterval: .milliseconds(20))
+            serverOrigin: nil, remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler(),
+            snapshotInterval: .milliseconds(20))
         viewModel.liveWrite = bridge
 
         // A projection that renders (read-live) but is NOT fully modeled — take a real

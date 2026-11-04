@@ -26,7 +26,7 @@ final class BlockTextFocusTests: XCTestCase {
                 isFocused: { fixture.isFocused },
                 cursorRequest: { fixture.request },
                 onEvent: { event in
-                    if case .textChanged(let text) = event { fixture.text = text }
+                    if case .textChanged(let text, _) = event { fixture.text = text }
                     switch event {
                     case .beganEditing, .endedEditing: fixture.focusEvents += 1
                     default: break

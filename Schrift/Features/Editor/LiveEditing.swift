@@ -153,7 +153,63 @@ func transformedCaret(old: String, new: String, caret: Int) -> Int {
         result = prefix
     }
 
-    return min(max(result, 0), newLength)
+    let clamped = min(max(result, 0), newLength)
+    // A shared prefix can end inside a surrogate pair or grapheme; never land there.
+    guard clamped < newLength else { return clamped }
+    return (new as NSString).rangeOfComposedCharacterSequence(at: clamped).location
+}
+
+/// Replays a single buffered UIKit replacement after a pending remote frame was flushed.
+/// Diff in Characters so a replacement never splits a surrogate pair or grapheme; caret
+/// offsets remain UTF-16. Remove only original characters the user deleted, keeping peer
+/// insertions/replacements, including edits elsewhere in the same block. At a shared
+/// insertion boundary the peer's insertion precedes ours. Composition keeps its existing,
+/// separate `rebasedCompositionText` policy.
+func rebasedLiveInput(
+    original: String, committed: String, caret: Int, onto peer: String
+) -> (text: String, caret: Int) {
+    let old = Array(original)
+    let new = Array(committed)
+    let target = Array(peer)
+    let common = min(old.count, new.count)
+    var prefix = 0
+    while prefix < common, old[prefix] == new[prefix] { prefix += 1 }
+    var suffix = 0
+    while suffix < common - prefix, old[old.count - suffix - 1] == new[new.count - suffix - 1] { suffix += 1 }
+
+    let peerDiff = target.difference(from: old)
+    var removed = Set<Int>()
+    var inserted = Set<Int>()
+    for change in peerDiff {
+        switch change {
+        case .remove(let offset, _, _): removed.insert(offset)
+        case .insert(let offset, _, _): inserted.insert(offset)
+        }
+    }
+    // Survivors pair in order. Their identities let us delete the local replacement's
+    // old span without deleting new peer characters interleaved within that span.
+    let survivors = zip(old.indices.filter { !removed.contains($0) }, target.indices.filter { !inserted.contains($0) })
+    var localDeletes = Set<Int>()
+    var insertionIndex = target.count
+    for (oldIndex, targetIndex) in survivors {
+        if oldIndex >= prefix { insertionIndex = min(insertionIndex, targetIndex) }
+        if oldIndex >= prefix, oldIndex < old.count - suffix { localDeletes.insert(targetIndex) }
+    }
+    let before = String(target[..<insertionIndex])
+    let replacement = String(new[prefix..<(new.count - suffix)])
+    let after = String(
+        target[insertionIndex...].enumerated().compactMap { offset, character in
+            localDeletes.contains(insertionIndex + offset) ? nil : character
+        })
+    let merged = before + replacement + after
+    let localStart = String(new[..<prefix]).utf16.count
+    let localEnd = localStart + replacement.utf16.count
+    let userCaret = min(max(0, caret), committed.utf16.count)
+    let mergedCaret =
+        (localStart...localEnd).contains(userCaret)
+        ? before.utf16.count + userCaret - localStart
+        : transformedCaret(old: committed, new: merged, caret: userCaret)
+    return (merged, mergedCaret)
 }
 
 // MARK: - Live-write engagement (C2c)
@@ -179,6 +235,9 @@ func canEngageLiveWrite(canEngageLiveEditing: Bool, projection: ProjectedDocumen
 /// without the manager ever entering the view model.
 @MainActor
 protocol EditorLiveWriteCoordinating: AnyObject {
+    /// Flush a pending remote frame BEFORE changing blocks, indices or selection.
+    /// `forwardLocalEdit` runs after the mutation and is too late to do this safely.
+    func prepareForLocalEdit()
     /// Forward one local edit to the shared replica if live-write mode is engaged.
     /// Returns `true` when the edit was handled live (the replica integrated + peers
     /// were notified and a snapshot scheduled), meaning the classic REST autosave
@@ -201,4 +260,9 @@ protocol EditorLiveWriteCoordinating: AnyObject {
     /// Fire any pending debounced live snapshot immediately (Done / background /
     /// disappear). A no-op when nothing is pending.
     func flushPendingLiveSnapshot()
+}
+
+extension EditorLiveWriteCoordinating {
+    // Classic-only test delegates have no remote frame to flush.
+    func prepareForLocalEdit() {}
 }

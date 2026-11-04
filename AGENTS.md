@@ -3321,7 +3321,11 @@ markdown write endpoint**. Understand this before touching the save path:
     proof is that every existing `EditorViewModel*Tests` test passes with no changes.
   - **The write gate (`canEngageLiveWrite`) is the C1 read gate plus one thing:**
     `canEngageLiveEditing` (loaded, clean, no dirty/pending-save/draft/conflict,
-    idle/saved) **and** the fresh projection is `isFullyModeled`. A document with any
+    idle/saved) **and** the last applied projection is `isFullyModeled`, with a valid
+    write baseline, no pending remote frame, and fresh fail-safe/pending-struct checks.
+    A synchronous replica notification invalidates that baseline before the replica can
+    be written again; local forwards change only `localEditVersions`, not the inbound
+    version or this modeled flag. A document with any
     `.unknown`/lossy/opaque block never satisfies this — it stays read-live but can never
     write-live, because such a projection can't round-trip back through
     `blockNoteBlocks(from:)` without the tracked `old` baseline silently desyncing from
@@ -3341,34 +3345,44 @@ markdown write endpoint**. Understand this before touching the save path:
     engage (including a no-op empty diff) and again after every `applyLiveRemoteChange` —
     so a peer's edit landing between two local keystrokes re-syncs `old` before the next
     local diff reads it. A local forward advances the baseline itself.
-  - **That re-sync must be SYNCHRONOUS with the integrate, not deferred.** The read-apply
-    (`replicaDidChange`) is driven two ways: the view's `.onChange(of: replicaVersion)`
-    (deferred to a later SwiftUI turn) **and** — load-bearing — a per-document observer the
-    bridge registers with `DocumentCollaborationManager` (`setReplicaObserver`), which
-    `applyReplicaUpdate` fires in the **same main-actor turn** it integrates an inbound
-    update and bumps `replicaVersion`. The deferred `.onChange` alone left a race window: a
-    keystroke landing after a remote update integrated but before the deferred re-apply
-    forwarded a local edit whose `old` still described the *pre-update* projection, and
-    `BlockNoteWrite.applyEdit` maps each `old[index].id` to the replica's live container
-    **by position** — so a structural remote change in that window (a block removed/inserted
-    shifting positions) mis-applied the edit and broadcast a corrupt update to peers (a
-    phantom duplicate block, verified). The synchronous observer closes the window by
-    re-syncing the baseline in the same turn the replica changes, so the editor and
-    `lastAppliedBlocks` always reflect the integrated replica before any keystroke can run.
-    The observer fires **only** on a clean integrate (never on a fail-safed/non-bumped
-    update), captures the bridge weakly (no retain cycle; a dead bridge self-neutralises),
-    and is cleared on the document's teardown. Firing `replicaDidChange` twice (observer +
-    deferred `.onChange`) is a proven no-op — an empty diff re-sets the same baseline.
-    **The observer's lifecycle is the per-document entry's, not the bridge's:** the bridge
-    (`registerReplicaObserver`) registers it on every live-session **(re)acquisition** in
-    `EditorView.requestCollaborationSessionIfNeeded` — *not* at bridge construction — and
-    `teardownIfIdle` drops it, so it exists exactly while a live entry does. Registering at
-    construction instead is wrong at both ends: the bridge is held in the view's `@State`
-    and outlives a linger-teardown, so a reopen would keep a now-dropped observer and
-    silently degrade to the deferred `.onChange` (reopening the race); and a document that
-    never opens a session (the default flag-off path, an unsupported server, offline) would
-    register an observer no teardown ever clears (an unbounded leak). Keying it to
-    acquisition avoids both.
+  - **Remote projection/UI applies are coalesced to one per display frame; write-safety
+    bookkeeping stays SYNCHRONOUS with integration.** `applyReplicaUpdate` still decodes,
+    integrates, bumps `replicaVersion` and fires the per-document observer in the **same
+    main-actor turn**. The observer immediately invalidates `lastAppliedBlocks` (`nil`)
+    and marks a remote apply pending; it never leaves a stale baseline eligible for a
+    local diff. Only the full projection/render, `liveChangeSet`, and the one non-install
+    funnel (`applyLiveRemoteChange`) wait for `LiveRemoteApplyScheduling`'s next frame.
+    Production uses a one-shot `CADisplayLink` in common run-loop modes; tests inject an
+    immediate or manually advanced scheduler. All messages integrate immediately; a burst
+    schedules once and projects the **latest** replica, with no sleeps. The view's later
+    `.onChange(of: replicaVersion)` shares that pending apply and skips an already-applied
+    version. `isApplyingLiveContent` and the write gate never project from a UI read.
+  - **Flush BEFORE a local mutation, never from the post-mutation forward.** Every local
+    content mutation calls `EditorLiveWriteCoordinating.prepareForLocalEdit()` before
+    reading indices/ranges or changing blocks. It flushes a pending frame, restoring the
+    editor and id-stable `lastAppliedBlocks` to the integrated replica before the edit.
+    This is the sole exception to waiting for a display frame. `forwardLocalEdit` refuses
+    a pending/invalid baseline; flushing there would already be too late and overwrite
+    the keystroke. A buffered UIKit `updateText` rebases its local replacement onto the
+    flushed peer text (`rebasedLiveInput`, character-safe with UTF-16 caret offsets),
+    preserving disjoint peer changes. Native text events carry their committed selection
+    so rebasing keeps the caret in UTF-16 space; Return carries its source buffer and
+    transforms the supplied offset even after selection deletion flushed the frame. Ordinary
+    pending-input/source-correction probes that decline must not flush: the later text
+    callback still holds its pre-frame buffer. Composition (#226) keeps marked text on
+    screen, updates only the held peer base during a frame, and uses its existing
+    `rebaseComposition` policy at commit; a commit before frame delivery flushes first.
+    `localEditVersions` still advance only on a local forward, never `replicaVersion` or
+    `remoteChangeTokens`, so no local self-echo is scheduled.
+  - **Observer and scheduler lifecycle follow the live entry.** Register the weak observer
+    on every live-session **(re)acquisition**, never at bridge construction: the bridge
+    can outlive a linger-teardown in SwiftUI `@State`. The manager drops the observer at
+    teardown. `stopRemoteApplies` cancels the pending frame, invalidates its generation
+    (even an already-delivered callback becomes inert), clears the baseline, and is called
+    on disappearance after flushing local durability work. It never clears the manager's
+    observer slot: another screen on the same document may have registered there first. Reacquisition
+    re-enables the retained bridge and schedules catch-up for an existing replica, even
+    when no new version edge arrives. Never register observers for documents without sessions.
   - **TOP SAFETY, restated at the debounce:** the bridge's ~60 s cancel-and-reschedule
     snapshot fire re-derives everything fresh (never trusts state captured at schedule
     time) — `encodeSnapshotForSave` returning `nil` means **skip, no PATCH**, and the
