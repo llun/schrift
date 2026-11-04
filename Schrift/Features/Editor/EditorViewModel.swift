@@ -2133,6 +2133,7 @@ final class EditorViewModel {
     }
 
     func updateComposition(blockID: UUID, text: String, selection range: NSRange, isMarked: Bool) {
+        flushBeforeSettlingAnotherComposition(than: blockID)
         guard mode == .blocks, let index = blockIndex(blockID) else { return }
         switch blocks[index].kind {
         case .divider, .image, .attachment: return
@@ -2172,7 +2173,7 @@ final class EditorViewModel {
         // UIKit's pre-frame buffer, so flush before mutation and rebase that local intent.
         // An existing composition already owns its original/base pair and rebases at publish.
         let hasComposition = compositionBaseText?.id == blockID
-        if !composing { liveWrite?.prepareForLocalEdit() }
+        if !composing { liveWrite?.prepareForLocalEdit() } else { flushBeforeSettlingAnotherComposition(than: blockID) }
         guard let index = blockIndex(blockID) else { return }
         var text = text
         if !composing, !hasComposition, original != blocks[index].text,
@@ -2234,6 +2235,12 @@ final class EditorViewModel {
     private func markDirtyUnlessComposing(_ blockID: UUID, composing: Bool) {
         guard !composing else { return }
         publishComposition(of: blockID)
+    }
+
+    /// Starting a composition settles (publishes) another block's, which flushes a pending
+    /// remote frame; do that before callers capture an index or the text to hold.
+    private func flushBeforeSettlingAnotherComposition(than blockID: UUID) {
+        if let held = compositionBaseText, held.id != blockID { liveWrite?.prepareForLocalEdit() }
     }
 
     /// Remembers the text `blockID` had before its composition so nothing serializes the marked
@@ -2305,6 +2312,8 @@ final class EditorViewModel {
     private func settleComposition() {
         guard let held = compositionBaseText, !holdsUnpublishedComposition else { return }
         if markedTextBlockID == held.id { markedTextBlockID = nil }
+        // A frame-pending peer deletion of the block must land before deciding to publish.
+        liveWrite?.prepareForLocalEdit()
         guard blockIndex(held.id) != nil else {
             compositionBaseText = nil
             return
@@ -2328,8 +2337,8 @@ final class EditorViewModel {
         guard mode == .blocks, let targetID = focusedBlockID else { return false }
         let pending = cursorRequest?.blockID == targetID ? cursorRequest : nil
         guard targetID != sourceID || (pending != nil && pending?.token != consumedCursorToken) else { return false }
-        // A probe for an ordinary UIKit edit must leave its buffer/baseline alone;
-        // updateText will flush and rebase when that edit is actually published.
+        // An ordinary UIKit edit already returned above without flushing; updateText flushes
+        // and rebases it when published. Only a cross-target pending input flushes here.
         let targetExisted = blockIndex(targetID) != nil
         liveWrite?.prepareForLocalEdit()
         // Consume the input only when the flush removed its target; otherwise fall through as before.

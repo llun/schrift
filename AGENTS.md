@@ -3378,8 +3378,9 @@ markdown write endpoint**. Understand this before touching the save path:
     on every live-session **(re)acquisition**, never at bridge construction: the bridge
     can outlive a linger-teardown in SwiftUI `@State`. The manager drops the observer at
     teardown. `stopRemoteApplies` cancels the pending frame, invalidates its generation
-    (even an already-delivered callback becomes inert), clears the observer and baseline,
-    and is called on disappearance after flushing local durability work. Reacquisition
+    (even an already-delivered callback becomes inert), clears the baseline, and is called
+    on disappearance after flushing local durability work. It never clears the manager's
+    observer slot: another screen on the same document may have registered there first. Reacquisition
     re-enables the retained bridge and schedules catch-up for an existing replica, even
     when no new version edge arrives. Never register observers for documents without sessions.
   - **TOP SAFETY, restated at the debounce:** the bridge's ~60 s cancel-and-reschedule

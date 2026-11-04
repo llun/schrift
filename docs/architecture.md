@@ -562,8 +562,9 @@ graceful downgrade) is wired end to end, still entirely behind the default-off
   `forwardLocalEdit()` declines, the on-screen edit is already there — the classic
   path that runs next persists exactly that content. No edit is ever lost to a
   declined live forward; at worst it takes one extra classic autosave cycle.
-- **`LiveEditingBridge.forwardLocalEdit()`** re-checks `canEngageLiveWrite` against a
-  freshly read projection (never a cached engagement flag), builds `new` from
+- **`LiveEditingBridge.forwardLocalEdit()`** re-checks `isHandlingLocalEditsLive`: the
+  engagement and fully-modeled flags the last frame apply set, no pending frame, the
+  update ability, and fresh fail-safe/pending-struct reads. It builds `new` from
   `viewModel.blocks` via the id-stable builder, and calls
   `collaboration.applyLocalEdit(old:new:for:)` with the bridge's tracked
   `lastAppliedBlocks` as `old`. A thrown `applyLocalEdit` (a malformed replica
@@ -613,9 +614,10 @@ graceful downgrade) is wired end to end, still entirely behind the default-off
   editor bridge.** The weak observer is registered on every session (re)acquisition,
   never at construction, and removed at manager teardown. On disappearance, after
   flushing local durability work, `stopRemoteApplies` cancels the callback, invalidates
-  its generation, clears the observer and write baseline, and disables delivery until
-  reacquisition. This also neutralizes an already-delivered obsolete callback. The
-  Registration also schedules catch-up for a lingered replica without waiting for a new
+  its generation, clears the write baseline, and ignores notifications until
+  reacquisition. It leaves the manager's observer slot alone, since another screen on
+  the same document may already have registered there. This also neutralizes an
+  already-delivered obsolete callback. Registration also schedules catch-up for a lingered replica without waiting for a new
   version edge. The retained SwiftUI bridge can therefore reopen after teardown without leaking
   observers for documents that never acquired sessions or losing its synchronous hook.
   Manual-frame tests pin burst/across-frame projection counts, cancellation, buffered

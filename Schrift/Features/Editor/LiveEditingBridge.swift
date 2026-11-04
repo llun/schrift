@@ -187,7 +187,9 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
         applyPendingRemoteChange()
     }
 
-    /// Navigation teardown cancels both the frame and its observer. Reacquisition
+    /// Navigation teardown cancels the frame and ignores later notifications. It leaves the
+    /// manager's observer slot alone: another screen on the same document may already have
+    /// registered there, and the manager clears it on idle teardown. Reacquisition
     /// re-registers the observer on the existing bridge and re-enables frame delivery.
     func stopRemoteApplies() {
         remoteApplyScheduler.cancel()
@@ -195,7 +197,6 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
         hasPendingRemoteApply = false
         remoteAppliesStopped = true
         observesReplica = false
-        collaboration.setReplicaObserver(nil, for: documentID)
         isEngaged = false
         lastAppliedBlocks = nil
         appliedReplicaVersion = nil

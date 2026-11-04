@@ -638,14 +638,20 @@ final class LiveEditingIntegrationTests: XCTestCase {
         manager.serverSupportsLiveCollaboration = true  // test-only override of the release capability
         _ = try XCTUnwrap(manager.session(for: documentID, canUpdate: false))
         defer { manager.suspend() }
+        let scheduler = ManualLiveRemoteApplyScheduler()
         let bridge = LiveEditingBridge(
-            documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil)
+            documentID: documentID, viewModel: viewModel, collaboration: manager, serverOrigin: nil,
+            remoteApplyScheduler: scheduler)
         var frame = Data([0])
         frame.append(SyncMessage(step: .step2, data: Data(hex: initialHex)).encodedPayload())
         spy.sockets[0].deliver(message: frame)
         await waitUntil { manager.replicaVersion(for: self.documentID) == 1 }
         bridge.replicaDidChange()
+        scheduler.advanceFrame()
+        // Engaged with a modeled projection, so only the missing update ability blocks writes.
+        XCTAssertTrue(bridge.isEngaged)
         XCTAssertTrue(bridge.isApplyingLiveContent)
+        XCTAssertTrue(manager.projectedReplica(for: documentID, interlinkingOrigin: nil)?.isFullyModeled == true)
         XCTAssertFalse(bridge.isHandlingLocalEditsLive)
         XCTAssertFalse(bridge.forwardLocalEdit())
         XCTAssertEqual(manager.localEditVersion(for: documentID), 0)
