@@ -67,7 +67,11 @@ enum YXMLString {
                 flush()
                 let value = try? JSONSerialization.jsonObject(with: Data(valueJSON.utf8), options: [.fragmentsAllowed])
                 if value == nil || value is NSNull { current[key] = nil } else { current[key] = value }
-            default: break
+            default:
+                // Embeds and other content the captures never hold: never equal to yjs's output,
+                // so an unsupported shape fails the comparison instead of silently passing.
+                flush()
+                runs.append(("<unsupported \(it.content)>", [:]))
             }
         }
         flush()
@@ -94,7 +98,8 @@ enum YXMLString {
         case .bool(let b): return b ? "true" : "false"
         case .null: return "null"
         case .undefined: return "undefined"
-        default: return "\(value)"
+        // Numbers, arrays and objects never appear in the captures; never match yjs's coercion.
+        default: return "<unsupported \(value)>"
         }
     }
 }
