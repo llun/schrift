@@ -14,7 +14,10 @@ enum YWireError: Error, Equatable {
 
 /// A Yjs struct identity: `(clientID, clock)`. The clock is the position of the
 /// struct's first unit in that client's monotonic sequence.
-struct YID: Equatable, Hashable, Sendable {
+///
+/// `Codable` is the JSON shape yjs uses for an id (`{client, clock}`), which
+/// `YRelativePositionJSON` (`YRelativePosition.swift`) needs.
+struct YID: Equatable, Hashable, Sendable, Codable {
     var client: UInt
     var clock: UInt
 }
