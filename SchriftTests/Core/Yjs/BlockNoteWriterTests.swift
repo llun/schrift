@@ -55,14 +55,15 @@ final class BlockNoteWriterTests: XCTestCase {
             let doc = try seeded(BlockNote056SplitParagraphTests.checkpoints)
             defer { doc.destroy() }
             let w = BlockNoteWriter(doc: doc)
-            try w.splitBlock(block: "p-c", at: offset, newID: "11111111-1111-4111-8111-111111111111")
+            let newID = "11111111-1111-4111-8111-111111111111"
+            try w.splitBlock(block: "p-c", at: offset, newID: newID)
             let blocks = YBlockProjection.project(doc).blocks
             XCTAssertEqual(blocks.count, 2)
-            XCTAssertEqual(blocks[0].runs.map(\.text).joined(), offset == 0 ? "" : "HelloWorld")
-            XCTAssertEqual(blocks[1].runs.map(\.text).joined(), offset == 0 ? "HelloWorld" : "")
-            XCTAssertEqual(blocks[0].id, "p-c")
-            XCTAssertEqual(blocks[1].id, "11111111-1111-4111-8111-111111111111")
-            try w.joinBlocks(block: "11111111-1111-4111-8111-111111111111")
+            // At offset 0 BlockNote inserts the empty block above, so the text keeps its id.
+            XCTAssertEqual(blocks.map(\.id), offset == 0 ? [newID, "p-c"] : ["p-c", newID])
+            XCTAssertEqual(
+                blocks.map { $0.runs.map(\.text).joined() }, offset == 0 ? ["", "HelloWorld"] : ["HelloWorld", ""])
+            try w.joinBlocks(block: offset == 0 ? "p-c" : newID)
             XCTAssertEqual(YXMLString.fragment(doc), BlockNote056SplitParagraphTests.checkpoints[0].xml)
         }
     }
@@ -71,8 +72,9 @@ final class BlockNoteWriterTests: XCTestCase {
         let doc = try seeded(BlockNote056MixedInlineEditTests.checkpoints)
         defer { doc.destroy() }
         let w = BlockNoteWriter(doc: doc)
-        // Replace the mention and the following middle text, leaving two nodes
-        // adjacent. An insertion there must mint an XmlText between them.
+        // Delete " middle " (units 8..<16, after the mention at 7), leaving the
+        // mention and the interlink adjacent. An insertion there must mint an
+        // XmlText between them.
         try w.replaceText(block: "p-g", range: NSRange(location: 8, length: 8), with: "")
         try w.replaceText(block: "p-g", range: NSRange(location: 8, length: 0), with: "between")
         let xml = YXMLString.fragment(doc)
@@ -161,5 +163,110 @@ final class BlockNoteWriterTests: XCTestCase {
             XCTAssertEqual(id, "p-c")
         }
         XCTAssertEqual(YXMLString.fragment(doc), before)
+    }
+
+    private func encoded(_ blocks: [BlockNoteBlock]) throws -> YDoc {
+        let doc = YDoc(clientID: 2, gc: false)
+        try doc.applyUpdate(YUpdateDecoder.decode(BlockNoteYjs.encode(blocks, clientID: 1)))
+        return doc
+    }
+
+    private func paragraph(_ id: String, _ text: String) -> BlockNoteBlock {
+        BlockNoteBlock(
+            node: "paragraph",
+            props: [
+                ("backgroundColor", .string("default")), ("textColor", .string("default")),
+                ("textAlignment", .string("left")),
+            ], runs: [InlineRun(text)], id: id)
+    }
+
+    private func assertThrows(
+        _ error: BlockNoteWriter.Error, in doc: YDoc, line: UInt = #line, _ body: (BlockNoteWriter) throws -> Void
+    ) {
+        let before = YXMLString.fragment(doc)
+        XCTAssertThrowsError(try body(BlockNoteWriter(doc: doc)), line: line) {
+            XCTAssertEqual($0 as? BlockNoteWriter.Error, error, line: line)
+        }
+        XCTAssertEqual(YXMLString.fragment(doc), before, line: line)
+    }
+
+    func testDuplicateBlockIDsAnywhereInTheTreeThrow() throws {
+        var parent = paragraph("parent", "a")
+        parent.children = [paragraph("same", "b")]
+        let doc = try encoded([parent, paragraph("same", "c")])
+        defer { doc.destroy() }
+        assertThrows(.duplicateID("same"), in: doc) {
+            try $0.replaceText(block: "same", range: NSRange(location: 0, length: 0), with: "x")
+        }
+        assertThrows(.duplicateID("same"), in: doc) { try $0.joinBlocks(block: "same") }
+        XCTAssertNoThrow(
+            try BlockNoteWriter(doc: doc).formatRange(
+                block: "parent", range: NSRange(location: 0, length: 1), attributes: ["bold": "{}"]))
+    }
+
+    func testToggleHeadingSplitIsUnsupported() throws {
+        let doc = try encoded([
+            BlockNoteBlock(
+                node: "heading",
+                props: [
+                    ("backgroundColor", .string("default")), ("textColor", .string("default")),
+                    ("textAlignment", .string("left")), ("level", .int(1)), ("isToggleable", .bool(true)),
+                ], runs: [InlineRun("Toggle")], id: "t")
+        ])
+        defer { doc.destroy() }
+        assertThrows(.unsupportedBlockType("heading"), in: doc) { try $0.splitBlock(block: "t", at: 3, newID: "1") }
+    }
+
+    func testUnknownTargetTypeThrowsBeforeLookup() throws {
+        let doc = YDoc(clientID: 2, gc: false)
+        defer { doc.destroy() }
+        assertThrows(.unsupportedBlockType("table"), in: doc) { try $0.setBlockType(block: "missing", to: "table") }
+    }
+
+    /// Each guard in `resolve`: the shapes a well-formed BlockNote container never has.
+    func testResolveRejectsMalformedContainers() throws {
+        let shapes: [(String, (YTransaction, YType) throws -> Void)] = [
+            (
+                "third child",
+                { tx, container in
+                    try YWrite.insertAfter(
+                        tx, into: container, after: container.start,
+                        [
+                            .type(YType(typeRef: .xmlElement(nodeName: "blockGroup"))),
+                            .type(YType(typeRef: .xmlElement(nodeName: "blockGroup"))),
+                        ])
+                }
+            ),
+            (
+                "second child is not a group",
+                { tx, container in
+                    try YWrite.insertAfter(
+                        tx, into: container, after: container.start,
+                        [.type(YType(typeRef: .xmlElement(nodeName: "paragraph")))])
+                }
+            ),
+            (
+                "first child is text",
+                { tx, container in
+                    try YWrite.insertAfter(tx, into: container, after: nil, [.type(YType(typeRef: .xmlText))])
+                }
+            ),
+            ("no content", { tx, container in container.start?.delete(tx) }),
+        ]
+        for (label, mutate) in shapes {
+            let doc = try seeded(BlockNote056SplitParagraphTests.checkpoints)
+            defer { doc.destroy() }
+            let root = try XCTUnwrap(doc.share["document-store"])
+            guard case .type(let group)? = root.start?.content, case .type(let container)? = group.start?.content
+            else { return XCTFail("seed shape") }
+            try doc.transact { tx in try mutate(tx, container) }
+            let before = YXMLString.fragment(doc)
+            XCTAssertThrowsError(
+                try BlockNoteWriter(doc: doc).replaceText(
+                    block: "p-c", range: NSRange(location: 0, length: 0), with: "x"),
+                label
+            ) { XCTAssertEqual($0 as? BlockNoteWriter.Error, .malformedBlock("p-c"), label) }
+            XCTAssertEqual(YXMLString.fragment(doc), before, label)
+        }
     }
 }

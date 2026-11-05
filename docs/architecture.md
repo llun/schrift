@@ -310,14 +310,41 @@ caller. This API is not yet wired into `BlockNoteWrite.applyEdit` or saving (B5b
 Ranges use UTF-16 text positions and one unit per atomic inline element (mentions,
 interlinks and math). They are clamped before format-aware `YTextOps` calls; the
 writer never requests yjs's past-end newline padding. Nil insertion marks inherit
-like yjs `insert`; an explicit map specifies the inserted marks. Split/join and
-block-type replacement copy inline elements rather than flattening them. Copied
-runs go through the existing `InlineContent.pieces(for:)` single shape builder.
-Splits copy the type/props and leave nested child groups on the original block.
-Missing/malformed targets and duplicate ids throw typed writer errors. Joining
-the first sibling throws `noPreviousBlock`; a source containing nested children
-is rejected rather than deleting that subtree. Supported content types are the
-text blocks paragraph, heading, bullet/numbered/check list item and code block.
+like yjs `insert`; an explicit map specifies the inserted marks. Copies keep inline
+elements rather than flattening them, and copied runs go through the existing
+`InlineContent.pieces(for:)` single shape builder. Supported content types are the
+text blocks paragraph, heading, bullet/numbered/check list item and code block
+(`BlockNoteWriter.propSchemas`, which also holds BlockNote 0.56's prop order and
+defaults).
+
+The block intents reproduce BlockNote 0.56's own commands, captured in node/jsdom
+against real BlockNote + yjs 13.6.33 and inlined in `BlockNoteWriterCaptures`:
+
+- **Split (Enter).** The block keeps its id, type, props and the text before the
+  offset; the new block takes the rest and the nested children, and is a list item
+  for list items, a paragraph otherwise, with default props. At offset 0 of
+  non-empty content an empty block is inserted above, so the text keeps its id.
+  Code blocks (Enter is a line break) and toggle headings (Enter depends on the
+  toggle's open state) are refused. An offset inside a surrogate pair snaps back to
+  the pair's start; BlockNote itself writes U+FFFD into both halves there.
+- **Join (`mergeBlocksCommand`).** The content joins the previous sibling's last
+  descendant, and the source's children are lifted into its place. An empty block
+  above with the same type and props is removed instead, and the source moves up
+  keeping its id and children. Code blocks on either side are refused, as in
+  BlockNote. The first sibling throws `noPreviousBlock` (BlockNote merges a first
+  child into its parent; not implemented).
+- **Type change (`updateBlock`).** Only the content element is replaced; the
+  container, id and nested group stay. Given props override; every other prop of
+  the new type keeps its existing value or takes its default. Into a code block the
+  content becomes plain `textContent` (marks and mentions/interlinks drop, math
+  keeps its source) — copying inline nodes into a code block made BlockNote delete
+  the whole fragment on mount.
+
+Missing targets, broken structure (`malformedBlock`) and duplicate ids throw typed
+writer errors; a valid block the writer does not edit (divider, image, table)
+throws `unsupportedBlockType`, so callers can tell broken from unsupported.
+Keyboard-level choices BlockNote makes before these commands (Backspace resetting a
+list item to a paragraph, Enter resetting an empty list item) stay with the caller.
 
 ### Local-edit transactions (B6)
 

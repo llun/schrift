@@ -1823,10 +1823,26 @@ that are easy to violate and expensive to discover:
   Clamp ranges before calling `YTextOps` so formatting cannot pad with newlines.
   Copied text uses **`InlineContent.pieces(for:)`**, the same single inline-shape
   builder as the encoder and B6; do not add another run-to-format builder.
-  Missing/malformed targets and duplicate ids throw `BlockNoteWriter.Error`.
-  Joining the first sibling throws `noPreviousBlock`; joining a source with
-  nested children is refused to preserve the subtree. Splits retain the original
-  type/props, with nested child groups staying on the original container.
+  **Block intents follow BlockNote 0.56's own commands, verified in node, not
+  reasoned from ProseMirror** (`BlockNoteWriterCaptures` inlines the captures):
+  split is Enter — the new block is a list item for list items and a paragraph
+  otherwise, always with default props, and takes the nested children; at offset
+  0 of non-empty content an empty block goes above instead, so ids stay with
+  their text. Join is `mergeBlocksCommand` — into the previous sibling's *last
+  descendant*, the source's children lifted into its place; an empty block above
+  with the same type and props is removed instead and the source keeps its id.
+  Type change is `updateBlock` — `props` override, other props of the new type
+  keep their existing value or default (`propSchemas`, the one allowlist); into a
+  `codeBlock` the content becomes ProseMirror `textContent` (copying inline nodes
+  there made real BlockNote delete the whole fragment on mount). Two deliberate
+  deviations: a split inside a surrogate pair snaps back to the pair's start
+  (BlockNote writes U+FFFD into both halves), and BlockNote's keyboard-level
+  choices before those commands (Backspace resetting a list item, Enter resetting
+  an empty list item, merging a first child into its parent) are the caller's —
+  the first sibling throws `noPreviousBlock`. Errors: `malformedBlock` means a
+  broken replica; `unsupportedBlockType` means a valid block the writer does not
+  edit (divider, image, table, toggle heading split) or one BlockNote refuses
+  (splitting/joining a code block).
 - **B6 deviates from yjs only in local-item *construction*, never in the store
   algorithm — verify at the document/projection level, not the store-structure
   level.** It rebuilds a changed text span wholesale from the new runs (not yjs's
