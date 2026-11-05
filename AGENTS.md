@@ -1664,10 +1664,11 @@ that are easy to violate and expensive to discover:
   load-bearing and proven only by the differential fuzz's nested-text formatting lane
   (a bare root type is never a concrete `YText`, so **only nested text fires the
   trigger** — this is BlockNote's actual shape): (1) format-value equality is JS
-  `===`, spelled out by `YFormatAttrValue` (primitive-by-JSON-text, object-by-owning-
-  item-identity, absent ⇔ `null`); (2) the cleanup's routing is **not confluent across
-  clients** — `iterateDeletedStructs` must walk the delete set in yjs `Map` insertion
-  order (`YDeleteSet.orderedClients`), never ascending, or a live mark is wrongly
+  `===`, spelled out by `YFormatAttrValue` (primitives compared by UTF-16 code
+  units, objects by value-identity token, absent ⇔ `null`); (2) the cleanup's routing
+  is **not confluent across clients** — `iterateDeletedStructs` must walk the delete
+  set in yjs `Map` insertion order (`YDeleteSet.orderedClients`), never ascending,
+  or a live mark is wrongly
   deleted. B4 unblocked the live write path (C2). See `docs/architecture.md`.
 - **Malformed input must throw, never trap.** Every clock is attacker-controlled
   (it arrives from a peer), and Swift's UInt arithmetic traps where JS goes
@@ -1874,7 +1875,11 @@ that are easy to violate and expensive to discover:
   `Dictionary` would not. (2) **Two equality rules over the same map** — the ops path
   uses yjs's `equalAttrs` (@6282, structural for objects, `YJSONValue.equalAttrs`),
   the cleanup path uses `===` (identity, `YFormatAttrValue`); `YTextAttributeValue`
-  carries both the raw JSON and the owning item so each path gets its rule. (3)
+  carries both the raw JSON and a `YAttributeIdentity` token so each path gets
+  its rule. Restoring/negating a value preserves that token on the new item
+  (`YItem.formatIdentity`); decoding mints separate identities lazily, and tokens
+  are never encoded. Primitive strings use UTF-16 code-unit equality, including
+  inside flat objects: Swift canonical equivalence is not JS `===`. (3)
   **Out-of-range indices are yjs's, not the editor's** — an insert past the end
   appends, a delete past the end stops at the end, and a format past the end **pads
   the text with `'\n'`** (@6584, Quill's trailing-newline convention). Clamping for
@@ -1889,12 +1894,11 @@ that are easy to violate and expensive to discover:
   object values by identity, reusing one `{href:…}` object across ops makes two
   `ContentFormat` items share a value object — a relation JSON cannot carry, so the
   recorded ops stop replaying (a shared-object random lane diverged at 1 of 100
-  sequences; deep-cloned, 0 of 3000 ops). One residual divergence is irreducible and
-  is yjs's, not ours: `insertAttributes` hands the *same* value object to every item
-  it mints, so two items can be `===` in memory yet distinct after
-  `encodeStateAsUpdate` + `applyUpdate`. yjs's cleanup therefore answers differently
-  before and after a round-trip; Schrift's item identity matches the post-round-trip
-  answer, which is the only one replicas can agree on.
+  sequences; deep-cloned, 0 of 3000 ops). Within an op, yjs reuses the *same* value
+  object when restoring/negating a current attribute. Schrift preserves that relation with
+  the in-memory token, so deleting an unformatted insertion cleans up its restored
+  object format exactly as yjs does. Encoding then decoding creates separate value
+  objects in yjs and separate tokens here; identity is deliberately not serialized.
 - **BlockNote 0.56 every-step goldens** (`BlockNote056*Tests`) inline eight captures from the phase 0 S3 spike
   from yjs 13.6.33, checking seed XML and all 17 edits. They hold XML and update bytes only; the captures' text deltas are not committed yet. B2's cursor positions are pinned separately by `YRelativePositionTests` (relative positions captured from yjs 13.6.33).
 - **Verify against the oracle, not against reasoning.** Golden fixtures

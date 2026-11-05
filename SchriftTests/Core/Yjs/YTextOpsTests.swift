@@ -570,9 +570,10 @@ final class YTextOpsTests: XCTestCase {
     /// for an object value is reference identity: two `ContentFormat` items whose
     /// `link` values are structurally equal but distinct objects are not
     /// interchangeable. Schrift models this with
-    /// `YFormatAttrValue.object(ObjectIdentifier(item))` — each item's value is its
-    /// own identity — which is also what yjs does after a wire round-trip, since the
-    /// encoder writes the JSON twice and the decoder builds two objects. The ops
+    /// `YFormatAttrValue.object(ObjectIdentifier(value.identity))` — independently
+    /// supplied values have separate tokens, while restored values retain theirs.
+    /// A wire round-trip also creates separate tokens, since the decoder parses
+    /// each value independently. The ops
     /// path keeps the other rule (`equalAttrs`, structural) for the same map.
     func testObjectAttributeValuesCompareByIdentity() throws {
         let doc = makeDoc()
@@ -599,6 +600,71 @@ final class YTextOpsTests: XCTestCase {
         guard case .object = first, case .object = second else {
             return XCTFail("object values must use the identity case")
         }
+    }
+
+    /// Transaction bytes, delta and full state captured from yjs 13.6.33.
+    func testRestoredObjectAttributeKeepsItsIdentity() throws {
+        let doc = makeDoc()
+        defer { doc.destroy() }
+        let text = doc.getText("t")
+        let ops: [Op] = [
+            Op(op: "insert", index: 0, text: "abc", attrs: [("link", #"{"href":"h"}"#)]),
+            Op(op: "insert", index: 1, text: "X", attrs: []),
+            Op(op: "delete", index: 1, length: 1),
+        ]
+        let updates = [
+            "0103010006010174046c696e6b0c7b2268726566223a2268227d84010003616263860103046c696e6b046e756c6c00",
+            "01030105c601010102046c696e6b046e756c6cc4010501020158c601060102046c696e6b0c7b2268726566223a2268227d00",
+            "000101010503",
+        ]
+        for (index, op) in ops.enumerated() {
+            var captured: YTransaction?
+            try doc.transact { transaction in
+                captured = transaction
+                try apply(op, to: text)
+            }
+            XCTAssertEqual(
+                try YTransactionEncoder.encodeUpdate(XCTUnwrap(captured))?.hexString,
+                updates[index], "op \(index): transaction update")
+        }
+        XCTAssertEqual(
+            toDelta(text), try XCTUnwrap(YJSONValue.parse(#"[{"insert":"abc","attributes":{"link":{"href":"h"}}}]"#)))
+        XCTAssertEqual(
+            try YStateEncoder.encodeStateAsUpdate(doc).hexString,
+            "0107010006010174046c696e6b0c7b2268726566223a2268227d8401000161840101026263860103046c696e6b046e756c6cc601010102046c696e6b046e756c6cc4010501020158c601060102046c696e6b0c7b2268726566223a2268227d0101010503"
+        )
+    }
+
+    /// Transaction bytes, delta and full state captured from yjs 13.6.33.
+    func testUnicodeEquivalentAttributeValuesAreDistinct() throws {
+        let doc = makeDoc()
+        defer { doc.destroy() }
+        let text = doc.getText("t")
+        let ops: [Op] = [
+            Op(op: "insert", index: 0, text: "a", attrs: [("link", "\"https://example.com/\u{00E9}\"")]),
+            Op(op: "format", index: 0, length: 1, attrs: [("link", "\"https://example.com/e\u{0301}\"")]),
+        ]
+        let updates = [
+            "0103010006010174046c696e6b182268747470733a2f2f6578616d706c652e636f6d2fc3a9228401000161860101046c696e6b046e756c6c00",
+            "01020103460100046c696e6b192268747470733a2f2f6578616d706c652e636f6d2f65cc8122c601010102046c696e6b182268747470733a2f2f6578616d706c652e636f6d2fc3a9220101010001",
+        ]
+        for (index, op) in ops.enumerated() {
+            var captured: YTransaction?
+            try doc.transact { transaction in
+                captured = transaction
+                try apply(op, to: text)
+            }
+            XCTAssertEqual(
+                try YTransactionEncoder.encodeUpdate(XCTUnwrap(captured))?.hexString,
+                updates[index], "op \(index): transaction update")
+        }
+        XCTAssertEqual(
+            toDelta(text),
+            try XCTUnwrap(YJSONValue.parse(#"[{"insert":"a","attributes":{"link":"https://example.com/é"}}]"#)))
+        XCTAssertEqual(
+            try YStateEncoder.encodeStateAsUpdate(doc).hexString,
+            "0105010006010174046c696e6b182268747470733a2f2f6578616d706c652e636f6d2fc3a9228401000161860101046c696e6b046e756c6c460100046c696e6b192268747470733a2f2f6578616d706c652e636f6d2f65cc8122c601010102046c696e6b182268747470733a2f2f6578616d706c652e636f6d2fc3a9220101010001"
+        )
     }
 
     // MARK: - Helpers

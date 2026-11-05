@@ -50,18 +50,32 @@ indirect enum YJSONValue: Equatable {
         case (nil, nil): return true
         case (nil, _), (_, nil): return false
         case (let a?, let b?):
-            if a == b { return true }
+            if jsStringEqual(a, b) { return true }
             guard let left = parse(a), let right = parse(b) else { return false }
             return equalAttrs(left, right)
         }
+    }
+
+    /// JS string equality: **UTF-16 code units**, not Swift's canonical
+    /// equivalence. `"é"` (U+00E9) and `"e\u{0301}"` are different JS strings and
+    /// must compare unequal — Swift's `String ==` would call them equal, which
+    /// silently skipped a format whose value differed only in normalization.
+    static func jsStringEqual(_ a: String, _ b: String) -> Bool {
+        a.utf16.elementsEqual(b.utf16)
     }
 
     private static func equalAttrs(_ a: YJSONValue, _ b: YJSONValue) -> Bool {
         switch (a, b) {
         case (.object(let left), .object(let right)):
             guard left.count == right.count else { return false }
+            // Key lookup must also be by code units: a `[String: _]` subscript
+            // hashes with canonical equivalence, so `"é"` would find `"e\u{0301}"`.
+            var byUnits: [[UInt16]: YJSONValue] = [:]
+            for (key, value) in right { byUnits[Array(key.utf16)] = value }
             for (key, value) in left {
-                guard let other = right[key], strictEqual(value, other) else { return false }
+                guard let other = byUnits[Array(key.utf16)], strictEqual(value, other) else {
+                    return false
+                }
             }
             return true
         case (.array(let left), .array(let right)):
@@ -80,7 +94,32 @@ indirect enum YJSONValue: Equatable {
         case (.null, .null): return true
         case (.bool(let x), .bool(let y)): return x == y
         case (.number(let x), .number(let y)): return x == y
-        case (.string(let x), .string(let y)): return x == y
+        case (.string(let x), .string(let y)): return jsStringEqual(x, y)
+        default: return false
+        }
+    }
+
+    /// Structural equality with string leaves compared by **UTF-16 code units**,
+    /// as JS `===` compares strings. The synthesized conformance would use Swift's
+    /// canonical equivalence, making `"é"` and `"e\u{0301}"` equal.
+    static func == (lhs: YJSONValue, rhs: YJSONValue) -> Bool {
+        switch (lhs, rhs) {
+        case (.null, .null): return true
+        case (.bool(let a), .bool(let b)): return a == b
+        case (.number(let a), .number(let b)): return a == b
+        case (.string(let a), .string(let b)): return jsStringEqual(a, b)
+        case (.array(let a), .array(let b)):
+            guard a.count == b.count else { return false }
+            for (x, y) in zip(a, b) where x != y { return false }
+            return true
+        case (.object(let a), .object(let b)):
+            guard a.count == b.count else { return false }
+            var byUnits: [[UInt16]: YJSONValue] = [:]
+            for (key, value) in b { byUnits[Array(key.utf16)] = value }
+            for (key, value) in a {
+                guard let other = byUnits[Array(key.utf16)], value == other else { return false }
+            }
+            return true
         default: return false
         }
     }

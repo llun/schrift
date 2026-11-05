@@ -54,4 +54,21 @@ final class YJSONValueTests: XCTestCase {
         XCTAssertFalse(YJSONValue.equalAttrs("{", "["))
         XCTAssertFalse(YJSONValue.equalAttrs("{}", "{"))
     }
+
+    /// JS `===` compares UTF-16 code units, so canonically equivalent strings are
+    /// **different** values. Swift's `String ==` would call them equal, which made
+    /// a format whose value differed only in normalization look redundant.
+    func testUnicodeEquivalentStringsAreNotEqual() {
+        // U+00E9 vs U+0065 U+0301.
+        XCTAssertFalse(YJSONValue.equalAttrs(#""é""#, #""e\u0301""#))
+        XCTAssertFalse(YJSONValue.equalAttrs(#"{"link":"é"}"#, #"{"link":"e\u0301"}"#))
+        // Keys too: a `[String: _]` lookup would match them canonically.
+        XCTAssertFalse(YJSONValue.equalAttrs(#"{"é":1}"#, #"{"e\u0301":1}"#))
+        // And the parsed values, not just the raw text.
+        XCTAssertNotEqual(YJSONValue.parse(#""é""#), YJSONValue.parse(#""e\u0301""#))
+        XCTAssertNotEqual(
+            YJSONValue.parse(#"{"é":1}"#), YJSONValue.parse(#"{"e\u0301":1}"#))
+        // Identical code units still compare equal.
+        XCTAssertTrue(YJSONValue.equalAttrs(#""é""#, #""\u00e9""#))
+    }
 }

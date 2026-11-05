@@ -116,6 +116,25 @@ final class YItem: YStruct {
     var redone: YID?
     var content: YContent
 
+    /// The identity token of this item's `ContentFormat` value — yjs's attribute
+    /// *value object*, the thing `cleanupFormattingGap` compares with `===`.
+    ///
+    /// **Not encoded.** A format item minted from an attribute value carries that
+    /// value's token, so a restored/negated attribute stays `===` to the item it
+    /// came from (yjs hands the same object to every `ContentFormat` it builds
+    /// from it). A decoded item has none and gets its own on first use, which is
+    /// yjs's post-round-trip behaviour: the encoder writes the JSON twice and the
+    /// decoder builds two objects. `splitItem` copies it to the right half.
+    var formatIdentity: YAttributeIdentity?
+
+    /// This item's value token, minting one on first use so repeated reads agree.
+    func resolvedFormatIdentity() -> YAttributeIdentity {
+        if let formatIdentity { return formatIdentity }
+        let token = YAttributeIdentity()
+        formatIdentity = token
+        return token
+    }
+
     /// Runtime flags — yjs `Item.info`:
     /// bit1 `0x01` keep · bit2 `0x02` countable · bit3 `0x04` deleted · bit4 `0x08` marker.
     ///

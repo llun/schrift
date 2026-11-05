@@ -2,8 +2,27 @@ import Foundation
 
 // MARK: - Attribute maps
 
+/// yjs's attribute *value object* — the thing `===` compares in
+/// `cleanupFormattingGap` (@6627).
+///
+/// yjs stores the caller's value object in `currentAttributes` and hands that
+/// **same object** to every `ContentFormat` it mints from it, so two format items
+/// can be `===` even though they are different items. Deriving identity from the
+/// owning item loses that: a restored attribute looked new and survived a cleanup
+/// yjs performs. So the value carries an explicit token instead:
+///
+/// - a value minted from caller JSON gets a **fresh** token;
+/// - a value re-used from `currentAttributes` or an existing format (the restore,
+///   negation and minimize paths) **keeps the source's** token;
+/// - an item decoded from the wire gets its own token on first use, so the remote
+///   path keeps yjs's post-round-trip behaviour (the encoder writes the JSON
+///   twice and the decoder builds two objects).
+///
+/// The token is never encoded.
+final class YAttributeIdentity {}
+
 /// One attribute value in force at a text position — yjs's `Map<string, any>`
-/// entry, kept as the raw JSON text plus the `ContentFormat` item that set it.
+/// entry, kept as the raw JSON text plus the identity token of the value object.
 ///
 /// Two different comparisons are needed over the same map, and yjs gets both from
 /// the one parsed value object it stores:
@@ -12,16 +31,13 @@ import Foundation
 ///   `formatText` @6526) uses `equalAttrs` (@6282), which compares two objects
 ///   *structurally* (lib0 `equalFlat`) — so `json` is what matters;
 /// - the **cleanup** path (`cleanupFormattingGap` @6604) uses `===`, which
-///   compares two objects by *identity* — so `owner` is what matters.
-///
-/// `owner` is the item whose `ContentFormat` set the value — exactly the object
-/// yjs stores in `currentAttributes`. A caller-supplied value has none.
-struct YTextAttributeValue: Equatable {
+///   compares two objects by *identity* — so `identity` is what matters.
+struct YTextAttributeValue {
     /// The value's raw JSON text (`JSON.stringify(value)` off the wire). `"null"`
     /// is JSON null, which `updateCurrentAttributes` treats as "delete the key".
     let json: String
-    /// The `ContentFormat` item that set this value, for `===` identity.
-    let owner: ObjectIdentifier?
+    /// The value object's identity — see `YAttributeIdentity`.
+    let identity: YAttributeIdentity
 }
 
 /// An **ordered** attribute map — yjs's `Object<string, any>` (a caller's
@@ -45,14 +61,14 @@ struct YTextAttributes: ExpressibleByDictionaryLiteral {
     /// A caller's attributes: raw JSON text per key, in literal order.
     init(dictionaryLiteral elements: (String, String)...) {
         for (key, value) in elements {
-            self[key] = YTextAttributeValue(json: value, owner: nil)
+            self[key] = YTextAttributeValue(json: value, identity: YAttributeIdentity())
         }
     }
 
     /// The same, from pairs built at runtime — the order is the array's.
     init(_ pairs: [(String, String)]) {
         for (key, value) in pairs {
-            self[key] = YTextAttributeValue(json: value, owner: nil)
+            self[key] = YTextAttributeValue(json: value, identity: YAttributeIdentity())
         }
     }
 
@@ -200,7 +216,7 @@ enum YTextOps {
         if valueJSON == "null" {
             current[key] = nil
         } else {
-            current[key] = YTextAttributeValue(json: valueJSON, owner: ObjectIdentifier(item))
+            current[key] = YTextAttributeValue(json: valueJSON, identity: item.resolvedFormatIdentity())
         }
     }
 
@@ -235,6 +251,9 @@ enum YTextOps {
                 parent: .type(parent),
                 parentSub: nil,
                 content: .format(key: key, valueJSON: value.json))
+            // yjs passes the value object it took from `currentAttributes`, so the
+            // restored format stays `===` to the one it restores.
+            nextFormat.formatIdentity = value.identity
             try nextFormat.integrate(transaction, offset: 0)
             currPos.right = nextFormat
             try currPos.forward()
@@ -275,7 +294,9 @@ enum YTextOps {
             let currentVal = currPos.currentAttributes[key]?.json ?? "null"
             guard !YJSONValue.equalAttrs(currentVal, value.json) else { continue }
             // Save the negated attribute (null when it was absent).
-            negatedAttributes[key] = YTextAttributeValue(json: currentVal, owner: nil)
+            negatedAttributes[key] = YTextAttributeValue(
+                json: currentVal,
+                identity: currPos.currentAttributes[key]?.identity ?? YAttributeIdentity())
             let left = currPos.left
             let right = currPos.right
             let item = YItem(
@@ -287,6 +308,8 @@ enum YTextOps {
                 parent: .type(parent),
                 parentSub: nil,
                 content: .format(key: key, valueJSON: value.json))
+            // yjs stores the caller's value object in the new format item.
+            item.formatIdentity = value.identity
             try item.integrate(transaction, offset: 0)
             currPos.right = item
             try currPos.forward()
@@ -310,7 +333,7 @@ enum YTextOps {
         // Every attribute in force that the caller did not mention is negated.
         currPos.currentAttributes.forEach { key, _ in
             if attributes[key] == nil {
-                attributes[key] = YTextAttributeValue(json: "null", owner: nil)
+                attributes[key] = YTextAttributeValue(json: "null", identity: YAttributeIdentity())
             }
         }
         let doc = transaction.doc
@@ -374,12 +397,12 @@ enum YTextOps {
                         } else {
                             if length == 0 { break iterationLoop }
                             negatedAttributes[key] = YTextAttributeValue(
-                                json: valueJSON, owner: nil)
+                                json: valueJSON, identity: right.resolvedFormatIdentity())
                         }
                         right.delete(transaction)
                     } else {
                         currPos.currentAttributes[key] = YTextAttributeValue(
-                            json: valueJSON, owner: ObjectIdentifier(right))
+                            json: valueJSON, identity: right.resolvedFormatIdentity())
                     }
                 } else {
                     if length < right.length {
@@ -485,18 +508,18 @@ enum YTextOps {
     }
 
     /// The cleanup pass's `===` view of an attribute map (`YFormatAttrValue`):
-    /// primitives by JSON text, objects by the owning `ContentFormat` item.
+    /// primitives by JSON text, objects by their identity token.
     ///
-    /// Every value in a `currentAttributes` map came from `updateCurrentAttributes`,
-    /// so an object value always has an owner — the same item `YFormatAttrValue.of`
-    /// would name.
+    /// The token is the same one `YFormatAttrValue.of` reads off the item, so a
+    /// value carried through `currentAttributes` compares equal to the format item
+    /// it came from — which is exactly what yjs's shared value object does.
     private static func formatAttrValues(_ attributes: YTextAttributes) -> [String: YFormatAttrValue] {
         var result: [String: YFormatAttrValue] = [:]
         attributes.forEach { key, value in
             guard value.json != "null" else { return }
             let first = value.json.first
-            if let owner = value.owner, first == "{" || first == "[" {
-                result[key] = .object(owner)
+            if first == "{" || first == "[" {
+                result[key] = .object(ObjectIdentifier(value.identity))
             } else {
                 result[key] = .primitive(value.json)
             }

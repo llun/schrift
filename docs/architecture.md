@@ -994,8 +994,9 @@ never a concrete `YText`):
 
 - **Format-value equality is JS `===`.** yjs compares parsed `ContentFormat.value`s
   with `===`; the store keeps raw `valueJSON`, so `YFormatAttrValue` reproduces that:
-  primitives by JSON text, objects/arrays by owning-item identity (never structurally
-  equal), and absent-key ⇔ JSON `null`.
+  primitives by JSON text using UTF-16 code-unit equality, objects/arrays by
+  value-identity token (shared by restored/negated formats), and absent-key ⇔ JSON
+  `null`. The token is in-memory only; decoding each format creates a new identity.
 - **The cleanup's routing is not confluent across clients.** `iterateDeletedStructs`
   must walk the transaction's delete set in yjs `Map` **insertion order** (now
   `YDeleteSet.orderedClients`), not ascending: a client owning a *deleted*
@@ -1028,7 +1029,11 @@ Three things are load-bearing and easy to "fix" wrongly:
 - **Two different equality rules over the same map.** The ops path uses yjs's
   `equalAttrs` (@6282) — structural for objects (`YJSONValue.equalAttrs`) — while the
   cleanup path uses `===` — identity (`YFormatAttrValue`). `YTextAttributeValue`
-  carries both the raw JSON and the owning item so each path gets its rule.
+  carries both the raw JSON and a `YAttributeIdentity` token so each path gets its
+  rule. `YItem.formatIdentity` holds the same token when an attribute is restored
+  or negated; decoded items lazily mint their own tokens. Tokens are never encoded.
+  Primitive string equality compares UTF-16 code units, including strings inside
+  flat objects, so composed and decomposed Unicode remain distinct as in JS `===`.
 - **Out-of-range indices are yjs's, not the editor's.** yjs does not clamp: an insert
   past the end appends, a delete past the end stops at the end, and a format past the
   end **pads the text with `'\n'`** (@6584, Quill's trailing-newline convention).
@@ -1054,11 +1059,13 @@ does not survive JSON. Such a fixture stops replaying (a shared-object random la
 diverged at 1 of 100 sequences; deep-cloned per op, 0 of 3000 ops). Capture scripts
 must deep-clone attribute objects per op.
 
-One residual divergence is irreducible and belongs to yjs: `insertAttributes` hands
-the *same* value object to every item it mints, so two items can be `===` in memory
-and distinct after `encodeStateAsUpdate` + `applyUpdate`. yjs's cleanup therefore
-answers differently before and after a round-trip. Schrift's item identity matches
-the post-round-trip answer, which is the only one replicas can agree on.
+Within an op, yjs hands the *same* value object to restored/negated format items.
+Schrift carries that identity through the value and item tokens, so a later delete
+can remove a redundant restored object format exactly as yjs does. After
+`encodeStateAsUpdate` + `applyUpdate`, yjs parses separate objects and Schrift
+mints separate tokens; both deliberately lose the in-memory sharing relation.
+The named object-restoration and Unicode-equivalence regressions pin transaction
+update bytes, the visible delta and the full state against yjs 13.6.33.
 
 ## Authentication
 
