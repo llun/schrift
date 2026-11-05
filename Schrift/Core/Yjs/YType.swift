@@ -37,12 +37,24 @@ final class YType {
     /// this milestone; it is what B4's `cleanupYTextAfterTransaction` keys off.
     var _hasFormatting = false
 
+    /// Whether this type is a text — yjs's `YText` or `YXmlText`, the two classes
+    /// that share `YTextEvent` and are therefore the only ones whose events carry
+    /// a `delta`.
+    ///
+    /// A nested type knows from its `typeRef`. A root has none (a root is named on
+    /// the wire, never referenced by a type ref), so its kind is whatever its
+    /// creator declared: `YDoc.getText(_:)` marks it text, and a root created by
+    /// `YDoc.get(_:)` is not. yjs instead re-casts the bare root into the concrete
+    /// class; with one `YType` class the cast is this flag.
+    var isText: Bool
+
     /// The owning document. `weak` deliberately: yjs relies on a tracing GC and
     /// wires `doc → share → type → doc` into a cycle, which ARC would leak.
     weak var doc: YDoc?
 
     init(typeRef: YTypeRef? = nil) {
         self.typeRef = typeRef
+        self.isText = typeRef == .text || typeRef == .xmlText
     }
 
     /// yjs `_integrate(y, item)` (@5158).
@@ -74,7 +86,7 @@ final class YType {
                 transaction.mergeStructs.append(current)
             }
         }
-        transaction.changed.removeValue(forKey: ObjectIdentifier(self))
+        transaction.removeChangedType(self)
     }
 }
 
@@ -96,10 +108,11 @@ final class YArraySearchMarker {
 /// A Yjs document replica — yjs `Doc` (@455), reduced to what the struct store
 /// needs.
 ///
-/// Deliberately **not** modelled: observers/events (`ObservableV2`) beyond the single
-/// `onUpdate` listener the live replica needs, subdocuments
-/// (Schrift's BlockNote schema is a single `document-store` XmlFragment with no
-/// nested docs), and undo/redo. The roadmap adds the `YDocument` facade
+/// Deliberately **not** modelled: the `ObservableV2` observer tree (`observe`/
+/// `observeDeep` and their listener sets) beyond the two hooks the live replica
+/// needs — `onUpdate` and `afterTransaction` — subdocuments (Schrift's BlockNote
+/// schema is a single `document-store` XmlFragment with no nested docs), and
+/// undo/redo. The roadmap adds the `YDocument` facade
 /// (`applyUpdate`/`encodeStateVector`/`encodeStateAsUpdate`) in B3 on top of this.
 final class YDoc {
     /// Garbage collection. **On by default** (B4) — matching a real yjs client
@@ -142,6 +155,27 @@ final class YDoc {
     /// never thrown out of cleanup or trapped.
     var onUpdate: ((_ origin: YTransactionOrigin?, _ encode: () -> Data?) -> Void)?
 
+    /// yjs `Doc`'s `'afterTransaction'` event (@3337) — the **change signal**.
+    ///
+    /// Fired once per cleaned transaction from the observer phase, after every
+    /// changed type's `_callObserver` has populated `transaction.changedParentTypes`
+    /// and **before** the formatting cleanup and gc/merge. That ordering is the
+    /// point: a run of typing that the merge will coalesce into one struct still
+    /// reads as separate inserts, and a deleted item is still a `delete` rather
+    /// than a tombstone.
+    ///
+    /// The transaction's `changedParentTypes` is complete when the hook runs, and
+    /// each text event's `delta` is valid **only** during the call (see
+    /// `YEvent.delta`). A nil hook runs nothing, and then no events are built at
+    /// all: `changedParentTypes` is populated only while a hook is set, because
+    /// this hook is its only consumer. The B4 formatting-cleanup arming does not
+    /// depend on it and still runs.
+    ///
+    /// A `transact` opened from inside the hook behaves as in yjs: the current
+    /// transaction is already off `doc.transaction`, so the new one is queued and
+    /// drained after the current one's gc/merge, never mid-cleanup.
+    var afterTransaction: ((YTransaction) -> Void)?
+
     init(clientID: UInt, gc: Bool = true) {
         self.clientID = clientID
         self.gc = gc
@@ -158,6 +192,25 @@ final class YDoc {
         let type = YType()
         type.integrate(doc: self, item: nil)
         share[name] = type
+        return type
+    }
+
+    /// yjs `Doc.getText(name)` (@665) — `get(name, YText)`.
+    ///
+    /// yjs's `Doc.get` (@614) re-casts a root that was created as a bare
+    /// `AbstractType` into the requested concrete class, and throws a plain
+    /// `Error` only when the root is already a *different* concrete constructor.
+    /// Schrift has one `YType` class, so the cast is `isText = true` and it is
+    /// applied unconditionally: a root that was declared as something else is
+    /// silently re-marked as text, not returned unchanged and not rejected.
+    ///
+    /// **Call this only for a text root.** Schrift cannot tell a bare root (which
+    /// yjs would re-cast) from a declared non-text root (which yjs would refuse),
+    /// because a root's kind is not on the wire and `get(_:)` records none. There
+    /// is no production caller; the tests use it to declare their text roots.
+    func getText(_ name: String) -> YType {
+        let type = get(name)
+        type.isText = true
         return type
     }
 
