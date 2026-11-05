@@ -71,4 +71,13 @@ final class YJSONValueTests: XCTestCase {
         // Identical code units still compare equal.
         XCTAssertTrue(YJSONValue.equalAttrs(#""é""#, #""\u00e9""#))
     }
+
+    func testCanonicallyEquivalentKeysStayDistinct() {
+        // JSON.parse keeps both keys; equalFlat then sees two keys against one.
+        XCTAssertFalse(YJSONValue.equalAttrs(#"{"\u00e9":1,"e\u0301":2}"#, #"{"\u00e9":2}"#))
+        guard case .object(let members) = YJSONValue.parse(#"{"\u00e9":1,"e\u0301":2}"#) else {
+            return XCTFail("expected an object")
+        }
+        XCTAssertEqual(members.count, 2)
+    }
 }

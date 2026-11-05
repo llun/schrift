@@ -761,14 +761,14 @@ final class YTextOpsTests: XCTestCase {
         var current: [String: String] = [:]
         var run: [UInt16] = []
 
-        func attributes() -> [String: YJSONValue] {
-            var result: [String: YJSONValue] = [:]
-            for (key, json) in current { result[key] = YJSONValue.parse(json) ?? .null }
+        func attributes() -> [YJSONKey: YJSONValue] {
+            var result: [YJSONKey: YJSONValue] = [:]
+            for (key, json) in current { result[YJSONKey(key)] = YJSONValue.parse(json) ?? .null }
             return result
         }
         func packRun() {
             guard !run.isEmpty else { return }
-            var op: [String: YJSONValue] = [
+            var op: [YJSONKey: YJSONValue] = [
                 "insert": .string(String(decoding: run, as: UTF16.self))
             ]
             if !current.isEmpty { op["attributes"] = .object(attributes()) }
@@ -784,7 +784,7 @@ final class YTextOpsTests: XCTestCase {
                     run += units
                 case .embed(let json):
                     packRun()
-                    var op: [String: YJSONValue] = ["insert": YJSONValue.parse(json) ?? .null]
+                    var op: [YJSONKey: YJSONValue] = ["insert": YJSONValue.parse(json) ?? .null]
                     if !current.isEmpty { op["attributes"] = .object(attributes()) }
                     ops.append(.object(op))
                 case .type:

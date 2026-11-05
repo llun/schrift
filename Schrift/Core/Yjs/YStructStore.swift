@@ -276,7 +276,7 @@ final class YStructStore {
 
         if leftItem.deleted { rightItem.markDeleted() }
         if leftItem.keep { rightItem.keep = true }
-        // Both halves are the same `ContentFormat` value, so they share its token.
+        // Unreachable today (a format item has length 1 and `YContent.splice` refuses `.format`); kept so a split could never drop the identity. Both halves would be the same `ContentFormat` value, so they share its token.
         rightItem.formatIdentity = leftItem.formatIdentity
         if let redone = leftItem.redone {
             rightItem.redone = YID(client: redone.client, clock: redone.clock + diff)

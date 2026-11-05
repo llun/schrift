@@ -15,13 +15,24 @@ import Foundation
 /// are the same value, and a large integer loses exactly the precision
 /// `JSON.parse` would. A lone surrogate escape becomes U+FFFD (a Swift `String`
 /// cannot hold one; JS keeps it), which only affects a value no schema writes.
+/// A JSON object key compared by UTF-16 code units, as JS property keys are.
+/// Swift `String` hashes by canonical equivalence, which would merge `"é"` and
+/// `"e\u{0301}"` into one key where `JSON.parse` keeps two.
+struct YJSONKey: Hashable, ExpressibleByStringLiteral, CustomStringConvertible {
+    let units: [UInt16]
+    init(_ string: String) { units = Array(string.utf16) }
+    init(stringLiteral value: String) { self.init(value) }
+    var string: String { String(decoding: units, as: UTF16.self) }
+    var description: String { string }
+}
+
 indirect enum YJSONValue: Equatable {
     case null
     case bool(Bool)
     case number(Double)
     case string(String)
     case array([YJSONValue])
-    case object([String: YJSONValue])
+    case object([YJSONKey: YJSONValue])
 
     /// The deepest nesting `parse` accepts. A format value is a flat object of
     /// primitives in every schema Schrift knows; the cap keeps a crafted
@@ -67,15 +78,10 @@ indirect enum YJSONValue: Equatable {
     private static func equalAttrs(_ a: YJSONValue, _ b: YJSONValue) -> Bool {
         switch (a, b) {
         case (.object(let left), .object(let right)):
+            // Keys are `YJSONKey`s, so lookup is already by code units.
             guard left.count == right.count else { return false }
-            // Key lookup must also be by code units: a `[String: _]` subscript
-            // hashes with canonical equivalence, so `"é"` would find `"e\u{0301}"`.
-            var byUnits: [[UInt16]: YJSONValue] = [:]
-            for (key, value) in right { byUnits[Array(key.utf16)] = value }
             for (key, value) in left {
-                guard let other = byUnits[Array(key.utf16)], strictEqual(value, other) else {
-                    return false
-                }
+                guard let other = right[key], strictEqual(value, other) else { return false }
             }
             return true
         case (.array(let left), .array(let right)):
@@ -114,10 +120,8 @@ indirect enum YJSONValue: Equatable {
             return true
         case (.object(let a), .object(let b)):
             guard a.count == b.count else { return false }
-            var byUnits: [[UInt16]: YJSONValue] = [:]
-            for (key, value) in b { byUnits[Array(key.utf16)] = value }
             for (key, value) in a {
-                guard let other = byUnits[Array(key.utf16)], value == other else { return false }
+                guard let other = b[key], value == other else { return false }
             }
             return true
         default: return false
@@ -177,7 +181,7 @@ private struct YJSONParser {
 
     private mutating func parseObject(depth: Int) -> YJSONValue? {
         index += 1  // "{"
-        var members: [String: YJSONValue] = [:]
+        var members: [YJSONKey: YJSONValue] = [:]
         skipWhitespace()
         if index < scalars.count, scalars[index] == "}" {
             index += 1
@@ -191,7 +195,7 @@ private struct YJSONParser {
             index += 1
             guard let value = parseValue(depth: depth + 1) else { return nil }
             // `JSON.parse` keeps the last of duplicate keys, as a dictionary does.
-            members[key] = value
+            members[YJSONKey(key)] = value
             skipWhitespace()
             guard index < scalars.count else { return nil }
             if scalars[index] == "," {
