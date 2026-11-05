@@ -17,12 +17,11 @@ import Foundation
 /// A JSON object key compared by UTF-16 code units, as JS property keys are.
 /// Swift `String` hashes by canonical equivalence, which would merge `"é"` and
 /// `"e\u{0301}"` into one key where `JSON.parse` keeps two.
-struct YJSONKey: Hashable, ExpressibleByStringLiteral, CustomStringConvertible {
+struct YJSONKey: Hashable, ExpressibleByStringLiteral {
     let units: [UInt16]
     init(_ string: String) { units = Array(string.utf16) }
     init(stringLiteral value: String) { self.init(value) }
     var string: String { String(decoding: units, as: UTF16.self) }
-    var description: String { string }
 }
 
 indirect enum YJSONValue: Equatable {

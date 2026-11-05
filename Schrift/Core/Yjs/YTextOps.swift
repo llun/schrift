@@ -73,7 +73,6 @@ struct YTextAttributes: ExpressibleByDictionaryLiteral {
     }
 
     var isEmpty: Bool { keys.isEmpty }
-    var count: Int { keys.count }
 
     /// `nil` reads as absent (JS `undefined`); writing `nil` deletes the key.
     /// Re-setting an existing key keeps its position, as a JS `Map.set` does.
@@ -101,14 +100,13 @@ struct YTextAttributes: ExpressibleByDictionaryLiteral {
 
 // MARK: - Insert value
 
-/// What `insertText` inserts — yjs's `string | object | AbstractType<any>`.
+/// What `insertText` inserts — yjs's `string | object`. yjs also accepts an
+/// `AbstractType` (`ContentType`); no Schrift caller embeds a shared type in text.
 enum YTextInsertValue {
     /// `ContentString`.
     case text(String)
     /// `ContentEmbed`, as its raw JSON text.
     case embed(json: String)
-    /// `ContentType` — an embedded shared type.
-    case type(YType)
 }
 
 // MARK: - Text operations
@@ -326,8 +324,9 @@ enum YTextOps {
     /// `attributes` and restoring the attributes it had to negate.
     ///
     /// yjs mutates the caller's `attributes` object (adding a `null` for every
-    /// attribute in force that the caller did not mention); the mutation is not
-    /// observable to a caller, so this works on a copy.
+    /// attribute in force that the caller did not mention), which a caller reusing
+    /// that object would see. The document state is the same either way; Schrift's
+    /// `YTextAttributes` is a value type, so this works on a copy.
     static func insertText(
         _ transaction: YTransaction, _ parent: YType, _ currPos: ItemTextListPosition,
         _ text: YTextInsertValue, _ attributes: YTextAttributes
@@ -347,7 +346,6 @@ enum YTextOps {
         switch text {
         case .text(let string): content = .string(Array(string.utf16))
         case .embed(let json): content = .embed(json: json)
-        case .type(let type): content = .type(type)
         }
         let left = currPos.left
         let right = currPos.right
