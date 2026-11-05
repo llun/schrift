@@ -140,8 +140,10 @@ stages; today it can **decode** an update, **integrate** it into a live document
 **encode** the integrated document back out (B3) — a full snapshot, a diff against a
 peer's state vector, or a state vector — byte-identical to yjs, **garbage-collect
 and clean up formatting** on remote transactions (B4), **project** the integrated
-replica back into the editor's block/markdown vocabulary (B5), and turn a **local**
-editor edit into local Yjs operations plus the incremental update they mint (B6). The
+replica back into the editor's block/markdown vocabulary (B5), turn a **local**
+editor edit into local Yjs operations plus the incremental update they mint (B6),
+and capture/resolve **relative positions** so a caret or selection survives local
+and remote edits (B2). The
 replica runs with **gc on by default** (`YDoc(gc: true)`, matching a real yjs client
 and the live write path):
 each transaction, `tryGcDeleteSet` sweeps the replica's *own* deleted items —
@@ -167,6 +169,36 @@ whenever an integrated item resolves to no parent (a neighbour was collected), a
 | `YStructIntegrator` | the driver: dependency ordering, pending structs, retry |
 | `YBlockProjection` / `InlineMarkdownWriter` | the **read-out** side (B5): projects an integrated replica into BlockNote-vocabulary `ProjectedBlock`s and then into the editor's markdown. See "Projecting the replica" below |
 | `YWrite` / `TextSpanDiff` / `BlockNoteWrite` | the **write-in** side (B6): local list/map mutation primitives, a char-level self-describing text-span diff, and the block-level edit driver that turns old/new BlockNote blocks into local ops + an incremental update. See "Local-edit transactions" below |
+| `YRelativePosition` | the **caret/selection** primitive (B2): yjs `RelativePosition` — capture from a type index, resolve against a later document state, binary + JSON codecs, compare. See "Relative positions" below |
+
+### Relative positions (B2)
+
+A caret or selection cannot be stored as an index: a peer inserting before it shifts
+it, and a peer deleting the character it names destroys it. `YRelativePosition` is
+yjs's answer — the type (by defining item id when nested, by root `share` key when
+root) plus the id of one character/element plus an `assoc` side — and it is the
+primitive the native editor will use to keep carets stable across local and remote
+edits. `fromTypeIndex` captures, `resolve(in:)` resolves against any later state
+(returning the type and its visible index), `encode`/`decode` are the binary form
+over the existing lib0 codec, `json`/`init(json:)` are yjs's JSON shape, and
+`compare` is its equality. There is no production caller yet.
+
+Two behaviours are yjs's and look like bugs: an unknown kind tag **decodes** (yjs's
+`switch` has no `default`; the position is merely unresolvable), and an unknown
+`tname` **resolves to a fresh empty root** because yjs calls `doc.get(tname)`. The
+binary form is lossy in one direction — an item-id encoding carries no type, since
+the item's parent implies it. `assoc` is load-bearing at `index == length`: `assoc 0`
+is the end-of-type position and follows text a peer appends, `assoc -1` is pinned to
+the last character and stays before it (the C2 end-of-paragraph IME fix).
+`followUndoneDeletions` is kept for parity, but `YItem.redone` is never set (no undo
+manager), so it currently reduces to `getItemWithOffset`.
+
+`resolve` reads and mutates the live doc, so it belongs on the replica's owner (main
+actor) like every other doc access, and a future cursor path must treat it carefully:
+an unknown `tname` **creates that root permanently** in `doc.share` (so a peer-fed
+caller only resolves names that already exist or that the schema owns), and a throw
+means a **malformed position, not a corrupt replica** — drop that cursor, never latch
+`replicaFailSafe`.
 
 ### Projecting the replica (B5)
 
@@ -1780,7 +1812,7 @@ Static assets (logo, illustrations, doc-type icons) are copied from the handoff'
 - Unit tests for `DocsAPIClient` and Codable models against mocked `URLSession` responses (fixture JSON matching the real serializer shapes documented above).
 - Unit tests for the on-device Markdown→Yjs encoder (`Core/Yjs` — `YjsEncoderTests`, `MarkdownYjsTests`, `InlineMarkdownTests`, verifying valid Yjs-v1 update bytes) and for the save flow (`DocumentSaveTests` / `DocumentSaveCoordinator*Tests`, verifying `saveDocumentContent` issues `PATCH /content/` then `PATCH /{id}/` for the title; `CollaborationYDocSaveClientTests` for the Docs 6 route choice and request shapes, with `BlockNoteIncrementalSaveTests`/`BlockNoteAlignmentTests` checking at the document level that the incremental update makes the served state read exactly like the saved markdown).
 - `BlockNote056*Tests` inline eight yjs 13.6.33 / BlockNote 0.56 captures from the phase 0 S3 spike (the editing-scenario harness, not object storage), checking seed XML and every incremental edit (17 steps) with nothing pending.
-  These tests hold XML and update bytes only; the captures' text deltas and cursor positions are not committed yet, and B3/B2 add them with the tests that use them.
+  These tests hold XML and update bytes only; the captures' text deltas are not committed yet. B2's cursor positions are pinned separately by `YRelativePositionTests` (relative positions captured from yjs 13.6.33).
 - SwiftUI Previews for every DesignSystem component, serving as the visual QA catalog (mirrors the handoff's `*.card.html` files).
 - No live integration tests against docs.llun.dev in CI — it's a personal server; verify manually against it during development instead.
 
