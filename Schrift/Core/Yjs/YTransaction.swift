@@ -8,13 +8,21 @@ enum YTransactionOrigin: Equatable {
     case remote
 }
 
+/// One `changedParentTypes` entry — yjs's `Map<AbstractType, Array<YEvent>>` pair,
+/// kept as an ordered array so iteration is deterministic.
+struct YChangedParentType {
+    let type: YType
+    var events: [YEvent]
+}
+
 /// One unit of change against a `YDoc` — yjs `Transaction` (@3081).
 ///
-/// Reduced to the fields the struct store actually reads. Deliberately **not**
-/// modelled: `changedParentTypes` and the observer machinery (no observers in
-/// this milestone), `subdocsAdded/Removed/Loaded` (Schrift's schema has no
-/// subdocuments), and `meta` (caller bookkeeping with no effect on state). The
-/// optional `origin` is retained as caller bookkeeping, matching yjs `Transaction`.
+/// Reduced to the fields the struct store and the change signal actually read.
+/// Deliberately **not** modelled: `subdocsAdded/Removed/Loaded` (Schrift's schema
+/// has no subdocuments), `meta` (caller bookkeeping with no effect on state), and
+/// the `ObservableV2` listener sets behind `observe`/`observeDeep` (no consumer
+/// yet). The optional `origin` is retained as caller bookkeeping, matching yjs
+/// `Transaction`.
 final class YTransaction {
     let doc: YDoc
     /// yjs `Transaction.origin` (@3128); caller bookkeeping, not encoded state.
@@ -29,11 +37,25 @@ final class YTransaction {
     /// that changed.
     ///
     /// yjs's `changed` is `Map<AbstractType, Set>` keyed by the type object; we key
-    /// by identity but keep the `YType` reference, because B4's observer phase reads
+    /// by identity but keep the `YType` reference, because the observer phase reads
     /// each changed type's `_hasFormatting`. `Item.integrate`, `Item.delete`, and
     /// `YType.deleteChildren` all maintain it (the last removes by `ObjectIdentifier`);
     /// B5's projection will read the subs.
     var changed: [ObjectIdentifier: (type: YType, subs: Set<String?>)] = [:]
+    /// The order types were first added to `changed` — yjs's `Map` insertion order.
+    ///
+    /// A Swift `Dictionary` iterates unpredictably, and the observer phase must run
+    /// in yjs's order: the events it records at a shared ancestor are compared in
+    /// that order, so a different order is a different `changedParentTypes`.
+    private(set) var changedOrder: [ObjectIdentifier] = []
+    /// yjs `changedParentTypes` (@3120) — every type an event was raised on, mapped
+    /// to the events raised there. `callTypeObservers` records the event at the
+    /// changed type and at every ancestor up to the root, so a consumer can find
+    /// the enclosing `blockContainer` from an edited `XmlText`.
+    ///
+    /// yjs keys a `Map` by type; the array keeps yjs's insertion order (the order
+    /// `_callObserver` ran), which is what a consumer sees. Lookup is by identity.
+    var changedParentTypes: [YChangedParentType] = []
     /// yjs `_needFormattingCleanup` — armed by the observer phase when a *remote*
     /// transaction touches a formatted text (`!local && _hasFormatting`), consumed by
     /// `cleanupYTextAfterTransaction` at the end of the same observer phase.
@@ -61,9 +83,30 @@ final class YTransaction {
         let item = type.item
         if item == nil || (item!.id.clock < (beforeState[item!.id.client] ?? 0) && !item!.deleted) {
             let oid = ObjectIdentifier(type)
+            if changed[oid] == nil { changedOrder.append(oid) }
             var entry = changed[oid] ?? (type: type, subs: [])
             entry.subs.insert(parentSub)
             changed[oid] = entry
+        }
+    }
+
+    /// yjs `transaction.changed.delete(type)` (@9514) — `ContentType.delete` drops
+    /// the type it just emptied, so no observer fires for it.
+    func removeChangedType(_ type: YType) {
+        let oid = ObjectIdentifier(type)
+        changed.removeValue(forKey: oid)
+        changedOrder.removeAll { $0 == oid }
+    }
+
+    /// yjs `callTypeObservers`'s `setIfUndefined(changedParentTypes, type, () =>
+    /// []).push(event)` (@5035) — append the event to the type's entry, creating
+    /// the entry on first sight.
+    func addChangedParentType(_ type: YType, _ event: YEvent) {
+        let oid = ObjectIdentifier(type)
+        if let index = changedParentTypes.firstIndex(where: { ObjectIdentifier($0.type) == oid }) {
+            changedParentTypes[index].events.append(event)
+        } else {
+            changedParentTypes.append(YChangedParentType(type: type, events: [event]))
         }
     }
 
@@ -225,17 +268,39 @@ extension YDoc {
             transaction.deleteSet.sortAndMerge()
             transaction.afterState = store.getStateVector()
 
-            // yjs dispatches each changed type's `_callObserver`. Schrift has no user
-            // observers, so this reduces to `YText._callObserver`'s one store-visible
-            // effect: on a *remote* change to a formatted text, arm the cleanup. yjs
-            // skips a type whose owning item is deleted.
-            for (_, entry) in transaction.changed {
+            // yjs @3296-3306: dispatch each changed type's `_callObserver`, in
+            // `transaction.changed` insertion order, skipping a type whose owning
+            // item is deleted. This is what populates `changedParentTypes` (the
+            // change signal) and what arms B4's formatting cleanup — the arming
+            // lives in `YType.callObserver`, mirroring `YText._callObserver`.
+            //
+            // The order is snapshotted first, as yjs builds its `fs` array before
+            // running any callback.
+            let changedOrder = transaction.changedOrder
+            for oid in changedOrder {
+                guard let entry = transaction.changed[oid] else { continue }
                 let type = entry.type
                 guard type.item == nil || !(type.item!.deleted) else { continue }
-                if !transaction.local, type._hasFormatting {
-                    transaction.needFormattingCleanup = true
-                }
+                type.callObserver(transaction, entry.subs)
             }
+
+            // yjs @3337: `doc.emit('afterTransaction', [transaction, doc])`,
+            // pushed by the deep-observer closure so it runs after every
+            // `_callObserver` and before the formatting cleanup. This is the
+            // change signal: `changedParentTypes` is complete and the store is
+            // still pre-gc/pre-merge, so a coalesced run of typing still reads as
+            // inserts. A nil hook runs nothing.
+            transaction.doc.afterTransaction?(transaction)
+
+            // Drop the events now that the hook has run. yjs keeps
+            // `changedParentTypes` on the transaction and lets the tracing GC
+            // collect the `Transaction ⇄ YEvent` cycle; ARC would keep the
+            // transaction — and through `changed`, the whole type graph — alive
+            // for the lifetime of the process. The events are only meaningful
+            // during the hook anyway: their deltas read the pre-gc/pre-merge
+            // store, so a consumer that stashes one would read a stale delta.
+            transaction.changedParentTypes = []
+
             // The last observer callback: run the formatting cleanup if armed. It opens
             // a nested local transaction (queued into `transactionCleanups` and drained
             // by the recursion below), deleting formatting items a concurrent edit

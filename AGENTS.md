@@ -1609,6 +1609,18 @@ that are easy to violate and expensive to discover:
   `transact` is untagged unless its caller tags it — B4's format cleanup keeps yjs's null
   origin. Nested transactions keep the outer origin. `lastTransactionOrigin` is an internal
   test seam for the most recently cleaned transaction.
+- **`YDoc.afterTransaction` is the change signal (B3), fired at yjs's `'afterTransaction'`
+  point (@3337).** It runs in the observer phase, after every changed type's
+  `_callObserver` (`YType.callObserver`, @5146) has filled `transaction.changedParentTypes`
+  through `callTypeObservers` (@5035: the event is recorded at the changed type and every
+  ancestor up to the root, in `changed` insertion order), and **before** the formatting
+  cleanup and gc/merge, so coalesced typing still reads as inserts. Text events (`YText`
+  and `YXmlText`, which share yjs's `YTextEvent`) carry a lazy `delta` that is valid only
+  during the hook. Unlike yjs's delta getter it never opens a transaction to read itself.
+  Element events carry no delta (plan §5: deltas cover `XmlText` only). The events are
+  dropped after the hook so ARC doesn't keep the transaction and type graph alive. A
+  `transact` opened inside the hook is queued and drained after the current transaction,
+  as in yjs. Buffering and delivery to the UI belong to the engine (B6), not the core.
 - **`YDoc.onUpdate` mirrors yjs's `'update'` event, and it is how the replica's own
   cleanup reaches peers.** yjs emits `'update'` from `cleanupTransactions`'s `finally`
   block (@3388-3392) for **every** transaction with content — after gc/merge and the
