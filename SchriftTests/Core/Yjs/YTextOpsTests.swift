@@ -667,7 +667,102 @@ final class YTextOpsTests: XCTestCase {
         )
     }
 
+    /// yjs 13.6.33: insert(0,"x",{mark:[]}); format(0,1,{mark:{}}).
+    func testArrayVsObjectEqualAttrs() throws {
+        try assertAttributeEqualityReplay(
+            initial: #"[]"#, formatted: #"{}"#,
+            updates: [
+                "0103010006010174046d61726b025b5d8401000178860101046d61726b046e756c6c00",
+                nil,
+            ],
+            delta: #"[{"insert":"x","attributes":{"mark":[]}}]"#,
+            finalState: "0103010006010174046d61726b025b5d8401000178860101046d61726b046e756c6c00")
+    }
+
+    /// yjs 13.6.33: insert(0,"x",{mark:{nested:{}}}); format(0,1,{mark:{nested:{}}}).
+    func testNestedDistinctEqualAttrs() throws {
+        try assertAttributeEqualityReplay(
+            initial: #"{"nested":{}}"#, formatted: #"{"nested":{}}"#,
+            updates: [
+                "0103010006010174046d61726b0d7b226e6573746564223a7b7d7d8401000178860101046d61726b046e756c6c00",
+                "01020103460100046d61726b0d7b226e6573746564223a7b7d7dc601010102046d61726b0d7b226e6573746564223a7b7d7d0101010001",
+            ],
+            delta: #"[{"insert":"x","attributes":{"mark":{"nested":{}}}}]"#,
+            finalState:
+                "0105010006010174046d61726b0d7b226e6573746564223a7b7d7d8401000178860101046d61726b046e756c6c460100046d61726b0d7b226e6573746564223a7b7d7dc601010102046d61726b0d7b226e6573746564223a7b7d7d0101010001"
+        )
+    }
+
+    /// yjs 13.6.33: insert(0,"x",{mark:{a:1}}); format(0,1,{mark:{a:1}}).
+    func testFlatEqualAttrs() throws {
+        try assertAttributeEqualityReplay(
+            initial: #"{"a":1}"#, formatted: #"{"a":1}"#,
+            updates: [
+                "0103010006010174046d61726b077b2261223a317d8401000178860101046d61726b046e756c6c00",
+                nil,
+            ],
+            delta: #"[{"insert":"x","attributes":{"mark":{"a":1}}}]"#,
+            finalState: "0103010006010174046d61726b077b2261223a317d8401000178860101046d61726b046e756c6c00")
+    }
+
+    /// Inherited attributes reuse the same nested value object in yjs, so the
+    /// second insert needs no format items even though equalFlat alone is false.
+    func testInheritedNestedAttributeKeepsItsIdentity() throws {
+        let doc = makeDoc()
+        defer { doc.destroy() }
+        let text = doc.getText("t")
+        let ops = [
+            Op(op: "insert", index: 0, text: "ab", attrs: [("mark", #"{"nested":{}}"#)]),
+            Op(op: "insert", index: 1, text: "X"),
+        ]
+        let updates = [
+            "0103010006010174046d61726b0d7b226e6573746564223a7b7d7d840100026162860102046d61726b046e756c6c00",
+            "01010104c401010102015800",
+        ]
+        for (index, op) in ops.enumerated() {
+            var captured: YTransaction?
+            try doc.transact { transaction in
+                captured = transaction
+                try apply(op, to: text)
+            }
+            XCTAssertEqual(
+                try YTransactionEncoder.encodeUpdate(XCTUnwrap(captured))?.hexString,
+                updates[index], "op \(index): transaction update")
+        }
+        XCTAssertEqual(
+            toDelta(text), try XCTUnwrap(YJSONValue.parse(#"[{"insert":"aXb","attributes":{"mark":{"nested":{}}}}]"#)))
+        XCTAssertEqual(
+            try YStateEncoder.encodeStateAsUpdate(doc).hexString,
+            "0105010006010174046d61726b0d7b226e6573746564223a7b7d7d84010001618401010162860102046d61726b046e756c6cc401010102015800"
+        )
+    }
+
     // MARK: - Helpers
+
+    private func assertAttributeEqualityReplay(
+        initial: String, formatted: String, updates: [String?], delta: String, finalState: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        let doc = makeDoc()
+        defer { doc.destroy() }
+        let text = doc.getText("t")
+        let ops = [
+            Op(op: "insert", index: 0, text: "x", attrs: [("mark", initial)]),
+            Op(op: "format", index: 0, length: 1, attrs: [("mark", formatted)]),
+        ]
+        for (index, op) in ops.enumerated() {
+            var captured: YTransaction?
+            try doc.transact { transaction in
+                captured = transaction
+                try apply(op, to: text)
+            }
+            XCTAssertEqual(
+                try YTransactionEncoder.encodeUpdate(XCTUnwrap(captured))?.hexString,
+                updates[index], "op \(index): transaction update (nil means no update)", file: file, line: line)
+        }
+        XCTAssertEqual(toDelta(text), try XCTUnwrap(YJSONValue.parse(delta)), file: file, line: line)
+        XCTAssertEqual(try YStateEncoder.encodeStateAsUpdate(doc).hexString, finalState, file: file, line: line)
+    }
 
     private func makeDoc() -> YDoc { YDoc(clientID: 1, gc: false) }
 

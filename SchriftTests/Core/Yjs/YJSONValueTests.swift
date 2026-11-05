@@ -10,7 +10,7 @@ import XCTest
 /// a nested container is never equal to another (two parses never share identity).
 final class YJSONValueTests: XCTestCase {
 
-    func testIdenticalTextIsEqual() {
+    func testIdenticalPrimitiveAndEmptyObjectTextIsEqual() {
         XCTAssertTrue(YJSONValue.equalAttrs("true", "true"))
         XCTAssertTrue(YJSONValue.equalAttrs("{}", "{}"))
     }
@@ -37,6 +37,33 @@ final class YJSONValueTests: XCTestCase {
         // `===`, and two parses never share identity.
         XCTAssertFalse(YJSONValue.equalAttrs(#"{"a":{"b":1}}"#, #"{"a": {"b": 1}}"#))
         XCTAssertFalse(YJSONValue.equalAttrs("[[1]]", "[ [1] ]"))
+    }
+
+    func testArraysAndObjectsCompareTheirEnumerableKeys() {
+        XCTAssertTrue(YJSONValue.equalAttrs("[]", "{}"))
+        XCTAssertTrue(YJSONValue.equalAttrs("[1, true]", #"{"0":1,"1":true}"#))
+        XCTAssertTrue(YJSONValue.equalAttrs(#"{"0":1,"1":true}"#, "[1, true]"))
+        XCTAssertFalse(YJSONValue.equalAttrs("[1]", #"{"a":1}"#))
+        XCTAssertFalse(YJSONValue.equalAttrs("[1]", #"{"0":2}"#))
+        XCTAssertFalse(YJSONValue.equalAttrs("[{}]", #"{"0":{}}"#))
+    }
+
+    func testIdenticalNestedJSONTextDoesNotImplyIdentity() {
+        XCTAssertFalse(YJSONValue.equalAttrs(#"{"nested":{}}"#, #"{"nested":{}}"#))
+        XCTAssertFalse(YJSONValue.equalAttrs("[[1]]", "[[1]]"))
+    }
+
+    func testSharedContainerIdentityPrecedesFlatComparison() {
+        let shared = YAttributeIdentity()
+        let nested = #"{"nested":{}}"#
+        XCTAssertTrue(YJSONValue.equalAttrs(nested, nested, identityA: shared, identityB: shared))
+        XCTAssertFalse(YJSONValue.equalAttrs(nested, nested, identityA: shared, identityB: YAttributeIdentity()))
+        let deep =
+            String(repeating: "[", count: YJSONValue.maxNestingDepth + 1)
+            + "0" + String(repeating: "]", count: YJSONValue.maxNestingDepth + 1)
+        XCTAssertTrue(YJSONValue.equalAttrs(deep, deep, identityA: shared, identityB: shared))
+        // Tokens belong to containers; primitives still compare by their values.
+        XCTAssertFalse(YJSONValue.equalAttrs("1", "2", identityA: shared, identityB: shared))
     }
 
     func testNumbersCompareAsDoubles() {

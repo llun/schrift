@@ -994,8 +994,8 @@ never a concrete `YText`):
 
 - **Format-value equality is JS `===`.** yjs compares parsed `ContentFormat.value`s
   with `===`; the store keeps raw `valueJSON`, so `YFormatAttrValue` reproduces that:
-  primitives by JSON text using UTF-16 code-unit equality, objects/arrays by
-  value-identity token (shared by restored/negated formats), and absent-key ⇔ JSON
+  primitives by parsed value (numbers numerically, strings by UTF-16 code units),
+  objects/arrays by value-identity token (shared by restored/negated formats), and absent-key ⇔ JSON
   `null`. The token is in-memory only; decoding each format creates a new identity.
 - **The cleanup's routing is not confluent across clients.** `iterateDeletedStructs`
   must walk the transaction's delete set in yjs `Map` **insertion order** (now
@@ -1016,8 +1016,9 @@ region coverage proves the cleanup code executes rather than being an honest neg
 with its forward/format bookkeeping, `findPosition` (@6367), and the
 `insertNegatedAttributes`/`insertAttributes`/`insertText`/`formatText`/`deleteText`
 family, exposed as `YType.insert`/`insertEmbed`/`delete`/`format` (@7362–@7450). It
-is what B5's BlockNote writer calls; `YXmlText` shares every one of these in yjs, and
-Schrift has one `YType`, so both use it.
+will be wired into the BlockNote writer in B5; the current writer still uses
+`YWrite` and `TextSpanDiff`. `YXmlText` shares every one of these operations in
+yjs, and Schrift has one `YType`, so both text kinds use them.
 
 Three things are load-bearing and easy to "fix" wrongly:
 
@@ -1027,13 +1028,17 @@ Three things are load-bearing and easy to "fix" wrongly:
   `dictionaryLiteral` keeps source order, which is JS object-literal order for the
   non-integer keys every schema uses); a Swift `Dictionary` would not.
 - **Two different equality rules over the same map.** The ops path uses yjs's
-  `equalAttrs` (@6282) — structural for objects (`YJSONValue.equalAttrs`) — while the
-  cleanup path uses `===` — identity (`YFormatAttrValue`). `YTextAttributeValue`
+  `equalAttrs` (@6282): `===` first, then lib0 `equalFlat` for any two containers
+  (`YJSONValue.equalAttrs`). Arrays expose their index keys, so `[]` equals `{}`;
+  flat values compare with `===`, so distinct nested containers remain unequal
+  even with identical JSON text. The cleanup path uses only `===`
+  (`YFormatAttrValue`). `YTextAttributeValue`
   carries both the raw JSON and a `YAttributeIdentity` token so each path gets its
   rule. `YItem.formatIdentity` holds the same token when an attribute is restored
   or negated; decoded items lazily mint their own tokens. Tokens are never encoded.
-  Primitive string equality compares UTF-16 code units, including strings inside
-  flat objects, so composed and decomposed Unicode remain distinct as in JS `===`.
+  The event delta also preserves these tokens in its attribute maps. Primitive
+  numbers compare numerically, and string equality compares UTF-16 code units,
+  including strings inside flat objects, so composed and decomposed Unicode remain distinct as in JS `===`.
 - **Out-of-range indices are yjs's, not the editor's.** yjs does not clamp: an insert
   past the end appends, a delete past the end stops at the end, and a format past the
   end **pads the text with `'\n'`** (@6584, Quill's trailing-newline convention).
@@ -1064,8 +1069,11 @@ Schrift carries that identity through the value and item tokens, so a later dele
 can remove a redundant restored object format exactly as yjs does. After
 `encodeStateAsUpdate` + `applyUpdate`, yjs parses separate objects and Schrift
 mints separate tokens; both deliberately lose the in-memory sharing relation.
-The named object-restoration and Unicode-equivalence regressions pin transaction
-update bytes, the visible delta and the full state against yjs 13.6.33.
+The named object-restoration, Unicode-equivalence and attribute-equality
+regressions pin transaction update bytes, the visible delta and the full state
+against yjs 13.6.33. The equality ones cover the two `equalFlat` edges a raw-JSON
+comparison gets wrong: `[]` equals `{}` (arrays expose index keys), and two
+distinct nested containers with identical JSON text are not `===`.
 
 ## Authentication
 

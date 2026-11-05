@@ -622,6 +622,32 @@ final class YAfterTransactionTests: XCTestCase {
         XCTAssertEqual(visibleText(of: doc.getText("t")), "aXbcde")
     }
 
+    /// yjs 13.6.33 observer deltas for a format that removes a nested mark. The
+    /// restored format reuses the removed value object, so the delta's
+    /// `equalAttrs` must see the same identity: without it the restored format
+    /// looks new and the trailing `mark: null` emits a second retain.
+    func testRestoredNestedAttributeDeltas() throws {
+        let doc = YDoc(clientID: 1, gc: false)
+        defer { doc.destroy() }
+        let text = doc.getText("t")
+        var deltas: [[YDeltaOp]] = []
+        doc.afterTransaction = { transaction in
+            for entry in transaction.changedParentTypes where entry.type === text {
+                for event in entry.events {
+                    if let delta = event.delta { deltas.append(delta) }
+                }
+            }
+        }
+        try text.insert(0, "ab", YTextAttributes([("mark", #"{"nested":{}}"#)]))
+        try text.format(0, 1, YTextAttributes([("mark", "null")]))
+        XCTAssertEqual(
+            deltas,
+            [
+                [.insert("ab", attributes: ["mark": #"{"nested":{}}"#])],
+                [.retain(1, attributes: ["mark": .null])],
+            ])
+    }
+
     // MARK: - Re-entrancy
 
     /// A `transact` opened from inside `afterTransaction` is queued, never run

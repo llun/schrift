@@ -29,7 +29,7 @@ final class YAttributeIdentity {}
 ///
 /// - the **ops** path (`insertAttributes` @6462, `minimizeAttributeChanges` @6440,
 ///   `formatText` @6526) uses `equalAttrs` (@6282), which compares two objects
-///   *structurally* (lib0 `equalFlat`) — so `json` is what matters;
+///   by identity first, then by flat enumerable keys (lib0 `equalFlat`);
 /// - the **cleanup** path (`cleanupFormattingGap` @6604) uses `===`, which
 ///   compares two objects by *identity* — so `identity` is what matters.
 struct YTextAttributeValue {
@@ -229,7 +229,7 @@ enum YTextOps {
         // Skip deleted items and formats that already carry the negated value.
         while let right = currPos.right,
             right.deleted
-                || (isFormat(right) && equalAttrs(negatedAttributes[formatKey(right)], formatValue(right)))
+                || (isFormat(right) && equalAttrs(negatedAttributes[formatKey(right)], right))
         {
             if !right.deleted { negatedAttributes[formatKey(right)] = nil }
             try currPos.forward()
@@ -270,8 +270,7 @@ enum YTextOps {
             let matches =
                 right.deleted
                 || (isFormat(right)
-                    && YJSONValue.equalAttrs(
-                        attributes[formatKey(right)]?.json ?? "null", formatValue(right)))
+                    && equalAttrs(attributes[formatKey(right)], right, absentIsNull: true))
             guard matches else { break }
             try currPos.forward()
         }
@@ -292,7 +291,11 @@ enum YTextOps {
         for (key, value) in requested {
             // `currentAttributes.get(key) ?? null` — absent is JSON null here.
             let currentVal = currPos.currentAttributes[key]?.json ?? "null"
-            guard !YJSONValue.equalAttrs(currentVal, value.json) else { continue }
+            guard
+                !YJSONValue.equalAttrs(
+                    currentVal, value.json,
+                    identityA: currPos.currentAttributes[key]?.identity, identityB: value.identity)
+            else { continue }
             // Save the negated attribute (null when it was absent).
             negatedAttributes[key] = YTextAttributeValue(
                 json: currentVal,
@@ -392,7 +395,7 @@ enum YTextOps {
             if !right.deleted {
                 if case .format(let key, let valueJSON) = right.content {
                     if let attr = attributes[key] {
-                        if YJSONValue.equalAttrs(attr.json, valueJSON) {
+                        if equalAttrs(attr, right) {
                             negatedAttributes[key] = nil
                         } else {
                             if length == 0 { break iterationLoop }
@@ -498,17 +501,18 @@ enum YTextOps {
         return "null"
     }
 
-    /// yjs `equalAttrs` (@6282) over a stored value and a raw JSON value.
+    /// yjs `equalAttrs` (@6282) over a stored value and a format item's value.
     ///
     /// `nil` is JS `undefined`, which is `===` to nothing — so an absent stored
-    /// value never matches. Callers that mean `?? null` pass `"null"` instead.
-    private static func equalAttrs(_ a: YTextAttributeValue?, _ b: String) -> Bool {
-        guard let a else { return false }
-        return YJSONValue.equalAttrs(a.json, b)
+    /// value never matches. `minimizeAttributeChanges` uses `?? null` instead.
+    private static func equalAttrs(_ a: YTextAttributeValue?, _ b: YItem, absentIsNull: Bool = false) -> Bool {
+        guard a != nil || absentIsNull else { return false }
+        return YJSONValue.equalAttrs(
+            a?.json ?? "null", formatValue(b), identityA: a?.identity, identityB: b.resolvedFormatIdentity())
     }
 
     /// The cleanup pass's `===` view of an attribute map (`YFormatAttrValue`):
-    /// primitives by JSON text, objects by their identity token.
+    /// primitives by parsed value, objects by their identity token.
     ///
     /// The token is the same one `YFormatAttrValue.of` reads off the item, so a
     /// value carried through `currentAttributes` compares equal to the format item
@@ -517,8 +521,7 @@ enum YTextOps {
         var result: [String: YFormatAttrValue] = [:]
         attributes.forEach { key, value in
             guard value.json != "null" else { return }
-            let first = value.json.first
-            if first == "{" || first == "[" {
+            if YJSONValue.isContainer(value.json) {
                 result[key] = .object(ObjectIdentifier(value.identity))
             } else {
                 result[key] = .primitive(value.json)

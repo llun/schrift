@@ -1873,17 +1873,21 @@ that are easy to violate and expensive to discover:
   keeps insertion order (a `dictionaryLiteral` keeps source order, which is JS
   object-literal order for the non-integer keys every schema uses), and a Swift
   `Dictionary` would not. (2) **Two equality rules over the same map** — the ops path
-  uses yjs's `equalAttrs` (@6282, structural for objects, `YJSONValue.equalAttrs`),
-  the cleanup path uses `===` (identity, `YFormatAttrValue`); `YTextAttributeValue`
+  uses yjs's `equalAttrs` (@6282, `YJSONValue.equalAttrs`): `===` first, then
+  lib0 `equalFlat` for any two containers (arrays expose index keys, so `[]` equals
+  `{}`; nested values compare with `===`, never by JSON text). The cleanup path
+  uses only `===` (`YFormatAttrValue`); `YTextAttributeValue`
   carries both the raw JSON and a `YAttributeIdentity` token so each path gets
   its rule. Restoring/negating a value preserves that token on the new item
   (`YItem.formatIdentity`); decoding mints separate identities lazily, and tokens
-  are never encoded. Primitive strings use UTF-16 code-unit equality, including
-  inside flat objects: Swift canonical equivalence is not JS `===`. (3)
+  are never encoded. The event delta preserves tokens in its attribute maps too.
+  Primitive numbers compare numerically; strings use UTF-16 code-unit equality,
+  including inside flat objects: Swift canonical equivalence is not JS `===`. (3)
   **Out-of-range indices are yjs's, not the editor's** — an insert past the end
   appends, a delete past the end stops at the end, and a format past the end **pads
   the text with `'\n'`** (@6584, Quill's trailing-newline convention). Clamping for
-  editor safety is the caller's (B5), not this layer's. `deleteText` reuses
+  editor safety is the caller's (B5), not this layer's. The current BlockNote writer
+  still uses `YWrite`/`TextSpanDiff`; B5 will wire it to `YTextOps`. `deleteText` reuses
   `YTextCleanup.cleanupFormattingGap` (@6604) rather than duplicating it, and a
   locally minted `ContentFormat` already sets `_hasFormatting` through
   `YContent.integrate` (@8991) — never edit `YItem.integrate` to do it.

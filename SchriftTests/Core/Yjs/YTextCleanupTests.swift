@@ -31,6 +31,15 @@ final class YTextCleanupTests: XCTestCase {
         doc.store.clients[client]?.structs ?? []
     }
 
+    /// Cleanup uses JS `===`, not JSON spelling and not `equalFlat`.
+    func testPrimitiveValuesCompareAsParsedJSValues() {
+        XCTAssertEqual(YFormatAttrValue.primitive("1"), .primitive("1.0"))
+        XCTAssertEqual(YFormatAttrValue.primitive("-0"), .primitive("0"))
+        XCTAssertEqual(YFormatAttrValue.primitive(#""a""#), .primitive(#""\u0061""#))
+        XCTAssertNotEqual(YFormatAttrValue.primitive("1"), .primitive("true"))
+        XCTAssertNotEqual(YFormatAttrValue.primitive(#""é""#), .primitive(#""e\u0301""#))
+    }
+
     // MARK: - Fixtures (captured from the oracle)
 
     /// A nested `Text("abc")` (map key "k"); two peers concurrently bold [0,3).

@@ -6,7 +6,7 @@ import Foundation
 ///
 /// yjs stores the parsed value and compares attribute values with `===`; Schrift
 /// keeps the raw `valueJSON` (see `YContent.format`), so this reproduces the same
-/// decision without parsing: **primitives compare JSON text by UTF-16 code units,
+/// decision: **primitives compare parsed values (strings by UTF-16 code units),
 /// objects/arrays by value-identity token** (restored formats share the token of
 /// their source value; independently parsed objects never share one). JSON `null`
 /// is never stored — yjs's `updateCurrentAttributes` *deletes* the key on a null
@@ -15,7 +15,7 @@ import Foundation
 /// `===`: `nil == nil` ⇔ `null === null`, `nil == .some` ⇔ `null === obj` (false),
 /// and `.some == .some` by the cases.
 enum YFormatAttrValue: Equatable {
-    /// JSON text of a scalar (bool / number / string) — compared by text.
+    /// JSON text of a scalar (bool / number / string) — compared by parsed value.
     case primitive(String)
     /// An object/array value — its identity token; never `==` another token.
     case object(ObjectIdentifier)
@@ -24,7 +24,7 @@ enum YFormatAttrValue: Equatable {
     /// canonical, so `"é"` would equal `"e\u{0301}"`), objects by identity.
     static func == (lhs: YFormatAttrValue, rhs: YFormatAttrValue) -> Bool {
         switch (lhs, rhs) {
-        case (.primitive(let a), .primitive(let b)): return YJSONValue.jsStringEqual(a, b)
+        case (.primitive(let a), .primitive(let b)): return YJSONValue.strictEqual(a, b)
         case (.object(let a), .object(let b)): return a == b
         default: return false
         }
@@ -36,10 +36,7 @@ enum YFormatAttrValue: Equatable {
     static func of(_ item: YItem) -> YFormatAttrValue? {
         guard case .format(_, let valueJSON) = item.content else { return nil }
         if valueJSON == "null" { return nil }
-        // `valueJSON` is `JSON.stringify(value)` off the wire — compact, no leading
-        // whitespace — so the first byte distinguishes an object/array from a scalar.
-        let first = valueJSON.first
-        if first == "{" || first == "[" {
+        if YJSONValue.isContainer(valueJSON) {
             return .object(ObjectIdentifier(item.resolvedFormatIdentity()))
         }
         return .primitive(valueJSON)
