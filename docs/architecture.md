@@ -298,6 +298,27 @@ The pieces live across `Core/Collaboration` and `Features/Editor`:
   (`enqueueLiveSnapshot`/`saveLiveSnapshot`); **C2c** is what finally calls both from the
   editor — see "Editor wiring — the write path complete (C2c)".
 
+### Intent-based native writer (B5a)
+
+`BlockNoteWriter` exposes `replaceText`, `formatRange`, `splitBlock`, `joinBlocks`,
+and `setBlockType` against unique BlockNote ids. Each intent runs in a local-user
+transaction and returns only that transaction's update after cleanup. Its
+`transaction` helper groups intents; nested calls return an empty update and the
+outer call returns the combined update. Replica ownership/lifetime stays with the
+caller. This API is not yet wired into `BlockNoteWrite.applyEdit` or saving (B5b).
+
+Ranges use UTF-16 text positions and one unit per atomic inline element (mentions,
+interlinks and math). They are clamped before format-aware `YTextOps` calls; the
+writer never requests yjs's past-end newline padding. Nil insertion marks inherit
+like yjs `insert`; an explicit map specifies the inserted marks. Split/join and
+block-type replacement copy inline elements rather than flattening them. Copied
+runs go through the existing `InlineContent.pieces(for:)` single shape builder.
+Splits copy the type/props and leave nested child groups on the original block.
+Missing/malformed targets and duplicate ids throw typed writer errors. Joining
+the first sibling throws `noPreviousBlock`; a source containing nested children
+is rejected rather than deleting that subtree. Supported content types are the
+text blocks paragraph, heading, bullet/numbered/check list item and code block.
+
 ### Local-edit transactions (B6)
 
 C1 wires the *read* side into the editor; **B6 is the write side** — a pure `Core/Yjs`

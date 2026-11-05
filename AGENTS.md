@@ -1813,6 +1813,20 @@ that are easy to violate and expensive to discover:
   element is rebuilt, since a splice would drop or misplace the edit. **Move is v1-coarse** — a reordered survivor is
   rebuilt whole (delete + re-insert), never relocated in place; reorders are rare
   and stay covered by full-snapshot fixtures.
+- **`BlockNoteWriter` is B5a's intent API for the future native editor**, separate
+  from `BlockNoteWrite.applyEdit` (the save/live path is unchanged). It locates
+  unique block ids and exposes replaceText, formatRange, splitBlock, joinBlocks,
+  and setBlockType. Each intent opens a `.localUser` transaction and returns its
+  incremental update after cleanup; `transaction` groups intents (nested calls
+  return the empty update; the outer call returns the combined bytes). UTF-16
+  offsets count inline XmlElements (mention/interlink/math) as one atomic unit.
+  Clamp ranges before calling `YTextOps` so formatting cannot pad with newlines.
+  Copied text uses **`InlineContent.pieces(for:)`**, the same single inline-shape
+  builder as the encoder and B6; do not add another run-to-format builder.
+  Missing/malformed targets and duplicate ids throw `BlockNoteWriter.Error`.
+  Joining the first sibling throws `noPreviousBlock`; joining a source with
+  nested children is refused to preserve the subtree. Splits retain the original
+  type/props, with nested child groups staying on the original container.
 - **B6 deviates from yjs only in local-item *construction*, never in the store
   algorithm — verify at the document/projection level, not the store-structure
   level.** It rebuilds a changed text span wholesale from the new runs (not yjs's
