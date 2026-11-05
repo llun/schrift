@@ -1,0 +1,35 @@
+SchriftTests/Core/Yjs/BlockNoteWriterTests.swift
+  s_68ba8f9a023eca::t_ab0419f9d95b38 1-17,20-30,33-99,132-148,152,155-165
+  s_68ba8f9a023eca::t_777a2909e3377c 100-131
+  s_68ba8f9a023eca::t_895731e1cdbd08 18-19,31-32,149-151,153-154
+docs/architecture.md
+  s_68ba8f9a023eca::t_8a79bd160cffee 301-321
+SchriftTests/Core/Yjs/BlockNoteWriterOracleTests.swift
+  s_68ba8f9a023eca::t_a3db0300fd9484 52,89-92
+  s_68ba8f9a023eca::t_777a2909e3377c 44-45,49-51,59-61
+  s_68ba8f9a023eca::t_895731e1cdbd08 9-12,16-19,39-40,43,46-47,54-56,58,62-64,71-72,93-96
+  s_68ba8f9a023eca::t_0e6e1f93df6348 1-8,13-15,20-38,41-42,48,53,57,65-70,73-88,97-106
+AGENTS.md
+  s_68ba8f9a023eca::t_8a79bd160cffee 1816-1829
+Schrift/Core/Yjs/BlockNoteWriter.swift
+  s_68ba8f9a023eca::t_f617728ea591fa 34,50,76,103,121,204,224-225,228-235
+  s_68ba8f9a023eca::t_3c4d0bf8e5ce92 1-33,35-43,46-49,51-73,75,77-102,104-113,117-120,122-157,162-166,170-179,185,193-203,205-217,220-223,226-227,236-329,334-351,356-381,384-403
+  s_68ba8f9a023eca::t_895731e1cdbd08 74,114-116,158-161,167-169,180-184,218-219,330-333,352-355,382-383
+  s_68ba8f9a023eca::t_777a2909e3377c 44-45,186-192
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4e6e1cff56e55df6e23268183552777a06f874f7",
+  "prompts": {},
+  "sessions": {
+    "s_68ba8f9a023eca": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ad99-1cf0-7b03-9c27-21650dacb41b",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
