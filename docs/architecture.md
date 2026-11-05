@@ -193,6 +193,13 @@ the last character and stays before it (the C2 end-of-paragraph IME fix).
 `followUndoneDeletions` is kept for parity, but `YItem.redone` is never set (no undo
 manager), so it currently reduces to `getItemWithOffset`.
 
+`resolve` reads and mutates the live doc, so it belongs on the replica's owner (main
+actor) like every other doc access, and a future cursor path must treat it carefully:
+an unknown `tname` **creates that root permanently** in `doc.share` (so a peer-fed
+caller only resolves names that already exist or that the schema owns), and a throw
+means a **malformed position, not a corrupt replica** — drop that cursor, never latch
+`replicaFailSafe`.
+
 ### Projecting the replica (B5)
 
 Decoding and integrating a remote update produces a live `YDoc`; **projection** turns

@@ -1821,7 +1821,7 @@ that are easy to violate and expensive to discover:
 - **`YRelativePosition` (B2) is the caret/selection primitive: a type ref, one item
   id, and `assoc`, transliterated from yjs's `RelativePosition` (@2301) and its
   codecs.** `fromTypeIndex` (@2421) captures, `resolve(in:)` (@2547) resolves to a
-  `YAbsolutePosition` (type + visible index), `encode`/`decode` (@2453/@2515) are the
+  `YAbsolutePosition` (type + visible index), `encode`/`decode` (@2477/@2515) are the
   binary form over the existing `Lib0Encoder`/`Lib0Decoder`, `json`/`init(json:)`
   (@2340/@2363) are yjs's JSON shape, and `compare` (@2609) is its equality. No
   production caller yet. Reductions, all documented in the file:
@@ -1836,7 +1836,13 @@ that are easy to violate and expensive to discover:
   `assoc` is load-bearing at `index == length`: `assoc 0` captures the end-of-type
   position (`item == nil`) and follows text a peer appends, `assoc -1` captures the
   last character's id and stays before it — the C2 end-of-paragraph IME fix, pinned
-  by `YRelativePositionTests`.
+  by `YRelativePositionTests`. **Caller rules for the future cursor path** (all in
+  `resolve`'s doc comment): an unknown `tname` **creates that root permanently** in
+  `doc.share`, so a peer-fed caller (awareness cursors) must only resolve names that
+  already exist or that the schema owns (`document-store`); a **throw means a
+  malformed position, not a corrupt replica** — drop the cursor and never latch
+  `replicaFailSafe`; and `resolve` reads/mutates the live doc, so it runs on the
+  replica's owner (main actor), unlike the value and its codecs.
 - **`YDoc.destroy()` is not optional.** The item graph is a mesh of strong cycles,
   so releasing a `YDoc` frees nothing; whoever owns a replica must tear it down.
 - **BlockNote 0.56 every-step goldens** (`BlockNote056*Tests`) inline eight captures from the phase 0 S3 spike

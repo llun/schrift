@@ -18,8 +18,10 @@ import Foundation
 /// load-bearing at the end of a paragraph — see
 /// `createRelativePositionFromTypeIndex` and `resolve(in:)`.
 ///
-/// Pure value code: no concurrency annotations, callable from any isolation
-/// domain.
+/// The value and its codecs are pure value code: no concurrency annotations,
+/// callable from any isolation domain. **`resolve(in:)` is not** — it reads the
+/// live document graph (and, for an unknown `tname`, mutates `doc.share`), so it
+/// runs on the replica's owner like every other doc access.
 struct YRelativePosition: Equatable, Sendable {
     /// The defining item id of a **nested** type (the item whose `ContentType`
     /// holds it), or nil when the type is a root.
@@ -69,8 +71,9 @@ extension YRelativePosition {
     ///   is the C2 end-of-paragraph fix; `YRelativePositionTests` pins it.
     ///
     /// `index` is `UInt` because it is a visible index (`YType.length` is `UInt`);
-    /// an index past the end is not an error — yjs's walk simply falls through to
-    /// the end-of-type position.
+    /// an index past the end is not an error. For `assoc >= 0` the walk falls
+    /// through to the end-of-type position; for `assoc < 0` it returns the last
+    /// available id (`t.lastId`), the same rule as `index == length`.
     static func fromTypeIndex(_ type: YType, index: UInt, assoc: Int = 0) throws -> YRelativePosition {
         var t = type.start
         var index = index
@@ -135,6 +138,22 @@ extension YRelativePosition {
     /// set and `followRedone` currently reduces to `getItemWithOffset`; the
     /// parameter and the loop are kept so the day undo lands this is already
     /// right, and so the two paths stay line-comparable with yjs.
+    ///
+    /// Three things a caller must know:
+    ///
+    /// - **An unknown `tname` creates that root permanently.** yjs's `doc.get`
+    ///   inserts it into `doc.share`, and this mirrors that. A caller fed by peers
+    ///   (awareness cursors) must not let `share` grow unbounded: only resolve a
+    ///   `tname` that already exists, or one of the names the schema owns
+    ///   (BlockNote's `document-store`).
+    /// - **A throw means a malformed position, not a corrupt replica.** The only
+    ///   throws are an all-nil position (an unknown decode tag, or `{}` JSON) and
+    ///   an item whose parent is still an unresolved id — both impossible for a
+    ///   position this core produced. A caller must drop that cursor and must
+    ///   **never** latch `replicaFailSafe` for it.
+    /// - **It reads (and can mutate) the live document**, so it runs on the
+    ///   replica's owner like every other doc access — not from an arbitrary
+    ///   isolation domain.
     func resolve(in doc: YDoc, followUndoneDeletions: Bool = true) throws -> YAbsolutePosition? {
         let store = doc.store
         if let rightID = item {
@@ -204,7 +223,11 @@ extension YRelativePosition {
         var item: YStruct
         while true {
             if diff > 0 {
-                nextID = YID(client: nextID.client, clock: nextID.clock + diff)
+                let (clock, overflow) = nextID.clock.addingReportingOverflow(diff)
+                // A redone chain is never set today; a clock near `UInt.max` would
+                // trap here, so refuse it like any other impossible state.
+                guard !overflow else { throw YIntegrationError.unexpectedCase }
+                nextID = YID(client: nextID.client, clock: clock)
             }
             item = try store.getItem(nextID)
             diff = nextID.clock - item.id.clock
@@ -325,6 +348,11 @@ private func readID(_ decoder: inout Lib0Decoder) throws -> YID {
 /// tolerates a missing `assoc` (defaulting to 0). Keeping the two apart makes
 /// those two reductions explicit instead of hiding them in a `Codable`
 /// conformance on the value type.
+///
+/// One deliberate narrowing: an id outside `UInt` (a negative `client`/`clock`, or
+/// one ≥ 2^64) throws a `DecodingError` here, where yjs would build the id and
+/// then resolve the position to null. Failing at decode is the fail-safe choice —
+/// the cursor is dropped either way, and no out-of-range clock reaches the store.
 struct YRelativePositionJSON: Equatable, Codable, Sendable {
     var type: YID?
     var tname: String?

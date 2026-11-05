@@ -56,10 +56,11 @@ final class YRelativePositionMalformedTests: XCTestCase {
 
     // MARK: - Varints
 
-    /// Eleven continuation bytes. `Lib0Decoder`'s documented narrowing: lib0's own
-    /// reader accumulates into a JS number and returns NaN here, so this is
-    /// stricter than yjs — but it throws a catchable error instead of trapping,
-    /// which is the property that matters for peer input.
+    /// Ten continuation bytes plus a `0x00` terminator. lib0's `readVarInt`
+    /// returns 0 for this input; Swift's shared `Lib0Decoder` is **stricter** and
+    /// throws `malformedVarInt` past ten bytes. That is a pre-existing decoder
+    /// narrowing, not something this PR changes — and it throws a catchable error
+    /// instead of trapping, which is the property that matters for peer input.
     func testOverlongVarintThrowsRatherThanTrapping() {
         assertThrows(Lib0DecodingError.malformedVarInt) {
             _ = try YRelativePosition.decode(Data(hex: "8080808080808080808000"))

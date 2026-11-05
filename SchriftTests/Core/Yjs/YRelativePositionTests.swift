@@ -349,6 +349,79 @@ final class YRelativePositionTests: XCTestCase {
         return last
     }
 
+    // MARK: - Tombstones and deleted parents
+
+    /// The nested `XmlText` seed both cases below share: `document-store` →
+    /// `paragraph` → `XmlText` holding "hello world".
+    private let tombstoneSeed =
+        "0103010007010e646f63756d656e742d73746f726503097061726167726170680700010006040001010b68656c6c6f20776f726c6400"
+
+    /// Client 2 deletes 5 characters at index 2, leaving "heorld".
+    private let tombstoneDelete = "000101010405"
+
+    /// Captures over tombstones: `fromTypeIndex` must skip deleted items, so index
+    /// 2 lands on clock 9 (the "o" after the deleted "llo w"), never on a
+    /// tombstone. Captured from yjs 13.6.33.
+    func testCaptureSkipsDeletedItems() throws {
+        let doc = try makeDoc(clientID: 9, seed: tombstoneSeed)
+        try doc.applyUpdate(try YUpdateDecoder.decode(Data(hex: tombstoneDelete)))
+        let type = try locate("nested-xmltext", in: doc)
+        XCTAssertEqual(type.length, 6, "11 seed units minus the 5 deleted")
+
+        let captures: [(index: Int, assoc: Int, hex: String)] = [
+            (0, 0, "00010200"), (1, 0, "00010300"), (2, 0, "00010900"),
+            (3, 0, "00010a00"), (4, 0, "00010b00"), (5, 0, "00010c00"),
+            (6, 0, "02010100"),
+            (0, -1, "02010141"), (1, -1, "00010241"), (2, -1, "00010341"),
+            (3, -1, "00010941"), (4, -1, "00010a41"), (5, -1, "00010b41"),
+            (6, -1, "00010c41"),
+        ]
+
+        for capture in captures {
+            let position = try YRelativePosition.fromTypeIndex(
+                type, index: UInt(capture.index), assoc: capture.assoc)
+            XCTAssertEqual(
+                try position.encode().hexString, capture.hex,
+                "index \(capture.index) assoc \(capture.assoc)")
+        }
+    }
+
+    /// Client 3 deletes the paragraph that holds the `XmlText`.
+    private let deleteParagraph = "00010101000d"
+
+    /// Resolving inside a deleted parent: yjs's `type._item.deleted` branch leaves
+    /// the index at 0 but still returns the type, so a caret in a paragraph a peer
+    /// just deleted collapses to its start rather than vanishing. Captured from
+    /// yjs 13.6.33 with `gc: false`.
+    ///
+    /// Note what this pins: every child of the deleted `XmlText` is deleted too, so
+    /// the index is 0 whether or not the guard runs (a deleted item already forces
+    /// 0, and the left walk skips tombstones). The observable contract is that the
+    /// position still **resolves** — to the same type, at index 0 — instead of
+    /// returning nil; a guard that made a deleted parent unresolvable fails here.
+    func testResolveInsideADeletedParentCollapsesToZero() throws {
+        let doc = try makeDoc(clientID: 3, seed: tombstoneSeed)
+        let type = try locate("nested-xmltext", in: doc)
+
+        let cases: [(index: Int, assoc: Int, hex: String)] = [
+            (0, 0, "00010200"),
+            (3, 0, "00010500"),
+            (3, -1, "00010441"),
+            (11, 0, "02010100"),
+        ]
+        let positions = try cases.map { try YRelativePosition.decode(Data(hex: $0.hex)) }
+
+        try doc.applyUpdate(try YUpdateDecoder.decode(Data(hex: deleteParagraph)))
+
+        for (offset, capture) in cases.enumerated() {
+            let label = "index \(capture.index) assoc \(capture.assoc)"
+            let resolved = try XCTUnwrap(
+                positions[offset].resolve(in: doc), "\(label): expected a position")
+            XCTAssertTrue(resolved.type === type, "\(label): resolved in a different type")
+            XCTAssertEqual(resolved.index, 0, "\(label): index")
+        }
+    }
+
     // MARK: - JSON shape
 
     /// The JSON keys and their omission rules are yjs's, not just "some JSON that
