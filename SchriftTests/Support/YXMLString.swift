@@ -18,7 +18,12 @@ enum YXMLString {
         var item = type.start
         while let current = item {
             defer { item = current.right }
-            guard !current.deleted, case .type(let child) = current.content else { continue }
+            guard !current.deleted else { continue }
+            // A non-type child never appears in the captures: never matches yjs's output.
+            guard case .type(let child) = current.content else {
+                out += "<unsupported \(current.content)>"
+                continue
+            }
             out += node(child)
         }
         return out
