@@ -1,15 +1,23 @@
 import Foundation
 
 /// Intent writer for the native editor (B5a). Offsets are UTF-16 units; an
-/// inline XmlElement (mention, interlink, math) occupies one atomic unit.
+/// inline XmlElement (mention, interlink, math, hard break) occupies one atomic
+/// unit. An offset between a surrogate pair's halves moves outward to the
+/// pair's edge (a range grows to cover the whole character), so no intent
+/// writes U+FFFD.
 /// Owns no replica lifetime: its caller must destroy `doc` when finished.
 /// Each intent opens a local-user transaction and returns its incremental update.
 /// `transaction` groups intents; nested intents return the empty update and the
-/// outer call returns the combined update. No save path uses this writer yet.
+/// outer call returns the combined update. **A group is not atomic**: each
+/// intent validates before it mutates, but when a later one throws, the earlier
+/// ones stay in the store, the transaction's observers still deliver them, and
+/// the call throws without returning bytes (yjs has no rollback). Treat the
+/// replica, not the missing return value, as the truth after a throw.
+/// No save path uses this writer yet.
 /// Block intents follow BlockNote 0.56's own commands (Enter's split,
 /// `mergeBlocksCommand`, `updateBlock`); keyboard-level choices made before
 /// those commands run (Backspace resetting a list item to a paragraph, Enter
-/// resetting an empty list item) are the caller's.
+/// resetting an empty list item or outdenting an empty nested block) are the caller's.
 struct BlockNoteWriter {
     enum Error: Swift.Error, Equatable {
         case missingBlock(String)
@@ -63,7 +71,7 @@ struct BlockNoteWriter {
     func replaceText(block: String, range: NSRange, with text: String, marks: YTextAttributes? = nil) throws -> Data {
         let target = try find(block)
         let parts = try inline(target.element, block: block)
-        let bounds = clamp(range, length: try length(parts))
+        let bounds = try clamp(range, parts: parts)
         return try transaction { tx in
             try remove(tx, parts: parts, range: bounds)
             guard !text.isEmpty else { return }
@@ -79,7 +87,7 @@ struct BlockNoteWriter {
     func formatRange(block: String, range: NSRange, attributes: YTextAttributes) throws -> Data {
         let target = try find(block)
         let parts = try inline(target.element, block: block)
-        let bounds = clamp(range, length: try length(parts))
+        let bounds = try clamp(range, parts: parts)
         return try transaction { _ in
             var start = 0
             for part in parts {
@@ -150,9 +158,11 @@ struct BlockNoteWriter {
     /// empty with the same type and props, it is removed instead and this
     /// block, with its id and children, takes its place. The first sibling
     /// throws `noPreviousBlock` (BlockNote would merge a first child into its
-    /// parent; not implemented). A code block on either side, or a previous
-    /// block without inline content, throws `unsupportedBlockType`, where
-    /// BlockNote refuses the merge.
+    /// parent; not implemented). A code block on either side throws
+    /// `unsupportedBlockType`, as BlockNote refuses that merge; so does any
+    /// block type outside `propSchemas` on the way (a previous image, quote or
+    /// toggle list item, even where BlockNote would merge into its last
+    /// descendant), because this writer does not edit those blocks.
     @discardableResult
     func joinBlocks(block: String) throws -> Data {
         let target = try find(block)
@@ -202,7 +212,9 @@ struct BlockNoteWriter {
     /// other prop of the new type keeps the block's existing value or takes its
     /// default. Into a code block the content becomes its plain text
     /// (ProseMirror `textContent`: marks and textless inline nodes drop, math
-    /// keeps its source).
+    /// keeps its source). Keeping the type changes only the props that differ,
+    /// on the existing element, as BlockNote does: a checkbox toggle or a
+    /// heading level is one attribute, and concurrent typing in the block survives.
     @discardableResult
     func setBlockType(block: String, to node: String, props: [(key: String, value: YAnyValue)] = []) throws -> Data {
         guard let schema = Self.propSchemas[node] else { throw Error.unsupportedBlockType(node) }
@@ -214,6 +226,13 @@ struct BlockNoteWriter {
                 value: props.last { $0.key == field.key }?.value
                     ?? existing.last { $0.key == field.key }?.value ?? field.value
             )
+        }
+        if node == target.node {
+            let current = try schemaProps(target, block: block)
+            let changed = zip(merged, current).filter { $0.0.value != $0.1 }.map(\.0)
+            return try transaction { tx in
+                for prop in changed { try YWrite.mapSet(tx, on: target.element, key: prop.key, .any([prop.value])) }
+            }
         }
         let parts = try inline(target.element, block: block)
         let copies: [Copy]
@@ -325,7 +344,7 @@ struct BlockNoteWriter {
                 return Part(item: item, type: type, width: width)
             }
             guard case .xmlElement(let node)? = type.typeRef,
-                ["userMentionInline", "interlinkingLinkInline", "math"].contains(node)
+                ["userMentionInline", "interlinkingLinkInline", "math", "hardBreak"].contains(node)
             else {
                 throw Error.malformedBlock(block)
             }
@@ -345,15 +364,19 @@ struct BlockNoteWriter {
         return total
     }
 
-    private func clamp(_ range: NSRange, length: Int) -> Range<Int> {
+    private func clamp(_ range: NSRange, parts: [Part]) throws -> Range<Int> {
+        let length = try length(parts)
         let start = min(max(0, range.location), length)
         let count = min(max(0, range.length), length - start)
-        return start..<(start + count)
+        let lower = snap(parts, start)
+        // An empty range is a caret: it moves back with its start rather than growing.
+        return lower..<(count == 0 ? lower : snap(parts, start + count, forward: true))
     }
 
-    /// Moves an offset that falls between a surrogate pair's halves back to
-    /// the pair's start, like `TextSpanDiff`, so a split never writes U+FFFD.
-    private func snap(_ parts: [Part], _ offset: Int) -> Int {
+    /// Moves an offset that falls between a surrogate pair's halves to the
+    /// pair's start (or end, `forward`), like `TextSpanDiff`, so yjs never
+    /// splices the pair and writes U+FFFD.
+    private func snap(_ parts: [Part], _ offset: Int, forward: Bool = false) -> Int {
         var start = 0
         for part in parts {
             if part.type.typeRef == .xmlText, offset > start, offset < start + part.width {
@@ -369,7 +392,7 @@ struct BlockNoteWriter {
                 let splitsPair =
                     index < units.count && UTF16.isTrailSurrogate(units[index])
                     && UTF16.isLeadSurrogate(units[index - 1])
-                return splitsPair ? offset - 1 : offset
+                return splitsPair ? offset + (forward ? 1 : -1) : offset
             }
             start += part.width
         }

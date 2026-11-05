@@ -184,8 +184,13 @@ final class BlockNoteWriterTests: XCTestCase {
         _ error: BlockNoteWriter.Error, in doc: YDoc, line: UInt = #line, _ body: (BlockNoteWriter) throws -> Void
     ) {
         let before = YXMLString.fragment(doc)
-        XCTAssertThrowsError(try body(BlockNoteWriter(doc: doc)), line: line) {
-            XCTAssertEqual($0 as? BlockNoteWriter.Error, error, line: line)
+        do {
+            try body(BlockNoteWriter(doc: doc))
+            XCTFail("Expected \(error)", line: line)
+        } catch let thrown as BlockNoteWriter.Error {
+            XCTAssertEqual(thrown, error, line: line)
+        } catch {
+            XCTFail("Unexpected \(error)", line: line)
         }
         XCTAssertEqual(YXMLString.fragment(doc), before, line: line)
     }
@@ -261,12 +266,50 @@ final class BlockNoteWriterTests: XCTestCase {
             else { return XCTFail("seed shape") }
             try doc.transact { tx in try mutate(tx, container) }
             let before = YXMLString.fragment(doc)
-            XCTAssertThrowsError(
+            do {
                 try BlockNoteWriter(doc: doc).replaceText(
-                    block: "p-c", range: NSRange(location: 0, length: 0), with: "x"),
-                label
-            ) { XCTAssertEqual($0 as? BlockNoteWriter.Error, .malformedBlock("p-c"), label) }
+                    block: "p-c", range: NSRange(location: 0, length: 0), with: "x")
+                XCTFail("Expected malformed block: \(label)")
+            } catch BlockNoteWriter.Error.malformedBlock(let id) {
+                XCTAssertEqual(id, "p-c", label)
+            }
             XCTAssertEqual(YXMLString.fragment(doc), before, label)
+        }
+    }
+
+    func testRangesAndCaretsNeverSplitASurrogatePair() throws {
+        // yjs splices a pair it is asked to cut and writes U+FFFD into both
+        // halves; the writer grows a range to the whole character and moves a
+        // caret back to the character's start.
+        let cases: [(String, (BlockNoteWriter) throws -> Void, String)] = [
+            (
+                "delete leading half",
+                { try $0.replaceText(block: "p-c", range: NSRange(location: 1, length: 1), with: "") }, ">ab<"
+            ),
+            (
+                "delete trailing half",
+                { try $0.replaceText(block: "p-c", range: NSRange(location: 2, length: 1), with: "") }, ">ab<"
+            ),
+            (
+                "caret inside", { try $0.replaceText(block: "p-c", range: NSRange(location: 2, length: 0), with: "x") },
+                ">ax😀b<"
+            ),
+            (
+                "bold trailing half",
+                {
+                    try $0.formatRange(block: "p-c", range: NSRange(location: 2, length: 1), attributes: ["bold": "{}"])
+                }, ">a<bold>😀</bold>b<"
+            ),
+        ]
+        for (label, edit, expected) in cases {
+            let doc = try seeded(BlockNote056SplitParagraphTests.checkpoints)
+            defer { doc.destroy() }
+            let w = BlockNoteWriter(doc: doc)
+            try w.replaceText(block: "p-c", range: NSRange(location: 0, length: 10), with: "a😀b")
+            try edit(w)
+            let xml = YXMLString.fragment(doc)
+            XCTAssertTrue(xml.contains(expected), "\(label): \(xml)")
+            XCTAssertFalse(xml.contains("\u{FFFD}"), label)
         }
     }
 }

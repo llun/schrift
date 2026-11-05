@@ -185,8 +185,11 @@ final class BlockNoteWriterOracleTests: XCTestCase {
         defer { doc.destroy() }
         try doc.applyUpdate(YUpdateDecoder.decode(try XCTUnwrap(Data(base64Encoded: base64))))
         let before = YXMLString.fragment(doc)
-        XCTAssertThrowsError(try author(BlockNoteWriter(doc: doc)), name, file: file, line: line) {
-            XCTAssertEqual($0 as? BlockNoteWriter.Error, error, name, file: file, line: line)
+        do {
+            _ = try author(BlockNoteWriter(doc: doc))
+            XCTFail("Expected \(error): \(name)", file: file, line: line)
+        } catch let thrown as BlockNoteWriter.Error {
+            XCTAssertEqual(thrown, error, name, file: file, line: line)
         }
         XCTAssertEqual(YXMLString.fragment(doc), before, name, file: file, line: line)
     }
@@ -311,5 +314,62 @@ final class BlockNoteWriterOracleTests: XCTestCase {
         try refuse("divider-seed", .unsupportedBlockType("divider")) {
             try $0.setBlockType(block: "a", to: "divider")
         }
+    }
+
+    func testSameTypeChangesOnlyChangedPropsLikeBlockNote() throws {
+        // BlockNote's `updateBlock` bytes: one attribute struct and a one-clock
+        // delete of the overwritten value (none at all when nothing changes).
+        let cases: [(String, String, [(key: String, value: YAnyValue)], String)] = [
+            ("check-toggle", "k-3", [("checked", .bool(true))], "AQECAKgBCwF4AQEBCwE="),
+            ("heading-level", "h-3", [("level", .int(2))], "AQECAKgBCwF9AgEBAQsB"),
+            ("p-same-type-color", "p-q", [("textColor", .string("green"))], "AQECAKgBBgF3BWdyZWVuAQEBBgE="),
+            ("p-same-type", "p-q", [], "AAA="),
+        ]
+        for (name, id, props, web) in cases {
+            let type = ["check-toggle": "checkListItem", "heading-level": "heading"][name] ?? "paragraph"
+            try replay(name) { writer in
+                let bytes = try writer.setBlockType(block: id, to: type, props: props)
+                XCTAssertEqual(bytes.base64EncodedString(), web, name)
+                return bytes
+            }
+        }
+    }
+
+    func testSameTypeToggleKeepsConcurrentTyping() throws {
+        let capture = try XCTUnwrap(BlockNoteWriterCaptures.captures["check-toggle"])
+        let seed = try YUpdateDecoder.decode(
+            try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(BlockNoteWriterCaptures.seeds[capture.seed]))))
+        let a = YDoc(clientID: 2, gc: false)
+        let b = YDoc(clientID: 3, gc: false)
+        defer {
+            a.destroy()
+            b.destroy()
+        }
+        try a.applyUpdate(seed)
+        try b.applyUpdate(seed)
+        let toggle = try BlockNoteWriter(doc: a).setBlockType(
+            block: "k-3", to: "checkListItem", props: [("checked", .bool(true))])
+        let typing = try BlockNoteWriter(doc: b).replaceText(
+            block: "k-3", range: NSRange(location: 4, length: 0), with: " done")
+        try a.applyUpdate(YUpdateDecoder.decode(typing))
+        try b.applyUpdate(YUpdateDecoder.decode(toggle))
+        let merged =
+            #"<blockgroup><blockcontainer id="k-3"><checklistitem backgroundColor="default" checked="true" "#
+            + #"textAlignment="left" textColor="default">Task done</checklistitem></blockcontainer></blockgroup>"#
+        XCTAssertEqual(YXMLString.fragment(a), merged)
+        XCTAssertEqual(YXMLString.fragment(b), merged)
+    }
+
+    func testHardBreakIsOneAtomicUnit() throws {
+        // BlockNote stores Shift+Enter as an empty `hardBreak` element: one
+        // position, no text (so a code block drops it), kept by split and join.
+        try replay("hb-type") { try $0.replaceText(block: "hb", range: NSRange(location: 2, length: 0), with: "Z") }
+        try replay("hb-delete") { try $0.replaceText(block: "hb", range: NSRange(location: 1, length: 1), with: "") }
+        try replay("hb-split-after") { try $0.splitBlock(block: "hb", at: 2, newID: "1") }
+        try replay("hb-split-before") { try $0.splitBlock(block: "hb", at: 1, newID: "1") }
+        try replay("hb-join-into") { try $0.joinBlocks(block: "second") }
+        try replay("hb-join-source") { try $0.joinBlocks(block: "second") }
+        try replay("hb-to-code") { try $0.setBlockType(block: "hb", to: "codeBlock") }
+        try replay("hb-to-heading") { try $0.setBlockType(block: "hb", to: "heading", props: [("level", .int(2))]) }
     }
 }

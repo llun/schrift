@@ -7,6 +7,8 @@
 // keeps the seed (BlockNote's Enter inserts a "\n" line break there, so the
 // writer refuses the split), and `split-surrogate` is checked against the
 // writer's code-point snap instead (BlockNote writes U+FFFD into both halves).
+// `enter-empty-nested` records BlockNote's outdent of an empty nested block on
+// Enter, a keyboard-level choice the writer leaves to its caller.
 enum BlockNoteWriterCaptures {
     static let seeds: [String: String] = [
         "p-mixed-to-code":
@@ -67,6 +69,22 @@ enum BlockNoteWriterCaptures {
             "AQ8BAAcBDmRvY3VtZW50LXN0b3JlAwpibG9ja0dyb3VwBwABAAMOYmxvY2tDb250YWluZXIHAAEBAwljb2RlQmxvY2sHAAECBgQAAQMCYWIoAAECCGxhbmd1YWdlAXcEdGV4dCgAAQECaWQBdwNjLTOHAQEDDmJsb2NrQ29udGFpbmVyBwABCAMJcGFyYWdyYXBoBwABCQYEAAEKAmNkKAABCQ9iYWNrZ3JvdW5kQ29sb3IBdwdkZWZhdWx0KAABCQl0ZXh0Q29sb3IBdwdkZWZhdWx0KAABCQ10ZXh0QWxpZ25tZW50AXcEbGVmdCgAAQgCaWQBdwVhZnRlcgA=",
         "join-mixed":
             "ASIBAAcBDmRvY3VtZW50LXN0b3JlAwpibG9ja0dyb3VwBwABAAMOYmxvY2tDb250YWluZXIHAAEBAwlwYXJhZ3JhcGgHAAECBgQAAQMBeCgAAQIPYmFja2dyb3VuZENvbG9yAXcHZGVmYXVsdCgAAQIJdGV4dENvbG9yAXcHZGVmYXVsdCgAAQINdGV4dEFsaWdubWVudAF3BGxlZnQoAAEBAmlkAXcFZmlyc3SHAQEDDmJsb2NrQ29udGFpbmVyBwABCQMJcGFyYWdyYXBoBwABCgYEAAELB0JlZm9yZSCHAQsDEXVzZXJNZW50aW9uSW5saW5lKAABEwZ1c2VySWQBdwZ1c2VyLTEoAAETCGZ1bGxOYW1lAXcMQWRhIExvdmVsYWNlhwETBgQAARYIIG1pZGRsZSCHARYDFmludGVybGlua2luZ0xpbmtJbmxpbmUoAAEfBWRvY0lkAXcFZG9jLTEoAAEfB2Jsb2NrSWQBdwh0YXJnZXQtMSgAAR8IZGlzYWJsZWQBeSgAAR8HdHJpZ2dlcgF3AS+HAR8GBAABJAYgbWF0aCCHASQDBG1hdGgHAAErBgQAASwDeF4yhwErBgQAATAGIGFmdGVyKAABCg9iYWNrZ3JvdW5kQ29sb3IBdwdkZWZhdWx0KAABCgl0ZXh0Q29sb3IBdwdkZWZhdWx0KAABCg10ZXh0QWxpZ25tZW50AXcEbGVmdCgAAQkCaWQBdwNwLWcA",
+        "check-toggle":
+            "AQoBAAcBDmRvY3VtZW50LXN0b3JlAwpibG9ja0dyb3VwBwABAAMOYmxvY2tDb250YWluZXIHAAEBAw1jaGVja0xpc3RJdGVtBwABAgYEAAEDBFRhc2soAAECD2JhY2tncm91bmRDb2xvcgF3B2RlZmF1bHQoAAECCXRleHRDb2xvcgF3B2RlZmF1bHQoAAECDXRleHRBbGlnbm1lbnQBdwRsZWZ0KAABAgdjaGVja2VkAXkoAAEBAmlkAXcDay0zAA==",
+        "heading-level":
+            "AQsBAAcBDmRvY3VtZW50LXN0b3JlAwpibG9ja0dyb3VwBwABAAMOYmxvY2tDb250YWluZXIHAAEBAwdoZWFkaW5nBwABAgYEAAEDBEhlYWQoAAECD2JhY2tncm91bmRDb2xvcgF3B2RlZmF1bHQoAAECCXRleHRDb2xvcgF3B2RlZmF1bHQoAAECDXRleHRBbGlnbm1lbnQBdwRsZWZ0KAABAgVsZXZlbAF9ASgAAQIMaXNUb2dnbGVhYmxlAXkoAAEBAmlkAXcDaC0zAA==",
+        "p-same-type":
+            "AQkBAAcBDmRvY3VtZW50LXN0b3JlAwpibG9ja0dyb3VwBwABAAMOYmxvY2tDb250YWluZXIHAAEBAwlwYXJhZ3JhcGgHAAECBgQAAQMBeCgAAQIPYmFja2dyb3VuZENvbG9yAXcHZGVmYXVsdCgAAQIJdGV4dENvbG9yAXcHZGVmYXVsdCgAAQINdGV4dEFsaWdubWVudAF3BGxlZnQoAAEBAmlkAXcDcC1xAA==",
+        "p-same-type-color":
+            "AQkBAAcBDmRvY3VtZW50LXN0b3JlAwpibG9ja0dyb3VwBwABAAMOYmxvY2tDb250YWluZXIHAAEBAwlwYXJhZ3JhcGgHAAECBgQAAQMBeCgAAQIPYmFja2dyb3VuZENvbG9yAXcDcmVkKAABAgl0ZXh0Q29sb3IBdwRibHVlKAABAg10ZXh0QWxpZ25tZW50AXcGY2VudGVyKAABAQJpZAF3A3AtcQA=",
+        "hb-type":
+            "AQwBAAcBDmRvY3VtZW50LXN0b3JlAwpibG9ja0dyb3VwBwABAAMOYmxvY2tDb250YWluZXIHAAEBAwlwYXJhZ3JhcGgHAAECBgQAAQMBYYcBAwMJaGFyZEJyZWFrhwEFBgQAAQYBYigAAQIPYmFja2dyb3VuZENvbG9yAXcHZGVmYXVsdCgAAQIJdGV4dENvbG9yAXcHZGVmYXVsdCgAAQINdGV4dEFsaWdubWVudAF3BGxlZnQoAAEBAmlkAXcCaGIA",
+        "hb-join-into":
+            "ARQBAAcBDmRvY3VtZW50LXN0b3JlAwpibG9ja0dyb3VwBwABAAMOYmxvY2tDb250YWluZXIHAAEBAwlwYXJhZ3JhcGgHAAECBgQAAQMBYYcBAwMJaGFyZEJyZWFrhwEFBgQAAQYBYigAAQIPYmFja2dyb3VuZENvbG9yAXcHZGVmYXVsdCgAAQIJdGV4dENvbG9yAXcHZGVmYXVsdCgAAQINdGV4dEFsaWdubWVudAF3BGxlZnQoAAEBAmlkAXcFZmlyc3SHAQEDDmJsb2NrQ29udGFpbmVyBwABDAMJcGFyYWdyYXBoBwABDQYEAAEOAWMoAAEND2JhY2tncm91bmRDb2xvcgF3B2RlZmF1bHQoAAENCXRleHRDb2xvcgF3B2RlZmF1bHQoAAENDXRleHRBbGlnbm1lbnQBdwRsZWZ0KAABDAJpZAF3BnNlY29uZAA=",
+        "hb-join-source":
+            "ARQBAAcBDmRvY3VtZW50LXN0b3JlAwpibG9ja0dyb3VwBwABAAMOYmxvY2tDb250YWluZXIHAAEBAwlwYXJhZ3JhcGgHAAECBgQAAQMBeCgAAQIPYmFja2dyb3VuZENvbG9yAXcHZGVmYXVsdCgAAQIJdGV4dENvbG9yAXcHZGVmYXVsdCgAAQINdGV4dEFsaWdubWVudAF3BGxlZnQoAAEBAmlkAXcFZmlyc3SHAQEDDmJsb2NrQ29udGFpbmVyBwABCQMJcGFyYWdyYXBoBwABCgYEAAELAWGHAQsDCWhhcmRCcmVha4cBDQYEAAEOAWIoAAEKD2JhY2tncm91bmRDb2xvcgF3B2RlZmF1bHQoAAEKCXRleHRDb2xvcgF3B2RlZmF1bHQoAAEKDXRleHRBbGlnbm1lbnQBdwRsZWZ0KAABCQJpZAF3BnNlY29uZAA=",
+        "enter-empty-nested":
+            "ARABAAcBDmRvY3VtZW50LXN0b3JlAwpibG9ja0dyb3VwBwABAAMOYmxvY2tDb250YWluZXIHAAEBAwlwYXJhZ3JhcGgHAAECBgQAAQMBeCgAAQIPYmFja2dyb3VuZENvbG9yAXcHZGVmYXVsdCgAAQIJdGV4dENvbG9yAXcHZGVmYXVsdCgAAQINdGV4dEFsaWdubWVudAF3BGxlZnSHAQIDCmJsb2NrR3JvdXAHAAEIAw5ibG9ja0NvbnRhaW5lcgcAAQkDCXBhcmFncmFwaCgAAQoPYmFja2dyb3VuZENvbG9yAXcHZGVmYXVsdCgAAQoJdGV4dENvbG9yAXcHZGVmYXVsdCgAAQoNdGV4dEFsaWdubWVudAF3BGxlZnQoAAEJAmlkAXcDa2lkKAABAQJpZAF3BnBhcmVudAA=",
         "divider-seed":
             "ARQBAAcBDmRvY3VtZW50LXN0b3JlAwpibG9ja0dyb3VwBwABAAMOYmxvY2tDb250YWluZXIHAAEBAwlwYXJhZ3JhcGgHAAECBgQAAQMBeCgAAQIPYmFja2dyb3VuZENvbG9yAXcHZGVmYXVsdCgAAQIJdGV4dENvbG9yAXcHZGVmYXVsdCgAAQINdGV4dEFsaWdubWVudAF3BGxlZnQoAAEBAmlkAXcBYYcBAQMOYmxvY2tDb250YWluZXIHAAEJAwdkaXZpZGVyKAABCQJpZAF3AWSHAQkDDmJsb2NrQ29udGFpbmVyBwABDAMJcGFyYWdyYXBoBwABDQYEAAEOAXkoAAEND2JhY2tncm91bmRDb2xvcgF3B2RlZmF1bHQoAAENCXRleHRDb2xvcgF3B2RlZmF1bHQoAAENDXRleHRBbGlnbm1lbnQBdwRsZWZ0KAABDAJpZAF3AWIA",
     ]
@@ -207,6 +225,66 @@ enum BlockNoteWriterCaptures {
         "join-mixed": (
             "join-mixed",
             #"<blockgroup><blockcontainer id="first"><paragraph backgroundColor="default" textAlignment="left" textColor="default">xBefore <usermentioninline fullName="Ada Lovelace" userId="user-1"></usermentioninline> middle <interlinkinglinkinline blockId="target-1" disabled="false" docId="doc-1" trigger="/"></interlinkinglinkinline> math <math>x^2</math> after</paragraph></blockcontainer></blockgroup>"#
+        ),
+        "check-toggle": (
+            "check-toggle",
+            #"<blockgroup><blockcontainer id="k-3"><checklistitem backgroundColor="default" checked="true" textAlignment="left" textColor="default">Task</checklistitem></blockcontainer></blockgroup>"#
+        ),
+        "check-toggle-typed": (
+            "check-toggle",
+            #"<blockgroup><blockcontainer id="k-3"><checklistitem backgroundColor="default" checked="true" textAlignment="left" textColor="default">Task</checklistitem></blockcontainer></blockgroup>"#
+        ),
+        "heading-level": (
+            "heading-level",
+            #"<blockgroup><blockcontainer id="h-3"><heading backgroundColor="default" isToggleable="false" level="2" textAlignment="left" textColor="default">Head</heading></blockcontainer></blockgroup>"#
+        ),
+        "heading-level-props-only": (
+            "heading-level",
+            #"<blockgroup><blockcontainer id="h-3"><heading backgroundColor="default" isToggleable="false" level="2" textAlignment="left" textColor="default">Head</heading></blockcontainer></blockgroup>"#
+        ),
+        "p-same-type": (
+            "p-same-type",
+            #"<blockgroup><blockcontainer id="p-q"><paragraph backgroundColor="default" textAlignment="left" textColor="default">x</paragraph></blockcontainer></blockgroup>"#
+        ),
+        "p-same-type-color": (
+            "p-same-type-color",
+            #"<blockgroup><blockcontainer id="p-q"><paragraph backgroundColor="red" textAlignment="center" textColor="green">x</paragraph></blockcontainer></blockgroup>"#
+        ),
+        "hb-type": (
+            "hb-type",
+            #"<blockgroup><blockcontainer id="hb"><paragraph backgroundColor="default" textAlignment="left" textColor="default">a<hardbreak></hardbreak>Zb</paragraph></blockcontainer></blockgroup>"#
+        ),
+        "hb-split-after": (
+            "hb-type",
+            #"<blockgroup><blockcontainer id="hb"><paragraph backgroundColor="default" textAlignment="left" textColor="default">a<hardbreak></hardbreak></paragraph></blockcontainer><blockcontainer id="1"><paragraph backgroundColor="default" textAlignment="left" textColor="default">b</paragraph></blockcontainer></blockgroup>"#
+        ),
+        "hb-split-before": (
+            "hb-type",
+            #"<blockgroup><blockcontainer id="hb"><paragraph backgroundColor="default" textAlignment="left" textColor="default">a</paragraph></blockcontainer><blockcontainer id="1"><paragraph backgroundColor="default" textAlignment="left" textColor="default"><hardbreak></hardbreak>b</paragraph></blockcontainer></blockgroup>"#
+        ),
+        "hb-join-into": (
+            "hb-join-into",
+            #"<blockgroup><blockcontainer id="first"><paragraph backgroundColor="default" textAlignment="left" textColor="default">a<hardbreak></hardbreak>bc</paragraph></blockcontainer></blockgroup>"#
+        ),
+        "hb-join-source": (
+            "hb-join-source",
+            #"<blockgroup><blockcontainer id="first"><paragraph backgroundColor="default" textAlignment="left" textColor="default">xa<hardbreak></hardbreak>b</paragraph></blockcontainer></blockgroup>"#
+        ),
+        "hb-to-code": (
+            "hb-type",
+            #"<blockgroup><blockcontainer id="hb"><codeblock language="text">ab</codeblock></blockcontainer></blockgroup>"#
+        ),
+        "hb-to-heading": (
+            "hb-type",
+            #"<blockgroup><blockcontainer id="hb"><heading backgroundColor="default" isToggleable="false" level="2" textAlignment="left" textColor="default">a<hardbreak></hardbreak>b</heading></blockcontainer></blockgroup>"#
+        ),
+        "hb-delete": (
+            "hb-type",
+            #"<blockgroup><blockcontainer id="hb"><paragraph backgroundColor="default" textAlignment="left" textColor="default">ab</paragraph></blockcontainer></blockgroup>"#
+        ),
+        "enter-empty-nested": (
+            "enter-empty-nested",
+            #"<blockgroup><blockcontainer id="parent"><paragraph backgroundColor="default" textAlignment="left" textColor="default">x</paragraph></blockcontainer><blockcontainer id="kid"><paragraph backgroundColor="default" textAlignment="left" textColor="default"></paragraph></blockcontainer></blockgroup>"#
         ),
         "divider-seed": (
             "divider-seed",
