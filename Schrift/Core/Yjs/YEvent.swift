@@ -164,8 +164,10 @@ final class YEvent {
     /// The delta's *values* are unaffected — a redundant format contributes no op
     /// either way. What differs is the redundant format *item*: yjs's getter
     /// deletes it inside that queued transaction, and Schrift leaves it. For a
-    /// remote transaction the B4 cleanup removes it right after the hook, so the
-    /// store still matches yjs. For a **local** transaction the cleanup is not
+    /// remote transaction the B4 cleanup then removes *a* redundant item right after
+    /// the hook, so the rendered attributes match yjs, though the surviving format
+    /// item can be a different struct (see the concurrent-bold test: yjs's read
+    /// deletes `2:0`, Schrift's cleanup deletes `1:11`). For a **local** transaction the cleanup is not
     /// armed (`!local` gates it), so a redundant format item would survive where
     /// yjs deletes it — today's write paths never mint one (`TextSpanDiff` emits a
     /// format only when the value changes, and `InlineContent` writes into fresh
@@ -444,6 +446,11 @@ extension YType {
         // ancestor is work a replica with no hook never consumes. yjs always
         // builds them because its `observe`/`observeDeep` listeners are the
         // consumers; Schrift has none.
+        //
+        // Every changed type gets an event, including a root. Schrift's roots are
+        // bare (`YDoc.get`), and yjs's bare `AbstractType._callObserver` builds none;
+        // but a yjs peer declares the root (BlockNote's `getXmlFragment`), and a
+        // declared `YXmlFragment` (@7777) does. Schrift follows the declared shape.
         if transaction.doc.afterTransaction != nil {
             let event = YEvent(target: self, transaction: transaction)
             YEvent.callTypeObservers(self, transaction, event)

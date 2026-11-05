@@ -41,8 +41,10 @@ indirect enum YJSONValue: Equatable {
     /// yjs `equalAttrs` (@6282) over two raw JSON texts: `===`, or lib0
     /// `equalFlat` for two objects/arrays (same key count, every value `===`).
     ///
-    /// `nil` is JSON `null` — the representation `YContent.format` uses for a
-    /// null value, which `updateCurrentAttributes` treats as "delete the key".
+    /// `nil` is an absent attribute (JS `undefined`), not JSON `null`: yjs's
+    /// `undefined === null` is false, so `equalAttrs(nil, "null")` is false here
+    /// too. Callers that treat a `"null"` format value as "delete the key" (as
+    /// `updateCurrentAttributes` does) normalize it to `nil` first.
     static func equalAttrs(_ a: String?, _ b: String?) -> Bool {
         switch (a, b) {
         case (nil, nil): return true
