@@ -1865,6 +1865,36 @@ that are easy to violate and expensive to discover:
   replica's owner (main actor), unlike the value and its codecs.
 - **`YDoc.destroy()` is not optional.** The item graph is a mesh of strong cycles,
   so releasing a `YDoc` frees nothing; whoever owns a replica must tear it down.
+- **`YTextOps` is the format-aware text write path (B4), and three of its rules are
+  easy to "fix" wrongly.** (1) **Attribute maps are ordered** — `insertAttributes`
+  mints one `ContentFormat` per changed key in iteration order, so the order decides
+  the clock order of those items and therefore the update bytes; `YTextAttributes`
+  keeps insertion order (a `dictionaryLiteral` keeps source order, which is JS
+  object-literal order for the non-integer keys every schema uses), and a Swift
+  `Dictionary` would not. (2) **Two equality rules over the same map** — the ops path
+  uses yjs's `equalAttrs` (@6282, structural for objects, `YJSONValue.equalAttrs`),
+  the cleanup path uses `===` (identity, `YFormatAttrValue`); `YTextAttributeValue`
+  carries both the raw JSON and the owning item so each path gets its rule. (3)
+  **Out-of-range indices are yjs's, not the editor's** — an insert past the end
+  appends, a delete past the end stops at the end, and a format past the end **pads
+  the text with `'\n'`** (@6584, Quill's trailing-newline convention). Clamping for
+  editor safety is the caller's (B5), not this layer's. `deleteText` reuses
+  `YTextCleanup.cleanupFormattingGap` (@6604) rather than duplicating it, and a
+  locally minted `ContentFormat` already sets `_hasFormatting` through
+  `YContent.integrate` (@8991) — never edit `YItem.integrate` to do it.
+  `YTextOpsTests` replays twelve yjs 13.6.33 captures op for op (both the
+  state-vector diff update and the transaction's own `'update'` bytes, plus
+  `toDelta()` after each), including the C2 boundary delete and a nested `XmlText`.
+  **Fixtures must deep-clone attribute objects per op.** Because the cleanup compares
+  object values by identity, reusing one `{href:…}` object across ops makes two
+  `ContentFormat` items share a value object — a relation JSON cannot carry, so the
+  recorded ops stop replaying (a shared-object random lane diverged at 1 of 100
+  sequences; deep-cloned, 0 of 3000 ops). One residual divergence is irreducible and
+  is yjs's, not ours: `insertAttributes` hands the *same* value object to every item
+  it mints, so two items can be `===` in memory yet distinct after
+  `encodeStateAsUpdate` + `applyUpdate`. yjs's cleanup therefore answers differently
+  before and after a round-trip; Schrift's item identity matches the post-round-trip
+  answer, which is the only one replicas can agree on.
 - **BlockNote 0.56 every-step goldens** (`BlockNote056*Tests`) inline eight captures from the phase 0 S3 spike
   from yjs 13.6.33, checking seed XML and all 17 edits. They hold XML and update bytes only; the captures' text deltas are not committed yet. B2's cursor positions are pinned separately by `YRelativePositionTests` (relative positions captured from yjs 13.6.33).
 - **Verify against the oracle, not against reasoning.** Golden fixtures
