@@ -205,11 +205,11 @@ final class YEvent {
         // `currentAttributes` never holds JSON null (`updateCurrentAttributes`
         // deletes the key instead); `oldAttributes` treats absent as null, which
         // is how yjs reads it (`oldAttributes.get(key) ?? null`).
-        var currentAttributes: [String: String] = [:]
-        var oldAttributes: [String: String] = [:]
+        var currentAttributes: [String: YTextAttributeValue] = [:]
+        var oldAttributes: [String: YTextAttributeValue] = [:]
         var item = target.start
         var action: DeltaAction?
-        var attributes: [String: YDeltaAttribute] = [:]
+        var attributes: [String: YTextAttributeValue] = [:]
         var insertText: [UInt16] = []
         var insertValue: YDeltaInsert?
         var retain: UInt = 0
@@ -218,8 +218,20 @@ final class YEvent {
         func insertAttributes() -> [String: YDeltaAttribute]? {
             guard !currentAttributes.isEmpty else { return nil }
             var result: [String: YDeltaAttribute] = [:]
-            for (key, text) in currentAttributes { result[key] = .json(text) }
+            for (key, value) in currentAttributes { result[key] = .json(value.json) }
             return result
+        }
+
+        // Preserve the parsed value's identity through all three maps. Raw JSON
+        // alone cannot distinguish shared nested containers from distinct ones.
+        func equalAttrs(_ a: YTextAttributeValue?, _ b: YTextAttributeValue?) -> Bool {
+            YJSONValue.equalAttrs(
+                a?.json ?? "null", b?.json ?? "null", identityA: a?.identity, identityB: b?.identity)
+        }
+
+        func deltaAttributes() -> [String: YDeltaAttribute]? {
+            guard !attributes.isEmpty else { return nil }
+            return attributes.mapValues { $0.json == "null" ? .null : .json($0.json) }
         }
 
         func addOp() {
@@ -249,7 +261,7 @@ final class YEvent {
                 insertValue = nil
             case .retain:
                 if retain > 0 {
-                    delta.append(.retain(retain, attributes: attributes.isEmpty ? nil : attributes))
+                    delta.append(.retain(retain, attributes: deltaAttributes()))
                 }
                 retain = 0
             }
@@ -308,18 +320,18 @@ final class YEvent {
                 }
 
             case .format(let key, let valueJSON):
-                let value: String? = valueJSON == "null" ? nil : valueJSON
+                let value = YTextAttributeValue(json: valueJSON, identity: current.resolvedFormatIdentity())
                 if adds(current) {
                     if !deletes(current) {
                         let curVal = currentAttributes[key]
-                        if !YJSONValue.equalAttrs(curVal, value) {
+                        if !equalAttrs(curVal, value) {
                             if action == .retain { addOp() }
-                            if YJSONValue.equalAttrs(value, oldAttributes[key]) {
+                            if equalAttrs(value, oldAttributes[key]) {
                                 attributes.removeValue(forKey: key)
                             } else {
-                                attributes[key] = value.map(YDeltaAttribute.json) ?? .null
+                                attributes[key] = value
                             }
-                        } else if value != nil {
+                        } else if valueJSON != "null" {
                             // yjs deletes the redundant item here, inside the
                             // transaction its delta getter opens. Schrift's delta
                             // is a pure read: a remote transaction's B4 cleanup
@@ -330,21 +342,21 @@ final class YEvent {
                 } else if deletes(current) {
                     oldAttributes[key] = value
                     let curVal = currentAttributes[key]
-                    if !YJSONValue.equalAttrs(curVal, value) {
+                    if !equalAttrs(curVal, value) {
                         if action == .retain { addOp() }
-                        attributes[key] = curVal.map(YDeltaAttribute.json) ?? .null
+                        attributes[key] = curVal ?? YTextAttributeValue(json: "null", identity: YAttributeIdentity())
                     }
                 } else if !current.deleted {
                     oldAttributes[key] = value
                     if let attr = attributes[key] {
-                        if !YJSONValue.equalAttrs(attr.jsonText, value) {
+                        if !equalAttrs(attr, value) {
                             if action == .retain { addOp() }
-                            if let value {
-                                attributes[key] = .json(value)
+                            if valueJSON != "null" {
+                                attributes[key] = value
                             } else {
                                 attributes.removeValue(forKey: key)
                             }
-                        } else if attr != .null {
+                        } else if attr.json != "null" {
                             // Redundant; see the `adds` branch above.
                         }
                     }
@@ -396,15 +408,14 @@ final class YEvent {
         }
     }
 
-    /// yjs `updateCurrentAttributes` (@6424) over raw JSON text — the delta's
-    /// attribute maps keep the text they emit, where the cleanup keeps
-    /// `YFormatAttrValue` (JS `===`). Same rule: a null value deletes the key.
-    private static func updateCurrentAttributes(_ current: inout [String: String], _ item: YItem) {
+    /// yjs `updateCurrentAttributes` (@6424): keep both raw JSON and value
+    /// identity for `equalAttrs`; a null value deletes the key.
+    private static func updateCurrentAttributes(_ current: inout [String: YTextAttributeValue], _ item: YItem) {
         guard case .format(let key, let valueJSON) = item.content else { return }
         if valueJSON == "null" {
             current.removeValue(forKey: key)
         } else {
-            current[key] = valueJSON
+            current[key] = YTextAttributeValue(json: valueJSON, identity: item.resolvedFormatIdentity())
         }
     }
 

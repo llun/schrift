@@ -10,7 +10,7 @@ import XCTest
 /// a nested container is never equal to another (two parses never share identity).
 final class YJSONValueTests: XCTestCase {
 
-    func testIdenticalTextIsEqual() {
+    func testIdenticalPrimitiveAndEmptyObjectTextIsEqual() {
         XCTAssertTrue(YJSONValue.equalAttrs("true", "true"))
         XCTAssertTrue(YJSONValue.equalAttrs("{}", "{}"))
     }
@@ -39,6 +39,33 @@ final class YJSONValueTests: XCTestCase {
         XCTAssertFalse(YJSONValue.equalAttrs("[[1]]", "[ [1] ]"))
     }
 
+    func testArraysAndObjectsCompareTheirEnumerableKeys() {
+        XCTAssertTrue(YJSONValue.equalAttrs("[]", "{}"))
+        XCTAssertTrue(YJSONValue.equalAttrs("[1, true]", #"{"0":1,"1":true}"#))
+        XCTAssertTrue(YJSONValue.equalAttrs(#"{"0":1,"1":true}"#, "[1, true]"))
+        XCTAssertFalse(YJSONValue.equalAttrs("[1]", #"{"a":1}"#))
+        XCTAssertFalse(YJSONValue.equalAttrs("[1]", #"{"0":2}"#))
+        XCTAssertFalse(YJSONValue.equalAttrs("[{}]", #"{"0":{}}"#))
+    }
+
+    func testIdenticalNestedJSONTextDoesNotImplyIdentity() {
+        XCTAssertFalse(YJSONValue.equalAttrs(#"{"nested":{}}"#, #"{"nested":{}}"#))
+        XCTAssertFalse(YJSONValue.equalAttrs("[[1]]", "[[1]]"))
+    }
+
+    func testSharedContainerIdentityPrecedesFlatComparison() {
+        let shared = YAttributeIdentity()
+        let nested = #"{"nested":{}}"#
+        XCTAssertTrue(YJSONValue.equalAttrs(nested, nested, identityA: shared, identityB: shared))
+        XCTAssertFalse(YJSONValue.equalAttrs(nested, nested, identityA: shared, identityB: YAttributeIdentity()))
+        let deep =
+            String(repeating: "[", count: YJSONValue.maxNestingDepth + 1)
+            + "0" + String(repeating: "]", count: YJSONValue.maxNestingDepth + 1)
+        XCTAssertTrue(YJSONValue.equalAttrs(deep, deep, identityA: shared, identityB: shared))
+        // Tokens belong to containers; primitives still compare by their values.
+        XCTAssertFalse(YJSONValue.equalAttrs("1", "2", identityA: shared, identityB: shared))
+    }
+
     func testNumbersCompareAsDoubles() {
         XCTAssertTrue(YJSONValue.equalAttrs("1", "1.0"))
         XCTAssertFalse(YJSONValue.equalAttrs("1", "2"))
@@ -53,5 +80,31 @@ final class YJSONValueTests: XCTestCase {
     func testMalformedTextIsNeverEqual() {
         XCTAssertFalse(YJSONValue.equalAttrs("{", "["))
         XCTAssertFalse(YJSONValue.equalAttrs("{}", "{"))
+    }
+
+    /// JS `===` compares UTF-16 code units, so canonically equivalent strings are
+    /// **different** values. Swift's `String ==` would call them equal, which made
+    /// a format whose value differed only in normalization look redundant.
+    func testUnicodeEquivalentStringsAreNotEqual() {
+        // U+00E9 vs U+0065 U+0301.
+        XCTAssertFalse(YJSONValue.equalAttrs(#""é""#, #""e\u0301""#))
+        XCTAssertFalse(YJSONValue.equalAttrs(#"{"link":"é"}"#, #"{"link":"e\u0301"}"#))
+        // Keys too: a `[String: _]` lookup would match them canonically.
+        XCTAssertFalse(YJSONValue.equalAttrs(#"{"é":1}"#, #"{"e\u0301":1}"#))
+        // And the parsed values, not just the raw text.
+        XCTAssertNotEqual(YJSONValue.parse(#""é""#), YJSONValue.parse(#""e\u0301""#))
+        XCTAssertNotEqual(
+            YJSONValue.parse(#"{"é":1}"#), YJSONValue.parse(#"{"e\u0301":1}"#))
+        // Identical code units still compare equal.
+        XCTAssertTrue(YJSONValue.equalAttrs(#""é""#, #""\u00e9""#))
+    }
+
+    func testCanonicallyEquivalentKeysStayDistinct() {
+        // JSON.parse keeps both keys; equalFlat then sees two keys against one.
+        XCTAssertFalse(YJSONValue.equalAttrs(#"{"\u00e9":1,"e\u0301":2}"#, #"{"\u00e9":2}"#))
+        guard case .object(let members) = YJSONValue.parse(#"{"\u00e9":1,"e\u0301":2}"#) else {
+            return XCTFail("expected an object")
+        }
+        XCTAssertEqual(members.count, 2)
     }
 }

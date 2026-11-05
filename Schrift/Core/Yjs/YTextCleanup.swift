@@ -6,18 +6,29 @@ import Foundation
 ///
 /// yjs stores the parsed value and compares attribute values with `===`; Schrift
 /// keeps the raw `valueJSON` (see `YContent.format`), so this reproduces the same
-/// decision without parsing: **primitives compare by JSON text, objects/arrays by
-/// owning-item identity** (two separate `ContentFormat.value` objects are never
-/// `===`, even when structurally equal). JSON `null` is never stored — yjs's
-/// `updateCurrentAttributes` *deletes* the key on a null value — so an absent key
+/// decision: **primitives compare parsed values (strings by UTF-16 code units),
+/// objects/arrays by value-identity token** (restored formats share the token of
+/// their source value; independently parsed objects never share one). JSON `null`
+/// is never stored — yjs's `updateCurrentAttributes` *deletes* the key on a null
+/// value — so an absent key
 /// represents `null`, which means `Optional<YFormatAttrValue>` equality *is* JS
 /// `===`: `nil == nil` ⇔ `null === null`, `nil == .some` ⇔ `null === obj` (false),
 /// and `.some == .some` by the cases.
 enum YFormatAttrValue: Equatable {
-    /// JSON text of a scalar (bool / number / string) — compared by text.
+    /// JSON text of a scalar (bool / number / string) — compared by parsed value.
     case primitive(String)
-    /// An object/array value — identity of the owning item; never `==` another item's.
+    /// An object/array value — its identity token; never `==` another token.
     case object(ObjectIdentifier)
+
+    /// JS `===`: primitives by **UTF-16 code units** (Swift's `String ==` is
+    /// canonical, so `"é"` would equal `"e\u{0301}"`), objects by identity.
+    static func == (lhs: YFormatAttrValue, rhs: YFormatAttrValue) -> Bool {
+        switch (lhs, rhs) {
+        case (.primitive(let a), .primitive(let b)): return YJSONValue.strictEqual(a, b)
+        case (.object(let a), .object(let b)): return a == b
+        default: return false
+        }
+    }
 
     /// The value of `item`'s `ContentFormat`, or nil when it is JSON `null` (which
     /// `updateCurrentAttributes` treats as "delete the key"). `nil` for a non-format
@@ -25,10 +36,9 @@ enum YFormatAttrValue: Equatable {
     static func of(_ item: YItem) -> YFormatAttrValue? {
         guard case .format(_, let valueJSON) = item.content else { return nil }
         if valueJSON == "null" { return nil }
-        // `valueJSON` is `JSON.stringify(value)` off the wire — compact, no leading
-        // whitespace — so the first byte distinguishes an object/array from a scalar.
-        let first = valueJSON.first
-        if first == "{" || first == "[" { return .object(ObjectIdentifier(item)) }
+        if YJSONValue.isContainer(valueJSON) {
+            return .object(ObjectIdentifier(item.resolvedFormatIdentity()))
+        }
         return .primitive(valueJSON)
     }
 }

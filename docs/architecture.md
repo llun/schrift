@@ -171,6 +171,7 @@ whenever an integrated item resolves to no parent (a neighbour was collected), a
 | `YBlockProjection` / `InlineMarkdownWriter` | the **read-out** side (B5): projects an integrated replica into BlockNote-vocabulary `ProjectedBlock`s and then into the editor's markdown. See "Projecting the replica" below |
 | `YWrite` / `TextSpanDiff` / `BlockNoteWrite` | the **write-in** side (B6): local list/map mutation primitives, a char-level self-describing text-span diff, and the block-level edit driver that turns old/new BlockNote blocks into local ops + an incremental update. See "Local-edit transactions" below |
 | `YRelativePosition` | the **caret/selection** primitive (B2): yjs `RelativePosition` — capture from a type index, resolve against a later document state, binary + JSON codecs, compare. See "Relative positions" below |
+| `YTextOps` | the **format-aware text ops** (B4): yjs `YText`'s `insert`/`insertEmbed`/`delete`/`format` and the `ItemTextListPosition` cursor they share, on a root `YText` or a nested `XmlText`. See "Format-aware text operations" below |
 
 ### Relative positions (B2)
 
@@ -993,8 +994,9 @@ never a concrete `YText`):
 
 - **Format-value equality is JS `===`.** yjs compares parsed `ContentFormat.value`s
   with `===`; the store keeps raw `valueJSON`, so `YFormatAttrValue` reproduces that:
-  primitives by JSON text, objects/arrays by owning-item identity (never structurally
-  equal), and absent-key ⇔ JSON `null`.
+  primitives by parsed value (numbers numerically, strings by UTF-16 code units),
+  objects/arrays by value-identity token (shared by restored/negated formats), and absent-key ⇔ JSON
+  `null`. The token is in-memory only; decoding each format creates a new identity.
 - **The cleanup's routing is not confluent across clients.** `iterateDeletedStructs`
   must walk the transaction's delete set in yjs `Map` **insertion order** (now
   `YDeleteSet.orderedClients`), not ascending: a client owning a *deleted*
@@ -1007,6 +1009,71 @@ The fuzz that once quantified the *gap* (2 of 1500 seeds diverged, both formatti
 now confirms the *fix*: the formatting lane runs thousands of nested-text concurrent-
 formatting scripts against the oracle with zero divergence, gc on and off, and
 region coverage proves the cleanup code executes rather than being an honest negative.
+
+### Format-aware text operations (B4)
+
+`YTextOps` is the write side of a text: yjs's `ItemTextListPosition` cursor (@6284)
+with its forward/format bookkeeping, `findPosition` (@6367), and the
+`insertNegatedAttributes`/`insertAttributes`/`insertText`/`formatText`/`deleteText`
+family, exposed as `YType.insert`/`insertEmbed`/`delete`/`format` (@7362–@7450). It
+will be wired into the BlockNote writer in B5; the current writer still uses
+`YWrite` and `TextSpanDiff`. `YXmlText` shares every one of these operations in
+yjs, and Schrift has one `YType`, so both text kinds use them.
+
+Three things are load-bearing and easy to "fix" wrongly:
+
+- **Attribute maps are ordered.** `insertAttributes` mints one `ContentFormat` per
+  changed key in iteration order, so the order decides the clock order of those items
+  and therefore the update bytes. `YTextAttributes` keeps insertion order (a
+  `dictionaryLiteral` keeps source order, which is JS object-literal order for the
+  non-integer keys every schema uses); a Swift `Dictionary` would not.
+- **Two different equality rules over the same map.** The ops path uses yjs's
+  `equalAttrs` (@6282): `===` first, then lib0 `equalFlat` for any two containers
+  (`YJSONValue.equalAttrs`). Arrays expose their index keys, so `[]` equals `{}`;
+  flat values compare with `===`, so distinct nested containers remain unequal
+  even with identical JSON text. The cleanup path uses only `===`
+  (`YFormatAttrValue`). `YTextAttributeValue`
+  carries both the raw JSON and a `YAttributeIdentity` token so each path gets its
+  rule. `YItem.formatIdentity` holds the same token when an attribute is restored
+  or negated; decoded items lazily mint their own tokens. Tokens are never encoded.
+  The event delta also preserves these tokens in its attribute maps. Primitive
+  numbers compare numerically, and string equality compares UTF-16 code units,
+  including strings inside flat objects, so composed and decomposed Unicode remain distinct as in JS `===`.
+- **Out-of-range indices are yjs's, not the editor's.** yjs does not clamp: an insert
+  past the end appends, a delete past the end stops at the end, and a format past the
+  end **pads the text with `'\n'`** (@6584, Quill's trailing-newline convention).
+  Clamping for editor safety belongs to the caller (B5), not this layer — clamping
+  here would change the bytes a real yjs client produces.
+
+`deleteText` reuses `YTextCleanup.cleanupFormattingGap` (@6604) rather than
+duplicating it. A locally minted `ContentFormat` sets its parent's `_hasFormatting`
+through `YContent.integrate` (@8991), which already ran before this landed — the
+cleanup trigger is unchanged. `YTextOpsTests` replays twelve yjs 13.6.33 captures
+(plain inserts, typing inside a bold run, explicit attributes including `null`,
+format add/remove/overlap, object-valued links, the C2 boundary delete, a whole
+formatted run, embeds, surrogate pairs, a split inside a surrogate pair, out-of-range
+ops, and a nested `XmlText`) op for op, asserting each op's state-vector diff update,
+the transaction's own `'update'` bytes (what the editor broadcasts — a delete's diff
+update repeats the store's whole delete set, the transaction encoder carries only its
+own deletes), and the text's `toDelta()`.
+
+The identity rule has a fixture consequence worth knowing: because the cleanup
+compares object values by identity, a capture that reuses one `{href:…}` object
+across ops makes two `ContentFormat` items share a value object, and that relation
+does not survive JSON. Such a fixture stops replaying (a shared-object random lane
+diverged at 1 of 100 sequences; deep-cloned per op, 0 of 3000 ops). Capture scripts
+must deep-clone attribute objects per op.
+
+Within an op, yjs hands the *same* value object to restored/negated format items.
+Schrift carries that identity through the value and item tokens, so a later delete
+can remove a redundant restored object format exactly as yjs does. After
+`encodeStateAsUpdate` + `applyUpdate`, yjs parses separate objects and Schrift
+mints separate tokens; both deliberately lose the in-memory sharing relation.
+The named object-restoration, Unicode-equivalence and attribute-equality
+regressions pin transaction update bytes, the visible delta and the full state
+against yjs 13.6.33. The equality ones cover the two `equalFlat` edges a raw-JSON
+comparison gets wrong: `[]` equals `{}` (arrays expose index keys), and two
+distinct nested containers with identical JSON text are not `===`.
 
 ## Authentication
 

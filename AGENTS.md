@@ -1664,10 +1664,11 @@ that are easy to violate and expensive to discover:
   load-bearing and proven only by the differential fuzz's nested-text formatting lane
   (a bare root type is never a concrete `YText`, so **only nested text fires the
   trigger** — this is BlockNote's actual shape): (1) format-value equality is JS
-  `===`, spelled out by `YFormatAttrValue` (primitive-by-JSON-text, object-by-owning-
-  item-identity, absent ⇔ `null`); (2) the cleanup's routing is **not confluent across
-  clients** — `iterateDeletedStructs` must walk the delete set in yjs `Map` insertion
-  order (`YDeleteSet.orderedClients`), never ascending, or a live mark is wrongly
+  `===`, spelled out by `YFormatAttrValue` (primitives compared by UTF-16 code
+  units, objects by value-identity token, absent ⇔ `null`); (2) the cleanup's routing
+  is **not confluent across clients** — `iterateDeletedStructs` must walk the delete
+  set in yjs `Map` insertion order (`YDeleteSet.orderedClients`), never ascending,
+  or a live mark is wrongly
   deleted. B4 unblocked the live write path (C2). See `docs/architecture.md`.
 - **Malformed input must throw, never trap.** Every clock is attacker-controlled
   (it arrives from a peer), and Swift's UInt arithmetic traps where JS goes
@@ -1865,6 +1866,43 @@ that are easy to violate and expensive to discover:
   replica's owner (main actor), unlike the value and its codecs.
 - **`YDoc.destroy()` is not optional.** The item graph is a mesh of strong cycles,
   so releasing a `YDoc` frees nothing; whoever owns a replica must tear it down.
+- **`YTextOps` is the format-aware text write path (B4), and three of its rules are
+  easy to "fix" wrongly.** (1) **Attribute maps are ordered** — `insertAttributes`
+  mints one `ContentFormat` per changed key in iteration order, so the order decides
+  the clock order of those items and therefore the update bytes; `YTextAttributes`
+  keeps insertion order (a `dictionaryLiteral` keeps source order, which is JS
+  object-literal order for the non-integer keys every schema uses), and a Swift
+  `Dictionary` would not. (2) **Two equality rules over the same map** — the ops path
+  uses yjs's `equalAttrs` (@6282, `YJSONValue.equalAttrs`): `===` first, then
+  lib0 `equalFlat` for any two containers (arrays expose index keys, so `[]` equals
+  `{}`; nested values compare with `===`, never by JSON text). The cleanup path
+  uses only `===` (`YFormatAttrValue`); `YTextAttributeValue`
+  carries both the raw JSON and a `YAttributeIdentity` token so each path gets
+  its rule. Restoring/negating a value preserves that token on the new item
+  (`YItem.formatIdentity`); decoding mints separate identities lazily, and tokens
+  are never encoded. The event delta preserves tokens in its attribute maps too.
+  Primitive numbers compare numerically; strings use UTF-16 code-unit equality,
+  including inside flat objects: Swift canonical equivalence is not JS `===`. (3)
+  **Out-of-range indices are yjs's, not the editor's** — an insert past the end
+  appends, a delete past the end stops at the end, and a format past the end **pads
+  the text with `'\n'`** (@6584, Quill's trailing-newline convention). Clamping for
+  editor safety is the caller's (B5), not this layer's. The current BlockNote writer
+  still uses `YWrite`/`TextSpanDiff`; B5 will wire it to `YTextOps`. `deleteText` reuses
+  `YTextCleanup.cleanupFormattingGap` (@6604) rather than duplicating it, and a
+  locally minted `ContentFormat` already sets `_hasFormatting` through
+  `YContent.integrate` (@8991) — never edit `YItem.integrate` to do it.
+  `YTextOpsTests` replays twelve yjs 13.6.33 captures op for op (both the
+  state-vector diff update and the transaction's own `'update'` bytes, plus
+  `toDelta()` after each), including the C2 boundary delete and a nested `XmlText`.
+  **Fixtures must deep-clone attribute objects per op.** Because the cleanup compares
+  object values by identity, reusing one `{href:…}` object across ops makes two
+  `ContentFormat` items share a value object — a relation JSON cannot carry, so the
+  recorded ops stop replaying (a shared-object random lane diverged at 1 of 100
+  sequences; deep-cloned, 0 of 3000 ops). Within an op, yjs reuses the *same* value
+  object when restoring/negating a current attribute. Schrift preserves that relation with
+  the in-memory token, so deleting an unformatted insertion cleans up its restored
+  object format exactly as yjs does. Encoding then decoding creates separate value
+  objects in yjs and separate tokens here; identity is deliberately not serialized.
 - **BlockNote 0.56 every-step goldens** (`BlockNote056*Tests`) inline eight captures from the phase 0 S3 spike
   from yjs 13.6.33, checking seed XML and all 17 edits. They hold XML and update bytes only; the captures' text deltas are not committed yet. B2's cursor positions are pinned separately by `YRelativePositionTests` (relative positions captured from yjs 13.6.33).
 - **Verify against the oracle, not against reasoning.** Golden fixtures

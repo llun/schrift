@@ -2,37 +2,46 @@ import Foundation
 
 // MARK: - JSON value (format-value equality only)
 
-/// A JSON value, parsed only so the text delta can compare two `ContentFormat`
-/// values the way yjs does.
+/// A JSON value, parsed so text operations, deltas and cleanup compare
+/// `ContentFormat` values the way yjs does.
 ///
 /// Everywhere else Schrift keeps a format value as its raw JSON text (see
-/// `YContent.format`), so nothing hinges on JSON canonicalization. The delta is
-/// the one place that has to look inside: yjs's `equalAttrs` compares two
-/// *objects* by their flat contents (lib0 `equalFlat`), not by identity, so two
-/// distinct `{}` values are equal even though they are different objects.
+/// `YContent.format`), so nothing hinges on JSON canonicalization. yjs's
+/// `equalAttrs` first checks identity, then compares objects and arrays by their
+/// enumerable keys (lib0 `equalFlat`), with each value compared using `===`.
 ///
 /// Numbers are `Double` because a JS number is a double — `1`, `1.0` and `1e0`
 /// are the same value, and a large integer loses exactly the precision
 /// `JSON.parse` would. A lone surrogate escape becomes U+FFFD (a Swift `String`
 /// cannot hold one; JS keeps it), which only affects a value no schema writes.
+/// A JSON object key compared by UTF-16 code units, as JS property keys are.
+/// Swift `String` hashes by canonical equivalence, which would merge `"é"` and
+/// `"e\u{0301}"` into one key where `JSON.parse` keeps two.
+struct YJSONKey: Hashable, ExpressibleByStringLiteral {
+    let units: [UInt16]
+    init(_ string: String) { units = Array(string.utf16) }
+    init(stringLiteral value: String) { self.init(value) }
+    var string: String { String(decoding: units, as: UTF16.self) }
+}
+
 indirect enum YJSONValue: Equatable {
     case null
     case bool(Bool)
     case number(Double)
     case string(String)
     case array([YJSONValue])
-    case object([String: YJSONValue])
+    case object([YJSONKey: YJSONValue])
 
     /// The deepest nesting `parse` accepts. A format value is a flat object of
     /// primitives in every schema Schrift knows; the cap keeps a crafted
     /// `[[[[…` from recursing the native stack, for the same reason
     /// `Lib0Decoder.maxAnyNestingDepth` exists. Past it `parse` returns nil and
-    /// the two values simply compare unequal.
+    /// independently parsed values compare unequal (shared identity still wins).
     static let maxNestingDepth = 64
 
     /// Parses `text`, or nil when it is not JSON. yjs would have rejected such a
     /// value at decode time (`readJSON` calls `JSON.parse`); Schrift keeps the
-    /// raw text, so an unparseable value is simply never equal to anything.
+    /// raw text, so independently parsed unparseable values compare unequal.
     static func parse(_ text: String) -> YJSONValue? {
         var parser = YJSONParser(text)
         return parser.parseDocument()
@@ -45,32 +54,56 @@ indirect enum YJSONValue: Equatable {
     /// `undefined === null` is false, so `equalAttrs(nil, "null")` is false here
     /// too. Callers that treat a `"null"` format value as "delete the key" (as
     /// `updateCurrentAttributes` does) normalize it to `nil` first.
-    static func equalAttrs(_ a: String?, _ b: String?) -> Bool {
+    static func equalAttrs(
+        _ a: String?, _ b: String?, identityA: YAttributeIdentity? = nil, identityB: YAttributeIdentity? = nil
+    ) -> Bool {
         switch (a, b) {
         case (nil, nil): return true
         case (nil, _), (_, nil): return false
         case (let a?, let b?):
-            if a == b { return true }
+            // A shared value object is `===` even when its contents are nested
+            // beyond the parser's defensive depth cap. JSON text is not identity.
+            if let identityA, let identityB, identityA === identityB, isContainer(a), isContainer(b) { return true }
             guard let left = parse(a), let right = parse(b) else { return false }
-            return equalAttrs(left, right)
+            if strictEqual(left, right) { return true }
+            guard let leftKeys = left.enumerableKeys, let rightKeys = right.enumerableKeys else { return false }
+            guard leftKeys.count == rightKeys.count else { return false }
+            for (key, value) in leftKeys {
+                guard let other = rightKeys[key], strictEqual(value, other) else { return false }
+            }
+            return true
         }
     }
 
-    private static func equalAttrs(_ a: YJSONValue, _ b: YJSONValue) -> Bool {
-        switch (a, b) {
-        case (.object(let left), .object(let right)):
-            guard left.count == right.count else { return false }
-            for (key, value) in left {
-                guard let other = right[key], strictEqual(value, other) else { return false }
-            }
-            return true
-        case (.array(let left), .array(let right)):
-            guard left.count == right.count else { return false }
-            for (value, other) in zip(left, right) where !strictEqual(value, other) { return false }
-            return true
-        default:
-            return strictEqual(a, b)
+    static func isContainer(_ text: String) -> Bool {
+        let first = text.first { !$0.isWhitespace }
+        return first == "{" || first == "["
+    }
+
+    /// JS string equality: **UTF-16 code units**, not Swift's canonical
+    /// equivalence. `"é"` (U+00E9) and `"e\u{0301}"` are different JS strings and
+    /// must compare unequal — Swift's `String ==` would call them equal, which
+    /// silently skipped a format whose value differed only in normalization.
+    static func jsStringEqual(_ a: String, _ b: String) -> Bool {
+        a.utf16.elementsEqual(b.utf16)
+    }
+
+    /// `Object.keys` over JSON containers: an array's keys are its indices, so
+    /// `[]` and `{}` have the same flat contents, as do `[1]` and `{"0":1}`.
+    private var enumerableKeys: [YJSONKey: YJSONValue]? {
+        switch self {
+        case .object(let members): return members
+        case .array(let elements):
+            return Dictionary(uniqueKeysWithValues: elements.enumerated().map { (YJSONKey(String($0)), $1) })
+        default: return nil
         }
+    }
+
+    /// JS `===` over independently parsed JSON. Container identity must be
+    /// checked by the caller using the value's token, never its JSON spelling.
+    static func strictEqual(_ a: String, _ b: String) -> Bool {
+        guard let left = parse(a), let right = parse(b) else { return false }
+        return strictEqual(left, right)
     }
 
     /// JS `===` over two parsed values: primitives by value, containers never
@@ -80,7 +113,30 @@ indirect enum YJSONValue: Equatable {
         case (.null, .null): return true
         case (.bool(let x), .bool(let y)): return x == y
         case (.number(let x), .number(let y)): return x == y
-        case (.string(let x), .string(let y)): return x == y
+        case (.string(let x), .string(let y)): return jsStringEqual(x, y)
+        default: return false
+        }
+    }
+
+    /// Structural equality with string leaves compared by **UTF-16 code units**,
+    /// as JS `===` compares strings. The synthesized conformance would use Swift's
+    /// canonical equivalence, making `"é"` and `"e\u{0301}"` equal.
+    static func == (lhs: YJSONValue, rhs: YJSONValue) -> Bool {
+        switch (lhs, rhs) {
+        case (.null, .null): return true
+        case (.bool(let a), .bool(let b)): return a == b
+        case (.number(let a), .number(let b)): return a == b
+        case (.string(let a), .string(let b)): return jsStringEqual(a, b)
+        case (.array(let a), .array(let b)):
+            guard a.count == b.count else { return false }
+            for (x, y) in zip(a, b) where x != y { return false }
+            return true
+        case (.object(let a), .object(let b)):
+            guard a.count == b.count else { return false }
+            for (key, value) in a {
+                guard let other = b[key], value == other else { return false }
+            }
+            return true
         default: return false
         }
     }
@@ -138,7 +194,7 @@ private struct YJSONParser {
 
     private mutating func parseObject(depth: Int) -> YJSONValue? {
         index += 1  // "{"
-        var members: [String: YJSONValue] = [:]
+        var members: [YJSONKey: YJSONValue] = [:]
         skipWhitespace()
         if index < scalars.count, scalars[index] == "}" {
             index += 1
@@ -152,7 +208,7 @@ private struct YJSONParser {
             index += 1
             guard let value = parseValue(depth: depth + 1) else { return nil }
             // `JSON.parse` keeps the last of duplicate keys, as a dictionary does.
-            members[key] = value
+            members[YJSONKey(key)] = value
             skipWhitespace()
             guard index < scalars.count else { return nil }
             if scalars[index] == "," {
