@@ -20,8 +20,10 @@ enum YPathComponent: Equatable, Hashable, ExpressibleByIntegerLiteral, Expressib
 /// One `insert` value in a text delta — yjs's `{ insert: string | object |
 /// AbstractType }`.
 enum YDeltaInsert: Equatable {
-    /// `ContentString` text. A string-valued `ContentEmbed` lands here too: yjs
-    /// cannot tell the two apart once the value is a string.
+    /// `ContentString` text — the only thing that lands here. A `ContentEmbed`
+    /// whose value is a string is still an embed: it goes to `.embed(json:)`,
+    /// because the store keeps the two content kinds apart and yjs's delta
+    /// carries the embed's parsed value, not its text.
     case text(String)
     /// `ContentEmbed` — its raw JSON text. yjs carries the parsed value; the
     /// delta's insert is the same JSON value either way.
@@ -146,20 +148,28 @@ final class YEvent {
     /// **Only valid during the `afterTransaction` call that raised this event.**
     /// It is computed from the transaction's before-state and delete set against
     /// the *live* item list, so once `cleanupTransactions` has gc'd and merged,
-    /// the same read would describe a different store. yjs has the same rule (its
-    /// `changes` throws once the cleanup queue is empty); Schrift documents it
-    /// rather than throwing, because a delta is a read and a late read is a
-    /// caller bug, not peer data.
+    /// the same read would describe a different store. yjs has the same rule, but
+    /// no guard on this getter: `YTextEvent.delta` (@6893) silently recomputes
+    /// against whatever the store holds now (and caches the first answer in
+    /// `_delta`). The `errorComputeChanges` throw belongs to `YEvent.keys`
+    /// (@4617), which checks `_transactionCleanups.length === 0` — a different
+    /// property. Schrift documents the rule rather than throwing, because a delta
+    /// is a read and a late read is a caller bug, not peer data.
     ///
     /// `nil` for a non-text target: plan §5 covers `XmlText` only, and an
     /// element's change is rebuilt from a projection of that block.
     ///
     /// yjs wraps the computation in `transact(...)`, which queues an empty extra
-    /// transaction (and lets the getter delete redundant format items). Schrift
-    /// does not: reading a delta must not open a transaction, and the redundant
-    /// formats are removed by the B4 cleanup that runs immediately after the
-    /// hook. The delta's *values* are unaffected — a redundant format contributes
-    /// no op either way.
+    /// transaction. Schrift does not: reading a delta must not open a transaction.
+    /// The delta's *values* are unaffected — a redundant format contributes no op
+    /// either way. What differs is the redundant format *item*: yjs's getter
+    /// deletes it inside that queued transaction, and Schrift leaves it. For a
+    /// remote transaction the B4 cleanup removes it right after the hook, so the
+    /// store still matches yjs. For a **local** transaction the cleanup is not
+    /// armed (`!local` gates it), so a redundant format item would survive where
+    /// yjs deletes it — today's write paths never mint one (`TextSpanDiff` emits a
+    /// format only when the value changes, and `InlineContent` writes into fresh
+    /// texts), so the divergence is unreachable, not merely unobserved.
     var delta: [YDeltaOp]? {
         guard target.isText else { return nil }
         if let cached = _delta { return cached }
@@ -218,7 +228,13 @@ final class YEvent {
                 deleteLen = 0
             case .insert:
                 if let value = insertValue {
-                    delta.append(.insert(value, attributes: insertAttributes()))
+                    // yjs's insert guard (@6932): `typeof insert === 'object' ||
+                    // insert.length > 0`. A `ContentType` insert is an object, so
+                    // it always qualifies; a `ContentEmbed` insert is the parsed
+                    // value, so its JSON kind decides — see `insertProducesOp`.
+                    if Self.insertProducesOp(value) {
+                        delta.append(.insert(value, attributes: insertAttributes()))
+                    }
                 } else if !insertText.isEmpty {
                     // Decode once, at the op boundary: a surrogate pair split
                     // across two `ContentString` items is one character in JS.
@@ -304,8 +320,9 @@ final class YEvent {
                         } else if value != nil {
                             // yjs deletes the redundant item here, inside the
                             // transaction its delta getter opens. Schrift's delta
-                            // is a pure read; the B4 cleanup removes it right
-                            // after the hook.
+                            // is a pure read: a remote transaction's B4 cleanup
+                            // removes it right after the hook, and a local one
+                            // never mints it (see `delta`).
                         }
                     }
                 } else if deletes(current) {
@@ -348,6 +365,33 @@ final class YEvent {
             delta.removeLast()
         }
         return delta
+    }
+
+    /// yjs's insert guard in `addOp` (@6932): `typeof insert === 'object' ||
+    /// insert.length > 0`, applied to the two inserts `insertValue` can hold.
+    ///
+    /// A `ContentType` insert is a `YType` — an object, so always an op. A
+    /// `ContentEmbed` insert is the *parsed* value, so the guard depends on its
+    /// JSON kind: an object, an array and `null` are `typeof "object"`; a
+    /// non-empty string has `length > 0`; `""`, a number and a boolean satisfy
+    /// neither, and yjs emits **no op at all** for them — the embed is in the
+    /// store but absent from the delta. An unparseable value (which yjs's
+    /// `readJSON` would have refused at decode time) is treated the same way.
+    private static func insertProducesOp(_ value: YDeltaInsert) -> Bool {
+        switch value {
+        case .type:
+            return true
+        case .embed(let json):
+            switch YJSONValue.parse(json) {
+            case .object, .array, .null: return true
+            case .string(let text): return !text.isEmpty
+            case .bool, .number, nil: return false
+            }
+        case .text(let text):
+            // `insertValue` never holds text — `ContentString` accumulates in
+            // `insertText` — but the guard is the same one yjs applies.
+            return !text.isEmpty
+        }
     }
 
     /// yjs `updateCurrentAttributes` (@6424) over raw JSON text — the delta's
@@ -393,8 +437,17 @@ extension YType {
         // yjs `AbstractType._callObserver` clears the search-marker cache on a
         // remote change. Schrift keeps no markers (see `_searchMarker`), so that
         // is a no-op.
-        let event = YEvent(target: self, transaction: transaction)
-        YEvent.callTypeObservers(self, transaction, event)
+        //
+        // The event exists for `YDoc.afterTransaction` alone, so it is built only
+        // when a hook is set: `changedParentTypes` is populated for that hook and
+        // nothing else reads it, and building one event per changed type per
+        // ancestor is work a replica with no hook never consumes. yjs always
+        // builds them because its `observe`/`observeDeep` listeners are the
+        // consumers; Schrift has none.
+        if transaction.doc.afterTransaction != nil {
+            let event = YEvent(target: self, transaction: transaction)
+            YEvent.callTypeObservers(self, transaction, event)
+        }
         // yjs `YText._callObserver` (@7158), shared by `YText` and `YXmlText`.
         //
         // yjs dispatches on the concrete class; Schrift has one `YType`, and a

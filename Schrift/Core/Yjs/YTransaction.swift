@@ -47,15 +47,33 @@ final class YTransaction {
     /// A Swift `Dictionary` iterates unpredictably, and the observer phase must run
     /// in yjs's order: the events it records at a shared ancestor are compared in
     /// that order, so a different order is a different `changedParentTypes`.
-    private(set) var changedOrder: [ObjectIdentifier] = []
+    ///
+    /// **Slots, not a packed array.** `removeChangedType` must drop a type in O(1)
+    /// (yjs's `Map.delete`); a packed array would need a linear scan per removal,
+    /// and a remote update touching N types would then cost O(N²) — an algorithmic
+    /// DoS any peer can trigger. A removed type's slot is nil'd, and a re-added type
+    /// appends a fresh slot, so it moves to the end exactly as a JS `Map`
+    /// delete-then-set does. The dispatch loop skips nil slots.
+    private(set) var changedOrder: [ObjectIdentifier?] = []
+    /// `changedOrder` slot per type — the O(1) half of the pair above.
+    private var changedOrderIndex: [ObjectIdentifier: Int] = [:]
     /// yjs `changedParentTypes` (@3120) — every type an event was raised on, mapped
     /// to the events raised there. `callTypeObservers` records the event at the
     /// changed type and at every ancestor up to the root, so a consumer can find
     /// the enclosing `blockContainer` from an edited `XmlText`.
     ///
     /// yjs keys a `Map` by type; the array keeps yjs's insertion order (the order
-    /// `_callObserver` ran), which is what a consumer sees. Lookup is by identity.
-    var changedParentTypes: [YChangedParentType] = []
+    /// `_callObserver` ran), which is what a consumer sees. Lookup is by identity,
+    /// through `changedParentTypeIndex` — a linear scan per event per ancestor would
+    /// make a remote update touching N types O(N²).
+    ///
+    /// **Only populated while `doc.afterTransaction` is set.** It exists for that
+    /// hook alone, so a replica with no hook builds no events and leaves this empty
+    /// (see `YType.callObserver`); the B4 formatting-cleanup arming is independent
+    /// of it and still runs.
+    private(set) var changedParentTypes: [YChangedParentType] = []
+    /// `changedParentTypes` index per type — the O(1) half of the pair above.
+    private var changedParentTypeIndex: [ObjectIdentifier: Int] = [:]
     /// yjs `_needFormattingCleanup` — armed by the observer phase when a *remote*
     /// transaction touches a formatted text (`!local && _hasFormatting`), consumed by
     /// `cleanupYTextAfterTransaction` at the end of the same observer phase.
@@ -83,7 +101,10 @@ final class YTransaction {
         let item = type.item
         if item == nil || (item!.id.clock < (beforeState[item!.id.client] ?? 0) && !item!.deleted) {
             let oid = ObjectIdentifier(type)
-            if changed[oid] == nil { changedOrder.append(oid) }
+            if changed[oid] == nil {
+                changedOrderIndex[oid] = changedOrder.count
+                changedOrder.append(oid)
+            }
             var entry = changed[oid] ?? (type: type, subs: [])
             entry.subs.insert(parentSub)
             changed[oid] = entry
@@ -92,10 +113,15 @@ final class YTransaction {
 
     /// yjs `transaction.changed.delete(type)` (@9514) — `ContentType.delete` drops
     /// the type it just emptied, so no observer fires for it.
+    ///
+    /// O(1): the type's `changedOrder` slot is nil'd rather than spliced out, and a
+    /// later re-add appends a new slot (yjs's `Map` delete-then-set order).
     func removeChangedType(_ type: YType) {
         let oid = ObjectIdentifier(type)
         changed.removeValue(forKey: oid)
-        changedOrder.removeAll { $0 == oid }
+        if let slot = changedOrderIndex.removeValue(forKey: oid) {
+            changedOrder[slot] = nil
+        }
     }
 
     /// yjs `callTypeObservers`'s `setIfUndefined(changedParentTypes, type, () =>
@@ -103,11 +129,19 @@ final class YTransaction {
     /// the entry on first sight.
     func addChangedParentType(_ type: YType, _ event: YEvent) {
         let oid = ObjectIdentifier(type)
-        if let index = changedParentTypes.firstIndex(where: { ObjectIdentifier($0.type) == oid }) {
+        if let index = changedParentTypeIndex[oid] {
             changedParentTypes[index].events.append(event)
         } else {
+            changedParentTypeIndex[oid] = changedParentTypes.count
             changedParentTypes.append(YChangedParentType(type: type, events: [event]))
         }
+    }
+
+    /// Drop the events once the hook has run — see `cleanupTransactions`. Clears the
+    /// index with the array so the two cannot disagree.
+    func clearChangedParentTypes() {
+        changedParentTypes = []
+        changedParentTypeIndex = [:]
     }
 
     // MARK: - Deep-nesting recursion guard
@@ -272,12 +306,14 @@ extension YDoc {
             // `transaction.changed` insertion order, skipping a type whose owning
             // item is deleted. This is what populates `changedParentTypes` (the
             // change signal) and what arms B4's formatting cleanup — the arming
-            // lives in `YType.callObserver`, mirroring `YText._callObserver`.
+            // lives in `YType.callObserver`, mirroring `YText._callObserver`, and
+            // runs whether or not a hook is set. With no hook the events are not
+            // built at all, so `changedParentTypes` stays empty.
             //
             // The order is snapshotted first, as yjs builds its `fs` array before
-            // running any callback.
+            // running any callback. Slots a `removeChangedType` nil'd are skipped.
             let changedOrder = transaction.changedOrder
-            for oid in changedOrder {
+            for case let oid? in changedOrder {
                 guard let entry = transaction.changed[oid] else { continue }
                 let type = entry.type
                 guard type.item == nil || !(type.item!.deleted) else { continue }
@@ -299,7 +335,7 @@ extension YDoc {
             // for the lifetime of the process. The events are only meaningful
             // during the hook anyway: their deltas read the pre-gc/pre-merge
             // store, so a consumer that stashes one would read a stale delta.
-            transaction.changedParentTypes = []
+            transaction.clearChangedParentTypes()
 
             // The last observer callback: run the formatting cleanup if armed. It opens
             // a nested local transaction (queued into `transactionCleanups` and drained

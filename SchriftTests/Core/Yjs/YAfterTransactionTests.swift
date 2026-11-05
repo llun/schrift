@@ -666,4 +666,157 @@ final class YAfterTransactionTests: XCTestCase {
         XCTAssertEqual(visibleText(of: text), "ab")
         XCTAssertEqual(doc.store.clients[5]?.structs.count, 1, "the outer cleanup merged a and b")
     }
+
+    // MARK: - Many changed types
+
+    /// A remote update touching a few hundred blocks: every block's text is edited
+    /// in one transaction on the peer, and the resulting update is applied here as
+    /// one remote transaction. The hook must see every changed type exactly once —
+    /// each text, its element, its container, the group and the root — with no
+    /// duplicate entry and no missing ancestor.
+    ///
+    /// This is the guard against the bookkeeping going quadratic again. A peer
+    /// chooses how many types an update touches, so a linear scan per event per
+    /// ancestor (or a linear removal from the changed order) is an algorithmic DoS;
+    /// both lookups are indexed by `ObjectIdentifier` now. There is deliberately no
+    /// timing assertion — the shape of the result is what must not regress.
+    func testRemoteUpdateTouchingManyTypesReportsEachChangedTypeOnce() throws {
+        let blockCount = 300
+        let blocks = (0..<blockCount).map { index in
+            BlockNoteBlock(
+                node: "paragraph",
+                props: [],
+                runs: [InlineRun("block \(index)")],
+                id: String(format: "00000000-0000-4000-8000-%012d", index))
+        }
+        let edited = blocks.map { block in
+            var block = block
+            block.runs = [InlineRun(block.runs[0].text + "!")]
+            return block
+        }
+
+        // The peer builds the document and the edit; the replica under test only
+        // ever sees bytes, so the transaction is remote.
+        let peer = YDoc(clientID: 1, gc: false)
+        defer { peer.destroy() }
+        _ = try BlockNoteWrite.applyEdit(old: [], new: blocks, to: peer)
+        let seed = try YStateEncoder.encodeStateAsUpdate(peer)
+
+        let doc = YDoc(clientID: 9, gc: false)
+        defer { doc.destroy() }
+        try doc.applyUpdate(try YUpdateDecoder.decode(seed), origin: .remote)
+
+        let recorder = YChangeRecorder()
+        recorder.attach(to: doc)
+
+        let update = try BlockNoteWrite.applyEdit(old: blocks, new: edited, to: peer)
+        try doc.applyUpdate(try YUpdateDecoder.decode(update), origin: .remote)
+
+        XCTAssertEqual(recorder.records.count, 1, "one remote update, one record")
+        let record = try XCTUnwrap(recorder.records.first)
+        XCTAssertEqual(record.events.count, blockCount, "one event per edited text")
+
+        // N texts + N elements + N containers + the blockGroup + the fragment root.
+        let paths = record.changed.map(\.path)
+        XCTAssertEqual(paths.count, 3 * blockCount + 2)
+        XCTAssertEqual(Set(paths).count, paths.count, "no changed type is reported twice")
+
+        // Each text's event is recorded at the text and at every ancestor, so the
+        // root sees all N events and each text sees exactly its own.
+        let textEntries = record.changed.filter { $0.path.count == 4 }
+        XCTAssertEqual(textEntries.count, blockCount)
+        XCTAssertTrue(textEntries.allSatisfy { $0.events.count == 1 })
+        XCTAssertEqual(record.events.count, blockCount, "the root saw every event")
+    }
+
+    // MARK: - Embeds in the delta
+
+    /// yjs's `addOp` pushes an insert only when `typeof insert === 'object' ||
+    /// insert.length > 0` (@6932). For a `ContentEmbed` the insert is the *parsed*
+    /// value, so an embed whose value is `""`, a number or a boolean produces no op
+    /// at all, while `null`, an object and a non-empty string do.
+    ///
+    /// The update is hand-assembled from Schrift's own wire model (`YItemRecord` +
+    /// `YUpdateReencoder`), which emits exactly the v1 frame yjs's decoder reads.
+    /// yjs's `insertEmbed` cannot produce this frame: it routes through `insertText`
+    /// (@6492), which mints `ContentString` for a String — so `""` is never an embed
+    /// — and throws on `null` (`null.constructor`). A number, boolean, object or
+    /// array *does* become a `ContentEmbed` there, so the hand-built frame is the
+    /// only way to carry all six values in one update. The expected delta is what
+    /// yjs 13.6.33 produces for these bytes (verified against the oracle: the same
+    /// frame yields `[insert "ab", insert null, insert {}, insert "x", insert "cd"]`
+    /// and text `"abcd"`).
+    func testEmbedDeltaMatchesYjsInsertGuard() throws {
+        let doc = YDoc(clientID: 9, gc: false)
+        defer { doc.destroy() }
+        let text = doc.getText("t")
+        let recorder = YChangeRecorder()
+        recorder.attach(to: doc)
+
+        let update = handBuiltTextUpdate(
+            client: 1,
+            root: "t",
+            contents: [
+                .string("ab"),
+                .embed(json: "\"\""),  // "" — typeof "string", length 0 → no op
+                .embed(json: "5"),  // number — no `length` → no op
+                .embed(json: "true"),  // boolean — no `length` → no op
+                .embed(json: "null"),  // typeof "object" → op
+                .embed(json: "{}"),  // typeof "object" → op
+                .embed(json: "\"x\""),  // non-empty string → op
+                .string("cd"),
+            ])
+        try doc.applyUpdate(try YUpdateDecoder.decode(update), origin: .remote)
+
+        assertChangeRecords(
+            recorder.records,
+            [
+                YChangeRecord(
+                    origin: .remote,
+                    local: false,
+                    events: [
+                        YEventRecord(
+                            target: [],
+                            delta: [
+                                .insert("ab"),
+                                .insert(.embed(json: "null")),
+                                .insert(.embed(json: "{}")),
+                                .insert(.embed(json: "\"x\"")),
+                                .insert("cd"),
+                            ])
+                    ])
+            ])
+        XCTAssertEqual(visibleEmbedCount(of: text), 6, "all six embeds are in the store")
+    }
+
+    /// A v1 update whose root text holds `contents` in order, minted by client
+    /// `client` from clock 0. Each item chains off the previous one's **last id**
+    /// (`clock + length - 1`, yjs's `Item.lastId`), so the frame is the same shape
+    /// yjs writes for a run of inserts.
+    private func handBuiltTextUpdate(
+        client: UInt, root: String, contents: [YContentRecord]
+    ) -> Data {
+        var structs: [YStructRecord] = []
+        var clock: UInt = 0
+        var previous: YID?
+        for content in contents {
+            // yjs `Item.write`: the left-origin bit when there is an origin, and
+            // the parent only when neither origin bit is set.
+            let info: UInt8 = (previous == nil ? 0 : 0x80) | content.ref
+            structs.append(
+                .item(
+                    YItemRecord(
+                        id: YID(client: client, clock: clock),
+                        info: info,
+                        origin: previous,
+                        rightOrigin: nil,
+                        parent: previous == nil ? .named(root) : nil,
+                        parentSub: nil,
+                        content: content)))
+            previous = YID(client: client, clock: clock + content.length - 1)
+            clock += content.length
+        }
+        return YUpdateReencoder.encode(
+            YUpdate(blocks: [YClientBlock(client: client, structs: structs)], deleteSet: []))
+    }
 }

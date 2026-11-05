@@ -166,9 +166,10 @@ final class YDoc {
     ///
     /// The transaction's `changedParentTypes` is complete when the hook runs, and
     /// each text event's `delta` is valid **only** during the call (see
-    /// `YEvent.delta`). A nil hook runs nothing; the events are still built,
-    /// because `changedParentTypes` is transaction state yjs always maintains and
-    /// the delta is lazy, so a nil hook pays no delta cost.
+    /// `YEvent.delta`). A nil hook runs nothing, and then no events are built at
+    /// all: `changedParentTypes` is populated only while a hook is set, because
+    /// this hook is its only consumer. The B4 formatting-cleanup arming does not
+    /// depend on it and still runs.
     ///
     /// A `transact` opened from inside the hook behaves as in yjs: the current
     /// transaction is already off `doc.transaction`, so the new one is queued and
@@ -196,10 +197,17 @@ final class YDoc {
 
     /// yjs `Doc.getText(name)` (@665) — `get(name, YText)`.
     ///
-    /// yjs re-casts a bare root into `YText`; with one `YType` class the cast is
-    /// `isText = true`. A root already declared as something else is returned
-    /// unchanged — yjs throws `unexpectedCase` there, a programming-error guard
-    /// rather than peer data.
+    /// yjs's `Doc.get` (@614) re-casts a root that was created as a bare
+    /// `AbstractType` into the requested concrete class, and throws a plain
+    /// `Error` only when the root is already a *different* concrete constructor.
+    /// Schrift has one `YType` class, so the cast is `isText = true` and it is
+    /// applied unconditionally: a root that was declared as something else is
+    /// silently re-marked as text, not returned unchanged and not rejected.
+    ///
+    /// **Call this only for a text root.** Schrift cannot tell a bare root (which
+    /// yjs would re-cast) from a declared non-text root (which yjs would refuse),
+    /// because a root's kind is not on the wire and `get(_:)` records none. There
+    /// is no production caller; the tests use it to declare their text roots.
     func getText(_ name: String) -> YType {
         let type = get(name)
         type.isText = true

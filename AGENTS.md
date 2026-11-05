@@ -1621,6 +1621,14 @@ that are easy to violate and expensive to discover:
   dropped after the hook so ARC doesn't keep the transaction and type graph alive. A
   `transact` opened inside the hook is queued and drained after the current transaction,
   as in yjs. Buffering and delivery to the UI belong to the engine (B6), not the core.
+  **`changedParentTypes` is populated only while a hook is set** — it exists for
+  `afterTransaction` alone, so a nil hook builds no events at all (yjs always builds them
+  because `observe`/`observeDeep` are its consumers; Schrift has none). The B4
+  formatting-cleanup arming is independent of it and still runs. Both the
+  `changedParentTypes` lookup and `changed`'s insertion order are indexed by
+  `ObjectIdentifier` (the order as nil-able slots), so a remote update touching N types is
+  O(N), not O(N²) — a peer controls N, so a linear scan per event per ancestor is an
+  algorithmic DoS.
 - **`YDoc.onUpdate` mirrors yjs's `'update'` event, and it is how the replica's own
   cleanup reaches peers.** yjs emits `'update'` from `cleanupTransactions`'s `finally`
   block (@3388-3392) for **every** transaction with content — after gc/merge and the
