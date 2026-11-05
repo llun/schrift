@@ -1779,6 +1779,8 @@ Static assets (logo, illustrations, doc-type icons) are copied from the handoff'
 
 - Unit tests for `DocsAPIClient` and Codable models against mocked `URLSession` responses (fixture JSON matching the real serializer shapes documented above).
 - Unit tests for the on-device Markdown→Yjs encoder (`Core/Yjs` — `YjsEncoderTests`, `MarkdownYjsTests`, `InlineMarkdownTests`, verifying valid Yjs-v1 update bytes) and for the save flow (`DocumentSaveTests` / `DocumentSaveCoordinator*Tests`, verifying `saveDocumentContent` issues `PATCH /content/` then `PATCH /{id}/` for the title; `CollaborationYDocSaveClientTests` for the Docs 6 route choice and request shapes, with `BlockNoteIncrementalSaveTests`/`BlockNoteAlignmentTests` checking at the document level that the incremental update makes the served state read exactly like the saved markdown).
+- `BlockNote056*Tests` inline eight yjs 13.6.33 / BlockNote 0.56 captures from the phase 0 S3 spike (the editing-scenario harness, not object storage), checking seed XML and every incremental edit (17 steps) with nothing pending.
+  These tests hold XML and update bytes only; the captures' text deltas and cursor positions are not committed yet, and B3/B2 add them with the tests that use them.
 - SwiftUI Previews for every DesignSystem component, serving as the visual QA catalog (mirrors the handoff's `*.card.html` files).
 - No live integration tests against docs.llun.dev in CI — it's a personal server; verify manually against it during development instead.
 

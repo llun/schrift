@@ -1820,6 +1820,8 @@ that are easy to violate and expensive to discover:
   not a competing definition of inline shape.
 - **`YDoc.destroy()` is not optional.** The item graph is a mesh of strong cycles,
   so releasing a `YDoc` frees nothing; whoever owns a replica must tear it down.
+- **BlockNote 0.56 every-step goldens** (`BlockNote056*Tests`) inline eight captures from the phase 0 S3 spike
+  from yjs 13.6.33, checking seed XML and all 17 edits. They hold XML and update bytes only; the captures' text deltas and cursor positions are not committed yet, and B3/B2 add them with the tests that use them.
 - **Verify against the oracle, not against reasoning.** Golden fixtures
   (`YIntegration*Tests`) pin each YATA branch from real yjs; the differential fuzz
   harness (session-local scratch, never committed — zero-dep rule) compares the
