@@ -62,7 +62,9 @@ final class DocumentEngineRoundOneTests: DocumentEngineTestCase {
             defer { doc.destroy() }
             let surface = RestartingSurface(blocks: projection(doc))
             let engine = DocumentEngine(doc: doc, surface: surface)
-            try engine.compositionBegan(blockID: Self.firstID, at: 6)
+            let caret = EditorPosition(blockID: Self.firstID, offset: 6)
+            try engine.setSelection(EditorSelection(anchor: caret, head: caret))
+            try engine.compositionBegan(blockID: Self.firstID)
             var attempted = false
             var caught: Error?
             surface.onPatch = {
@@ -74,7 +76,7 @@ final class DocumentEngineRoundOneTests: DocumentEngineTestCase {
                     } else {
                         try engine.compositionCancelled()
                     }
-                    try engine.compositionBegan(blockID: Self.firstID, at: 0)
+                    try engine.compositionBegan(blockID: Self.firstID)
                 } catch { caught = error }
             }
             try engine.replaceText(block: Self.thirdID, range: 0..<0, with: "trigger ")

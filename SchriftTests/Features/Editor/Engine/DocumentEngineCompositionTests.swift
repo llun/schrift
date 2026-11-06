@@ -22,7 +22,7 @@ final class DocumentEngineCompositionTests: DocumentEngineTestCase {
         XCTAssertEqual(origins, [.localUser])
         XCTAssertEqual(text(of: surface.blocks[0]), "First 日本paragraph.")
         XCTAssertEqual(try engine.currentSelection()?.head.offset, 8)
-        assertSingleRebuild(surface, origin: .localUser)
+        assertSingleRebuild(surface, origin: .other)
         XCTAssertEqual(surface.compositionDeferrals, [true, false])
         assertSurfaceMatchesProjection(surface, doc, "commit")
     }
@@ -55,7 +55,7 @@ final class DocumentEngineCompositionTests: DocumentEngineTestCase {
         try peer.applyUpdate(YUpdateDecoder.decode(engine.compositionCommitted(text: "😀に")), origin: .remote)
         XCTAssertEqual(text(of: surface.blocks[0]), "First paragraph.😀に!")
         XCTAssertEqual(try engine.currentSelection()?.head.offset, 19)
-        assertSingleRebuild(surface, origin: .localUser)
+        assertSingleRebuild(surface, origin: .other)
         XCTAssertEqual(YXMLString.fragment(local), YXMLString.fragment(peer))
         assertSurfaceMatchesProjection(surface, local, "end-of-text composition")
         assertSurfaceMatchesProjection(peerSurface, peer, "peer end-of-text composition")
@@ -98,7 +98,7 @@ final class DocumentEngineCompositionTests: DocumentEngineTestCase {
         }
         try peer.applyUpdate(YUpdateDecoder.decode(engine.compositionCommitted(text: "に")), origin: .remote)
         XCTAssertEqual(text(of: surface.blocks[0]), "AFirst にparagraph.!")
-        assertSingleRebuild(surface, origin: .localUser)
+        assertSingleRebuild(surface, origin: .other)
         XCTAssertEqual(YXMLString.fragment(local), YXMLString.fragment(peer))
         assertSurfaceMatchesProjection(surface, local, "held peer transactions committed")
         assertSurfaceMatchesProjection(peerSurface, peer, "peer received commit")
@@ -130,7 +130,9 @@ final class DocumentEngineCompositionTests: DocumentEngineTestCase {
         let surface = CompositionCallbackSurface(blocks: projection(doc))
         let engine = DocumentEngine(doc: doc, surface: surface)
         try engine.compositionBegan(blockID: Self.firstID, at: 6)
-        try engine.replaceText(block: Self.firstID, range: 0..<0, with: "held ")
+        try doc.transact(origin: .remote) { _ in
+            try XCTUnwrap(BlockIndex(doc: doc).entries[Self.firstID]?.textType).insert(0, "held ")
+        }
         surface.onPatch = {
             if surface.headless.appliedPatches.count == 1 {
                 try? engine.compositionCancelled()
@@ -150,7 +152,9 @@ final class DocumentEngineCompositionTests: DocumentEngineTestCase {
         let surface = HeadlessSurface(blocks: projection(doc))
         let engine = DocumentEngine(doc: doc, surface: surface)
         try engine.compositionBegan(blockID: Self.firstID, at: 6)
-        try engine.replaceText(block: Self.firstID, range: 0..<0, with: "held ")
+        try doc.transact(origin: .remote) { _ in
+            try XCTUnwrap(BlockIndex(doc: doc).entries[Self.firstID]?.textType).insert(0, "held ")
+        }
         let displayed = surface.blocks
         doc.destroy()
         XCTAssertTrue(engine.isDetached)
@@ -230,7 +234,9 @@ final class DocumentEngineCompositionTests: DocumentEngineTestCase {
         let surface = HeadlessSurface(blocks: projection(doc))
         let engine = DocumentEngine(doc: doc, surface: surface)
         try engine.compositionBegan(blockID: Self.firstID, at: 6)
-        try engine.replaceText(block: Self.firstID, range: 0..<0, with: "X")
+        try doc.transact(origin: .remote) { _ in
+            try XCTUnwrap(BlockIndex(doc: doc).entries[Self.firstID]?.textType).insert(0, "X")
+        }
         engine.detach()
         XCTAssertTrue(surface.appliedPatches.isEmpty)
         XCTAssertEqual(surface.compositionDeferrals, [true, false])
@@ -299,7 +305,7 @@ final class DocumentEngineCompositionTests: DocumentEngineTestCase {
         try peer.applyUpdate(YUpdateDecoder.decode(update), origin: .remote)
         XCTAssertEqual(try engine.currentSelection()?.head.offset, expectedAnchor + 1)
         XCTAssertEqual(text(of: surface.blocks[0]), expectedText)
-        assertSingleRebuild(surface, origin: .localUser)
+        assertSingleRebuild(surface, origin: .other)
         XCTAssertEqual(YXMLString.fragment(local), YXMLString.fragment(peer))
         assertSurfaceMatchesProjection(surface, local, "concurrent composition committed")
         assertSurfaceMatchesProjection(peerSurface, peer, "peer received composition")

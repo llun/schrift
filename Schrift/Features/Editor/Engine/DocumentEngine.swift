@@ -46,6 +46,9 @@ final class DocumentEngine {
     private var selection: RelativeEditorSelection?
     private var composition: CompositionQueue?
     private var isDeferringComposition = false
+    /// Retained through pending rebuilds and chained relative restarts. Raw
+    /// surface offsets stay locked until the final deferral-complete signal.
+    private var deferredBlockIDs: Set<String> = []
     private var compositionGeneration: UInt = 0
     private var isFlushing = false
     private let previousAfterTransaction: ((YTransaction) -> Void)?
@@ -86,11 +89,14 @@ final class DocumentEngine {
 
     // MARK: - Intents (UI → model)
 
+    // Input offsets are replica coordinates. Deferred blocks reject local
+    // input with .composingBlock through final rebuild/completion delivery.
+
     /// Replaces a block-relative UTF-16 range. `marks` is the complete mark set
     /// the replacement carries, or `nil` to inherit the marks at the range.
     @discardableResult
     func replaceText(block: String, range: Range<Int>, with text: String, marks: [TextMark]? = nil) throws -> Data {
-        try requireAttached()
+        try requireEditableBlock(block)
         return try writer.replaceText(
             block: block, range: range, with: text,
             marks: marks.map { YTextAttributes($0.map { ($0.key, $0.valueJSON) }) })
@@ -100,26 +106,40 @@ final class DocumentEngine {
     /// mark, matching BlockNote's style commands.
     @discardableResult
     func formatRange(block: String, range: Range<Int>, marks: [TextMark]) throws -> Data {
-        try requireAttached()
+        try requireEditableBlock(block)
         return try writer.formatRange(
             block: block, range: range, attributes: YTextAttributes(marks.map { ($0.key, $0.valueJSON) }))
     }
 
     @discardableResult
     func splitBlock(block: String, at offset: Int, newID: String) throws -> Data {
-        try requireAttached()
+        try requireEditableBlock(block)
         return try writer.splitBlock(block: block, at: offset, newID: newID)
     }
 
     @discardableResult
     func joinBlocks(block: String) throws -> Data {
-        try requireAttached()
+        try requireEditableBlock(block)
+        if !deferredBlockIDs.isEmpty {
+            // A join writes both the source and the previous sibling's last
+            // descendant. Check their outermost indexed blocks as well, so a
+            // nested destination cannot bypass a composing ancestor's lock.
+            let target = try writer.find(block)
+            if let source = builder.index.blockID(for: target.container) { try requireEditableBlock(source) }
+            var previous = target.item.left
+            while previous?.deleted == true { previous = previous?.left }
+            if let previous, case .type(let type) = previous.content,
+                let destination = builder.index.blockID(for: type)
+            {
+                try requireEditableBlock(destination)
+            }
+        }
         return try writer.joinBlocks(block: block)
     }
 
     @discardableResult
     func setBlockType(block: String, to node: String, props: [(key: String, value: YAnyValue)] = []) throws -> Data {
-        try requireAttached()
+        try requireEditableBlock(block)
         return try writer.setBlockType(block: block, to: node, props: props)
     }
 
@@ -129,6 +149,10 @@ final class DocumentEngine {
     /// out-of-bounds offsets throw without replacing the previous selection.
     func setSelection(_ selection: EditorSelection?) throws {
         try requireAttached()
+        if let selection {
+            try requireEditableBlock(selection.anchor.blockID)
+            try requireEditableBlock(selection.head.blockID)
+        }
         self.selection = try selection.map { try RelativeEditorSelection($0, index: builder.index) }
     }
 
@@ -144,9 +168,12 @@ final class DocumentEngine {
     /// selection. The composed string is an insertion, not a replacement range.
     /// `assoc` defaults to left affinity so a peer append stays after an IME
     /// begun at end-of-text. With no explicit offset the head's affinity wins.
+    /// Explicit offsets into deferred blocks throw `.composingBlock`; a restart
+    /// from the existing relative selection is allowed without `at:`.
     func compositionBegan(blockID: String, at offset: Int? = nil, assoc: Int = -1) throws {
         try requireAttached()
         guard composition == nil else { throw DocumentEngineError.compositionAlreadyActive }
+        if offset != nil { try requireEditableBlock(blockID) }
         let position: EditorPosition
         if let offset {
             position = EditorPosition(blockID: blockID, offset: offset, assoc: assoc)
@@ -164,6 +191,7 @@ final class DocumentEngine {
         else { throw DocumentEngineError.invalidPosition }
         composition = CompositionQueue(anchor: anchor)
         compositionGeneration &+= 1
+        deferredBlockIDs.insert(blockID)
         // A previous composition may have ended logically inside applyPatch,
         // with its completion event still queued. Keep deferral continuous.
         if !isDeferringComposition {
@@ -205,7 +233,9 @@ final class DocumentEngine {
             throw error
         }
         guard !isDetached else { return update }
-        finishComposition(origin: .localUser)
+        // The snapshot also contains discarded peer changes, so an optimistic
+        // surface must apply it even when it already displayed the marked text.
+        finishComposition(origin: .other)
         return update
     }
 
@@ -237,6 +267,11 @@ final class DocumentEngine {
     /// holds the engine has a lifecycle bug.
     private func requireAttached() throws {
         guard !isDetached else { throw DocumentEngineError.detached }
+    }
+
+    private func requireEditableBlock(_ blockID: String) throws {
+        try requireAttached()
+        guard !deferredBlockIDs.contains(blockID) else { throw DocumentEngineError.composingBlock }
     }
 
     // MARK: - Change signal
@@ -272,6 +307,7 @@ final class DocumentEngine {
                 case .compositionEnded(let generation):
                     guard generation == compositionGeneration else { continue }
                     isDeferringComposition = false
+                    deferredBlockIDs = []
                     surface?.setCompositionDeferred(false)
                 }
             }
@@ -296,6 +332,7 @@ final class DocumentEngine {
         buffered = []
         let wasComposing = isDeferringComposition
         isDeferringComposition = false
+        deferredBlockIDs = []
         composition = nil
         selection = nil
         doc.afterTransaction = previousAfterTransaction
@@ -312,4 +349,6 @@ enum DocumentEngineError: Error, Equatable {
     case invalidPosition
     case compositionAlreadyActive
     case compositionNotActive
+    /// Surface offsets may be stale until final rebuild/completion delivery.
+    case composingBlock
 }

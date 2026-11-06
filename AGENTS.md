@@ -2057,7 +2057,8 @@ only; nothing in the shipping editor uses it yet.
   whole surface list, for a root-group replacement, a fragment that was empty
   when the engine attached, a container `id` changed in place, and every
   transaction while the replica is not index-shaped — see the `.text` bullet). Every patch carries a `BlockPatchOrigin`
-  (`.localUser`, `.remote`, `.other`) taken from the transaction.
+  (`.localUser`, `.remote`, `.other`) normally taken from the transaction;
+  authoritative composition rebuilds always use `.other` and must be applied.
 - **Selection is relative.** `setSelection(EditorSelection?)` captures directed
   anchor/head endpoints (`EditorPosition`: block id, UTF-16 offset, `assoc`);
   `currentSelection()` resolves them against the current replica after any
@@ -2088,9 +2089,19 @@ only; nothing in the shipping editor uses it yet.
   and still rebuilds. A successful commit collapses selection after the inserted
   UTF-16 text, captured inside the write transaction before observers run; capture
   errors propagate through the error/rebuild path rather than becoming a silent
-  nil selection (transactions have no rollback). A new composition can begin
-  immediately after commit/cancel inside `applyPatch`: deferral stays continuous
+  nil selection (transactions have no rollback). A new composition can begin from
+  the relative selection after commit/cancel inside `applyPatch`: deferral stays continuous
   and generation-tagged completion events cannot end a newer composition.
+  Input offsets are always replica coordinates, not frozen-surface coordinates.
+  `setSelection` endpoints and local `replaceText`/`formatRange`/`splitBlock`/
+  `joinBlocks`/`setBlockType` targeting a deferred block throw `.composingBlock`
+  without mutating the replica (joins check the destination/outer block too).
+  Block locks remain through pending rebuild delivery until the final
+  `setCompositionDeferred(false)`; a chained restart retains earlier locks.
+  Explicit-offset restarts into locked blocks are rejected. Restarts from an
+  existing relative selection, without `at:`, remain supported. Queries and
+  clearing selection remain allowed. A commit's write is `.localUser`, but its
+  rebuild is `.other` so optimistic surfaces always apply discarded peer changes.
   Detach drops deferral without rebuilding, clears selection, and
   rejects all later composition/selection intents as `.detached`. Surface equality
   with projection is intentionally suspended for deferred content, and restored

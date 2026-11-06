@@ -529,7 +529,8 @@ any screen. `Features/Editor/Engine/` holds these pieces:
   (the whole surface list, for a root-group replacement, a fragment that was
   empty when the engine attached, a container `id` changed in place, and every
   transaction while the replica is not index-shaped, `BlockIndex.isCanonical`). Every patch carries a `BlockPatchOrigin`
-  (`.localUser`, `.remote`, `.other`) taken from the transaction. The surface also
+  (`.localUser`, `.remote`, `.other`) normally taken from the transaction;
+  composition rebuilds always use `.other` and must be applied. The surface also
   receives `setCompositionDeferred(Bool)`; selection uses the engine's query API.
 - **`HeadlessSurface`** — an in-memory surface that only ever changes through
   `applyPatch`, so a test can assert it equals the replica's projection after
@@ -589,9 +590,26 @@ replaced or non-addressable original text drops the commit write, returns the
 empty update, and still rebuilds. Rebuild and deferral completion share the
 serialized delivery queue so surface callbacks can transact without reentrant
 patch delivery. Commit/cancel ends the logical composition immediately, allowing
-`compositionBegan` from inside the same `applyPatch` callback. Deferral stays
+`compositionBegan` from a relative selection inside the same `applyPatch` callback. Deferral stays
 continuous until the newest composition's rebuild completes; generation-tagged
 completion events prevent an older completion from ending a newer composition.
+All input offsets use replica coordinates. A frozen surface's offsets cannot be
+submitted as if they referred to the replica, where peer edits already landed.
+`setSelection` rejects either endpoint in a deferred block with `.composingBlock`;
+`replaceText`, `formatRange`, `splitBlock`, `joinBlocks`, and `setBlockType` reject
+that block too, with joins checking the source and destination's outer blocks.
+Rejection leaves the replica, selection, patches and deferral history unchanged.
+Locks persist through pending rebuild delivery until the final
+`setCompositionDeferred(false)` signal; chained restarts retain earlier locks.
+An explicit `compositionBegan(..., at:)` into a locked block is rejected even
+after logical commit/cancel, since its queued rebuild may not have reached the
+surface. A restart without `at:` uses the existing relative selection and remains
+safe even if it discards the previous composing-block rebuild. Queries and
+`setSelection(nil)` remain allowed during deferral.
+Every composition rebuild, including a successful commit's, has origin `.other`
+and must always be applied by optimistic surfaces. Only the write transaction is
+`.localUser`: tagging its catch-up snapshot that way would lose discarded peer
+changes when a surface skips the local edit it already displayed.
 Detach clears selection/deferral and drops deferred work without a rebuild;
 later intents throw `.detached`. A deferred surface intentionally differs
 from projection until commit/cancel restores equality. Native marked-text and

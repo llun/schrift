@@ -37,6 +37,12 @@ import Foundation
 /// a whole-list reset. Selection is queried with `DocumentEngine.currentSelection`
 /// after patches; its offsets resolve against the current replica, even while
 /// the surface's composing block is intentionally frozen.
+/// Input offsets always use replica coordinates, not the frozen display.
+/// Selection endpoints and local intents targeting a deferred block throw
+/// `.composingBlock`; joins also check the destination. These blocks stay locked
+/// until `setCompositionDeferred(false)`, after the final rebuild is delivered.
+/// An explicit-offset restart into a locked block is rejected too. A restart
+/// from the existing relative selection (no `at:`) is safe and supported.
 /// A composition restarted from `applyPatch` after commit/cancel keeps deferral
 /// continuous; completion of the previous composition cannot clear the new one.
 protocol EditorSurface: AnyObject {
@@ -55,7 +61,9 @@ struct BlockPatch: Equatable {
     var changes: [BlockChange]
     /// Who caused the transaction. A surface that applied a local intent
     /// optimistically skips `.localUser` patches for that edit; a surface with
-    /// no optimism (or any `.remote` patch) applies everything.
+    /// no optimism (or any `.remote` patch) applies everything. Composition
+    /// rebuilds are always `.other`, never `.localUser`, and must always be
+    /// applied: they include discarded peer edits as well as committed text.
     var origin: BlockPatchOrigin
 
     init(_ changes: [BlockChange] = [], origin: BlockPatchOrigin = .other) {
@@ -66,11 +74,13 @@ struct BlockPatch: Equatable {
     var isEmpty: Bool { changes.isEmpty }
 }
 
-/// The transaction origin a patch came from.
+/// A patch's cause/delivery policy; composition rebuilds use `.other` even when
+/// the commit wrote through a `.localUser` transaction.
 enum BlockPatchOrigin: Equatable {
     case localUser
     case remote
-    /// A transaction with no origin — the B4 formatting cleanup, or a test.
+    /// A transaction with no origin (B4 cleanup, a test), or an authoritative
+    /// composition rebuild that every surface must apply.
     case other
 
     init(_ origin: YTransactionOrigin?) {
