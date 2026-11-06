@@ -47,7 +47,7 @@ struct PatchBuilder {
         var touched: [String] = []
         var groups: [YType] = []
         var rootGroupChanged = false
-        var resync = rootAppeared
+        var resync = rootAppeared || !index.isCanonical
 
         func touch(_ id: String) {
             if !touched.contains(id) { touched.append(id) }
@@ -69,8 +69,9 @@ struct PatchBuilder {
                 // The narrowed rule: only a simple container whose element is
                 // exactly this XmlText may take the fast path.
                 // `isProjectable` is the pre-transaction state (the entry was
-                // refreshed after the last one): an opaque block's surface holds
-                // no runs, so a delta has nothing to apply to.
+                // refreshed after the last one): when the projection dropped or
+                // scrubbed content, the surface's runs are not the text's, so a
+                // delta computed from the text would not line up.
                 if let block = index.entries[id], block.isSimpleText, block.isProjectable, block.textType === type,
                     let element = block.element, YBlockProjection.props(of: element) != nil,
                     let deltas = Self.textDeltas(events[oid], text: type)
@@ -111,7 +112,9 @@ struct PatchBuilder {
             }
         }
 
-        if resync {
+        // A root-group change that leaves a shape the index cannot mirror
+        // (an id-less or duplicate container, a stray child) resyncs too.
+        if resync || groups.contains(where: { !BlockIndex.isCanonical(group: $0) }) {
             let blocks = YBlockProjection.project(doc).blocks.map(BlockSnapshot.init)
             index.rebuild()
             return BlockPatch([.reset(blocks)], origin: origin)

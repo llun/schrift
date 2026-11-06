@@ -589,10 +589,13 @@ sends the complete set, including `[]`, in the projection's format-item order.
 **Cost.** Classification reads `transaction.changed` (direct child changes), so
 a keystroke visits one `XmlText` and projects no block, and the emit loop
 iterates only the touched ids ordered by the index's position map — never
-`index.order`. Text and prop changes are O(touched blocks). A structural change
-(root-group membership, split/join, a nested change) rebuilds the index —
-O(document) for that walk — and projects only the touched blocks, one at a time
-(`YBlockProjection.projectBlock`). `DocumentEnginePatchCostTests` and
+`index.order`. Text and prop changes are O(touched blocks). A root-group change
+(membership, split/join) rebuilds the index — O(document), reading each block's
+text for `isProjectable` — and projects only the touched blocks, one at a time
+(`YBlockProjection.projectBlock`); a nested change only refreshes its top-level
+entry. A replica the id-keyed index cannot mirror (`BlockIndex.isCanonical`
+false: several root children, an id-less or non-container group child, a
+repeated id) resets on every transaction until it is canonical again. `DocumentEnginePatchCostTests` and
 `DocumentEngineNarrowedRuleTests.testTextTransactionVisitsOnlyTouchedEntries`
 pin the counters and what they measure.
 

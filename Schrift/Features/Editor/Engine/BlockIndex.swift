@@ -29,10 +29,11 @@ struct BlockIndex {
         /// child is an `XmlText`.
         let isSimpleText: Bool
         /// True when, at the time the entry was built, the projection read this
-        /// block's props and text as-is: props readable, and the text holds only
-        /// strings and known marks with readable links. Anything else is opaque
-        /// or scrubbed, so the surface's copy came from a `.replaceBlock` and a
-        /// fast-path patch could not be applied to it.
+        /// block's props and text as-is: a simple container, readable props,
+        /// and — when the element is a sole `XmlText` — only strings and known
+        /// marks with readable links. Otherwise the projection dropped or
+        /// scrubbed content the surface's copy therefore lacks, and a fast-path
+        /// patch computed from the replica could not be applied to it.
         let isProjectable: Bool
     }
 
@@ -48,6 +49,12 @@ struct BlockIndex {
     private(set) var groupOrder: [ObjectIdentifier: [String]] = [:]
     /// The root group's item, so a replacement (same id, new object) is visible.
     private(set) var rootGroupItem: YItem?
+    /// False when the replica has a shape the id-keyed index cannot mirror:
+    /// a root with more than one child, a group child that is not a container
+    /// with a readable id, or two containers sharing an id. The projection
+    /// still renders those (as `""`-id or repeated blocks), so while this is
+    /// false every transaction resets the surface instead of diffing.
+    private(set) var isCanonical = true
     private let doc: YDoc
     /// Re-resolved on every rebuild: an engine created on an empty document
     /// must start patching once the owner seeds the root.
@@ -124,7 +131,8 @@ struct BlockIndex {
         entries[id] = Self.entry(id: id, item: item)
     }
 
-    /// Re-reads the whole index. Only structural changes pay for this: a
+    /// Re-reads the whole index, including each block's text for
+    /// `isProjectable`. Only a root-group change or a reset pays for this: a
     /// split/join/insert/remove is rare, a keystroke is not.
     mutating func rebuild() {
         entries = [:]
@@ -132,8 +140,15 @@ struct BlockIndex {
         position = [:]
         groupOrder = [:]
         rootGroupItem = nil
+        isCanonical = true
         root = doc.share[BlockNoteYjs.fragmentField]
-        guard let root, let group = Self.rootGroup(in: root) else { return }
+        guard let root else { return }
+        let rootChildren = Self.countableChildren(of: root)
+        guard let group = Self.rootGroup(in: root) else {
+            isCanonical = rootChildren.isEmpty
+            return
+        }
+        isCanonical = rootChildren.count == 1 && Self.isCanonical(group: group)
         rootGroupItem = group.item
         let containers = containers(in: group)
         groupOrder[ObjectIdentifier(group)] = containers.map(\.id)
@@ -149,6 +164,18 @@ struct BlockIndex {
     }
 
     // MARK: - Reading the replica
+
+    /// True when every countable child of `group` is a container with a
+    /// readable id, and no id repeats.
+    static func isCanonical(group: YType) -> Bool {
+        var seen: Set<String> = []
+        for child in countableChildren(of: group) {
+            guard case .type(let type) = child.content, type.typeRef == .xmlElement(nodeName: "blockContainer"),
+                let id = blockID(of: type), seen.insert(id).inserted
+            else { return false }
+        }
+        return true
+    }
 
     private static func rootGroup(in root: YType) -> YType? {
         var item = root.start

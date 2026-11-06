@@ -2106,10 +2106,13 @@ only; nothing in the shipping editor uses it yet.
   reads `transaction.changed` (the types whose *direct* children changed), so a
   keystroke visits one `XmlText` and projects no block. The emit loop iterates
   only the touched ids, ordered by the index's position map — never
-  `index.order`. A structural change (root-group membership, split/join, a nested
-  change) rebuilds the index and projects the touched blocks, one at a time
-  (`YBlockProjection.projectBlock`); it is O(document) for the index walk, not
-  O(touched). `DocumentEnginePatchCostTests` and
+  `index.order`. A root-group change (membership, split/join) rebuilds the index
+  — O(document), reading each block's text for `isProjectable` — and projects
+  the touched blocks, one at a time (`YBlockProjection.projectBlock`); a nested
+  change only refreshes its top-level entry. A replica the id-keyed index cannot
+  mirror (`BlockIndex.isCanonical` false: several root children, an id-less or
+  non-container group child, a repeated id) resets on every transaction until
+  it is canonical again. `DocumentEnginePatchCostTests` and
   `DocumentEngineNarrowedRuleTests.testTextTransactionVisitsOnlyTouchedEntries`
   pin the counters and what they measure. A delta that both rewrites text and
   re-marks it, or a format range whose marks are not uniform, escalates to

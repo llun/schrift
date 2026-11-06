@@ -377,4 +377,69 @@ final class DocumentEngineNarrowedRuleTests: DocumentEngineTestCase {
         assertSurfaceMatchesProjection(surface, doc, "after the container id becomes unreadable")
     }
 
+    // MARK: - 15. Shapes the id-keyed index cannot mirror
+
+    func testDeletingAnIDLessContainerResetsTheSurface() throws {
+        let doc = try makeDoc(clientID: 1)
+        defer { doc.destroy() }
+        let surface = HeadlessSurface(blocks: projection(doc))
+        let engine = DocumentEngine(doc: doc, surface: surface)
+        let container = try XCTUnwrap(BlockIndex(doc: doc).entries[Self.firstID]?.container)
+        try doc.transact { tx in
+            try YWrite.mapSet(tx, on: container, key: "id", .any([.int(1)]))
+        }
+        XCTAssertEqual(surface.blocks.map(\.id), ["", Self.secondID, Self.thirdID])
+
+        // The index has no entry for the "" block; only a reset removes it.
+        try doc.transact { tx in container.item?.delete(tx) }
+
+        let patch = try XCTUnwrap(surface.appliedPatches.last)
+        XCTAssertTrue(hasReset(patch), "an id-less shape must reset, got \(patch.changes)")
+        XCTAssertEqual(surface.blocks.map(\.id), [Self.secondID, Self.thirdID])
+        _ = engine
+        assertSurfaceMatchesProjection(surface, doc, "after deleting the id-less container")
+    }
+
+    func testASecondRootChildResetsEveryTransaction() throws {
+        let doc = try makeDoc(clientID: 1)
+        defer { doc.destroy() }
+        let surface = HeadlessSurface(blocks: projection(doc))
+        let engine = DocumentEngine(doc: doc, surface: surface)
+        let root = try XCTUnwrap(doc.share[BlockNoteYjs.fragmentField])
+        let group = try XCTUnwrap(BlockIndex(doc: doc).rootGroupType())
+        try doc.transact { tx in
+            _ = try YWrite.insertAfter(
+                tx, into: root, after: group.item, [.type(YType(typeRef: .xmlElement(nodeName: "blockGroup")))])
+        }
+        XCTAssertEqual(surface.blocks.count, 0, "the projection renders nothing for two root children")
+
+        // A split inside the first group would otherwise be an `.insert`.
+        try engine.splitBlock(block: Self.firstID, at: 5, newID: Self.newRootID)
+
+        let patch = try XCTUnwrap(surface.appliedPatches.last)
+        XCTAssertTrue(hasReset(patch), "a non-canonical root must reset, got \(patch.changes)")
+        assertSurfaceMatchesProjection(surface, doc, "after splitting under two root children")
+    }
+
+    func testDuplicateIDsResetInsteadOfPatchingTheWrongBlock() throws {
+        let doc = try makeDoc(clientID: 1)
+        defer { doc.destroy() }
+        let surface = HeadlessSurface(blocks: projection(doc))
+        let engine = DocumentEngine(doc: doc, surface: surface)
+        let index = BlockIndex(doc: doc)
+        let firstText = try XCTUnwrap(index.entries[Self.firstID]?.textType)
+        let secondContainer = try XCTUnwrap(index.entries[Self.secondID]?.container)
+        try doc.transact { tx in
+            try YWrite.mapSet(tx, on: secondContainer, key: "id", .any([.string(Self.firstID)]))
+        }
+        XCTAssertEqual(surface.blocks.map(\.id), [Self.firstID, Self.firstID, Self.thirdID])
+
+        try doc.transact { _ in try firstText.insert(0, "X") }
+
+        let patch = try XCTUnwrap(surface.appliedPatches.last)
+        XCTAssertTrue(hasReset(patch), "repeated ids must reset, got \(patch.changes)")
+        XCTAssertEqual(text(of: surface.blocks[0]), "XFirst paragraph.")
+        _ = engine
+        assertSurfaceMatchesProjection(surface, doc, "after editing the first of two same-id blocks")
+    }
 }
