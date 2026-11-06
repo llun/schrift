@@ -526,8 +526,9 @@ any screen. `Features/Editor/Engine/` holds four pieces:
   `.props` (attributes only), `.insert(after:, [BlockSnapshot])`, `.remove`,
   `.replaceBlock` (the whole-block fallback for inline nodes, split/join, a type
   change, or a delta the text form cannot express) and `.reset([BlockSnapshot])`
-  (the whole surface list, for a root-group replacement or a fragment that was
-  empty when the engine attached). Every patch carries a `BlockPatchOrigin`
+  (the whole surface list, for a root-group replacement, a fragment that was
+  empty when the engine attached, a container `id` changed in place, and every
+  transaction while the replica is not index-shaped, `BlockIndex.isCanonical`). Every patch carries a `BlockPatchOrigin`
   (`.localUser`, `.remote`, `.other`) taken from the transaction. Composition and
   selection hooks are B6b.
 - **`HeadlessSurface`** — an in-memory surface that only ever changes through
@@ -580,8 +581,9 @@ known marks with readable links; `BlockIndex.Entry.isProjectable`), because an
 opaque or mark-scrubbed block's surface copy came from a `.replaceBlock`. Only
 the root `blockGroup` produces `.insert`/`.remove`; a
 reorder there is a `.remove` + `.insert`. A change to the fragment root, or a
-root group that is not the one the index recorded, or a container's `id`
-changed in place, is a `.reset` of the projected document.
+root group that is not the one the index recorded, a container's `id` changed
+in place, or any transaction while `BlockIndex.isCanonical` is false, is a
+`.reset` of the projected document.
 `TextDelta.marks` is never `nil` from the builder: `nil`
 means *inherit* (the surface's local-keystroke form), and the builder always
 sends the complete set, including `[]`, in the projection's format-item order.

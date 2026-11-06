@@ -2053,8 +2053,9 @@ only; nothing in the shipping editor uses it yet.
   `BlockPatch` changes are `.text(blockID, [TextDelta])`, `.props`,
   `.insert(after:, [BlockSnapshot])`, `.remove([blockID])`,
   `.replaceBlock(blockID, BlockSnapshot)` and `.reset([BlockSnapshot])` (the
-  whole surface list, for a root-group replacement or a fragment that was empty
-  when the engine attached). Every patch carries a `BlockPatchOrigin`
+  whole surface list, for a root-group replacement, a fragment that was empty
+  when the engine attached, a container `id` changed in place, and every
+  transaction while the replica is not index-shaped — see the `.text` bullet). Every patch carries a `BlockPatchOrigin`
   (`.localUser`, `.remote`, `.other`) taken from the transaction. Composition
   and selection hooks are B6b; do not stub them in.
 - **The engine borrows the replica; it never owns it.** `DocumentCollaborationManager`
@@ -2100,8 +2101,9 @@ only; nothing in the shipping editor uses it yet.
   `.replaceBlock`. Only the root `blockGroup` produces
   `.insert`/`.remove`; a nested group never does. A reorder in the root group is
   a `.remove` + `.insert` (the surface holds an ordered list). A change to the
-  fragment root, or a root group that is not the one the index recorded, or a
-  container's `id` changed in place, is a `.reset` of the projected document.
+  fragment root, or a root group that is not the one the index recorded, a
+  container's `id` changed in place, or any transaction while
+  `BlockIndex.isCanonical` is false, is a `.reset` of the projected document.
 - **Patch building is O(touched blocks) for text and prop changes.** Classification
   reads `transaction.changed` (the types whose *direct* children changed), so a
   keystroke visits one `XmlText` and projects no block. The emit loop iterates
