@@ -310,7 +310,7 @@ outer call returns the combined update. A group is not atomic: each intent
 validates before it mutates, but when a later intent throws, the earlier ones stay
 in the store and the transaction's observers still deliver them, while the call
 throws and returns no bytes — yjs has no rollback, so after a throw the replica is
-the truth. Replica ownership/lifetime stays with the caller. This API is not yet wired into `BlockNoteWrite.applyEdit` or saving (B5b).
+the truth. Replica ownership/lifetime stays with the caller, which destroys the replica on any throw (as with `applyReplicaUpdate`): a throw out of transaction cleanup leaves it unusable. This API is not yet wired into `BlockNoteWrite.applyEdit` or saving (B5b).
 
 Ranges use UTF-16 text positions and one unit per atomic inline element (mentions,
 interlinks, math and hard breaks — BlockNote's Shift+Enter is an empty `hardBreak`
