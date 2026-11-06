@@ -31,6 +31,7 @@ struct PatchBuilder {
     }
 
     mutating func build(_ transaction: YTransaction) -> BlockPatch {
+        let rootAppeared = index.resolveRoot()
         var events: [ObjectIdentifier: YEvent] = [:]
         for entry in transaction.changedParentTypes {
             if let event = entry.events.first { events[ObjectIdentifier(entry.type)] = event }
@@ -41,6 +42,7 @@ struct PatchBuilder {
         var props: Set<String> = []
         var touched: [String] = []
         var groups: [YType] = []
+        var rootGroupChanged = false
 
         func touch(_ id: String) {
             if !touched.contains(id) { touched.append(id) }
@@ -53,17 +55,33 @@ struct PatchBuilder {
             if type.typeRef == .xmlText {
                 guard let id = index.blockID(for: type) else { continue }
                 touch(id)
-                if let deltas = Self.textDeltas(events[oid], text: type) {
+                // Only the block's own content text may become a `.text` patch.
+                // Text in a nested block or a nested group is not addressable at
+                // this block's offsets: rebuild the top-level block instead.
+                if index.entries[id]?.textTypes.contains(where: { $0 === type }) == true,
+                    let deltas = Self.textDeltas(events[oid], text: type)
+                {
                     textDeltas[id] = deltas
                 } else {
                     structural.insert(id)
                 }
                 continue
             }
-            if type.typeRef == .xmlElement(nodeName: "blockGroup") || type.item == nil {
-                groups.append(type)
+            if type.typeRef == .xmlElement(nodeName: "blockGroup") {
+                if index.isRootGroup(type) {
+                    groups.append(type)
+                    rootGroupChanged = true
+                } else if let id = index.blockID(for: type) {
+                    // A nested group's child list moved: the top-level block's
+                    // projection changed, and only a whole-block patch can say so.
+                    touch(id)
+                    structural.insert(id)
+                }
                 continue
             }
+            // The fragment root itself: its child list is the root group, whose
+            // own entry carries any membership change.
+            if type.item == nil { continue }
             guard let id = index.blockID(for: type) else { continue }
             touch(id)
             if type.typeRef == .xmlElement(nodeName: "blockContainer") || entry.subs.contains(nil) {
@@ -73,6 +91,14 @@ struct PatchBuilder {
             }
         }
 
+        // An engine created on an empty document sees the root appear inside a
+        // transaction whose group may not be in `changed`: the whole block list
+        // is new, so diff it against the empty index.
+        if rootAppeared, let group = index.rootGroupType(), !groups.contains(where: { $0 === group }) {
+            groups.append(group)
+            rootGroupChanged = true
+        }
+
         var changes: [BlockChange] = []
         var removed: [String] = []
         var inserts: [(after: String?, blocks: [BlockSnapshot])] = []
@@ -80,41 +106,59 @@ struct PatchBuilder {
         for group in groups {
             let current = index.containers(in: group)
             let previous = index.groupOrder[ObjectIdentifier(group)] ?? []
-            let currentIDs = Set(current.map(\.id))
-            removed.append(contentsOf: previous.filter { !currentIDs.contains($0) })
-            var pending: [BlockSnapshot] = []
-            var after: String?
-            for (id, item) in current {
-                if previous.contains(id) {
-                    if !pending.isEmpty {
-                        inserts.append((after, pending))
-                        pending = []
+            let currentIDs = current.map(\.id)
+            let previousSet = Set(previous)
+            let currentSet = Set(currentIDs)
+            let survivorsInPreviousOrder = previous.filter { currentSet.contains($0) }
+            let survivorsInCurrentOrder = currentIDs.filter { previousSet.contains($0) }
+            if survivorsInPreviousOrder != survivorsInCurrentOrder {
+                // A reorder. The surface holds an ordered list, so the only
+                // patch that expresses a move is remove-then-insert; moves are
+                // rare and correctness beats a minimal diff.
+                removed.append(contentsOf: previous)
+                inserts.append((nil, current.map { snapshot($0.item) }))
+            } else {
+                removed.append(contentsOf: previous.filter { !currentSet.contains($0) })
+                var pending: [BlockSnapshot] = []
+                var after: String?
+                for (id, item) in current {
+                    if previousSet.contains(id) {
+                        if !pending.isEmpty {
+                            inserts.append((after, pending))
+                            pending = []
+                        }
+                        after = id
+                    } else {
+                        pending.append(snapshot(item))
                     }
-                    after = id
-                } else {
-                    pending.append(snapshot(item))
                 }
+                if !pending.isEmpty { inserts.append((after, pending)) }
             }
-            if !pending.isEmpty { inserts.append((after, pending)) }
-            index.setGroupOrder(group, current.map(\.id))
+            index.setGroupOrder(group, currentIDs)
         }
 
         for id in index.order where touched.contains(id) {
             if structural.contains(id) {
                 guard let entry = index.entries[id] else { continue }
                 changes.append(.replaceBlock(blockID: id, block: snapshot(entry.containerItem)))
-            } else if props.contains(id) {
-                guard let element = index.entries[id]?.element else { continue }
-                changes.append(.props(blockID: id, props: YBlockProjection.props(of: element) ?? []))
-            } else if let deltas = textDeltas[id], !deltas.isEmpty {
-                changes.append(.text(blockID: id, deltas: deltas))
+            } else {
+                // Props and text are independent: one transaction may change
+                // both, and dropping either leaves the surface stale.
+                if props.contains(id), let element = index.entries[id]?.element {
+                    changes.append(.props(blockID: id, props: YBlockProjection.props(of: element) ?? []))
+                }
+                if let deltas = textDeltas[id], !deltas.isEmpty {
+                    changes.append(.text(blockID: id, deltas: deltas))
+                }
             }
         }
 
         if !removed.isEmpty { changes.insert(.remove(blockIDs: removed), at: 0) }
         for insert in inserts { changes.append(.insert(after: insert.after, blocks: insert.blocks)) }
 
-        if !groups.isEmpty {
+        // Only a root-group change alters the block list; a nested change leaves
+        // the index's entries valid, so it never pays for a rebuild.
+        if rootGroupChanged {
             index.rebuild()
         } else {
             for id in touched { index.refresh(id) }
@@ -145,23 +189,29 @@ struct PatchBuilder {
         // pre-change coordinate space; the block is rebuilt instead.
         if changesText && changesMarks { return nil }
         if changesMarks { return formatDeltas(delta, text: text) }
-        var cursor = 0
+        var oldCursor = 0
+        var newCursor = 0
         var out: [TextDelta] = []
         for op in delta {
             switch op.kind {
             case .retain(let length):
-                cursor += Int(length)
+                oldCursor += Int(length)
+                newCursor += Int(length)
             case .delete(let length):
-                out.append(TextDelta(range: cursor..<(cursor + Int(length)), replacement: ""))
-                cursor += Int(length)
+                out.append(TextDelta(range: oldCursor..<(oldCursor + Int(length)), replacement: ""))
+                oldCursor += Int(length)
             case .insert(let value):
                 guard case .text(let string) = value else { return nil }
-                out.append(
-                    TextDelta(
-                        range: cursor..<cursor, replacement: string,
-                        marks: op.attributes.map { attributes in
-                            attributes.map { TextMark(key: $0.key, valueJSON: $0.value.jsonText ?? "null") }
-                        }))
+                let length = string.utf16.count
+                // Marks come from the text itself, in format-item order, so the
+                // surface's run order matches the projection's. `[]` is explicit:
+                // an insertion with no marks in force must not inherit the marks
+                // to its right. A non-uniform range is not one delta.
+                guard let marks = uniformMarks(in: text, range: newCursor..<(newCursor + length)) else {
+                    return nil
+                }
+                out.append(TextDelta(range: oldCursor..<oldCursor, replacement: string, marks: marks))
+                newCursor += length
             }
         }
         return out

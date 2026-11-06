@@ -23,12 +23,22 @@ import Foundation
 /// cleanup or a split's new block, and a surface that skipped it would drift.
 /// A surface that already applied the keystroke itself reconciles; see
 /// `EditorSurface`.
+///
+/// **Remote updates are the owner's.** The engine never applies a peer's
+/// update: `DocumentCollaborationManager` owns the replica and calls
+/// `doc.applyUpdate(_:origin: .remote)`. The engine observes the resulting
+/// transaction like any other and patches the surface.
+///
+/// **Single consumer of the delivery hooks.** `afterAllTransactions` and
+/// `onDestroy` are single-slot, so the engine asserts it is their only
+/// consumer; `afterTransaction` is chained and restored on detach.
 @MainActor
 final class DocumentEngine {
     private let doc: YDoc
     private let writer: BlockNoteWriter
     private var builder: PatchBuilder
     private var buffered: [BlockPatch] = []
+    private var isFlushing = false
     private let previousAfterTransaction: ((YTransaction) -> Void)?
     private(set) var isDetached = false
 
@@ -47,6 +57,9 @@ final class DocumentEngine {
         self.surface = surface
         self.writer = BlockNoteWriter(doc: doc)
         self.builder = PatchBuilder(doc: doc)
+        assert(
+            doc.afterAllTransactions == nil && doc.onDestroy == nil,
+            "DocumentEngine is the single consumer of afterAllTransactions/onDestroy")
         self.previousAfterTransaction = doc.afterTransaction
         let previous = doc.afterTransaction
         doc.afterTransaction = { [weak self] transaction in
@@ -63,7 +76,8 @@ final class DocumentEngine {
     /// the replacement carries, or `nil` to inherit the marks at the range.
     @discardableResult
     func replaceText(block: String, range: Range<Int>, with text: String, marks: [TextMark]? = nil) throws -> Data {
-        try writer.replaceText(
+        try requireAttached()
+        return try writer.replaceText(
             block: block, range: range, with: text,
             marks: marks.map { YTextAttributes($0.map { ($0.key, $0.valueJSON) }) })
     }
@@ -72,33 +86,34 @@ final class DocumentEngine {
     /// mark, matching BlockNote's style commands.
     @discardableResult
     func formatRange(block: String, range: Range<Int>, marks: [TextMark]) throws -> Data {
-        try writer.formatRange(
+        try requireAttached()
+        return try writer.formatRange(
             block: block, range: range, attributes: YTextAttributes(marks.map { ($0.key, $0.valueJSON) }))
     }
 
     @discardableResult
     func splitBlock(block: String, at offset: Int, newID: String) throws -> Data {
-        try writer.splitBlock(block: block, at: offset, newID: newID)
+        try requireAttached()
+        return try writer.splitBlock(block: block, at: offset, newID: newID)
     }
 
     @discardableResult
     func joinBlocks(block: String) throws -> Data {
-        try writer.joinBlocks(block: block)
+        try requireAttached()
+        return try writer.joinBlocks(block: block)
     }
 
     @discardableResult
     func setBlockType(block: String, to node: String, props: [(key: String, value: YAnyValue)] = []) throws -> Data {
-        try writer.setBlockType(block: block, to: node, props: props)
+        try requireAttached()
+        return try writer.setBlockType(block: block, to: node, props: props)
     }
 
-    // MARK: - Remote updates (owner → model)
-
-    /// Applies a peer's update. The owner may equally call
-    /// `doc.applyUpdate(_:origin: .remote)` itself: the hook buffers either way
-    /// and `afterAllTransactions` delivers.
-    func applyRemoteUpdate(_ data: Data) throws {
-        guard !isDetached else { return }
-        try doc.applyUpdate(try YUpdateDecoder.decode(data), origin: .remote)
+    /// Intents after detach are a documented error, not a silent no-op: the
+    /// replica is gone, so there is nothing to write and a caller that still
+    /// holds the engine has a lifecycle bug.
+    private func requireAttached() throws {
+        guard !isDetached else { throw DocumentEngineError.detached }
     }
 
     // MARK: - Change signal
@@ -110,18 +125,27 @@ final class DocumentEngine {
         buffered.append(patch)
     }
 
+    /// Delivers buffered patches in order. A surface may open a transaction
+    /// from `applyPatch` (a UIKit text view does); that transaction's
+    /// `afterAllTransactions` re-enters here, sees `isFlushing`, and leaves its
+    /// patch in the queue for this outermost loop to drain — never mid-delivery.
     private func flush() {
-        guard !isDetached, !buffered.isEmpty else { return }
-        let patches = buffered
-        buffered = []
-        for patch in patches { surface?.applyPatch(patch) }
+        guard !isDetached, !isFlushing else { return }
+        isFlushing = true
+        defer { isFlushing = false }
+        while !buffered.isEmpty {
+            let patches = buffered
+            buffered = []
+            for patch in patches { surface?.applyPatch(patch) }
+        }
     }
 
     // MARK: - Teardown
 
     /// Detaches from the replica. Called by `YDoc.destroy()` through
     /// `onDestroy`, and safe to call directly. Idempotent; after it the engine
-    /// holds no hook into the store and delivers nothing.
+    /// holds no hook into the store, delivers nothing, and every intent throws
+    /// `DocumentEngineError.detached`.
     func detach() {
         guard !isDetached else { return }
         isDetached = true
@@ -130,4 +154,10 @@ final class DocumentEngine {
         doc.afterAllTransactions = nil
         doc.onDestroy = nil
     }
+}
+
+/// The engine's lifecycle errors.
+enum DocumentEngineError: Error, Equatable {
+    /// The replica was destroyed (or the engine detached); intents are refused.
+    case detached
 }

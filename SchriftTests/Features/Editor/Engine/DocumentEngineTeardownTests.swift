@@ -27,8 +27,10 @@ final class DocumentEngineTeardownTests: DocumentEngineTestCase {
         let patchesBefore = surface.appliedPatches.count
 
         doc.destroy()
-        // A remote update after teardown is a no-op, not a use-after-destroy.
-        try engine.applyRemoteUpdate(Data([0, 0]))
+        // An intent after teardown is refused, not a use-after-destroy.
+        XCTAssertThrowsError(try engine.replaceText(block: Self.firstID, range: 0..<0, with: "x")) {
+            XCTAssertEqual($0 as? DocumentEngineError, .detached)
+        }
 
         XCTAssertEqual(surface.appliedPatches.count, patchesBefore)
         XCTAssertTrue(surface.blocks.isEmpty == false, "the surface keeps what it was showing")

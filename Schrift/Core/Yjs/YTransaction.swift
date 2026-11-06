@@ -408,12 +408,9 @@ extension YDoc {
                 transactionCleanups = []
                 // yjs `Doc`'s `'afterAllTransactions'`: the outermost cleanup is
                 // done and `doc.transaction` is nil. A listener may open a
-                // transaction here (the engine's surface does); it is queued, so
-                // drain it before returning.
-                if let afterAllTransactions = transaction.doc.afterAllTransactions {
-                    afterAllTransactions()
-                    if !transactionCleanups.isEmpty { try cleanupTransactions(0) }
-                }
+                // transaction here (the engine's surface does); it is queued and
+                // drained by the enclosing `transact` loop, exactly as in yjs.
+                transaction.doc.afterAllTransactions?()
             } else {
                 try cleanupTransactions(i + 1)
             }

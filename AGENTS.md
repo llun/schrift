@@ -2070,18 +2070,33 @@ only; nothing in the shipping editor uses it yet.
   the edit it just made: the same transaction may also carry a format cleanup or
   a split's new block. A patch describes a *transition* from the pre-transaction
   state, so a surface that already applied the keystroke itself (a UIKit text
-  view mutates synchronously) must **reconcile** — the range already holds the
-  replacement — not insert a second copy. `HeadlessSurface` never mutates on its
-  own, so it applies every patch and equals the projection after each step.
-  There is no optimistic overlay (plan §2.3).
-- **Patch building is O(touched blocks).** Classification reads
-  `transaction.changed` (the types whose *direct* children changed), so a
-  keystroke visits one `XmlText` and projects no block. Only a structural change
-  walks its group, and only a block the delta cannot express is projected, one
-  block at a time (`YBlockProjection.projectBlock`). `DocumentEnginePatchCostTests`
-  pins the counters. A delta that both rewrites text and re-marks it, or a
-  format range whose marks are not uniform, escalates to `.replaceBlock` rather
-  than guessing.
+  view mutates synchronously) must **reconcile**. The rule, per change kind:
+  `.text` — if the range already holds `replacement` (or is already empty for a
+  deletion), skip that delta; `.replaceBlock`/`.props` — assign, idempotent;
+  `.insert`/`.remove` — skip ids already present/absent. `HeadlessSurface` never
+  mutates on its own, so it applies every patch and equals the projection after
+  each step. There is no optimistic overlay (plan §2.3).
+- **Only a block's own content text is `.text`.** `BlockIndex.Entry.textTypes`
+  holds the `XmlText` children of the block's *content element*. A change to a
+  nested block's text, or to a nested `blockGroup`'s child list, is not
+  addressable at the top-level block's offsets: it escalates to
+  `.replaceBlock` of the top-level block. Only the root `blockGroup` produces
+  `.insert`/`.remove`; a nested group never does. A reorder in the root group is
+  a `.remove` + `.insert` (the surface holds an ordered list).
+- **Patch building is O(touched blocks) for text and prop changes.** Classification
+  reads `transaction.changed` (the types whose *direct* children changed), so a
+  keystroke visits one `XmlText` and projects no block. A structural change
+  (root-group membership, split/join, a nested change) rebuilds the index and
+  projects the touched blocks, one at a time (`YBlockProjection.projectBlock`);
+  it is O(document) for the index walk, not O(touched). `DocumentEnginePatchCostTests`
+  pins the counters and what they measure. A delta that both rewrites text and
+  re-marks it, or a format range whose marks are not uniform, escalates to
+  `.replaceBlock` rather than guessing.
+- **`TextDelta.marks` is never `nil` from the builder.** `nil` means *inherit*
+  the marks in force at the insertion point (the surface's convenience form for
+  a local keystroke). The builder always sends the complete set, including `[]`
+  for "no marks in force", in the projection's format-item order — never
+  `Dictionary` order.
 - **No UIKit, no `NSRange`, in `Engine/`.** The model speaks block-relative
   `Range<Int>` UTF-16 offsets only; `BlockNoteWriter` carries `Range<Int>`
   overloads so the engine never spells `NSRange`. Grep the folder for

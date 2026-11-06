@@ -552,14 +552,28 @@ is queued and drained by the same `transact` call.
 the edit it just made, because the same transaction may also carry a format
 cleanup or a split's new block. A patch describes a transition from the
 pre-transaction state, so a surface that already applied the keystroke itself
-must reconcile rather than re-apply; `HeadlessSurface` never mutates on its own
-and therefore always equals the projection. There is no optimistic overlay.
+must reconcile rather than re-apply: for `.text`, skip a delta whose range
+already holds `replacement` (or is already empty for a deletion); `.props` and
+`.replaceBlock` assign and are idempotent; `.insert`/`.remove` skip ids already
+present/absent. `HeadlessSurface` never mutates on its own and therefore always
+equals the projection. There is no optimistic overlay.
+
+**Only a block's own content text is `.text`.** `BlockIndex.Entry.textTypes`
+holds the `XmlText` children of the block's content element. A change to a
+nested block's text, or to a nested `blockGroup`'s child list, is not
+addressable at the top-level block's offsets and escalates to `.replaceBlock` of
+the top-level block. Only the root `blockGroup` produces `.insert`/`.remove`; a
+reorder there is a `.remove` + `.insert`. `TextDelta.marks` is never `nil` from
+the builder: `nil` means *inherit* (the surface's local-keystroke form), and the
+builder always sends the complete set, including `[]`, in the projection's
+format-item order.
 
 **Cost.** Classification reads `transaction.changed` (direct child changes), so
-a keystroke visits one `XmlText` and projects no block; only a structural change
-walks its group, and only an inexpressible block is projected, one at a time
-(`YBlockProjection.projectBlock`). `DocumentEnginePatchCostTests` pins the
-counters.
+a keystroke visits one `XmlText` and projects no block. Text and prop changes
+are O(touched blocks). A structural change (root-group membership, split/join, a
+nested change) rebuilds the index — O(document) for that walk — and projects
+only the touched blocks, one at a time (`YBlockProjection.projectBlock`).
+`DocumentEnginePatchCostTests` pins the counters and what they measure.
 
 **Teardown.** `YDoc.onDestroy` fires at the start of `destroy()`; the engine
 detaches there — hooks cleared, buffered patches dropped, later calls no-ops —

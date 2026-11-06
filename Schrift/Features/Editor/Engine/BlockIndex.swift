@@ -17,20 +17,51 @@ struct BlockIndex {
         let containerItem: YItem
         let container: YType
         let element: YType?
-        let node: String
+        /// The `XmlText` children of the block's **content element** — the only
+        /// text a `.text` patch may address. Text anywhere else (a nested
+        /// block's content, a nested group) is not this block's text.
         let textTypes: [YType]
     }
 
     private(set) var entries: [String: Entry] = [:]
     /// Block ids in document order.
     private(set) var order: [String] = []
-    /// The ordered block ids each `blockGroup` held when the index last saw it.
+    /// The ordered block ids the root `blockGroup` held when the index last saw
+    /// it. Nested groups are not tracked: a change inside one escalates to a
+    /// `.replaceBlock` of its top-level block, so there is nothing to diff.
     private(set) var groupOrder: [ObjectIdentifier: [String]] = [:]
-    private let root: YType?
+    private let doc: YDoc
+    /// Re-resolved on every rebuild: an engine created on an empty document
+    /// must start patching once the owner seeds the root.
+    private var root: YType?
 
     init(doc: YDoc) {
+        self.doc = doc
         root = doc.share[BlockNoteYjs.fragmentField]
         rebuild()
+    }
+
+    /// Re-reads the fragment root when it was absent at init (an engine created
+    /// on an empty document). Returns true when the root just appeared, so the
+    /// builder can treat the whole block list as new. Cheap: one map lookup, and
+    /// only while nil.
+    mutating func resolveRoot() -> Bool {
+        guard root == nil else { return false }
+        root = doc.share[BlockNoteYjs.fragmentField]
+        return root != nil
+    }
+
+    /// The root `blockGroup`, if the fragment has one.
+    func rootGroupType() -> YType? {
+        guard let root else { return nil }
+        return Self.rootGroup(in: root)
+    }
+
+    /// Whether `type` is the root `blockGroup` — the only group whose child
+    /// list is the document's block list.
+    func isRootGroup(_ type: YType) -> Bool {
+        guard let root, let item = type.item else { return false }
+        return item.parentType === root
     }
 
     /// The block id a changed type belongs to: the outermost `blockContainer`
@@ -75,6 +106,7 @@ struct BlockIndex {
         entries = [:]
         order = []
         groupOrder = [:]
+        root = doc.share[BlockNoteYjs.fragmentField]
         guard let root, let group = Self.rootGroup(in: root) else { return }
         let containers = containers(in: group)
         groupOrder[ObjectIdentifier(group)] = containers.map(\.id)
@@ -102,24 +134,27 @@ struct BlockIndex {
 
     private static func entry(id: String, item: YItem) -> Entry {
         guard case .type(let container) = item.content else {
-            return Entry(id: id, containerItem: item, container: YType(), element: nil, node: "", textTypes: [])
+            return Entry(id: id, containerItem: item, container: YType(), element: nil, textTypes: [])
         }
         var element: YType?
-        var node = ""
-        var textTypes: [YType] = []
         var child = container.start
         while let current = child {
             defer { child = current.right }
             guard !current.deleted, case .type(let type) = current.content else { continue }
-            if element == nil, case .xmlElement(let name)? = type.typeRef {
+            if element == nil, case .xmlElement = type.typeRef {
                 element = type
-                node = name
-            } else if type.typeRef == .xmlText {
-                textTypes.append(type)
+                break
             }
         }
-        return Entry(
-            id: id, containerItem: item, container: container, element: element, node: node, textTypes: textTypes)
+        // Text lives inside the content element, not beside it.
+        var textTypes: [YType] = []
+        var textChild = element?.start
+        while let current = textChild {
+            defer { textChild = current.right }
+            guard !current.deleted, case .type(let type) = current.content else { continue }
+            if type.typeRef == .xmlText { textTypes.append(type) }
+        }
+        return Entry(id: id, containerItem: item, container: container, element: element, textTypes: textTypes)
     }
 
     /// The container's `id` map entry, read the way `YBlockProjection` reads it.

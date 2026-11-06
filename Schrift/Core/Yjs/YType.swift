@@ -193,6 +193,12 @@ final class YDoc {
     /// here: `destroy()` leaves the object alive with an empty store, so a
     /// later transaction would otherwise call into a graph that no longer
     /// exists. A nil hook runs nothing.
+    ///
+    /// **Deliberate deviation from yjs.** yjs emits `'destroy'` at the *end* of
+    /// `destroy()`, after the store is emptied. This port emits it first,
+    /// because the engine's detach must run before the graph it reads is torn
+    /// down; emitting afterwards would let a hook observe a half-destroyed
+    /// store. The hook is cleared immediately after it runs, so it fires once.
     var onDestroy: (() -> Void)?
 
     init(clientID: UInt, gc: Bool = true) {

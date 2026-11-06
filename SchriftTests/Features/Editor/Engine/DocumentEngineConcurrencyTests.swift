@@ -35,8 +35,8 @@ final class DocumentEngineConcurrencyTests: DocumentEngineTestCase {
 
     /// Exchanges both sides' updates in both orders and asserts convergence.
     private func exchange(_ pair: Pair, _ updateA: Data, _ updateB: Data, _ label: String) throws {
-        try pair.engineA.applyRemoteUpdate(updateB)
-        try pair.engineB.applyRemoteUpdate(updateA)
+        try pair.a.applyUpdate(try YUpdateDecoder.decode(updateB), origin: .remote)
+        try pair.b.applyUpdate(try YUpdateDecoder.decode(updateA), origin: .remote)
         XCTAssertEqual(YXMLString.fragment(pair.a), YXMLString.fragment(pair.b), label)
         assertSurfaceMatchesProjection(pair.surfaceA, pair.a, "\(label): A")
         assertSurfaceMatchesProjection(pair.surfaceB, pair.b, "\(label): B")
@@ -95,7 +95,7 @@ final class DocumentEngineConcurrencyTests: DocumentEngineTestCase {
         // arms the B4 cleanup on B.
         let updateA = try pair.engineA.formatRange(
             block: Self.secondID, range: 0..<30, marks: [TextMark(key: "bold", valueJSON: "{}")])
-        try pair.engineB.applyRemoteUpdate(updateA)
+        try pair.b.applyUpdate(try YUpdateDecoder.decode(updateA), origin: .remote)
 
         XCTAssertEqual(pair.b.lastTransactionOrigin, nil, "the cleanup transaction must have run on B")
         assertSurfaceMatchesProjection(pair.surfaceB, pair.b, "B after the remote format")

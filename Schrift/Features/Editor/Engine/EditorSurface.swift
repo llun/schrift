@@ -11,12 +11,22 @@ import Foundation
 /// that holds the document *as it was before that transaction*. The engine
 /// emits a patch for a local intent exactly as it does for a remote update, so
 /// a surface that already applied the keystroke itself (a UIKit text view
-/// mutates its storage synchronously) must **reconcile** — the range already
-/// holds the replacement, so it is a no-op — rather than insert a second copy.
-/// `HeadlessSurface` never mutates on its own, so it applies every patch and
-/// its block list equals the replica's projection after each step. There is no
-/// optimistic overlay (plan §2.3): the replica is the truth and the patch is
-/// how the surface catches up.
+/// mutates its storage synchronously) must **reconcile** rather than apply the
+/// change twice. The rule, per change kind:
+///
+/// - `.text`: each delta's `range` is in the surface's **pre-change** text. If
+///   the surface already applied the edit, the range already holds
+///   `replacement` — skip that delta. For a deletion (`replacement == ""`) the
+///   range is already empty at that offset — skip it. Otherwise apply it.
+/// - `.replaceBlock`: assign the snapshot; idempotent.
+/// - `.props`: assign the attribute set; idempotent.
+/// - `.insert`: skip blocks whose id is already present; `.remove`: skip ids
+///   already absent.
+///
+/// A surface that never mutates on its own (a fresh renderer) applies every
+/// patch unconditionally and converges. `HeadlessSurface` is that reference
+/// implementation. There is no optimistic overlay (plan §2.3): the replica is
+/// the truth and the patch is how the surface catches up.
 ///
 /// Composition and selection hooks (`setCompositionDeferred`, `applySelection`)
 /// belong to B6b; they are deliberately absent rather than stubbed.
@@ -57,8 +67,14 @@ enum BlockChange: Equatable {
 /// One replacement inside a block's text.
 ///
 /// `range` is a block-relative UTF-16 range in the pre-change text; an empty
-/// range is an insertion. `marks` is the complete mark set the replacement
-/// carries, or `nil` to inherit the marks in force at the insertion point.
+/// range is an insertion.
+///
+/// **`marks` contract.** `nil` means *inherit* the marks in force at the
+/// insertion point (the character to the left, else the one to the right) —
+/// the convenience form a surface uses when it builds a delta for a local
+/// keystroke. The engine's `PatchBuilder` never emits `nil`: it always sends
+/// the complete mark set, including `[]` for "no marks in force", so a surface
+/// applying a patch never inherits by accident. A deletion carries no marks.
 struct TextDelta: Equatable {
     var range: Range<Int>
     var replacement: String

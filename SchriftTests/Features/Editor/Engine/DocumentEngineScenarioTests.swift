@@ -22,7 +22,7 @@ final class DocumentEngineScenarioTests: DocumentEngineTestCase {
             return XCTFail("expected a text change, got \(patch.changes)")
         }
         XCTAssertEqual(id, Self.firstID)
-        XCTAssertEqual(deltas, [TextDelta(range: 5..<5, replacement: "X")])
+        XCTAssertEqual(deltas, [TextDelta(range: 5..<5, replacement: "X", marks: [])])
     }
 
     func testTypingInsideABoldRunCarriesTheMark() throws {
@@ -62,10 +62,11 @@ final class DocumentEngineScenarioTests: DocumentEngineTestCase {
         let localSurface = HeadlessSurface(blocks: projection(local))
         let remoteSurface = HeadlessSurface(blocks: projection(remote))
         let localEngine = DocumentEngine(doc: local, surface: localSurface)
+        _ = localEngine
         let remoteEngine = DocumentEngine(doc: remote, surface: remoteSurface)
 
         let update = try remoteEngine.replaceText(block: Self.firstID, range: 0..<0, with: "A ")
-        try localEngine.applyRemoteUpdate(update)
+        try local.applyUpdate(try YUpdateDecoder.decode(update), origin: .remote)
 
         assertSurfaceMatchesProjection(localSurface, local, "local after the remote insert")
         assertSurfaceMatchesProjection(remoteSurface, remote, "remote after its own insert")
@@ -83,11 +84,12 @@ final class DocumentEngineScenarioTests: DocumentEngineTestCase {
         let localSurface = HeadlessSurface(blocks: projection(local))
         let remoteSurface = HeadlessSurface(blocks: projection(remote))
         let localEngine = DocumentEngine(doc: local, surface: localSurface)
+        _ = localEngine
         let remoteEngine = DocumentEngine(doc: remote, surface: remoteSurface)
 
         let update = try remoteEngine.splitBlock(
             block: Self.firstID, at: 6, newID: "b0000000-0000-4000-8000-0000000000aa")
-        try localEngine.applyRemoteUpdate(update)
+        try local.applyUpdate(try YUpdateDecoder.decode(update), origin: .remote)
 
         assertSurfaceMatchesProjection(localSurface, local, "local after the remote split")
         assertSurfaceMatchesProjection(remoteSurface, remote, "remote after its own split")
@@ -107,10 +109,11 @@ final class DocumentEngineScenarioTests: DocumentEngineTestCase {
         let localSurface = HeadlessSurface(blocks: projection(local))
         let remoteSurface = HeadlessSurface(blocks: projection(remote))
         let localEngine = DocumentEngine(doc: local, surface: localSurface)
+        _ = localEngine
         let remoteEngine = DocumentEngine(doc: remote, surface: remoteSurface)
 
         let update = try remoteEngine.joinBlocks(block: Self.secondID)
-        try localEngine.applyRemoteUpdate(update)
+        try local.applyUpdate(try YUpdateDecoder.decode(update), origin: .remote)
 
         assertSurfaceMatchesProjection(localSurface, local, "local after the remote join")
         assertSurfaceMatchesProjection(remoteSurface, remote, "remote after its own join")
@@ -129,11 +132,12 @@ final class DocumentEngineScenarioTests: DocumentEngineTestCase {
         let localSurface = HeadlessSurface(blocks: projection(local))
         let remoteSurface = HeadlessSurface(blocks: projection(remote))
         let localEngine = DocumentEngine(doc: local, surface: localSurface)
+        _ = localEngine
         let remoteEngine = DocumentEngine(doc: remote, surface: remoteSurface)
 
         let update = try remoteEngine.formatRange(
             block: Self.thirdID, range: 0..<5, marks: [TextMark(key: "bold", valueJSON: "{}")])
-        try localEngine.applyRemoteUpdate(update)
+        try local.applyUpdate(try YUpdateDecoder.decode(update), origin: .remote)
 
         assertSurfaceMatchesProjection(localSurface, local, "local after the remote format")
         assertSurfaceMatchesProjection(remoteSurface, remote, "remote after its own format")
@@ -154,10 +158,11 @@ final class DocumentEngineScenarioTests: DocumentEngineTestCase {
         let localSurface = HeadlessSurface(blocks: projection(local))
         let remoteSurface = HeadlessSurface(blocks: projection(remote))
         let localEngine = DocumentEngine(doc: local, surface: localSurface)
+        _ = localEngine
         let remoteEngine = DocumentEngine(doc: remote, surface: remoteSurface)
 
         let update = try remoteEngine.setBlockType(block: Self.thirdID, to: "heading", props: [("level", .int(2))])
-        try localEngine.applyRemoteUpdate(update)
+        try local.applyUpdate(try YUpdateDecoder.decode(update), origin: .remote)
 
         assertSurfaceMatchesProjection(localSurface, local, "local after the remote type change")
         assertSurfaceMatchesProjection(remoteSurface, remote, "remote after its own type change")
