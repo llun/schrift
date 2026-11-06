@@ -31,10 +31,20 @@ import Foundation
 /// implementation. There is no optimistic overlay (plan §2.3): the replica is
 /// the truth and the patch is how the surface catches up.
 ///
-/// Composition and selection hooks (`setCompositionDeferred`, `applySelection`)
-/// belong to B6b; they are deliberately absent rather than stubbed.
+/// During composition, `setCompositionDeferred(true)` means the composing
+/// block's patches are held. Commit/cancel delivers an authoritative rebuild,
+/// never stale deltas, then clears deferral. Structural invalidation may require
+/// a whole-list reset. Selection is queried with `DocumentEngine.currentSelection`
+/// after patches; its offsets resolve against the current replica, even while
+/// the surface's composing block is intentionally frozen.
 protocol EditorSurface: AnyObject {
     func applyPatch(_ patch: BlockPatch)
+    func setCompositionDeferred(_ deferred: Bool)
+}
+
+extension EditorSurface {
+    /// Surfaces without marked text need no deferral state.
+    func setCompositionDeferred(_ deferred: Bool) {}
 }
 
 /// One transaction's worth of change, in document order: removals first, then

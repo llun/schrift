@@ -515,10 +515,10 @@ them, which is BlockNote's own rule. No incremental byte pin moved.
   boundaries and could split a surrogate pair, which the fuzz caught; the code-point
   snap described above is the fix.
 
-### The headless document engine (B6a)
+### The headless document engine (B6a/B6b)
 
 The phase 2 native editor's foundation, proven headlessly and not yet wired into
-any screen. `Features/Editor/Engine/` holds four pieces:
+any screen. `Features/Editor/Engine/` holds these pieces:
 
 - **`EditorSurface`** — the model → UI protocol: one `applyPatch(BlockPatch)`.
   A patch is a list of `BlockChange`s: `.text(blockID, [TextDelta])` (a
@@ -529,8 +529,8 @@ any screen. `Features/Editor/Engine/` holds four pieces:
   (the whole surface list, for a root-group replacement, a fragment that was
   empty when the engine attached, a container `id` changed in place, and every
   transaction while the replica is not index-shaped, `BlockIndex.isCanonical`). Every patch carries a `BlockPatchOrigin`
-  (`.localUser`, `.remote`, `.other`) taken from the transaction. Composition and
-  selection hooks are B6b.
+  (`.localUser`, `.remote`, `.other`) taken from the transaction. The surface also
+  receives `setCompositionDeferred(Bool)`; selection uses the engine's query API.
 - **`HeadlessSurface`** — an in-memory surface that only ever changes through
   `applyPatch`, so a test can assert it equals the replica's projection after
   every step.
@@ -544,6 +544,40 @@ any screen. `Features/Editor/Engine/` holds four pieces:
   content element and text children and is maintained incrementally from the
   transaction's changed types; the builder classifies those types and emits the
   patch.
+
+**Selection.** `setSelection(EditorSelection?)` captures directed anchor/head
+endpoints as `YRelativePosition`s. Each `EditorPosition` holds a block id,
+block-relative UTF-16 offset, and affinity (`assoc`, default -1). Negative
+affinity sticks to the character before the boundary, including when a peer
+appends at end-of-text; non-negative affinity follows the character after it.
+`currentSelection()` resolves both endpoints after any transaction, against the
+replica even when composition intentionally freezes the surface. Capture rejects
+invalid offsets and non-canonical/opaque/multi-text blocks without changing the
+previous selection. Resolution checks the original text identity against the
+current block index: deletion, type replacement under the same block id, or a
+non-addressable shape returns nil. Only locally captured positions enter this
+path; no arbitrary peer root names are resolved.
+
+**Composition.** `compositionBegan(blockID:at:assoc:)` captures an insertion
+anchor (the selection head if `at` is omitted), and signals surface deferral.
+`CompositionQueue` invalidates that block's patches from every origin while
+updates continue integrating into the replica. Independent block patches still
+flow. A list operation removing/reinserting the composing block, or any `.reset`,
+defers the entire list and all subsequent patches because later transitions may
+depend on the held structure. No stale deltas are replayed or retained.
+`compositionCommitted(text:)` inserts the composed string at the resolved anchor
+through `BlockNoteWriter` in one `.localUser` transaction, returns its update for
+broadcast, and collapses selection after the inserted UTF-16 text. The write's
+own delta is held too. Commit and `compositionCancelled()` then deliver one
+`.replaceBlock` projected from the replica (a fresh whole-list `.reset` for the
+structural fallback) before clearing deferral. Cancel writes nothing. A deleted,
+replaced or non-addressable original text drops the commit write, returns the
+empty update, and still rebuilds. Rebuild and deferral completion share the
+serialized delivery queue so surface callbacks can transact without reentrant
+patch delivery. Detach clears selection/deferral and drops held work without a
+rebuild; later intents throw `.detached`. A deferred surface intentionally differs
+from projection until commit/cancel restores equality. Native marked-text and
+device validation remain phase 2 work; this contract is proven headlessly.
 
 **Buffering.** `YDoc.afterTransaction` runs in the observer phase, where a text
 delta is valid but the store is still pre-gc/pre-merge, so the engine only
