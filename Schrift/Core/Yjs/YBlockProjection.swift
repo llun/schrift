@@ -422,14 +422,15 @@ extension YBlockProjection {
         a.map { [$0.key, $0.valueJSON] } == b.map { [$0.key, $0.valueJSON] }
     }
 
+    /// The mark keys the projection keeps; the engine's `.text` patches use
+    /// the same set.
+    static let renderableMarkKeys: Set<String> = ["bold", "italic", "code", "strike", "link"]
+
     /// Drops any mark whose key isn't in the vocabulary the app's markdown
     /// export understands (bold/italic/code/strike/link), reporting a lossy
     /// reason per dropped key. The server's own markdown export drops unknown
     /// marks the same way, so this keeps write-back parity rather than
     /// inventing a new divergence.
-    /// The mark keys the projection keeps; the engine's `.text` patches use
-    /// the same set.
-    static let renderableMarkKeys: Set<String> = ["bold", "italic", "code", "strike", "link"]
 
     private static func scrubUnknownMarks(_ runs: [InlineRun]) -> (runs: [InlineRun], reasons: [String]) {
         var reasons: [String] = []

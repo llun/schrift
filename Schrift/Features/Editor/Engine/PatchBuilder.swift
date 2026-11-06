@@ -80,7 +80,7 @@ struct PatchBuilder {
                     let element = block.element, YBlockProjection.props(of: element) != nil,
                     let deltas = Self.textDeltas(events[oid], text: type),
                     let runs = YBlockProjection.textRuns(type),
-                    HeadlessSurface.apply(deltas, to: block.runs) == runs
+                    TextDelta.apply(deltas, to: block.runs) == runs
                 {
                     textDeltas[id] = deltas
                 } else {

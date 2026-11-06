@@ -141,7 +141,8 @@ final class DocumentEngine {
             let patches = buffered
             buffered = []
             for patch in patches {
-                // A surface may destroy the replica from `applyPatch`.
+                // A surface may detach the engine (or destroy the replica,
+                // which detaches it) from `applyPatch`: drop the rest.
                 guard !isDetached else { return }
                 surface?.applyPatch(patch)
             }

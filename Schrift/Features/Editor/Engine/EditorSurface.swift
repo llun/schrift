@@ -114,6 +114,51 @@ struct TextDelta: Equatable {
         self.replacement = replacement
         self.marks = marks
     }
+
+    /// Applies deltas to a run list. Deltas are in pre-change coordinates, so
+    /// they are applied from the last one backwards and earlier offsets stay
+    /// valid. Reversing the *array* (not sorting by range) keeps several
+    /// insertions at the same offset in their original order.
+    /// A `nil` mark set inherits the marks in force at the insertion point.
+    static func apply(_ deltas: [TextDelta], to runs: [InlineRun]) -> [InlineRun] {
+        var units: [(unit: UInt16, marks: [TextMark])] = []
+        for run in runs {
+            let marks = run.marks.map { TextMark(key: $0.key, valueJSON: $0.valueJSON) }
+            for unit in run.text.utf16 { units.append((unit, marks)) }
+        }
+        for delta in deltas.reversed() {
+            let lower = min(max(0, delta.range.lowerBound), units.count)
+            let upper = min(max(lower, delta.range.upperBound), units.count)
+            // Inherit the marks in force *before* the insertion point — the
+            // character to its left, not the one to its right, which a later
+            // delta in this same patch may have just inserted.
+            let marks =
+                delta.marks
+                ?? (lower > 0 ? units[lower - 1].marks : (lower < units.count ? units[lower].marks : []))
+            let replacement = delta.replacement.utf16.map { (unit: $0, marks: marks) }
+            units.replaceSubrange(lower..<upper, with: replacement)
+        }
+        var out: [InlineRun] = []
+        var buffer: [UInt16] = []
+        var current: [TextMark] = []
+        func flush() {
+            guard !buffer.isEmpty else { return }
+            out.append(
+                InlineRun(
+                    String(decoding: buffer, as: UTF16.self),
+                    marks: current.map { ($0.key, $0.valueJSON) }))
+            buffer = []
+        }
+        for entry in units {
+            if entry.marks != current {
+                flush()
+                current = entry.marks
+            }
+            buffer.append(entry.unit)
+        }
+        flush()
+        return out
+    }
 }
 
 /// One inline mark: a BlockNote attribute key and its raw JSON value

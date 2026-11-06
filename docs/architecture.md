@@ -589,8 +589,9 @@ means *inherit* (the surface's local-keystroke form), and the builder always
 sends the complete set, including `[]`, in the projection's format-item order.
 
 **Cost.** Classification reads `transaction.changed` (direct child changes), so
-a keystroke visits one `XmlText`, reads that one text to check its deltas
-against the fold, and projects no block, and the emit loop
+a keystroke visits one `XmlText`, folds that one text to check its deltas
+against the index's cached runs (`TextDelta.apply`; the index keeps one run
+list per simple block) and again when the entry refreshes, projects no block, and the emit loop
 iterates only the touched ids ordered by the index's position map — never
 `index.order`. Text and prop changes are O(touched blocks). A root-group change
 (membership, split/join) rebuilds the index — O(document), reading each block's

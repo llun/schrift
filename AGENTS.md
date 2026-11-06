@@ -2109,8 +2109,10 @@ only; nothing in the shipping editor uses it yet.
   `BlockIndex.isCanonical` is false, is a `.reset` of the projected document.
 - **Patch building is O(touched blocks) for text and prop changes.** Classification
   reads `transaction.changed` (the types whose *direct* children changed), so a
-  keystroke visits one `XmlText`, reads that one text to check its deltas against
-  the fold, and projects no block. The emit loop iterates
+  keystroke visits one `XmlText`, folds that one text to check its deltas against
+  the index's cached runs (`TextDelta.apply`), re-folds it when the entry
+  refreshes, and projects no block. The index holds one cached run list per
+  simple block, a second copy of the document's text. The emit loop iterates
   only the touched ids, ordered by the index's position map — never
   `index.order`. A root-group change (membership, split/join) rebuilds the index
   — O(document), reading each block's text for `isProjectable` — and projects
