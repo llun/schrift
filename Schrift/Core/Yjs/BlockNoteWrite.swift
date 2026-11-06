@@ -353,11 +353,13 @@ enum BlockNoteWrite {
     ///   a throw, which the manager turns into a fail-safe and a permanent
     ///   downgrade to classic for the document.
     /// - **A block whose element holds an inline node** (`interlinkingLinkInline`,
-    ///   mention, math, hard break). The projection folds such a node into a run
-    ///   whose text is the node's label (the link title), while the live element
-    ///   counts the node as one unit — so the run-space offsets the writer works in
-    ///   do not map to live offsets. The legacy reconcile rebuilds the element
-    ///   instead of splicing, which is correct for any shape.
+    ///   mention, math, hard break). The projection folds an interlink into a run
+    ///   whose text is its title while the live element counts it as one unit, so
+    ///   run-space offsets don't map to live offsets; mention, math and hard break
+    ///   project as opaque and never reach the live path (the fallback is defensive
+    ///   for them). The legacy reconcile rebuilds the element instead of splicing,
+    ///   exactly as before; for an interlink that rebuild writes a plain link mark,
+    ///   a pre-existing limitation documented in docs/architecture.md.
     ///
     /// Both fallbacks are the same code the live path ran before, so they cannot
     /// change a document.
@@ -400,6 +402,11 @@ enum BlockNoteWrite {
     private static func reconcileBlockWithWriter(
         doc: YDoc, container: YItem, old: BlockNoteBlock, new: BlockNoteBlock
     ) throws {
+        // An untouched survivor writes nothing: return before the whole-document
+        // `find` and the guard, so a keystroke costs O(1) per untouched block, as legacy did.
+        let oldProps = Dictionary(old.props.map { ($0.key, $0.value) }, uniquingKeysWith: { first, _ in first })
+        let props = old.node == new.node ? new.props.filter { oldProps[$0.key] != $0.value } : new.props
+        if old.node == new.node, props.isEmpty, old.runs == new.runs { return }
         // The container is the authority on the block's id: the caller's `old`/`new`
         // ids can be stale (the editor re-identifies a row after a remote structural
         // change while the replica keeps the server's id), and the legacy reconcile
@@ -419,8 +426,6 @@ enum BlockNoteWrite {
         }
         let writer = BlockNoteWriter(doc: doc)
         var target = try writer.find(id)
-        let oldProps = Dictionary(old.props.map { ($0.key, $0.value) }, uniquingKeysWith: { first, _ in first })
-        let props = old.node == new.node ? new.props.filter { oldProps[$0.key] != $0.value } : new.props
         if old.node != new.node || !props.isEmpty {
             try writer.setBlockType(in: target, to: new.node, props: props)
             if old.node != new.node { target = try writer.find(id) }
