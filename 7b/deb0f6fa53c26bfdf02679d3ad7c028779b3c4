@@ -1,0 +1,27 @@
+AGENTS.md
+  s_2b1a50e2f9b981::t_6037b4c76e5390 1795,1802-1830,1837-1838,1841-1843,1846-1848,1914-1939
+Schrift/Core/Collaboration/DocumentCollaborationManager.swift
+  s_2b1a50e2f9b981::t_6c269baa4ac079 278-279
+Schrift/Core/Yjs/BlockNoteWrite.swift
+  s_2b1a50e2f9b981::t_31c75fc0ff85bf 33-47,54-57,68-85,101,275-276,303-304,341-475,493
+docs/architecture.md
+  s_2b1a50e2f9b981::t_adde7fbd57aa6c 172,313,376-418,457-461
+Schrift/Core/Yjs/BlockNoteIncrementalSave.swift
+  s_2b1a50e2f9b981::t_e25f66fa02906f 16,35,99,105,115,153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7bdeb0f6fa53c26bfdf02679d3ad7c028779b3c4",
+  "prompts": {},
+  "sessions": {
+    "s_2b1a50e2f9b981": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5b6f5d8b-21a0-4073-b076-d824b161ad07",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
