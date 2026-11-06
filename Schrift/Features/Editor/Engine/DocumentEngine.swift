@@ -174,7 +174,7 @@ final class DocumentEngine {
     /// Explicit offsets into deferred blocks throw `.composingBlock`; a restart
     /// from the existing relative selection is allowed without `at:`.
     func compositionBegan(blockID: String, at offset: Int? = nil, assoc: Int = -1) throws {
-        try requireAttached()
+        try requireCompositionBoundary()
         if offset != nil { try requireEditableBlock(blockID) }
         guard composition == nil else { throw DocumentEngineError.compositionAlreadyActive }
         let position: EditorPosition
@@ -209,7 +209,7 @@ final class DocumentEngine {
     /// by one current snapshot; callers can broadcast the returned update.
     @discardableResult
     func compositionCommitted(text: String) throws -> Data {
-        try requireAttached()
+        try requireCompositionBoundary()
         guard let composing = composition else { throw DocumentEngineError.compositionNotActive }
         guard let position = composing.anchor.resolve(in: doc, index: builder.index) else {
             finishComposition(origin: .other)
@@ -243,7 +243,7 @@ final class DocumentEngine {
     }
 
     func compositionCancelled() throws {
-        try requireAttached()
+        try requireCompositionBoundary()
         guard composition != nil else { throw DocumentEngineError.compositionNotActive }
         finishComposition(origin: .other)
     }
@@ -270,6 +270,16 @@ final class DocumentEngine {
     /// holds the engine has a lifecycle bug.
     private func requireAttached() throws {
         guard !isDetached else { throw DocumentEngineError.detached }
+    }
+
+    /// Observer hooks can have no open transaction while cleanup is still
+    /// pending. Composition transitions must wait for both phases to finish;
+    /// applyPatch runs from afterAllTransactions after the cleanup list is cleared.
+    private func requireCompositionBoundary() throws {
+        try requireAttached()
+        guard doc.transaction == nil, doc.transactionCleanups.isEmpty else {
+            throw DocumentEngineError.insideTransaction
+        }
     }
 
     private func requireEditableBlock(_ blockID: String) throws {
@@ -369,4 +379,6 @@ enum DocumentEngineError: Error, Equatable {
     case compositionNotActive
     /// Surface offsets may be stale until final rebuild/completion delivery.
     case composingBlock
+    /// Composition transitions require a transaction boundary after all cleanup.
+    case insideTransaction
 }

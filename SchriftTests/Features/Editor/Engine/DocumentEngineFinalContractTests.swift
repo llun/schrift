@@ -4,6 +4,81 @@ import XCTest
 
 @MainActor
 final class DocumentEngineFinalContractTests: DocumentEngineTestCase {
+    func testCompositionIntentsRejectTransactionBodyAndChainedAfterTransactionHook() throws {
+        for duringCleanup in [true, false] {
+            for intent in ["cancel", "commit", "begin"] {
+                let doc = try makeDoc(clientID: 1)
+                defer { doc.destroy() }
+                let surface = HeadlessSurface(blocks: projection(doc))
+                weak var hookedEngine: DocumentEngine?
+                var attempted = false
+                func assertRejected(_ engine: DocumentEngine) throws {
+                    let state = try YStateEncoder.encodeStateAsUpdate(doc)
+                    let blocks = surface.blocks
+                    let patches = surface.appliedPatches
+                    let deferrals = surface.compositionDeferrals
+                    let selection = try engine.currentSelection()
+                    let transaction = doc.transaction
+                    let pending = doc.transactionCleanups.count
+                    let action: () throws -> Void = {
+                        switch intent {
+                        case "begin": try engine.compositionBegan(blockID: Self.firstID, at: 6)
+                        case "commit": _ = try engine.compositionCommitted(text: "unsafe")
+                        default: try engine.compositionCancelled()
+                        }
+                    }
+                    XCTAssertThrowsError(try action()) {
+                        XCTAssertEqual($0 as? DocumentEngineError, .insideTransaction)
+                    }
+                    XCTAssertEqual(try YStateEncoder.encodeStateAsUpdate(doc), state)
+                    XCTAssertEqual(surface.blocks, blocks)
+                    XCTAssertEqual(surface.appliedPatches, patches)
+                    XCTAssertEqual(surface.compositionDeferrals, deferrals)
+                    XCTAssertEqual(try engine.currentSelection(), selection)
+                    XCTAssertTrue(doc.transaction === transaction)
+                    XCTAssertEqual(doc.transactionCleanups.count, pending)
+                }
+                // Installed before the engine, so this runs in its chained hook
+                // before record(T), reproducing the mid-observer cancel bug.
+                doc.afterTransaction = { _ in
+                    guard duringCleanup, !attempted, let engine = hookedEngine else { return }
+                    attempted = true
+                    XCTAssertNil(doc.transaction)
+                    XCTAssertFalse(doc.transactionCleanups.isEmpty)
+                    do { try assertRejected(engine) } catch { XCTFail("hook check failed: \(error)") }
+                }
+                let engine = DocumentEngine(doc: doc, surface: surface)
+                hookedEngine = engine
+                if intent != "begin" { try engine.compositionBegan(blockID: Self.firstID, at: 6) }
+                let textType = try XCTUnwrap(BlockIndex(doc: doc).entries[Self.firstID]?.textType)
+                try doc.transact(origin: .remote) { _ in
+                    try textType.insert(0, "Z")
+                    if !duringCleanup {
+                        attempted = true
+                        XCTAssertNotNil(doc.transaction)
+                        try assertRejected(engine)
+                    }
+                }
+                XCTAssertTrue(attempted)
+                XCTAssertNil(doc.transaction)
+                XCTAssertTrue(doc.transactionCleanups.isEmpty)
+                if intent == "begin" {
+                    XCTAssertFalse(surface.isCompositionDeferred)
+                    try engine.compositionBegan(blockID: Self.firstID, at: 6)
+                } else {
+                    XCTAssertTrue(surface.isCompositionDeferred)
+                    XCTAssertTrue(surface.appliedPatches.isEmpty)
+                }
+                try engine.compositionCancelled()
+                XCTAssertEqual(surface.compositionDeferrals, [true, false])
+                XCTAssertEqual(
+                    text(of: surface.blocks[0]), "ZFirst paragraph.",
+                    "the transaction delta must not be replayed on a rebuild")
+                assertSurfaceMatchesProjection(surface, doc, "\(intent), during cleanup=\(duringCleanup)")
+            }
+        }
+    }
+
     func testWholeListFreezeRejectsOtherBlockInputsUntilResetAndCompletion() throws {
         for commit in [false, true] {
             let local = try makeDoc(clientID: 1)

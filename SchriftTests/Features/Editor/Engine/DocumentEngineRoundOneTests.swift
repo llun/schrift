@@ -69,6 +69,9 @@ final class DocumentEngineRoundOneTests: DocumentEngineTestCase {
             var caught: Error?
             surface.onPatch = {
                 guard !attempted else { return }
+                XCTAssertNil(doc.transaction)
+                XCTAssertTrue(
+                    doc.transactionCleanups.isEmpty, "applyPatch runs after the outermost cleanup list is cleared")
                 attempted = true
                 do {
                     if commit {

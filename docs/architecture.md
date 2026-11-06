@@ -593,6 +593,12 @@ patch delivery. Commit/cancel ends the logical composition immediately, allowing
 `compositionBegan` from a relative selection inside the same `applyPatch` callback. Deferral stays
 continuous until the newest composition's rebuild completes; generation-tagged
 completion events prevent an older completion from ending a newer composition.
+`compositionBegan`, `compositionCommitted`, and `compositionCancelled` require
+`doc.transaction == nil` and an empty `doc.transactionCleanups` list. Otherwise
+they throw `.insideTransaction` before touching composition, replica or surface.
+This includes observer hooks, where the open transaction is nil but cleanup is
+still pending. Calls from `applyPatch` remain allowed: the list is cleared
+before `afterAllTransactions` invokes the engine's delivery hook.
 All input offsets use replica coordinates. A frozen surface's offsets cannot be
 submitted as if they referred to the replica, where peer edits already landed.
 `setSelection` rejects either endpoint in a deferred block with `.composingBlock`;

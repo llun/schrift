@@ -2092,6 +2092,11 @@ only; nothing in the shipping editor uses it yet.
   nil selection (transactions have no rollback). A new composition can begin from
   the relative selection after commit/cancel inside `applyPatch`: deferral stays continuous
   and generation-tagged completion events cannot end a newer composition.
+  All three composition APIs throw `.insideTransaction` before changing anything
+  when `doc.transaction` is non-nil or `transactionCleanups` is non-empty. Do not
+  call them from transaction bodies or observer/cleanup hooks. Calls from
+  `applyPatch` remain supported: the cleanup list is cleared before
+  `afterAllTransactions` starts delivery.
   Input offsets are always replica coordinates, not frozen-surface coordinates.
   `setSelection` endpoints and local `replaceText`/`formatRange`/`splitBlock`/
   `joinBlocks`/`setBlockType` targeting a deferred block throw `.composingBlock`
