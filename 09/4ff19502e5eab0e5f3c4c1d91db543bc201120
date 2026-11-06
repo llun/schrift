@@ -1,0 +1,36 @@
+SchriftTests/Features/Editor/Engine/DocumentEngineRoundOneTests.swift
+  s_2c3e81a2e89eee::t_40c06859fdfe90 72
+  s_2c3e81a2e89eee::t_341de28d49f724 73-74
+AGENTS.md
+  s_2c3e81a2e89eee::t_45f276ea41d170 2095-2097
+  s_2c3e81a2e89eee::t_0410c21abb467c 2098-2099
+docs/architecture.md
+  s_2c3e81a2e89eee::t_0410c21abb467c 600-601
+  s_2c3e81a2e89eee::t_45f276ea41d170 596-599
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_2c3e81a2e89eee::t_45f276ea41d170 177,212,246,275-276,278-279
+  s_2c3e81a2e89eee::t_0410c21abb467c 277
+  s_2c3e81a2e89eee::t_40c06859fdfe90 382-383
+  s_2c3e81a2e89eee::t_fc51abd72b94b5 280-282
+  s_2c3e81a2e89eee::t_0d0f68e11541f5 283-284
+SchriftTests/Features/Editor/Engine/DocumentEngineFinalContractTests.swift
+  s_2c3e81a2e89eee::t_341de28d49f724 74-76
+  s_2c3e81a2e89eee::t_d606e866144bf1 8-9,53,55
+  s_2c3e81a2e89eee::t_40c06859fdfe90 7,10-52,54,56-73,77-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "094ff19502e5eab0e5f3c4c1d91db543bc201120",
+  "prompts": {},
+  "sessions": {
+    "s_2c3e81a2e89eee": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1b0b4-bb44-7653-a547-b51b9af40d44",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
