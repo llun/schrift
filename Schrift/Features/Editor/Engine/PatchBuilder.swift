@@ -66,10 +66,14 @@ struct PatchBuilder {
             if type.typeRef == .xmlText {
                 guard let id = index.blockID(for: type) else { continue }
                 touch(id)
-                // The narrowed rule: only a block whose element is exactly one
-                // XmlText, with no nested children, may take the fast path.
-                if let block = index.entries[id], block.isSimpleText, block.textType === type,
-                    !block.hasNestedChildren, let deltas = Self.textDeltas(events[oid], text: type)
+                // The narrowed rule: only a simple container whose element is
+                // exactly this XmlText may take the fast path.
+                // `isProjectable` is the pre-transaction state (the entry was
+                // refreshed after the last one): an opaque block's surface holds
+                // no runs, so a delta has nothing to apply to.
+                if let block = index.entries[id], block.isSimpleText, block.isProjectable, block.textType === type,
+                    let element = block.element, YBlockProjection.props(of: element) != nil,
+                    let deltas = Self.textDeltas(events[oid], text: type)
                 {
                     textDeltas[id] = deltas
                 } else {
@@ -89,11 +93,17 @@ struct PatchBuilder {
                 }
                 continue
             }
+            // A container's `id` changed in place (possibly to an unreadable
+            // value): the block's identity moved, which only a resync says.
+            if type.typeRef == .xmlElement(nodeName: "blockContainer"), entry.subs.contains("id") {
+                resync = true
+                continue
+            }
             guard let id = index.blockID(for: type) else { continue }
             touch(id)
             if type.typeRef == .xmlElement(nodeName: "blockContainer") || entry.subs.contains(nil) {
                 structural.insert(id)
-            } else if let block = index.entries[id], block.element === type, !block.hasNestedChildren {
+            } else if let block = index.entries[id], block.element === type, block.isSimpleContainer, block.isProjectable {
                 props.insert(id)
             } else {
                 // A nested element's attributes are not the top-level block's.
@@ -159,8 +169,14 @@ struct PatchBuilder {
             if structural.contains(id) || (props.contains(id) && textDeltas[id] != nil) {
                 guard let entry = index.entries[id] else { continue }
                 changes.append(.replaceBlock(blockID: id, block: snapshot(entry.containerItem)))
-            } else if props.contains(id), let element = index.entries[id]?.element {
-                changes.append(.props(blockID: id, props: YBlockProjection.props(of: element) ?? []))
+            } else if props.contains(id), let entry = index.entries[id] {
+                // Unreadable props make the projection opaque (no props, no
+                // runs): only a whole-block patch says that.
+                if let element = entry.element, let blockProps = YBlockProjection.props(of: element) {
+                    changes.append(.props(blockID: id, props: blockProps))
+                } else {
+                    changes.append(.replaceBlock(blockID: id, block: snapshot(entry.containerItem)))
+                }
             } else if let deltas = textDeltas[id], !deltas.isEmpty {
                 changes.append(.text(blockID: id, deltas: deltas))
             }
@@ -201,6 +217,9 @@ struct PatchBuilder {
         // A delta that both rewrites text and re-marks it has no single
         // pre-change coordinate space; the block is rebuilt instead.
         if changesText && changesMarks { return nil }
+        // An embed or an unreadable link anywhere in the text makes the
+        // projection opaque (no runs): no `.text` delta can say that.
+        guard BlockIndex.projectsAsText(text) else { return nil }
         if changesMarks { return formatDeltas(delta, text: text) }
         var oldCursor = 0
         var newCursor = 0
@@ -220,10 +239,9 @@ struct PatchBuilder {
                 // surface's run order matches the projection's. `[]` is explicit:
                 // an insertion with no marks in force must not inherit the marks
                 // to its right. A non-uniform range is not one delta.
-                guard
-                    let marks = Self.marks(
-                        in: text, range: newCursor..<(newCursor + length), attributes: op.attributes)
-                else { return nil }
+                guard let marks = uniformMarks(in: text, range: newCursor..<(newCursor + length)) else {
+                    return nil
+                }
                 out.append(TextDelta(range: oldCursor..<oldCursor, replacement: string, marks: marks))
                 newCursor += length
             }
@@ -250,16 +268,6 @@ struct PatchBuilder {
                     range: range, replacement: String(decoding: units[range], as: UTF16.self), marks: marks))
         }
         return out
-    }
-
-    /// The marks an insertion carries, in the text's format-item order. The
-    /// delta's `attributes` are a `Dictionary` and carry no order; the text's
-    /// items do, and that is what the projection renders. Exposed so the
-    /// mark-order test can pin the mapping deterministically.
-    static func marks(
-        in text: YType, range: Range<Int>, attributes: [String: YDeltaAttribute]?
-    ) -> [TextMark]? {
-        uniformMarks(in: text, range: range)
     }
 
     /// The text's current UTF-16 units, or `nil` when it holds something other

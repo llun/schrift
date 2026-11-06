@@ -17,14 +17,23 @@ struct BlockIndex {
         let containerItem: YItem
         let container: YType
         let element: YType?
-        /// The element's single `XmlText` child, when the element has exactly
-        /// one child and it is text. `nil` for inline nodes, several text
-        /// children, or a leaf — shapes the `.text` fast path must not address.
+        /// The element's single `XmlText` child, when `isSimpleText`. `nil` for
+        /// inline nodes, several text children, or a leaf — shapes the `.text`
+        /// fast path must not address.
         let textType: YType?
-        /// True when the element has exactly one child, an `XmlText`.
+        /// True when the container's only countable child is its content
+        /// element — no nested `blockGroup`, no stray content — the one shape
+        /// `YBlockProjection` reads props and runs from.
+        let isSimpleContainer: Bool
+        /// True when the container is simple and the element's only countable
+        /// child is an `XmlText`.
         let isSimpleText: Bool
-        /// True when the container has a nested `blockGroup` child.
-        let hasNestedChildren: Bool
+        /// True when, at the time the entry was built, the projection read this
+        /// block's props and text as-is: props readable, and the text holds only
+        /// strings and known marks with readable links. Anything else is opaque
+        /// or scrubbed, so the surface's copy came from a `.replaceBlock` and a
+        /// fast-path patch could not be applied to it.
+        let isProjectable: Bool
     }
 
     private(set) var entries: [String: Entry] = [:]
@@ -155,41 +164,67 @@ struct BlockIndex {
         guard case .type(let container) = item.content else {
             return Entry(
                 id: id, containerItem: item, container: YType(), element: nil, textType: nil,
-                isSimpleText: false, hasNestedChildren: false)
+                isSimpleContainer: false, isSimpleText: false, isProjectable: false)
         }
+        // Counted the way `YBlockProjection` counts children (countable items
+        // only), so the fast paths accept exactly the shapes it projects.
+        let containerChildren = countableChildren(of: container)
         var element: YType?
-        var hasNestedChildren = false
-        var child = container.start
-        while let current = child {
-            defer { child = current.right }
-            guard !current.deleted, case .type(let type) = current.content else { continue }
-            if type.typeRef == .xmlElement(nodeName: "blockGroup") {
-                hasNestedChildren = true
-            } else if element == nil, case .xmlElement = type.typeRef {
+        for child in containerChildren {
+            if case .type(let type) = child.content, type.typeRef != .xmlElement(nodeName: "blockGroup"),
+                case .xmlElement = type.typeRef
+            {
                 element = type
+                break
             }
         }
-        // The `.text` fast path needs the element to be exactly one XmlText:
-        // no inline nodes, no sibling text children whose offsets would need
-        // translating.
+        let isSimpleContainer = containerChildren.count == 1 && element != nil
         var textType: YType?
-        var elementChildCount = 0
-        var elementChildIsText = false
-        var textChild = element?.start
-        while let current = textChild {
-            defer { textChild = current.right }
-            guard !current.deleted, case .type(let type) = current.content else { continue }
-            elementChildCount += 1
-            if type.typeRef == .xmlText {
+        if isSimpleContainer, let element {
+            let elementChildren = countableChildren(of: element)
+            if elementChildren.count == 1, case .type(let type) = elementChildren[0].content,
+                type.typeRef == .xmlText
+            {
                 textType = type
-                elementChildIsText = true
             }
         }
-        let isSimpleText = elementChildCount == 1 && elementChildIsText
+        let isProjectable =
+            isSimpleContainer && element.map { YBlockProjection.props(of: $0) != nil } == true
+            && textType.map(projectsAsText) != false
         return Entry(
-            id: id, containerItem: item, container: container, element: element,
-            textType: isSimpleText ? textType : nil, isSimpleText: isSimpleText,
-            hasNestedChildren: hasNestedChildren)
+            id: id, containerItem: item, container: container, element: element, textType: textType,
+            isSimpleContainer: isSimpleContainer, isSimpleText: textType != nil, isProjectable: isProjectable)
+    }
+
+    /// True when the projection reads this text as runs unchanged: only strings
+    /// and formats, every format a known mark, and every link readable. An
+    /// embed or a bad link makes the block opaque; an unknown mark is scrubbed,
+    /// and the scrub keeps run splits a `.text` patch cannot reproduce.
+    static func projectsAsText(_ text: YType) -> Bool {
+        var item = text.start
+        while let current = item {
+            defer { item = current.right }
+            guard !current.deleted else { continue }
+            switch current.content {
+            case .string: continue
+            case .format(let key, let valueJSON):
+                guard valueJSON != "null" else { continue }
+                guard YBlockProjection.renderableMarkKeys.contains(key) else { return false }
+                if key == "link", YBlockProjection.linkHref(from: valueJSON) == nil { return false }
+            default: return false
+            }
+        }
+        return true
+    }
+
+    private static func countableChildren(of type: YType) -> [YItem] {
+        var out: [YItem] = []
+        var item = type.start
+        while let current = item {
+            defer { item = current.right }
+            if !current.deleted, current.countable { out.append(current) }
+        }
+        return out
     }
 
     /// The container's `id` map entry, read the way `YBlockProjection` reads it.

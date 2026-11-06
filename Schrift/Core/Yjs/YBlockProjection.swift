@@ -414,15 +414,18 @@ extension YBlockProjection {
     /// reason per dropped key. The server's own markdown export drops unknown
     /// marks the same way, so this keeps write-back parity rather than
     /// inventing a new divergence.
+    /// The mark keys the projection keeps; the engine's `.text` patches use
+    /// the same set.
+    static let renderableMarkKeys: Set<String> = ["bold", "italic", "code", "strike", "link"]
+
     private static func scrubUnknownMarks(_ runs: [InlineRun]) -> (runs: [InlineRun], reasons: [String]) {
         var reasons: [String] = []
         let result = runs.map { run -> InlineRun in
             var kept: [(key: String, valueJSON: String)] = []
             for mark in run.marks {
-                switch mark.key {
-                case "bold", "italic", "code", "strike", "link":
+                if renderableMarkKeys.contains(mark.key) {
                     kept.append(mark)
-                default:
+                } else {
                     let reason = "unknownMark:\(mark.key)"
                     if !reasons.contains(reason) { reasons.append(reason) }
                 }
@@ -436,7 +439,7 @@ extension YBlockProjection {
     /// literal scan — so escaping differences (e.g. `\/` vs `/`) never matter
     /// here; only the byte-exact encoder (`InlineMarkdown.linkValueJSON`) cares
     /// about that. `nil` means the value is unreadable as `{"href": string}`.
-    private static func linkHref(from valueJSON: String) -> String? {
+    static func linkHref(from valueJSON: String) -> String? {
         guard let data = valueJSON.data(using: .utf8) else { return nil }
         guard let object = try? JSONSerialization.jsonObject(with: data) else { return nil }
         guard let dict = object as? [String: Any] else { return nil }

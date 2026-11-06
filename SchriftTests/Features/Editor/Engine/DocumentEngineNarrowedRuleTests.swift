@@ -227,29 +227,154 @@ final class DocumentEngineNarrowedRuleTests: DocumentEngineTestCase {
         assertSurfaceMatchesProjection(surface, doc, "after typing in a 60-block document")
     }
 
-    // MARK: - 8. Deterministic mark order
+    // MARK: - 9. A container id changed in place
 
-    func testInsertMarksFollowFormatItemOrderDeterministically() throws {
+    func testChangingAContainerIDResetsTheSurfaceAndReindexesTheBlock() throws {
+        let doc = try makeDoc(clientID: 1)
+        defer { doc.destroy() }
+        let surface = HeadlessSurface(blocks: projection(doc))
+        let engine = DocumentEngine(doc: doc, surface: surface)
+        let container = try XCTUnwrap(BlockIndex(doc: doc).entries[Self.firstID]?.container)
+
+        try doc.transact { tx in
+            try YWrite.mapSet(tx, on: container, key: "id", .any([.string(Self.newRootID)]))
+        }
+
+        let patch = try XCTUnwrap(surface.appliedPatches.last)
+        XCTAssertTrue(hasReset(patch), "an id changed in place must reset, got \(patch.changes)")
+        XCTAssertNil(block(surface, Self.firstID))
+        XCTAssertNotNil(block(surface, Self.newRootID))
+        assertSurfaceMatchesProjection(surface, doc, "after changing the container id")
+
+        try engine.replaceText(block: Self.newRootID, range: 0..<0, with: "X")
+
+        XCTAssertEqual(text(of: try XCTUnwrap(block(surface, Self.newRootID))), "XFirst paragraph.")
+        assertSurfaceMatchesProjection(surface, doc, "after editing the reindexed block")
+    }
+
+    // MARK: - 10. Opaque container and inline shapes
+
+    func testTextInOpaqueContainerAndInlineShapesReplacesTheBlocks() throws {
+        let doc = try makeDoc(clientID: 1)
+        defer { doc.destroy() }
+        let surface = HeadlessSurface(blocks: projection(doc))
+        let engine = DocumentEngine(doc: doc, surface: surface)
+        let index = BlockIndex(doc: doc)
+        let first = try XCTUnwrap(index.entries[Self.firstID])
+        let firstText = try XCTUnwrap(first.textType)
+        let second = try XCTUnwrap(index.entries[Self.secondID])
+        let secondElement = try XCTUnwrap(second.element)
+        let secondText = try XCTUnwrap(second.textType)
+
+        // Both shapes project empty runs: an extra content element in the
+        // first container, and a non-type child beside the second XmlText.
+        try doc.transact { tx in
+            let extra = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+            _ = try YWrite.insertAfter(tx, into: first.container, after: first.element?.item, [.type(extra)])
+            _ = try YWrite.insertAfter(
+                tx, into: secondElement, after: secondText.item, [.string(Array("unexpected".utf16))])
+        }
+        assertSurfaceMatchesProjection(surface, doc, "after introducing opaque shapes")
+
+        try doc.transact { _ in
+            try firstText.insert(0, "X")
+            try secondText.insert(0, "Y")
+        }
+
+        let patch = try XCTUnwrap(surface.appliedPatches.last)
+        XCTAssertTrue(hasReplace(patch, Self.firstID), "an opaque container must rebuild, got \(patch.changes)")
+        XCTAssertTrue(hasReplace(patch, Self.secondID), "an opaque inline shape must rebuild, got \(patch.changes)")
+        _ = engine
+        assertSurfaceMatchesProjection(surface, doc, "after editing text in opaque shapes")
+    }
+
+    // MARK: - 11. Unknown marks follow the projection's vocabulary
+
+    func testUnknownMarksReplaceTheBlock() throws {
         let blocks = [
-            BlockNoteBlock(node: "paragraph", props: Self.paragraphProps, runs: [], id: Self.firstID)
+            BlockNoteBlock(node: "paragraph", props: Self.paragraphProps, runs: [InlineRun("abc")], id: Self.firstID)
         ]
         let doc = try makeDoc(blocks, clientID: 1)
         defer { doc.destroy() }
-        let index = BlockIndex(doc: doc)
-        let text = try XCTUnwrap(index.entries[Self.firstID]?.textType)
+        let surface = HeadlessSurface(blocks: projection(doc))
+        let engine = DocumentEngine(doc: doc, surface: surface)
 
-        // The delta's attributes are a Dictionary; the text's format items keep
-        // the caller's order. Build the items in the reverse of the Dictionary's
-        // order, so only format-item order can produce the expected sequence.
-        let attributes: [String: YDeltaAttribute] = ["bold": .json("{}"), "italic": .json("{}")]
-        let dictionaryOrder = Array(attributes.keys)
-        let itemOrder = Array(dictionaryOrder.reversed())
-        let textAttributes = YTextAttributes(itemOrder.map { ($0, "{}") })
-        try text.insert(0, "X", textAttributes)
+        try engine.replaceText(
+            block: Self.firstID, range: 0..<0, with: "X", marks: [TextMark(key: "underline", valueJSON: "{}")])
 
-        let marks = try XCTUnwrap(
-            PatchBuilder.marks(in: text, range: 0..<1, attributes: attributes))
-        XCTAssertEqual(marks.map(\.key), itemOrder)
-        XCTAssertNotEqual(marks.map(\.key), dictionaryOrder)
+        let patch = try XCTUnwrap(surface.appliedPatches.last)
+        XCTAssertTrue(hasReplace(patch, Self.firstID), "unknown marks must rebuild, got \(patch.changes)")
+        let runs = try XCTUnwrap(block(surface, Self.firstID)).runs
+        XCTAssertEqual(runs.map(\.text), ["X", "abc"], "scrubbing a mark preserves the projection's run boundary")
+        XCTAssertTrue(runs.allSatisfy { $0.marks.isEmpty })
+        assertSurfaceMatchesProjection(surface, doc, "after inserting text with an unknown mark")
     }
+
+    // MARK: - 12. Unreadable props suppress projected text
+
+    func testUnreadablePropsReplaceTheBlockAndClearItsRuns() throws {
+        let doc = try makeDoc(clientID: 1)
+        defer { doc.destroy() }
+        let surface = HeadlessSurface(blocks: projection(doc))
+        let engine = DocumentEngine(doc: doc, surface: surface)
+        let element = try XCTUnwrap(BlockIndex(doc: doc).entries[Self.firstID]?.element)
+
+        try doc.transact { tx in
+            try YWrite.mapSet(tx, on: element, key: "bad", .any([.string("a"), .string("b")]))
+        }
+
+        let patch = try XCTUnwrap(surface.appliedPatches.last)
+        XCTAssertTrue(hasReplace(patch, Self.firstID), "unreadable props must rebuild, got \(patch.changes)")
+        XCTAssertEqual(text(of: try XCTUnwrap(block(surface, Self.firstID))), "")
+        _ = engine
+        assertSurfaceMatchesProjection(surface, doc, "after unreadable props suppress the text")
+    }
+
+    // MARK: - 13. Readable props restore previously suppressed text
+
+    func testRepairingUnreadablePropsReplacesTheBlockAndRestoresItsRuns() throws {
+        let doc = try makeDoc(clientID: 1)
+        defer { doc.destroy() }
+        let surface = HeadlessSurface(blocks: projection(doc))
+        let engine = DocumentEngine(doc: doc, surface: surface)
+        let element = try XCTUnwrap(BlockIndex(doc: doc).entries[Self.firstID]?.element)
+
+        try doc.transact { tx in
+            try YWrite.mapSet(tx, on: element, key: "bad", .any([.string("a"), .string("b")]))
+        }
+        XCTAssertEqual(text(of: try XCTUnwrap(block(surface, Self.firstID))), "")
+        assertSurfaceMatchesProjection(surface, doc, "before repairing unreadable props")
+
+        try doc.transact { tx in
+            try YWrite.mapSet(tx, on: element, key: "bad", .any([.string("readable")]))
+        }
+
+        let patch = try XCTUnwrap(surface.appliedPatches.last)
+        XCTAssertTrue(hasReplace(patch, Self.firstID), "repairing unreadable props must rebuild, got \(patch.changes)")
+        XCTAssertEqual(text(of: try XCTUnwrap(block(surface, Self.firstID))), "First paragraph.")
+        _ = engine
+        assertSurfaceMatchesProjection(surface, doc, "after readable props restore the text")
+    }
+
+    // MARK: - 14. An unreadable container id
+
+    func testChangingAContainerIDToAnUnreadableValueResetsTheSurface() throws {
+        let doc = try makeDoc(clientID: 1)
+        defer { doc.destroy() }
+        let surface = HeadlessSurface(blocks: projection(doc))
+        let engine = DocumentEngine(doc: doc, surface: surface)
+        let container = try XCTUnwrap(BlockIndex(doc: doc).entries[Self.firstID]?.container)
+
+        try doc.transact { tx in
+            try YWrite.mapSet(tx, on: container, key: "id", .any([.int(1)]))
+        }
+
+        let patch = try XCTUnwrap(surface.appliedPatches.last)
+        XCTAssertTrue(hasReset(patch), "an unreadable id must reset, got \(patch.changes)")
+        XCTAssertNil(block(surface, Self.firstID))
+        XCTAssertEqual(surface.blocks.map(\.id), ["", Self.secondID, Self.thirdID])
+        _ = engine
+        assertSurfaceMatchesProjection(surface, doc, "after the container id becomes unreadable")
+    }
+
 }

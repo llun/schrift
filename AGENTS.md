@@ -2093,11 +2093,15 @@ only; nothing in the shipping editor uses it yet.
   content element's attributes, a parent's text when it has children, several
   `XmlText` children (no sibling-offset math), a container replaced in place
   under the same id (the index tracks the container `YItem`, not just the id), or
-  props and text changed together. Only the root `blockGroup` produces
+  props and text changed together. `.text` and `.props` also need the block to
+  have projected as-is *before* the transaction and after it (readable props, a
+  text of strings and known marks with readable links; `BlockIndex.Entry.isProjectable`),
+  because an opaque or mark-scrubbed block's surface copy came from a
+  `.replaceBlock`. Only the root `blockGroup` produces
   `.insert`/`.remove`; a nested group never does. A reorder in the root group is
   a `.remove` + `.insert` (the surface holds an ordered list). A change to the
-  fragment root, or a root group that is not the one the index recorded, is a
-  `.reset` of the projected document.
+  fragment root, or a root group that is not the one the index recorded, or a
+  container's `id` changed in place, is a `.reset` of the projected document.
 - **Patch building is O(touched blocks) for text and prop changes.** Classification
   reads `transaction.changed` (the types whose *direct* children changed), so a
   keystroke visits one `XmlText` and projects no block. The emit loop iterates
