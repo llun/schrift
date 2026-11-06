@@ -275,7 +275,8 @@ final class DocumentCollaborationManager {
     /// resulting incremental Yjs update to the room — the outbound write path (C2a).
     ///
     /// `old` must be the replica's current projection (`projectedReplica`), `new`
-    /// the edited blocks. `BlockNoteWrite.applyEdit` diffs them, mutates the replica
+    /// the edited blocks. `BlockNoteWrite.applyEdit` diffs them — reconciling a
+    /// surviving block through `BlockNoteWriter`'s intents (B5b) — mutates the replica
     /// in place inside its own local transaction, and returns that transaction's own
     /// update — the structs it minted and the ranges it deleted (`YTransactionEncoder`),
     /// or the canonical empty update `0000` when nothing changed; those bytes are

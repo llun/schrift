@@ -13,7 +13,7 @@ enum BlockNoteIncrementalSaveError: Error, Equatable {
     /// state does not order the way this one does.
     case incompleteServerState
     /// The `document-store` root is not the canonical single `blockGroup`, or a block lacks a
-    /// unique id — `BlockNoteWrite.applyEdit` maps old blocks to live containers by position
+    /// unique id — `BlockNoteWrite.applyEditLegacy` maps old blocks to live containers by position
     /// and id, and neither mapping would be trustworthy.
     case nonCanonicalDocument
 }
@@ -32,7 +32,7 @@ enum BlockNoteIncrementalSaveError: Error, Equatable {
 ///    the document already uses — a reused id would mint duplicate `(client, clock)` pairs);
 /// 2. project it (`YBlockProjection`) into the old blocks;
 /// 3. align the new blocks' ids with them (`BlockNoteAlignment`);
-/// 4. `BlockNoteWrite.applyEdit` → the update holding exactly the ops this save made.
+/// 4. `BlockNoteWrite.applyEditLegacy` → the update holding exactly the ops this save made.
 ///
 /// The replica is always destroyed before returning (`YDoc.destroy()` is not optional).
 enum BlockNoteIncrementalSave {
@@ -96,13 +96,13 @@ enum BlockNoteIncrementalSave {
         let deletesBefore = YStateEncoder.deleteBlocks(YDeleteSet.from(store: doc.store))
         let update: Data
         do {
-            update = try BlockNoteWrite.applyEdit(
+            update = try BlockNoteWrite.applyEditLegacy(
                 old: oldForWrite, new: aligned, to: doc, allowsNestedInserts: true)
         } catch {
             throw BlockNoteIncrementalSaveError.nonCanonicalDocument
         }
         // Keep "nothing changed" defined by the store's clocks and deletes, independent
-        // of how applyEdit encodes its transaction (including the empty-update fallback).
+        // of how applyEditLegacy encodes its transaction (including the empty-update fallback).
         if doc.store.getStateVector() == stateBefore,
             YStateEncoder.deleteBlocks(YDeleteSet.from(store: doc.store)) == deletesBefore
         {
@@ -112,7 +112,7 @@ enum BlockNoteIncrementalSave {
     }
 
     /// The replica's top-level blocks as the alignment's `old`, after refusing every shape
-    /// `applyEdit`'s positional container mapping cannot trust.
+    /// `applyEditLegacy`'s positional container mapping cannot trust.
     ///
     /// Fidelity comes from a projection **without** an interlinking origin, on purpose: a web
     /// document-link node then projects opaque, so it is never paired and text-reconciled —
@@ -150,7 +150,7 @@ enum BlockNoteIncrementalSave {
         }
     }
 
-    /// `applyEdit` maps old blocks to containers by walking the `blockGroup`'s undeleted
+    /// `applyEditLegacy` maps old blocks to containers by walking the `blockGroup`'s undeleted
     /// children, while the projection skips non-countable ones. They agree only when every
     /// undeleted child is countable, which a well-formed BlockNote document always is.
     private static func blockGroupChildrenAreCountable(_ doc: YDoc) -> Bool {
