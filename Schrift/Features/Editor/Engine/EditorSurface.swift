@@ -41,6 +41,9 @@ import Foundation
 /// Selection endpoints and local intents targeting a deferred block throw
 /// `.composingBlock`; joins also check the destination. These blocks stay locked
 /// until `setCompositionDeferred(false)`, after the final rebuild is delivered.
+/// If a structural change requires a whole-list reset, every block is locked
+/// with `.composingBlock`. That global lock persists through pending reset
+/// delivery and chained restarts until the deferral-complete signal.
 /// An explicit-offset restart into a locked block is rejected too. A restart
 /// from the existing relative selection (no `at:`) is safe and supported.
 /// A composition restarted from `applyPatch` after commit/cancel keeps deferral

@@ -601,6 +601,13 @@ that block too, with joins checking the source and destination's outer blocks.
 Rejection leaves the replica, selection, patches and deferral history unchanged.
 Locks persist through pending rebuild delivery until the final
 `setCompositionDeferred(false)` signal; chained restarts retain earlier locks.
+If `CompositionQueue.requiresReset` is set, **the whole list is frozen**: the same
+`.composingBlock` error rejects input and selection endpoints for every block,
+including an explicit `compositionBegan(..., at:)` on another block. The engine
+latches that global lock beyond the queue's logical end, through pending reset
+delivery and chained restarts, until the final deferral-complete signal. Normal
+per-block deferral continues to allow input on independent blocks. Selection
+queries and `setSelection(nil)` remain available in either mode.
 An explicit `compositionBegan(..., at:)` into a locked block is rejected even
 after logical commit/cancel, since its queued rebuild may not have reached the
 surface. A restart without `at:` uses the existing relative selection and remains

@@ -2098,6 +2098,11 @@ only; nothing in the shipping editor uses it yet.
   without mutating the replica (joins check the destination/outer block too).
   Block locks remain through pending rebuild delivery until the final
   `setCompositionDeferred(false)`; a chained restart retains earlier locks.
+  When the composition queue requires a whole-list reset, **all blocks** reject
+  offset-based input with `.composingBlock`. That global lock is latched through
+  logical composition end, pending reset delivery and chained restarts, and clears
+  only with the final deferral-complete signal. Ordinary composition keeps the
+  per-block lock, allowing input on independently updated blocks.
   Explicit-offset restarts into locked blocks are rejected. Restarts from an
   existing relative selection, without `at:`, remain supported. Queries and
   clearing selection remain allowed. A commit's write is `.localUser`, but its

@@ -49,6 +49,9 @@ final class DocumentEngine {
     /// Retained through pending rebuilds and chained relative restarts. Raw
     /// surface offsets stay locked until the final deferral-complete signal.
     private var deferredBlockIDs: Set<String> = []
+    /// A reset freezes every block. Unlike the queue, this survives logical
+    /// composition end and stays latched until final deferral completion.
+    private var isWholeListDeferred = false
     private var compositionGeneration: UInt = 0
     private var isFlushing = false
     private let previousAfterTransaction: ((YTransaction) -> Void)?
@@ -172,8 +175,8 @@ final class DocumentEngine {
     /// from the existing relative selection is allowed without `at:`.
     func compositionBegan(blockID: String, at offset: Int? = nil, assoc: Int = -1) throws {
         try requireAttached()
-        guard composition == nil else { throw DocumentEngineError.compositionAlreadyActive }
         if offset != nil { try requireEditableBlock(blockID) }
+        guard composition == nil else { throw DocumentEngineError.compositionAlreadyActive }
         let position: EditorPosition
         if let offset {
             position = EditorPosition(blockID: blockID, offset: offset, assoc: assoc)
@@ -271,7 +274,9 @@ final class DocumentEngine {
 
     private func requireEditableBlock(_ blockID: String) throws {
         try requireAttached()
-        guard !deferredBlockIDs.contains(blockID) else { throw DocumentEngineError.composingBlock }
+        guard !isWholeListDeferred, !deferredBlockIDs.contains(blockID) else {
+            throw DocumentEngineError.composingBlock
+        }
     }
 
     // MARK: - Change signal
@@ -279,9 +284,20 @@ final class DocumentEngine {
     private func record(_ transaction: YTransaction) {
         guard !isDetached else { return }
         var patch = builder.build(transaction)
-        if composition != nil { patch = composition!.filter(patch) }
+        patch = filterForComposition(patch)
         guard !patch.isEmpty else { return }
         buffered.append(.patch(patch))
+    }
+
+    /// Both recording and reentrant delivery can discover a structural reset.
+    /// Latch its input lock before dropping the patch, even if completion later
+    /// clears or replaces the queue before the reset reaches the surface.
+    private func filterForComposition(_ patch: BlockPatch) -> BlockPatch {
+        guard var queue = composition else { return patch }
+        let filtered = queue.filter(patch)
+        composition = queue
+        if queue.requiresReset { isWholeListDeferred = true }
+        return filtered
     }
 
     /// Delivers buffered patches in order. A surface may open a transaction
@@ -302,12 +318,13 @@ final class DocumentEngine {
                 switch event {
                 case .patch(var patch):
                     // A previous delivery can begin composition reentrantly.
-                    if composition != nil { patch = composition!.filter(patch) }
+                    patch = filterForComposition(patch)
                     if !patch.isEmpty { surface?.applyPatch(patch) }
                 case .compositionEnded(let generation):
                     guard generation == compositionGeneration else { continue }
                     isDeferringComposition = false
                     deferredBlockIDs = []
+                    isWholeListDeferred = false
                     surface?.setCompositionDeferred(false)
                 }
             }
@@ -333,6 +350,7 @@ final class DocumentEngine {
         let wasComposing = isDeferringComposition
         isDeferringComposition = false
         deferredBlockIDs = []
+        isWholeListDeferred = false
         composition = nil
         selection = nil
         doc.afterTransaction = previousAfterTransaction

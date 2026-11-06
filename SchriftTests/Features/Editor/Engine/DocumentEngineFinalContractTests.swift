@@ -4,6 +4,72 @@ import XCTest
 
 @MainActor
 final class DocumentEngineFinalContractTests: DocumentEngineTestCase {
+    func testWholeListFreezeRejectsOtherBlockInputsUntilResetAndCompletion() throws {
+        for commit in [false, true] {
+            let local = try makeDoc(clientID: 1)
+            defer { local.destroy() }
+            let peer = try makeDoc(clientID: 2)
+            defer { peer.destroy() }
+            let surface = ContractSurface(blocks: projection(local))
+            let peerSurface = HeadlessSurface(blocks: projection(peer))
+            let engine = DocumentEngine(doc: local, surface: surface)
+            let peerEngine = DocumentEngine(doc: peer, surface: peerSurface)
+            try engine.compositionBegan(blockID: Self.secondID, at: 3)
+            try local.applyUpdate(YUpdateDecoder.decode(peerEngine.joinBlocks(block: Self.secondID)), origin: .remote)
+            try local.applyUpdate(
+                YUpdateDecoder.decode(peerEngine.replaceText(block: Self.thirdID, range: 0..<0, with: "Z")),
+                origin: .remote)
+            XCTAssertTrue(surface.received.isEmpty, "removal makes every subsequent block patch wait for reset")
+            XCTAssertEqual(text(of: surface.headless.blocks[2]), "Third paragraph.")
+            let caret = EditorPosition(blockID: Self.thirdID, offset: 5)
+            func assertWholeListLocked() throws {
+                let actions: [() throws -> Void] = [
+                    { _ = try engine.replaceText(block: Self.thirdID, range: 5..<5, with: "unsafe") },
+                    { try engine.setSelection(EditorSelection(anchor: caret, head: caret)) },
+                    { try engine.compositionBegan(blockID: Self.thirdID, at: 5) },
+                ]
+                for reject in actions {
+                    let state = try YStateEncoder.encodeStateAsUpdate(local)
+                    let selection = try engine.currentSelection()
+                    let patches = surface.received
+                    let deferrals = surface.headless.compositionDeferrals
+                    XCTAssertThrowsError(try reject()) { XCTAssertEqual($0 as? DocumentEngineError, .composingBlock) }
+                    XCTAssertEqual(try YStateEncoder.encodeStateAsUpdate(local), state)
+                    XCTAssertEqual(try engine.currentSelection(), selection)
+                    XCTAssertEqual(surface.received, patches)
+                    XCTAssertEqual(surface.headless.compositionDeferrals, deferrals)
+                }
+            }
+            try assertWholeListLocked()
+            var checkedReset = false
+            surface.onPatch = {
+                guard !checkedReset else { return }
+                checkedReset = true
+                guard case .reset = surface.received.last?.changes.first else { return XCTFail("expected final reset") }
+                // The queue is now nil, but the deferral-complete event has not
+                // arrived. Its global lock must survive delivery of the reset.
+                do { try assertWholeListLocked() } catch { XCTFail("reset callback failed: \(error)") }
+            }
+            if commit {
+                XCTAssertEqual(try engine.compositionCommitted(text: "LOST"), Data([0, 0]))
+            } else {
+                try engine.compositionCancelled()
+            }
+            XCTAssertTrue(checkedReset)
+            XCTAssertEqual(surface.headless.compositionDeferrals, [true, false])
+            assertSurfaceMatchesProjection(surface.headless, local, "whole-list reset after commit=\(commit)")
+            surface.onPatch = nil
+            try engine.setSelection(EditorSelection(anchor: caret, head: caret))
+            try engine.compositionBegan(blockID: Self.thirdID, at: 5)
+            try engine.compositionCancelled()
+            let update = try engine.replaceText(block: Self.thirdID, range: 5..<5, with: "allowed")
+            try peer.applyUpdate(YUpdateDecoder.decode(update), origin: .remote)
+            XCTAssertEqual(YXMLString.fragment(local), YXMLString.fragment(peer))
+            assertSurfaceMatchesProjection(surface.headless, local, "whole-list input unlocked")
+            assertSurfaceMatchesProjection(peerSurface, peer, "peer after unlock")
+        }
+    }
+
     func testFrozenBlockRejectsSelectionAndEveryIntentWithoutSideEffects() throws {
         let pair = try makePair()
         defer { pair.destroy() }

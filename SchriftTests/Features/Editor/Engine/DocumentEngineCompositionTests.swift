@@ -114,7 +114,9 @@ final class DocumentEngineCompositionTests: DocumentEngineTestCase {
         try doc.transact(origin: .remote) { tx in
             try YWrite.mapSet(tx, on: container, key: "id", .any([.string("renamed")]))
         }
-        try engine.replaceText(block: Self.thirdID, range: 0..<0, with: "later ")
+        try doc.transact(origin: .remote) { _ in
+            try XCTUnwrap(BlockIndex(doc: doc).entries[Self.thirdID]?.textType).insert(0, "later ")
+        }
         XCTAssertTrue(surface.appliedPatches.isEmpty)
         try engine.compositionCancelled()
         XCTAssertEqual(surface.appliedPatches.count, 1)
