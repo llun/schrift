@@ -9,14 +9,14 @@ import Foundation
 /// projected, one block at a time (`YBlockProjection.projectBlock`). The
 /// counters below are the test seam for that claim.
 ///
-/// The delta rules, in order of preference:
-/// - a block whose only change is an `XmlText` → `.text`, mapped from the
-///   `YTextEvent` delta (insert/delete with marks; a pure format change becomes
-///   a replacement of the range's own text carrying the resulting marks);
-/// - a block whose content element only changed attributes → `.props`;
-/// - anything else (inline nodes, split/join, a type change, a mixed
-///   text-and-format delta, a non-uniform format range) → `.replaceBlock`,
-///   rebuilt from a projection of that block alone.
+/// **One rule for `.text`.** A block gets a `.text` patch only when all three
+/// hold: it has no nested children; its content element has exactly one child,
+/// an `XmlText` (no inline nodes, no sibling text children); and the only change
+/// to it in this transaction is that text. Everything else touched in a block —
+/// attributes, structure, a container replacement, a nested change — becomes a
+/// `.replaceBlock` of the top-level block from its projection. A props-only
+/// change is still `.props`. A fragment-root or root-group replacement is a
+/// `.reset` of the whole surface.
 struct PatchBuilder {
     let doc: YDoc
     private(set) var index: BlockIndex
@@ -24,6 +24,9 @@ struct PatchBuilder {
     private(set) var projectedBlocks = 0
     /// Changed types classified — the other half of the counter.
     private(set) var visitedTypes = 0
+    /// Index entries visited while emitting — proves the emit loop is
+    /// O(touched), not O(document).
+    private(set) var visitedEntries = 0
 
     init(doc: YDoc, index: BlockIndex? = nil) {
         self.doc = doc
@@ -31,6 +34,7 @@ struct PatchBuilder {
     }
 
     mutating func build(_ transaction: YTransaction) -> BlockPatch {
+        let origin = BlockPatchOrigin(transaction.origin)
         let rootAppeared = index.resolveRoot()
         var events: [ObjectIdentifier: YEvent] = [:]
         for entry in transaction.changedParentTypes {
@@ -43,6 +47,7 @@ struct PatchBuilder {
         var touched: [String] = []
         var groups: [YType] = []
         var rootGroupChanged = false
+        var resync = rootAppeared
 
         func touch(_ id: String) {
             if !touched.contains(id) { touched.append(id) }
@@ -52,14 +57,19 @@ struct PatchBuilder {
             guard let entry = transaction.changed[oid] else { continue }
             visitedTypes += 1
             let type = entry.type
+            // The fragment root itself: a root-group add, remove or replacement
+            // has no block-relative spelling. Resync the whole surface.
+            if type.item == nil {
+                resync = true
+                continue
+            }
             if type.typeRef == .xmlText {
                 guard let id = index.blockID(for: type) else { continue }
                 touch(id)
-                // Only the block's own content text may become a `.text` patch.
-                // Text in a nested block or a nested group is not addressable at
-                // this block's offsets: rebuild the top-level block instead.
-                if index.entries[id]?.textTypes.contains(where: { $0 === type }) == true,
-                    let deltas = Self.textDeltas(events[oid], text: type)
+                // The narrowed rule: only a block whose element is exactly one
+                // XmlText, with no nested children, may take the fast path.
+                if let block = index.entries[id], block.isSimpleText, block.textType === type,
+                    !block.hasNestedChildren, let deltas = Self.textDeltas(events[oid], text: type)
                 {
                     textDeltas[id] = deltas
                 } else {
@@ -69,34 +79,32 @@ struct PatchBuilder {
             }
             if type.typeRef == .xmlElement(nodeName: "blockGroup") {
                 if index.isRootGroup(type) {
+                    // A new root-group object is a replacement, not a diff.
+                    if index.rootGroupItem !== type.item { resync = true }
                     groups.append(type)
                     rootGroupChanged = true
                 } else if let id = index.blockID(for: type) {
-                    // A nested group's child list moved: the top-level block's
-                    // projection changed, and only a whole-block patch can say so.
                     touch(id)
                     structural.insert(id)
                 }
                 continue
             }
-            // The fragment root itself: its child list is the root group, whose
-            // own entry carries any membership change.
-            if type.item == nil { continue }
             guard let id = index.blockID(for: type) else { continue }
             touch(id)
             if type.typeRef == .xmlElement(nodeName: "blockContainer") || entry.subs.contains(nil) {
                 structural.insert(id)
-            } else {
+            } else if let block = index.entries[id], block.element === type, !block.hasNestedChildren {
                 props.insert(id)
+            } else {
+                // A nested element's attributes are not the top-level block's.
+                structural.insert(id)
             }
         }
 
-        // An engine created on an empty document sees the root appear inside a
-        // transaction whose group may not be in `changed`: the whole block list
-        // is new, so diff it against the empty index.
-        if rootAppeared, let group = index.rootGroupType(), !groups.contains(where: { $0 === group }) {
-            groups.append(group)
-            rootGroupChanged = true
+        if resync {
+            let blocks = YBlockProjection.project(doc).blocks.map(BlockSnapshot.init)
+            index.rebuild()
+            return BlockPatch([.reset(blocks)], origin: origin)
         }
 
         var changes: [BlockChange] = []
@@ -123,6 +131,13 @@ struct PatchBuilder {
                 var after: String?
                 for (id, item) in current {
                     if previousSet.contains(id) {
+                        // Same id, different container object: the block was
+                        // replaced in place. Membership alone cannot see it.
+                        if index.entries[id]?.containerItem !== item {
+                            index.setContainer(id, item: item)
+                            touch(id)
+                            structural.insert(id)
+                        }
                         if !pending.isEmpty {
                             inserts.append((after, pending))
                             pending = []
@@ -137,19 +152,17 @@ struct PatchBuilder {
             index.setGroupOrder(group, currentIDs)
         }
 
-        for id in index.order where touched.contains(id) {
-            if structural.contains(id) {
+        // Iterate the touched ids only, in document order — never `index.order`.
+        let ordered = touched.sorted { (index.position[$0] ?? Int.max) < (index.position[$1] ?? Int.max) }
+        for id in ordered {
+            visitedEntries += 1
+            if structural.contains(id) || (props.contains(id) && textDeltas[id] != nil) {
                 guard let entry = index.entries[id] else { continue }
                 changes.append(.replaceBlock(blockID: id, block: snapshot(entry.containerItem)))
-            } else {
-                // Props and text are independent: one transaction may change
-                // both, and dropping either leaves the surface stale.
-                if props.contains(id), let element = index.entries[id]?.element {
-                    changes.append(.props(blockID: id, props: YBlockProjection.props(of: element) ?? []))
-                }
-                if let deltas = textDeltas[id], !deltas.isEmpty {
-                    changes.append(.text(blockID: id, deltas: deltas))
-                }
+            } else if props.contains(id), let element = index.entries[id]?.element {
+                changes.append(.props(blockID: id, props: YBlockProjection.props(of: element) ?? []))
+            } else if let deltas = textDeltas[id], !deltas.isEmpty {
+                changes.append(.text(blockID: id, deltas: deltas))
             }
         }
 
@@ -163,7 +176,7 @@ struct PatchBuilder {
         } else {
             for id in touched { index.refresh(id) }
         }
-        return BlockPatch(changes)
+        return BlockPatch(changes, origin: origin)
     }
 
     private mutating func snapshot(_ item: YItem) -> BlockSnapshot {
@@ -207,9 +220,10 @@ struct PatchBuilder {
                 // surface's run order matches the projection's. `[]` is explicit:
                 // an insertion with no marks in force must not inherit the marks
                 // to its right. A non-uniform range is not one delta.
-                guard let marks = uniformMarks(in: text, range: newCursor..<(newCursor + length)) else {
-                    return nil
-                }
+                guard
+                    let marks = Self.marks(
+                        in: text, range: newCursor..<(newCursor + length), attributes: op.attributes)
+                else { return nil }
                 out.append(TextDelta(range: oldCursor..<oldCursor, replacement: string, marks: marks))
                 newCursor += length
             }
@@ -236,6 +250,16 @@ struct PatchBuilder {
                     range: range, replacement: String(decoding: units[range], as: UTF16.self), marks: marks))
         }
         return out
+    }
+
+    /// The marks an insertion carries, in the text's format-item order. The
+    /// delta's `attributes` are a `Dictionary` and carry no order; the text's
+    /// items do, and that is what the projection renders. Exposed so the
+    /// mark-order test can pin the mapping deterministically.
+    static func marks(
+        in text: YType, range: Range<Int>, attributes: [String: YDeltaAttribute]?
+    ) -> [TextMark]? {
+        uniformMarks(in: text, range: range)
     }
 
     /// The text's current UTF-16 units, or `nil` when it holds something other

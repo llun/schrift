@@ -2051,9 +2051,12 @@ only; nothing in the shipping editor uses it yet.
   `PatchBuilder` (change signal → patch), and `HeadlessSurface` (an in-memory
   surface, so a test can assert the surface converges to the projection).
   `BlockPatch` changes are `.text(blockID, [TextDelta])`, `.props`,
-  `.insert(after:, [BlockSnapshot])`, `.remove([blockID])` and
-  `.replaceBlock(blockID, BlockSnapshot)`. Composition and selection hooks are
-  B6b; do not stub them in.
+  `.insert(after:, [BlockSnapshot])`, `.remove([blockID])`,
+  `.replaceBlock(blockID, BlockSnapshot)` and `.reset([BlockSnapshot])` (the
+  whole surface list, for a root-group replacement or a fragment that was empty
+  when the engine attached). Every patch carries a `BlockPatchOrigin`
+  (`.localUser`, `.remote`, `.other`) taken from the transaction. Composition
+  and selection hooks are B6b; do not stub them in.
 - **The engine borrows the replica; it never owns it.** `DocumentCollaborationManager`
   keeps the one-owner rule. `YDoc.onDestroy` fires at the start of `destroy()`
   and the engine detaches there — hooks cleared, buffered patches dropped, later
@@ -2070,26 +2073,41 @@ only; nothing in the shipping editor uses it yet.
   the edit it just made: the same transaction may also carry a format cleanup or
   a split's new block. A patch describes a *transition* from the pre-transaction
   state, so a surface that already applied the keystroke itself (a UIKit text
-  view mutates synchronously) must **reconcile**. The rule, per change kind:
-  `.text` — if the range already holds `replacement` (or is already empty for a
-  deletion), skip that delta; `.replaceBlock`/`.props` — assign, idempotent;
-  `.insert`/`.remove` — skip ids already present/absent. `HeadlessSurface` never
-  mutates on its own, so it applies every patch and equals the projection after
-  each step. There is no optimistic overlay (plan §2.3).
-- **Only a block's own content text is `.text`.** `BlockIndex.Entry.textTypes`
-  holds the `XmlText` children of the block's *content element*. A change to a
-  nested block's text, or to a nested `blockGroup`'s child list, is not
-  addressable at the top-level block's offsets: it escalates to
-  `.replaceBlock` of the top-level block. Only the root `blockGroup` produces
+  view mutates synchronously) must **reconcile**. The rule is the patch's
+  `origin`, not content inspection — a displayed `"a"` plus a delete of `0..<1`
+  cannot tell "already applied" from "not yet applied". A surface that applied a
+  local intent optimistically **skips `.localUser` patches for that edit** (phase
+  2 may refine this with command ids); it applies every `.remote` and `.other`
+  patch. `.replaceBlock`/`.props`/`.reset` are assignments and idempotent either
+  way; `.insert`/`.remove` skip ids already present/absent. `HeadlessSurface`
+  never mutates on its own, so it applies every patch regardless of origin and
+  equals the projection after each step. There is no optimistic overlay (plan
+  §2.3).
+- **`.text` has exactly one shape.** A block gets `.text` only when (a) it has no
+  nested children (no nested `blockGroup`), (b) its content element has exactly
+  one child, an `XmlText`, with no inline nodes — so the projection's runs *are*
+  that text — and (c) the only change to it in this transaction is that text (no
+  attribute, structural or container change). Everything else touched in a block
+  escalates to `.replaceBlock` of the top-level block, rebuilt from that block's
+  projection: a nested block's text, a nested group's child list, a nested
+  content element's attributes, a parent's text when it has children, several
+  `XmlText` children (no sibling-offset math), a container replaced in place
+  under the same id (the index tracks the container `YItem`, not just the id), or
+  props and text changed together. Only the root `blockGroup` produces
   `.insert`/`.remove`; a nested group never does. A reorder in the root group is
-  a `.remove` + `.insert` (the surface holds an ordered list).
+  a `.remove` + `.insert` (the surface holds an ordered list). A change to the
+  fragment root, or a root group that is not the one the index recorded, is a
+  `.reset` of the projected document.
 - **Patch building is O(touched blocks) for text and prop changes.** Classification
   reads `transaction.changed` (the types whose *direct* children changed), so a
-  keystroke visits one `XmlText` and projects no block. A structural change
-  (root-group membership, split/join, a nested change) rebuilds the index and
-  projects the touched blocks, one at a time (`YBlockProjection.projectBlock`);
-  it is O(document) for the index walk, not O(touched). `DocumentEnginePatchCostTests`
-  pins the counters and what they measure. A delta that both rewrites text and
+  keystroke visits one `XmlText` and projects no block. The emit loop iterates
+  only the touched ids, ordered by the index's position map — never
+  `index.order`. A structural change (root-group membership, split/join, a nested
+  change) rebuilds the index and projects the touched blocks, one at a time
+  (`YBlockProjection.projectBlock`); it is O(document) for the index walk, not
+  O(touched). `DocumentEnginePatchCostTests` and
+  `DocumentEngineNarrowedRuleTests.testTextTransactionVisitsOnlyTouchedEntries`
+  pin the counters and what they measure. A delta that both rewrites text and
   re-marks it, or a format range whose marks are not uniform, escalates to
   `.replaceBlock` rather than guessing.
 - **`TextDelta.marks` is never `nil` from the builder.** `nil` means *inherit*

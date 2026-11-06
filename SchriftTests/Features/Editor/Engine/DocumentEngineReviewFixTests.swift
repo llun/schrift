@@ -162,9 +162,9 @@ final class DocumentEngineReviewFixTests: DocumentEngineTestCase {
         XCTAssertTrue(run.marks.isEmpty, "the insertion must not inherit the bold to its right")
     }
 
-    // MARK: - 7. Props and text in one transaction both reach the surface
+    // MARK: - 7. Props and text in one transaction rebuild the block
 
-    func testPropsAndTextChangedTogetherBothReachTheSurface() throws {
+    func testPropsAndTextChangedTogetherRebuildTheBlock() throws {
         let doc = try makeDoc(clientID: 1)
         defer { doc.destroy() }
         let surface = HeadlessSurface(blocks: projection(doc))
@@ -173,15 +173,18 @@ final class DocumentEngineReviewFixTests: DocumentEngineTestCase {
         let index = BlockIndex(doc: doc)
         let entry = try XCTUnwrap(index.entries[Self.firstID])
         let element = try XCTUnwrap(entry.element)
-        let text = try XCTUnwrap(entry.textTypes.first)
+        let text = try XCTUnwrap(entry.textType)
         try doc.transact { tx in
             try YWrite.mapSet(tx, on: element, key: "textColor", .any([.string("red")]))
             try text.insert(0, "X")
         }
 
         let patch = try XCTUnwrap(surface.appliedPatches.last)
-        XCTAssertTrue(patch.changes.contains { if case .props = $0 { return true } else { return false } })
-        XCTAssertTrue(patch.changes.contains { if case .text = $0 { return true } else { return false } })
+        XCTAssertTrue(
+            patch.changes.contains {
+                if case .replaceBlock(let id, _) = $0 { return id == Self.firstID } else { return false }
+            },
+            "props and text together are not a text-only change, got \(patch.changes)")
         assertSurfaceMatchesProjection(surface, doc, "after props and text together")
     }
 

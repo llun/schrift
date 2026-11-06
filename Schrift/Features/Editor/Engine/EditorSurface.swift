@@ -14,14 +14,17 @@ import Foundation
 /// mutates its storage synchronously) must **reconcile** rather than apply the
 /// change twice. The rule, per change kind:
 ///
-/// - `.text`: each delta's `range` is in the surface's **pre-change** text. If
-///   the surface already applied the edit, the range already holds
-///   `replacement` — skip that delta. For a deletion (`replacement == ""`) the
-///   range is already empty at that offset — skip it. Otherwise apply it.
+/// - `.text`: each delta's `range` is in the surface's **pre-change** text.
+///   Content inspection cannot tell "already applied" from "not applied" (a
+///   displayed `"a"` plus a delete of `0..<1` is ambiguous), so the patch
+///   carries `origin`. A surface that applied a local intent optimistically
+///   skips the `.localUser` patch for that edit; a surface that did not (or a
+///   remote patch) applies it. Phase 2 may refine this with command ids.
 /// - `.replaceBlock`: assign the snapshot; idempotent.
 /// - `.props`: assign the attribute set; idempotent.
 /// - `.insert`: skip blocks whose id is already present; `.remove`: skip ids
 ///   already absent.
+/// - `.reset`: replace the whole block list; idempotent.
 ///
 /// A surface that never mutates on its own (a fresh renderer) applies every
 /// patch unconditionally and converges. `HeadlessSurface` is that reference
@@ -38,12 +41,33 @@ protocol EditorSurface: AnyObject {
 /// per-block changes, then insertions.
 struct BlockPatch: Equatable {
     var changes: [BlockChange]
+    /// Who caused the transaction. A surface that applied a local intent
+    /// optimistically skips `.localUser` patches for that edit; a surface with
+    /// no optimism (or any `.remote` patch) applies everything.
+    var origin: BlockPatchOrigin
 
-    init(_ changes: [BlockChange] = []) {
+    init(_ changes: [BlockChange] = [], origin: BlockPatchOrigin = .other) {
         self.changes = changes
+        self.origin = origin
     }
 
     var isEmpty: Bool { changes.isEmpty }
+}
+
+/// The transaction origin a patch came from.
+enum BlockPatchOrigin: Equatable {
+    case localUser
+    case remote
+    /// A transaction with no origin — the B4 formatting cleanup, or a test.
+    case other
+
+    init(_ origin: YTransactionOrigin?) {
+        switch origin {
+        case .localUser: self = .localUser
+        case .remote: self = .remote
+        case nil: self = .other
+        }
+    }
 }
 
 /// One change to one block, or to the block list.
@@ -60,8 +84,13 @@ enum BlockChange: Equatable {
     /// Blocks that left the document.
     case remove(blockIDs: [String])
     /// The whole-block fallback: inline nodes, split/join, a type change, a
-    /// mixed text-and-format delta, or anything else the delta cannot express.
+    /// mixed text-and-format delta, a nested change, a container replacement,
+    /// or anything else the delta cannot express.
     case replaceBlock(blockID: String, block: BlockSnapshot)
+    /// The whole block list, replacing whatever the surface holds. Emitted when
+    /// the fragment root or the root group is added, removed or replaced — a
+    /// change with no block-relative spelling.
+    case reset([BlockSnapshot])
 }
 
 /// One replacement inside a block's text.

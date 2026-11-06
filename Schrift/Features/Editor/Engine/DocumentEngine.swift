@@ -51,6 +51,9 @@ final class DocumentEngine {
     var projectedBlockCount: Int { builder.projectedBlocks }
     /// Changed types classified since the engine was created.
     var visitedTypeCount: Int { builder.visitedTypes }
+    /// Index entries visited while emitting since the engine was created — the
+    /// O(touched) emit-loop seam.
+    var visitedEntryCount: Int { builder.visitedEntries }
 
     init(doc: YDoc, surface: EditorSurface? = nil) {
         self.doc = doc

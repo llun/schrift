@@ -44,6 +44,8 @@ final class HeadlessSurface: EditorSurface {
         case .replaceBlock(let blockID, let block):
             guard let index = blocks.firstIndex(where: { $0.id == blockID }) else { return }
             blocks[index] = block
+        case .reset(let reset):
+            blocks = reset
         }
     }
 
