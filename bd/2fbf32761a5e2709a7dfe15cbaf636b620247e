@@ -1,0 +1,46 @@
+AGENTS.md
+  s_dc239db0cc1c9d::t_75ade6f8e02304 2096-2100,2103-2104
+Schrift/Features/Editor/Engine/BlockIndex.swift
+  s_dc239db0cc1c9d::t_31211d391b8d35 20-22,24-29,169-171,173-176,178,181,183-187,195,218-227
+  s_dc239db0cc1c9d::t_06f89983ca829e 31-36,167,191-193,196-217
+Schrift/Core/Yjs/YBlockProjection.swift
+  s_dc239db0cc1c9d::t_e33c05d4328db3 417-420,426,428,442
+Schrift/Features/Editor/Engine/PatchBuilder.swift
+  s_dc239db0cc1c9d::t_e33c05d4328db3 69-70,76,172-174,176-179,242-244
+  s_dc239db0cc1c9d::t_c2a400a0e52963 75,220-221
+  s_dc239db0cc1c9d::t_7670b53dcc59f2 175
+  s_dc239db0cc1c9d::t_06f89983ca829e 71-74,96-97,99-101,222
+  s_dc239db0cc1c9d::t_c15553d14c03d8 98
+  s_dc239db0cc1c9d::t_af52fb57c407c5 106
+SchriftTests/Features/Editor/Engine/DocumentEngineNarrowedRuleTests.swift
+  s_3f698fd45288e1::t_9e573da23551b9 291-292,299-305,310,312
+  s_3f698fd45288e1::t_ae79d9c7571887 230,232-290,313-330,378-379
+  s_3f698fd45288e1::t_46c229613e5b2d 293,295,306-309,331-377
+docs/architecture.md
+  s_dc239db0cc1c9d::t_e5ef25e5f7d572 584-585
+  s_dc239db0cc1c9d::t_75ade6f8e02304 577-581,583
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bd2fbf32761a5e2709a7dfe15cbaf636b620247e",
+  "prompts": {},
+  "sessions": {
+    "s_3f698fd45288e1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1afe6-62bc-7d10-9df6-98910b224b33",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
