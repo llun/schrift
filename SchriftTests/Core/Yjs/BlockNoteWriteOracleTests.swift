@@ -120,9 +120,12 @@ final class BlockNoteWriteOracleTests: XCTestCase {
         XCTAssertEqual(projected.first?.fidelity, .opaque(reason: "nested children"))
     }
 
-    /// An element with no `xmlText` (y-prosemirror writes none for an empty paragraph) has
-    /// nowhere to splice text, so a text change rebuilds the element instead of dropping it.
-    func testTypingIntoAParagraphWithNoTextChildRebuildsItsElement() throws {
+    /// An element with no `xmlText` (y-prosemirror writes none for an empty paragraph):
+    /// the live writer path creates the `xmlText` and types into it, keeping the
+    /// element and its `id` (the legacy path rebuilds the element instead). The
+    /// projection alone cannot tell the two apart, so this also pins the writer's
+    /// structural choice: the content element is the *same* `YItem` afterwards.
+    func testTypingIntoAParagraphWithNoTextChildCreatesItsText() throws {
         let id = "11111111-1111-1111-1111-111111111111"
         let doc = YDoc(clientID: 42)
         defer { doc.destroy() }
@@ -136,10 +139,32 @@ final class BlockNoteWriteOracleTests: XCTestCase {
             try YWrite.mapSet(tx, on: container, key: "id", .any([.string(id)]))
         }
         let empty = BlockNoteBlock(node: "paragraph", props: [], runs: [], id: id)
+        let container = try XCTUnwrap(
+            firstChild(doc.get(BlockNoteWrite.fragmentField)).flatMap { item -> YType? in
+                guard case .type(let group) = item.content else { return nil }
+                return firstChild(group).flatMap { child -> YType? in
+                    guard case .type(let container) = child.content else { return nil }
+                    return container
+                }
+            })
+        let elementBefore = try XCTUnwrap(firstChild(container))
 
         _ = try BlockNoteWrite.applyEdit(old: [empty], new: [para("typed", id: id)], to: doc)
 
         assertProjects(doc, to: [para("typed", id: id)])
+        let elementAfter = try XCTUnwrap(firstChild(container))
+        XCTAssertTrue(elementBefore === elementAfter, "the writer keeps the content element, it does not rebuild it")
+        XCTAssertEqual(elementAfter.id, elementBefore.id, "the element's id clock is unchanged")
+    }
+
+    /// The first undeleted list child of `type`.
+    private func firstChild(_ type: YType) -> YItem? {
+        var item = type.start
+        while let current = item {
+            if !current.deleted { return current }
+            item = current.right
+        }
+        return nil
     }
 
     func testTypingACharIntoAParagraph() throws {

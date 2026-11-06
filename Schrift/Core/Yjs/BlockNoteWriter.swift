@@ -16,7 +16,10 @@ import Foundation
 /// ones stay in the store, the transaction's observers still deliver them, and
 /// the call throws without returning bytes (yjs has no rollback). Treat the
 /// replica, not the missing return value, as the truth after a throw.
-/// No save path uses this writer yet.
+/// The **live** path uses this writer: `BlockNoteWrite.applyEdit` (the
+/// `DocumentCollaborationManager.applyLocalEdit` reconcile) authors a surviving
+/// block's in-place edit as these intents. The Docs 6 incremental save still
+/// uses the legacy `TextSpanDiff` + `YWrite` reconcile (`applyEditLegacy`).
 /// Block intents follow BlockNote 0.56's own commands (Enter's split,
 /// `mergeBlocksCommand`, `updateBlock`); keyboard-level choices made before
 /// those commands run (Backspace resetting a list item to a paragraph, Enter
@@ -74,7 +77,18 @@ struct BlockNoteWriter {
     /// inherit marks when nil, or use the explicit map when supplied.
     @discardableResult
     func replaceText(block: String, range: NSRange, with text: String, marks: YTextAttributes? = nil) throws -> Data {
-        let target = try find(block)
+        try replaceText(in: try find(block), range: range, with: text, marks: marks)
+    }
+
+    /// `replaceText` against an already-resolved target, so a caller applying
+    /// several intents to one block walks the document once (`find` is a
+    /// whole-document walk). The target must still be live: a kind change
+    /// replaces the element, so re-resolve after one.
+    @discardableResult
+    func replaceText(in target: Target, range: NSRange, with text: String, marks: YTextAttributes? = nil)
+        throws -> Data
+    {
+        let block = target.id
         let parts = try inline(target.element, block: block)
         let bounds = try clamp(range, parts: parts)
         return try transaction { tx in
@@ -225,8 +239,19 @@ struct BlockNoteWriter {
     /// heading level is one attribute, and concurrent typing in the block survives.
     @discardableResult
     func setBlockType(block: String, to node: String, props: [(key: String, value: YAnyValue)] = []) throws -> Data {
+        // Validate the target type before the lookup, as before the `in:` split.
+        guard Self.propSchemas[node] != nil else { throw Error.unsupportedBlockType(node) }
+        return try setBlockType(in: try find(block), to: node, props: props)
+    }
+
+    /// `setBlockType` against an already-resolved target (see `replaceText(in:)`).
+    /// A kind change replaces the element, so re-resolve before a later intent.
+    @discardableResult
+    func setBlockType(in target: Target, to node: String, props: [(key: String, value: YAnyValue)] = [])
+        throws -> Data
+    {
+        let block = target.id
         guard let schema = Self.propSchemas[node] else { throw Error.unsupportedBlockType(node) }
-        let target = try find(block)
         let existing = try properties(target.element, block: block)
         let merged = schema.map { field in
             (
@@ -258,7 +283,11 @@ struct BlockNoteWriter {
 
     // MARK: - Checked replica access
 
-    private struct Target {
+    /// A resolved block: its container, content element and node. Resolving is a
+    /// whole-document walk, so a caller applying several intents to one block
+    /// resolves once and passes the target to the `in:` overloads.
+    struct Target {
+        let id: String
         let item: YItem
         let container: YType
         let elementItem: YItem
@@ -278,7 +307,7 @@ struct BlockNoteWriter {
         return result
     }
 
-    private func find(_ id: String) throws -> Target {
+    func find(_ id: String) throws -> Target {
         guard let root = doc.share[BlockNoteYjs.fragmentField] else { throw Error.missingBlock(id) }
         var stack = [root]
         var found: Target?
@@ -330,8 +359,8 @@ struct BlockNoteWriter {
         }
         guard Self.propSchemas[node] != nil else { throw Error.unsupportedBlockType(node) }
         return Target(
-            item: item, container: container, elementItem: first, element: element, node: node, nested: nested,
-            group: group)
+            id: id, item: item, container: container, elementItem: first, element: element, node: node,
+            nested: nested, group: group)
     }
 
     private struct Part {

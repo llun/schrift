@@ -169,7 +169,7 @@ whenever an integrated item resolves to no parent (a neighbour was collected), a
 | `YTransaction` | transaction lifecycle + the merge cleanup that runs after every update |
 | `YStructIntegrator` | the driver: dependency ordering, pending structs, retry |
 | `YBlockProjection` / `InlineMarkdownWriter` | the **read-out** side (B5): projects an integrated replica into BlockNote-vocabulary `ProjectedBlock`s and then into the editor's markdown. See "Projecting the replica" below |
-| `YWrite` / `TextSpanDiff` / `BlockNoteWrite` | the **write-in** side (B6): local list/map mutation primitives, a char-level self-describing text-span diff, and the block-level edit driver that turns old/new BlockNote blocks into local ops + an incremental update. See "Local-edit transactions" below |
+| `YWrite` / `TextSpanDiff` / `BlockNoteWrite` | the **write-in** side (B6): local list/map mutation primitives, a char-level self-describing text-span diff, and the block-level edit driver that turns old/new BlockNote blocks into local ops + an incremental update. `applyEdit` (live) reconciles survivors through `BlockNoteWriter`; `applyEditLegacy` (the Docs 6 save) keeps the hand-authored reconcile. See "Local-edit transactions" below |
 | `YRelativePosition` | the **caret/selection** primitive (B2): yjs `RelativePosition` — capture from a type index, resolve against a later document state, binary + JSON codecs, compare. See "Relative positions" below |
 | `YTextOps` | the **format-aware text ops** (B4): yjs `YText`'s `insert`/`insertEmbed`/`delete`/`format` and the `ItemTextListPosition` cursor they share, on a root `YText` or a nested `XmlText`. See "Format-aware text operations" below |
 
@@ -310,7 +310,7 @@ outer call returns the combined update. A group is not atomic: each intent
 validates before it mutates, but when a later intent throws, the earlier ones stay
 in the store and the transaction's observers still deliver them, while the call
 throws and returns no bytes — yjs has no rollback, so after a throw the replica is
-the truth. Replica ownership/lifetime stays with the caller, which destroys the replica on any throw (as with `applyReplicaUpdate`): a throw out of transaction cleanup leaves it unusable. This API is not yet wired into `BlockNoteWrite.applyEdit` or saving (B5b).
+the truth. Replica ownership/lifetime stays with the caller, which destroys the replica on any throw (as with `applyReplicaUpdate`): a throw out of transaction cleanup leaves it unusable. Since B5b it is the reconcile the **live** path uses (`BlockNoteWrite.applyEdit`); the Docs 6 save still calls `applyEditLegacy` (see "Local-edit transactions").
 
 Ranges use UTF-16 text positions and one unit per atomic inline element (mentions,
 interlinks, math and hard breaks — BlockNote's Shift+Enter is an empty `hardBreak`
@@ -373,9 +373,60 @@ nested block) stay with the caller.
 
 C1 wires the *read* side into the editor; **B6 is the write side** — a pure `Core/Yjs`
 layer that turns an editor edit (old blocks → new blocks) into local Yjs operations
-against a replica and encodes only the incremental update those operations minted. It
-has **zero runtime effect on its own**: nothing calls it until C2 threads it through
-the collaboration session, transport, and save coordinator.
+against a replica and encodes only the incremental update those operations minted. C2a
+threads it through the collaboration session and transport (`applyLocalEdit`); the
+Docs 6 save reaches it through `BlockNoteIncrementalSave`.
+
+**The single writer, gated in two parts (B5b, plan decision 6).** Insertion is shared
+by both entry points — `insertBlock`/`insertContentElement` — so from-empty and
+new-block insertion stay byte-identical to the golden encoder on either path. A
+*surviving* block is reconciled by one of two paths, chosen explicitly at the call
+site:
+
+- `applyEdit` — the **live** path (`DocumentCollaborationManager.applyLocalEdit`) —
+  reconciles through `BlockNoteWriter`'s intents: text through `replaceText` (one
+  intent per run of the span `TextSpanDiff` chose, with explicit marks so the span
+  never inherits a mark open at the caret), props and kind changes through
+  `setBlockType` (same type sets only the changed props on the existing element; a
+  kind change replaces the content element and keeps the container, `id` and nested
+  group). The writer's own `transaction` sees the caller's open transaction and
+  returns the empty update, so the whole edit stays one transaction and one
+  broadcast. It addresses the block by the **container's live `id`**, not the
+  caller's (the editor re-identifies a row after a remote structural change while the
+  replica keeps the server's id, and the legacy reconcile never rewrote a survivor's
+  id either), and it refuses an `old` whose text length disagrees with the live
+  element — a lying-`old` guard, because the writer clamps a range for editor safety,
+  so a lying `old` would silently rewrite the wrong span instead of failing, and the
+  manager's fail-safe contract depends on the throw; the guard is skipped for
+  inline-node blocks, which never take the writer path. Two kinds of survivor fall
+  back to the legacy reconcile: a block type the writer does not edit (`quote`,
+  `divider`, `image` — the projection models them, so the live path can reach them),
+  and a block whose element holds an inline node — exact for `interlinkingLinkInline`,
+  which the projection folds into a run whose text is the link title while the live
+  element counts the node as one unit, so run-space offsets do not map to live offsets;
+  defensive for mention/math/hard break, which the projection does not fold (it returns
+  non-text inline content, so the block is `.opaque` and the live bridge never writes
+  it). Both fallbacks are the code the live path ran before; the
+  alternative is a throw the manager turns into a fail-safe and a permanent
+  downgrade to classic.
+- `applyEditLegacy` — the **Docs 6 incremental save** (`BlockNoteIncrementalSave`) —
+  keeps the hand-authored `TextSpanDiff` + `YWrite` reconcile, byte-for-byte as
+  before the writer landed. Plan decision 6 does not re-point it in phase 1;
+  `BlockNoteIncrementalSaveTests` pins its bytes.
+
+The re-point was gated on a session-local parity lane (never committed): 1000 seeds ×
+3 sequential random edits over paragraphs, headings, list items, check lists, code
+blocks, quotes, dividers and images — text edits with marks/links/emoji, prop changes,
+kind changes, inserts, deletes, moves and empty blocks — each applied to two identical
+replicas through `applyEditLegacy` and `applyEdit`, comparing the **projected
+document** (id, node, props, per-unit marks, fidelity) and a from-empty render of
+`new`: 3000 cases, 0 mismatches. The lane covers link **marks** only: `BlockNoteBlock`
+runs cannot express an inline node, so it never produced an `interlinkingLinkInline`
+— that shape is covered by `BlockNoteWriteLiveReconcileTests`. The one intended
+difference it surfaced is a code
+block whose runs carry marks (a document BlockNote cannot produce — the projection
+reads it as opaque `marked code`): the legacy path keeps the marks, the writer drops
+them, which is BlockNote's own rule. No incremental byte pin moved.
 
 - **`YWrite`** is the local-mutation primitive layer: `insertAfter`/`insert` (list
   insert, yjs `typeListInsertGenericsAfter`/`typeListInsertGenerics`), `delete` (list
@@ -414,9 +465,13 @@ the collaboration session, transport, and save coordinator.
   therefore the encoded bytes) coincide. Children are only ever *inserted*, and only when the
   caller opts in with `allowsNestedInserts: true` (the Docs 6 save, which writes nested
   lists that way; the live path keeps the default `false` and throws): `old` must be flat, and a survivor whose new block
-  has children is rebuilt rather than reconciled. A text change is spliced in place only
-  when the element's sole child is one `xmlText`; an element with none (y-prosemirror's
-  empty paragraph) or several (text split by an inline node) is rebuilt instead.
+  has children is rebuilt rather than reconciled. On the legacy path a text change is
+  spliced in place only when the element's sole child is one `xmlText`; an element with
+  none (y-prosemirror's empty paragraph) or several (text split by an inline node) is
+  rebuilt instead. The writer path has no such restriction for a text-only element:
+  `replaceText` addresses the right `xmlText` and creates one when the element has
+  none. An element holding an inline node still takes the legacy rebuild on both
+  paths, because its run-space offsets do not map to live offsets.
 - **B6 deviates from yjs only in local-item *construction*, never in the store
   algorithm — so it is verified at the document/projection level, not the
   store-structure level.** A changed text span is rebuilt wholesale from the new runs
@@ -526,16 +581,22 @@ one and adds the outbound write path on top of it.
   permanently (so this document's replica is never rebuilt or trusted again this
   session), and the error is rethrown, never trapped — clocks are peer/edit-influenced
   and this store must not crash on them.
-- **A survivor whose content element is not exactly one `xmlText` is rebuilt, not
-  spliced.** `BlockNoteWrite`'s `reconcileBlock` text-splices a changed block in place
-  only when its content element holds exactly one `xmlText`; otherwise — a block holding
-  a web document-link node (its text split around the inline node), or a web-created
-  empty paragraph (y-prosemirror writes no `xmlText` for it) — it rebuilds the block's
-  content element from the new runs. The live path inherits this, so editing such a block
-  here **flattens a document-link node to a plain markdown link** for every peer. `applyEdit`
-  also refuses a nested `new` block on this path (`allowsNestedInserts` defaults to
-  `false`; only the Docs 6 save opts in), so a nested list downgrades to classic rather
-  than broadcasting a subtree.
+- **A survivor whose content element holds an inline node is rebuilt, not spliced.**
+  On the **legacy** path (`applyEditLegacy`, the Docs 6 save) `reconcileBlockLegacy`
+  text-splices a changed block in place only when its content element holds exactly one
+  `xmlText`; otherwise — a web document-link node (its text split around the inline
+  node), or a web-created empty paragraph (y-prosemirror writes no `xmlText` for it) —
+  it rebuilds the content element from the new runs. The **live** path (`applyEdit`)
+  does not inherit that: an empty paragraph keeps its element and the writer creates the
+  `xmlText`, and an element with several `xmlText` children but no inline node is
+  spliced through `BlockNoteWriter.inline()`'s part walk. Only an element holding an
+  inline node (whose run-space offsets do not map to live offsets) and the block types
+  the writer does not edit (`quote`, `divider`, `image`) fall back to the legacy
+  rebuild. So editing a block that holds a web document-link node here still
+  **flattens that node to a plain markdown link** for every peer. `applyEdit` also
+  refuses a nested `new` block on this path (`allowsNestedInserts` defaults to `false`;
+  only the Docs 6 save opts in), so a nested list downgrades to classic rather than
+  broadcasting a subtree.
 - **`encodeSnapshotForSave(for:)`** is the other half of the eventual live-snapshot save
   path: a full `YStateEncoder.encodeStateAsUpdate(replica, since: [:])` of the document
   when `canWriteReplica(for:)` holds, `nil` otherwise ("no trustworthy snapshot"). Nothing

@@ -1792,29 +1792,71 @@ that are easy to violate and expensive to discover:
   the scanner is unchanged (see the inline-scanner rules under "Editor & the
   on-device save").
 - **The local-edit write path (`YWrite`, `TextSpanDiff`, `BlockNoteWrite`, B6) is
-  pure `Core/Yjs` with zero runtime effect until C2 wires it in.** `YWrite` is the
+  pure `Core/Yjs`; C2a wires it into the live editor.** `YWrite` is the
   local-mutation primitive layer — list insert/delete (`typeListInsertGenericsAfter`/
   `typeListInsertGenerics`/`typeListDelete`) and map set (`typeMapSet`), each a
   faithful transliteration that mints local `YItem`s and integrates them through the
   existing YATA loop inside `doc.transact(local: true)`. `BlockNoteWrite.applyEdit(
   old:new:to:)` diffs two BlockNote block lists by id (insert/remove/kind-change/
   prop-change/move) and returns `YTransactionEncoder.encodeUpdate(tx)` after
-  cleanup — only the structs and deletes this edit made (`0000` if unchanged). **Its
-  strongest correctness gate is from-empty byte identity**:
+  cleanup — only the structs and deletes this edit made (`0000` if unchanged).
+  **The single writer, gated in two parts (B5b, plan decision 6).** Insertion is
+  shared by both entry points — `insertBlock`/`insertContentElement` — so from-empty
+  and new-block insertion stay byte-identical to the golden encoder on either path.
+  A *surviving* block is reconciled by one of two paths, chosen explicitly at the
+  call site:
+  - `applyEdit` — the **live** path (`DocumentCollaborationManager.applyLocalEdit`)
+    — reconciles through `BlockNoteWriter`'s intents: text through `replaceText`
+    (one intent per run of the span `TextSpanDiff` chose, with explicit marks so the
+    span never inherits a mark open at the caret), props and kind changes through
+    `setBlockType` (same type sets only the changed props on the existing element;
+    a kind change replaces the content element and keeps the container, `id` and
+    nested group). The writer's own `transaction` sees the caller's open transaction
+    and returns the empty update, so the whole edit stays one transaction and one
+    broadcast. It addresses the block by the **container's live `id`**, not the
+    caller's: the editor re-identifies a row after a remote structural change while
+    the replica keeps the server's id, and the legacy reconcile never rewrote a
+    survivor's id either. It also refuses an `old` whose text length disagrees with
+    the live element — a lying-`old` guard, because the writer clamps a range (editor
+    safety), so a lying `old` would silently rewrite the wrong span instead of
+    failing, and the manager's fail-safe contract depends on the throw; the guard is
+    skipped for inline-node blocks, which never take the writer path. Two kinds of
+    survivor fall back to the legacy reconcile instead: a block type the writer does
+    not edit (`quote`, `divider`, `image` — the projection models them, so the live
+    path can reach them), and a block whose element holds an inline node — exact for
+    `interlinkingLinkInline`, which the projection folds into a run whose text is the
+    link title while the live element counts the node as one unit, so the writer's
+    run-space offsets do not map to live offsets; defensive for mention/math/hard
+    break, which the projection does not fold (it returns non-text inline content, so
+    the block is `.opaque` and the live bridge never writes it). Both fallbacks are
+    the code the live path ran before, so they cannot change a document; the
+    alternative is a throw the manager turns into a fail-safe and a permanent
+    downgrade to classic.
+  - `applyEditLegacy` — the **Docs 6 incremental save**
+    (`BlockNoteIncrementalSave`) — keeps the hand-authored `TextSpanDiff` +
+    `YWrite` reconcile, byte-for-byte as before the writer landed. Plan decision 6
+    does not re-point it in phase 1; `BlockNoteIncrementalSaveTests` pins its bytes.
+  **Its strongest correctness gate is from-empty byte identity**:
   `applyEdit(old: [], new: blocks)` must be byte-identical to the shipping
   `BlockNoteYjs.encode(blocks)` golden encoder, which holds because `insertBlock`
   mints items in the encoder's exact order (blockGroup, container, element,
   `xmlText`+runs, props, nested `blockGroup` + children, id — a *new* block may carry
   children, inserted as a nested group exactly as `emitGroup` does and pinned by the
   nested from-empty anchors; `old` must stay flat, and a survivor whose new block has
-  children is rebuilt, never reconciled). A text change is spliced in place only when
+  children is rebuilt, never reconciled). On the **legacy** path a text change is
+  spliced in place only when
   the element's sole child is one `xmlText`; otherwise (y-prosemirror writes **no**
   `xmlText` for an empty paragraph; an inline node splits text into several) the
-  element is rebuilt, since a splice would drop or misplace the edit. **Move is v1-coarse** — a reordered survivor is
+  element is rebuilt, since a splice would drop or misplace the edit. The writer
+  path has no such restriction for a text-only element: `replaceText` addresses the
+  right `xmlText` (and creates one when the element has none). An element holding an
+  inline node still takes the legacy rebuild on both paths, because its run-space
+  offsets do not map to live offsets. **Move is v1-coarse** — a reordered survivor is
   rebuilt whole (delete + re-insert), never relocated in place; reorders are rare
   and stay covered by full-snapshot fixtures.
-- **`BlockNoteWriter` is B5a's intent API for the future native editor**, separate
-  from `BlockNoteWrite.applyEdit` (the save/live path is unchanged). It locates
+- **`BlockNoteWriter` is the single writer: B5a's intent API, and since B5b the
+  reconcile the live path uses** (`BlockNoteWrite.applyEdit`; the Docs 6 save still
+  calls `applyEditLegacy`). It locates
   unique block ids by UTF-16 code units (opaque JS strings; normalization forms
   are distinct) and exposes replaceText, formatRange, splitBlock, joinBlocks,
   and setBlockType. Each intent opens a `.localUser` transaction and returns its
@@ -1880,13 +1922,37 @@ that are easy to violate and expensive to discover:
   ~400k oracle-verified renders against node yjs across BMP, concurrent-convergence,
   and `mergeUpdates`/gc/`diffUpdate` interop lanes — 0 divergences after fixing one
   bug the fuzz found (a raw UTF-16-unit diff splitting a surrogate pair; the
-  code-point snap above is the fix). `InlineContent.pieces(for:)`
-  (`InlineContent.swift`) is the **one shared inline-shape builder** behind both the
-  from-scratch encoder (`BlockNoteYjs.emitInline`) and `BlockNoteWrite`'s
-  whole-subtree paths — don't add a second way to turn a run list into the
-  open/carry/close-format sequence; `TextSpanDiff`'s own diff-specific piece builder
-  emits the same `InlinePiece` vocabulary through the same `content(of:)` mapper,
-  not a competing definition of inline shape.
+  code-point snap above is the fix). **B5b's re-point was gated on a parity lane**
+  (session-local, never committed): 1000 seeds × 3 sequential random edits over
+  paragraphs, headings, list items, check lists, code blocks, quotes, dividers and
+  images — text edits with marks/links/emoji, prop changes, kind changes, inserts,
+  deletes, moves and empty blocks — applying each edit to two identical replicas
+  through `applyEditLegacy` and `applyEdit` and comparing the **projected document**
+  (id, node, props, per-unit marks, fidelity) plus a from-empty render of `new`:
+  3000 cases, 0 mismatches. The lane covers link **marks** only: `BlockNoteBlock`
+  runs cannot express an inline node, so it never produced an
+  `interlinkingLinkInline` — that shape is covered by
+  `BlockNoteWriteLiveReconcileTests`. The one intended difference it surfaced: a code block
+  whose runs carry marks (a document BlockNote cannot produce — the projection reads
+  it as opaque `marked code`) keeps them on the legacy path and loses them on the
+  writer path, which is BlockNote's own rule. No incremental byte pin moved: the
+  writer's `replaceText` mints the same items as the legacy splice for the pinned
+  cases (`b6TypingUpdateHex`, the split pin in `YTransactionEncoderTests`), so
+  nothing needed re-capturing. `InlineContent.pieces(for:)`
+  (`InlineContent.swift`) is the **one shared inline-shape builder** behind the
+  from-scratch encoder (`BlockNoteYjs.emitInline`), `BlockNoteWrite`'s
+  whole-subtree paths and `BlockNoteWriter`'s copies — don't add a second way to
+  turn a run list into the open/carry/close-format sequence; `TextSpanDiff`'s own
+  diff-specific piece builder emits the same `InlinePiece` vocabulary through the
+  same `content(of:)` mapper, not a competing definition of inline shape. **INV
+  1.24, restated for the single writer:** `BlockNoteWriter` is the only writer of
+  in-place block edits (text through `YTextOps`, inline shapes through
+  `InlineContent.pieces`), and `BlockNoteWrite` is the only block-level differ; the
+  legacy `TextSpanDiff` + `YWrite` reconcile survives only as
+  `applyEditLegacy` (the Docs 6 save) and as the fallback for block types the
+  writer does not edit (`quote`, `divider`, `image`) and for elements holding an
+  inline node (whose run-space offsets do not map to live offsets). Do not add a
+  third reconcile.
 - **`YRelativePosition` (B2) is the caret/selection primitive: a type ref, one item
   id, and `assoc`, transliterated from yjs's `RelativePosition` (@2301) and its
   codecs.** `fromTypeIndex` (@2421) captures, `resolve(in:)` (@2547) resolves to a

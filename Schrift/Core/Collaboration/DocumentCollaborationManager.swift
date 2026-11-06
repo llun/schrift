@@ -2,8 +2,9 @@ import Foundation
 
 /// Errors from the manager's outbound local-edit write path (C2a,
 /// `applyLocalEdit`). A malformed replica that makes `BlockNoteWrite.applyEdit`
-/// throw propagates its own `YIntegrationError` unchanged — this type covers only
-/// the write-eligibility gate.
+/// throw propagates its own error unchanged (`YIntegrationError`, or a
+/// `BlockNoteWriter.Error` from the live writer path) — this type covers only the
+/// write-eligibility gate.
 enum CollaborationWriteError: Error, Equatable {
     /// The document's replica is not in a writable state — there is no replica,
     /// the initial sync has not landed, it carries unintegrated pending structs,
@@ -275,7 +276,8 @@ final class DocumentCollaborationManager {
     /// resulting incremental Yjs update to the room — the outbound write path (C2a).
     ///
     /// `old` must be the replica's current projection (`projectedReplica`), `new`
-    /// the edited blocks. `BlockNoteWrite.applyEdit` diffs them, mutates the replica
+    /// the edited blocks. `BlockNoteWrite.applyEdit` diffs them — reconciling a
+    /// surviving block through `BlockNoteWriter`'s intents (B5b) — mutates the replica
     /// in place inside its own local transaction, and returns that transaction's own
     /// update — the structs it minted and the ranges it deleted (`YTransactionEncoder`),
     /// or the canonical empty update `0000` when nothing changed; those bytes are
@@ -289,8 +291,9 @@ final class DocumentCollaborationManager {
     ///
     /// Throws `CollaborationWriteError.notWritable` when the replica is not writable
     /// (`canWriteReplica(for:)`) — nothing is mutated or broadcast. A malformed replica
-    /// that makes `BlockNoteWrite.applyEdit` throw `YIntegrationError` (an integration
-    /// or encode failure leaves a corrupt store) latches `replicaFailSafe` and tears
+    /// that makes `BlockNoteWrite.applyEdit` throw (`YIntegrationError` for an
+    /// integration or encode failure, or a `BlockNoteWriter.Error` such as
+    /// `duplicateID` from the live writer path) latches `replicaFailSafe` and tears
     /// the replica down exactly as the inbound apply path does, then **rethrows** the
     /// underlying error — it never traps.
     func applyLocalEdit(old: [BlockNoteBlock], new: [BlockNoteBlock], for documentID: UUID) throws -> Data {
