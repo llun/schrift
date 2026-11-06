@@ -1823,13 +1823,15 @@ that are easy to violate and expensive to discover:
     skipped for inline-node blocks, which never take the writer path. Two kinds of
     survivor fall back to the legacy reconcile instead: a block type the writer does
     not edit (`quote`, `divider`, `image` — the projection models them, so the live
-    path can reach them), and a block whose element holds an inline node
-    (`interlinkingLinkInline`, mention, math, hard break) — the projection folds the
-    node into a run whose text is its label while the live element counts it as one
-    unit, so the writer's run-space offsets do not map to live offsets. Both
-    fallbacks are the code the live path ran before, so they cannot change a
-    document; the alternative is a throw the manager turns into a fail-safe and a
-    permanent downgrade to classic.
+    path can reach them), and a block whose element holds an inline node — exact for
+    `interlinkingLinkInline`, which the projection folds into a run whose text is the
+    link title while the live element counts the node as one unit, so the writer's
+    run-space offsets do not map to live offsets; defensive for mention/math/hard
+    break, which the projection does not fold (it returns non-text inline content, so
+    the block is `.opaque` and the live bridge never writes it). Both fallbacks are
+    the code the live path ran before, so they cannot change a document; the
+    alternative is a throw the manager turns into a fail-safe and a permanent
+    downgrade to classic.
   - `applyEditLegacy` — the **Docs 6 incremental save**
     (`BlockNoteIncrementalSave`) — keeps the hand-authored `TextSpanDiff` +
     `YWrite` reconcile, byte-for-byte as before the writer landed. Plan decision 6
@@ -1948,7 +1950,9 @@ that are easy to violate and expensive to discover:
   `InlineContent.pieces`), and `BlockNoteWrite` is the only block-level differ; the
   legacy `TextSpanDiff` + `YWrite` reconcile survives only as
   `applyEditLegacy` (the Docs 6 save) and as the fallback for block types the
-  writer does not edit. Do not add a third reconcile.
+  writer does not edit (`quote`, `divider`, `image`) and for elements holding an
+  inline node (whose run-space offsets do not map to live offsets). Do not add a
+  third reconcile.
 - **`YRelativePosition` (B2) is the caret/selection primitive: a type ref, one item
   id, and `assoc`, transliterated from yjs's `RelativePosition` (@2301) and its
   codecs.** `fromTypeIndex` (@2421) captures, `resolve(in:)` (@2547) resolves to a

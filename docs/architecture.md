@@ -401,10 +401,12 @@ site:
   inline-node blocks, which never take the writer path. Two kinds of survivor fall
   back to the legacy reconcile: a block type the writer does not edit (`quote`,
   `divider`, `image` — the projection models them, so the live path can reach them),
-  and a block whose element holds an inline node (`interlinkingLinkInline`, mention,
-  math, hard break) — the projection folds the node into a run whose text is its
-  label while the live element counts it as one unit, so run-space offsets do not map
-  to live offsets. Both fallbacks are the code the live path ran before; the
+  and a block whose element holds an inline node — exact for `interlinkingLinkInline`,
+  which the projection folds into a run whose text is the link title while the live
+  element counts the node as one unit, so run-space offsets do not map to live offsets;
+  defensive for mention/math/hard break, which the projection does not fold (it returns
+  non-text inline content, so the block is `.opaque` and the live bridge never writes
+  it). Both fallbacks are the code the live path ran before; the
   alternative is a throw the manager turns into a fail-safe and a permanent
   downgrade to classic.
 - `applyEditLegacy` — the **Docs 6 incremental save** (`BlockNoteIncrementalSave`) —
@@ -579,16 +581,22 @@ one and adds the outbound write path on top of it.
   permanently (so this document's replica is never rebuilt or trusted again this
   session), and the error is rethrown, never trapped — clocks are peer/edit-influenced
   and this store must not crash on them.
-- **A survivor whose content element is not exactly one `xmlText` is rebuilt, not
-  spliced.** `BlockNoteWrite`'s `reconcileBlock` text-splices a changed block in place
-  only when its content element holds exactly one `xmlText`; otherwise — a block holding
-  a web document-link node (its text split around the inline node), or a web-created
-  empty paragraph (y-prosemirror writes no `xmlText` for it) — it rebuilds the block's
-  content element from the new runs. The live path inherits this, so editing such a block
-  here **flattens a document-link node to a plain markdown link** for every peer. `applyEdit`
-  also refuses a nested `new` block on this path (`allowsNestedInserts` defaults to
-  `false`; only the Docs 6 save opts in), so a nested list downgrades to classic rather
-  than broadcasting a subtree.
+- **A survivor whose content element holds an inline node is rebuilt, not spliced.**
+  On the **legacy** path (`applyEditLegacy`, the Docs 6 save) `reconcileBlockLegacy`
+  text-splices a changed block in place only when its content element holds exactly one
+  `xmlText`; otherwise — a web document-link node (its text split around the inline
+  node), or a web-created empty paragraph (y-prosemirror writes no `xmlText` for it) —
+  it rebuilds the content element from the new runs. The **live** path (`applyEdit`)
+  does not inherit that: an empty paragraph keeps its element and the writer creates the
+  `xmlText`, and an element with several `xmlText` children but no inline node is
+  spliced through `BlockNoteWriter.inline()`'s part walk. Only an element holding an
+  inline node (whose run-space offsets do not map to live offsets) and the block types
+  the writer does not edit (`quote`, `divider`, `image`) fall back to the legacy
+  rebuild. So editing a block that holds a web document-link node here still
+  **flattens that node to a plain markdown link** for every peer. `applyEdit` also
+  refuses a nested `new` block on this path (`allowsNestedInserts` defaults to `false`;
+  only the Docs 6 save opts in), so a nested list downgrades to classic rather than
+  broadcasting a subtree.
 - **`encodeSnapshotForSave(for:)`** is the other half of the eventual live-snapshot save
   path: a full `YStateEncoder.encodeStateAsUpdate(replica, since: [:])` of the document
   when `canWriteReplica(for:)` holds, `nil` otherwise ("no trustworthy snapshot"). Nothing
