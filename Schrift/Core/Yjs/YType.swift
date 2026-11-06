@@ -176,6 +176,31 @@ final class YDoc {
     /// drained after the current one's gc/merge, never mid-cleanup.
     var afterTransaction: ((YTransaction) -> Void)?
 
+    /// yjs `Doc`'s `'afterAllTransactions'` event — fired once the outermost
+    /// transaction's cleanup has finished and `transactionCleanups` is empty.
+    ///
+    /// This is the delivery boundary the engine (B6) needs: `afterTransaction`
+    /// runs inside the observer phase, where a delta is valid but the store is
+    /// still pre-gc/pre-merge, so a consumer may only *buffer* there. Here the
+    /// transaction is fully cleaned and `doc.transaction` is nil, so a listener
+    /// may read the replica or open a transaction — which is queued and drained
+    /// by the same `transact` call, as in yjs. A nil hook runs nothing.
+    var afterAllTransactions: (() -> Void)?
+
+    /// Fired at the start of `destroy()`, before any edge is broken.
+    ///
+    /// A consumer that borrowed the replica (the engine) must drop its hooks
+    /// here: `destroy()` leaves the object alive with an empty store, so a
+    /// later transaction would otherwise call into a graph that no longer
+    /// exists. A nil hook runs nothing.
+    ///
+    /// **Deliberate deviation from yjs.** yjs emits `'destroy'` at the *end* of
+    /// `destroy()`, after the store is emptied. This port emits it first,
+    /// because the engine's detach must run before the graph it reads is torn
+    /// down; emitting afterwards would let a hook observe a half-destroyed
+    /// store. The hook is cleared immediately after it runs, so it fires once.
+    var onDestroy: (() -> Void)?
+
     init(clientID: UInt, gc: Bool = true) {
         self.clientID = clientID
         self.gc = gc
@@ -238,6 +263,8 @@ final class YDoc {
     /// collaboration session, C1) must call it when it drops a replica; `deinit` is
     /// no use here, since the cycles are exactly what keeps `deinit` from running.
     func destroy() {
+        onDestroy?()
+        onDestroy = nil
         for (_, list) in store.clients {
             for s in list.structs {
                 guard let item = s as? YItem else { continue }

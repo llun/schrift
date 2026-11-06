@@ -167,6 +167,20 @@ extension YBlockProjection {
 
     // MARK: - Per-block projection
 
+    /// Projects one block container — the engine's whole-block fallback (B6).
+    /// Same classification as `project(_:)`, one block at a time, so a patch
+    /// costs O(touched blocks) rather than O(document).
+    static func projectBlock(_ containerItem: YItem, interlinkingOrigin: String? = nil) -> ProjectedBlock {
+        projectContainer(containerItem, interlinkingOrigin: interlinkingOrigin)
+    }
+
+    /// The content element's attributes, sorted, or `nil` when one is
+    /// unreadable — the `.props` patch's payload.
+    static func props(of element: YType) -> [ProjectedProp]? {
+        let (props, failure) = readProps(element)
+        return failure == nil ? props : nil
+    }
+
     /// Builds one projected block from a `blockGroup` child item. Every branch
     /// either returns a fully classified block or an `.opaque` one recording
     /// why — never a trap or a thrown error.
@@ -282,20 +296,7 @@ extension YBlockProjection {
                 return ([], "non-text inline content")
             }
             if childType.typeRef == .xmlText {
-                var openMarks: [(key: String, valueJSON: String)] = []
-                for item in children(of: childType, includeFormats: true) {
-                    switch item.content {
-                    case .string(let units):
-                        appendRun(text: String(decoding: units, as: UTF16.self), marks: openMarks, to: &runs)
-                    case .format(let key, let valueJSON):
-                        openMarks.removeAll { $0.key == key }
-                        if valueJSON != "null" {
-                            openMarks.append((key: key, valueJSON: valueJSON))
-                        }
-                    default:
-                        return ([], "unexpected text content")
-                    }
-                }
+                guard foldText(childType, into: &runs) else { return ([], "unexpected text content") }
             } else if childType.typeRef == .xmlElement(nodeName: interlinkingLinkNodeName) {
                 guard let (text, href) = projectInterlinkingLink(childType, interlinkingOrigin: interlinkingOrigin)
                 else {
@@ -307,6 +308,32 @@ extension YBlockProjection {
             }
         }
         return (runs, nil)
+    }
+
+    /// One `XmlText`'s runs, before mark scrubbing, folded exactly as a block's
+    /// text is — or `nil` when it holds something other than strings and
+    /// formats. The engine checks its `.text` patches against this.
+    static func textRuns(_ text: YType) -> [InlineRun]? {
+        var runs: [InlineRun] = []
+        return foldText(text, into: &runs) ? runs : nil
+    }
+
+    private static func foldText(_ text: YType, into runs: inout [InlineRun]) -> Bool {
+        var openMarks: [(key: String, valueJSON: String)] = []
+        for item in children(of: text, includeFormats: true) {
+            switch item.content {
+            case .string(let units):
+                appendRun(text: String(decoding: units, as: UTF16.self), marks: openMarks, to: &runs)
+            case .format(let key, let valueJSON):
+                openMarks.removeAll { $0.key == key }
+                if valueJSON != "null" {
+                    openMarks.append((key: key, valueJSON: valueJSON))
+                }
+            default:
+                return false
+            }
+        }
+        return true
     }
 
     /// Projects an `interlinkingLinkInline` node (the web editor's custom
@@ -395,20 +422,24 @@ extension YBlockProjection {
         a.map { [$0.key, $0.valueJSON] } == b.map { [$0.key, $0.valueJSON] }
     }
 
+    /// The mark keys the projection keeps; the engine's `.text` patches use
+    /// the same set.
+    static let renderableMarkKeys: Set<String> = ["bold", "italic", "code", "strike", "link"]
+
     /// Drops any mark whose key isn't in the vocabulary the app's markdown
     /// export understands (bold/italic/code/strike/link), reporting a lossy
     /// reason per dropped key. The server's own markdown export drops unknown
     /// marks the same way, so this keeps write-back parity rather than
     /// inventing a new divergence.
+
     private static func scrubUnknownMarks(_ runs: [InlineRun]) -> (runs: [InlineRun], reasons: [String]) {
         var reasons: [String] = []
         let result = runs.map { run -> InlineRun in
             var kept: [(key: String, valueJSON: String)] = []
             for mark in run.marks {
-                switch mark.key {
-                case "bold", "italic", "code", "strike", "link":
+                if renderableMarkKeys.contains(mark.key) {
                     kept.append(mark)
-                default:
+                } else {
                     let reason = "unknownMark:\(mark.key)"
                     if !reasons.contains(reason) { reasons.append(reason) }
                 }
@@ -422,7 +453,7 @@ extension YBlockProjection {
     /// literal scan — so escaping differences (e.g. `\/` vs `/`) never matter
     /// here; only the byte-exact encoder (`InlineMarkdown.linkValueJSON`) cares
     /// about that. `nil` means the value is unreadable as `{"href": string}`.
-    private static func linkHref(from valueJSON: String) -> String? {
+    static func linkHref(from valueJSON: String) -> String? {
         guard let data = valueJSON.data(using: .utf8) else { return nil }
         guard let object = try? JSONSerialization.jsonObject(with: data) else { return nil }
         guard let dict = object as? [String: Any] else { return nil }

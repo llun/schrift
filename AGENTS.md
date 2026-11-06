@@ -2039,6 +2039,102 @@ that are easy to violate and expensive to discover:
   "defensive" merge of duplicate client blocks where yjs simply overwrites. If you
   cannot demonstrate the deviation against the oracle, transliterate instead.
 
+### The document engine (`Features/Editor/Engine`, B6a)
+
+The headless layer the phase 2 native editor sits on. It is proven by tests
+only; nothing in the shipping editor uses it yet.
+
+- **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
+  `DocumentEngine` (`@MainActor`), which borrows the replica and resolves
+  intents through `BlockNoteWriter` inside one `.localUser` transaction. Below
+  it: `BlockIndex` (block id ↔ container / content element / text children),
+  `PatchBuilder` (change signal → patch), and `HeadlessSurface` (an in-memory
+  surface, so a test can assert the surface converges to the projection).
+  `BlockPatch` changes are `.text(blockID, [TextDelta])`, `.props`,
+  `.insert(after:, [BlockSnapshot])`, `.remove([blockID])`,
+  `.replaceBlock(blockID, BlockSnapshot)` and `.reset([BlockSnapshot])` (the
+  whole surface list, for a root-group replacement, a fragment that was empty
+  when the engine attached, a container `id` changed in place, and every
+  transaction while the replica is not index-shaped — see the `.text` bullet). Every patch carries a `BlockPatchOrigin`
+  (`.localUser`, `.remote`, `.other`) taken from the transaction. Composition
+  and selection hooks are B6b; do not stub them in.
+- **The engine borrows the replica; it never owns it.** `DocumentCollaborationManager`
+  keeps the one-owner rule. `YDoc.onDestroy` fires at the start of `destroy()`
+  and the engine detaches there — hooks cleared, buffered patches dropped (even
+  mid-delivery, if a surface destroys the replica from `applyPatch`), and every
+  later intent throws `DocumentEngineError.detached`. Releasing the engine
+  detaches it too (`isolated deinit`), so a closed editor leaves no hook on a
+  replica that lingers. A replica destroyed by a fail-safe or a suspend teardown must
+  never be touched again, and this is the hook that makes that true.
+- **Buffer in `afterTransaction`, deliver at `afterAllTransactions`.** A text
+  delta is valid only inside the observer phase, and the store there is still
+  pre-gc/pre-merge, so the engine only *buffers*. `YDoc.afterAllTransactions`
+  (yjs's `'afterAllTransactions'`) fires once the outermost cleanup is done and
+  `doc.transaction` is nil; that is where patches reach the surface. A surface
+  that opens a transaction from `applyPatch` is queued and drained by the same
+  `transact` call, as in yjs. Never deliver from inside `afterTransaction`.
+- **Local intents emit patches too.** The engine does not suppress the patch for
+  the edit it just made: the same transaction may also carry a format cleanup or
+  a split's new block. A patch describes a *transition* from the pre-transaction
+  state, so a surface that already applied the keystroke itself (a UIKit text
+  view mutates synchronously) must **reconcile**. The rule is the patch's
+  `origin`, not content inspection — a displayed `"a"` plus a delete of `0..<1`
+  cannot tell "already applied" from "not yet applied". A surface that applied a
+  local intent optimistically **skips `.localUser` patches for that edit** (phase
+  2 may refine this with command ids); it applies every `.remote` and `.other`
+  patch. `.replaceBlock`/`.props`/`.reset` are assignments and idempotent either
+  way; `.insert`/`.remove` skip ids already present/absent. `HeadlessSurface`
+  never mutates on its own, so it applies every patch regardless of origin and
+  equals the projection after each step. There is no optimistic overlay (plan
+  §2.3).
+- **`.text` has exactly one shape.** A block gets `.text` only when (a) it has no
+  nested children (no nested `blockGroup`), (b) its content element has exactly
+  one child, an `XmlText`, with no inline nodes — so the projection's runs *are*
+  that text — and (c) the only change to it in this transaction is that text (no
+  attribute, structural or container change). Everything else touched in a block
+  escalates to `.replaceBlock` of the top-level block, rebuilt from that block's
+  projection: a nested block's text, a nested group's child list, a nested
+  content element's attributes, a parent's text when it has children, several
+  `XmlText` children (no sibling-offset math), a container replaced in place
+  under the same id (the index tracks the container `YItem`, not just the id), or
+  props and text changed together. `.text` and `.props` also need the block to
+  have projected as-is *before* the transaction and after it (readable props, a
+  text of strings and known marks with readable links; `BlockIndex.Entry.isProjectable`),
+  because an opaque or mark-scrubbed block's surface copy came from a
+  `.replaceBlock`. Only the root `blockGroup` produces
+  `.insert`/`.remove`; a nested group never does. A reorder in the root group is
+  a `.remove` + `.insert` (the surface holds an ordered list). A change to the
+  fragment root, or a root group that is not the one the index recorded, a
+  container's `id` changed in place, or any transaction while
+  `BlockIndex.isCanonical` is false, is a `.reset` of the projected document.
+- **Patch building is O(touched blocks) for text and prop changes.** Classification
+  reads `transaction.changed` (the types whose *direct* children changed), so a
+  keystroke visits one `XmlText`, folds that one text to check its deltas against
+  the index's cached runs (`TextDelta.apply`), re-folds it when the entry
+  refreshes, and projects no block. The index holds one cached run list per
+  simple block, a second copy of the document's text. The emit loop iterates
+  only the touched ids, ordered by the index's position map — never
+  `index.order`. A root-group change (membership, split/join) rebuilds the index
+  — O(document), reading each block's text for `isProjectable` — and projects
+  the touched blocks, one at a time (`YBlockProjection.projectBlock`); a nested
+  change only refreshes its top-level entry. A replica the id-keyed index cannot
+  mirror (`BlockIndex.isCanonical` false: several root children, an id-less or
+  non-container group child, a repeated id) resets on every transaction until
+  it is canonical again. `DocumentEnginePatchCostTests` and
+  `DocumentEngineNarrowedRuleTests.testTextTransactionVisitsOnlyTouchedEntries`
+  pin the counters and what they measure. A delta that both rewrites text and
+  re-marks it, or a format range whose marks are not uniform, escalates to
+  `.replaceBlock` rather than guessing.
+- **`TextDelta.marks` is never `nil` from the builder.** `nil` means *inherit*
+  the marks in force at the insertion point (the surface's convenience form for
+  a local keystroke). The builder always sends the complete set, including `[]`
+  for "no marks in force", in the projection's format-item order — never
+  `Dictionary` order.
+- **No UIKit, no `NSRange`, in `Engine/`.** The model speaks block-relative
+  `Range<Int>` UTF-16 offsets only; `BlockNoteWriter` carries `Range<Int>`
+  overloads so the engine never spells `NSRange`. Grep the folder for
+  `NSRange`/`NSText*`/`UIView`/`UITextView`/`UndoManager` and expect zero hits.
+
 ### Editor & the on-device save (`Core/Yjs`)
 
 - **Hide completed is a reading presentation preference, off by default and local
