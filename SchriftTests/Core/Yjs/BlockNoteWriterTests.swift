@@ -209,6 +209,46 @@ final class BlockNoteWriterTests: XCTestCase {
                 block: "parent", range: NSRange(location: 0, length: 1), attributes: ["bold": "{}"]))
     }
 
+    func testCanonicallyEquivalentIDDoesNotMatchAnyIntent() throws {
+        for (existing, requested) in [("e\u{301}", "\u{E9}"), ("\u{E9}", "e\u{301}")] {
+            let doc = try encoded([paragraph(existing, "abc")])
+            defer { doc.destroy() }
+            assertThrows(.missingBlock(requested), in: doc) {
+                try $0.replaceText(block: requested, range: NSRange(location: 0, length: 1), with: "x")
+            }
+            assertThrows(.missingBlock(requested), in: doc) {
+                try $0.formatRange(block: requested, range: NSRange(location: 0, length: 1), attributes: ["bold": "{}"])
+            }
+            assertThrows(.missingBlock(requested), in: doc) {
+                try $0.splitBlock(block: requested, at: 1, newID: "new")
+            }
+            assertThrows(.missingBlock(requested), in: doc) { try $0.joinBlocks(block: requested) }
+            assertThrows(.missingBlock(requested), in: doc) { try $0.setBlockType(block: requested, to: "heading") }
+        }
+    }
+
+    func testBothIDNormalizationFormsCanBeEditedWithoutFalseDuplicate() throws {
+        let doc = try encoded([paragraph("e\u{301}", "a"), paragraph("\u{E9}", "b")])
+        defer { doc.destroy() }
+        let writer = BlockNoteWriter(doc: doc)
+        try writer.replaceText(block: "e\u{301}", range: NSRange(location: 1, length: 0), with: "1")
+        try writer.replaceText(block: "\u{E9}", range: NSRange(location: 1, length: 0), with: "2")
+        let blocks = YBlockProjection.project(doc).blocks
+        XCTAssertEqual(blocks.map { Array($0.id.utf16) }, [Array("e\u{301}".utf16), Array("\u{E9}".utf16)])
+        XCTAssertEqual(blocks.map { $0.runs.map(\.text).joined() }, ["a1", "b2"])
+    }
+
+    func testSplitNewIDMayUseOtherNormalizationForm() throws {
+        for (existing, newID) in [("e\u{301}", "\u{E9}"), ("\u{E9}", "e\u{301}")] {
+            let doc = try encoded([paragraph(existing, "ab")])
+            defer { doc.destroy() }
+            try BlockNoteWriter(doc: doc).splitBlock(block: existing, at: 1, newID: newID)
+            let blocks = YBlockProjection.project(doc).blocks
+            XCTAssertEqual(blocks.map { Array($0.id.utf16) }, [Array(existing.utf16), Array(newID.utf16)])
+            XCTAssertEqual(blocks.map { $0.runs.map(\.text).joined() }, ["a", "b"])
+        }
+    }
+
     func testToggleHeadingSplitIsUnsupported() throws {
         let doc = try encoded([
             BlockNoteBlock(

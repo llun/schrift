@@ -1815,7 +1815,8 @@ that are easy to violate and expensive to discover:
   and stay covered by full-snapshot fixtures.
 - **`BlockNoteWriter` is B5a's intent API for the future native editor**, separate
   from `BlockNoteWrite.applyEdit` (the save/live path is unchanged). It locates
-  unique block ids and exposes replaceText, formatRange, splitBlock, joinBlocks,
+  unique block ids by UTF-16 code units (opaque JS strings; normalization forms
+  are distinct) and exposes replaceText, formatRange, splitBlock, joinBlocks,
   and setBlockType. Each intent opens a `.localUser` transaction and returns its
   incremental update after cleanup; `transaction` groups intents (nested calls
   return the empty update; the outer call returns the combined bytes). **A group
@@ -1828,6 +1829,10 @@ that are easy to violate and expensive to discover:
   surrogate pair: a range grows to the whole character, a caret moves back to its
   start (yjs would splice the pair and write U+FFFD into both halves).
   Clamp ranges before calling `YTextOps` so formatting cannot pad with newlines.
+  Code blocks allow no marks: `formatRange` is a successful no-op with an empty
+  update, and `replaceText` drops supplied marks and inserts plain text, matching
+  BlockNote's style commands and explicit/stored-mark typing. Converting back to
+  a paragraph must not reveal formatting authored while it was a code block.
   Copied text uses **`InlineContent.pieces(for:)`**, the same single inline-shape
   builder as the encoder and B6; do not add another run-to-format builder.
   **Block intents follow BlockNote 0.56's own commands, verified in node, not

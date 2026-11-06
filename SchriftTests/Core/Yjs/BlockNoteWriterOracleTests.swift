@@ -148,6 +148,29 @@ final class BlockNoteWriterOracleTests: XCTestCase {
         }
     }
 
+    func testCodeBlockFormattingIsANoOpAndStaysPlainAfterConversion() throws {
+        try check(BlockNoteWriterCaptures.codeBlockFormat, identical: [true, true]) { writer, step in
+            if step == 1 {
+                return try writer.formatRange(
+                    block: "c", range: NSRange(location: 0, length: 2), attributes: ["bold": "{}", "italic": "{}"])
+            }
+            return try writer.setBlockType(block: "c", to: "paragraph")
+        }
+    }
+
+    func testCodeBlockTypingDropsMarksAndStaysPlainAfterConversion() throws {
+        // BlockNote's insertContent with explicit marks and insertText with
+        // stored marks produced identical plain-text updates in the node capture.
+        try check(BlockNoteWriterCaptures.codeBlockTyping, identical: [true, true]) { writer, step in
+            if step == 1 {
+                return try writer.replaceText(
+                    block: "c", range: NSRange(location: 1, length: 0), with: "b",
+                    marks: ["bold": "{}", "italic": "{}"])
+            }
+            return try writer.setBlockType(block: "c", to: "paragraph")
+        }
+    }
+
     // MARK: - BlockNote-captured block intents (BlockNoteWriterCaptures)
 
     /// Authors one intent on the capture's seed and expects BlockNote's XML

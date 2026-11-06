@@ -301,7 +301,9 @@ The pieces live across `Core/Collaboration` and `Features/Editor`:
 ### Intent-based native writer (B5a)
 
 `BlockNoteWriter` exposes `replaceText`, `formatRange`, `splitBlock`, `joinBlocks`,
-and `setBlockType` against unique BlockNote ids. Each intent runs in a local-user
+and `setBlockType` against unique BlockNote ids, compared by UTF-16 code units
+like opaque JavaScript strings (canonical normalization forms stay distinct,
+including in duplicate checks and split's new id). Each intent runs in a local-user
 transaction and returns only that transaction's update after cleanup. Its
 `transaction` helper groups intents; nested calls return an empty update and the
 outer call returns the combined update. A group is not atomic: each intent
@@ -317,7 +319,13 @@ surrogate pair grows the range to the whole character and a caret there moves ba
 to its start; yjs would otherwise splice the pair and write U+FFFD into both halves.
 They are clamped before format-aware `YTextOps` calls; the
 writer never requests yjs's past-end newline padding. Nil insertion marks inherit
-like yjs `insert`; an explicit map specifies the inserted marks. Copies keep inline
+like yjs `insert`; an explicit map specifies the inserted marks. Code blocks allow
+no marks: `formatRange` succeeds as a no-op and returns an empty update;
+`replaceText` inserts plain text regardless of supplied marks. Node captures of
+BlockNote's range style command, explicit-mark insertion and stored-mark typing
+confirm this behavior; converting back to a paragraph retains plain text. This
+is a supported no-op, rather than an `unsupportedBlockType` error (unlike a refused
+code-block split or join). Copies keep inline
 elements rather than flattening them, and copied runs go through the existing
 `InlineContent.pieces(for:)` single shape builder. Supported content types are the
 text blocks paragraph, heading, bullet/numbered/check list item and code block

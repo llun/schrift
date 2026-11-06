@@ -10,6 +10,46 @@
 // `enter-empty-nested` records BlockNote's outdent of an empty nested block on
 // Enter, a keyboard-level choice the writer leaves to its caller.
 enum BlockNoteWriterCaptures {
+    // Real BlockNote 0.56 + yjs 13.6.33: codeBlock has marks: "".
+    // toggleStyles on a range is a no-op; insertContent with explicit marks
+    // and insertText with stored marks both insert plain text. Conversion back
+    // to a paragraph retains no marks. Captured in .review/scratch/capture-findings.mjs.
+    static let codeBlockFormat: [(label: String, updateBase64: String, xml: String)] = [
+        (
+            "seed",
+            "AQcBAAcBDmRvY3VtZW50LXN0b3JlAwpibG9ja0dyb3VwBwABAAMOYmxvY2tDb250YWluZXIHAAEBAwljb2RlQmxvY2sHAAECBgQAAQMDYWJjKAABAghsYW5ndWFnZQF3BHRleHQoAAEBAmlkAXcBYwA=",
+            #"<blockgroup><blockcontainer id="c"><codeblock language="text">abc</codeblock></blockcontainer></blockgroup>"#
+        ),
+        (
+            "code-format",
+            "AAA=",
+            #"<blockgroup><blockcontainer id="c"><codeblock language="text">abc</codeblock></blockcontainer></blockgroup>"#
+        ),
+        (
+            "convert to paragraph",
+            "AQYCAEcBAgMJcGFyYWdyYXBoBwACAAYEAAIBA2FiYygAAgAPYmFja2dyb3VuZENvbG9yAXcHZGVmYXVsdCgAAgAJdGV4dENvbG9yAXcHZGVmYXVsdCgAAgANdGV4dEFsaWdubWVudAF3BGxlZnQBAQECBg==",
+            #"<blockgroup><blockcontainer id="c"><paragraph backgroundColor="default" textAlignment="left" textColor="default">abc</paragraph></blockcontainer></blockgroup>"#
+        ),
+    ]
+
+    static let codeBlockTyping: [(label: String, updateBase64: String, xml: String)] = [
+        (
+            "seed",
+            "AQcBAAcBDmRvY3VtZW50LXN0b3JlAwpibG9ja0dyb3VwBwABAAMOYmxvY2tDb250YWluZXIHAAEBAwljb2RlQmxvY2sHAAECBgQAAQMCYWMoAAECCGxhbmd1YWdlAXcEdGV4dCgAAQECaWQBdwFjAA==",
+            #"<blockgroup><blockcontainer id="c"><codeblock language="text">ac</codeblock></blockcontainer></blockgroup>"#
+        ),
+        (
+            "code-typing-explicit",
+            "AQECAMQBBAEFAWIA",
+            #"<blockgroup><blockcontainer id="c"><codeblock language="text">abc</codeblock></blockcontainer></blockgroup>"#
+        ),
+        (
+            "convert to paragraph",
+            "AQYCAUcBAgMJcGFyYWdyYXBoBwACAQYEAAICA2FiYygAAgEPYmFja2dyb3VuZENvbG9yAXcHZGVmYXVsdCgAAgEJdGV4dENvbG9yAXcHZGVmYXVsdCgAAgENdGV4dEFsaWdubWVudAF3BGxlZnQCAgEAAQEBAgU=",
+            #"<blockgroup><blockcontainer id="c"><paragraph backgroundColor="default" textAlignment="left" textColor="default">abc</paragraph></blockcontainer></blockgroup>"#
+        ),
+    ]
+
     static let seeds: [String: String] = [
         "p-mixed-to-code":
             "ARoBAAcBDmRvY3VtZW50LXN0b3JlAwpibG9ja0dyb3VwBwABAAMOYmxvY2tDb250YWluZXIHAAEBAwlwYXJhZ3JhcGgHAAECBgQAAQMHQmVmb3JlIIcBAwMRdXNlck1lbnRpb25JbmxpbmUoAAELBnVzZXJJZAF3BnVzZXItMSgAAQsIZnVsbE5hbWUBdwxBZGEgTG92ZWxhY2WHAQsGBAABDgggbWlkZGxlIIcBDgMWaW50ZXJsaW5raW5nTGlua0lubGluZSgAARcFZG9jSWQBdwVkb2MtMSgAARcHYmxvY2tJZAF3CHRhcmdldC0xKAABFwhkaXNhYmxlZAF5KAABFwd0cmlnZ2VyAXcBL4cBFwYEAAEcBiBtYXRoIIcBHAMEbWF0aAcAASMGBAABJAN4XjKHASMGBAABKAYgYWZ0ZXIoAAECD2JhY2tncm91bmRDb2xvcgF3B2RlZmF1bHQoAAECCXRleHRDb2xvcgF3B2RlZmF1bHQoAAECDXRleHRBbGlnbm1lbnQBdwRsZWZ0KAABAQJpZAF3A3AtZwA=",

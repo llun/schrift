@@ -67,6 +67,8 @@ struct BlockNoteWriter {
         return nested ? Data([0, 0]) : try YTransactionEncoder.encodeUpdate(tx) ?? Data([0, 0])
     }
 
+    /// Code blocks insert plain text, dropping supplied marks. Other blocks
+    /// inherit marks when nil, or use the explicit map when supplied.
     @discardableResult
     func replaceText(block: String, range: NSRange, with text: String, marks: YTextAttributes? = nil) throws -> Data {
         let target = try find(block)
@@ -77,18 +79,21 @@ struct BlockNoteWriter {
             guard !text.isEmpty else { return }
             let current = try inline(target.element, block: block)
             let (type, offset) = try textPosition(tx, element: target.element, parts: current, at: bounds.lowerBound)
-            try type.insert(UInt(offset), text, marks)
+            try type.insert(UInt(offset), text, target.node == "codeBlock" ? [:] : marks)
         }
     }
 
     /// Formats text portions of the range; atomic inline elements keep their
     /// own schema attributes, rather than receiving text ContentFormat items.
+    /// Code blocks allow no marks: like BlockNote's style command, this is a
+    /// successful no-op there, returning an empty update.
     @discardableResult
     func formatRange(block: String, range: NSRange, attributes: YTextAttributes) throws -> Data {
         let target = try find(block)
         let parts = try inline(target.element, block: block)
         let bounds = try clamp(range, parts: parts)
         return try transaction { _ in
+            guard target.node != "codeBlock" else { return }
             var start = 0
             for part in parts {
                 let end = start + part.width
@@ -282,7 +287,10 @@ struct BlockNoteWriter {
                 if child.typeRef == .xmlElement(nodeName: "blockContainer"),
                     let value = child.map["id"], !value.deleted,
                     case .any(let values) = value.content, values.count == 1, case .string(let candidate) = values[0],
-                    candidate == id
+                    // BlockNote ids are opaque JS strings, not canonically
+                    // equivalent Swift strings. This also governs duplicate ids
+                    // and splitBlock's newID check, which both use this lookup.
+                    candidate.utf16.elementsEqual(id.utf16)
                 {
                     guard found == nil else { throw Error.duplicateID(id) }
                     found = try resolve(item, group: type, id: id)
