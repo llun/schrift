@@ -406,6 +406,14 @@ extension YDoc {
 
             if transactionCleanups.count <= i + 1 {
                 transactionCleanups = []
+                // yjs `Doc`'s `'afterAllTransactions'`: the outermost cleanup is
+                // done and `doc.transaction` is nil. A listener may open a
+                // transaction here (the engine's surface does); it is queued, so
+                // drain it before returning.
+                if let afterAllTransactions = transaction.doc.afterAllTransactions {
+                    afterAllTransactions()
+                    if !transactionCleanups.isEmpty { try cleanupTransactions(0) }
+                }
             } else {
                 try cleanupTransactions(i + 1)
             }

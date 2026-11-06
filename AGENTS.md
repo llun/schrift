@@ -2039,6 +2039,54 @@ that are easy to violate and expensive to discover:
   "defensive" merge of duplicate client blocks where yjs simply overwrites. If you
   cannot demonstrate the deviation against the oracle, transliterate instead.
 
+### The document engine (`Features/Editor/Engine`, B6a)
+
+The headless layer the phase 2 native editor sits on. It is proven by tests
+only; nothing in the shipping editor uses it yet.
+
+- **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
+  `DocumentEngine` (`@MainActor`), which borrows the replica and resolves
+  intents through `BlockNoteWriter` inside one `.localUser` transaction. Below
+  it: `BlockIndex` (block id ↔ container / content element / text children),
+  `PatchBuilder` (change signal → patch), and `HeadlessSurface` (an in-memory
+  surface, so a test can assert the surface converges to the projection).
+  `BlockPatch` changes are `.text(blockID, [TextDelta])`, `.props`,
+  `.insert(after:, [BlockSnapshot])`, `.remove([blockID])` and
+  `.replaceBlock(blockID, BlockSnapshot)`. Composition and selection hooks are
+  B6b; do not stub them in.
+- **The engine borrows the replica; it never owns it.** `DocumentCollaborationManager`
+  keeps the one-owner rule. `YDoc.onDestroy` fires at the start of `destroy()`
+  and the engine detaches there — hooks cleared, buffered patches dropped, later
+  calls no-ops. A replica destroyed by a fail-safe or a suspend teardown must
+  never be touched again, and this is the hook that makes that true.
+- **Buffer in `afterTransaction`, deliver at `afterAllTransactions`.** A text
+  delta is valid only inside the observer phase, and the store there is still
+  pre-gc/pre-merge, so the engine only *buffers*. `YDoc.afterAllTransactions`
+  (yjs's `'afterAllTransactions'`) fires once the outermost cleanup is done and
+  `doc.transaction` is nil; that is where patches reach the surface. A surface
+  that opens a transaction from `applyPatch` is queued and drained by the same
+  `transact` call, as in yjs. Never deliver from inside `afterTransaction`.
+- **Local intents emit patches too.** The engine does not suppress the patch for
+  the edit it just made: the same transaction may also carry a format cleanup or
+  a split's new block. A patch describes a *transition* from the pre-transaction
+  state, so a surface that already applied the keystroke itself (a UIKit text
+  view mutates synchronously) must **reconcile** — the range already holds the
+  replacement — not insert a second copy. `HeadlessSurface` never mutates on its
+  own, so it applies every patch and equals the projection after each step.
+  There is no optimistic overlay (plan §2.3).
+- **Patch building is O(touched blocks).** Classification reads
+  `transaction.changed` (the types whose *direct* children changed), so a
+  keystroke visits one `XmlText` and projects no block. Only a structural change
+  walks its group, and only a block the delta cannot express is projected, one
+  block at a time (`YBlockProjection.projectBlock`). `DocumentEnginePatchCostTests`
+  pins the counters. A delta that both rewrites text and re-marks it, or a
+  format range whose marks are not uniform, escalates to `.replaceBlock` rather
+  than guessing.
+- **No UIKit, no `NSRange`, in `Engine/`.** The model speaks block-relative
+  `Range<Int>` UTF-16 offsets only; `BlockNoteWriter` carries `Range<Int>`
+  overloads so the engine never spells `NSRange`. Grep the folder for
+  `NSRange`/`NSText*`/`UIView`/`UITextView`/`UndoManager` and expect zero hits.
+
 ### Editor & the on-device save (`Core/Yjs`)
 
 - **Hide completed is a reading presentation preference, off by default and local

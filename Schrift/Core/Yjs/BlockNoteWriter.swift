@@ -80,6 +80,17 @@ struct BlockNoteWriter {
         try replaceText(in: try find(block), range: range, with: text, marks: marks)
     }
 
+    /// `Range<Int>` spelling of `replaceText`, for callers below the UI seam
+    /// (the engine) that must not mention `NSRange`.
+    @discardableResult
+    func replaceText(block: String, range: Range<Int>, with text: String, marks: YTextAttributes? = nil)
+        throws -> Data
+    {
+        try replaceText(
+            block: block, range: NSRange(location: range.lowerBound, length: range.count), with: text,
+            marks: marks)
+    }
+
     /// `replaceText` against an already-resolved target, so a caller applying
     /// several intents to one block walks the document once (`find` is a
     /// whole-document walk). The target must still be live: a kind change
@@ -122,6 +133,14 @@ struct BlockNoteWriter {
                 start = end
             }
         }
+    }
+
+    /// `Range<Int>` spelling of `formatRange`, for callers below the UI seam.
+    @discardableResult
+    func formatRange(block: String, range: Range<Int>, attributes: YTextAttributes) throws -> Data {
+        try formatRange(
+            block: block, range: NSRange(location: range.lowerBound, length: range.count),
+            attributes: attributes)
     }
 
     /// BlockNote's Enter: the block keeps its id, type, props and the content

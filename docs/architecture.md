@@ -515,6 +515,62 @@ them, which is BlockNote's own rule. No incremental byte pin moved.
   boundaries and could split a surrogate pair, which the fuzz caught; the code-point
   snap described above is the fix.
 
+### The headless document engine (B6a)
+
+The phase 2 native editor's foundation, proven headlessly and not yet wired into
+any screen. `Features/Editor/Engine/` holds four pieces:
+
+- **`EditorSurface`** — the model → UI protocol: one `applyPatch(BlockPatch)`.
+  A patch is a list of `BlockChange`s: `.text(blockID, [TextDelta])` (a
+  block-relative UTF-16 range, its replacement and the marks it carries),
+  `.props` (attributes only), `.insert(after:, [BlockSnapshot])`, `.remove` and
+  `.replaceBlock` (the whole-block fallback for inline nodes, split/join, a type
+  change, or a delta the text form cannot express). Composition and selection
+  hooks are B6b.
+- **`HeadlessSurface`** — an in-memory surface that only ever changes through
+  `applyPatch`, so a test can assert it equals the replica's projection after
+  every step.
+- **`DocumentEngine`** (`@MainActor`) — borrows the replica from
+  `DocumentCollaborationManager` (never owns it), exposes block-relative intents
+  (`replaceText`, `formatRange`, `splitBlock`, `joinBlocks`, `setBlockType`)
+  that resolve through `BlockNoteWriter` in one `.localUser` transaction and
+  return the update bytes for broadcast, and turns the change signal into
+  patches.
+- **`BlockIndex` / `PatchBuilder`** — the index maps a block id to its container,
+  content element and text children and is maintained incrementally from the
+  transaction's changed types; the builder classifies those types and emits the
+  patch.
+
+**Buffering.** `YDoc.afterTransaction` runs in the observer phase, where a text
+delta is valid but the store is still pre-gc/pre-merge, so the engine only
+buffers there. Delivery happens at `YDoc.afterAllTransactions` — yjs's
+`'afterAllTransactions'`, fired once the outermost cleanup is done and
+`doc.transaction` is nil. A surface that opens a transaction from `applyPatch`
+is queued and drained by the same `transact` call.
+
+**Local intents emit patches too.** The engine does not suppress the patch for
+the edit it just made, because the same transaction may also carry a format
+cleanup or a split's new block. A patch describes a transition from the
+pre-transaction state, so a surface that already applied the keystroke itself
+must reconcile rather than re-apply; `HeadlessSurface` never mutates on its own
+and therefore always equals the projection. There is no optimistic overlay.
+
+**Cost.** Classification reads `transaction.changed` (direct child changes), so
+a keystroke visits one `XmlText` and projects no block; only a structural change
+walks its group, and only an inexpressible block is projected, one at a time
+(`YBlockProjection.projectBlock`). `DocumentEnginePatchCostTests` pins the
+counters.
+
+**Teardown.** `YDoc.onDestroy` fires at the start of `destroy()`; the engine
+detaches there — hooks cleared, buffered patches dropped, later calls no-ops —
+so a fail-safe or suspend teardown can never leave a hook pointing at a
+destroyed store.
+
+**No UIKit in the model.** `Engine/` mentions no `NSRange`, `NSText*`, `UIView`,
+`UITextView` or `UndoManager`; offsets are block-relative `Range<Int>` UTF-16
+values, and `BlockNoteWriter` carries `Range<Int>` overloads so the engine never
+spells `NSRange`.
+
 ### Two-way sync engine (C2a)
 
 C1 wires the *read* side into the editor; B6 can turn an edit into bytes but has zero

@@ -167,6 +167,20 @@ extension YBlockProjection {
 
     // MARK: - Per-block projection
 
+    /// Projects one block container — the engine's whole-block fallback (B6).
+    /// Same classification as `project(_:)`, one block at a time, so a patch
+    /// costs O(touched blocks) rather than O(document).
+    static func projectBlock(_ containerItem: YItem, interlinkingOrigin: String? = nil) -> ProjectedBlock {
+        projectContainer(containerItem, interlinkingOrigin: interlinkingOrigin)
+    }
+
+    /// The content element's attributes, sorted, or `nil` when one is
+    /// unreadable — the `.props` patch's payload.
+    static func props(of element: YType) -> [ProjectedProp]? {
+        let (props, failure) = readProps(element)
+        return failure == nil ? props : nil
+    }
+
     /// Builds one projected block from a `blockGroup` child item. Every branch
     /// either returns a fully classified block or an `.opaque` one recording
     /// why — never a trap or a thrown error.
