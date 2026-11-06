@@ -32,11 +32,13 @@ import Foundation
 /// the truth and the patch is how the surface catches up.
 ///
 /// During composition, `setCompositionDeferred(true)` means the composing
-/// block's patches are held. Commit/cancel delivers an authoritative rebuild,
-/// never stale deltas, then clears deferral. Structural invalidation may require
+/// block's patches are discarded and replaced by an authoritative rebuild on
+/// commit/cancel, then deferral clears. Structural invalidation may require
 /// a whole-list reset. Selection is queried with `DocumentEngine.currentSelection`
 /// after patches; its offsets resolve against the current replica, even while
 /// the surface's composing block is intentionally frozen.
+/// A composition restarted from `applyPatch` after commit/cancel keeps deferral
+/// continuous; completion of the previous composition cannot clear the new one.
 protocol EditorSurface: AnyObject {
     func applyPatch(_ patch: BlockPatch)
     func setCompositionDeferred(_ deferred: Bool)

@@ -2,8 +2,8 @@ import XCTest
 
 @testable import Schrift
 
-/// Shared fixtures for the headless engine tests: a seeded replica, a surface
-/// that must always equal its projection, and the two-replica harness the
+/// Shared fixtures for the headless engine tests: a seeded replica, the
+/// surface/projection assertions, and the one two-replica harness the
 /// concurrent-editor cases use.
 @MainActor
 class DocumentEngineTestCase: XCTestCase {
@@ -41,6 +41,35 @@ class DocumentEngineTestCase: XCTestCase {
         let doc = YDoc(clientID: UInt(clientID), gc: true)
         try doc.applyUpdate(YUpdateDecoder.decode(BlockNoteYjs.encode(blocks, clientID: Self.seedClientID)))
         return doc
+    }
+
+    struct Pair {
+        let a: YDoc
+        let b: YDoc
+        let surfaceA: HeadlessSurface
+        let surfaceB: HeadlessSurface
+        let engineA: DocumentEngine
+        let engineB: DocumentEngine
+
+        func destroy() {
+            a.destroy()
+            b.destroy()
+        }
+    }
+
+    func makePair() throws -> Pair {
+        let a = try makeDoc(clientID: 1)
+        let b: YDoc
+        do { b = try makeDoc(clientID: 2) } catch {
+            a.destroy()
+            throw error
+        }
+        let surfaceA = HeadlessSurface(blocks: projection(a))
+        let surfaceB = HeadlessSurface(blocks: projection(b))
+        return Pair(
+            a: a, b: b, surfaceA: surfaceA, surfaceB: surfaceB,
+            engineA: DocumentEngine(doc: a, surface: surfaceA),
+            engineB: DocumentEngine(doc: b, surface: surfaceB))
     }
 
     /// The replica's projection in the surface's vocabulary.

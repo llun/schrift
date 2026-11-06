@@ -544,6 +544,10 @@ any screen. `Features/Editor/Engine/` holds these pieces:
   content element and text children and is maintained incrementally from the
   transaction's changed types; the builder classifies those types and emits the
   patch.
+- **`CompositionQueue`** — discards composing-block deltas, preserves independent
+  block delivery, and remembers when completion needs a whole-list reset.
+- **`EngineSelection`** — directed surface positions and their internal relative
+  captures, including an element anchor for an empty text-capable block.
 
 **Selection.** `setSelection(EditorSelection?)` captures directed anchor/head
 endpoints as `YRelativePosition`s. Each `EditorPosition` holds a block id,
@@ -552,8 +556,14 @@ affinity sticks to the character before the boundary, including when a peer
 appends at end-of-text; non-negative affinity follows the character after it.
 `currentSelection()` resolves both endpoints after any transaction, against the
 replica even when composition intentionally freezes the surface. Capture rejects
-invalid offsets and non-canonical/opaque/multi-text blocks without changing the
-previous selection. Resolution checks the original text identity against the
+invalid offsets (including a boundary inside a surrogate pair) and
+non-canonical/opaque/multi-text blocks without changing the previous selection.
+A simple, projectable text-capable element with no countable children accepts
+offset 0 without creating an XmlText. Its capture names the element at child
+index 0: left affinity stays at text offset 0 when a peer creates text, while
+non-negative affinity follows the end of its sole XmlText. While still empty,
+both resolve to 0. The writer creates the text on the first non-empty commit.
+Resolution checks the original text or empty-element identity against the
 current block index: deletion, type replacement under the same block id, or a
 non-addressable shape returns nil. Only locally captured positions enter this
 path; no arbitrary peer root names are resolved.
@@ -567,15 +577,23 @@ defers the entire list and all subsequent patches because later transitions may
 depend on the held structure. No stale deltas are replayed or retained.
 `compositionCommitted(text:)` inserts the composed string at the resolved anchor
 through `BlockNoteWriter` in one `.localUser` transaction, returns its update for
-broadcast, and collapses selection after the inserted UTF-16 text. The write's
-own delta is held too. Commit and `compositionCancelled()` then deliver one
-`.replaceBlock` projected from the replica (a fresh whole-list `.reset` for the
+broadcast, and captures the collapsed selection after the inserted UTF-16 text
+inside that same transaction, before observers or cleanup can edit it. Capture
+errors propagate through the writer error/rebuild path; no failed capture is
+silently replaced by nil (transactions have no rollback). Later edits remap the
+captured caret, and later deletion/replacement invalidates it normally. The
+write's own delta is discarded too. Commit and `compositionCancelled()` then
+deliver one `.replaceBlock` projected from the replica (a fresh whole-list `.reset` for the
 structural fallback) before clearing deferral. Cancel writes nothing. A deleted,
 replaced or non-addressable original text drops the commit write, returns the
 empty update, and still rebuilds. Rebuild and deferral completion share the
 serialized delivery queue so surface callbacks can transact without reentrant
-patch delivery. Detach clears selection/deferral and drops held work without a
-rebuild; later intents throw `.detached`. A deferred surface intentionally differs
+patch delivery. Commit/cancel ends the logical composition immediately, allowing
+`compositionBegan` from inside the same `applyPatch` callback. Deferral stays
+continuous until the newest composition's rebuild completes; generation-tagged
+completion events prevent an older completion from ending a newer composition.
+Detach clears selection/deferral and drops deferred work without a rebuild;
+later intents throw `.detached`. A deferred surface intentionally differs
 from projection until commit/cancel restores equality. Native marked-text and
 device validation remain phase 2 work; this contract is proven headlessly.
 

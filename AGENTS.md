@@ -2064,8 +2064,12 @@ only; nothing in the shipping editor uses it yet.
   transaction, including while the surface is deferred. Negative affinity (the
   default) stays with the character before a boundary; non-negative affinity
   follows the character after it. Captures require a canonical index and a
-  projectable single-text block; invalid offsets throw without replacing the
-  previous selection. A deleted/replaced/non-addressable text returns nil, never
+  projectable single-text block, or a simple text-capable element with no
+  countable children at offset 0. Empty captures name the element, not a newly
+  authored XmlText: left affinity stays at 0 when text appears; non-negative
+  affinity follows the end of its sole XmlText. Invalid offsets, including one
+  inside a surrogate pair, throw without replacing the previous selection.
+  A deleted/replaced/non-addressable text or empty element returns nil, never
   a position in another text under the same block id. These are local captures,
   not an entry point for peer-supplied relative positions.
 - **Composition deferral lives in the engine.** `compositionBegan(blockID:at:assoc:)`
@@ -2082,7 +2086,12 @@ only; nothing in the shipping editor uses it yet.
   patches until a fresh `.reset` at completion. If the original text disappears,
   is replaced, or becomes non-addressable, commit drops its write (empty update)
   and still rebuilds. A successful commit collapses selection after the inserted
-  UTF-16 text. Detach drops deferral without rebuilding, clears selection, and
+  UTF-16 text, captured inside the write transaction before observers run; capture
+  errors propagate through the error/rebuild path rather than becoming a silent
+  nil selection (transactions have no rollback). A new composition can begin
+  immediately after commit/cancel inside `applyPatch`: deferral stays continuous
+  and generation-tagged completion events cannot end a newer composition.
+  Detach drops deferral without rebuilding, clears selection, and
   rejects all later composition/selection intents as `.detached`. Surface equality
   with projection is intentionally suspended for deferred content, and restored
   on commit/cancel. This remains headless; real IME validation belongs to phase 2.

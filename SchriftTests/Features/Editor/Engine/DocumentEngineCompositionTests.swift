@@ -44,19 +44,21 @@ final class DocumentEngineCompositionTests: DocumentEngineTestCase {
     }
 
     func testEndOfTextAnchorStaysBeforePeerAppendAndCommitUsesUTF16() throws {
-        try withPeers { local, peer, surface, peerSurface, engine, peerEngine in
-            try engine.compositionBegan(blockID: Self.firstID, at: 16)
-            try local.applyUpdate(
-                YUpdateDecoder.decode(peerEngine.replaceText(block: Self.firstID, range: 16..<16, with: "!")),
-                origin: .remote)
-            try peer.applyUpdate(YUpdateDecoder.decode(engine.compositionCommitted(text: "😀に")), origin: .remote)
-            XCTAssertEqual(text(of: surface.blocks[0]), "First paragraph.😀に!")
-            XCTAssertEqual(try engine.currentSelection()?.head.offset, 19)
-            assertSingleRebuild(surface, origin: .localUser)
-            XCTAssertEqual(YXMLString.fragment(local), YXMLString.fragment(peer))
-            assertSurfaceMatchesProjection(surface, local, "end-of-text composition")
-            assertSurfaceMatchesProjection(peerSurface, peer, "peer end-of-text composition")
-        }
+        let pair = try makePair()
+        defer { pair.destroy() }
+        let (local, peer, surface, peerSurface, engine, peerEngine) =
+            (pair.a, pair.b, pair.surfaceA, pair.surfaceB, pair.engineA, pair.engineB)
+        try engine.compositionBegan(blockID: Self.firstID, at: 16)
+        try local.applyUpdate(
+            YUpdateDecoder.decode(peerEngine.replaceText(block: Self.firstID, range: 16..<16, with: "!")),
+            origin: .remote)
+        try peer.applyUpdate(YUpdateDecoder.decode(engine.compositionCommitted(text: "😀に")), origin: .remote)
+        XCTAssertEqual(text(of: surface.blocks[0]), "First paragraph.😀に!")
+        XCTAssertEqual(try engine.currentSelection()?.head.offset, 19)
+        assertSingleRebuild(surface, origin: .localUser)
+        XCTAssertEqual(YXMLString.fragment(local), YXMLString.fragment(peer))
+        assertSurfaceMatchesProjection(surface, local, "end-of-text composition")
+        assertSurfaceMatchesProjection(peerSurface, peer, "peer end-of-text composition")
     }
 
     func testNonAddressableBlockDropsWriteAndRebuildsWithoutRetargeting() throws {
@@ -78,26 +80,28 @@ final class DocumentEngineCompositionTests: DocumentEngineTestCase {
     }
 
     func testSeveralHeldPeerTransactionsBecomeExactlyOneRebuild() throws {
-        try withPeers { local, peer, surface, peerSurface, engine, peerEngine in
-            try engine.compositionBegan(blockID: Self.firstID, at: 6)
-            let updates = [
-                try peerEngine.replaceText(block: Self.firstID, range: 0..<0, with: "A"),
-                try peerEngine.replaceText(block: Self.firstID, range: 17..<17, with: "!"),
-                try peerEngine.formatRange(
-                    block: Self.firstID, range: 0..<1, marks: [TextMark(key: "bold", valueJSON: "{}")]),
-            ]
-            for update in updates {
-                try local.applyUpdate(YUpdateDecoder.decode(update), origin: .remote)
-                XCTAssertTrue(surface.appliedPatches.isEmpty)
-                assertSurfaceMatchesProjection(peerSurface, peer, "peer transactions")
-            }
-            try peer.applyUpdate(YUpdateDecoder.decode(engine.compositionCommitted(text: "に")), origin: .remote)
-            XCTAssertEqual(text(of: surface.blocks[0]), "AFirst にparagraph.!")
-            assertSingleRebuild(surface, origin: .localUser)
-            XCTAssertEqual(YXMLString.fragment(local), YXMLString.fragment(peer))
-            assertSurfaceMatchesProjection(surface, local, "held peer transactions committed")
-            assertSurfaceMatchesProjection(peerSurface, peer, "peer received commit")
+        let pair = try makePair()
+        defer { pair.destroy() }
+        let (local, peer, surface, peerSurface, engine, peerEngine) =
+            (pair.a, pair.b, pair.surfaceA, pair.surfaceB, pair.engineA, pair.engineB)
+        try engine.compositionBegan(blockID: Self.firstID, at: 6)
+        let updates = [
+            try peerEngine.replaceText(block: Self.firstID, range: 0..<0, with: "A"),
+            try peerEngine.replaceText(block: Self.firstID, range: 17..<17, with: "!"),
+            try peerEngine.formatRange(
+                block: Self.firstID, range: 0..<1, marks: [TextMark(key: "bold", valueJSON: "{}")]),
+        ]
+        for update in updates {
+            try local.applyUpdate(YUpdateDecoder.decode(update), origin: .remote)
+            XCTAssertTrue(surface.appliedPatches.isEmpty)
+            assertSurfaceMatchesProjection(peerSurface, peer, "peer transactions")
         }
+        try peer.applyUpdate(YUpdateDecoder.decode(engine.compositionCommitted(text: "に")), origin: .remote)
+        XCTAssertEqual(text(of: surface.blocks[0]), "AFirst にparagraph.!")
+        assertSingleRebuild(surface, origin: .localUser)
+        XCTAssertEqual(YXMLString.fragment(local), YXMLString.fragment(peer))
+        assertSurfaceMatchesProjection(surface, local, "held peer transactions committed")
+        assertSurfaceMatchesProjection(peerSurface, peer, "peer received commit")
     }
 
     func testResetHoldsSubsequentIndependentDeltasUntilCancel() throws {
@@ -187,33 +191,37 @@ final class DocumentEngineCompositionTests: DocumentEngineTestCase {
     }
 
     func testPeerDeletingComposingBlockDropsCommitAndResets() throws {
-        try withPeers { local, peer, surface, peerSurface, engine, peerEngine in
-            try engine.compositionBegan(blockID: Self.secondID, at: 6)
-            let update = try peerEngine.joinBlocks(block: Self.secondID)
-            try local.applyUpdate(YUpdateDecoder.decode(update), origin: .remote)
-            XCTAssertTrue(
-                surface.appliedPatches.isEmpty, "list changes involving the composing block are held together")
-            XCTAssertEqual(try engine.compositionCommitted(text: "LOST"), Data([0, 0]))
-            XCTAssertEqual(surface.appliedPatches.count, 1)
-            guard case .reset = surface.appliedPatches[0].changes.first else { return XCTFail("expected reset") }
-            XCTAssertEqual(YXMLString.fragment(local), YXMLString.fragment(peer))
-            assertSurfaceMatchesProjection(surface, local, "deleted composition")
-            assertSurfaceMatchesProjection(peerSurface, peer, "peer deletion")
-        }
+        let pair = try makePair()
+        defer { pair.destroy() }
+        let (local, peer, surface, peerSurface, engine, peerEngine) =
+            (pair.a, pair.b, pair.surfaceA, pair.surfaceB, pair.engineA, pair.engineB)
+        try engine.compositionBegan(blockID: Self.secondID, at: 6)
+        let update = try peerEngine.joinBlocks(block: Self.secondID)
+        try local.applyUpdate(YUpdateDecoder.decode(update), origin: .remote)
+        XCTAssertTrue(
+            surface.appliedPatches.isEmpty, "list changes involving the composing block are held together")
+        XCTAssertEqual(try engine.compositionCommitted(text: "LOST"), Data([0, 0]))
+        XCTAssertEqual(surface.appliedPatches.count, 1)
+        guard case .reset = surface.appliedPatches[0].changes.first else { return XCTFail("expected reset") }
+        XCTAssertEqual(YXMLString.fragment(local), YXMLString.fragment(peer))
+        assertSurfaceMatchesProjection(surface, local, "deleted composition")
+        assertSurfaceMatchesProjection(peerSurface, peer, "peer deletion")
     }
 
     func testPeerReplacingTextTypeDropsCommitDespiteSameBlockID() throws {
-        try withPeers { local, peer, surface, peerSurface, engine, peerEngine in
-            try engine.compositionBegan(blockID: Self.firstID, at: 6)
-            try local.applyUpdate(
-                YUpdateDecoder.decode(peerEngine.setBlockType(block: Self.firstID, to: "heading")), origin: .remote)
-            XCTAssertTrue(surface.appliedPatches.isEmpty)
-            XCTAssertEqual(try engine.compositionCommitted(text: "LOST"), Data([0, 0]))
-            assertSingleRebuild(surface, origin: .other)
-            XCTAssertEqual(YXMLString.fragment(local), YXMLString.fragment(peer))
-            assertSurfaceMatchesProjection(surface, local, "replaced composition text")
-            assertSurfaceMatchesProjection(peerSurface, peer, "peer type change")
-        }
+        let pair = try makePair()
+        defer { pair.destroy() }
+        let (local, peer, surface, peerSurface, engine, peerEngine) =
+            (pair.a, pair.b, pair.surfaceA, pair.surfaceB, pair.engineA, pair.engineB)
+        try engine.compositionBegan(blockID: Self.firstID, at: 6)
+        try local.applyUpdate(
+            YUpdateDecoder.decode(peerEngine.setBlockType(block: Self.firstID, to: "heading")), origin: .remote)
+        XCTAssertTrue(surface.appliedPatches.isEmpty)
+        XCTAssertEqual(try engine.compositionCommitted(text: "LOST"), Data([0, 0]))
+        assertSingleRebuild(surface, origin: .other)
+        XCTAssertEqual(YXMLString.fragment(local), YXMLString.fragment(peer))
+        assertSurfaceMatchesProjection(surface, local, "replaced composition text")
+        assertSurfaceMatchesProjection(peerSurface, peer, "peer type change")
     }
 
     func testDetachDropsHeldChangesAndAllNewIntentsThrow() throws {
@@ -249,12 +257,21 @@ final class DocumentEngineCompositionTests: DocumentEngineTestCase {
         defer { doc.destroy() }
         let surface = HeadlessSurface(blocks: projection(doc))
         let engine = DocumentEngine(doc: doc, surface: surface)
-        XCTAssertThrowsError(try engine.compositionCommitted(text: "x"))
-        XCTAssertThrowsError(try engine.compositionCancelled())
-        XCTAssertThrowsError(try engine.compositionBegan(blockID: Self.firstID))
-        XCTAssertThrowsError(try engine.compositionBegan(blockID: Self.firstID, at: -1))
+        func assertRejected(_ expected: DocumentEngineError, _ action: () throws -> Void) throws {
+            let before = try YStateEncoder.encodeStateAsUpdate(doc)
+            let deferrals = surface.compositionDeferrals
+            let patches = surface.appliedPatches
+            XCTAssertThrowsError(try action()) { XCTAssertEqual($0 as? DocumentEngineError, expected) }
+            XCTAssertEqual(try YStateEncoder.encodeStateAsUpdate(doc), before)
+            XCTAssertEqual(surface.compositionDeferrals, deferrals)
+            XCTAssertEqual(surface.appliedPatches, patches)
+        }
+        try assertRejected(.compositionNotActive) { _ = try engine.compositionCommitted(text: "x") }
+        try assertRejected(.compositionNotActive) { try engine.compositionCancelled() }
+        try assertRejected(.invalidPosition) { try engine.compositionBegan(blockID: Self.firstID) }
+        try assertRejected(.invalidPosition) { try engine.compositionBegan(blockID: Self.firstID, at: -1) }
         try engine.compositionBegan(blockID: Self.firstID, at: 6)
-        XCTAssertThrowsError(try engine.compositionBegan(blockID: Self.secondID, at: 0))
+        try assertRejected(.compositionAlreadyActive) { try engine.compositionBegan(blockID: Self.secondID, at: 0) }
         try engine.compositionCancelled()
         assertSingleRebuild(surface, origin: .other)
         assertSurfaceMatchesProjection(surface, doc, "invalid transitions")
@@ -263,27 +280,29 @@ final class DocumentEngineCompositionTests: DocumentEngineTestCase {
     private func concurrentComposition(
         range: Range<Int>, replacement: String, expectedAnchor: Int, expectedText: String
     ) throws {
-        try withPeers { local, peer, surface, peerSurface, engine, peerEngine in
-            let caret = EditorPosition(blockID: Self.firstID, offset: 6)
-            try engine.setSelection(EditorSelection(anchor: caret, head: caret))
-            try engine.compositionBegan(blockID: Self.firstID)
-            try local.applyUpdate(
-                YUpdateDecoder.decode(peerEngine.replaceText(block: Self.firstID, range: range, with: replacement)),
-                origin: .remote)
-            XCTAssertEqual(try engine.currentSelection()?.head.offset, expectedAnchor)
-            XCTAssertTrue(surface.appliedPatches.isEmpty)
-            XCTAssertEqual(text(of: surface.blocks[0]), "First paragraph.")
-            assertSurfaceMatchesProjection(peerSurface, peer, "peer edit while local composition held")
+        let pair = try makePair()
+        defer { pair.destroy() }
+        let (local, peer, surface, peerSurface, engine, peerEngine) =
+            (pair.a, pair.b, pair.surfaceA, pair.surfaceB, pair.engineA, pair.engineB)
+        let caret = EditorPosition(blockID: Self.firstID, offset: 6)
+        try engine.setSelection(EditorSelection(anchor: caret, head: caret))
+        try engine.compositionBegan(blockID: Self.firstID)
+        try local.applyUpdate(
+            YUpdateDecoder.decode(peerEngine.replaceText(block: Self.firstID, range: range, with: replacement)),
+            origin: .remote)
+        XCTAssertEqual(try engine.currentSelection()?.head.offset, expectedAnchor)
+        XCTAssertTrue(surface.appliedPatches.isEmpty)
+        XCTAssertEqual(text(of: surface.blocks[0]), "First paragraph.")
+        assertSurfaceMatchesProjection(peerSurface, peer, "peer edit while local composition held")
 
-            let update = try engine.compositionCommitted(text: "に")
-            try peer.applyUpdate(YUpdateDecoder.decode(update), origin: .remote)
-            XCTAssertEqual(try engine.currentSelection()?.head.offset, expectedAnchor + 1)
-            XCTAssertEqual(text(of: surface.blocks[0]), expectedText)
-            assertSingleRebuild(surface, origin: .localUser)
-            XCTAssertEqual(YXMLString.fragment(local), YXMLString.fragment(peer))
-            assertSurfaceMatchesProjection(surface, local, "concurrent composition committed")
-            assertSurfaceMatchesProjection(peerSurface, peer, "peer received composition")
-        }
+        let update = try engine.compositionCommitted(text: "に")
+        try peer.applyUpdate(YUpdateDecoder.decode(update), origin: .remote)
+        XCTAssertEqual(try engine.currentSelection()?.head.offset, expectedAnchor + 1)
+        XCTAssertEqual(text(of: surface.blocks[0]), expectedText)
+        assertSingleRebuild(surface, origin: .localUser)
+        XCTAssertEqual(YXMLString.fragment(local), YXMLString.fragment(peer))
+        assertSurfaceMatchesProjection(surface, local, "concurrent composition committed")
+        assertSurfaceMatchesProjection(peerSurface, peer, "peer received composition")
     }
 
     private func assertSingleRebuild(
@@ -295,20 +314,6 @@ final class DocumentEngineCompositionTests: DocumentEngineTestCase {
         guard case .replaceBlock = surface.appliedPatches.first?.changes.first else {
             return XCTFail("expected exactly one rebuild", file: file, line: line)
         }
-    }
-
-    private func withPeers(
-        _ body: (YDoc, YDoc, HeadlessSurface, HeadlessSurface, DocumentEngine, DocumentEngine) throws -> Void
-    ) throws {
-        let local = try makeDoc(clientID: 1)
-        defer { local.destroy() }
-        let peer = try makeDoc(clientID: 2)
-        defer { peer.destroy() }
-        let surface = HeadlessSurface(blocks: projection(local))
-        let peerSurface = HeadlessSurface(blocks: projection(peer))
-        let engine = DocumentEngine(doc: local, surface: surface)
-        let peerEngine = DocumentEngine(doc: peer, surface: peerSurface)
-        try body(local, peer, surface, peerSurface, engine, peerEngine)
     }
 }
 

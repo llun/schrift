@@ -40,12 +40,13 @@ final class DocumentEngine {
     private var builder: PatchBuilder
     private enum SurfaceEvent {
         case patch(BlockPatch)
-        case compositionEnded
+        case compositionEnded(UInt)
     }
     private var buffered: [SurfaceEvent] = []
     private var selection: RelativeEditorSelection?
     private var composition: CompositionQueue?
     private var isDeferringComposition = false
+    private var compositionGeneration: UInt = 0
     private var isFlushing = false
     private let previousAfterTransaction: ((YTransaction) -> Void)?
     private(set) var isDetached = false
@@ -145,7 +146,7 @@ final class DocumentEngine {
     /// begun at end-of-text. With no explicit offset the head's affinity wins.
     func compositionBegan(blockID: String, at offset: Int? = nil, assoc: Int = -1) throws {
         try requireAttached()
-        guard !isDeferringComposition else { throw DocumentEngineError.compositionAlreadyActive }
+        guard composition == nil else { throw DocumentEngineError.compositionAlreadyActive }
         let position: EditorPosition
         if let offset {
             position = EditorPosition(blockID: blockID, offset: offset, assoc: assoc)
@@ -162,13 +163,18 @@ final class DocumentEngine {
             case .xmlElement(let node)? = element.typeRef, BlockNoteWriter.propSchemas[node] != nil
         else { throw DocumentEngineError.invalidPosition }
         composition = CompositionQueue(anchor: anchor)
-        isDeferringComposition = true
-        surface?.setCompositionDeferred(true)
+        compositionGeneration &+= 1
+        // A previous composition may have ended logically inside applyPatch,
+        // with its completion event still queued. Keep deferral continuous.
+        if !isDeferringComposition {
+            isDeferringComposition = true
+            surface?.setCompositionDeferred(true)
+        }
     }
 
     /// Writes once at the resolved anchor through the existing local-user
     /// writer. A deleted, replaced, or opaque target drops the write and returns
-    /// the empty update. Every held delta (including the write's own) is replaced
+    /// the empty update. Discarded deltas (including the write's own) are replaced
     /// by one current snapshot; callers can broadcast the returned update.
     @discardableResult
     func compositionCommitted(text: String) throws -> Data {
@@ -180,15 +186,25 @@ final class DocumentEngine {
         }
         let update: Data
         do {
-            update = try writer.replaceText(
-                block: position.blockID, range: position.offset..<position.offset, with: text)
+            update = try writer.transaction { _ in
+                try writer.replaceText(block: position.blockID, range: position.offset..<position.offset, with: text)
+                // Capture before cleanup/observers can edit or replace the text.
+                // Refresh only this entry in a temporary index: an empty element
+                // can now have the XmlText the writer just created. A failed
+                // capture propagates through the same error/rebuild path as a
+                // writer failure; it is never silently converted to nil.
+                var captureIndex = builder.index
+                captureIndex.refresh(position.blockID)
+                let caret = EditorPosition(
+                    blockID: position.blockID, offset: position.offset + text.utf16.count, assoc: -1)
+                selection = try RelativeEditorSelection(
+                    EditorSelection(anchor: caret, head: caret), index: captureIndex)
+            }
         } catch {
             if !isDetached { finishComposition(origin: .other) }
             throw error
         }
         guard !isDetached else { return update }
-        let caret = EditorPosition(blockID: position.blockID, offset: position.offset + text.utf16.count, assoc: -1)
-        selection = try? RelativeEditorSelection(EditorSelection(anchor: caret, head: caret), index: builder.index)
         finishComposition(origin: .localUser)
         return update
     }
@@ -212,7 +228,7 @@ final class DocumentEngine {
         }
         composition = nil
         buffered.append(.patch(BlockPatch([change], origin: origin)))
-        buffered.append(.compositionEnded)
+        buffered.append(.compositionEnded(compositionGeneration))
         flush()
     }
 
@@ -253,7 +269,8 @@ final class DocumentEngine {
                     // A previous delivery can begin composition reentrantly.
                     if composition != nil { patch = composition!.filter(patch) }
                     if !patch.isEmpty { surface?.applyPatch(patch) }
-                case .compositionEnded:
+                case .compositionEnded(let generation):
+                    guard generation == compositionGeneration else { continue }
                     isDeferringComposition = false
                     surface?.setCompositionDeferred(false)
                 }
