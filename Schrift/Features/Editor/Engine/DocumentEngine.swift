@@ -44,7 +44,9 @@ final class DocumentEngine {
     private(set) var isDetached = false
 
     /// The surface patches are delivered to. Weak: the surface owns the engine,
-    /// not the other way round.
+    /// not the other way round. A patch delivered while it is `nil` is lost and
+    /// there is no catch-up, so attach the surface before the first transaction
+    /// and keep it for the engine's lifetime.
     weak var surface: EditorSurface?
 
     /// Blocks projected into snapshots since the engine was created — the
