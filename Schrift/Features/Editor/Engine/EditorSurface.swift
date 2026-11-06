@@ -31,10 +31,31 @@ import Foundation
 /// implementation. There is no optimistic overlay (plan §2.3): the replica is
 /// the truth and the patch is how the surface catches up.
 ///
-/// Composition and selection hooks (`setCompositionDeferred`, `applySelection`)
-/// belong to B6b; they are deliberately absent rather than stubbed.
+/// During composition, `setCompositionDeferred(true)` means the composing
+/// block's patches are discarded and replaced by an authoritative rebuild on
+/// commit/cancel, then deferral clears. Structural invalidation may require
+/// a whole-list reset. Selection is queried with `DocumentEngine.currentSelection`
+/// after patches; its offsets resolve against the current replica, even while
+/// the surface's composing block is intentionally frozen.
+/// Input offsets always use replica coordinates, not the frozen display.
+/// Selection endpoints and local intents targeting a deferred block throw
+/// `.composingBlock`; joins also check the destination. These blocks stay locked
+/// until `setCompositionDeferred(false)`, after the final rebuild is delivered.
+/// If a structural change requires a whole-list reset, every block is locked
+/// with `.composingBlock`. That global lock persists through pending reset
+/// delivery and chained restarts until the deferral-complete signal.
+/// An explicit-offset restart into a locked block is rejected too. A restart
+/// from the existing relative selection (no `at:`) is safe and supported.
+/// A composition restarted from `applyPatch` after commit/cancel keeps deferral
+/// continuous; completion of the previous composition cannot clear the new one.
 protocol EditorSurface: AnyObject {
     func applyPatch(_ patch: BlockPatch)
+    func setCompositionDeferred(_ deferred: Bool)
+}
+
+extension EditorSurface {
+    /// Surfaces without marked text need no deferral state.
+    func setCompositionDeferred(_ deferred: Bool) {}
 }
 
 /// One transaction's worth of change, in document order: removals first, then
@@ -43,7 +64,9 @@ struct BlockPatch: Equatable {
     var changes: [BlockChange]
     /// Who caused the transaction. A surface that applied a local intent
     /// optimistically skips `.localUser` patches for that edit; a surface with
-    /// no optimism (or any `.remote` patch) applies everything.
+    /// no optimism (or any `.remote` patch) applies everything. Composition
+    /// rebuilds are always `.other`, never `.localUser`, and must always be
+    /// applied: they include discarded peer edits as well as committed text.
     var origin: BlockPatchOrigin
 
     init(_ changes: [BlockChange] = [], origin: BlockPatchOrigin = .other) {
@@ -54,11 +77,13 @@ struct BlockPatch: Equatable {
     var isEmpty: Bool { changes.isEmpty }
 }
 
-/// The transaction origin a patch came from.
+/// A patch's cause/delivery policy; composition rebuilds use `.other` even when
+/// the commit wrote through a `.localUser` transaction.
 enum BlockPatchOrigin: Equatable {
     case localUser
     case remote
-    /// A transaction with no origin — the B4 formatting cleanup, or a test.
+    /// A transaction with no origin (B4 cleanup, a test), or an authoritative
+    /// composition rebuild that every surface must apply.
     case other
 
     init(_ origin: YTransactionOrigin?) {

@@ -1,6 +1,6 @@
 import Foundation
 
-/// The headless document engine (B6a): the layer a native editor sits on.
+/// The headless document engine (B6a/B6b): the layer a native editor sits on.
 ///
 /// **It borrows the replica; it never owns it.** The `YDoc` belongs to
 /// `DocumentCollaborationManager` on the main actor (the one-owner rule), and
@@ -38,7 +38,21 @@ final class DocumentEngine {
     private let doc: YDoc
     private let writer: BlockNoteWriter
     private var builder: PatchBuilder
-    private var buffered: [BlockPatch] = []
+    private enum SurfaceEvent {
+        case patch(BlockPatch)
+        case compositionEnded(UInt)
+    }
+    private var buffered: [SurfaceEvent] = []
+    private var selection: RelativeEditorSelection?
+    private var composition: CompositionQueue?
+    private var isDeferringComposition = false
+    /// Retained through pending rebuilds and chained relative restarts. Raw
+    /// surface offsets stay locked until the final deferral-complete signal.
+    private var deferredBlockIDs: Set<String> = []
+    /// A reset freezes every block. Unlike the queue, this survives logical
+    /// composition end and stays latched until final deferral completion.
+    private var isWholeListDeferred = false
+    private var compositionGeneration: UInt = 0
     private var isFlushing = false
     private let previousAfterTransaction: ((YTransaction) -> Void)?
     private(set) var isDetached = false
@@ -78,11 +92,14 @@ final class DocumentEngine {
 
     // MARK: - Intents (UI → model)
 
+    // Input offsets are replica coordinates. Deferred blocks reject local
+    // input with .composingBlock through final rebuild/completion delivery.
+
     /// Replaces a block-relative UTF-16 range. `marks` is the complete mark set
     /// the replacement carries, or `nil` to inherit the marks at the range.
     @discardableResult
     func replaceText(block: String, range: Range<Int>, with text: String, marks: [TextMark]? = nil) throws -> Data {
-        try requireAttached()
+        try requireEditableBlock(block)
         return try writer.replaceText(
             block: block, range: range, with: text,
             marks: marks.map { YTextAttributes($0.map { ($0.key, $0.valueJSON) }) })
@@ -92,27 +109,160 @@ final class DocumentEngine {
     /// mark, matching BlockNote's style commands.
     @discardableResult
     func formatRange(block: String, range: Range<Int>, marks: [TextMark]) throws -> Data {
-        try requireAttached()
+        try requireEditableBlock(block)
         return try writer.formatRange(
             block: block, range: range, attributes: YTextAttributes(marks.map { ($0.key, $0.valueJSON) }))
     }
 
     @discardableResult
     func splitBlock(block: String, at offset: Int, newID: String) throws -> Data {
-        try requireAttached()
+        try requireEditableBlock(block)
         return try writer.splitBlock(block: block, at: offset, newID: newID)
     }
 
     @discardableResult
     func joinBlocks(block: String) throws -> Data {
-        try requireAttached()
+        try requireEditableBlock(block)
+        if !deferredBlockIDs.isEmpty {
+            // A join writes both the source and the previous sibling's last
+            // descendant. Check their outermost indexed blocks as well, so a
+            // nested destination cannot bypass a composing ancestor's lock.
+            let target = try writer.find(block)
+            if let source = builder.index.blockID(for: target.container) { try requireEditableBlock(source) }
+            var previous = target.item.left
+            while previous?.deleted == true { previous = previous?.left }
+            if let previous, case .type(let type) = previous.content,
+                let destination = builder.index.blockID(for: type)
+            {
+                try requireEditableBlock(destination)
+            }
+        }
         return try writer.joinBlocks(block: block)
     }
 
     @discardableResult
     func setBlockType(block: String, to node: String, props: [(key: String, value: YAnyValue)] = []) throws -> Data {
-        try requireAttached()
+        try requireEditableBlock(block)
         return try writer.setBlockType(block: block, to: node, props: props)
+    }
+
+    // MARK: - Selection and composition
+
+    /// Captures both endpoints atomically. Unsupported/opaque blocks and
+    /// out-of-bounds offsets throw without replacing the previous selection.
+    func setSelection(_ selection: EditorSelection?) throws {
+        try requireAttached()
+        if let selection {
+            try requireEditableBlock(selection.anchor.blockID)
+            try requireEditableBlock(selection.head.blockID)
+        }
+        self.selection = try selection.map { try RelativeEditorSelection($0, index: builder.index) }
+    }
+
+    /// Resolves against the current replica, not the possibly deferred surface.
+    /// A removed/replaced/non-addressable text invalidates the selection.
+    func currentSelection() throws -> EditorSelection? {
+        try requireAttached()
+        return selection?.resolve(in: doc, index: builder.index)
+    }
+
+    /// Captures an insertion anchor, normally the current selection's head.
+    /// An explicit offset lets a surface begin composition before reporting its
+    /// selection. The composed string is an insertion, not a replacement range.
+    /// `assoc` defaults to left affinity so a peer append stays after an IME
+    /// begun at end-of-text. With no explicit offset the head's affinity wins.
+    /// Explicit offsets into deferred blocks throw `.composingBlock`; a restart
+    /// from the existing relative selection is allowed without `at:`.
+    func compositionBegan(blockID: String, at offset: Int? = nil, assoc: Int = -1) throws {
+        try requireCompositionBoundary()
+        if offset != nil { try requireEditableBlock(blockID) }
+        guard composition == nil else { throw DocumentEngineError.compositionAlreadyActive }
+        let position: EditorPosition
+        if let offset {
+            position = EditorPosition(blockID: blockID, offset: offset, assoc: assoc)
+        } else {
+            guard let head = try currentSelection()?.head, head.blockID == blockID else {
+                throw DocumentEngineError.invalidPosition
+            }
+            position = head
+        }
+        let anchor = try RelativeEditorPosition(position, index: builder.index)
+        // Selection can address any projectable single text; composing also
+        // requires a block the writer supports.
+        guard let element = builder.index.entries[blockID]?.element,
+            case .xmlElement(let node)? = element.typeRef, BlockNoteWriter.propSchemas[node] != nil
+        else { throw DocumentEngineError.invalidPosition }
+        composition = CompositionQueue(anchor: anchor)
+        compositionGeneration &+= 1
+        deferredBlockIDs.insert(blockID)
+        // A previous composition may have ended logically inside applyPatch,
+        // with its completion event still queued. Keep deferral continuous.
+        if !isDeferringComposition {
+            isDeferringComposition = true
+            surface?.setCompositionDeferred(true)
+        }
+    }
+
+    /// Writes once at the resolved anchor through the existing local-user
+    /// writer. A deleted, replaced, or opaque target drops the write and returns
+    /// the empty update. Discarded deltas (including the write's own) are replaced
+    /// by one current snapshot; callers can broadcast the returned update.
+    @discardableResult
+    func compositionCommitted(text: String) throws -> Data {
+        try requireCompositionBoundary()
+        guard let composing = composition else { throw DocumentEngineError.compositionNotActive }
+        guard let position = composing.anchor.resolve(in: doc, index: builder.index) else {
+            finishComposition(origin: .other)
+            return Data([0, 0])
+        }
+        let update: Data
+        do {
+            update = try writer.transaction { _ in
+                try writer.replaceText(block: position.blockID, range: position.offset..<position.offset, with: text)
+                // Capture before cleanup/observers can edit or replace the text.
+                // Refresh only this entry in a temporary index: an empty element
+                // can now have the XmlText the writer just created. A failed
+                // capture propagates through the same error/rebuild path as a
+                // writer failure; it is never silently converted to nil.
+                var captureIndex = builder.index
+                captureIndex.refresh(position.blockID)
+                let caret = EditorPosition(
+                    blockID: position.blockID, offset: position.offset + text.utf16.count, assoc: -1)
+                selection = try RelativeEditorSelection(
+                    EditorSelection(anchor: caret, head: caret), index: captureIndex)
+            }
+        } catch {
+            if !isDetached { finishComposition(origin: .other) }
+            throw error
+        }
+        guard !isDetached else { return update }
+        // The snapshot also contains discarded peer changes, so an optimistic
+        // surface must apply it even when it already displayed the marked text.
+        finishComposition(origin: .other)
+        return update
+    }
+
+    func compositionCancelled() throws {
+        try requireCompositionBoundary()
+        guard composition != nil else { throw DocumentEngineError.compositionNotActive }
+        finishComposition(origin: .other)
+    }
+
+    private func finishComposition(origin: BlockPatchOrigin) {
+        guard let composing = composition else { return }
+        let change: BlockChange
+        if !composing.requiresReset, builder.index.isCanonical,
+            let entry = builder.index.entries[composing.anchor.blockID]
+        {
+            change = .replaceBlock(
+                blockID: entry.id, block: BlockSnapshot(YBlockProjection.projectBlock(entry.containerItem)))
+        } else {
+            change = .reset(YBlockProjection.project(doc).blocks.map(BlockSnapshot.init))
+        }
+        composition = nil
+        buffered.append(.patch(BlockPatch([change], origin: origin)))
+        buffered.append(.compositionEnded(compositionGeneration))
+        flush()
     }
 
     /// Intents after detach are a documented error, not a silent no-op: the
@@ -122,13 +272,42 @@ final class DocumentEngine {
         guard !isDetached else { throw DocumentEngineError.detached }
     }
 
+    /// Observer hooks can have no open transaction while cleanup is still
+    /// pending. Composition transitions must wait for both phases to finish;
+    /// applyPatch runs from afterAllTransactions after the cleanup list is cleared.
+    private func requireCompositionBoundary() throws {
+        try requireAttached()
+        guard doc.transaction == nil, doc.transactionCleanups.isEmpty else {
+            throw DocumentEngineError.insideTransaction
+        }
+    }
+
+    private func requireEditableBlock(_ blockID: String) throws {
+        try requireAttached()
+        guard !isWholeListDeferred, !deferredBlockIDs.contains(blockID) else {
+            throw DocumentEngineError.composingBlock
+        }
+    }
+
     // MARK: - Change signal
 
     private func record(_ transaction: YTransaction) {
         guard !isDetached else { return }
-        let patch = builder.build(transaction)
+        var patch = builder.build(transaction)
+        patch = filterForComposition(patch)
         guard !patch.isEmpty else { return }
-        buffered.append(patch)
+        buffered.append(.patch(patch))
+    }
+
+    /// Both recording and reentrant delivery can discover a structural reset.
+    /// Latch its input lock before dropping the patch, even if completion later
+    /// clears or replaces the queue before the reset reaches the surface.
+    private func filterForComposition(_ patch: BlockPatch) -> BlockPatch {
+        guard var queue = composition else { return patch }
+        let filtered = queue.filter(patch)
+        composition = queue
+        if queue.requiresReset { isWholeListDeferred = true }
+        return filtered
     }
 
     /// Delivers buffered patches in order. A surface may open a transaction
@@ -142,11 +321,22 @@ final class DocumentEngine {
         while !buffered.isEmpty {
             let patches = buffered
             buffered = []
-            for patch in patches {
+            for event in patches {
                 // A surface may detach the engine (or destroy the replica,
                 // which detaches it) from `applyPatch`: drop the rest.
                 guard !isDetached else { return }
-                surface?.applyPatch(patch)
+                switch event {
+                case .patch(var patch):
+                    // A previous delivery can begin composition reentrantly.
+                    patch = filterForComposition(patch)
+                    if !patch.isEmpty { surface?.applyPatch(patch) }
+                case .compositionEnded(let generation):
+                    guard generation == compositionGeneration else { continue }
+                    isDeferringComposition = false
+                    deferredBlockIDs = []
+                    isWholeListDeferred = false
+                    surface?.setCompositionDeferred(false)
+                }
             }
         }
     }
@@ -167,9 +357,16 @@ final class DocumentEngine {
         guard !isDetached else { return }
         isDetached = true
         buffered = []
+        let wasComposing = isDeferringComposition
+        isDeferringComposition = false
+        deferredBlockIDs = []
+        isWholeListDeferred = false
+        composition = nil
+        selection = nil
         doc.afterTransaction = previousAfterTransaction
         doc.afterAllTransactions = nil
         doc.onDestroy = nil
+        if wasComposing { surface?.setCompositionDeferred(false) }
     }
 }
 
@@ -177,4 +374,11 @@ final class DocumentEngine {
 enum DocumentEngineError: Error, Equatable {
     /// The replica was destroyed (or the engine detached); intents are refused.
     case detached
+    case invalidPosition
+    case compositionAlreadyActive
+    case compositionNotActive
+    /// Surface offsets may be stale until final rebuild/completion delivery.
+    case composingBlock
+    /// Composition transitions require a transaction boundary after all cleanup.
+    case insideTransaction
 }

@@ -1958,8 +1958,9 @@ that are easy to violate and expensive to discover:
   codecs.** `fromTypeIndex` (@2421) captures, `resolve(in:)` (@2547) resolves to a
   `YAbsolutePosition` (type + visible index), `encode`/`decode` (@2477/@2515) are the
   binary form over the existing `Lib0Encoder`/`Lib0Decoder`, `json`/`init(json:)`
-  (@2340/@2363) are yjs's JSON shape, and `compare` (@2609) is its equality. No
-  production caller yet. Reductions, all documented in the file:
+  (@2340/@2363) are yjs's JSON shape, and `compare` (@2609) is its equality. The
+  headless engine uses it for selection and composition; no shipping editor caller
+  yet. Reductions, all documented in the file:
   `followUndoneDeletions` is kept for parity but `YItem.redone` is never set (no undo
   manager), so `followRedone` (@9567) currently reduces to `getItemWithOffset`; and
   the binary form is **lossy by design** — case 1 (an item id) carries no type,
@@ -2039,7 +2040,7 @@ that are easy to violate and expensive to discover:
   "defensive" merge of duplicate client blocks where yjs simply overwrites. If you
   cannot demonstrate the deviation against the oracle, transliterate instead.
 
-### The document engine (`Features/Editor/Engine`, B6a)
+### The document engine (`Features/Editor/Engine`, B6a/B6b)
 
 The headless layer the phase 2 native editor sits on. It is proven by tests
 only; nothing in the shipping editor uses it yet.
@@ -2056,8 +2057,65 @@ only; nothing in the shipping editor uses it yet.
   whole surface list, for a root-group replacement, a fragment that was empty
   when the engine attached, a container `id` changed in place, and every
   transaction while the replica is not index-shaped — see the `.text` bullet). Every patch carries a `BlockPatchOrigin`
-  (`.localUser`, `.remote`, `.other`) taken from the transaction. Composition
-  and selection hooks are B6b; do not stub them in.
+  (`.localUser`, `.remote`, `.other`) normally taken from the transaction;
+  authoritative composition rebuilds always use `.other` and must be applied.
+- **Selection is relative.** `setSelection(EditorSelection?)` captures directed
+  anchor/head endpoints (`EditorPosition`: block id, UTF-16 offset, `assoc`);
+  `currentSelection()` resolves them against the current replica after any
+  transaction, including while the surface is deferred. Negative affinity (the
+  default) stays with the character before a boundary; non-negative affinity
+  follows the character after it. Captures require a canonical index and a
+  projectable single-text block, or a simple text-capable element with no
+  countable children at offset 0. Empty captures name the element, not a newly
+  authored XmlText: left affinity stays at 0 when text appears; non-negative
+  affinity follows the end of its sole XmlText. Invalid offsets, including one
+  inside a surrogate pair, throw without replacing the previous selection.
+  A deleted/replaced/non-addressable text or empty element returns nil, never
+  a position in another text under the same block id. These are local captures,
+  not an entry point for peer-supplied relative positions.
+- **Composition deferral lives in the engine.** `compositionBegan(blockID:at:assoc:)`
+  captures an insertion anchor, using the current selection head when `at` is
+  omitted. `compositionCommitted(text:)` inserts the composed string at the
+  resolved anchor through the writer in one `.localUser` transaction and returns
+  update bytes; `compositionCancelled()` performs no write. The engine signals
+  `EditorSurface.setCompositionDeferred(true/false)` (recorded by `HeadlessSurface`).
+  While active, changes to that block from every origin, including the commit's
+  own write, are discarded from delivery; other blocks keep updating. Commit or
+  cancel sends exactly one `.replaceBlock` rebuilt from the current projection,
+  never replays stale deltas, then clears deferral. A `.reset` or list operation
+  removing/reinserting the composing block defers the whole list and all later
+  patches until a fresh `.reset` at completion. If the original text disappears,
+  is replaced, or becomes non-addressable, commit drops its write (empty update)
+  and still rebuilds. A successful commit collapses selection after the inserted
+  UTF-16 text, captured inside the write transaction before observers run; capture
+  errors propagate through the error/rebuild path rather than becoming a silent
+  nil selection (transactions have no rollback). A new composition can begin from
+  the relative selection after commit/cancel inside `applyPatch`: deferral stays continuous
+  and generation-tagged completion events cannot end a newer composition.
+  All three composition APIs throw `.insideTransaction` before changing anything
+  when `doc.transaction` is non-nil or `transactionCleanups` is non-empty. Do not
+  call them from transaction bodies or observer/cleanup hooks. Calls from
+  `applyPatch` remain supported: the cleanup list is cleared before
+  `afterAllTransactions` starts delivery.
+  Input offsets are always replica coordinates, not frozen-surface coordinates.
+  `setSelection` endpoints and local `replaceText`/`formatRange`/`splitBlock`/
+  `joinBlocks`/`setBlockType` targeting a deferred block throw `.composingBlock`
+  without mutating the replica (joins check the destination/outer block too).
+  Block locks remain through pending rebuild delivery until the final
+  `setCompositionDeferred(false)`; a chained restart retains earlier locks.
+  When the composition queue requires a whole-list reset, **all blocks** reject
+  offset-based input with `.composingBlock`. That global lock is latched through
+  logical composition end, pending reset delivery and chained restarts, and clears
+  only with the final deferral-complete signal. Ordinary composition keeps the
+  per-block lock, allowing input on independently updated blocks.
+  Explicit-offset restarts into locked blocks are rejected. Restarts from an
+  existing relative selection, without `at:`, remain supported. Queries and
+  clearing selection remain allowed. A commit's write is `.localUser`, but its
+  rebuild is `.other` so optimistic surfaces always apply discarded peer changes.
+  Detach drops deferral without rebuilding, clears selection, and
+  rejects all later composition/selection intents as `.detached`. Surface equality
+  with projection is intentionally suspended for deferred content, and restored
+  on commit/cancel. This remains headless; real IME validation belongs to phase 2.
 - **The engine borrows the replica; it never owns it.** `DocumentCollaborationManager`
   keeps the one-owner rule. `YDoc.onDestroy` fires at the start of `destroy()`
   and the engine detaches there — hooks cleared, buffered patches dropped (even

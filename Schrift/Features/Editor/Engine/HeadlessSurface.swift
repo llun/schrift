@@ -12,6 +12,8 @@ final class HeadlessSurface: EditorSurface {
     private(set) var blocks: [BlockSnapshot]
     /// Every patch received, in order — the engine's output, for assertions.
     private(set) var appliedPatches: [BlockPatch] = []
+    private(set) var isCompositionDeferred = false
+    private(set) var compositionDeferrals: [Bool] = []
 
     init(blocks: [BlockSnapshot] = []) {
         self.blocks = blocks
@@ -20,6 +22,11 @@ final class HeadlessSurface: EditorSurface {
     func applyPatch(_ patch: BlockPatch) {
         appliedPatches.append(patch)
         for change in patch.changes { apply(change) }
+    }
+
+    func setCompositionDeferred(_ deferred: Bool) {
+        isCompositionDeferred = deferred
+        compositionDeferrals.append(deferred)
     }
 
     private func apply(_ change: BlockChange) {

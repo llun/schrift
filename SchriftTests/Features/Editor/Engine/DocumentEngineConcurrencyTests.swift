@@ -3,37 +3,12 @@ import XCTest
 @testable import Schrift
 
 /// Plan §6's concurrent second editor: two replicas from one seed, an engine
-/// each, concurrent intents, updates exchanged in both orders. The assertions
+/// each, concurrent intents, updates exchanged between them. The assertions
 /// are convergence (identical XML) and that each surface equals its own
 /// replica's projection — never a guess at which side "wins".
 @MainActor
 final class DocumentEngineConcurrencyTests: DocumentEngineTestCase {
-    private struct Pair {
-        let a: YDoc
-        let b: YDoc
-        let surfaceA: HeadlessSurface
-        let surfaceB: HeadlessSurface
-        let engineA: DocumentEngine
-        let engineB: DocumentEngine
-
-        func destroy() {
-            a.destroy()
-            b.destroy()
-        }
-    }
-
-    private func makePair() throws -> Pair {
-        let a = try makeDoc(clientID: 1)
-        let b = try makeDoc(clientID: 2)
-        let surfaceA = HeadlessSurface(blocks: projection(a))
-        let surfaceB = HeadlessSurface(blocks: projection(b))
-        return Pair(
-            a: a, b: b, surfaceA: surfaceA, surfaceB: surfaceB,
-            engineA: DocumentEngine(doc: a, surface: surfaceA),
-            engineB: DocumentEngine(doc: b, surface: surfaceB))
-    }
-
-    /// Exchanges both sides' updates in both orders and asserts convergence.
+    /// Exchanges both independently authored updates and asserts convergence.
     private func exchange(_ pair: Pair, _ updateA: Data, _ updateB: Data, _ label: String) throws {
         try pair.a.applyUpdate(try YUpdateDecoder.decode(updateB), origin: .remote)
         try pair.b.applyUpdate(try YUpdateDecoder.decode(updateA), origin: .remote)

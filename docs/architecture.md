@@ -515,10 +515,10 @@ them, which is BlockNote's own rule. No incremental byte pin moved.
   boundaries and could split a surrogate pair, which the fuzz caught; the code-point
   snap described above is the fix.
 
-### The headless document engine (B6a)
+### The headless document engine (B6a/B6b)
 
 The phase 2 native editor's foundation, proven headlessly and not yet wired into
-any screen. `Features/Editor/Engine/` holds four pieces:
+any screen. `Features/Editor/Engine/` holds these pieces:
 
 - **`EditorSurface`** — the model → UI protocol: one `applyPatch(BlockPatch)`.
   A patch is a list of `BlockChange`s: `.text(blockID, [TextDelta])` (a
@@ -529,8 +529,9 @@ any screen. `Features/Editor/Engine/` holds four pieces:
   (the whole surface list, for a root-group replacement, a fragment that was
   empty when the engine attached, a container `id` changed in place, and every
   transaction while the replica is not index-shaped, `BlockIndex.isCanonical`). Every patch carries a `BlockPatchOrigin`
-  (`.localUser`, `.remote`, `.other`) taken from the transaction. Composition and
-  selection hooks are B6b.
+  (`.localUser`, `.remote`, `.other`) normally taken from the transaction;
+  composition rebuilds always use `.other` and must be applied. The surface also
+  receives `setCompositionDeferred(Bool)`; selection uses the engine's query API.
 - **`HeadlessSurface`** — an in-memory surface that only ever changes through
   `applyPatch`, so a test can assert it equals the replica's projection after
   every step.
@@ -544,6 +545,88 @@ any screen. `Features/Editor/Engine/` holds four pieces:
   content element and text children and is maintained incrementally from the
   transaction's changed types; the builder classifies those types and emits the
   patch.
+- **`CompositionQueue`** — discards composing-block deltas, preserves independent
+  block delivery, and remembers when completion needs a whole-list reset.
+- **`EngineSelection`** — directed surface positions and their internal relative
+  captures, including an element anchor for an empty text-capable block.
+
+**Selection.** `setSelection(EditorSelection?)` captures directed anchor/head
+endpoints as `YRelativePosition`s. Each `EditorPosition` holds a block id,
+block-relative UTF-16 offset, and affinity (`assoc`, default -1). Negative
+affinity sticks to the character before the boundary, including when a peer
+appends at end-of-text; non-negative affinity follows the character after it.
+`currentSelection()` resolves both endpoints after any transaction, against the
+replica even when composition intentionally freezes the surface. Capture rejects
+invalid offsets (including a boundary inside a surrogate pair) and
+non-canonical/opaque/multi-text blocks without changing the previous selection.
+A simple, projectable text-capable element with no countable children accepts
+offset 0 without creating an XmlText. Its capture names the element at child
+index 0: left affinity stays at text offset 0 when a peer creates text, while
+non-negative affinity follows the end of its sole XmlText. While still empty,
+both resolve to 0. The writer creates the text on the first non-empty commit.
+Resolution checks the original text or empty-element identity against the
+current block index: deletion, type replacement under the same block id, or a
+non-addressable shape returns nil. Only locally captured positions enter this
+path; no arbitrary peer root names are resolved.
+
+**Composition.** `compositionBegan(blockID:at:assoc:)` captures an insertion
+anchor (the selection head if `at` is omitted), and signals surface deferral.
+`CompositionQueue` invalidates that block's patches from every origin while
+updates continue integrating into the replica. Independent block patches still
+flow. A list operation removing/reinserting the composing block, or any `.reset`,
+defers the entire list and all subsequent patches because later transitions may
+depend on the held structure. No stale deltas are replayed or retained.
+`compositionCommitted(text:)` inserts the composed string at the resolved anchor
+through `BlockNoteWriter` in one `.localUser` transaction, returns its update for
+broadcast, and captures the collapsed selection after the inserted UTF-16 text
+inside that same transaction, before observers or cleanup can edit it. Capture
+errors propagate through the writer error/rebuild path; no failed capture is
+silently replaced by nil (transactions have no rollback). Later edits remap the
+captured caret, and later deletion/replacement invalidates it normally. The
+write's own delta is discarded too. Commit and `compositionCancelled()` then
+deliver one `.replaceBlock` projected from the replica (a fresh whole-list `.reset` for the
+structural fallback) before clearing deferral. Cancel writes nothing. A deleted,
+replaced or non-addressable original text drops the commit write, returns the
+empty update, and still rebuilds. Rebuild and deferral completion share the
+serialized delivery queue so surface callbacks can transact without reentrant
+patch delivery. Commit/cancel ends the logical composition immediately, allowing
+`compositionBegan` from a relative selection inside the same `applyPatch` callback. Deferral stays
+continuous until the newest composition's rebuild completes; generation-tagged
+completion events prevent an older completion from ending a newer composition.
+`compositionBegan`, `compositionCommitted`, and `compositionCancelled` require
+`doc.transaction == nil` and an empty `doc.transactionCleanups` list. Otherwise
+they throw `.insideTransaction` before touching composition, replica or surface.
+This includes observer hooks, where the open transaction is nil but cleanup is
+still pending. Calls from `applyPatch` remain allowed: the list is cleared
+before `afterAllTransactions` invokes the engine's delivery hook.
+All input offsets use replica coordinates. A frozen surface's offsets cannot be
+submitted as if they referred to the replica, where peer edits already landed.
+`setSelection` rejects either endpoint in a deferred block with `.composingBlock`;
+`replaceText`, `formatRange`, `splitBlock`, `joinBlocks`, and `setBlockType` reject
+that block too, with joins checking the source and destination's outer blocks.
+Rejection leaves the replica, selection, patches and deferral history unchanged.
+Locks persist through pending rebuild delivery until the final
+`setCompositionDeferred(false)` signal; chained restarts retain earlier locks.
+If `CompositionQueue.requiresReset` is set, **the whole list is frozen**: the same
+`.composingBlock` error rejects input and selection endpoints for every block,
+including an explicit `compositionBegan(..., at:)` on another block. The engine
+latches that global lock beyond the queue's logical end, through pending reset
+delivery and chained restarts, until the final deferral-complete signal. Normal
+per-block deferral continues to allow input on independent blocks. Selection
+queries and `setSelection(nil)` remain available in either mode.
+An explicit `compositionBegan(..., at:)` into a locked block is rejected even
+after logical commit/cancel, since its queued rebuild may not have reached the
+surface. A restart without `at:` uses the existing relative selection and remains
+safe even if it discards the previous composing-block rebuild. Queries and
+`setSelection(nil)` remain allowed during deferral.
+Every composition rebuild, including a successful commit's, has origin `.other`
+and must always be applied by optimistic surfaces. Only the write transaction is
+`.localUser`: tagging its catch-up snapshot that way would lose discarded peer
+changes when a surface skips the local edit it already displayed.
+Detach clears selection/deferral and drops deferred work without a rebuild;
+later intents throw `.detached`. A deferred surface intentionally differs
+from projection until commit/cancel restores equality. Native marked-text and
+device validation remain phase 2 work; this contract is proven headlessly.
 
 **Buffering.** `YDoc.afterTransaction` runs in the observer phase, where a text
 delta is valid but the store is still pre-gc/pre-merge, so the engine only
