@@ -142,8 +142,8 @@ enum BlockNoteWrite {
     ///    right after the element, then each child block inside it, recursively;
     /// 6. the `id` as `.any([.string(id)])` map entry **on the container**.
     ///
-    /// Steps 2–4 are shared verbatim with `reconcileBlock`'s kind-change branch via
-    /// `insertContentElement`. Step 5 mirrors `BlockNoteYjs.encode`'s `emitGroup`, whose
+    /// Steps 2–4 are shared verbatim with `reconcileBlockLegacy`'s kind-change branch
+    /// via `insertContentElement`. Step 5 mirrors `BlockNoteYjs.encode`'s `emitGroup`, whose
     /// nested group takes the element as its left origin — pinned by the from-empty anchor
     /// for a nested list (`BlockNoteWriteTests`).
     private static func insertBlock(
@@ -171,8 +171,8 @@ enum BlockNoteWrite {
     /// text block — its `xmlText` child and run pieces, then the block's props as
     /// `.any([value])` map entries **on the element** (a leaf `image` still carries
     /// its props). Shared verbatim by `insertBlock` (into a fresh container) and
-    /// `reconcileBlock`'s kind-change branch (into the surviving container, after
-    /// the old element was deleted).
+    /// `reconcileBlockLegacy`'s kind-change branch (into the surviving container,
+    /// after the old element was deleted).
     ///
     /// The mint order — element, text, run pieces, props — is load-bearing: it is
     /// what the from-empty byte-identity anchor (`BlockNoteWriteTests`) pins against
@@ -264,7 +264,8 @@ enum BlockNoteWrite {
     ///   running `left` (Task 7's `insertBlock`).
     /// - **survivor in place**: `reconcileBlock` applies only what changed — a kind
     ///   swap, changed/added props, or an in-place text span replace — keeping the
-    ///   container and its `id`.
+    ///   container and its `id`. Which reconcile does it is the split gate: the
+    ///   writer's intents on the live path, the legacy splice on the Docs 6 save.
     /// - **survivor moved**: v1 rebuilds it whole (delete + re-insert after `left`).
     ///   Reorders are rare and snapshot-covered, so this trades minimality for
     ///   simplicity; `keptSurvivors` decides which survivors are in place vs moved.
@@ -344,19 +345,30 @@ enum BlockNoteWrite {
     /// intents; `Reconcile.legacy` (the Docs 6 save) keeps the hand-authored
     /// `TextSpanDiff` + `YWrite` reconcile below, byte-for-byte.
     ///
-    /// A block type the writer does not edit (`quote`, `divider`, `image` — the
-    /// projection models them, so the live path can reach them, but
-    /// `BlockNoteWriter.propSchemas` has no intents for them) falls back to the
-    /// legacy reconcile on the writer path too: the alternative is a throw, which
-    /// the manager turns into a fail-safe and a permanent downgrade to classic for
-    /// the document. The fallback is the same code the live path ran before, so it
-    /// cannot change a document.
+    /// Two kinds of survivor fall back to the legacy reconcile on the writer path:
+    ///
+    /// - **A block type the writer does not edit** (`quote`, `divider`, `image` —
+    ///   the projection models them, so the live path can reach them, but
+    ///   `BlockNoteWriter.propSchemas` has no intents for them). The alternative is
+    ///   a throw, which the manager turns into a fail-safe and a permanent
+    ///   downgrade to classic for the document.
+    /// - **A block whose element holds an inline node** (`interlinkingLinkInline`,
+    ///   mention, math, hard break). The projection folds such a node into a run
+    ///   whose text is the node's label (the link title), while the live element
+    ///   counts the node as one unit — so the run-space offsets the writer works in
+    ///   do not map to live offsets. The legacy reconcile rebuilds the element
+    ///   instead of splicing, which is correct for any shape.
+    ///
+    /// Both fallbacks are the same code the live path ran before, so they cannot
+    /// change a document.
     private static func reconcileBlock(
         _ tx: YTransaction, doc: YDoc, container: YItem, old: BlockNoteBlock, new: BlockNoteBlock,
         reconcile: Reconcile
     ) throws {
         guard reconcile == .writer, BlockNoteWriter.propSchemas[old.node] != nil,
-            BlockNoteWriter.propSchemas[new.node] != nil
+            BlockNoteWriter.propSchemas[new.node] != nil,
+            case .type(let containerType) = container.content,
+            let element = contentElement(of: containerType), !hasInlineNodes(of: element)
         else {
             try reconcileBlockLegacy(tx, container: container, old: old, new: new)
             return
@@ -369,14 +381,22 @@ enum BlockNoteWrite {
     /// returns the empty update, so the whole edit stays one transaction and one
     /// broadcast):
     ///
-    /// - **props, same type** — `setBlockType` with the new props sets only the
-    ///   props that differ, on the existing element (BlockNote's `updateBlock`).
+    /// - **props, same type** — `setBlockType` with only the props that differ
+    ///   between `old` and `new`, on the existing element (BlockNote's
+    ///   `updateBlock`). Reconciling against `old` rather than the live element
+    ///   matters: a remote edit may have changed a prop the editor's `old` still
+    ///   shows the old value for, and the editor's unchanged `new` must not write
+    ///   it back.
     /// - **kind change** — `setBlockType` replaces the content element, keeping the
     ///   container, `id` and any nested group.
     /// - **text change** — `TextSpanDiff` still decides *what* changed (the minimal
     ///   visible range and the kept suffix); the writer's `replaceText` performs it,
     ///   one intent per run of the inserted span, with explicit marks so the span
     ///   never inherits a mark open at the caret.
+    ///
+    /// The block is resolved once (`find` is a whole-document walk) and the
+    /// resolved target is passed to every intent; a kind change replaces the
+    /// element, so it re-resolves before the text intents.
     private static func reconcileBlockWithWriter(
         doc: YDoc, container: YItem, old: BlockNoteBlock, new: BlockNoteBlock
     ) throws {
@@ -386,22 +406,28 @@ enum BlockNoteWrite {
         // never rewrote a survivor's id either. Addressing the live id keeps the
         // writer on the block the positional mapping already paired.
         guard case .type(let containerType) = container.content,
-            let elementItem = contentElementItem(of: containerType),
-            case .type(let element) = elementItem.content,
+            let element = contentElement(of: containerType),
             let id = liveID(of: containerType)
         else { throw YIntegrationError.unexpectedCase }
         // `old` must be this block's current projection. The writer clamps a range
         // (editor safety), so a lying `old` would silently rewrite the wrong span
         // instead of failing — the legacy path threw here, and the caller's
-        // fail-safe contract depends on it.
+        // fail-safe contract depends on it. Skipped for inline-node blocks, which
+        // never reach this path (their run space is not the live index space).
         guard visibleLength(of: element) == TextSpanDiff.marked(old.runs).units.count else {
             throw YIntegrationError.unexpectedCase
         }
         let writer = BlockNoteWriter(doc: doc)
-        try writer.setBlockType(block: id, to: new.node, props: new.props)
+        var target = try writer.find(id)
+        let oldProps = Dictionary(old.props.map { ($0.key, $0.value) }, uniquingKeysWith: { first, _ in first })
+        let props = old.node == new.node ? new.props.filter { oldProps[$0.key] != $0.value } : new.props
+        if old.node != new.node || !props.isEmpty {
+            try writer.setBlockType(in: target, to: new.node, props: props)
+            if old.node != new.node { target = try writer.find(id) }
+        }
         guard old.runs != new.runs, let change = TextSpanDiff.diff(old: old.runs, new: new.runs) else { return }
         try writer.replaceText(
-            block: id, range: NSRange(location: change.deleteRange.lowerBound, length: change.deleteRange.count),
+            in: target, range: NSRange(location: change.deleteRange.lowerBound, length: change.deleteRange.count),
             with: "")
         // The inserted span is `new`'s units between the common prefix and the kept
         // suffix — the same boundaries the diff chose, so a surrogate pair is never
@@ -411,9 +437,26 @@ enum BlockNoteWrite {
         var offset = span.lowerBound
         for run in runs(new.runs, range: span) {
             try writer.replaceText(
-                block: id, range: NSRange(location: offset, length: 0), with: run.text,
+                in: target, range: NSRange(location: offset, length: 0), with: run.text,
                 marks: attributes(run.marks))
             offset += run.text.utf16.count
+        }
+    }
+
+    /// The container's content element, or nil when the container is malformed.
+    private static func contentElement(of container: YType) -> YType? {
+        guard let item = contentElementItem(of: container), case .type(let element) = item.content else {
+            return nil
+        }
+        return element
+    }
+
+    /// Whether the element holds an inline node (anything but `xmlText`) — the
+    /// shape whose run-space offsets do not map to live offsets.
+    private static func hasInlineNodes(of element: YType) -> Bool {
+        liveListChildren(of: element).contains { child in
+            guard case .type(let type) = child.content else { return true }
+            return type.typeRef != .xmlText
         }
     }
 

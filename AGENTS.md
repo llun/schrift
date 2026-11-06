@@ -1816,13 +1816,20 @@ that are easy to violate and expensive to discover:
     broadcast. It addresses the block by the **container's live `id`**, not the
     caller's: the editor re-identifies a row after a remote structural change while
     the replica keeps the server's id, and the legacy reconcile never rewrote a
-    survivor's id either. It also refuses a `old` whose text length disagrees with
-    the live element — the writer clamps a range (editor safety), so a lying `old`
-    would silently rewrite the wrong span instead of failing, and the manager's
-    fail-safe contract depends on the throw. A block type the writer does not edit
-    (`quote`, `divider`, `image` — the projection models them, so the live path can
-    reach them) falls back to the legacy reconcile: the alternative is a throw, which
-    the manager turns into a fail-safe and a permanent downgrade to classic.
+    survivor's id either. It also refuses an `old` whose text length disagrees with
+    the live element — a lying-`old` guard, because the writer clamps a range (editor
+    safety), so a lying `old` would silently rewrite the wrong span instead of
+    failing, and the manager's fail-safe contract depends on the throw; the guard is
+    skipped for inline-node blocks, which never take the writer path. Two kinds of
+    survivor fall back to the legacy reconcile instead: a block type the writer does
+    not edit (`quote`, `divider`, `image` — the projection models them, so the live
+    path can reach them), and a block whose element holds an inline node
+    (`interlinkingLinkInline`, mention, math, hard break) — the projection folds the
+    node into a run whose text is its label while the live element counts it as one
+    unit, so the writer's run-space offsets do not map to live offsets. Both
+    fallbacks are the code the live path ran before, so they cannot change a
+    document; the alternative is a throw the manager turns into a fail-safe and a
+    permanent downgrade to classic.
   - `applyEditLegacy` — the **Docs 6 incremental save**
     (`BlockNoteIncrementalSave`) — keeps the hand-authored `TextSpanDiff` +
     `YWrite` reconcile, byte-for-byte as before the writer landed. Plan decision 6
@@ -1839,8 +1846,10 @@ that are easy to violate and expensive to discover:
   the element's sole child is one `xmlText`; otherwise (y-prosemirror writes **no**
   `xmlText` for an empty paragraph; an inline node splits text into several) the
   element is rebuilt, since a splice would drop or misplace the edit. The writer
-  path has no such restriction: `replaceText` addresses the right `xmlText` (and
-  creates one when the element has none). **Move is v1-coarse** — a reordered survivor is
+  path has no such restriction for a text-only element: `replaceText` addresses the
+  right `xmlText` (and creates one when the element has none). An element holding an
+  inline node still takes the legacy rebuild on both paths, because its run-space
+  offsets do not map to live offsets. **Move is v1-coarse** — a reordered survivor is
   rebuilt whole (delete + re-insert), never relocated in place; reorders are rare
   and stay covered by full-snapshot fixtures.
 - **`BlockNoteWriter` is the single writer: B5a's intent API, and since B5b the
@@ -1918,7 +1927,10 @@ that are easy to violate and expensive to discover:
   deletes, moves and empty blocks — applying each edit to two identical replicas
   through `applyEditLegacy` and `applyEdit` and comparing the **projected document**
   (id, node, props, per-unit marks, fidelity) plus a from-empty render of `new`:
-  3000 cases, 0 mismatches. The one intended difference it surfaced: a code block
+  3000 cases, 0 mismatches. The lane covers link **marks** only: `BlockNoteBlock`
+  runs cannot express an inline node, so it never produced an
+  `interlinkingLinkInline` — that shape is covered by
+  `BlockNoteWriteLiveReconcileTests`. The one intended difference it surfaced: a code block
   whose runs carry marks (a document BlockNote cannot produce — the projection reads
   it as opaque `marked code`) keeps them on the legacy path and loses them on the
   writer path, which is BlockNote's own rule. No incremental byte pin moved: the

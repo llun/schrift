@@ -120,9 +120,10 @@ final class BlockNoteWriteOracleTests: XCTestCase {
         XCTAssertEqual(projected.first?.fidelity, .opaque(reason: "nested children"))
     }
 
-    /// An element with no `xmlText` (y-prosemirror writes none for an empty paragraph) has
-    /// nowhere to splice text, so a text change rebuilds the element instead of dropping it.
-    func testTypingIntoAParagraphWithNoTextChildRebuildsItsElement() throws {
+    /// An element with no `xmlText` (y-prosemirror writes none for an empty paragraph):
+    /// the live writer path creates the `xmlText` and types into it, keeping the
+    /// element and its `id` (the legacy path rebuilds the element instead).
+    func testTypingIntoAParagraphWithNoTextChildCreatesItsText() throws {
         let id = "11111111-1111-1111-1111-111111111111"
         let doc = YDoc(clientID: 42)
         defer { doc.destroy() }

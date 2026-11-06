@@ -395,12 +395,18 @@ site:
   caller's (the editor re-identifies a row after a remote structural change while the
   replica keeps the server's id, and the legacy reconcile never rewrote a survivor's
   id either), and it refuses an `old` whose text length disagrees with the live
-  element — the writer clamps a range for editor safety, so a lying `old` would
-  silently rewrite the wrong span instead of failing, and the manager's fail-safe
-  contract depends on the throw. A block type the writer does not edit (`quote`,
-  `divider`, `image` — the projection models them, so the live path can reach them)
-  falls back to the legacy reconcile, because the alternative is a throw the manager
-  turns into a fail-safe and a permanent downgrade to classic.
+  element — a lying-`old` guard, because the writer clamps a range for editor safety,
+  so a lying `old` would silently rewrite the wrong span instead of failing, and the
+  manager's fail-safe contract depends on the throw; the guard is skipped for
+  inline-node blocks, which never take the writer path. Two kinds of survivor fall
+  back to the legacy reconcile: a block type the writer does not edit (`quote`,
+  `divider`, `image` — the projection models them, so the live path can reach them),
+  and a block whose element holds an inline node (`interlinkingLinkInline`, mention,
+  math, hard break) — the projection folds the node into a run whose text is its
+  label while the live element counts it as one unit, so run-space offsets do not map
+  to live offsets. Both fallbacks are the code the live path ran before; the
+  alternative is a throw the manager turns into a fail-safe and a permanent
+  downgrade to classic.
 - `applyEditLegacy` — the **Docs 6 incremental save** (`BlockNoteIncrementalSave`) —
   keeps the hand-authored `TextSpanDiff` + `YWrite` reconcile, byte-for-byte as
   before the writer landed. Plan decision 6 does not re-point it in phase 1;
@@ -412,7 +418,10 @@ blocks, quotes, dividers and images — text edits with marks/links/emoji, prop 
 kind changes, inserts, deletes, moves and empty blocks — each applied to two identical
 replicas through `applyEditLegacy` and `applyEdit`, comparing the **projected
 document** (id, node, props, per-unit marks, fidelity) and a from-empty render of
-`new`: 3000 cases, 0 mismatches. The one intended difference it surfaced is a code
+`new`: 3000 cases, 0 mismatches. The lane covers link **marks** only: `BlockNoteBlock`
+runs cannot express an inline node, so it never produced an `interlinkingLinkInline`
+— that shape is covered by `BlockNoteWriteLiveReconcileTests`. The one intended
+difference it surfaced is a code
 block whose runs carry marks (a document BlockNote cannot produce — the projection
 reads it as opaque `marked code`): the legacy path keeps the marks, the writer drops
 them, which is BlockNote's own rule. No incremental byte pin moved.
@@ -457,8 +466,10 @@ them, which is BlockNote's own rule. No incremental byte pin moved.
   has children is rebuilt rather than reconciled. On the legacy path a text change is
   spliced in place only when the element's sole child is one `xmlText`; an element with
   none (y-prosemirror's empty paragraph) or several (text split by an inline node) is
-  rebuilt instead. The writer path has no such restriction: `replaceText` addresses the
-  right `xmlText` and creates one when the element has none.
+  rebuilt instead. The writer path has no such restriction for a text-only element:
+  `replaceText` addresses the right `xmlText` and creates one when the element has
+  none. An element holding an inline node still takes the legacy rebuild on both
+  paths, because its run-space offsets do not map to live offsets.
 - **B6 deviates from yjs only in local-item *construction*, never in the store
   algorithm — so it is verified at the document/projection level, not the
   store-structure level.** A changed text span is rebuilt wholesale from the new runs
