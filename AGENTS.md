@@ -1813,6 +1813,54 @@ that are easy to violate and expensive to discover:
   element is rebuilt, since a splice would drop or misplace the edit. **Move is v1-coarse** — a reordered survivor is
   rebuilt whole (delete + re-insert), never relocated in place; reorders are rare
   and stay covered by full-snapshot fixtures.
+- **`BlockNoteWriter` is B5a's intent API for the future native editor**, separate
+  from `BlockNoteWrite.applyEdit` (the save/live path is unchanged). It locates
+  unique block ids by UTF-16 code units (opaque JS strings; normalization forms
+  are distinct) and exposes replaceText, formatRange, splitBlock, joinBlocks,
+  and setBlockType. Each intent opens a `.localUser` transaction and returns its
+  incremental update after cleanup; `transaction` groups intents (nested calls
+  return the empty update; the outer call returns the combined bytes). **A group
+  is not atomic** — each intent validates before it mutates, but if a later one
+  throws, the earlier ones stay in the store and the transaction's observers
+  still deliver them while the call throws without bytes (yjs has no rollback);
+  after a throw the replica, not the return value, is the truth. UTF-16
+  offsets count inline XmlElements (mention/interlink/math/`hardBreak`, BlockNote's
+  Shift+Enter) as one atomic unit, and no bound or caret ever lands inside a
+  surrogate pair: a range grows to the whole character, a caret moves back to its
+  start (yjs would splice the pair and write U+FFFD into both halves).
+  Clamp ranges before calling `YTextOps` so formatting cannot pad with newlines.
+  Code blocks allow no marks: `formatRange` is a successful no-op with an empty
+  update, and `replaceText` drops supplied marks and inserts plain text, matching
+  BlockNote's style commands and explicit/stored-mark typing. Converting back to
+  a paragraph must not reveal formatting authored while it was a code block.
+  Copied text uses **`InlineContent.pieces(for:)`**, the same single inline-shape
+  builder as the encoder and B6; do not add another run-to-format builder.
+  **Block intents follow BlockNote 0.56's own commands, verified in node, not
+  reasoned from ProseMirror** (`BlockNoteWriterCaptures` inlines the captures):
+  split is Enter — the new block is a list item for list items and a paragraph
+  otherwise, always with default props, and takes the nested children; at offset
+  0 of non-empty content an empty block goes above instead, so ids stay with
+  their text. Join is `mergeBlocksCommand` — into the previous sibling's *last
+  descendant*, the source's children lifted into its place; an empty block above
+  with the same type and props is removed instead and the source keeps its id.
+  Type change is `updateBlock` — `props` override, other props of the new type
+  keep their existing value or default (`propSchemas`, the one allowlist). **Keeping
+  the type sets only the changed props on the existing element** (a checkbox toggle
+  or heading level is one attribute struct, byte-identical to BlockNote) — never
+  rebuild the element there, or a collaborator's concurrent typing in it is lost
+  on merge. Into a
+  `codeBlock` the content becomes ProseMirror `textContent` (copying inline nodes
+  there made real BlockNote delete the whole fragment on mount). Two deliberate
+  deviations: the surrogate-pair snap above (BlockNote writes U+FFFD into both
+  halves of a split emoji), and BlockNote's keyboard-level choices before those
+  commands (Backspace resetting a list item, Enter resetting an empty list item or
+  outdenting an empty nested block, merging a first child into its parent) are the
+  caller's — the writer's split does not outdent, and the first sibling throws
+  `noPreviousBlock`. Errors: `malformedBlock` means a broken replica;
+  `unsupportedBlockType` means a valid block the writer does not edit (divider,
+  image, quote, table, toggle list item, toggle heading split — including on a
+  join's way to the previous last descendant, where BlockNote might merge) or one
+  BlockNote refuses (splitting/joining a code block).
 - **B6 deviates from yjs only in local-item *construction*, never in the store
   algorithm — verify at the document/projection level, not the store-structure
   level.** It rebuilds a changed text span wholesale from the new runs (not yjs's
