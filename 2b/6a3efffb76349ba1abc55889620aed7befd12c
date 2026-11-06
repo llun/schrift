@@ -1,0 +1,38 @@
+AGENTS.md
+  s_2c3e81a2e89eee::t_47636143ae469d 2092-2093
+  s_2c3e81a2e89eee::t_0aa36c550ad8f4 2060-2061,2095-2104
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_2c3e81a2e89eee::t_47636143ae469d 92-94,171-172,352
+  s_2c3e81a2e89eee::t_2f75d35ea55d79 353
+  s_2c3e81a2e89eee::t_354036686c3d37 274
+  s_2c3e81a2e89eee::t_d3f7ab500a717b 49-51,99,109,116,122-136,142,152-155,176,194,236-238,272-273,310,335
+  s_2c3e81a2e89eee::t_327989148cf24b 275-276
+SchriftTests/Features/Editor/Engine/DocumentEngineCompositionTests.swift
+  s_2c3e81a2e89eee::t_72626db7e4898c 25,58,101,133-135,155-157,237-239,308
+SchriftTests/Features/Editor/Engine/DocumentEngineFinalContractTests.swift
+  s_2c3e81a2e89eee::t_2f75d35ea55d79 1-52,58-77,83-113,116-117,122-127,130-140,145-182
+  s_2c3e81a2e89eee::t_ea37deea09257b 53-57,78-82,114-115,118-121,128-129,141-144
+docs/architecture.md
+  s_2c3e81a2e89eee::t_0aa36c550ad8f4 532-533,596-612
+  s_2c3e81a2e89eee::t_47636143ae469d 593
+Schrift/Features/Editor/Engine/EditorSurface.swift
+  s_2c3e81a2e89eee::t_0aa36c550ad8f4 40-45,64-66,77-78,82-83
+SchriftTests/Features/Editor/Engine/DocumentEngineRoundOneTests.swift
+  s_2c3e81a2e89eee::t_72626db7e4898c 65-67,79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2b6a3efffb76349ba1abc55889620aed7befd12c",
+  "prompts": {},
+  "sessions": {
+    "s_2c3e81a2e89eee": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1b0b4-bb44-7653-a547-b51b9af40d44",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
