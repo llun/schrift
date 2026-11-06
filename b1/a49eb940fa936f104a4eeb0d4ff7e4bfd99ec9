@@ -1,0 +1,31 @@
+Schrift/Core/Yjs/BlockNoteWriter.swift
+  s_01a32c91ca004c::t_c75cc2fe0d7022 293
+  s_01a32c91ca004c::t_3fe0e311c15311 70-71,88-89,96,290-292
+  s_01a32c91ca004c::t_d3375c1dba2ff4 82
+SchriftTests/Core/Yjs/BlockNoteWriterOracleTests.swift
+  s_01a32c91ca004c::t_1b940fc14a9652 151-173
+SchriftTests/Core/Yjs/BlockNoteWriterCaptures.swift
+  s_01a32c91ca004c::t_b18ad4d586972d 13-52
+SchriftTests/Core/Yjs/BlockNoteWriterTests.swift
+  s_01a32c91ca004c::t_1b940fc14a9652 212-251
+AGENTS.md
+  s_01a32c91ca004c::t_3fe0e311c15311 1818-1819,1832-1835
+docs/architecture.md
+  s_01a32c91ca004c::t_3fe0e311c15311 304-306,322-328
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b1a49eb940fa936f104a4eeb0d4ff7e4bfd99ec9",
+  "prompts": {},
+  "sessions": {
+    "s_01a32c91ca004c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ae92-8a22-79e0-9676-38f576f00eb8",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
