@@ -1,0 +1,31 @@
+docs/architecture.md
+  s_2c3e81a2e89eee::t_9d0a2c49ab3e6e 604-610
+SchriftTests/Features/Editor/Engine/DocumentEngineFinalContractTests.swift
+  s_2c3e81a2e89eee::t_cd928ba9af21d7 20-21,53-57
+  s_2c3e81a2e89eee::t_fa87909e5650d5 7-19,22-52,58-72
+Schrift/Features/Editor/Engine/EditorSurface.swift
+  s_2c3e81a2e89eee::t_9d0a2c49ab3e6e 44-46
+SchriftTests/Features/Editor/Engine/DocumentEngineCompositionTests.swift
+  s_2c3e81a2e89eee::t_fa87909e5650d5 117-119
+AGENTS.md
+  s_2c3e81a2e89eee::t_9d0a2c49ab3e6e 2101-2105
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_2c3e81a2e89eee::t_126a13804d542f 277
+  s_2c3e81a2e89eee::t_303407d40eb151 52-54,179,278-279,287,292-302,321,327,353
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "224b4181531a1628c39d716f8dccaf8a11b2f6ab",
+  "prompts": {},
+  "sessions": {
+    "s_2c3e81a2e89eee": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1b0b4-bb44-7653-a547-b51b9af40d44",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
