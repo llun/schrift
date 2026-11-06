@@ -2060,8 +2060,11 @@ only; nothing in the shipping editor uses it yet.
   and selection hooks are B6b; do not stub them in.
 - **The engine borrows the replica; it never owns it.** `DocumentCollaborationManager`
   keeps the one-owner rule. `YDoc.onDestroy` fires at the start of `destroy()`
-  and the engine detaches there — hooks cleared, buffered patches dropped, later
-  calls no-ops. A replica destroyed by a fail-safe or a suspend teardown must
+  and the engine detaches there — hooks cleared, buffered patches dropped (even
+  mid-delivery, if a surface destroys the replica from `applyPatch`), and every
+  later intent throws `DocumentEngineError.detached`. Releasing the engine
+  detaches it too (`isolated deinit`), so a closed editor leaves no hook on a
+  replica that lingers. A replica destroyed by a fail-safe or a suspend teardown must
   never be touched again, and this is the hook that makes that true.
 - **Buffer in `afterTransaction`, deliver at `afterAllTransactions`.** A text
   delta is valid only inside the observer phase, and the store there is still
@@ -2106,7 +2109,8 @@ only; nothing in the shipping editor uses it yet.
   `BlockIndex.isCanonical` is false, is a `.reset` of the projected document.
 - **Patch building is O(touched blocks) for text and prop changes.** Classification
   reads `transaction.changed` (the types whose *direct* children changed), so a
-  keystroke visits one `XmlText` and projects no block. The emit loop iterates
+  keystroke visits one `XmlText`, reads that one text to check its deltas against
+  the fold, and projects no block. The emit loop iterates
   only the touched ids, ordered by the index's position map — never
   `index.order`. A root-group change (membership, split/join) rebuilds the index
   — O(document), reading each block's text for `isProjectable` — and projects

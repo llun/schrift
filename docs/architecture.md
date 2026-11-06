@@ -589,7 +589,8 @@ means *inherit* (the surface's local-keystroke form), and the builder always
 sends the complete set, including `[]`, in the projection's format-item order.
 
 **Cost.** Classification reads `transaction.changed` (direct child changes), so
-a keystroke visits one `XmlText` and projects no block, and the emit loop
+a keystroke visits one `XmlText`, reads that one text to check its deltas
+against the fold, and projects no block, and the emit loop
 iterates only the touched ids ordered by the index's position map — never
 `index.order`. Text and prop changes are O(touched blocks). A root-group change
 (membership, split/join) rebuilds the index — O(document), reading each block's
@@ -602,8 +603,9 @@ repeated id) resets on every transaction until it is canonical again. `DocumentE
 pin the counters and what they measure.
 
 **Teardown.** `YDoc.onDestroy` fires at the start of `destroy()`; the engine
-detaches there — hooks cleared, buffered patches dropped, later calls no-ops —
-so a fail-safe or suspend teardown can never leave a hook pointing at a
+detaches there — hooks cleared, buffered patches dropped (even mid-delivery),
+later intents throwing `DocumentEngineError.detached` — and releasing the engine
+detaches it too (`isolated deinit`), so a fail-safe or suspend teardown can never leave a hook pointing at a
 destroyed store.
 
 **No UIKit in the model.** `Engine/` mentions no `NSRange`, `NSText*`, `UIView`,

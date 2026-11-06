@@ -296,20 +296,7 @@ extension YBlockProjection {
                 return ([], "non-text inline content")
             }
             if childType.typeRef == .xmlText {
-                var openMarks: [(key: String, valueJSON: String)] = []
-                for item in children(of: childType, includeFormats: true) {
-                    switch item.content {
-                    case .string(let units):
-                        appendRun(text: String(decoding: units, as: UTF16.self), marks: openMarks, to: &runs)
-                    case .format(let key, let valueJSON):
-                        openMarks.removeAll { $0.key == key }
-                        if valueJSON != "null" {
-                            openMarks.append((key: key, valueJSON: valueJSON))
-                        }
-                    default:
-                        return ([], "unexpected text content")
-                    }
-                }
+                guard foldText(childType, into: &runs) else { return ([], "unexpected text content") }
             } else if childType.typeRef == .xmlElement(nodeName: interlinkingLinkNodeName) {
                 guard let (text, href) = projectInterlinkingLink(childType, interlinkingOrigin: interlinkingOrigin)
                 else {
@@ -321,6 +308,32 @@ extension YBlockProjection {
             }
         }
         return (runs, nil)
+    }
+
+    /// One `XmlText`'s runs, before mark scrubbing, folded exactly as a block's
+    /// text is — or `nil` when it holds something other than strings and
+    /// formats. The engine checks its `.text` patches against this.
+    static func textRuns(_ text: YType) -> [InlineRun]? {
+        var runs: [InlineRun] = []
+        return foldText(text, into: &runs) ? runs : nil
+    }
+
+    private static func foldText(_ text: YType, into runs: inout [InlineRun]) -> Bool {
+        var openMarks: [(key: String, valueJSON: String)] = []
+        for item in children(of: text, includeFormats: true) {
+            switch item.content {
+            case .string(let units):
+                appendRun(text: String(decoding: units, as: UTF16.self), marks: openMarks, to: &runs)
+            case .format(let key, let valueJSON):
+                openMarks.removeAll { $0.key == key }
+                if valueJSON != "null" {
+                    openMarks.append((key: key, valueJSON: valueJSON))
+                }
+            default:
+                return false
+            }
+        }
+        return true
     }
 
     /// Projects an `interlinkingLinkInline` node (the web editor's custom

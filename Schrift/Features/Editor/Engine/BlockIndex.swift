@@ -35,6 +35,9 @@ struct BlockIndex {
         /// scrubbed content the surface's copy therefore lacks, and a fast-path
         /// patch computed from the replica could not be applied to it.
         let isProjectable: Bool
+        /// The sole text's runs when the entry was built — the surface's copy,
+        /// which a `.text` patch is checked against. `[]` unless `isSimpleText`.
+        let runs: [InlineRun]
     }
 
     private(set) var entries: [String: Entry] = [:]
@@ -191,7 +194,7 @@ struct BlockIndex {
         guard case .type(let container) = item.content else {
             return Entry(
                 id: id, containerItem: item, container: YType(), element: nil, textType: nil,
-                isSimpleContainer: false, isSimpleText: false, isProjectable: false)
+                isSimpleContainer: false, isSimpleText: false, isProjectable: false, runs: [])
         }
         // Counted the way `YBlockProjection` counts children (countable items
         // only), so the fast paths accept exactly the shapes it projects.
@@ -220,7 +223,8 @@ struct BlockIndex {
             && textType.map(projectsAsText) != false
         return Entry(
             id: id, containerItem: item, container: container, element: element, textType: textType,
-            isSimpleContainer: isSimpleContainer, isSimpleText: textType != nil, isProjectable: isProjectable)
+            isSimpleContainer: isSimpleContainer, isSimpleText: textType != nil, isProjectable: isProjectable,
+            runs: isProjectable ? textType.flatMap(YBlockProjection.textRuns) ?? [] : [])
     }
 
     /// True when the projection reads this text as runs unchanged: only strings

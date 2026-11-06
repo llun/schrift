@@ -72,9 +72,15 @@ struct PatchBuilder {
                 // refreshed after the last one): when the projection dropped or
                 // scrubbed content, the surface's runs are not the text's, so a
                 // delta computed from the text would not line up.
+                // The deltas must turn the surface's runs into exactly what the
+                // projection now folds: the event delta compares marks as a set,
+                // so a mark re-opened in another order, or a link value spelled
+                // differently, on retained text has no delta of its own.
                 if let block = index.entries[id], block.isSimpleText, block.isProjectable, block.textType === type,
                     let element = block.element, YBlockProjection.props(of: element) != nil,
-                    let deltas = Self.textDeltas(events[oid], text: type)
+                    let deltas = Self.textDeltas(events[oid], text: type),
+                    let runs = YBlockProjection.textRuns(type),
+                    HeadlessSurface.apply(deltas, to: block.runs) == runs
                 {
                     textDeltas[id] = deltas
                 } else {
@@ -104,7 +110,9 @@ struct PatchBuilder {
             touch(id)
             if type.typeRef == .xmlElement(nodeName: "blockContainer") || entry.subs.contains(nil) {
                 structural.insert(id)
-            } else if let block = index.entries[id], block.element === type, block.isSimpleContainer, block.isProjectable {
+            } else if let block = index.entries[id], block.element === type, block.isSimpleContainer,
+                block.isProjectable
+            {
                 props.insert(id)
             } else {
                 // A nested element's attributes are not the top-level block's.
@@ -166,7 +174,13 @@ struct PatchBuilder {
         }
 
         // Iterate the touched ids only, in document order — never `index.order`.
-        let ordered = touched.sorted { (index.position[$0] ?? Int.max) < (index.position[$1] ?? Int.max) }
+        // A removed id (a reorder removes them all) is re-inserted, if at all,
+        // as a fresh snapshot: a per-block change for it would address a block
+        // the same patch just took away.
+        let removedSet = Set(removed)
+        let ordered = touched.filter { !removedSet.contains($0) }.sorted {
+            (index.position[$0] ?? Int.max) < (index.position[$1] ?? Int.max)
+        }
         for id in ordered {
             visitedEntries += 1
             if structural.contains(id) || (props.contains(id) && textDeltas[id] != nil) {

@@ -7,8 +7,9 @@ import Foundation
 /// the engine only reads and writes it through the writer. When the owner
 /// destroys the replica — a fail-safe, a suspend teardown — `YDoc.onDestroy`
 /// fires and the engine detaches: its hooks are cleared, buffered patches are
-/// dropped, and every later call is a no-op. Nothing here can touch a destroyed
-/// store.
+/// dropped (even mid-delivery), and every later intent throws
+/// `DocumentEngineError.detached`. Releasing the engine detaches it too. Nothing
+/// here can touch a destroyed store.
 ///
 /// **Buffering.** `YDoc.afterTransaction` runs inside the transaction's
 /// observer phase, where a text delta is valid and the store is pre-gc/pre-merge.
@@ -139,7 +140,11 @@ final class DocumentEngine {
         while !buffered.isEmpty {
             let patches = buffered
             buffered = []
-            for patch in patches { surface?.applyPatch(patch) }
+            for patch in patches {
+                // A surface may destroy the replica from `applyPatch`.
+                guard !isDetached else { return }
+                surface?.applyPatch(patch)
+            }
         }
     }
 
@@ -149,6 +154,12 @@ final class DocumentEngine {
     /// `onDestroy`, and safe to call directly. Idempotent; after it the engine
     /// holds no hook into the store, delivers nothing, and every intent throws
     /// `DocumentEngineError.detached`.
+    /// An engine released without `detach()` (an editor screen closing while
+    /// the replica lingers) must not leave its hooks on the replica.
+    isolated deinit {
+        detach()
+    }
+
     func detach() {
         guard !isDetached else { return }
         isDetached = true
