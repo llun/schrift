@@ -1048,10 +1048,16 @@ whose replica has not fail-safed; checked before and after the GET), it skips re
 markdown so the same edits are not inserted again as new Yjs items. After the session's
 initial step2 exchange, the bridge re-persists the replica snapshot through the normal save
 coordinator path only when the draft's markdown is canonically equal to the replica's
-projection, which clears the write-ahead draft on success. A draft that differs holds edits the
+projection and its title passes the classic replay's title rule (a co-author's rename the
+user never made, two different renames, or no known server title leave the draft). Success
+clears the write-ahead draft. `canonicalMarkdown` ignores leaf nesting, so a draft differing
+only by a leaf's indentation is re-persisted flat: content is kept and leaf structure follows
+the replica. A draft that differs holds edits the
 replica lacks, so it is left alone. Tearing down an idle held entry (`teardownIfIdle`, or the
 idle drop in `suspend()`) fires `onHeldReplicaReleased`, wired to `syncPendingDrafts()`, so
-that draft then replays through the classic path. Until then it waits while the editor holds
+that draft then replays through the classic path. A replica fail-safe does not fire
+`onHeldReplicaReleased`, so a draft skipped while it was held waits for the next normal sync
+trigger (reconnect, foreground, launch). Until then it waits while the editor holds
 the replica, and classic saves outside `runSyncPass` (retry, autosave after live mode
 disengages) can still race the socket, as on legacy servers. Details live in `AGENTS.md`.
 

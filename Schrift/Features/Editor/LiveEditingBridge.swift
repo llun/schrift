@@ -188,14 +188,31 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
     /// edits typed on the classic path (after a failed snapshot, or with no replica) are in
     /// the draft but not the replica, and re-persisting would overwrite and clear them.
     /// Those drafts are left for the classic replay once the replica is released.
+    /// `canonicalMarkdown` ignores leaf nesting, so a draft that differs only by a leaf's
+    /// indentation is re-persisted flat: its content is kept, its leaf structure is the replica's.
+    ///
+    /// The snapshot PATCHes the on-screen title too, so the title must pass the same rule the
+    /// classic replay applies (`draftSyncDecision`): a co-author's rename the user never made is
+    /// adopted there, and two different renames are a conflict. Either way the draft is left for
+    /// that replay. With no server title known this session, nothing can be checked, so the
+    /// draft is left too.
     func initialSyncDidChange() {
+        let coordinator = viewModel.saveCoordinator
         guard collaboration.initialSyncVersion(for: documentID) > 0,
-            viewModel.saveCoordinator.state(for: documentID) == .pendingSync,
-            let draft = viewModel.saveCoordinator.storedDraft(documentID: documentID),
+            coordinator.state(for: documentID) == .pendingSync,
+            let draft = coordinator.storedDraft(documentID: documentID),
+            let serverTitle = coordinator.knownServerTitle(documentID: documentID),
             let projection = collaboration.projectedReplica(for: documentID, interlinkingOrigin: serverOrigin),
             projection.isFullyModeled,
             let markdown = YBlockProjection.projectedMarkdown(projection),
-            canonicalMarkdown(draft.markdown) == canonicalMarkdown(markdown)
+            canonicalMarkdown(draft.markdown) == canonicalMarkdown(markdown),
+            // No server `updated_at` here: `.distantFuture` skips the "server not written since
+            // the baseline" shortcut, which can only turn a keep into adopt/conflict (leave it).
+            case .push(let pushTitle, _) = draftSyncDecision(
+                baseline: draft.baseline, lastPushedMarkdown: draft.lastPushedMarkdown,
+                localMarkdown: draft.markdown, draftTitle: draft.title, draftUpdatedAt: draft.updatedAt,
+                serverTitle: serverTitle, serverUpdatedAt: .distantFuture, serverMarkdown: markdown),
+            pushTitle == draft.title, pushTitle == viewModel.title
         else { return }
         fireSnapshot()
     }

@@ -985,12 +985,18 @@ server is about to hold.
   write and the replica has not fail-safed; re-checked after the GET), so it cannot replay
   the same markdown as new Yjs items. Once the session completes its initial step2 exchange,
   the bridge re-persists the complete replica snapshot through `persistLiveSnapshot` only
-  when the draft's markdown is canonically equal to the replica's projection; a successful
-  `finish` then clears the draft. A draft that differs carries classic-path edits the replica
+  when the draft's markdown is canonically equal to the replica's projection and its title
+  passes the classic replay's title rule (a co-author's rename the user never made, two
+  different renames, or no known server title leave the draft); a successful `finish` then
+  clears the draft. `canonicalMarkdown` ignores leaf nesting, so a draft differing only by a
+  leaf's indentation is re-persisted flat: content is kept and leaf structure follows the
+  replica. A draft that differs carries classic-path edits the replica
   lacks (typed after a failed snapshot, typed offline with no replica, or a reopened
   `.pendingSync` document), so it is left untouched. When the manager tears down the idle held
   entry (`teardownIfIdle`, or `suspend()`'s idle drop), `onHeldReplicaReleased` runs
-  `syncPendingDrafts()` and the draft gets its classic replay. Until then it waits while the
+  `syncPendingDrafts()` and the draft gets its classic replay. A replica fail-safe does not
+  fire `onHeldReplicaReleased`, so a draft skipped while it was held waits for the next normal
+  sync trigger (reconnect, foreground, launch). Until then it waits while the
   editor holds the replica and no socket is rebuilt, and classic saves outside `runSyncPass`
   (retry, autosave after live mode disengages) can still race the socket, as on legacy
   servers. If the app is killed before reconnect, the replica is gone and the draft replays
