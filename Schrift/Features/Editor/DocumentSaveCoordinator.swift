@@ -91,6 +91,9 @@ final class DocumentSaveCoordinator {
     private let client: DocsAPIClient
     private let draftStore: PendingDraftStore
     private let replicaStore: ReplicaStore
+    /// The remembered signed-in account, available offline. A raw draft is
+    /// rewritten or queued only for its own account; nil fails closed.
+    private let signedInUser: SignedInUserStore
     private let contentCache: DocumentContentCacheStore
     private let createStore: PendingDocumentCreateStore
     let pins: DocumentPinCoordinator
@@ -435,6 +438,7 @@ final class DocumentSaveCoordinator {
             signedInUser: SignedInUserStore(userDefaults: listCache.userDefaults), userDefaults: listCache.userDefaults)
         self.draftStore = draftStore
         self.replicaStore = replicaStore ?? ReplicaStore()
+        self.signedInUser = SignedInUserStore(userDefaults: listCache.userDefaults)
         self.contentCache = contentCache
         self.createStore = createStore
         self.deleteStore = deleteStore
@@ -2437,9 +2441,9 @@ final class DocumentSaveCoordinator {
     ) throws {
         let id = adapter.scope.documentID
         guard adapter.scope.serverOrigin == client.serverOrigin, !draftStore.holdsUnreadableData,
-            !isPendingCreate(documentID: id)
+            !isPendingCreate(documentID: id), adapter.scope.ownerUserID == signedInUser.userID
         else { throw ReplicaSaveError.invalidScope }
-        let request = try adapter.prepare(markdown: projectedMarkdown, expected: expected)
+        let (request, markdown) = try adapter.prepare(markdown: projectedMarkdown, expected: expected)
         let previous = draftStore.draft(for: id)
         if let previous {
             guard let reference = previous.replica, reference.scope == request.reference.scope,
@@ -2448,7 +2452,7 @@ final class DocumentSaveCoordinator {
         }
         enqueue(
             documentID: id,
-            save: PendingSave(title: title, markdown: projectedMarkdown, replicaRequest: request),
+            save: PendingSave(title: title, markdown: markdown, replicaRequest: request),
             baseline: baseline ?? previous?.baseline)
     }
 
@@ -3573,6 +3577,14 @@ final class DocumentSaveCoordinator {
     /// wins — an accepted race, recoverable from the server's version history).
     func resolveConflictKeepingLocal(documentID: UUID) {
         let resolved = conflicts[documentID]
+        // Another signed-in account must never rewrite, release or send this raw draft:
+        // the conflict, baseline and queued work all stay exactly as they are.
+        if let reference = draftStore.draft(for: documentID)?.replica,
+            reference.scope.ownerUserID != signedInUser.userID
+        {
+            states[documentID] = .failed("Couldn't save changes. Please try again.")
+            return
+        }
         // Defensive only, per the invariant above: were a save somehow in flight, its
         // `finish` would pick the held slot up anyway, so dropping out here is safe.
         guard inFlight[documentID] == nil else {
@@ -3638,10 +3650,15 @@ final class DocumentSaveCoordinator {
         {
             // Re-read: the draft above may have just had its baseline advanced.
             if let reference = draft.replica {
-                try? enqueueReplica(
-                    adapter: ReplicaSaveAdapter(store: replicaStore, scope: reference.scope),
-                    title: draft.title, projectedMarkdown: draft.markdown, baseline: draft.baseline, expected: reference
-                )
+                do {
+                    try enqueueReplica(
+                        adapter: ReplicaSaveAdapter(store: replicaStore, scope: reference.scope),
+                        title: draft.title, projectedMarkdown: draft.markdown, baseline: draft.baseline,
+                        expected: reference)
+                } catch {
+                    // The conflict is already cleared, so a silent no-op would claim nothing is unsaved.
+                    states[documentID] = .failed("Couldn't save changes. Please try again.")
+                }
             } else {
                 enqueue(documentID: documentID, title: draft.title, markdown: draft.markdown, baseline: draft.baseline)
             }
@@ -3963,14 +3980,17 @@ final class DocumentSaveCoordinator {
             // The save PATCHes are void, so there is no server `updated_at` to
             // record: `serverUpdatedAt` is nil (truthfully "unknown after a void
             // save") and `syncedAt` is the client wall-clock of the confirmed save.
-            contentCache.save(
-                CachedDocumentContent(
-                    documentID: documentID,
-                    title: save.title,
-                    markdown: save.markdown,
-                    syncedAt: Date(),
-                    serverUpdatedAt: nil
-                ))
+            // A raw save's Markdown is a lossy shadow, never the classic cache's body.
+            if save.replicaRequest == nil {
+                contentCache.save(
+                    CachedDocumentContent(
+                        documentID: documentID,
+                        title: save.title,
+                        markdown: save.markdown,
+                        syncedAt: Date(),
+                        serverUpdatedAt: nil
+                    ))
+            }
             if let request = save.replicaRequest, !request.adapter.isCurrent(request) {
                 states[documentID] = .pendingSync
             }

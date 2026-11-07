@@ -10,6 +10,8 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         let client: DocsAPIClient
         let coordinator: DocumentSaveCoordinator
         let drafts: PendingDraftStore
+        let listCache: DocumentCacheStore
+        let contentCache: DocumentContentCacheStore
         let store: ReplicaStore
         let adapter: ReplicaSaveAdapter
         let scope: ReplicaScope
@@ -38,14 +40,18 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
             update: update)
         let suite = "ReplicaSaveAdapterTests.\(UUID().uuidString)"
         draftSuiteNames.append(suite)
-        let drafts = PendingDraftStore(userDefaults: UserDefaults(suiteName: suite)!)
+        let defaults = UserDefaults(suiteName: suite)!
+        let drafts = PendingDraftStore(userDefaults: defaults)
+        let listCache = DocumentCacheStore(userDefaults: defaults)
+        SignedInUserStore(userDefaults: defaults).remember(owner)
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         let coordinator = DocumentSaveCoordinator(
-            client: client, draftStore: drafts, replicaStore: store,
-            contentCache: DocumentContentCacheStore(directory: cacheDirectory), backgroundTasks: .noop,
-            isLiveReplicaHeld: isHeld)
+            client: client, draftStore: drafts, replicaStore: store, contentCache: contentCache,
+            listCache: listCache, backgroundTasks: .noop, isLiveReplicaHeld: isHeld)
         return Fixture(
-            client: client, coordinator: coordinator, drafts: drafts, store: store,
+            client: client, coordinator: coordinator, drafts: drafts, listCache: listCache,
+            contentCache: contentCache, store: store,
             adapter: adapter, scope: scope, checkpoint: checkpoint, update: update)
     }
 
@@ -247,7 +253,8 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         stub(log: log)
         let relaunched = DocumentSaveCoordinator(
             client: f.client, draftStore: f.drafts, replicaStore: f.store,
-            contentCache: DocumentContentCacheStore(directory: cacheDirectory), backgroundTasks: .noop)
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory), listCache: f.listCache,
+            backgroundTasks: .noop)
         await relaunched.syncPendingDrafts()
         await waitUntil { self.isSaved(relaunched.state(for: self.documentID)) }
         XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/"), 1)
@@ -287,7 +294,10 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
     func testOldMarkdownDraftAndWrongAccountAreNeverAdoptedOrSent() async throws {
         let f = try fixture()
         f.drafts.save(PendingDraft(documentID: documentID, title: "Old", markdown: "old", updatedAt: Date()))
-        XCTAssertThrowsError(try enqueue(f))
+        do {
+            try enqueue(f)
+            XCTFail("an old Markdown draft must not be adopted")
+        } catch ReplicaSaveError.incompatibleDraft {}
         XCTAssertNil(f.drafts.draft(for: documentID)?.replica)
         XCTAssertNil(MockURLProtocol.lastRequest)
         f.drafts.remove(documentID: documentID)
@@ -310,7 +320,8 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
                 updatedAt: draft.updatedAt, baseline: draft.baseline, replica: reference))
         let relaunched = DocumentSaveCoordinator(
             client: f.client, draftStore: f.drafts, replicaStore: f.store,
-            contentCache: DocumentContentCacheStore(directory: cacheDirectory), backgroundTasks: .noop)
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory), listCache: f.listCache,
+            backgroundTasks: .noop)
         await relaunched.syncPendingDrafts()
         XCTAssertNil(MockURLProtocol.lastRequest)
         let restore = try XCTUnwrap(f.store.restore(for: f.scope))
@@ -318,7 +329,121 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
             .appendingPathComponent(try f.scope.directoryName()).appendingPathComponent(
                 restore.manifest.journal[0].file.name)
         try Data([0xff]).write(to: path)
-        XCTAssertThrowsError(try enqueue(f))
+        do {
+            try enqueue(f)
+            XCTFail("a corrupt journal must not be captured")
+        } catch ReplicaStoreError.corrupt {}
+        XCTAssertNil(MockURLProtocol.lastRequest)
+    }
+
+    func testKeystrokeDuringTitleRequestIsRestampedFromRawAndSentByTheNextPass() async throws {
+        let f = try fixture()
+        let log = RequestRecorder()
+        let gate = MockURLProtocol.ResponseGate()
+        defer { gate.open() }
+        stub(log: log, titleGate: gate)
+        try enqueue(f)
+        await waitUntil { log.count(ofMethod: "PATCH", urlContaining: "/api/v1.0/documents/") == 1 }
+        let second = try appendSecond(f)
+        gate.open()
+        await waitUntil { self.isPendingSync(f.coordinator.state(for: self.documentID)) }
+        let stale = try XCTUnwrap(f.drafts.draft(for: documentID))
+        XCTAssertEqual(stale.replica?.revision, 1, "the draft still names the revision before the keystroke")
+        XCTAssertEqual(stale.markdown, "xOne")
+        XCTAssertEqual(try f.store.outbox(for: f.scope)?.updates, [second])
+        // No editor re-enqueues: the sync pass alone must carry "y" from the journal.
+        await f.coordinator.syncPendingDrafts()
+        await waitUntil { self.isSaved(f.coordinator.state(for: self.documentID)) }
+        XCTAssertNil(try f.store.outbox(for: f.scope), "the second keystroke was sent and acknowledged")
+        XCTAssertNil(f.drafts.draft(for: documentID))
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/"), 2)
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/content/"), 0)
+        XCTAssertEqual(try f.store.restore(for: f.scope)?.manifest.httpAcknowledgedThrough, 2)
+    }
+
+    func testIncompatibleReferenceIsRefusedRatherThanRestamped() throws {
+        let f = try fixture()
+        let manifest = try XCTUnwrap(f.store.restore(for: f.scope)).manifest
+        let current = ReplicaDraftReference(manifest: manifest, markdown: "xOne")
+        var older = manifest
+        older.revision = 0
+        let stale = ReplicaDraftReference(manifest: older, markdown: "One")
+        XCTAssertEqual(try f.adapter.prepare(markdown: "One", expected: stale).markdown, "xOne\n")
+        let otherScope = ReplicaScope(
+            serverOrigin: f.scope.serverOrigin, ownerUserID: UUID(), org: f.scope.org, documentID: documentID)
+        let wrongScope = ReplicaDraftReference(
+            manifest: ReplicaManifest(
+                formatVersion: manifest.formatVersion, scope: otherScope, generation: manifest.generation,
+                revision: 0, checkpointSequence: 0, checkpoint: manifest.checkpoint, journal: [], outbox: [],
+                httpAcknowledgedThrough: 0, projectionCacheVersion: manifest.projectionCacheVersion),
+            markdown: "One")
+        let wrongGeneration = ReplicaDraftReference(
+            manifest: ReplicaManifest(
+                formatVersion: manifest.formatVersion, scope: f.scope, generation: UUID(),
+                revision: 0, checkpointSequence: 0, checkpoint: manifest.checkpoint, journal: [], outbox: [],
+                httpAcknowledgedThrough: 0, projectionCacheVersion: manifest.projectionCacheVersion),
+            markdown: "One")
+        var ahead = manifest
+        ahead.revision = 2
+        for (reference, markdown) in [
+            (wrongScope, "One"), (wrongGeneration, "One"),
+            (ReplicaDraftReference(manifest: ahead, markdown: "xOne"), "xOne"),
+            (stale, "edited shadow"), (current, "edited shadow"),
+        ] {
+            do {
+                _ = try f.adapter.prepare(markdown: markdown, expected: reference)
+                XCTFail("an incompatible reference must not be restamped")
+            } catch ReplicaSaveError.staleReference {}
+        }
+    }
+
+    func testRawSaveNeverWritesItsShadowIntoTheClassicContentCache() async throws {
+        let f = try fixture()
+        let log = RequestRecorder()
+        stub(log: log)
+        try enqueue(f)
+        await waitUntil { self.isSaved(f.coordinator.state(for: self.documentID)) }
+        XCTAssertNil(f.contentCache.content(for: documentID))
+    }
+
+    func testKeepMineUnderAnotherAccountLeavesTheNativeDraftAndConflictUntouched() async throws {
+        let f = try fixture()
+        let log = RequestRecorder()
+        stub(log: log)
+        f.coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date(timeIntervalSince1970: 2))
+        try enqueue(f)
+        let original = try XCTUnwrap(f.drafts.draft(for: documentID))
+        SignedInUserStore(userDefaults: f.listCache.userDefaults).remember(UUID())
+        f.coordinator.resolveConflictKeepingLocal(documentID: documentID)
+        XCTAssertEqual(f.drafts.draft(for: documentID), original)
+        XCTAssertTrue(self.isFailed(f.coordinator.state(for: documentID)))
+        XCTAssertNotNil(f.coordinator.pendingSave(documentID: documentID))
+        do {
+            try enqueue(f)
+            XCTFail("another account must not queue this raw draft")
+        } catch ReplicaSaveError.invalidScope {}
+        XCTAssertEqual(f.drafts.draft(for: documentID), original)
+        XCTAssertEqual(log.count(ofMethod: "PATCH"), 0)
+    }
+
+    func testKeepMineReportsAFailedRawCaptureInsteadOfANoOp() throws {
+        let f = try fixture()
+        f.coordinator.recordConflict(documentID: documentID, serverUpdatedAt: Date(timeIntervalSince1970: 2))
+        try enqueue(f)
+        // A relaunch rehydrates the conflict without a held save, so keep-mine captures afresh.
+        let relaunched = DocumentSaveCoordinator(
+            client: f.client, draftStore: f.drafts, replicaStore: f.store,
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory), listCache: f.listCache,
+            backgroundTasks: .noop)
+        XCTAssertNil(relaunched.pendingSave(documentID: documentID))
+        let restore = try XCTUnwrap(f.store.restore(for: f.scope))
+        try Data([0xff]).write(
+            to: cacheDirectory.appendingPathComponent("ReplicaDrafts")
+                .appendingPathComponent(try f.scope.directoryName())
+                .appendingPathComponent(restore.manifest.journal[0].file.name))
+        relaunched.resolveConflictKeepingLocal(documentID: documentID)
+        XCTAssertTrue(self.isFailed(relaunched.state(for: documentID)))
+        XCTAssertNotNil(f.drafts.draft(for: documentID)?.replica)
         XCTAssertNil(MockURLProtocol.lastRequest)
     }
 }

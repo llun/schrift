@@ -78,8 +78,14 @@ through the existing collaboration-ydoc PATCH and acknowledges the entire captur
 batch only after every PATCH confirms. Title is attempted afterward. A title-only
 retry after relaunch uses the persisted body acknowledgment and sends no body bytes.
 A newer journal revision keeps the draft and pending state; canonical Markdown
-equality alone never proves a rich revision saved. Partial batches retain every
-sequence for idempotent retry. No legacy route, live socket or Markdown diff is used.
+equality alone never proves a rich revision saved. The next replay re-stamps such a
+draft from the current raw revision (same scope, format and generation, a matching
+shadow, a revision not ahead of the journal) and sends the newer bytes; anything else
+is refused. Partial batches retain every sequence for idempotent retry. No legacy
+route, live socket or Markdown diff is used. A raw save never writes its lossy shadow
+into the classic content cache. Raw drafts are queued, and "Keep mine" rewrites them,
+only for the remembered signed-in owner; a failed raw capture after "Keep mine"
+reports `.failed` instead of a silent no-op.
 
 `PendingDraft.replica` is optional-on-decode. The nine coordinator constructions now
 either preserve scope/format/generation/revision/shadow provenance or explicitly hold
@@ -95,8 +101,8 @@ is idempotent while journal/engine revisions stay aligned. Failed disk persisten
 freezes the mutated graph, keeps the accepted display and retains unconfirmed bytes
 in memory; reopen uses the earlier durable revision.
 
-Remaining PR02a integration: production open/reconnect wiring, regeneration of the
-compatibility shadow when a journal is newer than its stored draft reference,
+Remaining PR02a integration: production open/reconnect wiring, a total shadow for
+opaque/rich documents (re-stamping refuses an unprojectable revision today),
 permanent native route ownership after a saved draft is removed, account/session
 generation guards, migration/rollback and production activation. Existing Markdown
 drafts retain their classic owner; no production native replica is adopted yet.

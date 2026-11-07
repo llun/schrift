@@ -62,9 +62,14 @@ final class DocumentEngine {
     private var holdingDurableRemote = false
     private(set) var nativeWriteFailed = false
     private(set) var nativeSnapshotCount = 0
-    /// Retain the rejected update when disk persistence fails. Never retry it
-    /// against this mutated replica; recover from the durable store instead.
+    /// The update whose persistence failed, kept only for diagnostics and tests.
+    /// Authoring and delivery are frozen (`nativeWriteFailed`); nothing retries,
+    /// sends or journals it. Recovery reopens from the durable store instead.
     private(set) var unconfirmedNativeUpdate: Data?
+    /// Set by a durable replica owner: every revision must be a journal entry,
+    /// so an unjournaled transaction freezes the engine instead of drifting
+    /// `revision` away from `manifest.revision`.
+    var requiresJournaledRevisions = false
 
     /// The surface patches are delivered to. Weak: the surface owns the engine,
     /// not the other way round. A patch delivered while it is `nil` is lost and
@@ -401,6 +406,12 @@ final class DocumentEngine {
                 commandID: command.id, baseRevision: command.baseRevision, emission: nativeEmission)
             nativeEmission += 1
         } else if nativeCommand == nil && !holdingDurableRemote && !patch.isEmpty {
+            guard !requiresJournaledRevisions else {
+                // No rollback exists for the transaction; freeze like a failed append.
+                nativeWriteFailed = true
+                buffered = []
+                return
+            }
             revision &+= 1
         }
         patch = filterForComposition(patch)

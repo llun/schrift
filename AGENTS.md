@@ -2127,7 +2127,12 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   collaboration-ydoc PATCH; it never takes the legacy snapshot route or a Markdown
   diff. A whole captured body batch is acknowledged durably before title is tried.
   Partial batches retain all bytes for idempotent retry. Later journal revisions
-  retain the draft and `.pendingSync`, even if they share a Markdown shadow.
+  retain the draft and `.pendingSync`, even if they share a Markdown shadow; the next
+  replay re-stamps that reference and shadow from the current raw revision (same
+  scope/format/generation, matching shadow, revision not ahead of the journal) and
+  refuses anything else. A raw save never writes the classic content cache. Raw
+  enqueue and "Keep mine" require the remembered signed-in owner (`SignedInUserStore`,
+  nil fails closed); a failed raw capture after "Keep mine" reports `.failed`.
   `PendingDraft.replica` is optional-on-decode and stamps scope/format/generation/
   revision plus canonical shadow digest. Classic/live enqueues cannot overwrite
   such drafts. Conflict/title/finish rewrites preserve the reference; old-draft
@@ -2141,8 +2146,11 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   integration journals remote bytes before releasing display patches, including
   idempotent no-op updates; remote sequences never enter the local outbox. Disk or
   cleanup failure freezes the unsafe graph and keeps the accepted display intact.
+  A restored durable session sets `requiresJournaledRevisions`: any unjournaled
+  transaction freezes the engine rather than drifting `revision` from the manifest.
+  Backspace at a block start is a quiet no-op until block joins (PR04).
   These are component APIs and tests: the production open/reconnect lifecycle,
-  shadow regeneration after edits newer than a stored reference, permanent route
+  a total shadow for opaque/rich documents, permanent route
   ownership after a successful save, sign-in generation guards and feature-switch
   rollback remain required before activating production typing. No live socket.
 

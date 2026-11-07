@@ -233,9 +233,19 @@ final class ReplicaStoreTests: XCTestCase {
                 let name = damage == "checkpoint" ? manifest.checkpoint.name : "manifest.json"
                 try Data([0xff]).write(to: folder.appendingPathComponent(name))
             }
-            XCTAssertThrowsError(try store.restore(for: scope), damage)
-            XCTAssertThrowsError(try store.outbox(for: scope), damage)
-            XCTAssertThrowsError(try ReplicaStore(directory: root).restore(for: scope), damage)
+            // The first read quarantines; every later read meets the sticky hold.
+            for (expected, read) in [
+                (ReplicaStoreError.corrupt, { _ = try store.restore(for: self.scope) }),
+                (.quarantined, { _ = try store.outbox(for: self.scope) }),
+                (.quarantined, { _ = try ReplicaStore(directory: root).restore(for: self.scope) }),
+            ] as [(ReplicaStoreError, () throws -> Void)] {
+                do {
+                    try read()
+                    XCTFail("damaged \(damage) must not reopen")
+                } catch let error as ReplicaStoreError {
+                    XCTAssertEqual(error, expected, damage)
+                }
+            }
             let recovery = folder.appendingPathComponent("Recovery")
             XCTAssertTrue(FileManager.default.fileExists(atPath: recovery.appendingPathComponent("blocked").path))
             XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: recovery.path).isEmpty)

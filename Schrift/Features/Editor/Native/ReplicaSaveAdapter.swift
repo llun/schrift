@@ -2,6 +2,8 @@ import Foundation
 
 enum ReplicaSaveError: Error, Equatable {
     case incompatibleDraft, staleReference, invalidScope
+    /// The raw revision has no total Markdown shadow yet (opaque/rich blocks).
+    case unprojectableShadow
 }
 
 /// An immutable captured save, constructed only after the raw journal is
@@ -41,11 +43,40 @@ final class ReplicaSaveAdapter {
         try store.append(update, for: scope, commandID: command.id, baseRevision: command.baseRevision, origin: .local)
     }
 
-    func prepare(markdown: String, expected: ReplicaDraftReference? = nil) throws -> ReplicaSaveRequest {
+    /// Returns the request and the shadow it was stamped with. A reference older
+    /// than the journal (keystrokes appended after its draft was written) is
+    /// re-stamped from the current raw revision, never from its stale Markdown.
+    /// A different scope, format or generation, a revision ahead of the journal,
+    /// or a shadow that no longer matches its reference is refused.
+    func prepare(
+        markdown: String, expected: ReplicaDraftReference? = nil
+    ) throws -> (request: ReplicaSaveRequest, markdown: String) {
         guard scope.isValid, let restored = try store.restore(for: scope) else { throw ReplicaSaveError.invalidScope }
+        var markdown = markdown
+        if let expected {
+            let manifest = restored.manifest
+            guard expected.scope == scope, expected.formatVersion == manifest.formatVersion,
+                expected.generation == manifest.generation, expected.revision <= manifest.revision,
+                expected.matches(markdown: markdown)
+            else { throw ReplicaSaveError.staleReference }
+            if expected.revision < manifest.revision { markdown = try Self.projectedMarkdown(restored) }
+        }
         let reference = ReplicaDraftReference(manifest: restored.manifest, markdown: markdown)
-        if let expected, expected != reference { throw ReplicaSaveError.staleReference }
-        return ReplicaSaveRequest(adapter: self, reference: reference, batch: try store.outbox(for: scope))
+        return (ReplicaSaveRequest(adapter: self, reference: reference, batch: try store.outbox(for: scope)), markdown)
+    }
+
+    /// The compatibility shadow of a verified raw revision. Read-only: this
+    /// throwaway replica never authors, and the shadow is never a writer.
+    private static func projectedMarkdown(_ restored: ReplicaRestore) throws -> String {
+        let doc = YDoc(clientID: 0)
+        defer { doc.destroy() }
+        try doc.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
+        for update in restored.updates { try doc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote) }
+        guard doc.store.pendingStructs == nil, doc.store.pendingDs == nil else { throw ReplicaStoreError.corrupt }
+        guard let markdown = YBlockProjection.projectedMarkdown(YBlockProjection.project(doc)) else {
+            throw ReplicaSaveError.unprojectableShadow
+        }
+        return markdown
     }
 
     func isCurrent(_ request: ReplicaSaveRequest) -> Bool {

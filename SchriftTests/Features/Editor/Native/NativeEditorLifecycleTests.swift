@@ -61,7 +61,10 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         XCTAssertTrue(session.isClosed)
         XCTAssertTrue(replica?.store.clients.isEmpty == true, "destroy must clear the replica graph")
         XCTAssertTrue(replica?.share.isEmpty == true)
-        XCTAssertThrowsError(try session.engine.replaceText(block: Self.firstID, range: 0..<0, with: "closed"))
+        do {
+            _ = try session.engine.replaceText(block: Self.firstID, range: 0..<0, with: "closed")
+            XCTFail("a closed session must not write")
+        } catch DocumentEngineError.detached {}
         let reopened = try NativeEditorSession(state: state)
         defer { reopened.close() }
         XCTAssertEqual(reopened.surface.blocks, session.surface.blocks)
@@ -83,12 +86,14 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         XCTAssertNil(replica)
 
         // Start with real structs so failure cleanup has cycles to break.
-        XCTAssertThrowsError(
-            try NativeEditorSession(state: Data([0xff])) {
+        do {
+            _ = try NativeEditorSession(state: Data([0xff])) {
                 let doc = try self.makeDoc(clientID: 125)
                 replica = doc
                 return doc
-            })
+            }
+            XCTFail("an undecodable seed must not open")
+        } catch Lib0DecodingError.truncated {}
         XCTAssertNil(replica)
     }
 

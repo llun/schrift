@@ -674,9 +674,13 @@ new non-colliding author client and restores the durable revision. Reconnect byt
 can merge into this same owner through a remote journal/delivery barrier. Even an
 idempotent remote update advances the matching journal/engine revision and never
 enters the local outbox. Failed remote persistence freezes writes before publishing
-the changed display. Production lifecycle wiring, permanent migration/rollback
-ownership, shadow regeneration for stale references and sign-in generation guards
-remain before activation. Native production opening is still read-only.
+the changed display. A draft reference older than the journal
+is re-stamped from the current raw revision during replay; an incompatible one is
+refused. A durable session freezes on any unjournaled transaction so the engine
+revision cannot drift from the manifest, and Backspace at a block start is a quiet
+no-op until block joins exist (PR04). Production lifecycle wiring, permanent
+migration/rollback ownership, a total shadow for opaque documents and sign-in
+generation guards remain before activation. Native production opening is still read-only.
 
 **Selection.** `setSelection(EditorSelection?)` captures directed anchor/head
 endpoints as `YRelativePosition`s. Each `EditorPosition` holds a block id,

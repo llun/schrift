@@ -269,6 +269,24 @@ final class NativeTypingTests: DocumentEngineTestCase {
         assertMatches(session)
     }
 
+    func testBackspaceAtABlockStartIsAQuietNoOpUntilBlockJoinsExist() throws {
+        let session = try session()
+        defer { session.close() }
+        var writes = 0
+        session.enableTyping { _, _ in writes += 1 }
+        let input = try XCTUnwrap(session.input)
+        let original = session.textView.textStorage.string
+        for id in [Self.secondID, Self.thirdID] {
+            let entry = try XCTUnwrap(session.surface.rangeIndex.entry(for: id))
+            session.textView.selectedRange = NSRange(location: entry.textRange.location, length: 0)
+            session.textView.deleteBackward()
+        }
+        XCTAssertEqual(session.textView.textStorage.string, original)
+        XCTAssertEqual(writes, 0)
+        XCTAssertNil(input.noticeKey, "a block join is deferred, not an input error")
+        XCTAssertTrue(session.textView.isEditable)
+    }
+
     func testUnreadableMarksCannotTurnScrubbedDisplayIntoAWriterTarget() throws {
         let session = try session([
             BlockNoteBlock(

@@ -33,8 +33,9 @@ final class NativeTextView: UITextView {
         guard let inputCoordinator, isEditable else { return }
         var range = selectedRange
         if range.length == 0 {
-            // Nothing precedes the document start; never reach into another block.
-            guard range.location > 0 else { return }
+            // Nothing precedes the document start, and deleting a separator would join
+            // blocks (PR04): both are quiet no-ops that never reach into another block.
+            guard range.location > 0, !inputCoordinator.isBlockSeparator(at: range.location - 1) else { return }
             range = (textStorage.string as NSString).rangeOfComposedCharacterSequence(at: range.location - 1)
         }
         inputCoordinator.replace(range: range, with: "")
