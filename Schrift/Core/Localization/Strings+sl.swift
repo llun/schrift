@@ -181,6 +181,7 @@ enum Strings_sl {
         .editor_saving: "Shranjevanje…",
         .editor_saved: "Shranjeno",
         .editor_save_failed: "Ni bilo mogoče shraniti · Poskusi znova",
+        .editor_save_failed_title: "Ni bilo mogoče shraniti",
         .editor_save_failed_a11y: "Shranjevanje ni uspelo. Poskusi znova",
 
         // Editor - reading surface / chrome

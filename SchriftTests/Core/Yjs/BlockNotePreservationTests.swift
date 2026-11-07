@@ -54,6 +54,39 @@ final class BlockNotePreservationTests: XCTestCase {
         block.props.first { $0.key == key }?.value
     }
 
+    // MARK: - Nested list items
+
+    /// The server's nested list items' rules with their text unread (`runs: nil`), as for an
+    /// item holding a document link or mention, placed against `base`.
+    private func wordsOnlyPlacements(server: [BlockNoteBlock], base: String) throws -> [Int?] {
+        let doc = YDoc(clientID: 999)
+        defer { doc.destroy() }
+        try doc.applyUpdate(try YUpdateDecoder.decode(served(server)))
+        let old = YBlockProjection.project(doc).blocks
+        let rules = BlockNotePreservation.rules(for: old, in: doc).map { rule -> BlockNotePreservation.Rule? in
+            guard case .listTree(let shape, let props, let runs, let words, _)? = rule else { return rule }
+            XCTAssertNotNil(runs, "the golden encoder's text reads as runs")
+            return .listTree(shape: shape, props: props, runs: nil, words: words)
+        }
+        return BlockNotePreservation.placingListTrees(rules, old: old, base: blocks(base)).map { rule in
+            if case .listTree(_, _, _, _, let base)? = rule { return base }
+            return nil
+        }
+    }
+
+    /// Words cannot tell `Task` from `Task!`: with two such items in play neither is placed (so
+    /// both are rebuilt from the markdown), rather than the LCS pairing them crosswise.
+    func testListItemsWhoseTextIsUnreadAreNotPlacedWhenTheirWordsAreAmbiguous() throws {
+        let base = "- Task\n  - Child\n- Task!\n  - Child"
+        let stored = blocks(base)
+        XCTAssertEqual(try wordsOnlyPlacements(server: [stored[1], stored[0]], base: base), [nil, nil])
+    }
+
+    func testAListItemWhoseTextIsUnreadIsPlacedWhenItsWordsAreUnique() throws {
+        let base = "Intro\n\n- Task\n  - Child"
+        XCTAssertEqual(try wordsOnlyPlacements(server: blocks(base), base: base), [nil, 1])
+    }
+
     // MARK: - Tables
 
     /// The web's table reaches the editor as pipe lines, which come back as three plain

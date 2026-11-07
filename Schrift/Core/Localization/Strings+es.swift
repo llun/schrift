@@ -172,6 +172,7 @@ enum Strings_es {
         .editor_saving: "Guardando…",
         .editor_saved: "Guardado",
         .editor_save_failed: "No se pudo guardar · Reintentar",
+        .editor_save_failed_title: "No se pudo guardar",
         .editor_save_failed_a11y: "Error al guardar. Reintentar",
 
         // Editor - reading surface / chrome

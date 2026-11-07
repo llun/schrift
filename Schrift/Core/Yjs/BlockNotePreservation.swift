@@ -52,8 +52,9 @@ import Foundation
 /// Without a base (a draft from before the base was recorded) no shadow is matched and only
 /// the invisible blocks are kept.
 ///
-/// List items with nested children are left out on purpose: the editor models their
-/// structure, so re-indenting one keeps every word and must still be written.
+/// List items with nested children get the stricter `.listTree`: the editor models their
+/// structure, so re-indenting one keeps every word and must still be written. Rebuilding an
+/// untouched one on every save instead deleted the subtree a co-author might be typing in.
 ///
 /// Pure value code over a replica the caller owns; see `AGENTS.md`, "The Yjs CRDT core".
 enum BlockNotePreservation {
@@ -66,6 +67,17 @@ enum BlockNotePreservation {
         /// bold word — and such a change must be written, not preserved away.
         case exact(node: String, props: [String: YAnyValue], runs: [InlineRun])
         case text([String])
+        /// A list item with nested children (`structuredListNodes`): one new block with the
+        /// same tree (`treeShape`), node for node the same expressible props and the same text,
+        /// so a re-indent or a nested tick is always written. The text is each node's exact
+        /// `runs` (punctuation, marks and link targets included) when the replica's inline
+        /// content reads as runs, else only its `words` (a document link or mention inside).
+        /// `base` is the base block this server block was when the edit started
+        /// (`placingListTrees`); only a new block the user left at that base block may be its
+        /// shadow, so two items that read the same (a duplicate, a reorder) cannot swap.
+        /// Without one it is never matched.
+        case listTree(
+            shape: [String], props: [[String: YAnyValue]], runs: [[InlineRun]]?, words: [String], base: Int? = nil)
         case media(url: String)
         /// Never spelled by the export: always kept where it was.
         case invisible
@@ -91,7 +103,7 @@ enum BlockNotePreservation {
         "backgroundColor", "textColor", "textAlignment", "isToggleable", "start",
     ]
 
-    /// List items whose nested children the editor models and may restructure.
+    /// List items whose nested children the editor models and may restructure (`Rule.listTree`).
     static let structuredListNodes: Set<String> = ["bulletListItem", "numberedListItem", "checkListItem"]
 
     /// Upper bound on the Yjs items one block's text walk visits, so a hostile replica with an
@@ -118,7 +130,11 @@ enum BlockNotePreservation {
             case .xmlElement(let node)? = element.typeRef
         else { return nil }
         let hasNestedChildren = children.count > 1
-        if hasNestedChildren, structuredListNodes.contains(node) { return nil }
+        if hasNestedChildren, structuredListNodes.contains(node) {
+            guard let tree = treeShape(of: container), let words = walkedTokens(of: container), !words.isEmpty
+            else { return nil }
+            return .listTree(shape: tree.shape, props: tree.props, runs: tree.runs, words: words)
+        }
         let props = attributes(of: element)
 
         if node == "pdf", props["showPreview"] != .bool(false) { return .invisible }
@@ -177,6 +193,71 @@ enum BlockNotePreservation {
         }
         let tokens = signatureTokens(text)
         return tokens.isEmpty ? signatureTokens(attributeText) : tokens
+    }
+
+    /// The nodes of a block's subtree in document order, each with its nesting depth, and each
+    /// node's props and inline runs (`runs` is nil when any node's do not read as runs). `nil`
+    /// for a shape the editor cannot spell (a non-block child) or past `maxItemsPerBlock`.
+    private static func treeShape(
+        of container: YType
+    ) -> (shape: [String], props: [[String: YAnyValue]], runs: [[InlineRun]]?)? {
+        var shape: [String] = []
+        var props: [[String: YAnyValue]] = []
+        var runs: [[InlineRun]]? = []
+        // Iterative, like `walkedTokens`, so a deeply nested replica cannot overrun the stack.
+        var stack: [(container: YType, depth: Int)] = [(container, 0)]
+        while let (current, depth) = stack.popLast() {
+            guard shape.count < maxItemsPerBlock else { return nil }
+            var nested: [YType] = []
+            for child in liveChildren(of: current) {
+                guard case .type(let type) = child.content, case .xmlElement(let name)? = type.typeRef else {
+                    return nil
+                }
+                guard name == "blockGroup" else {
+                    shape.append("\(depth):\(name)")
+                    props.append(attributes(of: type))
+                    if let nodeRuns = YBlockProjection.inlineRuns(of: type) {
+                        runs?.append(trimmingTrailingBlanks(nodeRuns))
+                    } else {
+                        runs = nil
+                    }
+                    continue
+                }
+                for entry in liveChildren(of: type) {
+                    guard case .type(let next) = entry.content, next.typeRef == .xmlElement(nodeName: "blockContainer")
+                    else { return nil }
+                    nested.append(next)
+                }
+            }
+            stack.append(contentsOf: nested.reversed().map { ($0, depth + 1) })
+        }
+        return (shape, props, runs)
+    }
+
+    /// `runs` without the trailing spaces and tabs the markdown's list parsers strip (`rstrip`),
+    /// so a server "Task " reads like its markdown "Task" (the markdown cannot keep them either).
+    /// A code or link run keeps its own, which its delimiters protect from the strip.
+    private static func trimmingTrailingBlanks(_ runs: [InlineRun]) -> [InlineRun] {
+        var runs = runs
+        while var last = runs.last, !last.marks.contains(where: { $0.key == "code" || $0.key == "link" }) {
+            while last.text.last == " " || last.text.last == "\t" { last.text.removeLast() }
+            guard last.text.isEmpty else {
+                runs[runs.count - 1] = last
+                break
+            }
+            runs.removeLast()
+        }
+        return runs
+    }
+
+    /// `treeShape` of a new block.
+    static func treeShape(of block: BlockNoteBlock, depth: Int = 0) -> [String] {
+        ["\(depth):\(block.node)"] + block.children.flatMap { treeShape(of: $0, depth: depth + 1) }
+    }
+
+    /// A new block and its nested children in `treeShape` order.
+    private static func treeNodes(of block: BlockNoteBlock) -> [BlockNoteBlock] {
+        [block] + block.children.flatMap { treeNodes(of: $0) }
     }
 
     /// Attributes that style a block rather than carry its content.
@@ -276,12 +357,70 @@ enum BlockNotePreservation {
         _ block: BlockNoteBlock, node: String, props: [String: YAnyValue], runs: [InlineRun]
     ) -> Bool {
         guard block.node == node, block.children.isEmpty, block.runs == runs else { return false }
-        return block.props.allSatisfy { prop in
+        return expressiblePropsMatch(block, props)
+    }
+
+    /// Whether every prop of `block` the markdown can express equals the server's `props`.
+    private static func expressiblePropsMatch(_ block: BlockNoteBlock, _ props: [String: YAnyValue]) -> Bool {
+        block.props.allSatisfy { prop in
             if unexpressibleKeys.contains(prop.key) { return true }
             // A prop the server block lacks only matches its default: a `checked` or `level`
             // the user set must never read as untouched.
             return (props[prop.key] ?? omittedDefaults[prop.key]) == prop.value
         }
+    }
+
+    /// Whether `block` reads like a `.listTree` server block: the same tree, expressible props
+    /// and text — the exact runs where the rule has them, else (or `byWords`) the same words.
+    /// `tokens` are `signatureTokens(of: block)`.
+    private static func isListTreeShadow(
+        _ block: BlockNoteBlock, tokens: [String], of rule: Rule?, byWords: Bool = false
+    ) -> Bool {
+        guard case .listTree(let shape, let props, let runs, let words, _)? = rule, treeShape(of: block) == shape
+        else { return false }
+        let nodes = treeNodes(of: block)
+        if let runs, !byWords {
+            guard nodes.map(\.runs) == runs else { return false }
+        } else if tokens != words {
+            return false
+        }
+        return zip(nodes, props).allSatisfy { expressiblePropsMatch($0, $1) }
+    }
+
+    /// `rules` with each `.listTree` tied to the base block it was when the edit started: an
+    /// LCS of the server blocks with the base under `isListTreeShadow` (the plain alignment's
+    /// anchors hold the rest in step). A server item no base block reads like keeps no base and
+    /// is rebuilt from the markdown. One whose text the replica does not spell as runs is
+    /// matched by words only when that is unambiguous both ways — the one base block reading
+    /// like it, and no other server item reading like that block — since words cannot tell
+    /// `Task` from `Task!` and two such items could swap; past `maxTableCells`, never.
+    static func placingListTrees(_ rules: [Rule?], old: [ProjectedBlock], base: [BlockNoteBlock]) -> [Rule?] {
+        let listTrees = rules.indices.filter { if case .listTree? = rules[$0] { true } else { false } }
+        guard !listTrees.isEmpty else { return rules }
+        let tokens = base.map { signatureTokens(of: $0) }
+        func readsByWords(_ oldIndex: Int, _ baseIndex: Int) -> Bool {
+            isListTreeShadow(base[baseIndex], tokens: tokens[baseIndex], of: rules[oldIndex], byWords: true)
+        }
+        var wordsOnlyPlacement: [Int: Int] = [:]
+        if old.count * base.count <= BlockNoteAlignment.maxTableCells {
+            for oldIndex in listTrees {
+                guard case .listTree(_, _, .none, _, _)? = rules[oldIndex] else { continue }
+                let candidates = base.indices.filter { readsByWords(oldIndex, $0) }
+                if candidates.count == 1, listTrees.filter({ readsByWords($0, candidates[0]) }).count == 1 {
+                    wordsOnlyPlacement[oldIndex] = candidates[0]
+                }
+            }
+        }
+        var placed = rules
+        let pairs = BlockNoteAlignment.anchorPairs(old: old, new: base) { oldIndex, baseIndex in
+            if case .listTree(_, _, .none, _, _)? = rules[oldIndex] { return wordsOnlyPlacement[oldIndex] == baseIndex }
+            return isListTreeShadow(base[baseIndex], tokens: tokens[baseIndex], of: rules[oldIndex])
+        }
+        for pair in pairs {
+            guard case .listTree(let shape, let props, let runs, let words, _)? = rules[pair.old] else { continue }
+            placed[pair.old] = .listTree(shape: shape, props: props, runs: runs, words: words, base: pair.new)
+        }
+        return placed
     }
 
     // MARK: - What the user left alone
@@ -403,7 +542,7 @@ enum BlockNotePreservation {
             }
             if anchor.old < old.count, anchor.old < rules.count, let rule = rules[anchor.old],
                 untouched[anchor.new] != nil,
-                isSingleShadow(new[anchor.new], tokens: tokens[anchor.new], of: rule)
+                isSingleShadow(new[anchor.new], tokens: tokens[anchor.new], base: untouched[anchor.new], of: rule)
             {
                 placements.append((old: anchor.old, range: anchor.new..<(anchor.new + 1)))
             }
@@ -440,12 +579,15 @@ enum BlockNotePreservation {
     }
 
     /// Whether one untouched new block is, on its own, the shadow of the server block `rule`
-    /// was made for. `tokens` are `signatureTokens(of: block)`.
-    static func isSingleShadow(_ block: BlockNoteBlock, tokens: [String], of rule: Rule) -> Bool {
+    /// was made for. `tokens` are `signatureTokens(of: block)`; `base` is the base block the
+    /// user left it as (`untouched`).
+    static func isSingleShadow(_ block: BlockNoteBlock, tokens: [String], base: Int?, of rule: Rule) -> Bool {
         switch rule {
         case .exact(let node, let props, let runs): return isExactShadow(block, node: node, props: props, runs: runs)
         case .media(let url): return isMediaShadow(block, url: url)
         case .text(let words): return !words.isEmpty && tokens == words
+        case .listTree(_, _, _, _, let origin):
+            return origin != nil && base == origin && isListTreeShadow(block, tokens: tokens, of: rule)
         case .invisible: return false
         }
     }
@@ -468,6 +610,14 @@ enum BlockNotePreservation {
             for index in start..<end where untouched[index] != nil {
                 budget -= 1
                 if isMediaShadow(new[index], url: url) { return index..<(index + 1) }
+            }
+            return nil
+        case .listTree:
+            for index in start..<end where untouched[index] != nil {
+                budget -= 1
+                if isSingleShadow(new[index], tokens: tokens[index], base: untouched[index], of: rule) {
+                    return index..<(index + 1)
+                }
             }
             return nil
         case .text(let words):

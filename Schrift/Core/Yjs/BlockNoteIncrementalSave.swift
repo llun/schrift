@@ -78,13 +78,15 @@ enum BlockNoteIncrementalSave {
         let old = try oldBlocks(of: doc, serverOrigin: serverOrigin)
         // Server blocks the markdown cannot spell are put back in place of their untouched
         // shadows (`BlockNotePreservation`), so the write leaves them exactly as they are.
-        let rules = BlockNotePreservation.rules(for: old, in: doc)
+        var rules = BlockNotePreservation.rules(for: old, in: doc)
+        if let baseBlocks { rules = BlockNotePreservation.placingListTrees(rules, old: old, base: baseBlocks) }
         let untouched = baseBlocks.map { BlockNotePreservation.untouched(base: $0, new: newBlocks) } ?? [:]
         let tokens = newBlocks.map { BlockNotePreservation.signatureTokens(of: $0) }
         // A server block's untouched shadow anchors to it, so a plain duplicate cannot take it.
         let anchors = BlockNoteAlignment.anchorPairs(old: old, new: newBlocks) { oldIndex, newIndex in
             guard untouched[newIndex] != nil, let rule = rules[oldIndex] else { return false }
-            return BlockNotePreservation.isSingleShadow(newBlocks[newIndex], tokens: tokens[newIndex], of: rule)
+            return BlockNotePreservation.isSingleShadow(
+                newBlocks[newIndex], tokens: tokens[newIndex], base: untouched[newIndex], of: rule)
         }
         let preserved = BlockNotePreservation.preserve(
             old: old, rules: rules, new: newBlocks, untouched: untouched, anchors: anchors, tokens: tokens)

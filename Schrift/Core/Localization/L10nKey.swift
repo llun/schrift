@@ -205,6 +205,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_saving = "editor.saving"  // "Saving…"
     case editor_saved = "editor.saved"  // "Saved"
     case editor_save_failed = "editor.save_failed"  // "Couldn't save · Retry"
+    case editor_save_failed_title = "editor.save_failed_title"  // "Couldn't save" — alert title
     case editor_save_failed_a11y = "editor.save_failed_a11y"  // "Save failed. Retry"
 
     // Editor - reading surface / chrome

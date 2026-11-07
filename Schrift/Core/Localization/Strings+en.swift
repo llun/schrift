@@ -165,6 +165,7 @@ enum Strings_en {
         .editor_saving: "Saving…",
         .editor_saved: "Saved",
         .editor_save_failed: "Couldn't save · Retry",
+        .editor_save_failed_title: "Couldn't save",
         .editor_save_failed_a11y: "Save failed. Retry",
 
         // Editor - reading surface / chrome

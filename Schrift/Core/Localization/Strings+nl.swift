@@ -169,6 +169,7 @@ enum Strings_nl {
         .editor_saving: "Opslaan…",
         .editor_saved: "Opgeslagen",
         .editor_save_failed: "Opslaan mislukt · Opnieuw proberen",
+        .editor_save_failed_title: "Opslaan mislukt",
         .editor_save_failed_a11y: "Opslaan mislukt. Opnieuw proberen",
 
         // Editor - reading surface / chrome

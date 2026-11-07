@@ -167,6 +167,7 @@ enum Strings_th {
         .editor_saving: "กำลังบันทึก…",
         .editor_saved: "บันทึกแล้ว",
         .editor_save_failed: "บันทึกไม่ได้ · ลองใหม่",
+        .editor_save_failed_title: "บันทึกไม่ได้",
         .editor_save_failed_a11y: "บันทึกไม่สำเร็จ ลองใหม่",
 
         // Editor - reading surface / chrome
