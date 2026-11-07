@@ -334,6 +334,14 @@ enum Strings_nl {
         .profile_language: "Taal",
         .profile_notifications: "Meldingen",
         .profile_work_offline: "Offline werken",
+        .native_editor_preserved_block: "%@ (behouden, nog niet bewerkbaar)",
+        .native_editor_unknown_block: "Niet-ondersteund blok",
+        .profile_native_editor: "Native editor (experimenteel, alleen-lezen)",
+        .profile_native_editor_footer:
+            "Wordt toegepast wanneer je een document opnieuw opent. Ondersteunt Docs 6; bewerken is nog niet beschikbaar.",
+        .native_editor_preserved_title: "Document behouden",
+        .native_editor_preserved_body:
+            "De native lezer kan de structuur van dit document nog niet weergeven. De oorspronkelijke inhoud blijft behouden.",
         .profile_live_collaboration: "Live samenwerken",
         .profile_live_collaboration_footer:
             "Live samenwerken synchroniseert bewerkingen in realtime met anderen wanneer de server dit ondersteunt.",

@@ -194,22 +194,25 @@ struct TextMark: Equatable {
 }
 
 /// A block as a surface renders it: identity, kind, attributes and inline runs.
-/// The projection's fidelity is deliberately absent — a surface renders what it
-/// is given and never decides whether a block is writable.
+/// The surface never decides whether a block is writable. `isOpaque` only
+/// distinguishes preserved placeholders from genuinely empty text blocks.
 struct BlockSnapshot: Equatable {
     var id: String
     var node: String
     var props: [ProjectedProp]
     var runs: [InlineRun]
+    var isOpaque: Bool
 
-    init(id: String, node: String, props: [ProjectedProp], runs: [InlineRun]) {
+    init(id: String, node: String, props: [ProjectedProp], runs: [InlineRun], isOpaque: Bool = false) {
         self.id = id
         self.node = node
         self.props = props
         self.runs = runs
+        self.isOpaque = isOpaque
     }
 
     init(_ block: ProjectedBlock) {
-        self.init(id: block.id, node: block.node, props: block.props, runs: block.runs)
+        self.init(
+            id: block.id, node: block.node, props: block.props, runs: block.runs, isOpaque: block.fidelity.isOpaque)
     }
 }

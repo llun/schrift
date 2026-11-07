@@ -347,6 +347,14 @@ enum Strings_sl {
         .profile_language: "Jezik",
         .profile_notifications: "Obvestila",
         .profile_work_offline: "Delo brez povezave",
+        .native_editor_preserved_block: "%@ (ohranjeno, še ni mogoče urejati)",
+        .native_editor_unknown_block: "Nepodprt blok",
+        .profile_native_editor: "Izvorni urejevalnik (poskusno, samo za branje)",
+        .profile_native_editor_footer:
+            "Velja ob naslednjem odprtju dokumenta. Podpira Docs 6; urejanje še ni na voljo.",
+        .native_editor_preserved_title: "Ohranjen dokument",
+        .native_editor_preserved_body:
+            "Izvorni bralnik še ne more prikazati strukture tega dokumenta. Izvirna vsebina je ohranjena.",
         .profile_live_collaboration: "Sodelovanje v živo",
         .profile_live_collaboration_footer:
             "Sodelovanje v živo sproti usklajuje vaše urejanje z drugimi, kadar strežnik to podpira.",

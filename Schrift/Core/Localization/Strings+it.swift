@@ -333,6 +333,14 @@ enum Strings_it {
         .profile_language: "Lingua",
         .profile_notifications: "Notifiche",
         .profile_work_offline: "Lavora offline",
+        .native_editor_preserved_block: "%@ (conservato, non ancora modificabile)",
+        .native_editor_unknown_block: "Blocco non supportato",
+        .profile_native_editor: "Editor nativo (sperimentale, sola lettura)",
+        .profile_native_editor_footer:
+            "Si applica alla prossima apertura di un documento. Supporta Docs 6; la modifica non è ancora disponibile.",
+        .native_editor_preserved_title: "Documento conservato",
+        .native_editor_preserved_body:
+            "Il lettore nativo non può ancora visualizzare la struttura di questo documento. Il contenuto originale è conservato.",
         .profile_live_collaboration: "Collaborazione dal vivo",
         .profile_live_collaboration_footer:
             "La collaborazione dal vivo sincronizza le modifiche con gli altri in tempo reale quando il server la supporta.",
