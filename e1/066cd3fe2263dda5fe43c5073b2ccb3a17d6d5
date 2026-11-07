@@ -1,0 +1,56 @@
+Schrift/Core/Networking/ServerConfigEndpoints.swift
+  s_2a54b453f881e2::t_d516549c44d450 24
+Schrift/Core/Collaboration/DocumentCollaborationSession.swift
+  s_2a54b453f881e2::t_cdb2f9c5e86fe9 177
+  s_2a54b453f881e2::t_2727dea604eb9c 89-91,107-108,121,265-267
+README.md
+  s_2a54b453f881e2::t_53e2fca901108c 9-14
+docs/offline-and-sync.md
+  s_2a54b453f881e2::t_53e2fca901108c 961-962
+AGENTS.md
+  s_2a54b453f881e2::t_0f5145dd7ae3ad 3801-3803
+  s_2a54b453f881e2::t_b8ffe33904a8b0 3639,3774-3775,3812-3817
+SchriftTests/Core/Collaboration/CollaborationDisconnectTests.swift
+  s_2a54b453f881e2::t_172cfb208ce371 6-13,34-49
+  s_2a54b453f881e2::t_f90d62dbd787f4 1
+  s_2a54b453f881e2::t_c9fb5845bbf2b2 50
+SchriftTests/Core/Collaboration/YWebSocketTests.swift
+  s_2a54b453f881e2::t_53e2fca901108c 47
+Schrift/App/RootView.swift
+  s_2a54b453f881e2::t_27ea1f5f0544df 219-221
+Schrift/Core/Collaboration/DocumentCollaborationManager.swift
+  s_2a54b453f881e2::t_dec5bcd95f2826 601-602
+  s_2a54b453f881e2::t_2727dea604eb9c 42-45,353,444-445,603,607-612
+  s_2a54b453f881e2::t_0cfa7dfa896d0d 613-614
+SchriftTests/Core/Networking/ServerConfigClientTests.swift
+  s_2a54b453f881e2::t_53e2fca901108c 75-77,79
+  s_2a54b453f881e2::t_d516549c44d450 78,84-85
+Schrift/Core/Collaboration/WebSocketConnecting.swift
+  s_2a54b453f881e2::t_27ea1f5f0544df 91-93,95-106
+  s_2a54b453f881e2::t_28192508ec1e80 94
+SchriftTests/Core/Collaboration/DocumentCollaborationManagerSyncProtocolTests.swift
+  s_2a54b453f881e2::t_d516549c44d450 101-105
+  s_2a54b453f881e2::t_cdb2f9c5e86fe9 91
+  s_2a54b453f881e2::t_1ed7886dcf0eff 84-88,90,106-108
+  s_2a54b453f881e2::t_de78928e531835 77-83,89,92-100,109-113
+docs/architecture.md
+  s_2a54b453f881e2::t_094f332c92ab33 1046-1052,1061-1064
+  s_2a54b453f881e2::t_0f5145dd7ae3ad 1034-1037
+  s_2a54b453f881e2::t_6630634ea65f5f 72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e1066cd3fe2263dda5fe43c5073b2ccb3a17d6d5",
+  "prompts": {},
+  "sessions": {
+    "s_2a54b453f881e2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1b521-a4e1-7542-b5e8-8aabff9f69d6",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
