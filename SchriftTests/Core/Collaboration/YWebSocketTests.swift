@@ -44,7 +44,7 @@ final class YWebSocketTests: DocumentCollaborationManagerTestCase {
         }
     }
 
-    func testDocs6RemainsUnavailableEvenWithUserFlagEnabled() async {
+    func testManagerServerSupportSeamCanDisableDocs6() async {
         let spy = ManagerSocketFactorySpy()
         let manager = await yhubManager(spy, enabled: false)
         XCTAssertEqual(manager.availability, .serverUnavailable)

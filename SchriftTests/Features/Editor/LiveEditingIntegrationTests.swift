@@ -635,7 +635,6 @@ final class LiveEditingIntegrationTests: XCTestCase {
             serverBaseURL: baseURL, cookieProvider: { [] }, featureEnabled: { true }, isOffline: { false },
             serverConfigProvider: { config }, socketFactory: spy.factory)
         await manager.refreshServerSupport()
-        manager.serverSupportsLiveCollaboration = true  // test-only override of the release capability
         _ = try XCTUnwrap(manager.session(for: documentID, canUpdate: false))
         defer { manager.suspend() }
         let scheduler = ManualLiveRemoteApplyScheduler()

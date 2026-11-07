@@ -39,6 +39,10 @@ final class DocumentCollaborationManager {
         /// entry: the latest `session(for:canUpdate:)` caller wins, and the replica is
         /// kept across a flip (a reader just stops writing and answering step1).
         var canUpdate: Bool
+        /// A server permission reset requires a fresh editor ability read before
+        /// this document can open another session. In particular, resume/reconnect
+        /// must not revive the stale writer role.
+        var requiresAbilityRefresh = false
         var refCount: Int
         var lingerTask: Task<Void, Never>?
         /// The document's live Yjs replica (C1), built lazily on the first
@@ -346,6 +350,7 @@ final class DocumentCollaborationManager {
             entry.lingerTask?.cancel()  // a re-open cancels the pending teardown
             entry.lingerTask = nil
             entry.refCount += 1
+            entry.requiresAbilityRefresh = false
             if entry.canUpdate != canUpdate {
                 entry.session?.stop()
                 entry.session = nil
@@ -436,7 +441,8 @@ final class DocumentCollaborationManager {
             onSyncUpdate: { [weak self] data in self?.applyReplicaUpdate(data, for: documentID) },
             initialSyncStep1: { [weak self] in self?.currentStateVector(for: documentID) ?? Data([0x00]) },
             onStateRequest: { [weak self] peerVector in self?.stateReply(to: peerVector, for: documentID) },
-            onInitialSync: { [weak self] in self?.markInitialSyncApplied(for: documentID) })
+            onInitialSync: { [weak self] in self?.markInitialSyncApplied(for: documentID) },
+            onPermissionsReset: { [weak self] in self?.handlePermissionsReset(for: documentID) })
         session.start()
         return session
     }
@@ -592,8 +598,18 @@ final class DocumentCollaborationManager {
         let available = availability == .available
         for (id, entry) in entries where entry.refCount > 0 {
             entry.session?.stop()
-            entries[id]?.session = available ? makeSession(for: id, canUpdate: entry.canUpdate) : nil
+            entries[id]?.session =
+                available && !entry.requiresAbilityRefresh
+                ? makeSession(for: id, canUpdate: entry.canUpdate) : nil
         }
+    }
+
+    private func handlePermissionsReset(for documentID: UUID) {
+        guard var entry = entries[documentID] else { return }
+        entry.canUpdate = false
+        entry.session = nil
+        entry.requiresAbilityRefresh = true
+        entries[documentID] = entry
     }
 
     private func teardownIfIdle(_ documentID: UUID) {

@@ -3636,7 +3636,7 @@ markdown write endpoint**. Understand this before touching the save path:
   to yhub as `{"update": base64}` (a full-state Yjs update is a valid incremental one, so no
   GET/diff is needed), while a pre-Docs 6 server takes the legacy
   `documents/{id}/content/` PATCH tagged `"websocket": true` (through
-  `setContent(…, viaWebSocket:)`; the classic body stays byte-identical when false). Docs 6 has
+  `setContent(…, viaWebSocket:)`; the classic body stays byte-identical when false). Docs 6
   live sessions use the enabled y-websocket transport, and snapshot saves use this route. Its
   PATCH carries the whole snapshot and is subject to the deployment's request-size limit. Because
   reconcile is markdown-based, the coordinator carries the **projected markdown** as the
@@ -3771,8 +3771,8 @@ markdown write endpoint**. Understand this before touching the save path:
     sync-engine surface). **Opt-in behind the default-off `schrift.liveCollaboration`
     flag — the C3 Profile toggle (Profile → Preferences → "Live collaboration", an
     `@AppStorage(LiveCollaborationPreference.key)` switch) is the only writer. The
-    default stays off pending the owed on-device WebSocket verification against a real
-    collaboration-capable server (non-gating follow-up); the flag is read lazily, so a
+    default stays off; the owner will run the on-device end-to-end WebSocket check in
+    TestFlight for this build. The flag is read lazily, so a
     flip affects newly requested sessions, not screens already open.** Docs 6's yhub
     collaboration server speaks plain y-websocket at
     `/collaboration/ws/v1/{org}/{documentID}`, not Hocuspocus. Its transport is enabled;
@@ -3798,7 +3798,9 @@ markdown write endpoint**. Understand this before touching the save path:
   replies to query-awareness), cannot broadcast edits, and cannot snapshot or report an edit
   handled live. `canProjectReplica` checks sync/replica health; `canWriteReplica(for:)` adds
   the update ability and is checked by the bridge before forwarding. Retain permission across
-  suspend/resume. Reconnect answers a server's step1 with the retained replica's step2 diff,
+  normal suspend/resume. A server close with 1000 clears `canUpdate`, drops the session, and
+  blocks resume/reconnect from rebuilding until a fresh `session(for:canUpdate:)` call supplies
+  abilities again. Reconnect answers a server's step1 with the retained replica's step2 diff,
   **including the delete set**: a deletion-only suspended edit does not change its state
   vector and must still reach the server. Do not gate state replies on replica health. Readers
   send none: a reader must not publish, whatever its replica holds. An entry keeps one ability
@@ -3807,6 +3809,12 @@ markdown write endpoint**. Understand this before touching the save path:
   Production enables yhub when the server advertises a collaboration URL. The manager's
   server-support seam remains available to tests. The independent default-off
   `schrift.liveCollaboration` user preference still gates session availability.
+  **Switch-on evidence (2026-11-07, S4/S5; labs `RESULTS.md`):** on the real yhub server,
+  snapshot and live sync for a document filled with every web block were byte-identical;
+  Schrift's core re-encoded them identically to yjs 13.6.33; the web cursor arrived as
+  y-prosemirror relative-position JSON and resolved correctly; off-main decode passed.
+  The remaining on-device end-to-end check is the owner's TestFlight step on this build.
+  Rollback is reverting `ServerConfig.yWebSocketLiveCollaborationEnabled` to `false`.
 - **The replica broadcasts the formatting-cleanup update it makes on its own.** An inbound
   update that touches a formatted text makes `cleanupTransactions` open a second, local
   transaction with origin `nil` (B4). yjs providers broadcast that transaction's update like

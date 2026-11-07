@@ -69,7 +69,7 @@ A native SwiftUI iOS/iPadOS app that acts as a client for [La Suite Numérique D
 
 ## Non-goals (v1)
 
-- Real-time collaborative *writing* (typing that other clients see live) — the two-way write path is now **fully wired end to end** (C2a's sync engine + C2b's snapshot-save mechanism + **C2c**'s editor wiring: a keystroke forwards to the replica and broadcasts, a peer's edit applies caret-preservingly, and a ~60 s debounce PATCHes a full-state snapshot), but it is **opt-in** — everything above runs only behind the default-off `schrift.liveCollaboration` flag, so shipped behavior is unchanged until a user enables it via **Profile → Preferences → "Live collaboration"** (C3; default off pending the on-device WebSocket verification). Presence avatars are live. See "The Yjs CRDT core" → "Live editing (C1)", "Two-way sync engine (C2a)", "Live-snapshot save (C2b)", and "Editor wiring — the write path complete (C2c)". With the flag off, outbound edits keep saving via the single full-overwrite HTTP PATCH exactly as before.
+- Real-time collaborative *writing* (typing that other clients see live) — the two-way write path is now **fully wired end to end** (C2a's sync engine + C2b's snapshot-save mechanism + **C2c**'s editor wiring: a keystroke forwards to the replica and broadcasts, a peer's edit applies caret-preservingly, and a ~60 s debounce PATCHes a full-state snapshot), but it is **opt-in** — everything above runs only behind the default-off `schrift.liveCollaboration` flag, so shipped behavior is unchanged until a user enables it via **Profile → Preferences → "Live collaboration"** (C3). The owner will run the remaining on-device WebSocket check in TestFlight for this build. Presence avatars are live. See "The Yjs CRDT core" → "Live editing (C1)", "Two-way sync engine (C2a)", "Live-snapshot save (C2b)", and "Editor wiring — the write path complete (C2c)". With the flag off, outbound edits keep saving via the single full-overwrite HTTP PATCH exactly as before.
 - ~~Offline editing/sync queue.~~ **Superseded.** Offline *reading* of
   previously-opened documents was added 2026-07-03; the sync queue (write-ahead
   drafts, `.pendingSync`, conflict-checked replay on reconnect/foreground/launch)
@@ -1031,8 +1031,10 @@ ignored); the legacy Hocuspocus shape stays flat. The editor supplies the docume
 `abilities.update` from its existing metadata. Readers can receive/project updates but
 never publish awareness, broadcast local edits, produce save snapshots, or report local
 edits handled live. Replica read safety remains independent of write authorization.
-Permission and replica survive suspension; a reconnect's step2 diff includes deletions,
-even when a deletion-only edit left the state vector unchanged.
+Permission and replica survive normal suspension; a reconnect's step2 diff includes deletions,
+even when a deletion-only edit left the state vector unchanged. A server close with 1000 clears
+`canUpdate` and drops the session; resume/reconnect cannot rebuild it until a fresh
+`session(for:canUpdate:)` call supplies abilities again.
 
 **The production server gate is enabled:** `ServerConfig.yWebSocketLiveCollaborationEnabled`
 is true, so a Docs 6 config with an advertised collaboration URL supports live collaboration.
@@ -1040,6 +1042,13 @@ The independent user preference `schrift.liveCollaboration` remains default off 
 gates session availability. Saves continue through the incremental HTTP collaboration-server
 route for snapshots. Tests can still override the manager's support seam for isolated yhub
 transport cases.
+
+**Switch-on evidence (2026-11-07, S4/S5; labs `RESULTS.md`):** on the real yhub server,
+snapshot and live sync for a document filled with every web block were byte-identical.
+Schrift's core re-encoded them identically to yjs 13.6.33. The web cursor arrived as
+y-prosemirror relative-position JSON and resolved correctly, and off-main decode passed.
+The remaining on-device end-to-end check is the owner's TestFlight step on this build.
+Rollback is reverting `ServerConfig.yWebSocketLiveCollaborationEnabled` to `false`.
 
 **C3 (shipped):** the user-facing toggle is a **Profile → Preferences → "Live
 collaboration"** switch (`ProfileScreen`, a `ProfileTrailingRow` + `Switch` exactly like
@@ -1049,10 +1058,10 @@ the sibling Notifications/Work-offline rows) backed by
 { LiveCollaborationPreference.isEnabled() }`, a live closure re-evaluated on every
 `availability` read — pinned by
 `DocumentCollaborationManagerLifecycleTests.testAvailabilityTracksTheLivePreferenceFlagMidSession`,
-which fails if anyone "optimizes" it into a captured Bool. **The default is OFF /
-opt-in** (decision 2026-07-21): the write path is CI-verified but the on-device
-end-to-end WebSocket check against a real collaboration-capable server is still owed, so
-users must opt in; flipping the default waits for that verification. Deliberate,
+which fails if anyone "optimizes" it into a captured Bool. **The preference default is OFF /
+opt-in** (decision 2026-07-21). The real-server S4/S5 checks above support enabling the
+Docs 6 server capability; the owner will run the remaining on-device end-to-end WebSocket
+check in TestFlight for this build. Deliberate,
 documented semantics: the flag is read lazily, so a flip affects **newly requested
 sessions** (opening a document, reconnect, resume) — it does not retroactively open or
 close sockets on screens already showing a document; fully consistent from the next

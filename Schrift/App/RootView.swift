@@ -216,6 +216,9 @@ private struct AuthenticatedHomeContainer: View {
             // session belongs to before anything reads it. A stale id would list the
             // previous user's unsynced documents to the new one.
             await homeViewModel.refreshSignedInUser()
+            // Awareness is account-specific and can include an email address as the
+            // display name. Re-fetch it before any reauthenticated session is rebuilt.
+            await collaboration.refreshLocalAwareness()
             await homeViewModel.saveCoordinator.syncPendingPins()
             await homeViewModel.load()
         }

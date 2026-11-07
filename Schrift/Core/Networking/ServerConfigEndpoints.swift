@@ -21,7 +21,7 @@ struct ServerConfig: Codable, Equatable, Sendable {
     /// or leak the session cookie off-origin.
     ///
     /// Live collaboration is available when the server advertises a WebSocket and,
-    /// for Docs 6's y-websocket transport, the internal release capability is enabled.
+    /// for Docs 6's y-websocket transport, its internal server capability is enabled.
     /// The user preference `schrift.liveCollaboration` remains an independent opt-in;
     /// it cannot bypass this server gate. The socket URL is still origin-pinned by
     /// `CollaborationEndpoint`.
