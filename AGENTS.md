@@ -2685,14 +2685,19 @@ markdown write endpoint**. Understand this before touching the save path:
   diagram, columns) are kept where they were when no shadow is found. Anything the
   user edited no longer matches and is written from the markdown as before. A **nested
   list item** gets `Rule.listTree`: kept only when one *untouched* new block has the same
-  words **and** the same tree of nodes (`treeShape`), because the editor models its
-  structure and a re-indent keeps every word yet must be written. Rebuilding untouched
+  words, the same tree of nodes (`treeShape`) **and**, node for node, the same expressible
+  props as the server item, because the editor models its structure and a re-indent or a
+  nested tick keeps every word yet must be written — and only where `untouched` maps that
+  block to the base block the server item was (`placingListTrees`, an LCS of the server
+  blocks with the base), so two look-alike siblings cannot swap on a delete or reorder. Rebuilding untouched
   ones on every save (the old behaviour) deleted the subtree a co-author was typing in:
   keystrokes landing between the GET and the PATCH were lost, and two rebuilds of one item
   from the same state left both copies (TestFlight 0.103.0,
-  `testAnUntouchedNestedListItemIsLeftInPlaceForACoAuthorTypingInIt`). Still rebuilt:
-  an edited one, one without a recorded base, or one whose words a co-author changed
-  since the base — its nested media then resets web-set props the markdown does not carry
+  `testAnUntouchedNestedListItemIsLeftInPlaceForACoAuthorTypingInIt`). Still rebuilt
+  from the markdown: one the user edited (re-indented, ticked, re-worded, moved); every
+  one when the save has no recorded base; one whose words, tree or expressible props a
+  co-author changed on the server since the base; and one whose subtree holds no text, which
+  has no words to match — a rebuilt one's nested media then resets web-set props the markdown does not carry
   (an image's `caption`, `previewWidth`, `textAlignment`; a file's `caption`). **Docs 6's
   `updated_at` is not a content clock** (yhub's compaction bumps it ~10 s after edits,
   best effort; any Django PATCH, the app's own title PATCH included, bumps it at once),

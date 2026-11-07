@@ -3878,7 +3878,11 @@ final class DocumentSaveCoordinator {
             states[documentID] = .pendingSync
         } else {
             states[documentID] = .failed("Couldn't save changes. Please try again.")
-            failureDetails[documentID] = diagnosticsMarker.flatMap { diagnostics?.failure(after: $0) }
+            failureDetails[documentID] = diagnosticsMarker.flatMap { marker in
+                diagnostics?.failure(after: marker, newest: true) {
+                    saveFailureIsRelevant($0, documentID: documentID, error: error)
+                }
+            }
         }
         // A revalidation landed while this save was on the wire, so detection was skipped. Now
         // that it has settled the invariant holds again — so decide, before anything can push.
@@ -3967,4 +3971,16 @@ struct DocumentMoveEvent: Equatable, Sendable {
 private struct DocumentMovedObserver {
     weak var owner: AnyObject?
     let handler: @MainActor (DocumentMoveEvent) -> Void
+}
+
+/// Whether a failure the shared log recorded during a save is this save's reason: one of its
+/// document's requests (saves of other documents interleave in the same log), and not the
+/// legacy content route's 404 a Docs 6 server answers before the save falls back to the
+/// collaboration route — unless that 404 is the save's own `.notFound` (a deleted document on
+/// a pre-Docs 6 server). The id is matched before `displayPath` elides it.
+func saveFailureIsRelevant(_ failure: RequestFailure, documentID: UUID, error: Error?) -> Bool {
+    let id = documentID.uuidString.lowercased()
+    guard failure.path.contains(id) else { return false }
+    let isLegacyContent404 = failure.path == "documents/\(id)/content/" && failure.statusCode == 404
+    return !isLegacyContent404 || error as? DocsAPIError == .notFound
 }

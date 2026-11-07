@@ -18,7 +18,7 @@ import Foundation
 /// editor edits. Only anchored blocks survive untouched (unchanged non-opaque blocks, plus
 /// `unknownNode:*` and document-link blocks, and — through `align(old:new:forced:)` — the
 /// server blocks `BlockNotePreservation` recognised as untouched (a table, a callout, …); an
-/// untouched nested list item too, when its words and tree still match (`Rule.listTree`).
+/// untouched nested list item too, when its words, tree and props still match (`Rule.listTree`).
 /// One that does not match — or any, without a recorded base — is still rewritten from
 /// markdown, nested media included, which resets anything the web set on that media and
 /// the markdown does not carry (an image's `caption`, `previewWidth` and

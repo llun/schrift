@@ -237,6 +237,42 @@ final class BlockNoteIncrementalSaveTests: XCTestCase {
         XCTAssertNotEqual(after.blocks.map(\.id), stored.map(\.id), "rebuilt from the markdown")
     }
 
+    /// Two nested items with the same words and tree, told apart only by the tick: deleting the
+    /// unchecked one must keep the checked one, not the first server item that reads alike.
+    func testDeletingOneOfTwoItemsThatDifferOnlyInTheirTickKeepsTheOther() throws {
+        let stored = newBlocks("- [ ] Task\n  - Child\n- [x] Task\n  - Child")
+        XCTAssertEqual(stored.map(\.children.count), [1, 1])
+        let state = BlockNoteYjs.encode(stored, clientID: 1)
+
+        let update = try BlockNoteIncrementalSave.update(
+            serverState: state, newBlocks: newBlocks("- [x] Task\n  - Child"), baseBlocks: stored,
+            serverOrigin: origin)
+        let after = try project(state, after: update)
+
+        XCTAssertEqual(after.blocks.map(\.id), [stored[1].id], "the checked item is the one kept")
+    }
+
+    /// Two nested items whose words, tree and props match (one has a "!"): swapping them must be
+    /// written, so the untouched one keeps its own container rather than its look-alike's.
+    func testReorderingTwoLookAlikeNestedItemsIsWritten() throws {
+        let stored = newBlocks("- Task\n  - Child\n- Task!\n  - Child")
+        XCTAssertEqual(stored.map(\.children.count), [1, 1])
+        let state = BlockNoteYjs.encode(stored, clientID: 1)
+
+        let update = try BlockNoteIncrementalSave.update(
+            serverState: state, newBlocks: newBlocks("- Task!\n  - Child\n- Task\n  - Child"), baseBlocks: stored,
+            serverOrigin: origin)
+
+        let server = YDoc(clientID: 999)
+        defer { server.destroy() }
+        try server.applyUpdate(try YUpdateDecoder.decode(state))
+        if let update { try server.applyUpdate(try YUpdateDecoder.decode(update)) }
+        let ids = YBlockProjection.project(server).blocks.map(\.id)
+        let writer = BlockNoteWriter(doc: server)
+        XCTAssertEqual(try ids.map { text(of: try writer.find($0).element) }, ["Task!", "Task"])
+        XCTAssertEqual(ids.first, stored[1].id, "the untouched item kept its own container")
+    }
+
     private var nestedLeafMarkdown: String {
         let media = "\(origin)/media/11111111-1111-4111-8111-111111111111/attachments/"
         return "- [ ] Task\n  ![photo.jpg](\(media)22222222-2222-4222-8222-222222222222.jpg)\n"
