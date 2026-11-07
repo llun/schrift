@@ -21,6 +21,7 @@ struct ProfileScreen: View {
     // reads this key live (RootView's `featureEnabled` closure), so writing it here is the
     // entire wiring — see `LiveCollaborationPreference`.
     @AppStorage(LiveCollaborationPreference.key) private var liveCollaboration: Bool = false
+    @AppStorage(NativeEditorPreference.key) private var nativeEditor: Bool = false
 
     @State private var isConfirmingDisconnect = false
     @State private var showAppearanceSheet = false
@@ -151,8 +152,9 @@ struct ProfileScreen: View {
         ListSection(
             header: loc[.profile_prefs],
             // The section footer is a single `Text`, which renders the newline — one
-            // sentence per toggle (Work offline, then Live collaboration).
+            // sentence per toggle (Work offline, Live collaboration, then Native editor).
             footer: loc[.profile_prefs_footer] + "\n" + loc[.profile_live_collaboration_footer]
+                + "\n" + loc[.profile_native_editor_footer]
         ) {
             ListRow(
                 icon: .dark_mode,
@@ -191,6 +193,10 @@ struct ProfileScreen: View {
             ProfileTrailingRow(icon: .group, title: loc[.profile_live_collaboration]) {
                 Switch(isOn: $liveCollaboration)
             }
+            ProfileTrailingRow(icon: .edit, title: loc[.profile_native_editor]) {
+                Switch(isOn: $nativeEditor)
+            }
+            .accessibilityIdentifier("profile.nativeEditor")
         }
     }
 

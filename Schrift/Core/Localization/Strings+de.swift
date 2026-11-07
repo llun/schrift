@@ -337,6 +337,14 @@ enum Strings_de {
         .profile_language: "Sprache",
         .profile_notifications: "Benachrichtigungen",
         .profile_work_offline: "Offline arbeiten",
+        .native_editor_preserved_block: "%@ (erhalten, noch nicht bearbeitbar)",
+        .native_editor_unknown_block: "Nicht unterstützter Block",
+        .profile_native_editor: "Nativer Editor (experimentell, schreibgeschützt)",
+        .profile_native_editor_footer:
+            "Gilt beim nächsten Öffnen eines Dokuments. Unterstützt Docs 6; Bearbeiten ist noch nicht verfügbar.",
+        .native_editor_preserved_title: "Dokument erhalten",
+        .native_editor_preserved_body:
+            "Der native Leser kann die Struktur dieses Dokuments noch nicht anzeigen. Der ursprüngliche Inhalt bleibt erhalten.",
         .profile_live_collaboration: "Live-Zusammenarbeit",
         .profile_live_collaboration_footer:
             "Die Live-Zusammenarbeit synchronisiert Ihre Änderungen in Echtzeit mit anderen, wenn Ihr Server dies unterstützt.",

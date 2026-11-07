@@ -329,6 +329,12 @@ enum Strings_th {
         .profile_language: "ภาษา",
         .profile_notifications: "การแจ้งเตือน",
         .profile_work_offline: "ทำงานออฟไลน์",
+        .native_editor_preserved_block: "%@ (เก็บรักษาไว้ ยังแก้ไขไม่ได้)",
+        .native_editor_unknown_block: "บล็อกที่ไม่รองรับ",
+        .profile_native_editor: "ตัวแก้ไขเนทีฟ (ทดลอง อ่านอย่างเดียว)",
+        .profile_native_editor_footer: "มีผลเมื่อเปิดเอกสารครั้งถัดไป รองรับ Docs 6 แต่ยังไม่สามารถแก้ไขได้",
+        .native_editor_preserved_title: "เอกสารถูกเก็บรักษาไว้",
+        .native_editor_preserved_body: "ตัวอ่านเนทีฟยังไม่สามารถแสดงโครงสร้างของเอกสารนี้ได้ เนื้อหาต้นฉบับยังคงถูกเก็บรักษาไว้",
         .profile_live_collaboration: "การทำงานร่วมกันแบบเรียลไทม์",
         .profile_live_collaboration_footer:
             "การทำงานร่วมกันแบบเรียลไทม์จะซิงค์การแก้ไขของคุณกับผู้อื่นทันทีเมื่อเซิร์ฟเวอร์ของคุณรองรับ",

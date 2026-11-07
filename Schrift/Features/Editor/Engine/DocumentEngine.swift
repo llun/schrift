@@ -3,7 +3,7 @@ import Foundation
 /// The headless document engine (B6a/B6b): the layer a native editor sits on.
 ///
 /// **It borrows the replica; it never owns it.** The `YDoc` belongs to
-/// `DocumentCollaborationManager` on the main actor (the one-owner rule), and
+/// `DocumentCollaborationManager` or a separate `NativeEditorSession` on the main actor (the one-owner rule), and
 /// the engine only reads and writes it through the writer. When the owner
 /// destroys the replica — a fail-safe, a suspend teardown — `YDoc.onDestroy`
 /// fires and the engine detaches: its hooks are cleared, buffered patches are

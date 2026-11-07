@@ -342,6 +342,14 @@ enum Strings_en {
         .profile_language: "Language",
         .profile_notifications: "Notifications",
         .profile_work_offline: "Work offline",
+        .native_editor_preserved_block: "%@ (preserved, not editable yet)",
+        .native_editor_unknown_block: "Unsupported block",
+        .profile_native_editor: "Native editor (experimental, read-only)",
+        .profile_native_editor_footer:
+            "Applies when you next open a document. Supports Docs 6; editing is not available yet.",
+        .native_editor_preserved_title: "Preserved document",
+        .native_editor_preserved_body:
+            "This document has a structure the native reader cannot display yet. Its original content is preserved.",
         .profile_live_collaboration: "Live collaboration",
         .profile_live_collaboration_footer:
             "Live collaboration syncs your edits with others in real time when your server supports it.",

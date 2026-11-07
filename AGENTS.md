@@ -584,7 +584,9 @@ new code reads like the surrounding code.
     a replica is mutable shared state, so exactly one owner may touch it — the
     **main actor**, through `DocumentCollaborationManager` (`@MainActor final
     class`, `Schrift/Core/Collaboration/DocumentCollaborationManager.swift`),
-    which holds one `YDoc` per document (C1). Pass updates and projections across
+    which holds one `YDoc` per document (C1). The opt-in read-only native route
+    instead has a separate private main-actor owner, `NativeEditorSession`; it
+    never attaches to the manager's replica. Pass updates and projections across
     isolation domains — never the `YDoc`. Its inputs/outputs stay value types
     (`YUpdate`, `YContentRecord`), which is what keeps the boundary honest.
 - Value types that cross task/actor boundaries adopt `Sendable`; injected
@@ -2042,8 +2044,29 @@ that are easy to violate and expensive to discover:
 
 ### The document engine (`Features/Editor/Engine`, B6a/B6b)
 
-The headless layer the phase 2 native editor sits on. It is proven by tests
-only; nothing in the shipping editor uses it yet.
+The layer the phase 2 native reader sits on. The classic editor remains the
+default; `schrift.nativeEditor` is an experimental, default-off Profile preference.
+
+- **Native reader (PR01).** `EditorView` captures the preference once per open,
+  before instantiating the classic editor's tasks or live bridge. For an online
+  Docs 6 document with no pending local content, `NativeEditorOpen` fetches
+  `collaborationYDocState`; legacy servers, offline opens and fetch/decode failures
+  use the classic editor. Never replace a focused editor when the toggle changes.
+  `NativeEditorSession` privately owns its own main-actor `YDoc`, seeds
+  `NativeTextSurface` before attaching one engine, and calls `destroy()` on close,
+  failed initialization and deinitialization. It never borrows the manager's replica.
+  `NativeTextView` is selectable, non-editable TextKit 2 with one main scroller;
+  never read its legacy layout manager or force full-document layout/measurement.
+  `AttributedDocumentProjection` and `ProjectionRangeIndex` keep paragraph
+  separators outside replica text. Snapshots carry `isOpaque` for preserved
+  placeholders; unsupported nodes and invalid roots are explicit read-only states.
+  Apply every origin without optimism. After settled patches, storage must equal
+  a fresh attributed projection, comparing semantic attribute values. Text patches replace exact delta ranges; props/replacements
+  rebuild one block slice; structural edits insert/remove slices; only
+  reset replaces all storage. Presentation changes may restyle without a Yjs write.
+  PR01 has no native editing, persistence, sockets, rich block controls or legacy
+  local-replica adapter. The isolated `SchriftNativeTestHost` hosts the production
+  reader; `--native-large` chooses 5,000 paragraphs. No shipping launch arguments.
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (`@MainActor`), which borrows the replica and resolves

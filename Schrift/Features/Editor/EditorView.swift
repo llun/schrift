@@ -277,7 +277,44 @@ func presentedPeerCount(peerCount: Int, isOffline: Bool) -> Int? {
     return peerCount
 }
 
+/// Captures the experimental route at open. The classic view's tasks, save
+/// controls and live bridge are instantiated only when that route is selected.
 struct EditorView: View {
+    let viewModel: EditorViewModel
+    let reach: LinkReach
+    let serverHost: String
+    let serverOrigin: String
+    var childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore()
+    var linkRole: LinkRole? = nil
+    var initialIsFavorite: Bool = false
+    var pinRow: Document? = nil
+    var isOffline: Bool = false
+    var onDeleted: (() -> Void)? = nil
+    var onOpenDocument: ((Document) -> Void)? = nil
+    var onCreatedDocument: ((Document) -> Void)? = nil
+    @State private var nativeOpen = NativeEditorOpen()
+
+    var body: some View {
+        Group {
+            switch nativeOpen.route {
+            case .loading:
+                ProgressView()
+            case .native(let session):
+                NativeEditorView(session: session, title: viewModel.title)
+            case .classic:
+                ClassicEditorView(
+                    viewModel: viewModel, reach: reach, serverHost: serverHost, serverOrigin: serverOrigin,
+                    childrenCache: childrenCache, linkRole: linkRole, initialIsFavorite: initialIsFavorite,
+                    pinRow: pinRow, isOffline: isOffline, onDeleted: onDeleted,
+                    onOpenDocument: onOpenDocument, onCreatedDocument: onCreatedDocument)
+            }
+        }
+        .task { await nativeOpen.open(viewModel: viewModel, isOffline: isOffline) }
+        .onDisappear { nativeOpen.close() }
+    }
+}
+
+private struct ClassicEditorView: View {
     @Environment(\.docsTheme) private var theme
     @Bindable var viewModel: EditorViewModel
     let reach: LinkReach

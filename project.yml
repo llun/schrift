@@ -86,6 +86,7 @@ targets:
       testTargets:
         - SchriftTests
         - SchriftChecklistUITests
+        - SchriftNativeUITests
       gatherCoverageData: true
   SchriftTests:
     type: bundle.unit-test
@@ -135,4 +136,36 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.llun.Schrift.ChecklistUITests
+        GENERATE_INFOPLIST_FILE: true
+
+  # PR01 native fixture host: the production TextKit 2 reader and raw local
+  # replicas only. --native-large selects the 5,000-paragraph owner fixture.
+  SchriftNativeTestHost:
+    type: application
+    platform: iOS
+    sources:
+      - path: Schrift
+        excludes:
+          - App/SchriftApp.swift
+      - path: SchriftUITests/Support/NativeEditorTestHostApp.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.llun.Schrift.NativeTestHost
+        PRODUCT_MODULE_NAME: SchriftNativeTestHost
+        OTHER_SWIFT_FLAGS: "$(inherited) -module-alias Schrift=SchriftNativeTestHost"
+        GENERATE_INFOPLIST_FILE: true
+        TARGETED_DEVICE_FAMILY: "1,2"
+        INFOPLIST_KEY_UILaunchScreen_Generation: true
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+  SchriftNativeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: SchriftUITests/Native
+    dependencies:
+      - target: SchriftNativeTestHost
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.llun.Schrift.NativeUITests
         GENERATE_INFOPLIST_FILE: true
