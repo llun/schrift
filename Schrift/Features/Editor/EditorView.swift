@@ -871,6 +871,7 @@ struct EditorView: View {
             // not being pushed.
             if viewModel.syncConflict != nil {
                 Button {
+                    viewModel.dismissFocusForSheet()
                     conflictToResolve = viewModel.syncConflict.map(IdentifiedSyncConflict.init)
                 } label: {
                     EditorNoticeLabel(

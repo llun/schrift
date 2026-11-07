@@ -2285,6 +2285,19 @@ final class EditorViewModel {
         }
     }
 
+    /// Ends the caret session without leaving editing mode, so a sheet's actions are not hidden
+    /// under the keyboard. The resign `syncFocus` performs suppresses delegate echoes, so nothing
+    /// would settle a composition afterwards: like `finishEditing`, treat marked text as committed
+    /// (clear `markedTextBlockID`, else `settleComposition` is a no-op while it is held) and publish it.
+    func dismissFocusForSheet() {
+        if markedTextBlockID != nil { markedTextBlockID = nil }
+        settleComposition()
+        focusedBlockID = nil
+        cursorRequest = nil
+        selection = nil
+        slashQueryText = nil
+    }
+
     /// The text views moved focus: a composition left behind on the old block (its unmark never
     /// arrived) is published now rather than waiting for a timer live editing does not have.
     func noteFocusChange() {
