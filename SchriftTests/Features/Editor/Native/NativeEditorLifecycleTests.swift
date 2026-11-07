@@ -158,13 +158,21 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             }
             let response = MockURLProtocol.ResponseGate()
             let deadline = NativeOpenTestDeadline()
+            let completionCount = Counter()
+            let completed = expectation(
+                description: stallsConfig ? "late config response completed" : "late raw response completed")
+            completed.assertForOverFulfill = true
             stub(
                 version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID),
-                gate: stallsConfig ? nil : response, configGate: stallsConfig ? response : nil)
+                gate: stallsConfig ? nil : response, configGate: stallsConfig ? response : nil,
+                onGatedCompletion: {
+                    _ = completionCount.next()
+                    completed.fulfill()
+                })
             let open = NativeEditorOpen(enabled: true, waitForTimeout: { await deadline.wait() })
             let loading = Task { await open.open(viewModel: fixture.model, isOffline: false) }
             await waitUntil {
-                deadline.isWaiting
+                deadline.isWaiting && MockURLProtocol.deferredDeliveryCount == 1
                     && (stallsConfig
                         ? MockURLProtocol.lastRequest?.url?.path.contains("/config") == true
                         : MockURLProtocol.lastRequest?.url?.path.contains("/collaboration/ydoc/") == true)
@@ -174,9 +182,13 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             deadline.fire()
             await loading.value
             guard case .classic = open.route else { return XCTFail("deadline did not select classic") }
+            XCTAssertEqual(completionCount.current, 0, "the late response must still be held after fallback")
             response.open()
-            if stallsConfig { _ = try? await fixture.model.client.serverConfig() }
-            await open.open(viewModel: fixture.model, isOffline: false)
+            await fulfillment(of: [completed], timeout: 3)
+            XCTAssertEqual(completionCount.current, 1)
+            let installedSession: NativeEditorSession?
+            if case .native(let session) = open.route { installedSession = session } else { installedSession = nil }
+            XCTAssertNil(installedSession, "late prefetch completion must not install a native replica")
             guard case .classic = open.route else { return XCTFail("a late response replaced the selected fallback") }
         }
     }
@@ -273,16 +285,17 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
 
     private func stub(
         version: String, state: Data, status: Int = 200, gate: MockURLProtocol.ResponseGate? = nil,
-        configGate: MockURLProtocol.ResponseGate? = nil
+        configGate: MockURLProtocol.ResponseGate? = nil, onGatedCompletion: (@Sendable () -> Void)? = nil
     ) {
         MockURLProtocol.stubHandler = { request in
             let isConfig =
                 request.url?.path.hasSuffix("config") == true || request.url?.path.hasSuffix("config/") == true
             let object = isConfig ? ["RELEASE_VERSION": version] : ["doc": state.base64EncodedString()]
+            let responseGate = isConfig ? configGate : gate
             return .init(
                 statusCode: isConfig ? 200 : status, headers: ["Content-Type": "application/json"],
                 body: (try? JSONSerialization.data(withJSONObject: object)) ?? Data(), error: nil,
-                releasedBy: isConfig ? configGate : gate)
+                releasedBy: responseGate, onCompletion: responseGate == nil ? nil : onGatedCompletion)
         }
     }
 
