@@ -584,7 +584,9 @@ new code reads like the surrounding code.
     a replica is mutable shared state, so exactly one owner may touch it — the
     **main actor**, through `DocumentCollaborationManager` (`@MainActor final
     class`, `Schrift/Core/Collaboration/DocumentCollaborationManager.swift`),
-    which holds one `YDoc` per document (C1). Pass updates and projections across
+    which holds one `YDoc` per document (C1). The opt-in read-only native route
+    instead has a separate private main-actor owner, `NativeEditorSession`; it
+    never attaches to the manager's replica. Pass updates and projections across
     isolation domains — never the `YDoc`. Its inputs/outputs stay value types
     (`YUpdate`, `YContentRecord`), which is what keeps the boundary honest.
 - Value types that cross task/actor boundaries adopt `Sendable`; injected
@@ -2042,8 +2044,39 @@ that are easy to violate and expensive to discover:
 
 ### The document engine (`Features/Editor/Engine`, B6a/B6b)
 
-The headless layer the phase 2 native editor sits on. It is proven by tests
-only; nothing in the shipping editor uses it yet.
+The layer the phase 2 native reader sits on. The classic editor remains the
+default; `schrift.nativeEditor` is an experimental, default-off Profile preference.
+
+- **Native reader (PR01).** On first open, or reopen from `.loading` or `.native`,
+  `NativeEditorOpen` reads the preference before starting classic tasks or the live bridge;
+  a reappearing mounted classic route keeps running its tasks during the reread. For an online
+  Docs 6 document with no pending local content, `NativeEditorOpen` fetches
+  `collaborationYDocState`; legacy servers, offline/unreachable opens, pending
+  deletions, pending creation intents and fetch/decode failures use the classic editor. A three-second
+  deadline bounds the optional prefetch without awaiting cancellation of shared
+  config requests. Never replace a focused editor when the toggle changes.
+  Before selecting native, `refreshOfflineCacheForNativeReader` fetches the
+  server's Markdown export, reuses leaf-nesting recovery and `cacheServerCopy`,
+  and preserves its title/server timestamp for the classic offline fallback.
+  This refresh covers content only; it does not populate the children cache.
+  It never installs classic display state or changes the classic load route.
+  `NativeEditorSession` privately owns its own main-actor `YDoc`, seeds
+  `NativeTextSurface` before attaching one engine, and calls `destroy()` on close,
+  failed initialization and deinitialization. It never borrows the manager's replica.
+  `NativeTextView` is selectable, non-editable TextKit 2 with one main scroller;
+  never read its legacy layout manager or force full-document layout/measurement.
+  `AttributedDocumentProjection` and `ProjectionRangeIndex` keep paragraph
+  separators outside replica text. Snapshots carry `isOpaque` for preserved
+  placeholders; unsupported nodes and invalid roots are explicit read-only states.
+  Apply every origin without optimism. After settled patches, storage must equal
+  a fresh attributed projection, comparing semantic attribute values. Text patches replace exact delta ranges; props/replacements
+  rebuild one block slice. The session supplies fresh per-block projections for
+  text/props patches: placeholder offsets are never replica text offsets, and
+  fidelity-changing props/marks require a rebuilt slice. Structural edits insert/remove slices; only
+  reset replaces all storage. Presentation changes may restyle without a Yjs write.
+  PR01 has no native editing, persistence, sockets, rich block controls or legacy
+  local-replica adapter. The isolated `SchriftNativeTestHost` hosts the production
+  reader; `--native-large` chooses 5,000 paragraphs. No shipping launch arguments.
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (`@MainActor`), which borrows the replica and resolves
@@ -3792,6 +3825,12 @@ markdown write endpoint**. Understand this before touching the save path:
   `CollaborationEndpoint`'s API-origin scheme/host/port and explicit `Origin`/cookies.
   Only the validated org comes from config (the Networking rule above), never its host.
   y-websocket awareness nests the name/color in `user`; Hocuspocus keeps its flat shape.
+  **A writer renews its awareness every 15 s with a strictly higher clock** (y-protocols'
+  `outdatedTimeout / 2`); peers drop a state not renewed for 30 s, so a single announce made the
+  web show us for ~30 s at most. The query-awareness reply also bumps the clock, since an equal
+  clock does not refresh a peer's timer. The renewal stops on stop/disconnect; readers never send it.
+  The awareness clientID is the session's own random id, not the replica's `YDoc.clientID`:
+  yhub relays any id and the web never joins the two, so they need not match.
   The editor passes **`Document.abilities.update`**, never inferred link role, into session
   acquisition (both navigation surfaces already carry the document as `pinRow`). Missing
   metadata fails closed. Readers receive/project updates but publish no awareness (including

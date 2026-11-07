@@ -22,6 +22,10 @@ final class MockURLProtocol: URLProtocol {
         /// Holds this response until the test opens the gate. Takes precedence over
         /// `delay`, which a gated stub ignores.
         let gate: ResponseGate?
+        /// Signals that this stub's delivery ran (including a gated response
+        /// discarded after cancellation). Unlike the handler, this runs after
+        /// a response gate opens for gated stubs, never merely when the request arrives.
+        let onCompletion: (@Sendable () -> Void)?
 
         init(
             statusCode: Int,
@@ -29,7 +33,8 @@ final class MockURLProtocol: URLProtocol {
             body: Data,
             error: Error?,
             delay: TimeInterval = 0,
-            releasedBy gate: ResponseGate? = nil
+            releasedBy gate: ResponseGate? = nil,
+            onCompletion: (@Sendable () -> Void)? = nil
         ) {
             self.statusCode = statusCode
             self.headers = headers
@@ -37,6 +42,7 @@ final class MockURLProtocol: URLProtocol {
             self.error = error
             self.delay = delay
             self.gate = gate
+            self.onCompletion = onCompletion
         }
     }
 
@@ -309,12 +315,17 @@ final class MockURLProtocol: URLProtocol {
         // (`gate → held → item → stub → gate`) that `cancel()` does not break — so a gate
         // nothing ever opens would leak itself, the work item, this `URLProtocol` instance
         // and the body `Data`, for as long as the process lives.
-        let payload = Stub(statusCode: stub.statusCode, headers: stub.headers, body: stub.body, error: stub.error)
+        let payload = Stub(
+            statusCode: stub.statusCode, headers: stub.headers, body: stub.body, error: stub.error,
+            onCompletion: stub.onCompletion)
         // `self` is captured strongly on purpose, as on the delayed path: a dropped delivery
         // would strand the awaiting `session.data(for:)` until URLSession's own 60s request
         // timeout releases it as an opaque `-1001`.
         let item = DispatchWorkItem {
-            guard !self.isCancelled else { return }
+            guard !self.isCancelled else {
+                payload.onCompletion?()
+                return
+            }
             self.deliver(payload)
         }
         // A gate nothing ever opens stalls the test body until that same 60s timeout, and
@@ -355,6 +366,7 @@ final class MockURLProtocol: URLProtocol {
     }
 
     private func deliver(_ stub: Stub) {
+        defer { stub.onCompletion?() }
         guard let client else { return }
 
         if let error = stub.error {

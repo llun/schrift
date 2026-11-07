@@ -199,7 +199,12 @@ final class YWebSocketTests: DocumentCollaborationManagerTestCase {
         socket.deliver(message: Data([4]) + SyncMessage(step: .step2, data: Data([0, 0])).encodedPayload())
         socket.deliver(message: Data([3]))
         await waitUntil { socket.sentFrames.count == 3 }
-        XCTAssertEqual(socket.sentFrames[2], socket.sentFrames[1])
+        // Same state, but a newer clock: an equal one would not refresh the web's 30 s timer.
+        let announced = try AwarenessCodec.decodePayload(Data(socket.sentFrames[1].dropFirst()))
+        let answered = try AwarenessCodec.decodePayload(Data(socket.sentFrames[2].dropFirst()))
+        XCTAssertEqual(answered[0].clientID, announced[0].clientID)
+        XCTAssertEqual(answered[0].stateJSON, announced[0].stateJSON)
+        XCTAssertGreaterThan(answered[0].clock, announced[0].clock)
         XCTAssertEqual(manager.replicaVersion(for: docID), 0, "type 4 is not y-websocket sync")
     }
 

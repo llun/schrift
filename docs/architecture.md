@@ -517,8 +517,9 @@ them, which is BlockNote's own rule. No incremental byte pin moved.
 
 ### The headless document engine (B6a/B6b)
 
-The phase 2 native editor's foundation, proven headlessly and not yet wired into
-any screen. `Features/Editor/Engine/` holds these pieces:
+The phase 2 native editor's foundation. The default editor keeps its existing
+path; PR01 connects this engine to an opt-in read-only TextKit 2 surface.
+`Features/Editor/Engine/` holds these pieces:
 
 - **`EditorSurface`** — the model → UI protocol: one `applyPatch(BlockPatch)`.
   A patch is a list of `BlockChange`s: `.text(blockID, [TextDelta])` (a
@@ -536,7 +537,7 @@ any screen. `Features/Editor/Engine/` holds these pieces:
   `applyPatch`, so a test can assert it equals the replica's projection after
   every step.
 - **`DocumentEngine`** (`@MainActor`) — borrows the replica from
-  `DocumentCollaborationManager` (never owns it), exposes block-relative intents
+  `DocumentCollaborationManager` or a separate `NativeEditorSession` (never owns it), exposes block-relative intents
   (`replaceText`, `formatRange`, `splitBlock`, `joinBlocks`, `setBlockType`)
   that resolve through `BlockNoteWriter` in one `.localUser` transaction and
   return the update bytes for broadcast, and turns the change signal into
@@ -549,6 +550,53 @@ any screen. `Features/Editor/Engine/` holds these pieces:
   block delivery, and remembers when completion needs a whole-list reset.
 - **`EngineSelection`** — directed surface positions and their internal relative
   captures, including an element anchor for an empty text-capable block.
+
+**Native reader (phase 2 PR01).** Profile's `schrift.nativeEditor` preference
+defaults off and is read by `NativeEditorOpen` at each open or reopen. A selected surface
+never changes in response to a preference write. `NativeEditorOpen` fetches the
+existing raw `collaborationYDocState` for eligible online Docs 6 documents.
+Legacy servers, offline/unreachable or local documents, pending deletions/local
+content, pending creation intents and failed raw fetches/decodes stay with the classic editor. A three-second
+prefetch deadline selects classic without waiting for a stalled request to finish
+cancelling; closed/timed-out result streams cannot install late native sessions.
+Its tasks, controls and live bridge
+are not mounted alongside a native session.
+
+Successful native selection also refreshes the existing offline cache before
+publishing the session. The cache-only view-model path reuses `formattedContent`,
+leaf-nesting recovery and `cacheServerCopy`; the stored representation remains
+server-exported Markdown plus title, client sync time and server `updated_at`,
+rather than a potentially lossy native projection. It does not install classic
+display state or advance its edit baseline. This read is covered by the same
+prefetch deadline, cancellation/availability checks and save-marker freshness
+guard. The classic load route remains unchanged.
+This refresh covers content only, not the children cache.
+
+`NativeEditorSession` is the sole main-actor owner of a private local `YDoc`,
+separate from `DocumentCollaborationManager`. It integrates the raw baseline,
+seeds `NativeTextSurface` from `YBlockProjection`, then attaches one engine. Close
+and deinitialization destroy the replica; failed seeding also destroys it.
+`NativeTextView` uses standard TextKit 2 storage, asserts a text layout manager,
+allows selection/copy, and owns scrolling. There is no legacy layout-manager read,
+document-height measurement or full-document layout request.
+
+`AttributedDocumentProjection` renders semantic marks, token-based typography,
+block identity/type and structural separators. `BlockSnapshot.isOpaque` preserves
+the difference between an opaque paragraph and an empty one. Unsupported blocks
+get labelled preserved placeholders; an unsupported root has an explicit state.
+`ProjectionRangeIndex` maps UTF-16 ranges without treating separators as replica
+characters; duplicate/missing IDs are not addressable. `NativeTextSurface` applies
+all six patch kinds and every origin, replacing exact text-delta ranges or affected block storage
+slices (reset replaces all storage). Its settled storage equals a fresh
+projection under normalized attribute comparison. For text/props changes, the
+session projects the affected top-level block again; placeholders and fidelity
+changes rebuild that slice instead of using replica offsets in a UI label. The
+lookup scans container identities without reprojecting unrelated block text.
+Dynamic Type/language changes
+only rebuild presentation. No native edit/save/live path is introduced here;
+durable typing/legacy adapters and complete block chrome belong to later PRs.
+The generated project includes an isolated production-reader fixture host and
+UI smoke test; `--native-large` supplies the 5,000-paragraph scroll fixture.
 
 **Selection.** `setSelection(EditorSelection?)` captures directed anchor/head
 endpoints as `YRelativePosition`s. Each `EditorPosition` holds a block id,
@@ -1027,7 +1075,7 @@ is accepted without changing the replica or clearing known peers.
 slash, with the existing explicit origin and cookie headers. Only the validated org is
 read from `COLLABORATION_WS_URL`; its host never determines the socket destination.
 Awareness for yhub reads/writes `{"user":{"name":…, "color":…}}` (cursor fields are
-ignored); the legacy Hocuspocus shape stays flat. The editor supplies the document's
+ignored); the legacy Hocuspocus shape stays flat. A writer re-publishes its awareness every 15 s with a strictly higher clock (peers drop a state not renewed within 30 s); renewal stops on any disconnect. The editor supplies the document's
 `abilities.update` from its existing metadata. Readers can receive/project updates but
 never publish awareness, broadcast local edits, produce save snapshots, or report local
 edits handled live. Replica read safety remains independent of write authorization.
@@ -1269,7 +1317,8 @@ The item graph is a mesh of strong cycles — `item.left ⇄ item.right`, and
 ARC collects none of it, so **releasing a `YDoc` frees nothing**; a live session
 opens one replica per document. `YDoc.destroy()` breaks the cycles and must be
 called by the replica's owner — the main actor, through
-`DocumentCollaborationManager` (C1) — whenever it drops a replica (entry teardown or a
+`DocumentCollaborationManager` (C1), or the separate `NativeEditorSession` for the
+opt-in reader — whenever it drops a replica (entry teardown or a
 fail-safe). No edge can be
 `unowned` instead: the algorithm reads all of them in both directions, and none has
 a target that provably outlives its source.

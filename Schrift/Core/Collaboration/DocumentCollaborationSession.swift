@@ -62,6 +62,13 @@ final class DocumentCollaborationSession {
     /// Our awareness state (name and color: flat on Hocuspocus, nested under `user` on
     /// y-websocket) broadcast to peers, or nil to join as an observer (always for a reader).
     private let localState: LocalAwarenessState?
+    /// y-protocols awareness clock: every publish must carry a higher one, or peers
+    /// ignore it (an equal clock does not refresh their 30 s outdated timer).
+    private var awarenessClock: UInt = 0
+    /// How often we re-publish our state. y-protocols renews every 15 s and peers drop a
+    /// state that has not been renewed for 30 s, so one announce keeps us visible 30 s only.
+    private let awarenessRenewInterval: Duration
+    private var renewalTask: Task<Void, Never>?
     /// Fired on the main actor when a peer's change signal (a sync update)
     /// arrives. Signal-only: the payload is not applied, only noted.
     private let onRemoteChange: @MainActor () -> Void
@@ -96,6 +103,7 @@ final class DocumentCollaborationSession {
         transport: CollaborationTransport,
         clientID: UInt = UInt(UInt32.random(in: 1..<UInt32.max)),
         localState: LocalAwarenessState? = nil,
+        awarenessRenewInterval: Duration = .seconds(15),
         wireProtocol: CollaborationWireProtocol = .hocuspocus,
         canUpdate: Bool = true,
         onRemoteChange: @escaping @MainActor () -> Void = {},
@@ -108,6 +116,7 @@ final class DocumentCollaborationSession {
         self.transport = transport
         self.clientID = clientID
         self.localState = canUpdate ? localState : nil
+        self.awarenessRenewInterval = awarenessRenewInterval
         self.wireProtocol = wireProtocol
         self.canUpdate = canUpdate
         self.onRemoteChange = onRemoteChange
@@ -125,8 +134,6 @@ final class DocumentCollaborationSession {
         let transport = self.transport
         let documentName = self.documentName
         let clientID = self.clientID
-        let localState = self.localState
-        let wireProtocol = self.wireProtocol
         let initialSyncStep1 = self.initialSyncStep1
         pumpTask = Task { [weak self] in
             let events = await transport.start()
@@ -139,13 +146,10 @@ final class DocumentCollaborationSession {
             // A send failure means the socket is already broken; the pump's
             // disconnect event reclassifies the state, so ignore it here.
             try? await transport.send(frame)
-            // Announce our presence, so peers show our avatar.
-            if let localState {
-                let awareness = AwarenessCodec.encodePayload([
-                    AwarenessEntry(clientID: clientID, clock: 1, stateJSON: localState.json(wireProtocol: wireProtocol))
-                ])
-                try? await transport.send(
-                    HocuspocusMessage(documentName: documentName, type: .awareness, payload: awareness))
+            // Announce our presence, so peers show our avatar, then keep renewing it.
+            if let frame = self?.nextAwarenessFrame() {
+                try? await transport.send(frame)
+                self?.startAwarenessRenewal()
             }
             self?.markLiveIfConnecting()
             // Weak per iteration so a session dropped without stop() does not keep
@@ -154,12 +158,37 @@ final class DocumentCollaborationSession {
                 guard let self else { break }
                 self.handle(event)
             }
+            self?.renewalTask?.cancel()
+        }
+    }
+
+    /// Our awareness entry with a fresh clock, or nil for an observer (always for a reader).
+    private func nextAwarenessFrame() -> HocuspocusMessage? {
+        guard let localState else { return nil }
+        awarenessClock += 1
+        let payload = AwarenessCodec.encodePayload([
+            AwarenessEntry(
+                clientID: clientID, clock: awarenessClock, stateJSON: localState.json(wireProtocol: wireProtocol))
+        ])
+        return HocuspocusMessage(documentName: documentName, type: .awareness, payload: payload)
+    }
+
+    private func startAwarenessRenewal() {
+        let interval = awarenessRenewInterval
+        let transport = self.transport
+        renewalTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: interval)
+                guard !Task.isCancelled, let frame = self?.nextAwarenessFrame() else { return }
+                try? await transport.send(frame)
+            }
         }
     }
 
     /// Closes the socket ourselves (1001). The pump then observes `.selfClosed`
     /// and settles into `.ended(.closed)`, which unwinds the pump.
     func stop() {
+        renewalTask?.cancel()
         let transport = self.transport
         Task { await transport.close() }
     }
@@ -242,11 +271,7 @@ final class DocumentCollaborationSession {
                         peers, applying: entries, excludingLocalClientID: clientID, wireProtocol: wireProtocol)
                 }
             case .queryAwareness where wireProtocol == .yWebSocket:
-                guard let localState else { return }  // readers never publish, even on query
-                let payload = AwarenessCodec.encodePayload([
-                    AwarenessEntry(clientID: clientID, clock: 1, stateJSON: localState.json(wireProtocol: wireProtocol))
-                ])
-                let frame = HocuspocusMessage(documentName: documentName, type: .awareness, payload: payload)
+                guard let frame = nextAwarenessFrame() else { return }  // readers never publish, even on query
                 let transport = self.transport
                 Task { try? await transport.send(frame) }
             default:
@@ -257,6 +282,7 @@ final class DocumentCollaborationSession {
             // drop it. On reconnect the manager builds a fresh session that
             // repopulates `peers` from the new room's awareness.
             peers = []
+            renewalTask?.cancel()
             switch reason {
             case .permissionsReset: state = .ended(.permissionsReset)
             case .selfClosed: state = .ended(.closed)
