@@ -2047,8 +2047,9 @@ that are easy to violate and expensive to discover:
 The layer the phase 2 native reader sits on. The classic editor remains the
 default; `schrift.nativeEditor` is an experimental, default-off Profile preference.
 
-- **Native reader (PR01).** `NativeEditorOpen` reads the preference at each open/reopen,
-  before instantiating the classic editor's tasks or live bridge. For an online
+- **Native reader (PR01).** On first open, or reopen from `.loading` or `.native`,
+  `NativeEditorOpen` reads the preference before starting classic tasks or the live bridge;
+  a reappearing mounted classic route keeps running its tasks during the reread. For an online
   Docs 6 document with no pending local content, `NativeEditorOpen` fetches
   `collaborationYDocState`; legacy servers, offline/unreachable opens, pending
   deletions, pending creation intents and fetch/decode failures use the classic editor. A three-second
