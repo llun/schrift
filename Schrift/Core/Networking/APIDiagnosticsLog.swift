@@ -56,7 +56,13 @@ final class APIDiagnosticsLog: @unchecked Sendable {
     /// that threw, which can be recorded first: the editor reads a document's sub-page list
     /// alongside its body, and a 404 on the list is not the body's reason. It filters only;
     /// "first" still means first among the failures it accepts.
-    func failure(after marker: Int, where isRelevant: (RequestFailure) -> Bool = { _ in true }) -> RequestFailure? {
+    ///
+    /// `newest` takes the last accepted failure instead, for a caller whose filter already drops
+    /// the expected failures before the cause (the save's legacy-route 404 before its Docs 6
+    /// fallback), so the newest one left is the request the throw came from.
+    func failure(
+        after marker: Int, newest: Bool = false, where isRelevant: (RequestFailure) -> Bool = { _ in true }
+    ) -> RequestFailure? {
         lock.lock()
         defer { lock.unlock() }
         guard recorded > marker else { return nil }
@@ -65,7 +71,7 @@ final class APIDiagnosticsLog: @unchecked Sendable {
         // closest thing to it.
         let offsetFromEnd = recorded - marker
         let start = max(failures.count - offsetFromEnd, 0)
-        return failures[start...].first(where: isRelevant)
+        return newest ? failures[start...].last(where: isRelevant) : failures[start...].first(where: isRelevant)
     }
 
     var recentFailures: [RequestFailure] {

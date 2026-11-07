@@ -18,10 +18,10 @@ import Foundation
 /// editor edits. Only anchored blocks survive untouched (unchanged non-opaque blocks, plus
 /// `unknownNode:*` and document-link blocks, and — through `align(old:new:forced:)` — the
 /// server blocks `BlockNotePreservation` recognised as untouched (a table, a callout, …); an
-/// untouched nested list is still rewritten from markdown, as in the classic save. That
-/// includes a list item with a photo or file nested under it: the parent projects opaque, so
-/// it and its nested media are rebuilt on every save, which resets anything the web set on
-/// that media and the markdown does not carry (an image's `caption`, `previewWidth` and
+/// untouched nested list item too, when its text, tree and props still match (`Rule.listTree`).
+/// One that does not match — or any, without a recorded base — is still rewritten from
+/// markdown, nested media included, which resets anything the web set on that media and
+/// the markdown does not carry (an image's `caption`, `previewWidth` and
 /// `textAlignment`; a file's `caption`) to the defaults.
 ///
 /// The result's *content* is exactly `new` — the same overwrite semantics as the classic

@@ -172,6 +172,7 @@ enum Strings_de {
         .editor_saving: "Wird gespeichert…",
         .editor_saved: "Gespeichert",
         .editor_save_failed: "Speichern fehlgeschlagen · Erneut versuchen",
+        .editor_save_failed_title: "Speichern fehlgeschlagen",
         .editor_save_failed_a11y: "Speichern fehlgeschlagen. Erneut versuchen",
 
         // Editor - reading surface / chrome

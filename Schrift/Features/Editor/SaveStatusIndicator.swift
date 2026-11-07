@@ -67,7 +67,11 @@ func saveStatusDisplay(
 struct SaveStatusIndicator: View {
     @Environment(\.docsTheme) private var theme
     let display: SaveStatusDisplay
+    /// Why the save failed (request + server message); when set, tapping `.retry` shows it
+    /// in an alert whose Retry button does the retry.
+    var failureDetail: String?
     var onTap: () -> Void
+    @State private var isShowingFailureDetail = false
 
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -81,6 +85,12 @@ struct SaveStatusIndicator: View {
             statusContent
         }
         .animation(DocsMotion.saveStatusAnimation(reduceMotion: reduceMotion), value: display)
+        .alert(loc[.editor_save_failed_title], isPresented: $isShowingFailureDetail) {
+            Button(loc[.common_retry], action: onTap)
+            Button(loc[.common_cancel], role: .cancel) {}
+        } message: {
+            Text(failureDetail ?? "")
+        }
     }
 
     private var statusTransition: AnyTransition {
@@ -173,7 +183,7 @@ struct SaveStatusIndicator: View {
             .transition(statusTransition)
 
         case .retry:
-            Button(action: onTap) {
+            Button(action: { failureDetail == nil ? onTap() : (isShowingFailureDetail = true) }) {
                 HStack(spacing: DocsSpacing.space3xs) {
                     MaterialSymbol(.error, size: 11)
                     Text(loc[.editor_save_failed])

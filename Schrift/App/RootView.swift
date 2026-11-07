@@ -81,7 +81,8 @@ private struct AuthenticatedHomeContainer: View {
             client: client, serverOrigin: origin,
             isLiveReplicaHeld: { [weak collaborationManager] documentID in
                 collaborationManager?.hasHeldLiveReplica(for: documentID) ?? false
-            })
+            },
+            diagnostics: diagnostics)
         // A draft skipped while its replica was held replays once that replica is gone.
         collaborationManager.onHeldReplicaReleased = { [weak saveCoordinator] in
             Task { await saveCoordinator?.syncPendingDrafts() }

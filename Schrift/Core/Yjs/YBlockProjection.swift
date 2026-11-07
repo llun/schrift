@@ -310,6 +310,19 @@ extension YBlockProjection {
         return (runs, nil)
     }
 
+    /// A content element's inline runs as `projectBlock` reads a leaf block's (unknown marks
+    /// scrubbed), or `nil` when it holds anything else (a document link, a mention). Unlike
+    /// `projectBlock`, runs a dropped mark alone kept apart coalesce, as the markdown parser's do,
+    /// so an untouched nested list item still compares equal to its parsed shadow.
+    /// `BlockNotePreservation` reads a nested list item's text with it.
+    static func inlineRuns(of element: YType) -> [InlineRun]? {
+        let (runs, failure) = foldInline(element, interlinkingOrigin: nil)
+        guard failure == nil else { return nil }
+        var merged: [InlineRun] = []
+        for run in scrubUnknownMarks(runs).runs { appendRun(text: run.text, marks: run.marks, to: &merged) }
+        return merged
+    }
+
     /// One `XmlText`'s runs, before mark scrubbing, folded exactly as a block's
     /// text is — or `nil` when it holds something other than strings and
     /// formats. The engine checks its `.text` patches against this.

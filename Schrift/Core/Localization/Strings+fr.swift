@@ -169,6 +169,7 @@ enum Strings_fr {
         .editor_saving: "Enregistrement…",
         .editor_saved: "Enregistré",
         .editor_save_failed: "Impossible d’enregistrer · Réessayer",
+        .editor_save_failed_title: "Impossible d’enregistrer",
         .editor_save_failed_a11y: "Échec de l’enregistrement. Réessayer",
 
         // Editor - reading surface / chrome
