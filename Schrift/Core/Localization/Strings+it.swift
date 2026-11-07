@@ -336,6 +336,11 @@ enum Strings_it {
         .profile_work_offline: "Lavora offline",
         .native_editor_preserved_block: "%@ (conservato, non ancora modificabile)",
         .native_editor_unknown_block: "Blocco non supportato",
+        .native_editor_input_unavailable: "Questo input non è ancora supportato nell’editor nativo.",
+        .native_editor_marked_unavailable:
+            "Questo input da tastiera non è ancora supportato. Il documento è conservato in sola lettura.",
+        .native_editor_storage_failed:
+            "Impossibile salvare questa modifica sul dispositivo. La modifica è stata interrotta; il testo salvato in precedenza è conservato.",
         .profile_native_editor: "Editor nativo (sperimentale, sola lettura)",
         .profile_native_editor_footer:
             "Si applica alla prossima apertura di un documento. Supporta Docs 6; la modifica non è ancora disponibile.",

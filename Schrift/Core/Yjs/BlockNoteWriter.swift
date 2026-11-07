@@ -382,6 +382,13 @@ struct BlockNoteWriter {
             nested: nested, group: group)
     }
 
+    /// The engine's canonical index has already proved unique root-container
+    /// identity. Resolve that exact live item without another document walk.
+    func indexedTarget(_ item: YItem, id: String) throws -> Target {
+        guard !item.deleted, let group = item.parentType else { throw Error.missingBlock(id) }
+        return try resolve(item, group: group, id: id)
+    }
+
     private struct Part {
         let item: YItem
         let type: YType

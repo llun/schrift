@@ -7,7 +7,8 @@ struct NativeTextPresentation: Equatable {
     let labels: NativeEditorLabels
 }
 
-/// A non-optimistic consumer: all origins apply exactly once. Only the changed
+/// A non-optimistic consumer: all origins apply, and identified command echoes
+/// reconcile exactly once per emission. Only the changed
 /// text ranges are replaced; props/replacements rebuild one block's slice.
 /// A reset is the only patch that replaces the full document storage.
 @MainActor
@@ -17,6 +18,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     private(set) var rangeIndex: ProjectionRangeIndex
     private(set) var traits: UITraitCollection
     private var presentation: NativeTextPresentation
+    private var lastNativeStamp: NativePatchStamp?
     /// Replica-backed surfaces use the owner's settled projection to validate
     /// fast patches. Value-only fixtures may omit this callback.
     private let reprojectBlock: ((String) -> BlockSnapshot?)?
@@ -38,6 +40,15 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     }
 
     func applyPatch(_ patch: BlockPatch) {
+        if patch.origin == .localUser, let stamp = patch.nativeCommand {
+            if let last = lastNativeStamp,
+                stamp.baseRevision < last.baseRevision
+                    || (stamp.commandID == last.commandID && stamp.emission <= last.emission)
+            {
+                return
+            }
+            lastNativeStamp = stamp
+        }
         storage.beginEditing()
         defer { storage.endEditing() }
         for change in patch.changes {

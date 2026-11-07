@@ -56,6 +56,15 @@ final class DocumentEngine {
     private var isFlushing = false
     private let previousAfterTransaction: ((YTransaction) -> Void)?
     private(set) var isDetached = false
+    private(set) var revision: UInt64
+    private var nativeCommand: NativeEditCommand?
+    private var nativeEmission = 0
+    private var holdingDurableRemote = false
+    private(set) var nativeWriteFailed = false
+    private(set) var nativeSnapshotCount = 0
+    /// Retain the rejected update when disk persistence fails. Never retry it
+    /// against this mutated replica; recover from the durable store instead.
+    private(set) var unconfirmedNativeUpdate: Data?
 
     /// The surface patches are delivered to. Weak: the surface owns the engine,
     /// not the other way round. A patch delivered while it is `nil` is lost and
@@ -72,8 +81,19 @@ final class DocumentEngine {
     /// O(touched) emit-loop seam.
     var visitedEntryCount: Int { builder.visitedEntries }
 
-    init(doc: YDoc, surface: EditorSurface? = nil) {
+    /// A settled per-block projection through the same canonical identity
+    /// index used for writing. Native echoes must not scan all container IDs.
+    func nativeSnapshot(for blockID: String) -> BlockSnapshot? {
+        guard !isDetached, !nativeWriteFailed, builder.index.isCanonical,
+            let entry = builder.index.entries[blockID]
+        else { return nil }
+        nativeSnapshotCount += 1
+        return BlockSnapshot(YBlockProjection.projectBlock(entry.containerItem))
+    }
+
+    init(doc: YDoc, surface: EditorSurface? = nil, revision: UInt64 = 0) {
         self.doc = doc
+        self.revision = revision
         self.surface = surface
         self.writer = BlockNoteWriter(doc: doc)
         self.builder = PatchBuilder(doc: doc)
@@ -94,6 +114,83 @@ final class DocumentEngine {
 
     // Input offsets are replica coordinates. Deferred blocks reject local
     // input with .composingBlock through final rebuild/completion delivery.
+
+    /// UIKit delegates refuse their default mutation and use this command path.
+    /// Buffer echoes until the incremental bytes are durable, then reconcile
+    /// exactly once into canonical storage. There is no provisional UIKit edit.
+    @discardableResult
+    func replaceText(_ command: NativeEditCommand, persist: (Data) throws -> Void) throws -> Data {
+        try requireCompositionBoundary()
+        try requireEditableBlock(command.blockID)
+        guard nativeCommand == nil, !holdingDurableRemote, !isFlushing, composition == nil,
+            revision == command.baseRevision, revision < UInt64.max
+        else { throw DocumentEngineError.staleNativeCommand }
+        guard builder.index.isCanonical, let entry = builder.index.entries[command.blockID],
+            entry.isSimpleText, entry.isProjectable, let text = entry.textType,
+            !YBlockProjection.projectBlock(entry.containerItem).fidelity.isOpaque,
+            !command.replacement.unicodeScalars.contains(where: {
+                CharacterSet.newlines.contains($0) || $0.value == 0xfffc
+            })
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let target = try writer.indexedTarget(entry.containerItem, id: command.blockID)
+        let units = entry.runs.flatMap { Array($0.text.utf16) }
+        func validBoundary(_ offset: Int) -> Bool {
+            guard offset >= 0, offset <= units.count else { return false }
+            return offset == 0 || offset == units.count
+                || !(0xd800...0xdbff).contains(units[offset - 1]) || !(0xdc00...0xdfff).contains(units[offset])
+        }
+        guard text.length == UInt(units.count), validBoundary(command.range.lowerBound),
+            validBoundary(command.range.upperBound)
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        nativeCommand = command
+        nativeEmission = 0
+        do {
+            let update = try writer.replaceText(
+                in: target, range: NSRange(location: command.range.lowerBound, length: command.range.count),
+                with: command.replacement)
+            unconfirmedNativeUpdate = update
+            try persist(update)
+            revision += 1
+            unconfirmedNativeUpdate = nil
+            nativeCommand = nil
+            flush()
+            return update
+        } catch {
+            // Transactions have no rollback. Stop *all* authoring and delivery
+            // rather than retry against a graph whose bytes were not confirmed.
+            nativeCommand = nil
+            nativeWriteFailed = true
+            buffered = []
+            throw error
+        }
+    }
+
+    /// The owner applies remote bytes; the engine only holds delivery until
+    /// their journal entry is durable. One accepted update advances the shared
+    /// revision even when Yjs replay is an idempotent no-op.
+    func durablyIntegrateRemote(
+        update: Data, apply: () throws -> Void, persist: (UInt64) throws -> Void
+    ) throws {
+        try requireCompositionBoundary()
+        guard nativeCommand == nil, !holdingDurableRemote, !isFlushing, composition == nil, revision < UInt64.max else {
+            throw DocumentEngineError.insideTransaction
+        }
+        holdingDurableRemote = true
+        do {
+            unconfirmedNativeUpdate = update
+            try apply()
+            try persist(revision)
+            revision += 1
+            holdingDurableRemote = false
+            unconfirmedNativeUpdate = nil
+            flush()
+        } catch {
+            holdingDurableRemote = false
+            nativeWriteFailed = true
+            buffered = []
+            throw error
+        }
+    }
 
     /// Replaces a block-relative UTF-16 range. `marks` is the complete mark set
     /// the replacement carries, or `nil` to inherit the marks at the range.
@@ -277,13 +374,18 @@ final class DocumentEngine {
     /// applyPatch runs from afterAllTransactions after the cleanup list is cleared.
     private func requireCompositionBoundary() throws {
         try requireAttached()
-        guard doc.transaction == nil, doc.transactionCleanups.isEmpty else {
+        guard !nativeWriteFailed else { throw DocumentEngineError.nativeWriteFailed }
+        guard nativeCommand == nil, !holdingDurableRemote,
+            doc.transaction == nil, doc.transactionCleanups.isEmpty
+        else {
             throw DocumentEngineError.insideTransaction
         }
     }
 
     private func requireEditableBlock(_ blockID: String) throws {
         try requireAttached()
+        guard !nativeWriteFailed else { throw DocumentEngineError.nativeWriteFailed }
+        guard nativeCommand == nil, !holdingDurableRemote else { throw DocumentEngineError.insideTransaction }
         guard !isWholeListDeferred, !deferredBlockIDs.contains(blockID) else {
             throw DocumentEngineError.composingBlock
         }
@@ -294,6 +396,13 @@ final class DocumentEngine {
     private func record(_ transaction: YTransaction) {
         guard !isDetached else { return }
         var patch = builder.build(transaction)
+        if let command = nativeCommand, patch.origin == .localUser {
+            patch.nativeCommand = NativePatchStamp(
+                commandID: command.id, baseRevision: command.baseRevision, emission: nativeEmission)
+            nativeEmission += 1
+        } else if nativeCommand == nil && !holdingDurableRemote && !patch.isEmpty {
+            revision &+= 1
+        }
         patch = filterForComposition(patch)
         guard !patch.isEmpty else { return }
         buffered.append(.patch(patch))
@@ -315,7 +424,7 @@ final class DocumentEngine {
     /// `afterAllTransactions` re-enters here, sees `isFlushing`, and leaves its
     /// patch in the queue for this outermost loop to drain — never mid-delivery.
     private func flush() {
-        guard !isDetached, !isFlushing else { return }
+        guard !isDetached, !isFlushing, nativeCommand == nil, !holdingDurableRemote, !nativeWriteFailed else { return }
         isFlushing = true
         defer { isFlushing = false }
         while !buffered.isEmpty {
@@ -372,6 +481,7 @@ final class DocumentEngine {
 
 /// The engine's lifecycle errors.
 enum DocumentEngineError: Error, Equatable {
+    case staleNativeCommand, unsupportedNativeInput, nativeWriteFailed
     /// The replica was destroyed (or the engine detached); intents are refused.
     case detached
     case invalidPosition

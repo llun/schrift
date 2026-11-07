@@ -337,6 +337,11 @@ enum Strings_fr {
         .profile_work_offline: "Travailler hors ligne",
         .native_editor_preserved_block: "%@ (préservé, pas encore modifiable)",
         .native_editor_unknown_block: "Bloc non pris en charge",
+        .native_editor_input_unavailable: "Cette saisie n’est pas encore prise en charge dans l’éditeur natif.",
+        .native_editor_marked_unavailable:
+            "Cette saisie au clavier n’est pas encore prise en charge. Votre document est préservé en lecture seule.",
+        .native_editor_storage_failed:
+            "Impossible d’enregistrer cette modification sur votre appareil. La modification s’est arrêtée ; le texte précédemment enregistré est préservé.",
         .profile_native_editor: "Éditeur natif (expérimental, lecture seule)",
         .profile_native_editor_footer:
             "S’applique à la prochaine ouverture d’un document. Compatible avec Docs 6 ; la modification n’est pas encore disponible.",
