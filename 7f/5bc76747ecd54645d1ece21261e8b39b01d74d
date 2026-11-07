@@ -1,0 +1,38 @@
+SchriftTests/Features/Editor/Native/NativeEditorLifecycleTests.swift
+  s_75c7e256682ae4::t_a38fd9b48bf5a6 103-104,109-116,136-138,143-154,159-166,171-183,274-277,285,300,321,325-336
+  s_75c7e256682ae4::t_f4b9af2668615a 117-118,123,127-135
+  s_75c7e256682ae4::t_55105fe78ad146 105-108,139-142,155-158,167-170
+  s_75c7e256682ae4::t_47f9df1e8daec6 119-122,124-126
+  s_75c7e256682ae4::t_236fc5f11ffc66 337
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_75c7e256682ae4::t_03c8e80f86e69e 31-32,49-76,123,143
+  s_75c7e256682ae4::t_55105fe78ad146 164
+  s_75c7e256682ae4::t_5f4d40ff366f11 29-30,33,90-95,97-100,103,108,115-122,124-137,139-142,144-149,151-160,162,165-168,172-175,183-184
+Schrift/Features/Editor/Native/NativeTextSurface.swift
+  s_75c7e256682ae4::t_5f4d40ff366f11 20-22,25-28,32,47-67,71-75
+AGENTS.md
+  s_75c7e256682ae4::t_efb6657924dc1b 2053-2056,2067-2069
+SchriftTests/Features/Editor/Native/NativeTextSurfaceTests.swift
+  s_75c7e256682ae4::t_586930c785e869 81-82,90-110,122-130,135-148,152-156,161-164,166-172
+  s_75c7e256682ae4::t_55105fe78ad146 83-89,131-134,149-151,157-160
+  s_75c7e256682ae4::t_86e9d6c323ec49 165
+  s_75c7e256682ae4::t_f4b9af2668615a 111-121
+docs/architecture.md
+  s_75c7e256682ae4::t_efb6657924dc1b 558-562,581-585
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7f5bc76747ecd54645d1ece21261e8b39b01d74d",
+  "prompts": {},
+  "sessions": {
+    "s_75c7e256682ae4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1b54c-8f1e-73e3-a45d-4e8296e5330f",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
