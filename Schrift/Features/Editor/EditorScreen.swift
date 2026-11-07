@@ -3,8 +3,8 @@ import SwiftUI
 /// Owns the `EditorViewModel` as view state so parent re-renders (the sidebar
 /// refreshing, offline state flipping, list reloads) never recreate the
 /// editing session mid-edit. A fresh model is created only when the screen's
-/// identity changes (a different document is opened). `EditorView` captures the
-/// default-off native preference at that same boundary; preference changes never
+/// identity changes (a different document is opened). `EditorView` reads the
+/// default-off native preference at each safe open/reopen; preference changes never
 /// replace a focused editor.
 struct EditorScreen: View {
     let reach: LinkReach

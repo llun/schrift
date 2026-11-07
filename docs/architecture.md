@@ -552,15 +552,25 @@ path; PR01 connects this engine to an opt-in read-only TextKit 2 surface.
   captures, including an element anchor for an empty text-capable block.
 
 **Native reader (phase 2 PR01).** Profile's `schrift.nativeEditor` preference
-defaults off and is captured by `EditorView` at document open. A selected surface
+defaults off and is read by `EditorView` at each safe open/reopen, including a
+return from Profile within the same screen identity. A selected surface
 never changes in response to a preference write. `NativeEditorOpen` fetches the
 existing raw `collaborationYDocState` for eligible online Docs 6 documents.
 Legacy servers, offline/unreachable or local documents, pending deletions/local
-content and failed raw fetches/decodes stay with the classic editor. A three-second
+content, pending creation intents and failed raw fetches/decodes stay with the classic editor. A three-second
 prefetch deadline selects classic without waiting for a stalled request to finish
 cancelling; closed/timed-out result streams cannot install late native sessions.
 Its tasks, controls and live bridge
 are not mounted alongside a native session.
+
+Successful native selection also refreshes the existing offline cache before
+publishing the session. The cache-only view-model path reuses `formattedContent`,
+leaf-nesting recovery and `cacheServerCopy`; the stored representation remains
+server-exported Markdown plus title, client sync time and server `updated_at`,
+rather than a potentially lossy native projection. It does not install classic
+display state or advance its edit baseline. This read is covered by the same
+prefetch deadline, cancellation/availability checks and save-marker freshness
+guard. The classic load route remains unchanged.
 
 `NativeEditorSession` is the sole main-actor owner of a private local `YDoc`,
 separate from `DocumentCollaborationManager`. It integrates the raw baseline,

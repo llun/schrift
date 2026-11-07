@@ -76,7 +76,7 @@ final class NativeEditorSession {
     }
 }
 
-/// Captures the flag once. Failed/legacy/offline opens go to the classic
+/// Reads the flag at each open. Failed/legacy/offline opens go to the classic
 /// editor; a selected route never changes in response to a preference write.
 @MainActor @Observable
 final class NativeEditorOpen {
@@ -84,8 +84,10 @@ final class NativeEditorOpen {
         case loading, classic
         case native(NativeEditorSession)
     }
-    let enabled: Bool
+    private(set) var enabled = false
     private(set) var route: Route
+    private var isOpen = false
+    private let preference: @MainActor () -> Bool
     private var generation = 0
     private enum OpenResult: Sendable {
         case classic
@@ -95,16 +97,25 @@ final class NativeEditorOpen {
     private let waitForTimeout: @MainActor () async throws -> Void
 
     init(
-        enabled: Bool = NativeEditorPreference.isEnabled(),
+        preference: @escaping @MainActor () -> Bool = { NativeEditorPreference.isEnabled() },
         waitForTimeout: @escaping @MainActor () async throws -> Void = { try await Task.sleep(for: .seconds(3)) }
     ) {
-        self.enabled = enabled
-        self.route = enabled ? .loading : .classic
+        self.preference = preference
+        // Preserve the immediate default-off classic renderer. This initial
+        // value only chooses the initial view; every safe open rereads the key.
+        let initialPreference = preference()
+        self.enabled = initialPreference
+        self.route = initialPreference ? .loading : .classic
         self.waitForTimeout = waitForTimeout
     }
 
     func open(viewModel: EditorViewModel, isOffline: Bool) async {
-        guard case .loading = route else { return }
+        // A repeated call while visible must not swap a focused editor. Close
+        // establishes the next safe open boundary, including a return from Profile.
+        guard !isOpen else { return }
+        isOpen = true
+        enabled = preference()
+        route = .loading
         pendingOpen?.finish()
         generation += 1
         let request = generation
@@ -132,6 +143,12 @@ final class NativeEditorOpen {
                 let state = try await viewModel.client.collaborationYDocState(
                     documentID: viewModel.documentID, org: config.collaborationOrg)
                 guard !Task.isCancelled else { return }
+                guard self?.canContinue(request: request, viewModel: viewModel, isOffline: isOffline) == true,
+                    try await viewModel.refreshOfflineCacheForNativeReader()
+                else {
+                    continuation.yield(.classic)
+                    return
+                }
                 continuation.yield(.state(state))
             } catch {
                 continuation.yield(.classic)
@@ -173,12 +190,14 @@ final class NativeEditorOpen {
         // route keeps its existing cache/retry controls so it can recover.
         enabled && !isOffline && !viewModel.availability.showsOfflineStatus && !viewModel.isLocalDocument
             && !viewModel.isDocumentPendingDelete
+            && !viewModel.hasPendingNewDocumentEntry
             && !viewModel.isEditing && !viewModel.hasUnsavedLocalContent
             && viewModel.saveCoordinator.storedDraft(documentID: viewModel.documentID) == nil
             && viewModel.saveCoordinator.pendingSave(documentID: viewModel.documentID) == nil
     }
 
     func close() {
+        isOpen = false
         generation += 1
         pendingOpen?.finish()
         pendingOpen = nil

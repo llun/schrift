@@ -353,6 +353,7 @@ final class EditorViewModel {
     }
 
     var isEditing: Bool { mode != .reading }
+    var hasPendingNewDocumentEntry: Bool { entryIntent?.isPending == true }
 
     // MARK: - Error state
 
@@ -1278,6 +1279,24 @@ final class EditorViewModel {
             return false
         }
         saveCoordinator.clearResolvedConflict(documentID: documentID)
+        return true
+    }
+
+    /// The native reader keeps the same server-exported offline copy as the
+    /// classic reader, without installing markdown, advancing its baseline or
+    /// starting the classic editor's children/live/save paths.
+    func refreshOfflineCacheForNativeReader() async throws -> Bool {
+        guard !Task.isCancelled, !availability.isOffline, !isLocalDocument, !isDocumentPendingDelete,
+            !hasPendingNewDocumentEntry
+        else { return false }
+        let token = availability.token
+        let marker = saveCoordinator.saveMarker(documentID: documentID)
+        let fetched = try await client.formattedContent(documentID: documentID)
+        let (formatted, leafNesting) = await recoveringLeafNesting(fetched, availabilityToken: token)
+        guard !Task.isCancelled, availability.permitsResponse(for: token), !isDocumentPendingDelete,
+            !saveCoordinator.mayPredateSave(marker)
+        else { return false }
+        cacheServerCopy(formatted, leafNesting: leafNesting)
         return true
     }
 
