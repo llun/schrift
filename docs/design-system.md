@@ -479,8 +479,7 @@
 > controls independently and exclude no findings; complete-editor tests separately
 > verify discovery, all-hidden reveal, mode transitions and scrolling.
 
-> **Living design document.** This covers a design-system refresh handed off from
-> Claude Design (`schrift-ios-design-system.zip`) — the adaptive dark theme,
+> **Living design document.** This covers a design-system refresh — the adaptive dark theme,
 > in-app localization, layout-fidelity work, and read-only version history — plus
 > two new user-facing features, all of which shipped. Kept current with the app;
 > update it in place when behavior changes. See also
