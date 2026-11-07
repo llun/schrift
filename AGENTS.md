@@ -5019,10 +5019,9 @@ markdown write endpoint**. Understand this before touching the save path:
   simulator builds ad-hoc sign for free, and the Keychain tests require the test
   host's ad-hoc signature/entitlements — an unsigned host fails with
   `errSecMissingEntitlement (-34018)` (see `docs/ci.md`).
-- **Never run two `xcodegen`/`xcodebuild` jobs at once in the same checkout, and
-  never two `xcodebuild test` runs on the same simulator, even from separate
-  worktrees: they kill each other.** Run tests one at a time, or give each run
-  its own simulator and `-derivedDataPath`.
+- **Never run two `xcodegen`/`xcodebuild` jobs at once in the same checkout.**
+  Run tests one at a time, or give each run its own simulator and
+  `-derivedDataPath` (see the next bullet).
 - **Two `xcodebuild test` runs on the same simulator kill each other.** With
   several worktrees checked out, a concurrent run in
   another one aborts yours with `Test crashed with signal kill`/`signal term` and
@@ -5142,6 +5141,9 @@ them is simply the next round and counts toward the same round cap in step 3.
    comes first. A follow-up push outside an active loop starts a fresh cap.
    If the cap is hit with issues still open, say so explicitly on the PR
    instead of stopping silently.
+
+If an automated review bot runs on PRs, treat its comments like any other
+finding and give it up to 20 minutes to finish before the round ends.
 
 The loop — and the agent's work — is **not finished until the PR's `Build &
 Test` check is green on the latest pushed state**. A CI failure on the PR is
