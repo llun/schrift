@@ -1,0 +1,29 @@
+docs/architecture.md
+  s_dc239db0cc1c9d::t_7c83da9a60b394 1030
+SchriftTests/Core/Collaboration/DocumentCollaborationSessionTests.swift
+  s_dc239db0cc1c9d::t_b058369ca938bb 469-473,482-498,501-503,506,511
+  s_dc239db0cc1c9d::t_b050774879d904 466-468,474-481,499-500,504-505,507-510,512
+Schrift/Core/Collaboration/DocumentCollaborationSession.swift
+  s_dc239db0cc1c9d::t_c5ce2e066a20e1 161-184,191,274,285
+  s_dc239db0cc1c9d::t_5b7159d50ab442 65-71,106,119,149-152
+AGENTS.md
+  s_dc239db0cc1c9d::t_d7143560c273aa 3795-3800
+SchriftTests/Core/Collaboration/YWebSocketTests.swift
+  s_dc239db0cc1c9d::t_8b9349335b50dd 202-207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fc56bf890544591c591520ef3170187e74d1612e",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
