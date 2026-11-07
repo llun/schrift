@@ -139,6 +139,8 @@ final class NativeReplicaRestoreTests: DocumentEngineTestCase {
         XCTAssertTrue(session.engine.nativeWriteFailed)
         XCTAssertEqual(session.textView.textStorage.string, display)
         XCTAssertEqual(try store.restore(for: scope)?.manifest.revision, 1)
+        XCTAssertEqual(input.noticeKey, .native_editor_storage_failed)
+        XCTAssertFalse(session.textView.isEditable)
         XCTAssertFalse(input.replace(range: NSRange(location: 0, length: 0), with: "y"))
     }
 }

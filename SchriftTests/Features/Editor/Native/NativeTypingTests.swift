@@ -285,6 +285,13 @@ final class NativeTypingTests: DocumentEngineTestCase {
         XCTAssertEqual(writes, 0)
         XCTAssertNil(input.noticeKey, "a block join is deferred, not an input error")
         XCTAssertTrue(session.textView.isEditable)
+        // The end-of-document caret sits after the last separator, which no block owns:
+        // Backspace there is refused with a notice, like typing there, never swallowed.
+        session.textView.selectedRange = NSRange(location: session.textView.textStorage.length, length: 0)
+        session.textView.deleteBackward()
+        XCTAssertEqual(session.textView.textStorage.string, original)
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(input.noticeKey, .native_editor_input_unavailable)
     }
 
     func testUnreadableMarksCannotTurnScrubbedDisplayIntoAWriterTarget() throws {

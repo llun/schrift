@@ -85,9 +85,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
     }
 
-    /// Separators are structural, never replica text.
-    func isBlockSeparator(at location: Int) -> Bool {
-        surface.rangeIndex.entry(atUTF16: location)?.separatorRange.location == location
+    /// The end-of-document boundary has no owner, so it is never a block start.
+    func isBlockStart(_ location: Int) -> Bool {
+        surface.rangeIndex.entry(atUTF16: location)?.range.location == location
     }
 
     func stopAfterStorageFailure() {

@@ -676,9 +676,11 @@ idempotent remote update advances the matching journal/engine revision and never
 enters the local outbox. Failed remote persistence freezes writes before publishing
 the changed display. A draft reference older than the journal
 is re-stamped from the current raw revision during replay; an incompatible one is
-refused. A durable session freezes on any unjournaled transaction so the engine
-revision cannot drift from the manifest, and Backspace at a block start is a quiet
-no-op until block joins exist (PR04). Production lifecycle wiring, permanent
+refused, and a first capture projects its shadow from raw rather than trusting the
+caller. A durable session freezes on any unjournaled transaction (with the
+storage-failed notice) so the engine revision cannot drift from the manifest.
+Backspace at a block start is a quiet no-op until block joins exist (PR04); at the
+document end it is refused with a notice. Production lifecycle wiring, permanent
 migration/rollback ownership, a total shadow for opaque documents and sign-in
 generation guards remain before activation. Native production opening is still read-only.
 

@@ -84,7 +84,7 @@ final class NativeEditorSession {
         }
         session.replicaScope = scope
         session.replicaStore = store
-        session.engine.requiresJournaledRevisions = true
+        session.engine.onUnjournaledTransaction = { [weak session] in session?.input?.stopAfterStorageFailure() }
         if editable {
             let adapter = ReplicaSaveAdapter(store: store, scope: scope)
             session.enableTyping { try adapter.record($0, update: $1) }

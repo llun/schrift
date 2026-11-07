@@ -66,10 +66,10 @@ final class DocumentEngine {
     /// Authoring and delivery are frozen (`nativeWriteFailed`); nothing retries,
     /// sends or journals it. Recovery reopens from the durable store instead.
     private(set) var unconfirmedNativeUpdate: Data?
-    /// Set by a durable replica owner: every revision must be a journal entry,
-    /// so an unjournaled transaction freezes the engine instead of drifting
-    /// `revision` away from `manifest.revision`.
-    var requiresJournaledRevisions = false
+    /// Installed by a durable replica owner: every revision must be a journal
+    /// entry, so an unjournaled transaction freezes the engine (instead of
+    /// drifting `revision` from `manifest.revision`) and then calls this.
+    var onUnjournaledTransaction: (() -> Void)?
 
     /// The surface patches are delivered to. Weak: the surface owns the engine,
     /// not the other way round. A patch delivered while it is `nil` is lost and
@@ -406,10 +406,11 @@ final class DocumentEngine {
                 commandID: command.id, baseRevision: command.baseRevision, emission: nativeEmission)
             nativeEmission += 1
         } else if nativeCommand == nil && !holdingDurableRemote && !patch.isEmpty {
-            guard !requiresJournaledRevisions else {
+            if let onUnjournaledTransaction {
                 // No rollback exists for the transaction; freeze like a failed append.
                 nativeWriteFailed = true
                 buffered = []
+                onUnjournaledTransaction()
                 return
             }
             revision &+= 1

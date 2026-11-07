@@ -33,9 +33,10 @@ final class NativeTextView: UITextView {
         guard let inputCoordinator, isEditable else { return }
         var range = selectedRange
         if range.length == 0 {
-            // Nothing precedes the document start, and deleting a separator would join
-            // blocks (PR04): both are quiet no-ops that never reach into another block.
-            guard range.location > 0, !inputCoordinator.isBlockSeparator(at: range.location - 1) else { return }
+            // Nothing precedes the document start, and Backspace at a block start would join
+            // blocks (PR04): both are quiet no-ops. Every other caret takes the command path,
+            // which refuses the document-end boundary's separator with a notice.
+            guard range.location > 0, !inputCoordinator.isBlockStart(range.location) else { return }
             range = (textStorage.string as NSString).rangeOfComposedCharacterSequence(at: range.location - 1)
         }
         inputCoordinator.replace(range: range, with: "")

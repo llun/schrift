@@ -3689,6 +3689,11 @@ final class EditorViewModel {
         // Exhaustive on purpose — see `hasUnsavedLocalContent`.
         switch saveCoordinator.state(for: documentID) {
         case .failed, .pendingSync:
+            // A raw-owned draft refuses the classic writer, so it retries through the raw path.
+            if saveCoordinator.storedDraft(documentID: documentID)?.replica != nil {
+                saveCoordinator.retryReplicaDraft(documentID: documentID)
+                return
+            }
             saveCoordinator.enqueue(
                 documentID: documentID, title: savedTitle, markdown: savedMarkdown,
                 baseline: saveCoordinator.storedDraft(documentID: documentID)?.baseline)

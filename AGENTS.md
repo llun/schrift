@@ -2133,6 +2133,10 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   refuses anything else. A raw save never writes the classic content cache. Raw
   enqueue and "Keep mine" require the remembered signed-in owner (`SignedInUserStore`,
   nil fails closed); a failed raw capture after "Keep mine" reports `.failed`.
+  `enqueueReplica` never takes a caller shadow: it re-captures the stored draft's
+  verified one (`prepare(markdown:expected:)`, non-optional) or projects a first
+  capture from raw (`prepare()`). `saveNow` retries a raw-owned `.failed`/
+  `.pendingSync` draft through `retryReplicaDraft`, never the refused classic enqueue.
   `PendingDraft.replica` is optional-on-decode and stamps scope/format/generation/
   revision plus canonical shadow digest. Classic/live enqueues cannot overwrite
   such drafts. Conflict/title/finish rewrites preserve the reference; old-draft
@@ -2146,9 +2150,11 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   integration journals remote bytes before releasing display patches, including
   idempotent no-op updates; remote sequences never enter the local outbox. Disk or
   cleanup failure freezes the unsafe graph and keeps the accepted display intact.
-  A restored durable session sets `requiresJournaledRevisions`: any unjournaled
-  transaction freezes the engine rather than drifting `revision` from the manifest.
-  Backspace at a block start is a quiet no-op until block joins (PR04).
+  A restored durable session installs `onUnjournaledTransaction`: any unjournaled
+  transaction freezes the engine rather than drifting `revision` from the manifest,
+  and stops input with the storage-failed notice. Backspace at a block start is a
+  quiet no-op until block joins (PR04); at the document end (after the last
+  separator, which no block owns) it is refused with a notice, like typing there.
   These are component APIs and tests: the production open/reconnect lifecycle,
   a total shadow for opaque/rich documents, permanent route
   ownership after a successful save, sign-in generation guards and feature-switch

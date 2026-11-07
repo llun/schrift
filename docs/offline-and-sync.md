@@ -84,7 +84,10 @@ shadow, a revision not ahead of the journal) and sends the newer bytes; anything
 is refused. Partial batches retain every sequence for idempotent retry. No legacy
 route, live socket or Markdown diff is used. A raw save never writes its lossy shadow
 into the classic content cache. Raw drafts are queued, and "Keep mine" rewrites them,
-only for the remembered signed-in owner; a failed raw capture after "Keep mine"
+only for the remembered signed-in owner. The shadow is never caller-supplied: a
+stored draft's verified shadow is re-captured, or a first capture is projected from
+raw. A manual retry (`saveNow`) of a raw draft re-runs the raw capture
+(`retryReplicaDraft`). A failed raw capture after "Keep mine"
 reports `.failed` instead of a silent no-op.
 
 `PendingDraft.replica` is optional-on-decode. The nine coordinator constructions now

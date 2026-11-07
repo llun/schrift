@@ -2435,20 +2435,22 @@ final class DocumentSaveCoordinator {
 
     /// Capture only verified durable journal bytes. Old Markdown drafts keep
     /// their classic owner; only an existing raw generation may be advanced.
-    func enqueueReplica(
-        adapter: ReplicaSaveAdapter, title: String, projectedMarkdown: String,
-        baseline: DraftBaseline? = nil, expected: ReplicaDraftReference? = nil
-    ) throws {
+    /// The shadow is never the caller's: it is the stored draft's verified one,
+    /// or projected from the raw revision when there is none or it is older.
+    func enqueueReplica(adapter: ReplicaSaveAdapter, title: String, baseline: DraftBaseline? = nil) throws {
         let id = adapter.scope.documentID
         guard adapter.scope.serverOrigin == client.serverOrigin, !draftStore.holdsUnreadableData,
             !isPendingCreate(documentID: id), adapter.scope.ownerUserID == signedInUser.userID
         else { throw ReplicaSaveError.invalidScope }
-        let (request, markdown) = try adapter.prepare(markdown: projectedMarkdown, expected: expected)
         let previous = draftStore.draft(for: id)
+        let (request, markdown): (ReplicaSaveRequest, String)
         if let previous {
-            guard let reference = previous.replica, reference.scope == request.reference.scope,
-                reference.generation == request.reference.generation
-            else { throw ReplicaSaveError.incompatibleDraft }
+            guard let reference = previous.replica, reference.scope == adapter.scope else {
+                throw ReplicaSaveError.incompatibleDraft
+            }
+            (request, markdown) = try adapter.prepare(markdown: previous.markdown, expected: reference)
+        } else {
+            (request, markdown) = try adapter.prepare()
         }
         enqueue(
             documentID: id,
@@ -3308,7 +3310,7 @@ final class DocumentSaveCoordinator {
                     if let reference = draft.replica {
                         try enqueueReplica(
                             adapter: ReplicaSaveAdapter(store: replicaStore, scope: reference.scope),
-                            title: title, projectedMarkdown: draft.markdown, baseline: baseline, expected: reference)
+                            title: title, baseline: baseline)
                     } else {
                         enqueue(
                             documentID: draft.documentID, title: title, markdown: draft.markdown, baseline: baseline)
@@ -3649,19 +3651,28 @@ final class DocumentSaveCoordinator {
             let draft = draftStore.draft(for: documentID)
         {
             // Re-read: the draft above may have just had its baseline advanced.
-            if let reference = draft.replica {
-                do {
-                    try enqueueReplica(
-                        adapter: ReplicaSaveAdapter(store: replicaStore, scope: reference.scope),
-                        title: draft.title, projectedMarkdown: draft.markdown, baseline: draft.baseline,
-                        expected: reference)
-                } catch {
-                    // The conflict is already cleared, so a silent no-op would claim nothing is unsaved.
-                    states[documentID] = .failed("Couldn't save changes. Please try again.")
-                }
+            if draft.replica != nil {
+                // The conflict is already cleared, so a failed capture must not read as a no-op.
+                retryReplicaDraft(documentID: documentID)
             } else {
                 enqueue(documentID: documentID, title: draft.title, markdown: draft.markdown, baseline: draft.baseline)
             }
+        }
+    }
+
+    /// The manual retry of a raw-owned draft (the classic `enqueue` is refused for one).
+    /// It re-captures the stored draft through the raw path; a capture that still fails
+    /// reports `.failed`, never a silent no-op. Holds (conflict, pending create/delete,
+    /// live replica) still apply through `enqueue`.
+    func retryReplicaDraft(documentID: UUID) {
+        guard inFlight[documentID] == nil, queued[documentID] == nil,
+            let draft = draftStore.draft(for: documentID), let reference = draft.replica
+        else { return }
+        do {
+            try enqueueReplica(
+                adapter: ReplicaSaveAdapter(store: replicaStore, scope: reference.scope), title: draft.title)
+        } catch {
+            states[documentID] = .failed("Couldn't save changes. Please try again.")
         }
     }
 

@@ -43,24 +43,39 @@ final class ReplicaSaveAdapter {
         try store.append(update, for: scope, commandID: command.id, baseRevision: command.baseRevision, origin: .local)
     }
 
-    /// Returns the request and the shadow it was stamped with. A reference older
-    /// than the journal (keystrokes appended after its draft was written) is
-    /// re-stamped from the current raw revision, never from its stale Markdown.
-    /// A different scope, format or generation, a revision ahead of the journal,
-    /// or a shadow that no longer matches its reference is refused.
+    /// Re-captures a stored draft: `markdown` is that draft's shadow and must
+    /// match `expected`. A reference older than the journal (keystrokes appended
+    /// after its draft was written) is re-stamped from the current raw revision,
+    /// never from its stale Markdown. A different scope, format or generation, a
+    /// revision ahead of the journal, or a mismatched shadow is refused.
     func prepare(
-        markdown: String, expected: ReplicaDraftReference? = nil
+        markdown: String, expected: ReplicaDraftReference
     ) throws -> (request: ReplicaSaveRequest, markdown: String) {
+        let restored = try restoreVerified()
+        let manifest = restored.manifest
+        guard expected.scope == scope, expected.formatVersion == manifest.formatVersion,
+            expected.generation == manifest.generation, expected.revision <= manifest.revision,
+            expected.matches(markdown: markdown)
+        else { throw ReplicaSaveError.staleReference }
+        return try capture(
+            restored, markdown: expected.revision < manifest.revision ? Self.projectedMarkdown(restored) : markdown)
+    }
+
+    /// First capture, with no stored draft: the shadow always comes from raw,
+    /// so no caller-supplied Markdown is ever stamped as current.
+    func prepare() throws -> (request: ReplicaSaveRequest, markdown: String) {
+        let restored = try restoreVerified()
+        return try capture(restored, markdown: Self.projectedMarkdown(restored))
+    }
+
+    private func restoreVerified() throws -> ReplicaRestore {
         guard scope.isValid, let restored = try store.restore(for: scope) else { throw ReplicaSaveError.invalidScope }
-        var markdown = markdown
-        if let expected {
-            let manifest = restored.manifest
-            guard expected.scope == scope, expected.formatVersion == manifest.formatVersion,
-                expected.generation == manifest.generation, expected.revision <= manifest.revision,
-                expected.matches(markdown: markdown)
-            else { throw ReplicaSaveError.staleReference }
-            if expected.revision < manifest.revision { markdown = try Self.projectedMarkdown(restored) }
-        }
+        return restored
+    }
+
+    private func capture(
+        _ restored: ReplicaRestore, markdown: String
+    ) throws -> (request: ReplicaSaveRequest, markdown: String) {
         let reference = ReplicaDraftReference(manifest: restored.manifest, markdown: markdown)
         return (ReplicaSaveRequest(adapter: self, reference: reference, batch: try store.outbox(for: scope)), markdown)
     }

@@ -90,9 +90,9 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         }
     }
 
-    private func enqueue(_ f: Fixture, title: String = "Doc", markdown: String = "xOne") throws {
+    private func enqueue(_ f: Fixture, title: String = "Doc") throws {
         try f.coordinator.enqueueReplica(
-            adapter: f.adapter, title: title, projectedMarkdown: markdown,
+            adapter: f.adapter, title: title,
             baseline: DraftBaseline(serverUpdatedAt: Date(timeIntervalSince1970: 1), markdown: "One", title: "Doc"))
     }
 
@@ -181,7 +181,7 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         await waitUntil { self.isPendingSync(f.coordinator.state(for: self.documentID)) }
         XCTAssertNotNil(f.drafts.draft(for: documentID)?.replica)
         XCTAssertEqual(try f.store.outbox(for: f.scope)?.updates, [second])
-        try enqueue(f, markdown: "yxOne")
+        try enqueue(f)
         await waitUntil { self.isSaved(f.coordinator.state(for: self.documentID)) }
         XCTAssertNil(try f.store.outbox(for: f.scope))
         XCTAssertNil(f.drafts.draft(for: documentID))
@@ -205,7 +205,7 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
             }
             return .init(statusCode: counter.next() == 1 ? 204 : 503, headers: [:], body: Data(), error: nil)
         }
-        try enqueue(f, markdown: "yxOne")
+        try enqueue(f)
         await waitUntil { self.isPendingSync(f.coordinator.state(for: self.documentID)) }
         XCTAssertEqual(try f.store.outbox(for: f.scope)?.updates, [f.update, second])
         XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/api/v1.0/documents/"), 0)
@@ -248,7 +248,7 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         try enqueue(f, title: "Typed")
         await waitUntil { self.isPendingSync(f.coordinator.state(for: self.documentID)) }
         XCTAssertNil(try f.store.outbox(for: f.scope))
-        XCTAssertEqual(f.drafts.draft(for: documentID)?.lastPushedMarkdown, "xOne")
+        XCTAssertEqual(f.drafts.draft(for: documentID)?.lastPushedMarkdown, "xOne\n")
         XCTAssertNotNil(f.drafts.draft(for: documentID)?.replica)
         stub(log: log)
         let relaunched = DocumentSaveCoordinator(
@@ -349,7 +349,7 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         await waitUntil { self.isPendingSync(f.coordinator.state(for: self.documentID)) }
         let stale = try XCTUnwrap(f.drafts.draft(for: documentID))
         XCTAssertEqual(stale.replica?.revision, 1, "the draft still names the revision before the keystroke")
-        XCTAssertEqual(stale.markdown, "xOne")
+        XCTAssertEqual(stale.markdown, "xOne\n")
         XCTAssertEqual(try f.store.outbox(for: f.scope)?.updates, [second])
         // No editor re-enqueues: the sync pass alone must carry "y" from the journal.
         await f.coordinator.syncPendingDrafts()
@@ -395,6 +395,33 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
                 XCTFail("an incompatible reference must not be restamped")
             } catch ReplicaSaveError.staleReference {}
         }
+    }
+
+    func testFirstCaptureStampsTheRawProjectionNeverACallerShadow() throws {
+        let f = try fixture()
+        try enqueue(f)
+        let draft = try XCTUnwrap(f.drafts.draft(for: documentID))
+        XCTAssertEqual(draft.markdown, "xOne\n", "the shadow is projected from the journal")
+        XCTAssertEqual(draft.replica?.revision, 1)
+        XCTAssertEqual(draft.replica?.matches(markdown: draft.markdown), true)
+    }
+
+    func testManualRetryOfAFailedRawDraftSendsThroughTheRawPath() async throws {
+        let f = try fixture()
+        let log = RequestRecorder()
+        stub(log: log, bodyStatus: 403)
+        try enqueue(f)
+        await waitUntil { self.isFailed(f.coordinator.state(for: self.documentID)) }
+        stub(log: log)  // permission restored
+        let viewModel = EditorViewModel(
+            client: f.client, documentID: documentID, title: "Doc", saveCoordinator: f.coordinator,
+            signedInUser: SignedInUserStore(userDefaults: f.listCache.userDefaults), contentCache: f.contentCache,
+            listCache: f.listCache)
+        viewModel.saveNow()
+        await waitUntil { self.isSaved(f.coordinator.state(for: self.documentID)) }
+        XCTAssertNil(try f.store.outbox(for: f.scope))
+        XCTAssertNil(f.drafts.draft(for: documentID))
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/content/"), 0)
     }
 
     func testRawSaveNeverWritesItsShadowIntoTheClassicContentCache() async throws {
