@@ -140,14 +140,14 @@ final class CollaborationEndpointTests: XCTestCase {
         }
     }
 
-    func testYHubSelectionDoesNotEnableLiveCollaboration() {
+    func testYHubSelectionEnablesLiveCollaborationWhenUrlIsAdvertised() {
         for config in [
             ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: "wss://example.com/collaboration/ws/v1/team"),
             ServerConfig(releaseVersion: "v7.0.0", collaborationWsUrl: "wss://example.com/legacy"),
             ServerConfig(collaborationWsUrl: "wss://example.com/collaboration/ws/v1/team"),
         ] {
             XCTAssertEqual(CollaborationWireProtocol(config: config), .yWebSocket)
-            XCTAssertFalse(config.supportsLiveCollaboration)
+            XCTAssertTrue(config.supportsLiveCollaboration)
         }
         let legacy = ServerConfig(releaseVersion: "5.7.0", collaborationWsUrl: "wss://example.com/collaboration/ws/")
         XCTAssertEqual(CollaborationWireProtocol(config: legacy), .hocuspocus)

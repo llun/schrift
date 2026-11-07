@@ -958,8 +958,8 @@ server is about to hold.
   queues a full-state Yjs snapshot (PATCHed verbatim via
   `DocsAPIClient.saveLiveSnapshot` — to yhub as `{"update": base64}` on Docs 6, or to the
   legacy `documents/{id}/content/` route tagged `"websocket": true` before it) rather than
-  markdown-derived bytes. Docs 6 has no live session today (`ServerConfig.supportsLiveCollaboration`
-  stays false until a y-websocket client lands), so this route is groundwork for that client; its
+  markdown-derived bytes. Docs 6 live collaboration uses the enabled y-websocket client;
+  the user-facing preference remains default off. Its
   PATCH carries the whole snapshot and is subject to the deployment's request-size limit. It
   carries the **projected markdown** (our replica's render of
   the snapshot) as the draft body
@@ -981,6 +981,32 @@ server is about to hold.
   a failed live snapshot replaying as a classic markdown save is today's behaviour, no longer a
   rule to preserve; persisting the raw replica bytes in the draft is approved and planned. Its
   constraints live in `AGENTS.md` ("Drafts will carry the replica bytes").
+  On reconnect, `runSyncPass` skips a draft while its live replica is held (the entry can
+  write and the replica has not fail-safed; re-checked after the GET), so it cannot replay
+  the same markdown as new Yjs items. Once the session completes its initial step2 exchange,
+  the bridge re-persists the complete replica snapshot through `persistLiveSnapshot` only
+  when the draft's markdown is canonically equal to the replica's projection and its title
+  passes the classic replay's title rule (a co-author's rename the user never made, two
+  different renames, or no known server title leave the draft); a successful `finish` then
+  clears the draft. `knownServerTitle` is session-only and updated by editor fetches and landed
+  saves; a co-author's title-only rename changes no Yjs content, so it does not refresh over the
+  live socket and the gate can still approve the old local title. This pre-existing live-title gap
+  is narrowed by the gate but not closed. `canonicalMarkdown` ignores leaf nesting, so a draft
+  differing only by a
+  leaf's indentation is re-persisted flat: content is kept and leaf structure follows the
+  replica. A draft that differs carries classic-path edits the replica
+  lacks (typed after a failed snapshot, typed offline with no replica, or a reopened
+  `.pendingSync` document), so it is left untouched. When the manager tears down the idle held
+  entry (`teardownIfIdle`, or `suspend()`'s idle drop), `onHeldReplicaReleased` runs
+  `syncPendingDrafts()` and the draft gets its classic replay. A replica fail-safe does not
+  fire `onHeldReplicaReleased`, so a draft skipped while it was held waits for the next normal
+  sync trigger (reconnect, foreground, launch). Until then it waits while the
+  editor holds the replica and no socket is rebuilt, and classic saves outside `runSyncPass`
+  (retry, autosave after live mode disengages) can still race the socket, as on legacy
+  servers. If the app is killed before reconnect, the replica is gone and the draft replays
+  once.
+  A dropped socket does not auto-reconnect without a reachability change or foreground resume;
+  peer edits pause until then, while the ~60 s HTTP snapshot still sends local edits.
 
 ### 4. UI changes in `EditorView`
 

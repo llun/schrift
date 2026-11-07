@@ -62,30 +62,40 @@ private struct AuthenticatedHomeContainer: View {
             onTransportOutcome: { outcome, startedAt in connectivity.report(outcome, startedAt: startedAt) }
         )
         let origin = siteOrigin(for: serverURL) ?? ""
+        // The save replay must leave a draft alone while a healthy, writable live replica owns it.
+        let collaborationManager = DocumentCollaborationManager(
+            serverBaseURL: serverURL,
+            cookieProvider: { HTTPCookieStorage.shared.cookies(for: serverURL) ?? [] },
+            featureEnabled: { LiveCollaborationPreference.isEnabled() },
+            isOffline: { UserDefaults.standard.bool(forKey: "schrift.workOffline") },
+            serverConfigProvider: { try? await client.serverConfig() },
+            // Our awareness: display name + the avatar-palette colour, derived
+            // here (App layer) so `Core` never reaches into the design system.
+            localStateProvider: {
+                guard let user = try? await client.currentUser() else { return nil }
+                let name = user.displayName
+                return LocalAwarenessState(name: name, color: avatarColorHexString(for: name))
+            },
+            socketFactory: URLSessionWebSocket.factory())
+        let saveCoordinator = DocumentSaveCoordinator(
+            client: client, serverOrigin: origin,
+            isLiveReplicaHeld: { [weak collaborationManager] documentID in
+                collaborationManager?.hasHeldLiveReplica(for: documentID) ?? false
+            })
+        // A draft skipped while its replica was held replays once that replica is gone.
+        collaborationManager.onHeldReplicaReleased = { [weak saveCoordinator] in
+            Task { await saveCoordinator?.syncPendingDrafts() }
+        }
         _viewModel = State(
             initialValue: HomeViewModel(
-                client: client, serverOrigin: origin, diagnostics: diagnostics,
+                client: client, saveCoordinator: saveCoordinator, serverOrigin: origin, diagnostics: diagnostics,
                 availability: OnlineAvailability(connectivity: connectivity)))
         // The app-scoped live-collaboration manager. Built once per authenticated
         // server session (it needs the server origin + cookies); dormant until the
         // `schrift.liveCollaboration` toggle is on AND the server advertises the
         // collaboration WebSocket (learned from `/config/` in `.task` below). The
         // dialed socket URL and cookies are always origin-derived.
-        _collaboration = State(
-            initialValue: DocumentCollaborationManager(
-                serverBaseURL: serverURL,
-                cookieProvider: { HTTPCookieStorage.shared.cookies(for: serverURL) ?? [] },
-                featureEnabled: { LiveCollaborationPreference.isEnabled() },
-                isOffline: { UserDefaults.standard.bool(forKey: "schrift.workOffline") },
-                serverConfigProvider: { try? await client.serverConfig() },
-                // Our awareness: display name + the avatar-palette colour, derived
-                // here (App layer) so `Core` never reaches into the design system.
-                localStateProvider: {
-                    guard let user = try? await client.currentUser() else { return nil }
-                    let name = user.displayName
-                    return LocalAwarenessState(name: name, color: avatarColorHexString(for: name))
-                },
-                socketFactory: URLSessionWebSocket.factory()))
+        _collaboration = State(initialValue: collaborationManager)
         // App-scoped for the same reason the manager is: the same attachment can
         // be on screen in more than one place, and one owner is what gives
         // in-flight de-duplication and a single authority over the disk cache.
@@ -216,6 +226,9 @@ private struct AuthenticatedHomeContainer: View {
             // session belongs to before anything reads it. A stale id would list the
             // previous user's unsynced documents to the new one.
             await homeViewModel.refreshSignedInUser()
+            // Awareness is account-specific and can include an email address as the
+            // display name. Re-fetch it before any reauthenticated session is rebuilt.
+            await collaboration.refreshLocalAwareness()
             await homeViewModel.saveCoordinator.syncPendingPins()
             await homeViewModel.load()
         }

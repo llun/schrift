@@ -449,6 +449,7 @@ final class LiveEditingIntegrationTests: XCTestCase {
     private final class FakeReplicaProvider: LiveReplicaProviding {
         func canWriteReplica(for documentID: UUID) -> Bool { true }
         private var versions: [UUID: Int] = [:]
+        private var initialSyncVersions: [UUID: Int] = [:]
         private var projections: [UUID: ProjectedDocument] = [:]
 
         func setVersion(_ version: Int, for documentID: UUID) {
@@ -465,6 +466,10 @@ final class LiveEditingIntegrationTests: XCTestCase {
 
         func replicaVersion(for documentID: UUID) -> Int {
             versions[documentID] ?? 0
+        }
+
+        func initialSyncVersion(for documentID: UUID) -> Int {
+            initialSyncVersions[documentID] ?? 0
         }
 
         func projectedReplica(for documentID: UUID, interlinkingOrigin: String?) -> ProjectedDocument? {
@@ -635,7 +640,6 @@ final class LiveEditingIntegrationTests: XCTestCase {
             serverBaseURL: baseURL, cookieProvider: { [] }, featureEnabled: { true }, isOffline: { false },
             serverConfigProvider: { config }, socketFactory: spy.factory)
         await manager.refreshServerSupport()
-        manager.serverSupportsLiveCollaboration = true  // test-only override of the release capability
         _ = try XCTUnwrap(manager.session(for: documentID, canUpdate: false))
         defer { manager.suspend() }
         let scheduler = ManualLiveRemoteApplyScheduler()

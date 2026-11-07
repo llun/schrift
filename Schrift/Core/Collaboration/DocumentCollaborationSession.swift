@@ -38,7 +38,8 @@ final class DocumentCollaborationSession {
     }
 
     enum EndReason: Equatable, Sendable {
-        /// Server closed with 1000 (a permission reset): refetch doc + abilities.
+        /// A server close with 1000 ends this session instance; the manager rebuilds it on
+        /// the next resume or reconnect, retaining the stored abilities until PR09 refetches them.
         case permissionsReset
         /// We closed the socket ourselves (suspend / teardown).
         case closed
