@@ -310,12 +310,17 @@ extension YBlockProjection {
         return (runs, nil)
     }
 
-    /// A content element's inline runs exactly as `projectBlock` reads a leaf block's (unknown
-    /// marks scrubbed), or `nil` when it holds anything else (a document link, a mention).
+    /// A content element's inline runs as `projectBlock` reads a leaf block's (unknown marks
+    /// scrubbed), or `nil` when it holds anything else (a document link, a mention). Unlike
+    /// `projectBlock`, runs a dropped mark alone kept apart coalesce, as the markdown parser's do,
+    /// so an untouched nested list item still compares equal to its parsed shadow.
     /// `BlockNotePreservation` reads a nested list item's text with it.
     static func inlineRuns(of element: YType) -> [InlineRun]? {
         let (runs, failure) = foldInline(element, interlinkingOrigin: nil)
-        return failure == nil ? scrubUnknownMarks(runs).runs : nil
+        guard failure == nil else { return nil }
+        var merged: [InlineRun] = []
+        for run in scrubUnknownMarks(runs).runs { appendRun(text: run.text, marks: run.marks, to: &merged) }
+        return merged
     }
 
     /// One `XmlText`'s runs, before mark scrubbing, folded exactly as a block's
@@ -442,8 +447,7 @@ extension YBlockProjection {
 
     private static func scrubUnknownMarks(_ runs: [InlineRun]) -> (runs: [InlineRun], reasons: [String]) {
         var reasons: [String] = []
-        var result: [InlineRun] = []
-        for run in runs {
+        let result = runs.map { run -> InlineRun in
             var kept: [(key: String, valueJSON: String)] = []
             for mark in run.marks {
                 if renderableMarkKeys.contains(mark.key) {
@@ -453,9 +457,7 @@ extension YBlockProjection {
                     if !reasons.contains(reason) { reasons.append(reason) }
                 }
             }
-            // Runs a dropped mark alone kept apart coalesce, as the markdown parser's do, so an
-            // untouched block still compares equal to its parsed shadow.
-            appendRun(text: run.text, marks: kept, to: &result)
+            return InlineRun(run.text, marks: kept)
         }
         return (result, reasons)
     }
