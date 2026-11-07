@@ -1,0 +1,51 @@
+Schrift/Features/Editor/Native/NativeTextView.swift
+  s_dc239db0cc1c9d::t_733befc67af2c4 36-39
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  s_dc239db0cc1c9d::t_733befc67af2c4 88-89
+  s_dc239db0cc1c9d::t_ff292bdb9b93b0 90
+SchriftTests/Features/Editor/Native/NativeReplicaRestoreTests.swift
+  s_dc239db0cc1c9d::t_f80459933777d8 142-143
+SchriftTests/Features/Editor/Native/NativeTypingTests.swift
+  s_dc239db0cc1c9d::t_f80459933777d8 288-294
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_dc239db0cc1c9d::t_733befc67af2c4 87
+AGENTS.md
+  s_dc239db0cc1c9d::t_f34caba031cd8e 2136-2139,2153-2157
+docs/offline-and-sync.md
+  s_dc239db0cc1c9d::t_f34caba031cd8e 87-90
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_dc239db0cc1c9d::t_733befc67af2c4 69-72,409
+  s_dc239db0cc1c9d::t_ff292bdb9b93b0 413
+Schrift/Features/Editor/Native/ReplicaSaveAdapter.swift
+  s_dc239db0cc1c9d::t_733befc67af2c4 46-50,52,54-67,69-71,73-78
+  s_dc239db0cc1c9d::t_ff292bdb9b93b0 68
+SchriftTests/Features/Editor/Native/ReplicaSaveAdapterTests.swift
+  s_dc239db0cc1c9d::t_4f38d0c0f815d0 93,95,184,208
+  s_dc239db0cc1c9d::t_f80459933777d8 251,352,400-425
+  s_dc239db0cc1c9d::t_29a4f463adf173 426
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_dc239db0cc1c9d::t_1b1f12671d963a 2438-2440,2446,2448-2453,3313,3654-3656,3663-3668,3670-3672,3674-3675
+  s_dc239db0cc1c9d::t_f8f01d6912f547 3669,3673
+  s_dc239db0cc1c9d::t_c6ee266ef19a4a 3676-3678
+Schrift/Features/Editor/EditorViewModel.swift
+  s_dc239db0cc1c9d::t_ff292bdb9b93b0 3693
+  s_dc239db0cc1c9d::t_f8f01d6912f547 3692,3694-3696
+docs/architecture.md
+  s_dc239db0cc1c9d::t_f34caba031cd8e 679-683
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "738195609ba0d28cba4627a387d21601559b0519",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
