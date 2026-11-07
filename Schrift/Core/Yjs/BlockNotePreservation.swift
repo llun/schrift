@@ -217,7 +217,7 @@ enum BlockNotePreservation {
                     shape.append("\(depth):\(name)")
                     props.append(attributes(of: type))
                     if let nodeRuns = YBlockProjection.inlineRuns(of: type) {
-                        runs?.append(nodeRuns)
+                        runs?.append(trimmingTrailingBlanks(nodeRuns))
                     } else {
                         runs = nil
                     }
@@ -232,6 +232,22 @@ enum BlockNotePreservation {
             stack.append(contentsOf: nested.reversed().map { ($0, depth + 1) })
         }
         return (shape, props, runs)
+    }
+
+    /// `runs` without the trailing spaces and tabs the markdown's list parsers strip (`rstrip`),
+    /// so a server "Task " reads like its markdown "Task" (the markdown cannot keep them either).
+    /// A code or link run keeps its own, which its delimiters protect from the strip.
+    private static func trimmingTrailingBlanks(_ runs: [InlineRun]) -> [InlineRun] {
+        var runs = runs
+        while var last = runs.last, !last.marks.contains(where: { $0.key == "code" || $0.key == "link" }) {
+            while last.text.last == " " || last.text.last == "\t" { last.text.removeLast() }
+            guard last.text.isEmpty else {
+                runs[runs.count - 1] = last
+                break
+            }
+            runs.removeLast()
+        }
+        return runs
     }
 
     /// `treeShape` of a new block.

@@ -442,7 +442,8 @@ extension YBlockProjection {
 
     private static func scrubUnknownMarks(_ runs: [InlineRun]) -> (runs: [InlineRun], reasons: [String]) {
         var reasons: [String] = []
-        let result = runs.map { run -> InlineRun in
+        var result: [InlineRun] = []
+        for run in runs {
             var kept: [(key: String, valueJSON: String)] = []
             for mark in run.marks {
                 if renderableMarkKeys.contains(mark.key) {
@@ -452,7 +453,9 @@ extension YBlockProjection {
                     if !reasons.contains(reason) { reasons.append(reason) }
                 }
             }
-            return InlineRun(run.text, marks: kept)
+            // Runs a dropped mark alone kept apart coalesce, as the markdown parser's do, so an
+            // untouched block still compares equal to its parsed shadow.
+            appendRun(text: run.text, marks: kept, to: &result)
         }
         return (result, reasons)
     }

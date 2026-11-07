@@ -293,6 +293,46 @@ final class BlockNoteIncrementalSaveTests: XCTestCase {
         XCTAssertEqual(try ids.map { text(of: try writer.find($0).element) }, ["Task"], "not the server's Task!")
     }
 
+    /// The web underlined "Chi" of an untouched nested item. Scrubbing the unknown mark leaves
+    /// "Chi" + "ld", which must still read like the markdown's one "Child" run.
+    func testAnUntouchedNestedItemWithAnUnknownMarkIsLeftInPlace() throws {
+        try assertUntouchedNestedItemKept(
+            serverChildRuns: [InlineRun("Chi", marks: [(key: "underline", valueJSON: "true")]), InlineRun("ld")])
+    }
+
+    /// The server's nested item ends in blanks, which the markdown's list parser strips.
+    func testAnUntouchedNestedItemWithTrailingBlanksIsLeftInPlace() throws {
+        try assertUntouchedNestedItemKept(serverChildRuns: [InlineRun("Child \t")])
+    }
+
+    /// The server's "- Parent / - Child" holds `serverChildRuns` as the child's text; the user
+    /// edits only the paragraph above, so the list item and its child keep their containers.
+    private func assertUntouchedNestedItemKept(
+        serverChildRuns: [InlineRun], file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        let stored = newBlocks("Intro\n\n- Parent\n  - Child")
+        var serverBlocks = stored
+        serverBlocks[1].children[0].runs = serverChildRuns
+        let state = BlockNoteYjs.encode(serverBlocks, clientID: 1)
+
+        let update = try BlockNoteIncrementalSave.update(
+            serverState: state, newBlocks: newBlocks("TEST\n\n- Parent\n  - Child"), baseBlocks: stored,
+            serverOrigin: origin)
+
+        let server = YDoc(clientID: 999)
+        defer { server.destroy() }
+        try server.applyUpdate(try YUpdateDecoder.decode(state))
+        if let update { try server.applyUpdate(try YUpdateDecoder.decode(update)) }
+        let after = YBlockProjection.project(server)
+        XCTAssertEqual(
+            after.blocks.map(\.id), stored.map(\.id), "the list item kept its container", file: file, line: line)
+        XCTAssertEqual(after.blocks.first?.runs, [InlineRun("TEST")], file: file, line: line)
+        let child = try BlockNoteWriter(doc: server).find(stored[1].children[0].id).element
+        XCTAssertEqual(
+            text(of: child), serverChildRuns.map(\.text).joined(), "the child kept its own text", file: file, line: line
+        )
+    }
+
     private var nestedLeafMarkdown: String {
         let media = "\(origin)/media/11111111-1111-4111-8111-111111111111/attachments/"
         return "- [ ] Task\n  ![photo.jpg](\(media)22222222-2222-4222-8222-222222222222.jpg)\n"

@@ -2685,7 +2685,8 @@ markdown write endpoint**. Understand this before touching the save path:
   diagram, columns) are kept where they were when no shadow is found. Anything the
   user edited no longer matches and is written from the markdown as before. A **nested
   list item** gets `Rule.listTree`: kept only when one *untouched* new block has the same
-  text (each node's exact runs — punctuation, marks, link targets; only the words when the
+  text (each node's exact runs — punctuation, marks, link targets, but not the trailing blanks the
+  list parsers strip or a split only an unknown mark made; only the words when the
   replica's inline content does not read as runs, such as a mention, and then only when no
   other item or base block reads alike), the same tree of nodes (`treeShape`) **and**, node
   for node, the same expressible props as the server item, because the editor models its structure and a re-indent or a
