@@ -1,0 +1,26 @@
+Schrift/Core/Collaboration/DocumentCollaborationSession.swift
+  s_2a54b453f881e2::t_8edbc908f87c95 104,172,260
+AGENTS.md
+  s_2a54b453f881e2::t_8edbc908f87c95 3801,3810
+  s_2a54b453f881e2::t_b1cd7c8919e34c 3811
+docs/architecture.md
+  s_2a54b453f881e2::t_8edbc908f87c95 1034-1035
+Schrift/Core/Collaboration/DocumentCollaborationManager.swift
+  s_2a54b453f881e2::t_8edbc908f87c95 439,595
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1bf75212054bde9a650f0707d9fd748b5eda54ba",
+  "prompts": {},
+  "sessions": {
+    "s_2a54b453f881e2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1b521-a4e1-7542-b5e8-8aabff9f69d6",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
