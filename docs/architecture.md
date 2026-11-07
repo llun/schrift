@@ -1031,10 +1031,8 @@ ignored); the legacy Hocuspocus shape stays flat. The editor supplies the docume
 `abilities.update` from its existing metadata. Readers can receive/project updates but
 never publish awareness, broadcast local edits, produce save snapshots, or report local
 edits handled live. Replica read safety remains independent of write authorization.
-Permission and replica survive normal suspension; a reconnect's step2 diff includes deletions,
-even when a deletion-only edit left the state vector unchanged. A server close with 1000 clears
-`canUpdate` and drops the session; resume/reconnect cannot rebuild it until a fresh
-`session(for:canUpdate:)` call supplies abilities again.
+Permission and replica survive suspension; a reconnect's step2 diff includes deletions,
+even when a deletion-only edit left the state vector unchanged.
 
 **The production server gate is enabled:** `ServerConfig.yWebSocketLiveCollaborationEnabled`
 is true, so a Docs 6 config with an advertised collaboration URL supports live collaboration.

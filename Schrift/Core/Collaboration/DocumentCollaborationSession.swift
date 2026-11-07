@@ -86,9 +86,6 @@ final class DocumentCollaborationSession {
     /// that frame's bytes, so the manager can integrate them before marking
     /// the initial sync applied.
     private let onInitialSync: @MainActor () -> Void
-    /// Fired on a server permission reset so the manager drops this session and
-    /// refuses to rebuild it until the editor supplies fresh abilities.
-    private let onPermissionsReset: @MainActor () -> Void
     /// Latches `onInitialSync` to a single firing per session.
     private var didInitialSync = false
     private var pumpTask: Task<Void, Never>?
@@ -104,8 +101,7 @@ final class DocumentCollaborationSession {
         onSyncUpdate: @escaping @MainActor (Data) -> Void = { _ in },
         initialSyncStep1: @escaping @MainActor () -> Data = { Data([0x00]) },
         onStateRequest: @escaping @MainActor (Data) -> Data? = { _ in nil },
-        onInitialSync: @escaping @MainActor () -> Void = {},
-        onPermissionsReset: @escaping @MainActor () -> Void = {}
+        onInitialSync: @escaping @MainActor () -> Void = {}
     ) {
         self.documentName = documentName
         self.transport = transport
@@ -118,7 +114,6 @@ final class DocumentCollaborationSession {
         self.initialSyncStep1 = initialSyncStep1
         self.onStateRequest = onStateRequest
         self.onInitialSync = onInitialSync
-        self.onPermissionsReset = onPermissionsReset
     }
 
     /// Resumes the socket, sends the handshake, and pumps inbound events.
@@ -174,7 +169,7 @@ final class DocumentCollaborationSession {
     /// same way the handshake's is — the pump's disconnect event reclassifies
     /// the state, so there is nothing more to do here.
     func broadcast(update: Data) async {
-        guard canUpdate, state != .ended(.permissionsReset) else { return }
+        guard canUpdate else { return }
         let payload = SyncMessage(step: .update, data: update).encodedPayload()
         let frame = HocuspocusMessage(documentName: documentName, type: .sync, payload: payload)
         try? await transport.send(frame)
@@ -262,9 +257,7 @@ final class DocumentCollaborationSession {
             // repopulates `peers` from the new room's awareness.
             peers = []
             switch reason {
-            case .permissionsReset:
-                state = .ended(.permissionsReset)
-                onPermissionsReset()
+            case .permissionsReset: state = .ended(.permissionsReset)
             case .selfClosed: state = .ended(.closed)
             case .transient: state = .reconnecting
             }

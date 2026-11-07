@@ -3798,9 +3798,7 @@ markdown write endpoint**. Understand this before touching the save path:
   replies to query-awareness), cannot broadcast edits, and cannot snapshot or report an edit
   handled live. `canProjectReplica` checks sync/replica health; `canWriteReplica(for:)` adds
   the update ability and is checked by the bridge before forwarding. Retain permission across
-  normal suspend/resume. A server close with 1000 clears `canUpdate`, drops the session, and
-  blocks resume/reconnect from rebuilding until a fresh `session(for:canUpdate:)` call supplies
-  abilities again. Reconnect answers a server's step1 with the retained replica's step2 diff,
+  suspend/resume. Reconnect answers a server's step1 with the retained replica's step2 diff,
   **including the delete set**: a deletion-only suspended edit does not change its state
   vector and must still reach the server. Do not gate state replies on replica health. Readers
   send none: a reader must not publish, whatever its replica holds. An entry keeps one ability
@@ -3809,6 +3807,8 @@ markdown write endpoint**. Understand this before touching the save path:
   Production enables yhub when the server advertises a collaboration URL. The manager's
   server-support seam remains available to tests. The independent default-off
   `schrift.liveCollaboration` user preference still gates session availability.
+  A server permission change mid-session is not re-read by the client; the server enforces
+  write permission, and refetching abilities on reset belongs with native live editing (phase 2 PR09).
   **Switch-on evidence (2026-11-07, S4/S5; labs `RESULTS.md`):** on the real yhub server,
   snapshot and live sync for a document filled with every web block were byte-identical;
   Schrift's core re-encoded them identically to yjs 13.6.33; the web cursor arrived as

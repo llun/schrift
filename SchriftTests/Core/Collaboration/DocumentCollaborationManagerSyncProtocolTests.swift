@@ -74,43 +74,6 @@ final class DocumentCollaborationManagerSyncProtocolTests: DocumentCollaboration
         session?.stop()
     }
 
-    func testPermissionsResetDropsWriterUntilAbilitiesRefreshAndResumeCannotWrite() async throws {
-        let spy = ManagerSocketFactorySpy()
-        let manager = makeManager(spy: spy)
-        let session = try XCTUnwrap(manager.session(for: docID, canUpdate: true))
-        await waitUntil { spy.sockets.count == 1 }
-
-        let base = [para("hello", id: blockID)]
-        let initial = BlockNoteYjs.encode(base, clientID: 1)
-        spy.sockets[0].deliver(message: syncStep2Frame(data: initial))
-        await waitUntil { manager.canWriteReplica(for: self.docID) }
-        let sentBeforeReset = spy.sockets[0].sentFrames.count
-
-        spy.sockets[0].serverClose(code: .normalClosure)
-        await waitUntil { session.state == .ended(.permissionsReset) }
-        await session.broadcast(update: Data([0x00]))
-        XCTAssertFalse(manager.canWriteReplica(for: docID))
-        XCTAssertNil(manager.encodeSnapshotForSave(for: docID))
-        XCTAssertThrowsError(try manager.applyLocalEdit(old: base, new: [para("hello!", id: blockID)], for: docID)) {
-            XCTAssertEqual($0 as? CollaborationWriteError, .notWritable)
-        }
-
-        manager.suspend()
-        manager.resume()
-        await waitAndConfirmNever { spy.sockets.count > 1 }
-        XCTAssertFalse(manager.canWriteReplica(for: docID))
-        XCTAssertNil(manager.encodeSnapshotForSave(for: docID))
-        XCTAssertThrowsError(try manager.applyLocalEdit(old: base, new: [para("hello!", id: blockID)], for: docID)) {
-            XCTAssertEqual($0 as? CollaborationWriteError, .notWritable)
-        }
-        XCTAssertEqual(
-            spy.sockets[0].sentFrames.count, sentBeforeReset,
-            "no local update or snapshot is broadcast after reset")
-
-        XCTAssertNotNil(manager.session(for: docID, canUpdate: true), "fresh abilities permit a new writer session")
-        XCTAssertEqual(spy.sockets.count, 2)
-    }
-
     func testEncodeSnapshotForSaveNilForUnknownDocumentAndBeforeInitialSync() async {
         let spy = ManagerSocketFactorySpy()
         let manager = makeManager(spy: spy)
