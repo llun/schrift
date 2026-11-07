@@ -521,4 +521,45 @@ final class EditorViewModelConflictTests: EditorViewModelTestCase {
         XCTAssertEqual(savesInFlight(log), 0, "the flush is held by the conflict, never pushed")
         XCTAssertNotNil(coordinator.pendingSave(documentID: documentID), "it is parked in the hold")
     }
+
+    /// The conflict sheet's choices sit under the keyboard while a block is focused, so the pill
+    /// ends the caret session first. Editing mode and the typed text must survive it.
+    func testDismissFocusForSheetClearsFocusButKeepsEditingAndText() async {
+        let (viewModel, _, _, _) = makeEnvironment()
+        stubLoad(content: "# Base")
+        await viewModel.load()
+        viewModel.startEditing()
+        let id = viewModel.blocks[0].id
+        viewModel.focusedBlockID = id
+        viewModel.selection = NSRange(location: 4, length: 0)
+        viewModel.updateText(blockID: id, text: "Mine")
+
+        viewModel.dismissFocusForSheet()
+
+        XCTAssertNil(viewModel.focusedBlockID, "no focused block, so the row resigns and the keyboard goes")
+        XCTAssertNil(viewModel.selection)
+        XCTAssertEqual(viewModel.blocks[0].text, "Mine", "the edit is kept")
+        XCTAssertEqual(viewModel.mode, .blocks, "still editing; only the caret session ended")
+    }
+
+    /// Marked text is not yet published while its block is focused, and the resign that follows
+    /// suppresses delegate echoes, so the dismissal itself must commit it.
+    func testDismissFocusForSheetPublishesActiveComposition() async {
+        let (viewModel, _, _, _) = makeEnvironment()
+        stubLoad(content: "First")
+        await viewModel.load()
+        viewModel.startEditing()
+        let id = viewModel.blocks[0].id
+        viewModel.focusedBlockID = id
+        let marked = "Firstに"
+        viewModel.updateComposition(
+            blockID: id, text: marked, selection: NSRange(location: (marked as NSString).length, length: 0),
+            isMarked: true)
+        XCTAssertEqual(viewModel.markedTextBlockID, id)
+
+        viewModel.dismissFocusForSheet()
+
+        XCTAssertTrue(viewModel.currentMarkdown().contains("Firstに"), "the composed text is publishable")
+        XCTAssertNil(viewModel.markedTextBlockID, "the block no longer counts as composing")
+    }
 }
