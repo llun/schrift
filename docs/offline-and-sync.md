@@ -981,6 +981,13 @@ server is about to hold.
   a failed live snapshot replaying as a classic markdown save is today's behaviour, no longer a
   rule to preserve; persisting the raw replica bytes in the draft is approved and planned. Its
   constraints live in `AGENTS.md` ("Drafts will carry the replica bytes").
+  On reconnect, `runSyncPass` skips a draft while its healthy live replica is held, so it
+  cannot replay the same offline markdown as new Yjs items. Once the session completes its
+  initial step2 exchange, the bridge re-persists the complete replica snapshot through
+  `persistLiveSnapshot`; a successful `finish` clears the existing write-ahead draft. If the
+  app is killed before reconnect, the replica is gone and the untouched draft replays once.
+  A dropped socket does not auto-reconnect without a reachability change or foreground resume;
+  peer edits pause until then, while the ~60 s HTTP snapshot still sends local edits.
 
 ### 4. UI changes in `EditorView`
 

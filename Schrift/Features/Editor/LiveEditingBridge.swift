@@ -10,6 +10,8 @@ protocol LiveReplicaProviding: AnyObject {
     /// cleanly into the document's replica. The view observes this (not a
     /// push/delegate callback) and calls `replicaDidChange()` whenever it ticks.
     func replicaVersion(for documentID: UUID) -> Int
+    /// Advances after a session's initial step2 exchange, including reconnects.
+    func initialSyncVersion(for documentID: UUID) -> Int
     /// The document's live replica projected into BlockNote-vocabulary blocks,
     /// or `nil` when there is nothing safe to project yet (no replica, not
     /// synced, fail-safed, or still holding unintegrated pending structs/deletes).
@@ -177,6 +179,16 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
             guard let self, self.remoteApplyGeneration == generation else { return }
             self.applyPendingRemoteChange()
         }
+    }
+
+    /// A reconnect may have restored edits from a pending draft into the replica.
+    /// Re-persist that complete state so the coordinator's normal success path clears it.
+    func initialSyncDidChange() {
+        guard collaboration.initialSyncVersion(for: documentID) > 0,
+            viewModel.saveCoordinator.state(for: documentID) == .pendingSync,
+            viewModel.saveCoordinator.storedDraft(documentID: documentID) != nil
+        else { return }
+        fireSnapshot()
     }
 
     /// Runs before any editor mutation, never from the post-mutation forward. A local

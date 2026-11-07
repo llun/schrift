@@ -3815,6 +3815,14 @@ markdown write endpoint**. Understand this before touching the save path:
   y-prosemirror relative-position JSON and resolved correctly; off-main decode passed.
   The remaining on-device end-to-end check is the owner's TestFlight step on this build.
   Rollback is reverting `ServerConfig.yWebSocketLiveCollaborationEnabled` to `false`.
+  A dropped socket does not reconnect automatically: it is rebuilt on a network reachability
+  change or foreground resume. Peer edits stop arriving until then; local edits still reach
+  yhub through the ~60 s HTTP snapshot. `runSyncPass` skips a draft while a healthy live
+  replica is held for that document, because replaying its markdown could insert the same
+  offline edits as new Yjs items. After the session's initial step2 exchange, the bridge
+  re-persists the replica snapshot through `persistLiveSnapshot` so the normal successful
+  save path clears that write-ahead draft. A kill before reconnect leaves the draft intact
+  for one classic replay.
 - **The replica broadcasts the formatting-cleanup update it makes on its own.** An inbound
   update that touches a formatted text makes `cleanupTransactions` open a second, local
   transaction with origin `nil` (B4). yjs providers broadcast that transaction's update like

@@ -90,6 +90,8 @@ final class DocumentCollaborationManager {
 
     /// Per-document replica-version counters (see `replicaVersion(for:)`).
     private var replicaVersions: [UUID: Int] = [:]
+    /// Advances once each session completes its initial step2 exchange, including reconnects.
+    private var initialSyncVersions: [UUID: Int] = [:]
 
     /// Per-document local-edit counters (see `localEditVersion(for:)`). Deliberately
     /// separate from `replicaVersions`/`remoteChangeTokens`: a local edit is our own
@@ -201,6 +203,17 @@ final class DocumentCollaborationManager {
     /// session rebuilds; reset when the document's entry is torn down.
     func replicaVersion(for documentID: UUID) -> Int {
         replicaVersions[documentID] ?? 0
+    }
+
+    /// A monotonic event counter for completed session step2 exchanges.
+    func initialSyncVersion(for documentID: UUID) -> Int {
+        initialSyncVersions[documentID] ?? 0
+    }
+
+    /// Whether a healthy live replica currently owns this document's edits.
+    func hasHeldLiveReplica(for documentID: UUID) -> Bool {
+        guard let entry = entries[documentID] else { return false }
+        return entry.replica != nil && !entry.replicaFailSafe
     }
 
     /// Registers a synchronous observer fired the instant an inbound update integrates
@@ -565,6 +578,7 @@ final class DocumentCollaborationManager {
         guard var entry = entries[documentID] else { return }
         entry.initialSyncApplied = true
         entries[documentID] = entry
+        initialSyncVersions[documentID, default: 0] += 1
     }
 
     /// A full-snapshot Yjs v1 update of the document's replica for the classic
@@ -603,6 +617,7 @@ final class DocumentCollaborationManager {
         entries.removeValue(forKey: documentID)
         remoteChangeTokens.removeValue(forKey: documentID)
         replicaVersions.removeValue(forKey: documentID)
+        initialSyncVersions.removeValue(forKey: documentID)
         localEditVersions.removeValue(forKey: documentID)
         replicaObservers.removeValue(forKey: documentID)
     }

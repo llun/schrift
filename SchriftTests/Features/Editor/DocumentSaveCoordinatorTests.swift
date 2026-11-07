@@ -136,6 +136,35 @@ final class DocumentSaveCoordinatorTests: DocumentSaveCoordinatorTestCase {
             "a pending-sync draft beyond tolerance is a conflict — preserved, not discarded")
     }
 
+    func testSyncPendingDraftSkipsHeldLiveReplicaThenReplaysWhenReleased() async {
+        let log = RequestRecorder()
+        var replicaHeld = true
+        let (coordinator, draftStore, _) = makeCoordinator(isLiveReplicaHeld: { _ in replicaHeld })
+        let formattedBody = Self.formattedBody
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            if request.httpMethod == "PATCH", request.url?.absoluteString.hasSuffix("/content/") == true {
+                return .init(
+                    statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+            }
+            return .init(statusCode: 200, headers: [:], body: formattedBody, error: nil)
+        }
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "Server content")
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+        XCTAssertNotNil(draftStore.draft(for: documentID))
+
+        await coordinator.syncPendingDrafts()
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "formatted-content"), 0)
+        XCTAssertNotNil(draftStore.draft(for: documentID), "the replica still owns the write-ahead draft")
+
+        replicaHeld = false
+        stubSavePipeline(log: log)
+        await coordinator.syncPendingDrafts()
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "formatted-content"), 1)
+        XCTAssertNil(draftStore.draft(for: documentID))
+    }
+
     /// The primary success path the state enables: an offline save lands in
     /// `.pendingSync`, then `syncPendingDrafts` replays and clears it once the
     /// server is reachable and within tolerance.

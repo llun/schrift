@@ -122,6 +122,7 @@ final class LiveEditingBridgeTests: XCTestCase {
     private final class FakeReplicaProvider: LiveReplicaProviding {
         func canWriteReplica(for documentID: UUID) -> Bool { true }
         private var versions: [UUID: Int] = [:]
+        private var initialSyncVersions: [UUID: Int] = [:]
         private var projections: [UUID: ProjectedDocument] = [:]
         private(set) var projectionCount = 0
 
@@ -139,6 +140,14 @@ final class LiveEditingBridgeTests: XCTestCase {
 
         func replicaVersion(for documentID: UUID) -> Int {
             versions[documentID] ?? 0
+        }
+
+        func initialSyncVersion(for documentID: UUID) -> Int {
+            initialSyncVersions[documentID] ?? 0
+        }
+
+        func setInitialSyncVersion(_ version: Int, for documentID: UUID) {
+            initialSyncVersions[documentID] = version
         }
 
         func projectedReplica(for documentID: UUID, interlinkingOrigin: String?) -> ProjectedDocument? {
@@ -159,6 +168,7 @@ final class LiveEditingBridgeTests: XCTestCase {
 
         // Added for the C2c write seam. The read-only tests never call these.
         var snapshotData: Data?
+        private(set) var snapshotEncodeCount = 0
         var failSafe = false
         var pendingStructsFlag = true
         private(set) var appliedEdits: [(old: [BlockNoteBlock], new: [BlockNoteBlock])] = []
@@ -168,7 +178,10 @@ final class LiveEditingBridgeTests: XCTestCase {
             appliedEdits.append((old, new))
             return try applyResult.get()
         }
-        func encodeSnapshotForSave(for documentID: UUID) -> Data? { snapshotData }
+        func encodeSnapshotForSave(for documentID: UUID) -> Data? {
+            snapshotEncodeCount += 1
+            return snapshotData
+        }
         func replicaIsFailSafe(for documentID: UUID) -> Bool { failSafe }
         func hasPendingStructs(for documentID: UUID) -> Bool { pendingStructsFlag }
     }
@@ -875,6 +888,47 @@ final class LiveEditingBridgeTests: XCTestCase {
         // so — exactly as the view retains it in production — the test must keep the bridge
         // alive across the edit, or `liveWrite` would be nil and the edit would downgrade.
         withExtendedLifetime(bridge) {}
+    }
+
+    func testInitialSyncRepersistsPendingDraftFromLiveSnapshot() async throws {
+        let (viewModel, coordinator) = await loadDocument(content: "Alpha")
+        let provider = FakeReplicaProvider()
+        provider.pendingStructsFlag = false
+        provider.snapshotData = Data([0xAA])
+        provider.setProjection(try projectedDoc(fromMarkdown: "Alpha"), for: documentID)
+        let bridge = LiveEditingBridge(
+            documentID: documentID, viewModel: viewModel, collaboration: provider,
+            serverOrigin: nil, remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler())
+        viewModel.liveWrite = bridge
+
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "Alpha offline")
+        await waitUntil {
+            if case .pendingSync = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+        XCTAssertNotNil(coordinator.storedDraft(documentID: documentID))
+
+        let formatted = formattedBody(content: "Alpha")
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if request.httpMethod == "GET", url.contains("formatted-content") {
+                return .init(statusCode: 200, headers: [:], body: formatted, error: nil)
+            }
+            let status = request.httpMethod == "PATCH" && url.hasSuffix("/content/") ? 204 : 200
+            return .init(statusCode: status, headers: [:], body: Data(), error: nil)
+        }
+        provider.setInitialSyncVersion(1, for: documentID)
+        bridge.initialSyncDidChange()
+
+        XCTAssertEqual(provider.snapshotEncodeCount, 1)
+        await waitUntil {
+            if case .saved = coordinator.state(for: self.documentID) { return true }
+            return false
+        }
+        XCTAssertNil(coordinator.storedDraft(documentID: documentID), "the normal live-save finish clears the draft")
     }
 
     func testForwardOldBaselineIsTheLastAppliedProjectionAndAdvances() async throws {

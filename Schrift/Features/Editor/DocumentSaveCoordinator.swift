@@ -110,6 +110,7 @@ final class DocumentSaveCoordinator {
     private let mediaCheckMaxAttempts: Int
     private let mediaCheckRetryInterval: Duration
     private let backgroundTasks: BackgroundTaskProvider
+    private let isLiveReplicaHeld: @MainActor (UUID) -> Bool
 
     private var states: [UUID: DocSaveState] = [:]
     private var inFlight: [UUID: Task<Void, Never>] = [:]
@@ -413,7 +414,8 @@ final class DocumentSaveCoordinator {
         appBuild: String = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "",
         mediaCheckMaxAttempts: Int = 5,
         mediaCheckRetryInterval: Duration = .seconds(1),
-        backgroundTasks: BackgroundTaskProvider = .uiApplication
+        backgroundTasks: BackgroundTaskProvider = .uiApplication,
+        isLiveReplicaHeld: @escaping @MainActor (UUID) -> Bool = { _ in false }
     ) {
         self.client = client
         self.pins = DocumentPinCoordinator(
@@ -432,6 +434,7 @@ final class DocumentSaveCoordinator {
         self.mediaCheckMaxAttempts = mediaCheckMaxAttempts
         self.mediaCheckRetryInterval = mediaCheckRetryInterval
         self.backgroundTasks = backgroundTasks
+        self.isLiveReplicaHeld = isLiveReplicaHeld
         createStoreUnreadable = createStore.holdsUnreadableData
         deleteStoreUnreadable = deleteStore.holdsUnreadableData
         // Same reasoning as the conflict rehydration below: the holds these records drive
@@ -3185,6 +3188,8 @@ final class DocumentSaveCoordinator {
             // this document; until then its body is not this pass's to judge.
             guard !markdownReferencesPendingAttachment(draft.markdown) else { continue }
             guard inFlight[draft.documentID] == nil, queued[draft.documentID] == nil else { continue }
+            // The replica will persist this draft after sync; replaying markdown can duplicate Yjs items.
+            guard !isLiveReplicaHeld(draft.documentID) else { continue }
             // A save that FAILED this session is a retry candidate the user may still
             // be looking at (its draft is their only copy), owned by the reading
             // surface's "Couldn't save · tap to retry". Reconciling it here would
@@ -3200,6 +3205,7 @@ final class DocumentSaveCoordinator {
                 // content and its draft. Re-check before acting.
                 guard inFlight[draft.documentID] == nil,
                     queued[draft.documentID] == nil,
+                    !isLiveReplicaHeld(draft.documentID),
                     draftStore.draft(for: draft.documentID) == draft
                 else { continue }
                 let decision = draftSyncDecision(

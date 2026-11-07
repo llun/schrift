@@ -69,7 +69,7 @@ A native SwiftUI iOS/iPadOS app that acts as a client for [La Suite Numérique D
 
 ## Non-goals (v1)
 
-- Real-time collaborative *writing* (typing that other clients see live) — the two-way write path is now **fully wired end to end** (C2a's sync engine + C2b's snapshot-save mechanism + **C2c**'s editor wiring: a keystroke forwards to the replica and broadcasts, a peer's edit applies caret-preservingly, and a ~60 s debounce PATCHes a full-state snapshot), but it is **opt-in** — everything above runs only behind the default-off `schrift.liveCollaboration` flag, so shipped behavior is unchanged until a user enables it via **Profile → Preferences → "Live collaboration"** (C3). The owner will run the remaining on-device WebSocket check in TestFlight for this build. Presence avatars are live. See "The Yjs CRDT core" → "Live editing (C1)", "Two-way sync engine (C2a)", "Live-snapshot save (C2b)", and "Editor wiring — the write path complete (C2c)". With the flag off, outbound edits keep saving via the single full-overwrite HTTP PATCH exactly as before.
+- Real-time collaborative *writing* (typing that other clients see live) — the two-way write path is now **fully wired end to end** (C2a's sync engine + C2b's snapshot-save mechanism + **C2c**'s editor wiring: a keystroke forwards to the replica and broadcasts, a peer's edit applies caret-preservingly, and a ~60 s debounce PATCHes a full-state snapshot), but it is **opt-in** — everything above runs only behind the default-off `schrift.liveCollaboration` flag, so shipped behavior is unchanged until a user enables it via **Profile → Preferences → "Live collaboration"** (C3). The owner will run the remaining on-device WebSocket check in TestFlight for this build. Presence avatars are live. See "The Yjs CRDT core" → "Live editing (C1)", "Two-way sync engine (C2a)", "Live-snapshot save (C2b)", and "Editor wiring — the write path complete (C2c)". With the flag off, outbound edits use the existing HTTP save route: a full-overwrite PATCH before Docs 6, or a GET plus incremental PATCH on Docs 6.
 - ~~Offline editing/sync queue.~~ **Superseded.** Offline *reading* of
   previously-opened documents was added 2026-07-03; the sync queue (write-ahead
   drafts, `.pendingSync`, conflict-checked replay on reconnect/foreground/launch)
@@ -1033,6 +1033,9 @@ never publish awareness, broadcast local edits, produce save snapshots, or repor
 edits handled live. Replica read safety remains independent of write authorization.
 Permission and replica survive suspension; a reconnect's step2 diff includes deletions,
 even when a deletion-only edit left the state vector unchanged.
+After a socket drop the session does not reconnect by itself; a network reachability
+change or foreground resume is required. Until then peer edits stop arriving, while
+local edits still reach yhub through the ~60 s HTTP snapshot.
 
 **The production server gate is enabled:** `ServerConfig.yWebSocketLiveCollaborationEnabled`
 is true, so a Docs 6 config with an advertised collaboration URL supports live collaboration.
@@ -1040,6 +1043,10 @@ The independent user preference `schrift.liveCollaboration` remains default off 
 gates session availability. Saves continue through the incremental HTTP collaboration-server
 route for snapshots. Tests can still override the manager's support seam for isolated yhub
 transport cases.
+When `runSyncPass` sees a draft for a document with a healthy live replica, it skips
+replaying that markdown so the same offline edits are not inserted again as new Yjs items.
+After the session's initial step2 exchange, the bridge re-persists the replica snapshot
+through the normal save coordinator path, which clears the write-ahead draft on success.
 
 **Switch-on evidence (2026-11-07, S4/S5; labs `RESULTS.md`):** on the real yhub server,
 snapshot and live sync for a document filled with every web block were byte-identical.
