@@ -1,0 +1,19 @@
+AGENTS.md
+  s_54f38fdedc3d59::t_553ab21cabcfd2 2050-2052
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e884ae73b556baaff59bee29786526f715e1905f",
+  "prompts": {},
+  "sessions": {
+    "s_54f38fdedc3d59": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1b60b-624e-7ff3-a2f7-2f48a70b7ab7",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
