@@ -3973,14 +3973,21 @@ private struct DocumentMovedObserver {
     let handler: @MainActor (DocumentMoveEvent) -> Void
 }
 
-/// Whether a failure the shared log recorded during a save is this save's reason: one of its
-/// document's requests (saves of other documents interleave in the same log), and not the
-/// legacy content route's 404 a Docs 6 server answers before the save falls back to the
-/// collaboration route — unless that 404 is the save's own `.notFound` (a deleted document on
-/// a pre-Docs 6 server). The id is matched before `displayPath` elides it.
+/// Whether a failure the shared log recorded during a save is this save's reason: one of the
+/// requests the save itself makes for its document — the legacy content PATCH, the
+/// collaboration state GET or update PATCH, the title PATCH — so another document's save or
+/// this document's other reads (the editor's `children/` list, whose failure is swallowed)
+/// never show as it. Not the legacy content route's 404 a Docs 6 server answers before the
+/// save falls back to the collaboration route, unless that 404 is the save's own `.notFound`
+/// (a deleted document on a pre-Docs 6 server). The id is matched before `displayPath` elides it.
 func saveFailureIsRelevant(_ failure: RequestFailure, documentID: UUID, error: Error?) -> Bool {
     let id = documentID.uuidString.lowercased()
-    guard failure.path.contains(id) else { return false }
-    let isLegacyContent404 = failure.path == "documents/\(id)/content/" && failure.statusCode == 404
+    let route = failure.path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first ?? ""
+    let legacyContent = "documents/\(id)/content/"
+    let isSaveRequest =
+        failure.method == "PATCH" && (route == legacyContent || route == "documents/\(id)/")
+        || route.hasPrefix("/collaboration/ydoc/v1/") && route.hasSuffix("/\(id)")
+    guard isSaveRequest else { return false }
+    let isLegacyContent404 = route == legacyContent && failure.statusCode == 404
     return !isLegacyContent404 || error as? DocsAPIError == .notFound
 }

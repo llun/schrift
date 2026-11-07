@@ -188,10 +188,10 @@ amendment above; when this was written, editing offline was still blocked.)
   callout, a toggle, a video, a coloured paragraph, a PDF preview or page break
   (`BlockNotePreservation`, which recognises each one's markdown shadow and puts the
   original back). An untouched nested list item is kept too when the
-  server still holds it as the base did (same words, tree of nodes and expressible props,
+  server still holds it as the base did (same text, tree of nodes and expressible props,
   at the same base position). Rebuilt from markdown: one the user edited (re-indented,
   ticked, re-worded, moved); every one when the save has no recorded base; one whose
-  words, tree or expressible props a co-author changed since the base; and one whose
+  text, tree or expressible props a co-author changed since the base; and one whose
   subtree holds no text. Docs 6's `updated_at` lags content (yhub's ~10 s compaction) and
   moves on the app's own title PATCH, so the date rule can miss a co-author's very fresh
   edit — see `docs/architecture.md`. A server

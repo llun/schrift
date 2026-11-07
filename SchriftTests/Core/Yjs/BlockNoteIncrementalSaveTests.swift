@@ -273,6 +273,26 @@ final class BlockNoteIncrementalSaveTests: XCTestCase {
         XCTAssertEqual(ids.first, stored[1].id, "the untouched item kept its own container")
     }
 
+    /// The server swapped two nested items that differ only in a "!", and the user deleted
+    /// "Task!" locally. Words alone place the server's "Task!" at the base's "Task", so the save
+    /// kept "Task!" and deleted "Task"; the exact text must tell them apart.
+    func testDeletingOneOfTwoLookAlikeItemsTheServerSwappedKeepsTheOneLeft() throws {
+        let stored = newBlocks("- Task\n  - Child\n- Task!\n  - Child")
+        XCTAssertEqual(stored.map(\.children.count), [1, 1])
+        let state = BlockNoteYjs.encode([stored[1], stored[0]], clientID: 1)
+
+        let update = try BlockNoteIncrementalSave.update(
+            serverState: state, newBlocks: newBlocks("- Task\n  - Child"), baseBlocks: stored, serverOrigin: origin)
+
+        let server = YDoc(clientID: 999)
+        defer { server.destroy() }
+        try server.applyUpdate(try YUpdateDecoder.decode(state))
+        if let update { try server.applyUpdate(try YUpdateDecoder.decode(update)) }
+        let ids = YBlockProjection.project(server).blocks.map(\.id)
+        let writer = BlockNoteWriter(doc: server)
+        XCTAssertEqual(try ids.map { text(of: try writer.find($0).element) }, ["Task"], "not the server's Task!")
+    }
+
     private var nestedLeafMarkdown: String {
         let media = "\(origin)/media/11111111-1111-4111-8111-111111111111/attachments/"
         return "- [ ] Task\n  ![photo.jpg](\(media)22222222-2222-4222-8222-222222222222.jpg)\n"

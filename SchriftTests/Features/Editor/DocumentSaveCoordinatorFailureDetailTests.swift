@@ -96,6 +96,49 @@ final class DocumentSaveCoordinatorFailureDetailTests: DocumentSaveCoordinatorTe
         XCTAssertNil(coordinator.failureDetail(for: documentID))
     }
 
+    /// The editor's sub-page list read (`GET documents/{id}/children/`, whose failure it
+    /// swallows) 404s while the save is on the wire; it is not the save's reason, so a save that
+    /// fails without a response of its own shows none.
+    func testAChildrenReadFailingDuringTheSaveIsNotItsReason() async {
+        let (coordinator, log) = makeLoggedCoordinator()
+        let id = documentID.uuidString.lowercased()
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if url.contains("/collaboration/ydoc/") {
+                log.record(
+                    RequestFailure(method: "GET", path: "documents/\(id)/children/", statusCode: 404, body: Data()))
+                return .init(
+                    statusCode: 200, headers: ["Content-Type": "application/json"], body: Data(#"{"doc": "%%%"}"#.utf8),
+                    error: nil)
+            }
+            return .init(
+                statusCode: 404, headers: ["Content-Type": "text/html"], body: Data("<h1>Not Found</h1>".utf8),
+                error: nil)
+        }
+
+        coordinator.enqueue(documentID: documentID, title: "T", markdown: "# Mine")
+        await waitUntilFailed(coordinator, [documentID])
+
+        XCTAssertNil(coordinator.failureDetail(for: documentID))
+    }
+
+    func testOnlyTheSavesOwnRequestsAreRelevant() {
+        let id = documentID.uuidString.lowercased()
+        func relevant(_ method: String, _ path: String) -> Bool {
+            saveFailureIsRelevant(
+                RequestFailure(method: method, path: path, statusCode: 403, body: Data()), documentID: documentID,
+                error: nil)
+        }
+        XCTAssertTrue(relevant("PATCH", "documents/\(id)/content/"))
+        XCTAssertTrue(relevant("PATCH", "documents/\(id)/"))
+        XCTAssertTrue(relevant("GET", "/collaboration/ydoc/v1/docs/\(id)?gc=true&awareness=false"))
+        XCTAssertTrue(relevant("PATCH", "/collaboration/ydoc/v1/docs/\(id)"))
+        XCTAssertFalse(relevant("GET", "documents/\(id)/children/"))
+        XCTAssertFalse(relevant("GET", "documents/\(id)/"))
+        XCTAssertFalse(relevant("GET", "documents/\(id)/content/?content_format=markdown"))
+        XCTAssertFalse(relevant("PATCH", "documents/\(otherDocumentID.uuidString.lowercased())/content/"))
+    }
+
     /// Two documents fail while both saves are on the wire: each shows its own request, not the
     /// other's that the shared log recorded in between.
     func testInterleavedSavesEachShowTheirOwnFailure() async {
