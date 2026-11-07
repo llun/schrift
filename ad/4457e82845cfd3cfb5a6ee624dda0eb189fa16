@@ -1,0 +1,19 @@
+Schrift/Core/Collaboration/DocumentCollaborationSession.swift
+  s_2a54b453f881e2::t_7bfd1f7b15f216 41-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ad4457e82845cfd3cfb5a6ee624dda0eb189fa16",
+  "prompts": {},
+  "sessions": {
+    "s_2a54b453f881e2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1b521-a4e1-7542-b5e8-8aabff9f69d6",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
