@@ -305,18 +305,34 @@ final class BlockNoteIncrementalSaveTests: XCTestCase {
         try assertUntouchedNestedItemKept(serverChildRuns: [InlineRun("Child \t")])
     }
 
+    /// The server holds the child's marks as `[italic, bold]`; the markdown's `**_Child_**` parses
+    /// to `[bold, italic]`. The same formatting must not read as an edit.
+    func testAnUntouchedNestedItemWithReorderedMarksIsLeftInPlace() throws {
+        try assertUntouchedNestedItemKept(
+            markdown: "- Parent\n  - **_Child_**",
+            serverChildRuns: [
+                InlineRun(
+                    "Child",
+                    marks: [
+                        (key: "italic", valueJSON: InlineMarkdown.italicValue),
+                        (key: "bold", valueJSON: InlineMarkdown.boldValue),
+                    ])
+            ])
+    }
+
     /// The server's "- Parent / - Child" holds `serverChildRuns` as the child's text; the user
     /// edits only the paragraph above, so the list item and its child keep their containers.
     private func assertUntouchedNestedItemKept(
-        serverChildRuns: [InlineRun], file: StaticString = #filePath, line: UInt = #line
+        markdown: String = "- Parent\n  - Child", serverChildRuns: [InlineRun],
+        file: StaticString = #filePath, line: UInt = #line
     ) throws {
-        let stored = newBlocks("Intro\n\n- Parent\n  - Child")
+        let stored = newBlocks("Intro\n\n" + markdown)
         var serverBlocks = stored
         serverBlocks[1].children[0].runs = serverChildRuns
         let state = BlockNoteYjs.encode(serverBlocks, clientID: 1)
 
         let update = try BlockNoteIncrementalSave.update(
-            serverState: state, newBlocks: newBlocks("TEST\n\n- Parent\n  - Child"), baseBlocks: stored,
+            serverState: state, newBlocks: newBlocks("TEST\n\n" + markdown), baseBlocks: stored,
             serverOrigin: origin)
 
         let server = YDoc(clientID: 999)

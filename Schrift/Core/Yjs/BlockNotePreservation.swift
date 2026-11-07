@@ -380,11 +380,20 @@ enum BlockNotePreservation {
         else { return false }
         let nodes = treeNodes(of: block)
         if let runs, !byWords {
-            guard nodes.map(\.runs) == runs else { return false }
+            guard sameRunsIgnoringMarkOrder(nodes.map(\.runs), runs) else { return false }
         } else if tokens != words {
             return false
         }
         return zip(nodes, props).allSatisfy { expressiblePropsMatch($0, $1) }
+    }
+
+    /// Whether two runs-per-item lists match in text and marks, ignoring the order of each run's
+    /// marks: the server may hold `[italic, bold]` where the markdown parses `[bold, italic]`.
+    private static func sameRunsIgnoringMarkOrder(_ lhs: [[InlineRun]], _ rhs: [[InlineRun]]) -> Bool {
+        func canonical(_ runs: [[InlineRun]]) -> [[[String]]] {
+            runs.map { $0.map { [$0.text] + $0.marks.map { "\($0.key)\u{0}\($0.valueJSON)" }.sorted() } }
+        }
+        return canonical(lhs) == canonical(rhs)
     }
 
     /// `rules` with each `.listTree` tied to the base block it was when the edit started: an
