@@ -139,6 +139,7 @@ final class ThemeFlowTests: XCTestCase {
         // taller than the slack above it: scroll until it sits fully below the navigation bar.
         let account = app.buttons["profile.account"]
         let navBar = app.navigationBars.firstMatch
+        XCTAssertTrue(navBar.waitForExistence(timeout: 5))
         for _ in 0..<8 where account.frame.minY < navBar.frame.maxY { app.scrollViews.firstMatch.swipeDown() }
         XCTAssertGreaterThanOrEqual(account.frame.minY, navBar.frame.maxY)
         XCTAssertTrue(account.isHittable)
