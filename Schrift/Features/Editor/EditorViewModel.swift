@@ -1285,6 +1285,7 @@ final class EditorViewModel {
     /// The native reader keeps the same server-exported offline copy as the
     /// classic reader, without installing markdown, advancing its baseline or
     /// starting the classic editor's children/live/save paths.
+    /// This refresh covers content only, not the children cache.
     func refreshOfflineCacheForNativeReader() async throws -> Bool {
         guard !Task.isCancelled, !availability.isOffline, !isLocalDocument, !isDocumentPendingDelete,
             !hasPendingNewDocumentEntry

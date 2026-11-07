@@ -277,7 +277,7 @@ func presentedPeerCount(peerCount: Int, isOffline: Bool) -> Int? {
     return peerCount
 }
 
-/// Captures the experimental route at open. The classic view's tasks, save
+/// Presents the route NativeEditorOpen selects at each open or reopen. The classic view's tasks, save
 /// controls and live bridge are instantiated only when that route is selected.
 struct EditorView: View {
     let viewModel: EditorViewModel

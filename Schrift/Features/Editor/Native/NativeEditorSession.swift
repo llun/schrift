@@ -111,11 +111,16 @@ final class NativeEditorOpen {
 
     func open(viewModel: EditorViewModel, isOffline: Bool) async {
         // A repeated call while visible must not swap a focused editor. Close
-        // establishes the next safe open boundary, including a return from Profile.
+        // establishes the next safe open or reopen boundary.
         guard !isOpen else { return }
         isOpen = true
         enabled = preference()
-        route = .loading
+        // A reappearing classic editor keeps its SwiftUI identity and local
+        // view state while the optional native eligibility read is in flight.
+        switch route {
+        case .loading, .native: route = .loading
+        case .classic: break
+        }
         pendingOpen?.finish()
         generation += 1
         let request = generation

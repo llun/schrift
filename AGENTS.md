@@ -2047,7 +2047,7 @@ that are easy to violate and expensive to discover:
 The layer the phase 2 native reader sits on. The classic editor remains the
 default; `schrift.nativeEditor` is an experimental, default-off Profile preference.
 
-- **Native reader (PR01).** `EditorView` reads the preference at each open/reopen,
+- **Native reader (PR01).** `NativeEditorOpen` reads the preference at each open/reopen,
   before instantiating the classic editor's tasks or live bridge. For an online
   Docs 6 document with no pending local content, `NativeEditorOpen` fetches
   `collaborationYDocState`; legacy servers, offline/unreachable opens, pending
@@ -2057,6 +2057,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   Before selecting native, `refreshOfflineCacheForNativeReader` fetches the
   server's Markdown export, reuses leaf-nesting recovery and `cacheServerCopy`,
   and preserves its title/server timestamp for the classic offline fallback.
+  This refresh covers content only; it does not populate the children cache.
   It never installs classic display state or changes the classic load route.
   `NativeEditorSession` privately owns its own main-actor `YDoc`, seeds
   `NativeTextSurface` before attaching one engine, and calls `destroy()` on close,

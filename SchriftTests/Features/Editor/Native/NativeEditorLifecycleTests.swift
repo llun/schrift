@@ -303,6 +303,66 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         }
     }
 
+    func testDeleteDuringFormattedRefreshPreservesCacheAndFallsBackToClassic() async {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        let cache = DocumentContentCacheStore(directory: fixture.directory)
+        let original = CachedDocumentContent(
+            documentID: fixture.model.documentID, title: "Preserved title", markdown: "Preserved cached body",
+            syncedAt: Date(timeIntervalSince1970: 1), serverUpdatedAt: Date(timeIntervalSince1970: 2))
+        cache.save(original)
+        let response = MockURLProtocol.ResponseGate()
+        stub(
+            version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID),
+            markdown: "New server body that must not replace the cache", formattedGate: response)
+        let open = NativeEditorOpen(
+            preference: { true }, waitForTimeout: { try await Task.sleep(for: .seconds(30)) })
+        defer { open.close() }
+        let loading = Task { await open.open(viewModel: fixture.model, isOffline: false) }
+        await waitUntil {
+            MockURLProtocol.deferredDeliveryCount == 1
+                && MockURLProtocol.lastRequest?.url?.path.contains("formatted-content") == true
+        }
+        // This is inside refreshOfflineCacheForNativeReader's awaited read,
+        // after both the opener's and the refresh method's pre-fetch checks.
+        fixture.model.saveCoordinator.recordPendingDelete(documentID: fixture.model.documentID, ownerUserID: UUID())
+        response.open()
+        await loading.value
+        XCTAssertEqual(
+            cache.content(for: fixture.model.documentID), original,
+            "the refresh method's post-fetch guards must prevent this late cache write")
+        guard case .classic = open.route else { return XCTFail("a tombstoned refresh must select classic") }
+    }
+
+    func testClassicReopenStaysMountedWhileServerConfigIsRechecked() async {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        let open = NativeEditorOpen(
+            preference: { true }, waitForTimeout: { try await Task.sleep(for: .seconds(30)) })
+        defer { open.close() }
+        stub(version: "5.0.0", state: Data())
+        await open.open(viewModel: fixture.model, isOffline: false)
+        guard case .classic = open.route else { return XCTFail("legacy server must select classic") }
+        open.close()
+
+        let response = MockURLProtocol.ResponseGate()
+        stub(version: "5.0.0", state: Data(), configGate: response)
+        let reopening = Task { await open.open(viewModel: fixture.model, isOffline: false) }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+        let remainsClassic: Bool
+        if case .classic = open.route { remainsClassic = true } else { remainsClassic = false }
+        XCTAssertTrue(remainsClassic, "reappearing classic must not be unmounted for a loading spinner")
+        response.open()
+        await reopening.value
+        guard case .classic = open.route else { return XCTFail("classic reopen changed route") }
+    }
+
     func testPendingCreationIntentAlwaysChoosesEditableClassicWithoutNativeFetch() async {
         let intent = NewDocumentEntryIntent()
         let fixture = makeFixture(entryIntent: intent)
@@ -376,7 +436,8 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
     private func stub(
         version: String, state: Data, status: Int = 200, gate: MockURLProtocol.ResponseGate? = nil,
         configGate: MockURLProtocol.ResponseGate? = nil, onGatedCompletion: (@Sendable () -> Void)? = nil,
-        markdown: String = "Exported offline content", recorder: RequestRecorder? = nil
+        markdown: String = "Exported offline content", recorder: RequestRecorder? = nil,
+        formattedGate: MockURLProtocol.ResponseGate? = nil
     ) {
         MockURLProtocol.stubHandler = { request in
             recorder?.record(request)
@@ -388,7 +449,8 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
                 ]
                 return .init(
                     statusCode: 200, headers: ["Content-Type": "application/json"],
-                    body: try! JSONSerialization.data(withJSONObject: object), error: nil)
+                    body: try! JSONSerialization.data(withJSONObject: object), error: nil,
+                    releasedBy: formattedGate)
             }
             if request.url?.path.contains("children") == true {
                 return .init(statusCode: 200, headers: [:], body: Data("{\"count\":0,\"results\":[]}".utf8), error: nil)
