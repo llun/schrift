@@ -1,0 +1,37 @@
+SchriftTests/Core/Yjs/BlockNoteIncrementalSaveTests.swift
+  s_dc239db0cc1c9d::t_8ada44ecafb1e6 240-275
+AGENTS.md
+  s_dc239db0cc1c9d::t_11add9a3d45bbf 2688-2692,2696-2700
+Schrift/Core/Networking/APIDiagnosticsLog.swift
+  s_dc239db0cc1c9d::t_d59b3602a672ab 59-65,74
+Schrift/Core/Yjs/BlockNoteAlignment.swift
+  s_dc239db0cc1c9d::t_f44a34e601efce 21
+Schrift/Core/Yjs/BlockNoteIncrementalSave.swift
+  s_dc239db0cc1c9d::t_c0d0c80c6025fd 81-82,88-89
+Schrift/Core/Yjs/BlockNotePreservation.swift
+  s_dc239db0cc1c9d::t_70cf393462cd1f 71-76,130,132,194-197,199,211,222,230-234,332-337,345-373,493,530-532,537-539,564,567-569
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_dc239db0cc1c9d::t_90406099f42873 3881-3885,3975-3986
+SchriftTests/Features/Editor/DocumentSaveCoordinatorFailureDetailTests.swift
+  s_dc239db0cc1c9d::t_f5d34b12337a88 43-120
+docs/architecture.md
+  s_dc239db0cc1c9d::t_cdb06054358576 1842
+docs/offline-and-sync.md
+  s_dc239db0cc1c9d::t_91301cce8c0b75 191-195
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fca268aebd309389b79af614c6d3e8adbbd398ac",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
