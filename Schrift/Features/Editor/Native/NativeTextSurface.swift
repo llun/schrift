@@ -17,12 +17,19 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     private(set) var rangeIndex: ProjectionRangeIndex
     private(set) var traits: UITraitCollection
     private var presentation: NativeTextPresentation
+    /// Replica-backed surfaces use the owner's settled projection to validate
+    /// fast patches. Value-only fixtures may omit this callback.
+    private let reprojectBlock: ((String) -> BlockSnapshot?)?
     var labels: NativeEditorLabels { presentation.labels }
 
-    init(blocks: [BlockSnapshot], storage: NSTextStorage, traits: UITraitCollection = .current) {
+    init(
+        blocks: [BlockSnapshot], storage: NSTextStorage, traits: UITraitCollection = .current,
+        reprojectBlock: ((String) -> BlockSnapshot?)? = nil
+    ) {
         self.blocks = blocks
         self.storage = storage
         self.traits = traits
+        self.reprojectBlock = reprojectBlock
         self.rangeIndex = ProjectionRangeIndex(blocks: blocks)
         self.presentation = NativeTextPresentation(
             contentSize: traits.preferredContentSizeCategory, labels: NativeEditorLabels())
@@ -37,9 +44,35 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
             switch change {
             case .text(let id, let deltas):
                 guard let position = rangeIndex.position(for: id) else { continue }
+                if let reprojectBlock {
+                    guard let fresh = reprojectBlock(id) else { continue }
+                    var predicted = blocks[position]
+                    predicted.runs = TextDelta.apply(deltas, to: predicted.runs)
+                    // Readable engine text may still render as a placeholder.
+                    // A settled replica can also be ahead of this buffered
+                    // patch: assignment must win over replaying its deltas.
+                    if AttributedDocumentProjection.isPlaceholder(blocks[position])
+                        || AttributedDocumentProjection.isPlaceholder(fresh) || predicted != fresh
+                    {
+                        replace(at: position, with: fresh)
+                        continue
+                    }
+                } else if AttributedDocumentProjection.isPlaceholder(blocks[position]) {
+                    // Snapshot-only consumers cannot infer replica fidelity,
+                    // but must never splice replica offsets into a UI label.
+                    var block = blocks[position]
+                    block.runs = TextDelta.apply(deltas, to: block.runs)
+                    replace(at: position, with: block)
+                    continue
+                }
                 applyText(deltas, at: position)
             case .props(let id, let props):
                 guard let position = rangeIndex.position(for: id) else { continue }
+                if let reprojectBlock {
+                    guard let fresh = reprojectBlock(id) else { continue }
+                    replace(at: position, with: fresh)
+                    continue
+                }
                 var block = blocks[position]
                 block.props = props
                 replace(at: position, with: block)

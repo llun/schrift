@@ -100,6 +100,87 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         XCTAssertNil(MockURLProtocol.lastRequest)
     }
 
+    func testPendingDeletionKeepsClassicWithoutFetching() async {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        fixture.model.saveCoordinator.recordPendingDelete(documentID: fixture.model.documentID, ownerUserID: UUID())
+        XCTAssertTrue(fixture.model.isDocumentPendingDelete)
+        let open = NativeEditorOpen(enabled: true)
+        await open.open(viewModel: fixture.model, isOffline: false)
+        guard case .classic = open.route else { return XCTFail("a tombstoned document must stay on classic") }
+        XCTAssertNil(MockURLProtocol.lastRequest, "a tombstone must prevent even the config prefetch")
+    }
+
+    func testDeletionQueuedDuringRawFetchPreventsNativeInstallation() async {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        let response = MockURLProtocol.ResponseGate()
+        stub(
+            version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID), gate: response
+        )
+        let open = NativeEditorOpen(enabled: true)
+        let loading = Task { await open.open(viewModel: fixture.model, isOffline: false) }
+        await waitUntil { MockURLProtocol.lastRequest?.url?.path.contains("/collaboration/ydoc/") == true }
+        fixture.model.saveCoordinator.recordPendingDelete(documentID: fixture.model.documentID, ownerUserID: UUID())
+        response.open()
+        await loading.value
+        guard case .classic = open.route else { return XCTFail("an in-flight response showed a tombstoned document") }
+    }
+
+    func testUnreachableServerKeepsClassicWithoutPrefetching() async {
+        let connectivity = ConnectivityMonitor(monitoring: NetworkPathMonitoring { _ in {} })
+        let fixture = makeFixture(connectivity: connectivity)
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        connectivity.report(.unreachable)
+        await waitUntil { connectivity.serverUnreachable }
+        XCTAssertFalse(fixture.model.availability.isOffline, "this is transport evidence on a satisfied path")
+        let open = NativeEditorOpen(enabled: true)
+        await open.open(viewModel: fixture.model, isOffline: false)
+        guard case .classic = open.route else { return XCTFail("unreachable native prefetch must not hold up cache") }
+        XCTAssertNil(MockURLProtocol.lastRequest)
+    }
+
+    func testDeadlineBoundsStalledConfigAndRawFetchWithoutWaitingForResponse() async {
+        for stallsConfig in [true, false] {
+            let fixture = makeFixture()
+            defer {
+                fixture.clean()
+                MockURLProtocol.reset()
+            }
+            let response = MockURLProtocol.ResponseGate()
+            let deadline = NativeOpenTestDeadline()
+            stub(
+                version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID),
+                gate: stallsConfig ? nil : response, configGate: stallsConfig ? response : nil)
+            let open = NativeEditorOpen(enabled: true, waitForTimeout: { await deadline.wait() })
+            let loading = Task { await open.open(viewModel: fixture.model, isOffline: false) }
+            await waitUntil {
+                deadline.isWaiting
+                    && (stallsConfig
+                        ? MockURLProtocol.lastRequest?.url?.path.contains("/config") == true
+                        : MockURLProtocol.lastRequest?.url?.path.contains("/collaboration/ydoc/") == true)
+            }
+            // The network gate stays shut: fallback cannot depend on URLSession
+            // or a shared config task cooperating with cancellation.
+            deadline.fire()
+            await loading.value
+            guard case .classic = open.route else { return XCTFail("deadline did not select classic") }
+            response.open()
+            if stallsConfig { _ = try? await fixture.model.client.serverConfig() }
+            await open.open(viewModel: fixture.model, isOffline: false)
+            guard case .classic = open.route else { return XCTFail("a late response replaced the selected fallback") }
+        }
+    }
+
     func testLegacyAndFailedRawFetchFallBackToClassic() async {
         for (version, status, body) in [
             ("5.0.0", 200, Data()), ("6.0.0", 500, Data()), ("6.0.0", 200, Data("invalid".utf8)),
@@ -190,7 +271,10 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         guard case .classic = open.route else { return XCTFail("an in-flight baseline hid a local draft") }
     }
 
-    private func stub(version: String, state: Data, status: Int = 200, gate: MockURLProtocol.ResponseGate? = nil) {
+    private func stub(
+        version: String, state: Data, status: Int = 200, gate: MockURLProtocol.ResponseGate? = nil,
+        configGate: MockURLProtocol.ResponseGate? = nil
+    ) {
         MockURLProtocol.stubHandler = { request in
             let isConfig =
                 request.url?.path.hasSuffix("config") == true || request.url?.path.hasSuffix("config/") == true
@@ -198,7 +282,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             return .init(
                 statusCode: isConfig ? 200 : status, headers: ["Content-Type": "application/json"],
                 body: (try? JSONSerialization.data(withJSONObject: object)) ?? Data(), error: nil,
-                releasedBy: isConfig ? nil : gate)
+                releasedBy: isConfig ? configGate : gate)
         }
     }
 
@@ -213,7 +297,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         }
     }
 
-    private func makeFixture() -> Fixture {
+    private func makeFixture(connectivity: ConnectivityMonitor? = nil) -> Fixture {
         MockURLProtocol.reset()
         let suite = "NativeEditorLifecycleTests.\(UUID())"
         let defaults = UserDefaults(suiteName: suite)!
@@ -234,7 +318,20 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             client: client, documentID: UUID(), title: "Fixture", saveCoordinator: coordinator,
             signedInUser: SignedInUserStore(userDefaults: defaults), contentCache: content, childrenCache: children,
             listCache: DocumentCacheStore(userDefaults: defaults),
-            availability: OnlineAvailability(userDefaults: defaults))
+            availability: OnlineAvailability(connectivity: connectivity, userDefaults: defaults))
         return Fixture(model: model, defaults: defaults, suite: suite, directory: directory)
+    }
+}
+
+@MainActor
+private final class NativeOpenTestDeadline {
+    private var continuation: CheckedContinuation<Void, Never>?
+    var isWaiting: Bool { continuation != nil }
+    func wait() async {
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func fire() {
+        continuation?.resume()
+        continuation = nil
     }
 }

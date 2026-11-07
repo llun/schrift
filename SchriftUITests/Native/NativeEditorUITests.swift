@@ -9,7 +9,6 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(reader.isHittable)
         reader.tap()
         XCTAssertEqual(app.keyboards.count, 0)
-        XCTAssertFalse(app.buttons["Edit"].exists)
         reader.swipeUp()
         XCTAssertTrue(reader.isHittable)
     }

@@ -555,8 +555,11 @@ path; PR01 connects this engine to an opt-in read-only TextKit 2 surface.
 defaults off and is captured by `EditorView` at document open. A selected surface
 never changes in response to a preference write. `NativeEditorOpen` fetches the
 existing raw `collaborationYDocState` for eligible online Docs 6 documents.
-Legacy servers, offline/local documents, pending local content and failed raw
-fetches/decodes stay with the classic editor. Its tasks, controls and live bridge
+Legacy servers, offline/unreachable or local documents, pending deletions/local
+content and failed raw fetches/decodes stay with the classic editor. A three-second
+prefetch deadline selects classic without waiting for a stalled request to finish
+cancelling; closed/timed-out result streams cannot install late native sessions.
+Its tasks, controls and live bridge
 are not mounted alongside a native session.
 
 `NativeEditorSession` is the sole main-actor owner of a private local `YDoc`,
@@ -575,7 +578,11 @@ get labelled preserved placeholders; an unsupported root has an explicit state.
 characters; duplicate/missing IDs are not addressable. `NativeTextSurface` applies
 all six patch kinds and every origin, replacing exact text-delta ranges or affected block storage
 slices (reset replaces all storage). Its settled storage equals a fresh
-projection under normalized attribute comparison. Dynamic Type/language changes
+projection under normalized attribute comparison. For text/props changes, the
+session projects the affected top-level block again; placeholders and fidelity
+changes rebuild that slice instead of using replica offsets in a UI label. The
+lookup scans container identities without reprojecting unrelated block text.
+Dynamic Type/language changes
 only rebuild presentation. No native edit/save/live path is introduced here;
 durable typing/legacy adapters and complete block chrome belong to later PRs.
 The generated project includes an isolated production-reader fixture host and

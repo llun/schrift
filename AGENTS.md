@@ -2050,8 +2050,10 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
 - **Native reader (PR01).** `EditorView` captures the preference once per open,
   before instantiating the classic editor's tasks or live bridge. For an online
   Docs 6 document with no pending local content, `NativeEditorOpen` fetches
-  `collaborationYDocState`; legacy servers, offline opens and fetch/decode failures
-  use the classic editor. Never replace a focused editor when the toggle changes.
+  `collaborationYDocState`; legacy servers, offline/unreachable opens, pending
+  deletions and fetch/decode failures use the classic editor. A three-second
+  deadline bounds the optional prefetch without awaiting cancellation of shared
+  config requests. Never replace a focused editor when the toggle changes.
   `NativeEditorSession` privately owns its own main-actor `YDoc`, seeds
   `NativeTextSurface` before attaching one engine, and calls `destroy()` on close,
   failed initialization and deinitialization. It never borrows the manager's replica.
@@ -2062,7 +2064,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   placeholders; unsupported nodes and invalid roots are explicit read-only states.
   Apply every origin without optimism. After settled patches, storage must equal
   a fresh attributed projection, comparing semantic attribute values. Text patches replace exact delta ranges; props/replacements
-  rebuild one block slice; structural edits insert/remove slices; only
+  rebuild one block slice. The session supplies fresh per-block projections for
+  text/props patches: placeholder offsets are never replica text offsets, and
+  fidelity-changing props/marks require a rebuilt slice. Structural edits insert/remove slices; only
   reset replaces all storage. Presentation changes may restyle without a Yjs write.
   PR01 has no native editing, persistence, sockets, rich block controls or legacy
   local-replica adapter. The isolated `SchriftNativeTestHost` hosts the production
