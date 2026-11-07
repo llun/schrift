@@ -606,6 +606,9 @@ private struct ClassicEditorView: View {
             .onChange(of: collaboration.replicaVersion(for: viewModel.documentID)) { _, _ in
                 liveEditingBridge?.replicaDidChange()
             }
+            .onChange(of: collaboration.initialSyncVersion(for: viewModel.documentID)) { _, _ in
+                liveEditingBridge?.initialSyncDidChange()
+            }
             // Live refresh: a peer touched the document (a change signal on the socket
             // bumps this token), so debounce a silent revalidation. Suppressed while the
             // bridge is actively applying live content — the stream is already newer than

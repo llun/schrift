@@ -20,17 +20,18 @@ struct ServerConfig: Codable, Equatable, Sendable {
     /// never from this value, so a cross-origin config can't redirect the socket
     /// or leak the session cookie off-origin.
     ///
-    /// **Still false on Docs 6.** The y-websocket transport exists, but its separate
-    /// capability switch remains off pending the future switch-on PR. The user
-    /// preference `schrift.liveCollaboration` cannot bypass this server gate.
+    /// Live collaboration is available when the server advertises a WebSocket and,
+    /// for Docs 6's y-websocket transport, its internal server capability is enabled.
+    /// The user preference `schrift.liveCollaboration` remains an independent opt-in;
+    /// it cannot bypass this server gate. The socket URL is still origin-pinned by
+    /// `CollaborationEndpoint`.
     var supportsLiveCollaboration: Bool {
         collaborationWsUrl?.isEmpty == false
             && (!usesCollaborationYDocServer || Self.yWebSocketLiveCollaborationEnabled)
     }
 
-    /// Internal release capability, deliberately not a user preference. A later
-    /// switch-on PR flips this only after end-to-end yhub/editor verification.
-    static let yWebSocketLiveCollaborationEnabled = false
+    /// Internal release capability, deliberately separate from the user preference.
+    static let yWebSocketLiveCollaborationEnabled = true
 
     /// Whether this is a Docs 6+ deployment, whose document content lives in the yhub
     /// collaboration server rather than behind `documents/{id}/content/` — known from the

@@ -3669,10 +3669,9 @@ markdown write endpoint**. Understand this before touching the save path:
   to yhub as `{"update": base64}` (a full-state Yjs update is a valid incremental one, so no
   GET/diff is needed), while a pre-Docs 6 server takes the legacy
   `documents/{id}/content/` PATCH tagged `"websocket": true` (through
-  `setContent(…, viaWebSocket:)`; the classic body stays byte-identical when false). Docs 6 has
-  no live session today (`ServerConfig.yWebSocketLiveCollaborationEnabled` stays false),
-  so the y-websocket transport and this route remain switched-off groundwork. Its PATCH
-  carries the whole snapshot and is subject to the deployment's request-size limit. Because
+  `setContent(…, viaWebSocket:)`; the classic body stays byte-identical when false). Docs 6
+  live sessions use the enabled y-websocket transport, and snapshot saves use this route. Its
+  PATCH carries the whole snapshot and is subject to the deployment's request-size limit. Because
   reconcile is markdown-based, the coordinator carries the **projected markdown** as the
   `PendingSave.markdown` / draft body /
   `lastConfirmedPushMarkdown` stamp, so `finish`, the enqueue-hold, latest-wins coalescing,
@@ -3805,17 +3804,16 @@ markdown write endpoint**. Understand this before touching the save path:
     sync-engine surface). **Opt-in behind the default-off `schrift.liveCollaboration`
     flag — the C3 Profile toggle (Profile → Preferences → "Live collaboration", an
     `@AppStorage(LiveCollaborationPreference.key)` switch) is the only writer. The
-    default stays off pending the owed on-device WebSocket verification against a real
-    collaboration-capable server (non-gating follow-up); the flag is read lazily, so a
-    flip affects newly requested sessions, not screens already open.** **Unavailable on
-    Docs 6**: its collaboration server (yhub) speaks plain y-websocket at
-    `/collaboration/ws/v1/{org}/{documentID}`, not Hocuspocus. The A4 transport now exists,
-    but `ServerConfig.yWebSocketLiveCollaborationEnabled` is **false**, so
-    `ServerConfig.supportsLiveCollaboration` remains false for a release major ≥ 6 or a
-    `…/ws/v1/{org}` URL and the user toggle still has no effect there. See
+    default stays off; the owner will run the on-device end-to-end WebSocket check in
+    TestFlight for this build. The flag is read lazily, so a
+    flip affects newly requested sessions, not screens already open.** Docs 6's yhub
+    collaboration server speaks plain y-websocket at
+    `/collaboration/ws/v1/{org}/{documentID}`, not Hocuspocus. Its transport is enabled;
+    `supportsLiveCollaboration` requires an advertised collaboration URL, and the separate
+    default-off user preference still gates session availability. See
     `docs/architecture.md` ("Editor wiring — the write path complete (C2c)" and the
     "C3 (shipped)" paragraph).
-- **A4 adds yhub framing beside Hocuspocus, merged switched off.**
+- **A4 adds yhub framing beside Hocuspocus; A5 enables it in production.**
   `CollaborationWireProtocol(config:)` selects `.yWebSocket` when
   `ServerConfig.usesCollaborationYDocServer`, otherwise `.hocuspocus`. The transport alone
   adds/removes the document-name prefix; the session shares `SyncMessage` and
@@ -3839,10 +3837,49 @@ markdown write endpoint**. Understand this before touching the save path:
   send none: a reader must not publish, whatever its replica holds. An entry keeps one ability
   (the latest caller's) and keeps its replica across a writer→reader flip, so that replica may
   carry edits whose broadcast failed; they go out again only if a writer reopens it.
-  Production still stops at server availability: only tests override the manager's existing
-  server-support seam to exercise yhub. A **future switch-on PR** must verify the real
-  yhub/editor path end to end, then flip `ServerConfig.yWebSocketLiveCollaborationEnabled`;
-  it must retain the independent default-off `schrift.liveCollaboration` user preference.
+  Production enables yhub when the server advertises a collaboration URL. The manager's
+  server-support seam remains available to tests. The independent default-off
+  `schrift.liveCollaboration` user preference still gates session availability.
+  A server permission change mid-session is not re-read by the client; the server enforces
+  write permission, and refetching abilities on reset belongs with native live editing (phase 2 PR09).
+  **Switch-on evidence (2026-11-07, S4/S5; labs `RESULTS.md`):** on the real yhub server,
+  snapshot and live sync for a document filled with every web block were byte-identical;
+  Schrift's core re-encoded them identically to yjs 13.6.33; the web cursor arrived as
+  y-prosemirror relative-position JSON and resolved correctly; off-main decode passed.
+  The remaining on-device end-to-end check is the owner's TestFlight step on this build.
+  Rollback is reverting `ServerConfig.yWebSocketLiveCollaborationEnabled` to `false`.
+  A dropped socket does not reconnect automatically: it is rebuilt on a network reachability
+  change or foreground resume. Peer edits stop arriving until then; local edits still reach
+  yhub through the ~60 s HTTP snapshot. `runSyncPass` skips a draft (before and again after
+  its GET) while `hasHeldLiveReplica` is true: the entry can write (`canUpdate`) and holds a
+  replica that has not fail-safed. Such a replica sends its own step2 diff, so replaying the
+  markdown could insert the same edits as new Yjs items. A reader never sends step2, so its
+  draft is never skipped. After the session's initial step2 exchange,
+  `LiveEditingBridge.initialSyncDidChange` re-persists the replica snapshot through
+  `persistLiveSnapshot` **only while the stored draft's markdown is canonically equal to the
+  replica's projection** (`canonicalMarkdown`, the test `draftSyncDecision` uses) **and the
+  title passes the same rule**: `draftSyncDecision` with the draft's baseline and title, the
+  session's `knownServerTitle`, and no server timestamp. A co-author's rename the user never
+  made (adopt) or two different renames (conflict) leave the draft, since the snapshot PATCHes
+  the on-screen title; so does an unknown server title. `canonicalMarkdown` ignores leaf
+  nesting. `knownServerTitle` is session-only and updated by editor fetches and landed saves;
+  a co-author's title-only rename changes no Yjs content, so it does not refresh over the live
+  socket and the gate can still approve the old local title. This is the pre-existing live-title
+  gap: the gate narrows it but does not close it. A draft that differs only by a leaf's indentation
+  is re-persisted flat: content
+  is kept and leaf structure follows the replica. The normal
+  successful save path then clears that draft. Any other draft holds edits the replica lacks
+  (typed on the classic path after a failed snapshot disengaged live mode, typed with no
+  replica, or restored by reopening a `.pendingSync` document), so the bridge does nothing and
+  never overwrites or clears it. When the manager tears down an idle entry that held a replica
+  (`teardownIfIdle`, or the idle drop in `suspend()`), it fires `onHeldReplicaReleased`, which
+  `RootView` wires to `syncPendingDrafts()`, so the skipped draft gets its classic replay. A
+  replica fail-safe does not fire `onHeldReplicaReleased`: a draft skipped while it was held
+  waits for the next normal sync trigger (reconnect, foreground, launch). A
+  kill before reconnect leaves no replica, so the draft replays once. What stays: a skipped
+  draft waits while the editor holds the replica and no socket is rebuilt, and classic saves
+  outside `runSyncPass` (the retry, an autosave after live mode disengages) can still race the
+  socket, as they already could on legacy servers.
 - **The replica broadcasts the formatting-cleanup update it makes on its own.** An inbound
   update that touches a formatted text makes `cleanupTransactions` open a second, local
   transaction with origin `nil` (B4). yjs providers broadcast that transaction's update like

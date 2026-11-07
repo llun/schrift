@@ -72,20 +72,19 @@ final class ServerConfigClientTests: XCTestCase {
 
     // MARK: - Docs 6 (yhub)
 
-    /// Docs 6 replaced Hocuspocus with yhub's plain y-websocket. The app's collaboration
-    /// layer speaks Hocuspocus, so a Docs 6 server must not read as live-capable — known
-    /// from the release major *or* from the yhub URL shape when the version is withheld.
-    func testADocs6ServerDoesNotAdvertiseLiveCollaboration() {
-        let byVersion = ServerConfig(
+    /// A Docs 6 release uses yhub even when its advertised URL has the legacy shape;
+    /// the release major and URL shape each identify yhub when available.
+    func testDocs6ReleaseOrYHubURLShapeAdvertisesLiveCollaboration() {
+        let byVersionWithLegacyURL = ServerConfig(
             releaseVersion: "6.0.0", collaborationWsUrl: "wss://docs.example.org/collaboration/ws/")
         let byShape = ServerConfig(collaborationWsUrl: "wss://docs.example.org/collaboration/ws/v1/docs")
         let hocuspocus = ServerConfig(
             releaseVersion: "5.7.0", collaborationWsUrl: "wss://docs.example.org/collaboration/ws/")
 
-        XCTAssertTrue(byVersion.usesCollaborationYDocServer)
-        XCTAssertFalse(byVersion.supportsLiveCollaboration)
+        XCTAssertTrue(byVersionWithLegacyURL.usesCollaborationYDocServer)
+        XCTAssertTrue(byVersionWithLegacyURL.supportsLiveCollaboration)
         XCTAssertTrue(byShape.usesCollaborationYDocServer)
-        XCTAssertFalse(byShape.supportsLiveCollaboration)
+        XCTAssertTrue(byShape.supportsLiveCollaboration)
         XCTAssertFalse(hocuspocus.usesCollaborationYDocServer)
         XCTAssertTrue(hocuspocus.supportsLiveCollaboration)
     }

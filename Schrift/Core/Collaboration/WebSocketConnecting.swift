@@ -88,8 +88,22 @@ final class URLSessionWebSocket: WebSocketConnecting, @unchecked Sendable {
 
     /// A `WebSocketFactory` backed by a real `URLSession` — the production way the
     /// manager opens sockets. Tests inject a factory that returns a `FakeWebSocket`.
-    static func factory(session: URLSession = .shared) -> WebSocketFactory {
-        { request in URLSessionWebSocket(task: session.webSocketTask(with: request)) }
+    static func factory() -> WebSocketFactory {
+        let session = URLSession(
+            configuration: .ephemeral, delegate: CollaborationWebSocketSessionDelegate(), delegateQueue: nil)
+        return { request in URLSessionWebSocket(task: session.webSocketTask(with: request)) }
+    }
+}
+
+/// Refuses every WebSocket upgrade redirect. The initial request carries the
+/// session cookie and Origin header, so following a redirect would change the
+/// trust boundary of that credentialed handshake.
+final class CollaborationWebSocketSessionDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
     }
 }
 

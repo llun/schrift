@@ -326,6 +326,56 @@ final class DocumentCollaborationManagerReplicaTests: DocumentCollaborationManag
         XCTAssertTrue(manager.hasPendingStructs(for: docID))
     }
 
+    func testHeldLiveReplicaRequiresWriteAbilityAndAHealthyReplica() async {
+        let spy = ManagerSocketFactorySpy()
+        let manager = makeManager(spy: spy)
+        _ = manager.session(for: docID, canUpdate: false)
+        await waitUntil { spy.sockets.count == 1 }
+        let update = MarkdownYjs.encode(markdown: "Body", serverOrigin: "", clientID: 1)
+        spy.sockets[0].deliver(message: syncStep2Frame(data: update))
+        await waitUntil { manager.replicaVersion(for: docID) == 1 }
+        XCTAssertFalse(manager.hasHeldLiveReplica(for: docID), "a reader never sends step2")
+
+        _ = manager.session(for: docID, canUpdate: true)  // the replica survives the flip
+        await waitUntil { spy.sockets.count == 2 }
+        XCTAssertTrue(manager.hasHeldLiveReplica(for: docID))
+
+        spy.sockets[1].deliver(message: syncUpdateFrame(data: Data([0x00, 0x01, 0x02, 0x99])))
+        await waitUntil { manager.replicaIsFailSafe(for: docID) }
+        XCTAssertFalse(manager.hasHeldLiveReplica(for: docID))
+    }
+
+    func testTeardownOfAHeldReplicaFiresTheReleaseCallback() async {
+        let spy = ManagerSocketFactorySpy()
+        let manager = makeManager(linger: 0.05, spy: spy)
+        var released = 0
+        manager.onHeldReplicaReleased = { released += 1 }
+        _ = manager.session(for: docID, canUpdate: true)
+        await waitUntil { spy.sockets.count == 1 }
+        await seedWritableReplica(manager, socket: spy.sockets[0], blocks: [para("Body", id: blockID)])
+
+        manager.release(docID)
+        await waitUntil { manager.activeDocumentCount == 0 }
+        XCTAssertEqual(released, 1)
+    }
+
+    func testSuspendDroppingAHeldIdleReplicaFiresTheReleaseCallbackAndResetsState() async {
+        let spy = ManagerSocketFactorySpy()
+        let manager = makeManager(linger: 5, spy: spy)
+        var released = 0
+        manager.onHeldReplicaReleased = { released += 1 }
+        _ = manager.session(for: docID, canUpdate: true)
+        await waitUntil { spy.sockets.count == 1 }
+        await seedWritableReplica(manager, socket: spy.sockets[0], blocks: [para("Body", id: blockID)])
+        XCTAssertEqual(manager.initialSyncVersion(for: docID), 1)
+
+        manager.release(docID)
+        manager.suspend()
+        XCTAssertEqual(manager.activeDocumentCount, 0)
+        XCTAssertEqual(released, 1)
+        XCTAssertEqual(manager.initialSyncVersion(for: docID), 0)
+    }
+
     func testTeardownDestroysReplicaAndResetsVersion() async {
         let spy = ManagerSocketFactorySpy()
         let manager = makeManager(linger: 0.05, spy: spy)

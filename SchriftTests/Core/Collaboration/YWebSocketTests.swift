@@ -24,8 +24,8 @@ final class YWebSocketTests: DocumentCollaborationManagerTestCase {
             socketFactory: spy.factory, replicaClientIDProvider: { 42 })
         await manager.refreshServerSupport()
         await manager.refreshLocalAwareness()
-        // Only tests override this gate. Production remains switched off on Docs 6.
-        if enabled { manager.serverSupportsLiveCollaboration = true }
+        // Pin the manager seam so each test controls availability explicitly.
+        manager.serverSupportsLiveCollaboration = enabled
         return manager
     }
 
@@ -44,7 +44,7 @@ final class YWebSocketTests: DocumentCollaborationManagerTestCase {
         }
     }
 
-    func testDocs6RemainsUnavailableEvenWithUserFlagEnabled() async {
+    func testManagerServerSupportSeamCanDisableDocs6() async {
         let spy = ManagerSocketFactorySpy()
         let manager = await yhubManager(spy, enabled: false)
         XCTAssertEqual(manager.availability, .serverUnavailable)
