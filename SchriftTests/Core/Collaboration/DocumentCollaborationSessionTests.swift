@@ -463,6 +463,53 @@ final class DocumentCollaborationSessionTests: XCTestCase {
         await waitUntil { session.state == .ended(.closed) }
     }
 
+    /// y-protocols peers drop a state not renewed within 30 s, so a writer re-publishes it
+    /// on an interval with a strictly higher clock (an equal clock would not refresh it).
+    func testRenewsLocalAwarenessWithIncreasingClock() async throws {
+        let fake = FakeWebSocket()
+        let session = DocumentCollaborationSession(
+            documentName: doc, transport: CollaborationTransport(socket: fake), clientID: 42,
+            localState: LocalAwarenessState(name: "Me", color: "#abcdef"), awarenessRenewInterval: .milliseconds(20))
+        session.start()
+        await waitUntil { fake.sentFrames.count >= 4 }
+        let clocks = try fake.sentFrames.dropFirst().map {
+            try AwarenessCodec.decodePayload(HocuspocusMessage(decoding: $0).payload)[0].clock
+        }
+        XCTAssertEqual(Array(clocks.prefix(3)), [1, 2, 3])
+
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+        let sent = fake.sentFrames.count
+        await waitAndConfirmNever { fake.sentFrames.count > sent }
+    }
+
+    func testTransientDisconnectStopsAwarenessRenewal() async {
+        let fake = FakeWebSocket()
+        let session = DocumentCollaborationSession(
+            documentName: doc, transport: CollaborationTransport(socket: fake), clientID: 42,
+            localState: LocalAwarenessState(name: "Me", color: "#abcdef"), awarenessRenewInterval: .milliseconds(20))
+        session.start()
+        await waitUntil { fake.sentFrames.count >= 3 }
+
+        fake.failTransport()
+        await waitUntil { session.state == .reconnecting }
+        let sent = fake.sentFrames.count
+        await waitAndConfirmNever { fake.sentFrames.count > sent }
+    }
+
+    func testReaderNeverRenewsAwareness() async {
+        let fake = FakeWebSocket()
+        let session = DocumentCollaborationSession(
+            documentName: doc, transport: CollaborationTransport(socket: fake), clientID: 42,
+            localState: LocalAwarenessState(name: "Me", color: "#abcdef"),
+            awarenessRenewInterval: .milliseconds(20), canUpdate: false)
+        session.start()
+        await waitUntil { fake.sentFrames.count == 1 }
+        await waitAndConfirmNever { fake.sentFrames.count > 1 }
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
+
     func testWithoutLocalStateSendsOnlyTheHandshake() async {
         let fake = FakeWebSocket()
         let counter = ChangeCounter()

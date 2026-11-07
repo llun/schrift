@@ -1075,7 +1075,7 @@ is accepted without changing the replica or clearing known peers.
 slash, with the existing explicit origin and cookie headers. Only the validated org is
 read from `COLLABORATION_WS_URL`; its host never determines the socket destination.
 Awareness for yhub reads/writes `{"user":{"name":…, "color":…}}` (cursor fields are
-ignored); the legacy Hocuspocus shape stays flat. The editor supplies the document's
+ignored); the legacy Hocuspocus shape stays flat. A writer re-publishes its awareness every 15 s with a strictly higher clock (peers drop a state not renewed within 30 s); renewal stops on any disconnect. The editor supplies the document's
 `abilities.update` from its existing metadata. Readers can receive/project updates but
 never publish awareness, broadcast local edits, produce save snapshots, or report local
 edits handled live. Replica read safety remains independent of write authorization.

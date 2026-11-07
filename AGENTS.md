@@ -3825,6 +3825,12 @@ markdown write endpoint**. Understand this before touching the save path:
   `CollaborationEndpoint`'s API-origin scheme/host/port and explicit `Origin`/cookies.
   Only the validated org comes from config (the Networking rule above), never its host.
   y-websocket awareness nests the name/color in `user`; Hocuspocus keeps its flat shape.
+  **A writer renews its awareness every 15 s with a strictly higher clock** (y-protocols'
+  `outdatedTimeout / 2`); peers drop a state not renewed for 30 s, so a single announce made the
+  web show us for ~30 s at most. The query-awareness reply also bumps the clock, since an equal
+  clock does not refresh a peer's timer. The renewal stops on stop/disconnect; readers never send it.
+  The awareness clientID is the session's own random id, not the replica's `YDoc.clientID`:
+  yhub relays any id and the web never joins the two, so they need not match.
   The editor passes **`Document.abilities.update`**, never inferred link role, into session
   acquisition (both navigation surfaces already carry the document as `pinRow`). Missing
   metadata fails closed. Readers receive/project updates but publish no awareness (including
