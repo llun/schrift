@@ -1,0 +1,23 @@
+docs/architecture.md
+  s_09bd84d0907cf4::t_0f335c4d6653c6 1053-1057
+AGENTS.md
+  s_09bd84d0907cf4::t_0f335c4d6653c6 3832-3836
+docs/offline-and-sync.md
+  s_09bd84d0907cf4::t_0f335c4d6653c6 991-995
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a97e9845e231b1a901ecc3a36dfd7611cf4889af",
+  "prompts": {},
+  "sessions": {
+    "s_09bd84d0907cf4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1b60a-ec28-7622-b7fd-59923973695e",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
