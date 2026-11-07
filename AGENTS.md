@@ -299,8 +299,8 @@ names the section with the details.
 
 ## Working without Xcode (Linux)
 
-Some environments (for example a Linux container) have **no
-Xcode**, no `xcodebuild`, no iOS simulators and no Apple SDKs. There:
+Some environments (for example a Linux container) have **no Xcode**, no
+`xcodebuild`, no iOS simulators and no Apple SDKs. In those environments:
 
 - **Never attempt to build, test, or run the app.** UIKit/SwiftUI/XCTest and
   every Apple framework are unavailable; any `xcodebuild`/`xcrun` invocation
@@ -322,7 +322,7 @@ Xcode**, no `xcodebuild`, no iOS simulators and no Apple SDKs. There:
   - `xcodegen generate` is unavailable too — treat `project.yml` edits as
     unverified until CI builds them.
 
-### Commit conventions
+## Commit conventions
 
 - One logical change per commit; **Conventional Commit** messages (the PR
   title becomes the squash-commit subject that drives the release version —
@@ -5108,6 +5108,8 @@ markdown write endpoint**. Understand this before touching the save path:
   (`YYYY-MM-DD-<name>.md`); the repo deliberately has none. Fold lasting
   guidance into this `AGENTS.md` or the living `docs/` above, rewritten as
   **current guidance**, not filed as a dated point-in-time record.
+- **Local scratch stays out of git.** `.superpowers/` and `docs/superpowers/` are
+  git-ignored scratch locations; never force-add anything from them.
 - Keep the **living docs** accurate when behavior changes: this `AGENTS.md`,
   `README.md`, the design docs under `docs/`, `docs/testflight-setup.md`,
   `docs/ci.md`, and the CI/build sources (`project.yml`,
@@ -5143,7 +5145,10 @@ them is simply the next round and counts toward the same round cap in step 3.
    instead of stopping silently.
 
 If an automated review bot runs on PRs, treat its comments like any other
-finding and give it up to 20 minutes to finish before the round ends.
+finding and give it up to 20 minutes to finish before the round ends. Re-request
+its review only when there are commits newer than its last review, and never
+re-request a bot that already timed out on the current pushed state. A round
+ends only when every active bot has reviewed or timed out.
 
 The loop — and the agent's work — is **not finished until the PR's `Build &
 Test` check is green on the latest pushed state**. A CI failure on the PR is
