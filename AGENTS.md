@@ -2683,12 +2683,21 @@ markdown write endpoint**. Understand this before touching the save path:
   and the pair is forced into the alignment so `BlockNoteWrite` writes nothing for it.
   Nodes the export never spells (`invisibleNodes`: a PDF preview, page break, math,
   diagram, columns) are kept where they were when no shadow is found. Anything the
-  user edited no longer matches and is written from the markdown as before. Still
-  rewritten on every save: an untouched **nested list** (the editor models its
-  structure, so a re-indent keeps every word yet must be written), including a list
-  item with a photo or file nested under it — its nested media is rebuilt each save,
-  resetting web-set props the markdown does not carry (an image's `caption`,
-  `previewWidth`, `textAlignment`; a file's `caption`). Refused as
+  user edited no longer matches and is written from the markdown as before. A **nested
+  list item** gets `Rule.listTree`: kept only when one *untouched* new block has the same
+  words **and** the same tree of nodes (`treeShape`), because the editor models its
+  structure and a re-indent keeps every word yet must be written. Rebuilding untouched
+  ones on every save (the old behaviour) deleted the subtree a co-author was typing in:
+  keystrokes landing between the GET and the PATCH were lost, and two rebuilds of one item
+  from the same state left both copies (TestFlight 0.103.0,
+  `testAnUntouchedNestedListItemIsLeftInPlaceForACoAuthorTypingInIt`). Still rebuilt:
+  an edited one, one without a recorded base, or one whose words a co-author changed
+  since the base — its nested media then resets web-set props the markdown does not carry
+  (an image's `caption`, `previewWidth`, `textAlignment`; a file's `caption`). **Docs 6's
+  `updated_at` is not a content clock** (yhub's compaction bumps it ~10 s after edits,
+  best effort; any Django PATCH, the app's own title PATCH included, bumps it at once),
+  so `draftSyncDecision` rule 2 can miss a co-author's fresh edit — a known gap that needs
+  a content version for the baseline, not a quick fix. Refused as
   `.decoding` (nothing PATCHed): undecodable state, pending structs, a non-canonical
   root, a non-countable `blockGroup` child, or empty/duplicate block ids — the differ
   maps old blocks to live containers by position and id. The web's document-link

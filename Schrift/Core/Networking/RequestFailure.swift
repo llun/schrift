@@ -29,6 +29,16 @@ struct RequestFailure: Equatable, Sendable {
         self.bodyPrefix = boundedBodyPrefix(body)
     }
 
+    /// The request's path with the query dropped and document/attachment ids elided, safe to show.
+    var displayPath: String {
+        let route = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first ?? ""
+        return route.split(separator: "/", omittingEmptySubsequences: false)
+            .map { UUID(uuidString: String($0)) == nil ? String($0) : "…" }.joined(separator: "/")
+    }
+
+    /// The detail the save-failure alert shows: which request, then what the server said.
+    var saveFailureDetail: String { "\(method) \(displayPath)\n\(displayText)" }
+
     /// One line for the UI: the status, plus whatever the server said about it.
     var displayText: String {
         guard let reason = bodyPrefix.flatMap({ serverReason(fromBody: $0) }) else {

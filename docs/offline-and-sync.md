@@ -187,8 +187,11 @@ amendment above; when this was written, editing offline was still blocked.)
   server block the markdown cannot spell that the user did not touch — a table, a
   callout, a toggle, a video, a coloured paragraph, a PDF preview or page break
   (`BlockNotePreservation`, which recognises each one's markdown shadow and puts the
-  original back). An untouched nested list is still rewritten from markdown on every
-  save, same as the classic save. A server
+  original back). An untouched nested list item is kept too when the
+  server's words and tree still match it; one the user re-indented, ticked or edited is
+  written from markdown. Docs 6's `updated_at` lags content (yhub's ~10 s compaction) and
+  moves on the app's own title PATCH, so the date rule can miss a co-author's very fresh
+  edit — see `docs/architecture.md`. A server
   state the app cannot safely
   diff (undecodable, incomplete, non-canonical) fails the save as `.decoding` — not
   retryable, so it lands on `.failed` with the draft kept, never on a guess.

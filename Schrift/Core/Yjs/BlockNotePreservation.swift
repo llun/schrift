@@ -52,8 +52,9 @@ import Foundation
 /// Without a base (a draft from before the base was recorded) no shadow is matched and only
 /// the invisible blocks are kept.
 ///
-/// List items with nested children are left out on purpose: the editor models their
-/// structure, so re-indenting one keeps every word and must still be written.
+/// List items with nested children get the stricter `.listTree`: the editor models their
+/// structure, so re-indenting one keeps every word and must still be written. Rebuilding an
+/// untouched one on every save instead deleted the subtree a co-author might be typing in.
 ///
 /// Pure value code over a replica the caller owns; see `AGENTS.md`, "The Yjs CRDT core".
 enum BlockNotePreservation {
@@ -66,6 +67,9 @@ enum BlockNotePreservation {
         /// bold word — and such a change must be written, not preserved away.
         case exact(node: String, props: [String: YAnyValue], runs: [InlineRun])
         case text([String])
+        /// A list item with nested children (`structuredListNodes`): one new block with the
+        /// same words and the same tree (`treeShape`), so a re-indent is always written.
+        case listTree(shape: [String], words: [String])
         case media(url: String)
         /// Never spelled by the export: always kept where it was.
         case invisible
@@ -91,7 +95,7 @@ enum BlockNotePreservation {
         "backgroundColor", "textColor", "textAlignment", "isToggleable", "start",
     ]
 
-    /// List items whose nested children the editor models and may restructure.
+    /// List items whose nested children the editor models and may restructure (`Rule.listTree`).
     static let structuredListNodes: Set<String> = ["bulletListItem", "numberedListItem", "checkListItem"]
 
     /// Upper bound on the Yjs items one block's text walk visits, so a hostile replica with an
@@ -118,7 +122,11 @@ enum BlockNotePreservation {
             case .xmlElement(let node)? = element.typeRef
         else { return nil }
         let hasNestedChildren = children.count > 1
-        if hasNestedChildren, structuredListNodes.contains(node) { return nil }
+        if hasNestedChildren, structuredListNodes.contains(node) {
+            guard let shape = treeShape(of: container), let words = walkedTokens(of: container), !words.isEmpty
+            else { return nil }
+            return .listTree(shape: shape, words: words)
+        }
         let props = attributes(of: element)
 
         if node == "pdf", props["showPreview"] != .bool(false) { return .invisible }
@@ -177,6 +185,39 @@ enum BlockNotePreservation {
         }
         let tokens = signatureTokens(text)
         return tokens.isEmpty ? signatureTokens(attributeText) : tokens
+    }
+
+    /// The nodes of a block's subtree in document order, each with its nesting depth. `nil` for
+    /// a shape the editor cannot spell (a non-block child) or past `maxItemsPerBlock`.
+    private static func treeShape(of container: YType) -> [String]? {
+        var shape: [String] = []
+        // Iterative, like `walkedTokens`, so a deeply nested replica cannot overrun the stack.
+        var stack: [(container: YType, depth: Int)] = [(container, 0)]
+        while let (current, depth) = stack.popLast() {
+            guard shape.count < maxItemsPerBlock else { return nil }
+            var nested: [YType] = []
+            for child in liveChildren(of: current) {
+                guard case .type(let type) = child.content, case .xmlElement(let name)? = type.typeRef else {
+                    return nil
+                }
+                guard name == "blockGroup" else {
+                    shape.append("\(depth):\(name)")
+                    continue
+                }
+                for entry in liveChildren(of: type) {
+                    guard case .type(let next) = entry.content, next.typeRef == .xmlElement(nodeName: "blockContainer")
+                    else { return nil }
+                    nested.append(next)
+                }
+            }
+            stack.append(contentsOf: nested.reversed().map { ($0, depth + 1) })
+        }
+        return shape
+    }
+
+    /// `treeShape` of a new block.
+    static func treeShape(of block: BlockNoteBlock, depth: Int = 0) -> [String] {
+        ["\(depth):\(block.node)"] + block.children.flatMap { treeShape(of: $0, depth: depth + 1) }
     }
 
     /// Attributes that style a block rather than carry its content.
@@ -446,6 +487,7 @@ enum BlockNotePreservation {
         case .exact(let node, let props, let runs): return isExactShadow(block, node: node, props: props, runs: runs)
         case .media(let url): return isMediaShadow(block, url: url)
         case .text(let words): return !words.isEmpty && tokens == words
+        case .listTree(let shape, let words): return tokens == words && treeShape(of: block) == shape
         case .invisible: return false
         }
     }
@@ -468,6 +510,12 @@ enum BlockNotePreservation {
             for index in start..<end where untouched[index] != nil {
                 budget -= 1
                 if isMediaShadow(new[index], url: url) { return index..<(index + 1) }
+            }
+            return nil
+        case .listTree(let shape, let words):
+            for index in start..<end where untouched[index] != nil {
+                budget -= 1
+                if tokens[index] == words, treeShape(of: new[index]) == shape { return index..<(index + 1) }
             }
             return nil
         case .text(let words):

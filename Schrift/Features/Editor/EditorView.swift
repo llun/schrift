@@ -1154,7 +1154,8 @@ private struct ClassicEditorView: View {
         if display == .none {
             syncCaptionLabel
         } else {
-            SaveStatusIndicator(display: display, onTap: { viewModel.saveNow() })
+            SaveStatusIndicator(
+                display: display, failureDetail: viewModel.saveFailureDetail, onTap: { viewModel.saveNow() })
         }
     }
 

@@ -113,6 +113,11 @@ final class DocumentSaveCoordinator {
     private let isLiveReplicaHeld: @MainActor (UUID) -> Bool
 
     private var states: [UUID: DocSaveState] = [:]
+    /// The same log the shared client records into; nil in previews and tests that don't need detail.
+    private let diagnostics: APIDiagnosticsLog?
+    /// The non-2xx response behind a document's `.failed` state, for the save-failure alert.
+    /// Method, path, status and body prefix only — `RequestFailure` carries no credential.
+    private var failureDetails: [UUID: RequestFailure] = [:]
     private var inFlight: [UUID: Task<Void, Never>] = [:]
     private var inFlightContent: [UUID: PendingSave] = [:]
     private var queued: [UUID: PendingSave] = [:]
@@ -415,9 +420,11 @@ final class DocumentSaveCoordinator {
         mediaCheckMaxAttempts: Int = 5,
         mediaCheckRetryInterval: Duration = .seconds(1),
         backgroundTasks: BackgroundTaskProvider = .uiApplication,
-        isLiveReplicaHeld: @escaping @MainActor (UUID) -> Bool = { _ in false }
+        isLiveReplicaHeld: @escaping @MainActor (UUID) -> Bool = { _ in false },
+        diagnostics: APIDiagnosticsLog? = nil
     ) {
         self.client = client
+        self.diagnostics = diagnostics
         self.pins = DocumentPinCoordinator(
             client: client, store: pinStore ?? PendingDocumentPinStore(userDefaults: listCache.userDefaults),
             cache: listCache, serverOrigin: client.serverOrigin,
@@ -532,6 +539,13 @@ final class DocumentSaveCoordinator {
 
     func state(for documentID: UUID) -> DocSaveState {
         states[documentID] ?? .idle
+    }
+
+    /// The response that made this document's save land on `.failed`, or nil (transport or decoding
+    /// failure, or not failed).
+    func failureDetail(for documentID: UUID) -> RequestFailure? {
+        guard case .failed = state(for: documentID) else { return nil }
+        return failureDetails[documentID]
     }
 
     // MARK: - Documents created on this device
@@ -3721,6 +3735,8 @@ final class DocumentSaveCoordinator {
     private func start(documentID: UUID, save: PendingSave) {
         inFlightContent[documentID] = save
         states[documentID] = .saving
+        failureDetails[documentID] = nil
+        let diagnosticsMarker = diagnostics?.marker()
         let taskToken = backgroundTasks.begin("SchriftDocumentSave")
         // The draft's baseline is the server copy this edit descends from (the draft is
         // written before any save starts): the Docs 6 save reads it to keep the web blocks the
@@ -3744,19 +3760,25 @@ final class DocumentSaveCoordinator {
                         documentID: documentID, title: save.title, markdown: save.markdown,
                         baseMarkdown: baseMarkdown)
                 }
-                finish(documentID: documentID, save: save, error: titleFailure, contentLanded: true)
+                finish(
+                    documentID: documentID, save: save, error: titleFailure, contentLanded: true,
+                    diagnosticsMarker: diagnosticsMarker)
             } catch {
                 // A throw means the content PATCH was not **confirmed** — NOT that nothing
                 // reached the server: a dropped or timed-out response can hide a PATCH the
                 // server applied. All we know is that we cannot *record* the push, which is
                 // exactly what `draftSyncDecision`'s rule 0 backstops.
-                finish(documentID: documentID, save: save, error: error, contentLanded: false)
+                finish(
+                    documentID: documentID, save: save, error: error, contentLanded: false,
+                    diagnosticsMarker: diagnosticsMarker)
             }
             backgroundTasks.end(taskToken)
         }
     }
 
-    private func finish(documentID: UUID, save: PendingSave, error: Error?, contentLanded: Bool) {
+    private func finish(
+        documentID: UUID, save: PendingSave, error: Error?, contentLanded: Bool, diagnosticsMarker: Int? = nil
+    ) {
         inFlight[documentID] = nil
         inFlightContent[documentID] = nil
         let wasReplayedPush = replayedPushes.remove(documentID) != nil
@@ -3856,6 +3878,7 @@ final class DocumentSaveCoordinator {
             states[documentID] = .pendingSync
         } else {
             states[documentID] = .failed("Couldn't save changes. Please try again.")
+            failureDetails[documentID] = diagnosticsMarker.flatMap { diagnostics?.failure(after: $0) }
         }
         // A revalidation landed while this save was on the wire, so detection was skipped. Now
         // that it has settled the invariant holds again — so decide, before anything can push.

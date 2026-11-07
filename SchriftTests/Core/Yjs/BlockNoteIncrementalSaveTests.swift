@@ -138,8 +138,8 @@ final class BlockNoteIncrementalSaveTests: XCTestCase {
         XCTAssertEqual(after.blocks[1].fidelity, .opaque(reason: "nested children"))
     }
 
-    /// The accepted residual: a list item with nested leaves projects opaque, so even an
-    /// unchanged one is not anchored and is rebuilt on every save (resetting web-only media
+    /// The accepted residual without a recorded base: a list item with nested leaves projects
+    /// opaque, so even an unchanged one is not anchored and is rebuilt on every save (resetting web-only media
     /// props such as an image's caption). The content still reads the same afterwards.
     func testAnUnchangedItemWithNestedLeavesIsRebuiltEachSave() throws {
         let stored = newBlocks(nestedLeafMarkdown)
@@ -153,6 +153,88 @@ final class BlockNoteIncrementalSaveTests: XCTestCase {
         XCTAssertEqual(after.blocks.count, 1)
         XCTAssertEqual(after.blocks[0].fidelity, .opaque(reason: "nested children"))
         XCTAssertNotEqual(after.blocks[0].id, stored[0].id, "rebuilt, not reconciled")
+    }
+
+    /// TestFlight 0.103.0: the user edits only the first paragraph while a co-author types in a
+    /// nested bullet on the web. The save must leave that untouched list item where it is.
+    /// Rebuilding it (delete + re-insert, the old behaviour) dropped the co-author's keystroke
+    /// that landed between the save's GET and its PATCH ("Another bullet poin"), and a second
+    /// rebuild of the same item from the same state left both copies.
+    func testAnUntouchedNestedListItemIsLeftInPlaceForACoAuthorTypingInIt() throws {
+        let base = "Intro\n\n- Bullet\n  - Another bullet poin\n\nEnd"
+        let stored = newBlocks(base)
+        let state = BlockNoteYjs.encode(stored, clientID: 1)
+
+        // The save is computed from the GET...
+        let update = try BlockNoteIncrementalSave.update(
+            serverState: state, newBlocks: newBlocks("TEST\n\n- Bullet\n  - Another bullet poin\n\nEnd"),
+            baseBlocks: stored, serverOrigin: origin)
+        // ...while the co-author finishes the word before the PATCH lands.
+        let peer = YDoc(clientID: 7)
+        defer { peer.destroy() }
+        try peer.applyUpdate(try YUpdateDecoder.decode(state))
+        let keystroke = try BlockNoteWriter(doc: peer).replaceText(
+            block: stored[1].children[0].id, range: NSRange(location: 19, length: 0), with: "t")
+
+        let server = YDoc(clientID: 999)
+        defer { server.destroy() }
+        try server.applyUpdate(try YUpdateDecoder.decode(state))
+        try server.applyUpdate(try YUpdateDecoder.decode(keystroke))
+        if let update { try server.applyUpdate(try YUpdateDecoder.decode(update)) }
+
+        let after = YBlockProjection.project(server)
+        XCTAssertEqual(after.blocks.map(\.id), stored.map(\.id), "the list item kept its container")
+        XCTAssertEqual(after.blocks[0].runs, [InlineRun("TEST")])
+        XCTAssertEqual(
+            text(of: try BlockNoteWriter(doc: server).find(stored[1].children[0].id).element), "Another bullet point")
+    }
+
+    /// The visible characters of an element's `xmlText` children.
+    private func text(of element: YType) -> String {
+        var result = ""
+        var item = element.start
+        while let current = item {
+            if !current.deleted, case .type(let child) = current.content, child.typeRef == .xmlText {
+                var piece = child.start
+                while let run = piece {
+                    if !run.deleted, case .string(let units) = run.content {
+                        result += String(decoding: units, as: UTF16.self)
+                    }
+                    piece = run.right
+                }
+            }
+            item = current.right
+        }
+        return result
+    }
+
+    /// Re-indenting keeps every word and must still be written: the nested item is untouched
+    /// only when its whole subtree is.
+    func testUnNestingAListItemIsWritten() throws {
+        let base = "- Bullet\n  - Child"
+        let stored = newBlocks(base)
+        let state = BlockNoteYjs.encode(stored, clientID: 1)
+
+        let update = try BlockNoteIncrementalSave.update(
+            serverState: state, newBlocks: newBlocks("- Bullet\n- Child"), baseBlocks: stored, serverOrigin: origin)
+        let after = try project(state, after: update)
+
+        XCTAssertEqual(after.blocks.count, 2)
+        XCTAssertTrue(after.blocks.allSatisfy { $0.fidelity == .modeled })
+    }
+
+    /// A tick keeps every word and the tree, and must still be written.
+    func testTickingANestedChecklistItemIsWritten() throws {
+        let base = "- [ ] Parent\n  - [ ] Child"
+        let stored = newBlocks(base)
+        let state = BlockNoteYjs.encode(stored, clientID: 1)
+
+        let update = try BlockNoteIncrementalSave.update(
+            serverState: state, newBlocks: newBlocks("- [ ] Parent\n  - [x] Child"), baseBlocks: stored,
+            serverOrigin: origin)
+        let after = try project(state, after: update)
+
+        XCTAssertNotEqual(after.blocks.map(\.id), stored.map(\.id), "rebuilt from the markdown")
     }
 
     private var nestedLeafMarkdown: String {

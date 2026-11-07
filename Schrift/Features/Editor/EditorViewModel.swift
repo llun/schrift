@@ -419,6 +419,12 @@ final class EditorViewModel {
         }
     }
 
+    /// Which request the failed save died on and what the server said, for the "Couldn't save"
+    /// alert; nil when the failure had no HTTP response or the save is not failed.
+    var saveFailureDetail: String? {
+        saveCoordinator.failureDetail(for: documentID)?.saveFailureDetail
+    }
+
     /// The detected sync conflict for this document, if any. The reading surface
     /// shows a "Sync conflict · tap to review" pill and the `ConflictSheetView`
     /// while this is non-nil (reading `@Observable` cross-object state re-renders

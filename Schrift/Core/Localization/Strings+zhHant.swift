@@ -165,6 +165,7 @@ enum Strings_zhHant {
         .editor_saving: "儲存中…",
         .editor_saved: "已儲存",
         .editor_save_failed: "無法儲存 · 重試",
+        .editor_save_failed_title: "無法儲存",
         .editor_save_failed_a11y: "儲存失敗。重試",
 
         // Editor - reading surface / chrome
