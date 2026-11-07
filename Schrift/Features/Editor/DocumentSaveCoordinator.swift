@@ -3188,7 +3188,8 @@ final class DocumentSaveCoordinator {
             // this document; until then its body is not this pass's to judge.
             guard !markdownReferencesPendingAttachment(draft.markdown) else { continue }
             guard inFlight[draft.documentID] == nil, queued[draft.documentID] == nil else { continue }
-            // The replica will persist this draft after sync; replaying markdown can duplicate Yjs items.
+            // A held writable replica sends its own step2 diff, so replaying this markdown could
+            // duplicate those Yjs items. The draft waits; the replica's release triggers a new pass.
             guard !isLiveReplicaHeld(draft.documentID) else { continue }
             // A save that FAILED this session is a retry candidate the user may still
             // be looking at (its draft is their only copy), owned by the reading

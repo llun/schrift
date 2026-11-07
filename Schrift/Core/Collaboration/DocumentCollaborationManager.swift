@@ -210,11 +210,16 @@ final class DocumentCollaborationManager {
         initialSyncVersions[documentID] ?? 0
     }
 
-    /// Whether a healthy live replica currently owns this document's edits.
+    /// Whether a healthy, writable live replica currently owns this document's edits.
+    /// A reader never sends step2, so its draft has nothing to wait for.
     func hasHeldLiveReplica(for documentID: UUID) -> Bool {
         guard let entry = entries[documentID] else { return false }
-        return entry.replica != nil && !entry.replicaFailSafe
+        return entry.canUpdate && entry.replica != nil && !entry.replicaFailSafe
     }
+
+    /// Fired after an idle entry that held a live replica is torn down, so drafts the
+    /// sync pass skipped while it was held can replay. Wired by the app to `syncPendingDrafts()`.
+    @ObservationIgnored var onHeldReplicaReleased: (@MainActor () -> Void)?
 
     /// Registers a synchronous observer fired the instant an inbound update integrates
     /// for `documentID`, or clears it with `nil`. The `LiveEditingBridge` registers
@@ -396,20 +401,18 @@ final class DocumentCollaborationManager {
     /// otherwise strand it, since `resume()` only rebuilds referenced entries).
     func suspend() {
         isSuspended = true
+        var releasedHeldReplica = false
         for (id, entry) in entries {
             entry.lingerTask?.cancel()
             entry.session?.stop()
             if entry.refCount == 0 {
-                entry.replica?.destroy()
-                entries.removeValue(forKey: id)
-                remoteChangeTokens.removeValue(forKey: id)
-                replicaVersions.removeValue(forKey: id)
-                localEditVersions.removeValue(forKey: id)
+                releasedHeldReplica = removeEntry(id) || releasedHeldReplica
             } else {
                 entries[id]?.session = nil
                 entries[id]?.lingerTask = nil
             }
         }
+        if releasedHeldReplica { onHeldReplicaReleased?() }
     }
 
     /// scenePhase foreground: rebuild a fresh session for every still-referenced
@@ -613,13 +616,20 @@ final class DocumentCollaborationManager {
     private func teardownIfIdle(_ documentID: UUID) {
         guard let entry = entries[documentID], entry.refCount == 0 else { return }
         entry.session?.stop()
-        entry.replica?.destroy()
+        if removeEntry(documentID) { onHeldReplicaReleased?() }
+    }
+
+    /// Drops the entry and its per-document state; returns whether it held a live replica.
+    private func removeEntry(_ documentID: UUID) -> Bool {
+        let wasHeld = hasHeldLiveReplica(for: documentID)
+        entries[documentID]?.replica?.destroy()
         entries.removeValue(forKey: documentID)
         remoteChangeTokens.removeValue(forKey: documentID)
         replicaVersions.removeValue(forKey: documentID)
         initialSyncVersions.removeValue(forKey: documentID)
         localEditVersions.removeValue(forKey: documentID)
         replicaObservers.removeValue(forKey: documentID)
+        return wasHeld
     }
 }
 

@@ -165,6 +165,65 @@ final class DocumentSaveCoordinatorTests: DocumentSaveCoordinatorTestCase {
         XCTAssertNil(draftStore.draft(for: documentID))
     }
 
+    func testSyncPendingDraftRechecksHeldLiveReplicaAfterFetch() async {
+        let log = RequestRecorder()
+        // Not held before the GET; held by the time it returns (a live session synced meanwhile).
+        let (coordinator, draftStore, _) = makeCoordinator(isLiveReplicaHeld: { _ in
+            log.count(ofMethod: "GET", urlContaining: "formatted-content") > 0
+        })
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        // Equal to the server body, so without the re-check the replay would `.push`.
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "Server content")
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+
+        stubSavePipeline(log: log)
+        await coordinator.syncPendingDrafts()
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "formatted-content"), 1)
+        await waitAndConfirmNever { log.count(ofMethod: "PATCH") > 0 }
+        XCTAssertNotNil(draftStore.draft(for: documentID), "the held replica owns it now")
+    }
+
+    /// The real manager seam: a draft skipped while the editor's replica is held is pushed
+    /// once when that replica is torn down (the app wires the release to `syncPendingDrafts`).
+    func testHeldReplicaTeardownReplaysTheSkippedDraftOnce() async {
+        let spy = ManagerSocketFactorySpy()
+        let manager = DocumentCollaborationManager(
+            serverBaseURL: baseURL, cookieProvider: { [] }, featureEnabled: { true }, isOffline: { false },
+            serverConfigProvider: { nil }, socketFactory: spy.factory, lingerSeconds: 0.05)
+        manager.serverSupportsLiveCollaboration = true
+        let (coordinator, draftStore, _) = makeCoordinator(isLiveReplicaHeld: { [weak manager] documentID in
+            manager?.hasHeldLiveReplica(for: documentID) ?? false
+        })
+        manager.onHeldReplicaReleased = { Task { await coordinator.syncPendingDrafts() } }
+
+        _ = manager.session(for: documentID, canUpdate: true)
+        await waitUntil { spy.sockets.count == 1 }
+        let seed = MarkdownYjs.encode(markdown: "Server content", serverOrigin: "", clientID: 1)
+        let step2 = SyncMessage(step: .step2, data: seed).encodedPayload()
+        spy.sockets[0].deliver(
+            message: HocuspocusMessage(
+                documentName: documentID.uuidString.lowercased(), type: .sync, payload: step2
+            ).encoded())
+        await waitUntil { manager.hasHeldLiveReplica(for: self.documentID) }
+
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        coordinator.enqueue(documentID: documentID, title: "Doc", markdown: "Classic edit")
+        await waitUntil { self.isPendingSync(coordinator.state(for: self.documentID)) }
+        stubSavePipeline(log: log)
+        await coordinator.syncPendingDrafts()
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "formatted-content"), 0)
+
+        manager.release(documentID)
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/content/"), 1)
+        XCTAssertNil(draftStore.draft(for: documentID))
+    }
+
     /// The primary success path the state enables: an offline save lands in
     /// `.pendingSync`, then `syncPendingDrafts` replays and clears it once the
     /// server is reachable and within tolerance.

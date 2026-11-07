@@ -1043,10 +1043,17 @@ The independent user preference `schrift.liveCollaboration` remains default off 
 gates session availability. Saves continue through the incremental HTTP collaboration-server
 route for snapshots. Tests can still override the manager's support seam for isolated yhub
 transport cases.
-When `runSyncPass` sees a draft for a document with a healthy live replica, it skips
-replaying that markdown so the same offline edits are not inserted again as new Yjs items.
-After the session's initial step2 exchange, the bridge re-persists the replica snapshot
-through the normal save coordinator path, which clears the write-ahead draft on success.
+When `runSyncPass` sees a draft for a document whose live replica is held (a writable entry
+whose replica has not fail-safed; checked before and after the GET), it skips replaying that
+markdown so the same edits are not inserted again as new Yjs items. After the session's
+initial step2 exchange, the bridge re-persists the replica snapshot through the normal save
+coordinator path only when the draft's markdown is canonically equal to the replica's
+projection, which clears the write-ahead draft on success. A draft that differs holds edits the
+replica lacks, so it is left alone. Tearing down an idle held entry (`teardownIfIdle`, or the
+idle drop in `suspend()`) fires `onHeldReplicaReleased`, wired to `syncPendingDrafts()`, so
+that draft then replays through the classic path. Until then it waits while the editor holds
+the replica, and classic saves outside `runSyncPass` (retry, autosave after live mode
+disengages) can still race the socket, as on legacy servers. Details live in `AGENTS.md`.
 
 **Switch-on evidence (2026-11-07, S4/S5; labs `RESULTS.md`):** on the real yhub server,
 snapshot and live sync for a document filled with every web block were byte-identical.

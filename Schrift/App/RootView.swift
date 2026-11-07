@@ -62,7 +62,7 @@ private struct AuthenticatedHomeContainer: View {
             onTransportOutcome: { outcome, startedAt in connectivity.report(outcome, startedAt: startedAt) }
         )
         let origin = siteOrigin(for: serverURL) ?? ""
-        // The save replay must leave a draft alone while a healthy live replica owns it.
+        // The save replay must leave a draft alone while a healthy, writable live replica owns it.
         let collaborationManager = DocumentCollaborationManager(
             serverBaseURL: serverURL,
             cookieProvider: { HTTPCookieStorage.shared.cookies(for: serverURL) ?? [] },
@@ -82,6 +82,10 @@ private struct AuthenticatedHomeContainer: View {
             isLiveReplicaHeld: { [weak collaborationManager] documentID in
                 collaborationManager?.hasHeldLiveReplica(for: documentID) ?? false
             })
+        // A draft skipped while its replica was held replays once that replica is gone.
+        collaborationManager.onHeldReplicaReleased = { [weak saveCoordinator] in
+            Task { await saveCoordinator?.syncPendingDrafts() }
+        }
         _viewModel = State(
             initialValue: HomeViewModel(
                 client: client, saveCoordinator: saveCoordinator, serverOrigin: origin, diagnostics: diagnostics,

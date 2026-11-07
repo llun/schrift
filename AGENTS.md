@@ -3817,12 +3817,24 @@ markdown write endpoint**. Understand this before touching the save path:
   Rollback is reverting `ServerConfig.yWebSocketLiveCollaborationEnabled` to `false`.
   A dropped socket does not reconnect automatically: it is rebuilt on a network reachability
   change or foreground resume. Peer edits stop arriving until then; local edits still reach
-  yhub through the ~60 s HTTP snapshot. `runSyncPass` skips a draft while a healthy live
-  replica is held for that document, because replaying its markdown could insert the same
-  offline edits as new Yjs items. After the session's initial step2 exchange, the bridge
-  re-persists the replica snapshot through `persistLiveSnapshot` so the normal successful
-  save path clears that write-ahead draft. A kill before reconnect leaves the draft intact
-  for one classic replay.
+  yhub through the ~60 s HTTP snapshot. `runSyncPass` skips a draft (before and again after
+  its GET) while `hasHeldLiveReplica` is true: the entry can write (`canUpdate`) and holds a
+  replica that has not fail-safed. Such a replica sends its own step2 diff, so replaying the
+  markdown could insert the same edits as new Yjs items. A reader never sends step2, so its
+  draft is never skipped. After the session's initial step2 exchange,
+  `LiveEditingBridge.initialSyncDidChange` re-persists the replica snapshot through
+  `persistLiveSnapshot` **only while the stored draft's markdown is canonically equal to the
+  replica's projection** (`canonicalMarkdown`, the test `draftSyncDecision` uses); the normal
+  successful save path then clears that draft. Any other draft holds edits the replica lacks
+  (typed on the classic path after a failed snapshot disengaged live mode, typed with no
+  replica, or restored by reopening a `.pendingSync` document), so the bridge does nothing and
+  never overwrites or clears it. When the manager tears down an idle entry that held a replica
+  (`teardownIfIdle`, or the idle drop in `suspend()`), it fires `onHeldReplicaReleased`, which
+  `RootView` wires to `syncPendingDrafts()`, so the skipped draft gets its classic replay. A
+  kill before reconnect leaves no replica, so the draft replays once. What stays: a skipped
+  draft waits while the editor holds the replica and no socket is rebuilt, and classic saves
+  outside `runSyncPass` (the retry, an autosave after live mode disengages) can still race the
+  socket, as they already could on legacy servers.
 - **The replica broadcasts the formatting-cleanup update it makes on its own.** An inbound
   update that touches a formatted text makes `cleanupTransactions` open a second, local
   transaction with origin `nil` (B4). yjs providers broadcast that transaction's update like

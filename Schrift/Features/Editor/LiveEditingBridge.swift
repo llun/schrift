@@ -181,12 +181,21 @@ final class LiveEditingBridge: EditorLiveWriteCoordinating {
         }
     }
 
-    /// A reconnect may have restored edits from a pending draft into the replica.
-    /// Re-persist that complete state so the coordinator's normal success path clears it.
+    /// After a session's step2 exchange, a pending draft that is exactly the replica's
+    /// state (a live snapshot whose PATCH failed) is re-persisted from the replica, so the
+    /// coordinator's normal success path clears it without a classic markdown replay.
+    /// Only when the draft's markdown is canonically equal to the replica's projection:
+    /// edits typed on the classic path (after a failed snapshot, or with no replica) are in
+    /// the draft but not the replica, and re-persisting would overwrite and clear them.
+    /// Those drafts are left for the classic replay once the replica is released.
     func initialSyncDidChange() {
         guard collaboration.initialSyncVersion(for: documentID) > 0,
             viewModel.saveCoordinator.state(for: documentID) == .pendingSync,
-            viewModel.saveCoordinator.storedDraft(documentID: documentID) != nil
+            let draft = viewModel.saveCoordinator.storedDraft(documentID: documentID),
+            let projection = collaboration.projectedReplica(for: documentID, interlinkingOrigin: serverOrigin),
+            projection.isFullyModeled,
+            let markdown = YBlockProjection.projectedMarkdown(projection),
+            canonicalMarkdown(draft.markdown) == canonicalMarkdown(markdown)
         else { return }
         fireSnapshot()
     }
