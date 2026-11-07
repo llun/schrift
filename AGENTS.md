@@ -3637,9 +3637,8 @@ markdown write endpoint**. Understand this before touching the save path:
   GET/diff is needed), while a pre-Docs 6 server takes the legacy
   `documents/{id}/content/` PATCH tagged `"websocket": true` (through
   `setContent(…, viaWebSocket:)`; the classic body stays byte-identical when false). Docs 6 has
-  no live session today (`ServerConfig.yWebSocketLiveCollaborationEnabled` stays false),
-  so the y-websocket transport and this route remain switched-off groundwork. Its PATCH
-  carries the whole snapshot and is subject to the deployment's request-size limit. Because
+  live sessions use the enabled y-websocket transport, and snapshot saves use this route. Its
+  PATCH carries the whole snapshot and is subject to the deployment's request-size limit. Because
   reconcile is markdown-based, the coordinator carries the **projected markdown** as the
   `PendingSave.markdown` / draft body /
   `lastConfirmedPushMarkdown` stamp, so `finish`, the enqueue-hold, latest-wins coalescing,
@@ -3774,15 +3773,14 @@ markdown write endpoint**. Understand this before touching the save path:
     `@AppStorage(LiveCollaborationPreference.key)` switch) is the only writer. The
     default stays off pending the owed on-device WebSocket verification against a real
     collaboration-capable server (non-gating follow-up); the flag is read lazily, so a
-    flip affects newly requested sessions, not screens already open.** **Unavailable on
-    Docs 6**: its collaboration server (yhub) speaks plain y-websocket at
-    `/collaboration/ws/v1/{org}/{documentID}`, not Hocuspocus. The A4 transport now exists,
-    but `ServerConfig.yWebSocketLiveCollaborationEnabled` is **false**, so
-    `ServerConfig.supportsLiveCollaboration` remains false for a release major ≥ 6 or a
-    `…/ws/v1/{org}` URL and the user toggle still has no effect there. See
+    flip affects newly requested sessions, not screens already open.** Docs 6's yhub
+    collaboration server speaks plain y-websocket at
+    `/collaboration/ws/v1/{org}/{documentID}`, not Hocuspocus. Its transport is enabled;
+    `supportsLiveCollaboration` requires an advertised collaboration URL, and the separate
+    default-off user preference still gates session availability. See
     `docs/architecture.md` ("Editor wiring — the write path complete (C2c)" and the
     "C3 (shipped)" paragraph).
-- **A4 adds yhub framing beside Hocuspocus, merged switched off.**
+- **A4 adds yhub framing beside Hocuspocus; A5 enables it in production.**
   `CollaborationWireProtocol(config:)` selects `.yWebSocket` when
   `ServerConfig.usesCollaborationYDocServer`, otherwise `.hocuspocus`. The transport alone
   adds/removes the document-name prefix; the session shares `SyncMessage` and
@@ -3806,10 +3804,9 @@ markdown write endpoint**. Understand this before touching the save path:
   send none: a reader must not publish, whatever its replica holds. An entry keeps one ability
   (the latest caller's) and keeps its replica across a writer→reader flip, so that replica may
   carry edits whose broadcast failed; they go out again only if a writer reopens it.
-  Production still stops at server availability: only tests override the manager's existing
-  server-support seam to exercise yhub. A **future switch-on PR** must verify the real
-  yhub/editor path end to end, then flip `ServerConfig.yWebSocketLiveCollaborationEnabled`;
-  it must retain the independent default-off `schrift.liveCollaboration` user preference.
+  Production enables yhub when the server advertises a collaboration URL. The manager's
+  server-support seam remains available to tests. The independent default-off
+  `schrift.liveCollaboration` user preference still gates session availability.
 - **The replica broadcasts the formatting-cleanup update it makes on its own.** An inbound
   update that touches a formatted text makes `cleanupTransactions` open a second, local
   transaction with origin `nil` (B4). yjs providers broadcast that transaction's update like

@@ -826,11 +826,9 @@ it succeeds, `EditorViewModel.persistLiveSnapshot` calls `enqueueLiveSnapshot` �
   `documents/{id}/content/` PATCH tagged **`"websocket": true`**, which the docs backend uses
   to distinguish a live-collab snapshot from a REST full-overwrite. With nothing known the
   legacy route is tried first and only its `.routeNotFound` falls back, learning the org from
-  config; the route is memoized once the collaboration PATCH succeeds. Docs 6 has no live
-  session today (`ServerConfig.yWebSocketLiveCollaborationEnabled` stays false), so the
-  y-websocket transport and this route remain switched-off groundwork. Its PATCH carries
-  the whole snapshot and
-  is subject to the deployment's request-size limit. With `viaWebSocket`
+  config; the route is memoized once the collaboration PATCH succeeds. Docs 6 live sessions
+  use the enabled y-websocket transport, and snapshot saves use this route. Its PATCH carries
+  the whole snapshot and is subject to the deployment's request-size limit. With `viaWebSocket`
   false (the default) the classic content body is byte-identical to before.
 - **`DocumentSaveCoordinator.enqueueLiveSnapshot(documentID:snapshot:projectedMarkdown:title:baseline:)`**
   queues that save. A live snapshot pushes CRDT **bytes**, but the reconcile machinery is
@@ -1016,7 +1014,7 @@ graceful downgrade) is wired end to end, still entirely behind the default-off
   baseline invalidation, pre-mutation flushing and one latest-state apply per frame. Every pre-existing `EditorViewModel*Tests` test passes unchanged, which is the
   standing proof that the classic path is untouched when `liveWrite` is `nil`.
 
-**Docs 6 transport exists, switched off (A4).** Docs 6 replaced Hocuspocus with yhub.
+**Docs 6 transport enabled (A5).** Docs 6 replaced Hocuspocus with yhub.
 `CollaborationWireProtocol(config:)` selects plain y-websocket for
 `usesCollaborationYDocServer`; all other servers retain Hocuspocus framing. The transport
 uses `varUint(type) + payload` with no document-name prefix for yhub; the same session
@@ -1036,13 +1034,12 @@ edits handled live. Replica read safety remains independent of write authorizati
 Permission and replica survive suspension; a reconnect's step2 diff includes deletions,
 even when a deletion-only edit left the state vector unchanged.
 
-**The production gate remains closed:** `ServerConfig.yWebSocketLiveCollaborationEnabled`
-is false, so `supportsLiveCollaboration` remains false on Docs 6 and the manager never
-opens its socket there. Saves continue through the incremental HTTP collaboration-server
-route. Tests alone override the manager's existing support seam to drive captured yhub
-frames and fake-socket sync/reconnect cases. A future switch-on PR must verify the real
-yhub/editor interaction end to end before flipping that internal capability; the separate
-user preference `schrift.liveCollaboration` remains default off.
+**The production server gate is enabled:** `ServerConfig.yWebSocketLiveCollaborationEnabled`
+is true, so a Docs 6 config with an advertised collaboration URL supports live collaboration.
+The independent user preference `schrift.liveCollaboration` remains default off and still
+gates session availability. Saves continue through the incremental HTTP collaboration-server
+route for snapshots. Tests can still override the manager's support seam for isolated yhub
+transport cases.
 
 **C3 (shipped):** the user-facing toggle is a **Profile → Preferences → "Live
 collaboration"** switch (`ProfileScreen`, a `ProfileTrailingRow` + `Switch` exactly like
