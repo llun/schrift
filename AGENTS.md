@@ -3829,7 +3829,11 @@ markdown write endpoint**. Understand this before touching the save path:
   session's `knownServerTitle`, and no server timestamp. A co-author's rename the user never
   made (adopt) or two different renames (conflict) leave the draft, since the snapshot PATCHes
   the on-screen title; so does an unknown server title. `canonicalMarkdown` ignores leaf
-  nesting, so a draft that differs only by a leaf's indentation is re-persisted flat: content
+  nesting. `knownServerTitle` is session-only and updated by editor fetches and landed saves;
+  a co-author's title-only rename changes no Yjs content, so it does not refresh over the live
+  socket and the gate can still approve the old local title. This is the pre-existing live-title
+  gap: the gate narrows it but does not close it. A draft that differs only by a leaf's indentation
+  is re-persisted flat: content
   is kept and leaf structure follows the replica. The normal
   successful save path then clears that draft. Any other draft holds edits the replica lacks
   (typed on the classic path after a failed snapshot disengaged live mode, typed with no

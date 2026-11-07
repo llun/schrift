@@ -988,7 +988,11 @@ server is about to hold.
   when the draft's markdown is canonically equal to the replica's projection and its title
   passes the classic replay's title rule (a co-author's rename the user never made, two
   different renames, or no known server title leave the draft); a successful `finish` then
-  clears the draft. `canonicalMarkdown` ignores leaf nesting, so a draft differing only by a
+  clears the draft. `knownServerTitle` is session-only and updated by editor fetches and landed
+  saves; a co-author's title-only rename changes no Yjs content, so it does not refresh over the
+  live socket and the gate can still approve the old local title. This pre-existing live-title gap
+  is narrowed by the gate but not closed. `canonicalMarkdown` ignores leaf nesting, so a draft
+  differing only by a
   leaf's indentation is re-persisted flat: content is kept and leaf structure follows the
   replica. A draft that differs carries classic-path edits the replica
   lacks (typed after a failed snapshot, typed offline with no replica, or a reopened

@@ -1050,7 +1050,11 @@ initial step2 exchange, the bridge re-persists the replica snapshot through the 
 coordinator path only when the draft's markdown is canonically equal to the replica's
 projection and its title passes the classic replay's title rule (a co-author's rename the
 user never made, two different renames, or no known server title leave the draft). Success
-clears the write-ahead draft. `canonicalMarkdown` ignores leaf nesting, so a draft differing
+clears the write-ahead draft. `knownServerTitle` is session-only and updated by editor fetches
+and landed saves; a co-author's title-only rename changes no Yjs content, so it does not refresh
+over the live socket and the gate can still approve the old local title. This pre-existing
+live-title gap is narrowed by the gate but not closed. `canonicalMarkdown` ignores leaf nesting,
+so a draft differing
 only by a leaf's indentation is re-persisted flat: content is kept and leaf structure follows
 the replica. A draft that differs holds edits the
 replica lacks, so it is left alone. Tearing down an idle held entry (`teardownIfIdle`, or the
