@@ -40,11 +40,9 @@ build/
 # Signing.xcconfig (committed) optionally includes this; see it for details.
 Local.xcconfig
 
-# Session-local scratch written by the superpowers agent workflow (task
-# briefs/reports, progress notes) — never current state, never committed.
+# Local task scratch (briefs, reports, progress notes) — never committed.
 .superpowers/
 
-# Plans and "superpowers" workflow documents must never be committed — design
-# knowledge lives in the living docs under docs/ instead. See the "Docs
-# convention" in AGENTS.md.
+# Plans and task documents must never be committed — design knowledge lives in
+# the living docs under docs/ instead. See the "Docs convention" in AGENTS.md.
 docs/superpowers/
