@@ -333,8 +333,8 @@ enum Strings_zhHant {
         .native_editor_input_unavailable: "原生編輯器暫不支援此輸入。",
         .native_editor_marked_unavailable: "暫不支援此鍵盤輸入。你的文件已保留為唯讀模式。",
         .native_editor_storage_failed: "無法在你的裝置上儲存此次編輯。編輯已停止，先前儲存的文字已保留。",
-        .profile_native_editor: "原生編輯器（實驗性，唯讀）",
-        .profile_native_editor_footer: "下次開啟文件時生效。支援 Docs 6，暫不支援編輯。",
+        .profile_native_editor: "原生編輯器（實驗性）",
+        .profile_native_editor_footer: "下次開啟文件時生效。支援 Docs 6，目前僅支援輸入純文字。",
         .native_editor_preserved_title: "文件已保留",
         .native_editor_preserved_body: "原生閱讀器暫時無法顯示此文件的結構，原始內容仍然保留。",
         .profile_live_collaboration: "即時協作",
@@ -382,5 +382,17 @@ enum Strings_zhHant {
         .account_language_footer: "您的伺服器用於電子郵件和共享內容的語言。應用程式本身的語言在偏好設定中。",
         // Toast
         .toast_link_copied: "連結已複製",
+        .native_editor_owned_read_only_body: "此文件以原生編輯器格式儲存。原生編輯器關閉時無法編輯；請在個人資料中開啟後繼續。",
+        .native_editor_owned_unavailable_title: "原生文件無法使用",
+        .native_editor_owned_unavailable_body: "此文件屬於原生編輯器，但無法讀取其已儲存的副本。它將保持唯讀，以免傳統編輯器覆寫它。",
+        .profile_recover_drafts: "復原無法讀取的草稿",
+        .profile_recover_drafts_footer: "部分已儲存的草稿無法讀取。請嘗試復原；如果復原失敗，不會刪除任何內容。",
+        .profile_recover_drafts_title: "復原草稿",
+        .profile_recover_drafts_success: "草稿已復原。",
+        .profile_recover_drafts_set_aside: "移開無法讀取的副本",
+        .profile_recover_drafts_set_aside_message:
+            "此裝置上的部分文件副本無法讀取，因此這裡無法編輯任何文件。移開後，這些副本會被移到此裝置上的一個單獨資料夾中。其檔案會保留，但不再開啟，其中從未同步的變更也不會傳送。之後即可再次編輯其他文件。",
+        .profile_recover_drafts_set_aside_success: "已移開無法讀取的副本。現在可再次編輯其他文件。",
+        .profile_recover_drafts_failure: "無法復原草稿。它們仍儲存在此裝置上。",
     ]
 }

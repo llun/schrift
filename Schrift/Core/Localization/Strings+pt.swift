@@ -341,9 +341,9 @@ enum Strings_pt {
             "Esta entrada de teclado ainda não é suportada. O documento foi preservado em modo somente leitura.",
         .native_editor_storage_failed:
             "Não foi possível guardar esta edição no dispositivo. A edição foi interrompida; o texto guardado anteriormente foi preservado.",
-        .profile_native_editor: "Editor nativo (experimental, só de leitura)",
+        .profile_native_editor: "Editor nativo (experimental)",
         .profile_native_editor_footer:
-            "Aplica-se na próxima abertura de um documento. Suporta Docs 6; a edição ainda não está disponível.",
+            "Aplica-se na próxima abertura de um documento. Suporta Docs 6; por enquanto só é possível escrever texto simples.",
         .native_editor_preserved_title: "Documento preservado",
         .native_editor_preserved_body:
             "O leitor nativo ainda não consegue apresentar a estrutura deste documento. O conteúdo original está preservado.",
@@ -396,5 +396,22 @@ enum Strings_pt {
             "O idioma que seu servidor usa para e-mails e conteúdo compartilhado. O idioma do aplicativo está em Preferências.",
         // Toast
         .toast_link_copied: "Link copiado",
+        .native_editor_owned_read_only_body:
+            "Este documento está guardado no formato do editor nativo. A edição não está disponível enquanto o editor nativo estiver desativado; ative-o no perfil para continuar.",
+        .native_editor_owned_unavailable_title: "Documento nativo indisponível",
+        .native_editor_owned_unavailable_body:
+            "Este documento pertence ao editor nativo, mas a cópia guardada não pode ser lida. Permanece só de leitura para que o editor clássico não o possa substituir.",
+        .profile_recover_drafts: "Recuperar rascunhos ilegíveis",
+        .profile_recover_drafts_footer:
+            "Alguns rascunhos guardados não puderam ser lidos. Tente recuperá-los; nada é eliminado se a recuperação falhar.",
+        .profile_recover_drafts_title: "Recuperar rascunhos",
+        .profile_recover_drafts_success: "Rascunhos recuperados.",
+        .profile_recover_drafts_set_aside: "Pôr de parte cópias ilegíveis",
+        .profile_recover_drafts_set_aside_message:
+            "Algumas cópias de documentos neste dispositivo não podem ser lidas, por isso nenhum documento pode ser editado aqui. Pô-las de parte move essas cópias para uma pasta separada neste dispositivo. Os seus ficheiros são mantidos, mas deixam de ser abertos, e as alterações nunca sincronizadas não serão enviadas. Os outros documentos voltam depois a poder ser editados.",
+        .profile_recover_drafts_set_aside_success:
+            "Cópias ilegíveis postas de parte. Os outros documentos voltam a poder ser editados.",
+        .profile_recover_drafts_failure:
+            "Não foi possível recuperar os rascunhos. Continuam guardados neste dispositivo.",
     ]
 }

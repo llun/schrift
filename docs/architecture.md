@@ -599,8 +599,8 @@ The generated project includes an isolated production-reader fixture host and
 UI smoke test; `--native-large` supplies the 5,000-paragraph scroll fixture.
 
 **PR02a persistence checkpoint.** `ReplicaStore` and `ReplicaManifest` add the
-durable storage foundation used by the session/save component APIs. Production
-native opening remains read-only. The main-actor store hashes the
+durable storage foundation used by the session/save component APIs and, since
+slice B, the production open route. The main-actor store hashes the
 server/account/org/document scope into an Application Support directory, retains
 backup-included immutable checkpoint/update files, and flushes files and directory
 entries before switching a checksummed manifest. Restore verifies all referenced
@@ -612,21 +612,28 @@ The HTTP outbox is independent of the replay checkpoint and of state vectors.
 Compaction retains pending local update bytes even when the new checkpoint already
 contains their effect. Acknowledging a captured prefix leaves later edits queued;
 delete-only updates require the same HTTP confirmation. There is no eviction or
-sign-out removal API. The caller must author a checkpoint for the exact revision,
+sign-out removal; `remove(for:)` is an explicit discard through a tombstone rename,
+and only of the signed-in owner's replica (another account's replica and native draft
+survive a discard or deletion made in another session).
+A durable owner marker (`ReplicaOwnershipStore`), written before any replica file,
+keeps the classic and live writers off a native-owned document even after its draft
+is gone; the open route restores it (typeable only with the switch on), and unknown ownership is read-only. The caller must author a checkpoint for the exact revision,
 restore into a fresh non-colliding client, and stop writing after a disk failure.
 The store does not validate Yjs semantics or perform a network request.
 
 `PendingDraftStore` now preserves every distinct unreadable blob before a write
 reuses the live key. Its hold survives writes/relaunches; explicit recovery retries
 all blobs, merges without replacing newer live drafts, and writes before clearing
-the hold. Recreate the coordinator after recovery so conflict stamps are rehydrated.
+the hold. `DocumentSaveCoordinator.recoverQuarantinedDrafts()` rehydrates conflict
+stamps; Profile offers it while the hold is in force.
 `PendingDraft` now has an optional replica reference; the save component checkpoint
-below describes its reconstruction audit. Production opening, migration ownership
-and typing activation remain subsequent PR02a work. See [offline-and-sync.md](offline-and-sync.md).
+below describes its reconstruction audit. Production open/reconnect wiring and typing
+activation are described under "PR02 activation (slice B)" below; migration remains.
+See [offline-and-sync.md](offline-and-sync.md).
 
 **PR02a typing component checkpoint.** Native sessions can explicitly install a
-`NativeInputCoordinator` with a durable-update callback. The production open route
-does not invoke that entry point yet. The delegate rejects UIKit's default mutation
+`NativeInputCoordinator` with a durable-update callback; since slice B the
+production open route invokes it behind the switch. The delegate rejects UIKit's default mutation
 and sends a command ID, base revision and block-relative UTF-16 replacement to the
 engine. Before mutation, the engine validates the canonical indexed simple-text
 target, readable fidelity and character boundaries. After the writer returns its
@@ -642,9 +649,7 @@ invalid UTF-16 boundaries are refused before transactions. `setMarkedText` is
 intercepted before UIKit mutates anything and falls back to preserved read-only
 content with an explanation. UIKit undo remains disabled. A failed mutation or
 append freezes the unsafe replica and retains any returned unconfirmed update in memory;
-the accepted display and earlier durable journal remain intact. Native production
-activation, coordinator saves, offline restoration and migration ownership remain
-subsequent integration work.
+the accepted display and earlier durable journal remain intact.
 The isolated native host's `--native-typing` fixture enables this component against
 disposable journal files; a UI test exercises keyboard input and Return refusal.
 Production launch arguments and default routing remain unchanged.
@@ -680,9 +685,47 @@ refused, and a first capture projects its shadow from raw rather than trusting t
 caller. A durable session freezes on any unjournaled transaction (with the
 storage-failed notice) so the engine revision cannot drift from the manifest.
 Backspace at a block start is a quiet no-op until block joins exist (PR04); at the
-document end it is refused with a notice. Production lifecycle wiring, permanent
-migration/rollback ownership, a total shadow for opaque documents and sign-in
-generation guards remain before activation. Native production opening is still read-only.
+document end it is refused with a notice. Permanent migration/rollback ownership
+and a total shadow for opaque documents remain open; production activation is below.
+
+**PR02 activation (slice B).** With the default-off switch on, `NativeEditorOpen`
+enables durable typing only for a signed-in user whose document metadata grants
+`abilities.update`, on a Docs 6 server, for a document that is not a pending create
+or delete, has no classic draft or queued save, has no live owner (A5's
+`isLiveReplicaHeld`) and projects fully (`NativeEditorSession.canType`: fully
+modeled with a Markdown shadow). An owned replica is restored offline-first, then
+the fetched raw state is integrated into the same durable owner; a converted
+response is never installed. An unowned eligible document is seeded into a new
+replica from the fetched raw state (`ReplicaStore.create` writes the marker first)
+and restored. Everything else keeps PR01's in-memory read-only view and never gains a
+marker. Each persisted command schedules `NativeReplicaSaveScheduler`, which uses the
+classic autosave cadence (trailing interval, 30 s cap) and hands the verified outbox
+to `enqueueReplica` with the cached server title/baseline. Close and backgrounding
+flush it; reopening a replica whose outbox has no draft (a process that ended inside
+the debounce) schedules it. The native view reuses `SaveStatusIndicator`: debounced
+journal bytes show "Saved on this device", then the coordinator's real state. A
+refused capture freezes authoring and reports `.failed`. Reconnect integrates the
+fetched state again. The sign-in guard reuses `SessionStore.signInGeneration`
+(threaded to `EditorView`, which closes and reopens a native route on change) plus
+the remembered signed-in user, rechecked after every await; `enqueueReplica` and
+the sender already refuse another account. Both login flows hand the confirmed id to
+`signIn`, which remembers it before the generation moves, and a flush while the
+account is unknown keeps the save pending ("Saved on this device") for the reopen.
+Sign-out bumps the generation too. An unparseable confirmation id signs in with the
+identity unknown. `/users/me/` writers
+drop answers from before the session changed hands (`SignedInUserStore.epoch`), and
+close cancels the reopen and reconnect tasks. A marker without a replica is cleared,
+with the switch on, only when no manifest, quarantine, draft or queued save exists,
+and the unowned route then re-seeds it. Profile's recovery row also rebuilds
+corrupt or lost marker data from the scoped manifests on disk and native drafts
+(`DocumentSaveCoordinator.repairReplicaOwnership`); it writes nothing while a folder
+cannot be read or two scopes claim a document with no draft or single outbox to
+choose by; the alert can then set the unreadable folders aside (bytes kept in
+`ReplicaDraftsSetAside`, never read) and repair again. A native draft owns its document
+even without a marker entry. No native live socket exists,
+and a native session never takes the live write path. The isolated host's
+`--native-open` fixture runs the real `EditorView` route offline over an owned
+replica; its UI test types, relaunches and finds the text restored.
 
 **Selection.** `setSelection(EditorSelection?)` captures directed anchor/head
 endpoints as `YRelativePosition`s. Each `EditorPosition` holds a block id,

@@ -341,9 +341,9 @@ enum Strings_it {
             "Questo input da tastiera non è ancora supportato. Il documento è conservato in sola lettura.",
         .native_editor_storage_failed:
             "Impossibile salvare questa modifica sul dispositivo. La modifica è stata interrotta; il testo salvato in precedenza è conservato.",
-        .profile_native_editor: "Editor nativo (sperimentale, sola lettura)",
+        .profile_native_editor: "Editor nativo (sperimentale)",
         .profile_native_editor_footer:
-            "Si applica alla prossima apertura di un documento. Supporta Docs 6; la modifica non è ancora disponibile.",
+            "Si applica alla prossima apertura di un documento. Supporta Docs 6; per ora è disponibile solo la digitazione di testo semplice.",
         .native_editor_preserved_title: "Documento conservato",
         .native_editor_preserved_body:
             "Il lettore nativo non può ancora visualizzare la struttura di questo documento. Il contenuto originale è conservato.",
@@ -395,5 +395,21 @@ enum Strings_it {
             "La lingua che il tuo server utilizza per le e-mail e i contenuti condivisi. La lingua dell'app si trova in Preferenze.",
         // Toast
         .toast_link_copied: "Link copiato",
+        .native_editor_owned_read_only_body:
+            "Questo documento è salvato nel formato dell'editor nativo. La modifica non è disponibile finché l'editor nativo è disattivato; attivalo nel profilo per continuare.",
+        .native_editor_owned_unavailable_title: "Documento nativo non disponibile",
+        .native_editor_owned_unavailable_body:
+            "Questo documento appartiene all'editor nativo, ma la sua copia salvata non è leggibile. Rimane in sola lettura così l'editor classico non può sovrascriverlo.",
+        .profile_recover_drafts: "Recupera bozze illeggibili",
+        .profile_recover_drafts_footer:
+            "Alcune bozze salvate non sono state lette. Prova a recuperarle; se il recupero fallisce non viene eliminato nulla.",
+        .profile_recover_drafts_title: "Recupera bozze",
+        .profile_recover_drafts_success: "Bozze recuperate.",
+        .profile_recover_drafts_set_aside: "Metti da parte le copie illeggibili",
+        .profile_recover_drafts_set_aside_message:
+            "Alcune copie dei documenti su questo dispositivo non sono leggibili, quindi qui non è possibile modificare alcun documento. Metterle da parte sposta quelle copie in una cartella separata su questo dispositivo. I loro file vengono conservati ma non vengono più aperti, e le modifiche mai sincronizzate al loro interno non verranno inviate. Gli altri documenti torneranno modificabili.",
+        .profile_recover_drafts_set_aside_success:
+            "Copie illeggibili messe da parte. Gli altri documenti sono di nuovo modificabili.",
+        .profile_recover_drafts_failure: "Impossibile recuperare le bozze. Restano salvate su questo dispositivo.",
     ]
 }

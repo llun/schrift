@@ -342,9 +342,9 @@ enum Strings_fr {
             "Cette saisie au clavier n’est pas encore prise en charge. Votre document est préservé en lecture seule.",
         .native_editor_storage_failed:
             "Impossible d’enregistrer cette modification sur votre appareil. La modification s’est arrêtée ; le texte précédemment enregistré est préservé.",
-        .profile_native_editor: "Éditeur natif (expérimental, lecture seule)",
+        .profile_native_editor: "Éditeur natif (expérimental)",
         .profile_native_editor_footer:
-            "S’applique à la prochaine ouverture d’un document. Compatible avec Docs 6 ; la modification n’est pas encore disponible.",
+            "S’applique à la prochaine ouverture d’un document. Compatible avec Docs 6 ; pour l’instant, seule la saisie de texte brut est disponible.",
         .native_editor_preserved_title: "Document préservé",
         .native_editor_preserved_body:
             "La structure de ce document ne peut pas encore être affichée par le lecteur natif. Son contenu original est préservé.",
@@ -398,5 +398,22 @@ enum Strings_fr {
             "La langue utilisée par votre serveur pour les e-mails et le contenu partagé. La langue de l’application se trouve dans Préférences.",
         // Toast
         .toast_link_copied: "Lien copié",
+        .native_editor_owned_read_only_body:
+            "Ce document est enregistré au format de l'éditeur natif. La modification est indisponible tant que l'éditeur natif est désactivé ; activez-le dans le profil pour continuer.",
+        .native_editor_owned_unavailable_title: "Document natif indisponible",
+        .native_editor_owned_unavailable_body:
+            "Ce document appartient à l'éditeur natif, mais sa copie enregistrée est illisible. Il reste en lecture seule pour que l'éditeur classique ne puisse pas l'écraser.",
+        .profile_recover_drafts: "Récupérer les brouillons illisibles",
+        .profile_recover_drafts_footer:
+            "Certains brouillons enregistrés n'ont pas pu être lus. Essayez de les récupérer ; rien n'est supprimé en cas d'échec.",
+        .profile_recover_drafts_title: "Récupérer les brouillons",
+        .profile_recover_drafts_success: "Brouillons récupérés.",
+        .profile_recover_drafts_set_aside: "Mettre de côté les copies illisibles",
+        .profile_recover_drafts_set_aside_message:
+            "Certaines copies de documents sur cet appareil sont illisibles, donc aucun document ne peut être modifié ici. Les mettre de côté déplace ces copies dans un dossier distinct sur cet appareil. Leurs fichiers sont conservés mais ne sont plus ouverts, et les modifications jamais synchronisées qu'elles contiennent ne seront pas envoyées. Les autres documents pourront ensuite être modifiés à nouveau.",
+        .profile_recover_drafts_set_aside_success:
+            "Copies illisibles mises de côté. Les autres documents peuvent à nouveau être modifiés.",
+        .profile_recover_drafts_failure:
+            "Impossible de récupérer les brouillons. Ils restent enregistrés sur cet appareil.",
     ]
 }

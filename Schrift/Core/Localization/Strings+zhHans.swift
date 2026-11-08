@@ -333,8 +333,8 @@ enum Strings_zhHans {
         .native_editor_input_unavailable: "原生编辑器暂不支持此输入。",
         .native_editor_marked_unavailable: "暂不支持此键盘输入。你的文档已保留为只读模式。",
         .native_editor_storage_failed: "无法在你的设备上保存此次编辑。编辑已停止，之前保存的文字已保留。",
-        .profile_native_editor: "原生编辑器（实验性，只读）",
-        .profile_native_editor_footer: "下次打开文档时生效。支持 Docs 6，暂不支持编辑。",
+        .profile_native_editor: "原生编辑器（实验性）",
+        .profile_native_editor_footer: "下次打开文档时生效。支持 Docs 6，目前仅支持输入纯文本。",
         .native_editor_preserved_title: "文档已保留",
         .native_editor_preserved_body: "原生阅读器暂时无法显示此文档的结构，原始内容仍然保留。",
         .profile_live_collaboration: "实时协作",
@@ -382,5 +382,17 @@ enum Strings_zhHans {
         .account_language_footer: "您的服务器用于电子邮件和共享内容的语言。应用自身的语言在偏好设置中。",
         // Toast
         .toast_link_copied: "链接已复制",
+        .native_editor_owned_read_only_body: "此文档以原生编辑器格式保存。原生编辑器关闭时无法编辑；请在个人资料中开启后继续。",
+        .native_editor_owned_unavailable_title: "原生文档不可用",
+        .native_editor_owned_unavailable_body: "此文档属于原生编辑器，但无法读取其已保存的副本。它将保持只读，以免经典编辑器覆盖它。",
+        .profile_recover_drafts: "恢复无法读取的草稿",
+        .profile_recover_drafts_footer: "部分已保存的草稿无法读取。请尝试恢复；如果恢复失败，不会删除任何内容。",
+        .profile_recover_drafts_title: "恢复草稿",
+        .profile_recover_drafts_success: "草稿已恢复。",
+        .profile_recover_drafts_set_aside: "移开无法读取的副本",
+        .profile_recover_drafts_set_aside_message:
+            "此设备上的部分文档副本无法读取，因此这里无法编辑任何文档。移开后，这些副本会被移到此设备上的一个单独文件夹中。其文件会保留，但不再打开，其中从未同步的更改也不会发送。之后即可再次编辑其他文档。",
+        .profile_recover_drafts_set_aside_success: "已移开无法读取的副本。现在可再次编辑其他文档。",
+        .profile_recover_drafts_failure: "无法恢复草稿。它们仍保存在此设备上。",
     ]
 }

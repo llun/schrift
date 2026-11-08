@@ -345,9 +345,9 @@ enum Strings_de {
             "Diese Tastatureingabe wird noch nicht unterstützt. Ihr Dokument bleibt im schreibgeschützten Modus erhalten.",
         .native_editor_storage_failed:
             "Diese Änderung konnte nicht auf Ihrem Gerät gespeichert werden. Das Bearbeiten wurde beendet; zuvor gespeicherter Text bleibt erhalten.",
-        .profile_native_editor: "Nativer Editor (experimentell, schreibgeschützt)",
+        .profile_native_editor: "Nativer Editor (experimentell)",
         .profile_native_editor_footer:
-            "Gilt beim nächsten Öffnen eines Dokuments. Unterstützt Docs 6; Bearbeiten ist noch nicht verfügbar.",
+            "Gilt beim nächsten Öffnen eines Dokuments. Unterstützt Docs 6; bisher ist nur die Eingabe von reinem Text möglich.",
         .native_editor_preserved_title: "Dokument erhalten",
         .native_editor_preserved_body:
             "Der native Leser kann die Struktur dieses Dokuments noch nicht anzeigen. Der ursprüngliche Inhalt bleibt erhalten.",
@@ -400,5 +400,22 @@ enum Strings_de {
             "Die Sprache, die Ihr Server für E-Mails und geteilte Inhalte verwendet. Die Sprache der App finden Sie unter Einstellungen.",
         // Toast
         .toast_link_copied: "Link kopiert",
+        .native_editor_owned_read_only_body:
+            "Dieses Dokument ist im Format des nativen Editors gespeichert. Bearbeiten ist nicht möglich, solange der native Editor ausgeschaltet ist; schalte ihn im Profil ein, um fortzufahren.",
+        .native_editor_owned_unavailable_title: "Nativer Inhalt nicht verfügbar",
+        .native_editor_owned_unavailable_body:
+            "Dieses Dokument gehört zum nativen Editor, aber seine gespeicherte Kopie kann nicht gelesen werden. Es bleibt schreibgeschützt, damit der klassische Editor es nicht überschreiben kann.",
+        .profile_recover_drafts: "Unlesbare Entwürfe wiederherstellen",
+        .profile_recover_drafts_footer:
+            "Einige gespeicherte Entwürfe konnten nicht gelesen werden. Versuche, sie wiederherzustellen; bei einem Fehlschlag wird nichts gelöscht.",
+        .profile_recover_drafts_title: "Entwürfe wiederherstellen",
+        .profile_recover_drafts_success: "Entwürfe wiederhergestellt.",
+        .profile_recover_drafts_set_aside: "Unlesbare Kopien beiseitelegen",
+        .profile_recover_drafts_set_aside_message:
+            "Einige Kopien von Dokumenten auf diesem Gerät können nicht gelesen werden, daher lässt sich hier kein Dokument bearbeiten. Beim Beiseitelegen werden diese Kopien in einen separaten Ordner auf diesem Gerät verschoben. Ihre Dateien bleiben erhalten, werden aber nicht mehr geöffnet, und nie synchronisierte Änderungen darin werden nicht gesendet. Andere Dokumente lassen sich danach wieder bearbeiten.",
+        .profile_recover_drafts_set_aside_success:
+            "Unlesbare Kopien beiseitegelegt. Andere Dokumente lassen sich wieder bearbeiten.",
+        .profile_recover_drafts_failure:
+            "Die Entwürfe konnten nicht wiederhergestellt werden. Sie bleiben auf diesem Gerät gespeichert.",
     ]
 }

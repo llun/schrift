@@ -342,9 +342,9 @@ enum Strings_nl {
             "Deze toetsenbordinvoer wordt nog niet ondersteund. Je document is behouden in alleen-lezenmodus.",
         .native_editor_storage_failed:
             "Deze wijziging kon niet op je apparaat worden opgeslagen. Bewerken is gestopt; eerder opgeslagen tekst is behouden.",
-        .profile_native_editor: "Native editor (experimenteel, alleen-lezen)",
+        .profile_native_editor: "Native editor (experimenteel)",
         .profile_native_editor_footer:
-            "Wordt toegepast wanneer je een document opnieuw opent. Ondersteunt Docs 6; bewerken is nog niet beschikbaar.",
+            "Wordt toegepast wanneer je een document opnieuw opent. Ondersteunt Docs 6; voorlopig kun je alleen platte tekst typen.",
         .native_editor_preserved_title: "Document behouden",
         .native_editor_preserved_body:
             "De native lezer kan de structuur van dit document nog niet weergeven. De oorspronkelijke inhoud blijft behouden.",
@@ -397,5 +397,22 @@ enum Strings_nl {
             "De taal die je server gebruikt voor e-mails en gedeelde inhoud. De taal van de app vind je bij Voorkeuren.",
         // Toast
         .toast_link_copied: "Link gekopieerd",
+        .native_editor_owned_read_only_body:
+            "Dit document is opgeslagen in de indeling van de native editor. Bewerken is niet beschikbaar zolang de native editor uit staat; zet hem aan in het profiel om door te gaan.",
+        .native_editor_owned_unavailable_title: "Native document niet beschikbaar",
+        .native_editor_owned_unavailable_body:
+            "Dit document hoort bij de native editor, maar de opgeslagen kopie kan niet worden gelezen. Het blijft alleen-lezen zodat de klassieke editor het niet kan overschrijven.",
+        .profile_recover_drafts: "Onleesbare concepten herstellen",
+        .profile_recover_drafts_footer:
+            "Sommige opgeslagen concepten konden niet worden gelezen. Probeer ze te herstellen; er wordt niets verwijderd als het herstellen mislukt.",
+        .profile_recover_drafts_title: "Concepten herstellen",
+        .profile_recover_drafts_success: "Concepten hersteld.",
+        .profile_recover_drafts_set_aside: "Onleesbare kopieën apart zetten",
+        .profile_recover_drafts_set_aside_message:
+            "Sommige kopieën van documenten op dit apparaat zijn onleesbaar, waardoor hier geen document kan worden bewerkt. Apart zetten verplaatst die kopieën naar een aparte map op dit apparaat. De bestanden blijven bewaard maar worden niet meer geopend, en wijzigingen erin die nooit zijn gesynchroniseerd, worden niet verzonden. Andere documenten kun je daarna weer bewerken.",
+        .profile_recover_drafts_set_aside_success:
+            "Onleesbare kopieën apart gezet. Andere documenten kun je weer bewerken.",
+        .profile_recover_drafts_failure:
+            "De concepten konden niet worden hersteld. Ze blijven op dit apparaat opgeslagen.",
     ]
 }

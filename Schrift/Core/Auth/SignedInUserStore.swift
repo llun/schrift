@@ -29,6 +29,7 @@ import Foundation
 /// the read is one `UserDefaults` string lookup on a path that already does file I/O.
 struct SignedInUserStore {
     private static let key = "dev.llun.Schrift.signedInUserID"
+    private static let epochKey = "dev.llun.Schrift.signedInUserEpoch"
 
     private let userDefaults: UserDefaults
 
@@ -39,6 +40,11 @@ struct SignedInUserStore {
     var userID: UUID? {
         userDefaults.string(forKey: Self.key).flatMap(UUID.init(uuidString:))
     }
+
+    /// Moves at every `clear()`, the moments a session changes hands. A
+    /// `/users/me/` writer captures it before its await and remembers the answer
+    /// only if it has not moved, so account A's late response never names B.
+    var epoch: Int { userDefaults.integer(forKey: Self.epochKey) }
 
     /// Write through from any successful `/users/me/`. Idempotent, and a nil id (the field is
     /// Optional on the wire) is ignored rather than clearing a good value — a server that omits
@@ -59,5 +65,6 @@ struct SignedInUserStore {
     /// the server before anything of the previous user's is listed or sent.
     func clear() {
         userDefaults.removeObject(forKey: Self.key)
+        userDefaults.set(epoch &+ 1, forKey: Self.epochKey)
     }
 }

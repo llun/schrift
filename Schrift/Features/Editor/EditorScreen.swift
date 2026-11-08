@@ -17,6 +17,8 @@ struct EditorScreen: View {
     var onDeleted: (() -> Void)? = nil
     var onOpenDocument: ((Document) -> Void)? = nil
     var onCreatedDocument: ((Document) -> Void)? = nil
+    /// See `EditorView.signInGeneration`.
+    var signInGeneration: Int = 0
 
     @State private var viewModel: EditorViewModel
     /// Retained past `init` because the Pages drawer reads the same store the
@@ -43,7 +45,8 @@ struct EditorScreen: View {
         isOffline: Bool = false,
         onDeleted: (() -> Void)? = nil,
         onOpenDocument: ((Document) -> Void)? = nil,
-        onCreatedDocument: ((Document) -> Void)? = nil
+        onCreatedDocument: ((Document) -> Void)? = nil,
+        signInGeneration: Int = 0
     ) {
         _viewModel = State(
             initialValue: EditorViewModel(
@@ -69,6 +72,7 @@ struct EditorScreen: View {
         self.onDeleted = onDeleted
         self.onOpenDocument = onOpenDocument
         self.onCreatedDocument = onCreatedDocument
+        self.signInGeneration = signInGeneration
     }
 
     var body: some View {
@@ -84,7 +88,8 @@ struct EditorScreen: View {
             isOffline: isOffline,
             onDeleted: onDeleted,
             onOpenDocument: onOpenDocument,
-            onCreatedDocument: onCreatedDocument
+            onCreatedDocument: onCreatedDocument,
+            signInGeneration: signInGeneration
         )
     }
 }

@@ -292,7 +292,15 @@ struct EditorView: View {
     var onDeleted: (() -> Void)? = nil
     var onOpenDocument: ((Document) -> Void)? = nil
     var onCreatedDocument: ((Document) -> Void)? = nil
+    /// `SessionStore.signInGeneration`: a change means the session under this
+    /// screen may be another account's, so the native route is closed and
+    /// reopened rather than left typing into the previous account's replica.
+    var signInGeneration: Int = 0
     @State private var nativeOpen = NativeEditorOpen()
+    @Environment(LocalizationStore.self) private var loc
+    @Environment(\.scenePhase) private var scenePhase
+
+    private var showsOffline: Bool { isOffline || viewModel.availability.isOffline }
 
     var body: some View {
         Group {
@@ -300,7 +308,17 @@ struct EditorView: View {
             case .loading:
                 ProgressView()
             case .native(let session):
-                NativeEditorView(session: session, title: viewModel.title)
+                NativeEditorView(
+                    session: session, title: viewModel.title,
+                    preservedNotice: nativeOpen.isPreservedReadOnly
+                        ? .native_editor_owned_read_only_body : nil,
+                    saveStatus: session.input == nil ? nil : nativeSaveStatus(session),
+                    saveFailureDetail: viewModel.saveFailureDetail,
+                    onSave: { nativeOpen.saveNow(viewModel: viewModel) })
+            case .preservedUnavailable:
+                ContentUnavailableView(
+                    loc[.native_editor_owned_unavailable_title], systemImage: "doc.richtext",
+                    description: Text(loc[.native_editor_owned_unavailable_body]))
             case .classic:
                 ClassicEditorView(
                     viewModel: viewModel, reach: reach, serverHost: serverHost, serverOrigin: serverOrigin,
@@ -309,8 +327,42 @@ struct EditorView: View {
                     onOpenDocument: onOpenDocument, onCreatedDocument: onCreatedDocument)
             }
         }
-        .task { await nativeOpen.open(viewModel: viewModel, isOffline: isOffline) }
+        .task { await openNative() }
         .onDisappear { nativeOpen.close() }
+        // The journal is already durable; this hands the debounced save to the
+        // coordinator, whose background task carries it.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background || phase == .inactive { nativeOpen.flushPendingSave() }
+        }
+        .onChange(of: showsOffline) { _, offline in
+            guard !offline else { return }
+            nativeOpen.refreshInBackground(viewModel: viewModel, isOffline: showsOffline)
+        }
+        .onChange(of: signInGeneration) { _, _ in
+            // A mounted classic editor keeps its own session handling and is never swapped.
+            if case .classic = nativeOpen.route { return }
+            nativeOpen.reopen(
+                viewModel: viewModel, isOffline: showsOffline, canUpdate: pinRow?.abilities.update == true)
+        }
+    }
+
+    private func openNative() async {
+        // Both navigation surfaces pass the server Document as pinRow. Missing
+        // metadata fails closed to the read-only view.
+        await nativeOpen.open(
+            viewModel: viewModel, isOffline: showsOffline, canUpdate: pinRow?.abilities.update == true)
+    }
+
+    /// The classic status resolver, fed by the coordinator's real save state.
+    /// Debounced journal bytes are on this device but not yet handed over.
+    private func nativeSaveStatus(_ session: NativeEditorSession) -> SaveStatusDisplay {
+        if session.hasPendingSave { return .savedOnDevice }
+        let hasConflict = viewModel.syncConflict != nil
+        return saveStatusDisplay(
+            saveState: viewModel.saveState, hasConflict: hasConflict,
+            hasUnsavedLocalContent: hasConflict
+                && viewModel.saveCoordinator.storedDraft(documentID: viewModel.documentID) != nil,
+            connectionDown: isOffline || viewModel.availability.connectionAppearsDown)
     }
 }
 

@@ -29,6 +29,11 @@ struct ReplicaSaveRequest: Equatable, Sendable {
 /// half-land handling, never the legacy live-snapshot fallback or Markdown diff.
 @MainActor
 final class ReplicaSaveAdapter {
+    /// Compaction runs once this many journal segments are already covered
+    /// (acknowledged local or integrated remote). Unsent outbox segments are
+    /// retained by compaction, so they never count toward it.
+    static let compactionJournalThreshold = 64
+
     let scope: ReplicaScope
     private let store: ReplicaStore
 
@@ -100,6 +105,28 @@ final class ReplicaSaveAdapter {
             && restored.manifest.revision == request.reference.revision && restored.manifest.outbox.isEmpty
     }
 
+    /// Bounds journal growth: compacts once the covered segments reach the
+    /// threshold. Not on every empty outbox, which would re-encode the whole
+    /// document on the main actor after every save. The checkpoint is encoded
+    /// from the verified raw revision, and compaction keeps the revision and
+    /// generation, so outstanding draft references stay valid. Best-effort: a
+    /// failed compaction leaves the journal intact and must never fail a save
+    /// that already landed.
+    @discardableResult
+    func compactIfNeeded() -> Bool {
+        do {
+            guard let manifest = try store.manifest(for: scope),
+                manifest.journal.count - manifest.outbox.count >= Self.compactionJournalThreshold,
+                let restored = try store.restore(for: scope)
+            else { return false }
+            let checkpoint = try Self.fullState(restored)
+            try store.compact(for: scope, checkpoint: checkpoint, baseRevision: restored.manifest.revision)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     /// Confirmation of every body PATCH precedes the durable acknowledgment,
     /// then the caller attempts title. A partial batch is retained in full and
     /// retried idempotently. Delete-only bytes are never inferred from a vector.
@@ -120,6 +147,18 @@ final class ReplicaSaveAdapter {
                     documentID: scope.documentID, org: scope.org, update: update)
             }
             try store.acknowledge(batch)
+            compactIfNeeded()
         }
+    }
+
+    /// The full Yjs state of a verified raw revision. Read-only: this throwaway
+    /// replica never authors, and the checkpoint is never a writer.
+    private static func fullState(_ restored: ReplicaRestore) throws -> Data {
+        let doc = YDoc(clientID: 0)
+        defer { doc.destroy() }
+        try doc.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
+        for update in restored.updates { try doc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote) }
+        guard doc.store.pendingStructs == nil, doc.store.pendingDs == nil else { throw ReplicaStoreError.corrupt }
+        return try YStateEncoder.encodeStateAsUpdate(doc)
     }
 }

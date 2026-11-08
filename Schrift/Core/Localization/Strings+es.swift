@@ -346,9 +346,9 @@ enum Strings_es {
             "Esta entrada de teclado aún no es compatible. Tu documento se conserva en modo de solo lectura.",
         .native_editor_storage_failed:
             "No se pudo guardar este cambio en tu dispositivo. La edición se ha detenido; el texto guardado anteriormente se conserva.",
-        .profile_native_editor: "Editor nativo (experimental, solo lectura)",
+        .profile_native_editor: "Editor nativo (experimental)",
         .profile_native_editor_footer:
-            "Se aplica al abrir el próximo documento. Compatible con Docs 6; la edición aún no está disponible.",
+            "Se aplica al abrir el próximo documento. Compatible con Docs 6; por ahora solo se puede escribir texto sin formato.",
         .native_editor_preserved_title: "Documento conservado",
         .native_editor_preserved_body:
             "El lector nativo aún no puede mostrar la estructura de este documento. Su contenido original se conserva.",
@@ -402,5 +402,22 @@ enum Strings_es {
             "El idioma que usa tu servidor para los correos electrónicos y el contenido compartido. El idioma de la aplicación está en Preferencias.",
         // Toast
         .toast_link_copied: "Enlace copiado",
+        .native_editor_owned_read_only_body:
+            "Este documento está guardado en el formato del editor nativo. La edición no está disponible mientras el editor nativo esté desactivado; actívalo en el perfil para continuar.",
+        .native_editor_owned_unavailable_title: "Documento nativo no disponible",
+        .native_editor_owned_unavailable_body:
+            "Este documento pertenece al editor nativo, pero su copia guardada no se puede leer. Permanece en solo lectura para que el editor clásico no pueda sobrescribirlo.",
+        .profile_recover_drafts: "Recuperar borradores ilegibles",
+        .profile_recover_drafts_footer:
+            "Algunos borradores guardados no se pudieron leer. Intenta recuperarlos; no se elimina nada si la recuperación falla.",
+        .profile_recover_drafts_title: "Recuperar borradores",
+        .profile_recover_drafts_success: "Borradores recuperados.",
+        .profile_recover_drafts_set_aside: "Apartar copias ilegibles",
+        .profile_recover_drafts_set_aside_message:
+            "Algunas copias de documentos en este dispositivo no se pueden leer, así que aquí no se puede editar ningún documento. Al apartarlas, esas copias se mueven a una carpeta separada en este dispositivo. Sus archivos se conservan, pero ya no se abren, y los cambios que nunca se sincronizaron no se enviarán. Después, los demás documentos se podrán volver a editar.",
+        .profile_recover_drafts_set_aside_success:
+            "Copias ilegibles apartadas. Los demás documentos se pueden volver a editar.",
+        .profile_recover_drafts_failure:
+            "No se pudieron recuperar los borradores. Siguen guardados en este dispositivo.",
     ]
 }

@@ -473,4 +473,42 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         XCTAssertNotNil(f.drafts.draft(for: documentID)?.replica)
         XCTAssertNil(MockURLProtocol.lastRequest)
     }
+
+    func testAcknowledgedSaveBelowTheThresholdDoesNotReencodeTheDocument() async throws {
+        let f = try fixture()
+        let log = RequestRecorder()
+        stub(log: log)
+        try enqueue(f)
+        await waitUntil { self.isSaved(f.coordinator.state(for: self.documentID)) }
+        let manifest = try XCTUnwrap(f.store.manifest(for: f.scope))
+        XCTAssertTrue(manifest.outbox.isEmpty)
+        XCTAssertEqual(manifest.journal.count, 1, "one covered segment is below the threshold")
+        XCTAssertEqual(manifest.checkpointSequence, 0)
+    }
+
+    func testCompactionCountsOnlyCoveredSegmentsAndKeepsTheProjection() throws {
+        let f = try fixture()
+        // The fixture already recorded one update; reach the threshold without
+        // acknowledging. Compaction would retain every one of these unsent
+        // segments, so it must not re-encode the document for nothing.
+        for revision in 1..<UInt64(ReplicaSaveAdapter.compactionJournalThreshold) {
+            _ = try f.store.append(
+                f.update, for: f.scope, commandID: UUID(), baseRevision: revision, origin: .local)
+        }
+        let before = try XCTUnwrap(f.store.manifest(for: f.scope))
+        XCTAssertEqual(before.journal.count, ReplicaSaveAdapter.compactionJournalThreshold)
+        XCTAssertFalse(f.adapter.compactIfNeeded())
+        XCTAssertEqual(try f.store.manifest(for: f.scope), before)
+        // Once the batch is acknowledged, every segment is covered and compacts.
+        try f.store.acknowledge(try XCTUnwrap(f.store.outbox(for: f.scope)))
+        XCTAssertTrue(f.adapter.compactIfNeeded())
+        let restored = try XCTUnwrap(f.store.restore(for: f.scope))
+        XCTAssertTrue(restored.manifest.journal.isEmpty)
+        XCTAssertEqual(restored.manifest.checkpointSequence, restored.manifest.revision)
+        XCTAssertEqual(restored.manifest.generation, before.generation)
+        let doc = YDoc(clientID: 0)
+        defer { doc.destroy() }
+        try doc.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
+        XCTAssertEqual(YBlockProjection.projectedMarkdown(YBlockProjection.project(doc)), "xOne\n")
+    }
 }

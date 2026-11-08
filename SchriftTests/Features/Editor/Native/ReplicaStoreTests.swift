@@ -6,22 +6,36 @@ import XCTest
 final class ReplicaStoreTests: XCTestCase {
     private enum Interrupted: Error { case crash }
     private var directory: URL!
+    private var ownershipSuite: String!
+    private var ownershipDefaults: UserDefaults!
     private let scope = ReplicaScope(
         serverOrigin: "https://docs.example", ownerUserID: UUID(), org: "docs", documentID: UUID())
     private let baseline = Data([0, 0])
 
     override func setUp() async throws {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        ownershipSuite = "ReplicaStoreTests.\(UUID().uuidString)"
+        ownershipDefaults = UserDefaults(suiteName: ownershipSuite)
     }
 
     override func tearDown() async throws {
         if let directory { try? FileManager.default.removeItem(at: directory) }
+        ownershipDefaults?.removePersistentDomain(forName: ownershipSuite)
+        ownershipDefaults = nil
+        ownershipSuite = nil
     }
 
     private func store(
         interrupt: ((ReplicaStore.Operation, ReplicaStore.Boundary) throws -> Void)? = nil
     ) -> ReplicaStore {
         ReplicaStore(directory: directory, interrupt: interrupt)
+    }
+
+    private func ownedStore(
+        interrupt: ((ReplicaStore.Operation, ReplicaStore.Boundary) throws -> Void)? = nil
+    ) -> (ReplicaStore, ReplicaOwnershipStore) {
+        let ownership = ReplicaOwnershipStore(userDefaults: ownershipDefaults)
+        return (ReplicaStore(directory: directory, ownershipStore: ownership, interrupt: interrupt), ownership)
     }
 
     func testCreateAppendAndRelaunchRetainsScopeAndOrderedLocalAndRemoteUpdates() throws {
@@ -274,6 +288,111 @@ final class ReplicaStoreTests: XCTestCase {
         ]
         for other in alternatives { XCTAssertNil(try store.restore(for: other)) }
         XCTAssertNotNil(try self.store().restore(for: scope))
+    }
+
+    func testCreateMarksOwnershipBeforeTheManifestIsVisible() throws {
+        for boundary in ReplicaStore.Boundary.commitBoundaries {
+            let root = directory.appendingPathComponent(UUID().uuidString)
+            let ownership = ReplicaOwnershipStore(userDefaults: ownershipDefaults)
+            let crashing = ReplicaStore(directory: root, ownershipStore: ownership) { op, point in
+                if op == .create && point == boundary { throw Interrupted.crash }
+            }
+            XCTAssertThrowsError(try crashing.create(for: scope, checkpoint: baseline), "\(boundary)")
+            // The marker is written before any payload, so a crash can never
+            // leave a replica the classic writer could open.
+            XCTAssertEqual(
+                ownership.owner(documentID: scope.documentID, serverOrigin: scope.serverOrigin), .owned(scope),
+                "\(boundary)")
+            let restored = try ReplicaStore(directory: root).restore(for: scope)
+            XCTAssertEqual(restored?.checkpoint, boundary.manifestIsVisible ? baseline : nil, "\(boundary)")
+        }
+    }
+
+    func testCreateRefusesWhenOwnershipCannotBeWritten() throws {
+        ownershipDefaults.set(Data([0xff]), forKey: "dev.llun.Schrift.replicaOwnership")
+        let (store, ownership) = ownedStore()
+        do {
+            _ = try store.create(for: scope, checkpoint: baseline)
+            XCTFail("a replica must not exist without a marker")
+        } catch ReplicaStoreError.ownershipUnavailable {}
+        XCTAssertNil(try store.restore(for: scope))
+        XCTAssertTrue(ownership.holdsUnreadableData)
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: directory.path), "no replica directory exists without a marker")
+    }
+
+    func testLostMarkerDataWithReplicaFilesIsUnreadable() throws {
+        let (store, ownership) = ownedStore()
+        XCTAssertEqual(store.ownership(documentID: scope.documentID, serverOrigin: scope.serverOrigin), .none)
+        _ = try store.create(for: scope, checkpoint: baseline)
+        XCTAssertEqual(store.ownership(documentID: scope.documentID, serverOrigin: scope.serverOrigin), .owned(scope))
+        // Marker data exists once any replica was created, even after every
+        // marker is cleared, so its absence beside replica files means it was lost.
+        try store.remove(for: scope)
+        XCTAssertTrue(ownership.hasData)
+        XCTAssertEqual(store.ownership(documentID: scope.documentID, serverOrigin: scope.serverOrigin), .none)
+        _ = try store.create(for: scope, checkpoint: baseline)
+        ownershipDefaults.removeObject(forKey: "dev.llun.Schrift.replicaOwnership")
+        XCTAssertEqual(store.ownership(documentID: scope.documentID, serverOrigin: scope.serverOrigin), .unreadable)
+        XCTAssertEqual(store.ownership(documentID: UUID(), serverOrigin: scope.serverOrigin), .unreadable)
+    }
+
+    func testRemoveClearsMarkerAndFilesAndIsIdempotent() throws {
+        let (store, ownership) = ownedStore()
+        _ = try store.create(for: scope, checkpoint: baseline)
+        _ = try store.append(Data([1]), for: scope, commandID: UUID(), baseRevision: 0, origin: .local)
+        XCTAssertEqual(ownership.owner(documentID: scope.documentID, serverOrigin: scope.serverOrigin), .owned(scope))
+        try store.remove(for: scope)
+        XCTAssertNil(try store.restore(for: scope))
+        XCTAssertEqual(ownership.owner(documentID: scope.documentID, serverOrigin: scope.serverOrigin), .none)
+        // A second discard is a no-op, not an error.
+        try store.remove(for: scope)
+        XCTAssertEqual(ownership.owner(documentID: scope.documentID, serverOrigin: scope.serverOrigin), .none)
+    }
+
+    func testRemoveWorksWhenQuarantined() throws {
+        let (store, ownership) = ownedStore()
+        _ = try store.create(for: scope, checkpoint: baseline)
+        let manifest = try store.append(Data([7]), for: scope, commandID: UUID(), baseRevision: 0, origin: .local)
+        let folder = directory.appendingPathComponent(try scope.directoryName())
+        try Data([8]).write(to: folder.appendingPathComponent(manifest.journal[0].file.name))
+        XCTAssertThrowsError(try store.restore(for: scope))
+        // The user asked to discard this work; a sticky corruption hold must
+        // not make it undeletable.
+        try store.remove(for: scope)
+        XCTAssertNil(try store.restore(for: scope))
+        XCTAssertEqual(ownership.owner(documentID: scope.documentID, serverOrigin: scope.serverOrigin), .none)
+    }
+
+    func testRemoveCrashBoundariesKeepTheSafeDirection() throws {
+        for boundary in [ReplicaStore.Boundary.replicaRenamed, .ownershipCleared] {
+            let root = directory.appendingPathComponent(UUID().uuidString)
+            let ownership = ReplicaOwnershipStore(userDefaults: ownershipDefaults)
+            let healthy = ReplicaStore(directory: root, ownershipStore: ownership)
+            _ = try healthy.create(for: scope, checkpoint: baseline)
+            let crashing = ReplicaStore(directory: root, ownershipStore: ownership) { op, point in
+                if op == .remove && point == boundary { throw Interrupted.crash }
+            }
+            XCTAssertThrowsError(try crashing.remove(for: scope), "\(boundary)")
+            // The replica is unreachable at both boundaries, so it can never be
+            // replayed as a half-deleted edit.
+            XCTAssertNil(try healthy.restore(for: scope), "\(boundary)")
+            let expected: ReplicaOwnership = boundary == .replicaRenamed ? .owned(scope) : .none
+            XCTAssertEqual(
+                ownership.owner(documentID: scope.documentID, serverOrigin: scope.serverOrigin), expected,
+                "\(boundary)")
+            // A retry finishes the discard and clears the marker.
+            try healthy.remove(for: scope)
+            XCTAssertEqual(ownership.owner(documentID: scope.documentID, serverOrigin: scope.serverOrigin), .none)
+            XCTAssertNil(try healthy.restore(for: scope))
+        }
+    }
+
+    func testRemoveWithoutOwnershipStoreStillRemovesFiles() throws {
+        let store = store()
+        _ = try store.create(for: scope, checkpoint: baseline)
+        try store.remove(for: scope)
+        XCTAssertNil(try store.restore(for: scope))
     }
 }
 

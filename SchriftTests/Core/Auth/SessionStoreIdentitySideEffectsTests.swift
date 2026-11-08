@@ -87,6 +87,19 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertEqual(store.signInGeneration, before + 1)
     }
 
+    /// Signing out changes the session too, so a mounted native editor closes instead of
+    /// typing on under a forgotten identity.
+    func testSignOutAdvancesTheSignInGeneration() throws {
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        try store.signIn(serverURL: serverURL)
+        let afterSignIn = store.signInGeneration
+
+        try store.signOut()
+
+        XCTAssertEqual(store.signInGeneration, afterSignIn + 1)
+    }
+
     /// It marks a *change of session*, not a failure of one — a dismissed sheet must not
     /// re-run every screen's load.
     func testExpiringASessionDoesNotAdvanceTheSignInGeneration() throws {

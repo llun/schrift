@@ -3,6 +3,14 @@ import SwiftUI
 struct NativeEditorView: View {
     let session: NativeEditorSession
     let title: String
+    /// Shown when the document is native-owned but editing is not enabled.
+    /// The replica is preserved and read-only; the classic writer must not
+    /// open over it.
+    var preservedNotice: L10nKey? = nil
+    /// The classic editor's save status, shown only while typing is enabled.
+    var saveStatus: SaveStatusDisplay? = nil
+    var saveFailureDetail: String? = nil
+    var onSave: () -> Void = {}
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.docsTheme) private var theme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -27,12 +35,31 @@ struct NativeEditorView: View {
                 .id(ObjectIdentifier(session))
             }
         }
+        .safeAreaInset(edge: .top) {
+            if let preservedNotice {
+                Text(loc[preservedNotice])
+                    .font(.footnote)
+                    .foregroundStyle(theme.colors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, DocsSpacing.gutter)
+                    .padding(.vertical, DocsSpacing.spaceXS)
+                    .background(theme.colors.surfacePage)
+                    .accessibilityIdentifier("nativeEditor.preservedNotice")
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             if let key = session.input?.noticeKey {
                 Text(loc[key])
                     .font(.footnote)
                     .padding()
                     .accessibilityIdentifier("nativeEditor.inputNotice")
+            }
+        }
+        .toolbar {
+            if let saveStatus, saveStatus != .none {
+                ToolbarItem(placement: .topBarTrailing) {
+                    SaveStatusIndicator(display: saveStatus, failureDetail: saveFailureDetail, onTap: onSave)
+                }
             }
         }
         .background(theme.colors.surfacePage)

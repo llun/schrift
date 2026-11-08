@@ -7,9 +7,12 @@
 > [`architecture.md`](architecture.md) for the overall architecture and
 > [`AGENTS.md`](../AGENTS.md) for the operational conventions.
 
-> **PR02a checkpoint (2026-11-07):** the native editor is still read-only. A
-> standalone `ReplicaStore` now provides the persistence foundation below;
-> native typing, save/reconnect/reopen integration and migration are not enabled.
+> **PR02 activation (slice B, 2026-11-08):** with the default-off
+> `schrift.nativeEditor` switch on, eligible Docs 6 documents type into a durable
+> replica and save through the coordinator; see "Native typing activation" below.
+> Old Markdown-draft migration, local-create key migration and a total shadow for
+> rich documents are not done. The checkpoints below record how the components
+> were built.
 
 > **Typing component checkpoint:** the native input coordinator and command/echo
 > path now exist and are covered by `NativeTypingTests`. Explicitly enabled test
@@ -61,16 +64,47 @@ their effect is already checkpointed. Only confirmation of the captured HTTP bod
 batch permits acknowledgment; newer edits remain pending. State-vector equality
 does not confirm delete sets. The store does not send requests, set saved status,
 own title retry state or use a live socket. Its bytes are backup-included, retained
-on sign-out, never evicted and never logged.
+on sign-out, never evicted and never logged. `ReplicaSaveAdapter.compactIfNeeded`
+is the production call site: after a durable acknowledgment and after each raw
+capture, it compacts once 64 journal segments are covered (acknowledged local or
+integrated remote). Unsent outbox segments never count, and it never re-encodes the
+document after every save. A failed compaction leaves the journal and the save intact.
+
+`ReplicaStore.remove(for:)` is the only delete: keep-server-version,
+`discardPendingWork` and therefore document deletion call it. It renames the whole
+scope folder to a `.removed` tombstone, flushes the parent, clears the owner marker,
+then deletes the tombstone. An interruption leaves the intact replica or an
+unreachable tombstone, never a half-deleted replica; a crash before the marker is
+cleared leaves the document read-only. Quarantined replicas can be removed too. Sign-out
+never removes a replica. Only the signed-in owner's replica is removed: when another
+account (or an unknown one) is signed in, a discard or a landed deletion leaves that
+owner's replica, marker and native draft in place and completes the rest of the delete
+for the current session. On a shared device B's DELETE of A's document 404s as "already
+gone", and that must not destroy A's unsynced work.
+
+**Owner marker.** `ReplicaOwnershipStore` keeps a versioned, checksummed UserDefaults
+map from `origin|documentID` to the owning scope. `create` writes it before any replica
+file or directory exists, so a crash leaves a marker without a replica (read-only),
+never the reverse. Once marked, `DocumentSaveCoordinator.enqueue` refuses every classic
+and live save for the document even after a successful save removed its draft, and
+`EditorViewModel.canStartEditing` is false. `NativeEditorOpen` checks the marker
+before any network and regardless of the switch: it restores the replica (read-only
+with a "turn the switch on" notice while the switch is off), and shows a
+preserved-unavailable state when the replica is quarantined or missing (re-seeded with the switch on; see below), the marker data
+is corrupt, or the replica belongs to another account. Corrupt marker data, or a
+replica directory without any marker data, answers "owned" for every document: ownership
+is unknown, so nothing is classic-editable. One document has one owner; another
+scope's mark is refused and its clear is a no-op.
 
 `PendingDraftStore` now quarantines unreadable blobs before **both** mutating
 operations (`save` and `remove`), retains successive distinct corruptions, and
 keeps `holdsUnreadableData` sticky across healthy writes and relaunches. Explicit
 `recoverQuarantinedDrafts()` succeeds only when all recovery blobs decode; it merges
 by timestamp, preserves newer live edits and persists the merged store before
-clearing quarantine. Failed recovery retains the hold and every blob. Callers must
-recreate `DocumentSaveCoordinator` after successful recovery to rehydrate conflict
-holds. No recovery UI or startup writes have been introduced.
+clearing quarantine. Failed recovery retains the hold and every blob.
+`DocumentSaveCoordinator.recoverQuarantinedDrafts()` wraps it and rehydrates the
+conflict holds of the recovered drafts. Profile's Files section shows "Recover
+unreadable drafts" only while the hold is in force; there are no startup writes.
 
 The save adapter captures a verified outbox and enters the coordinator's existing
 serialized slots. It validates server/config/org/account, sends each stored update
@@ -104,11 +138,79 @@ is idempotent while journal/engine revisions stay aligned. Failed disk persisten
 freezes the mutated graph, keeps the accepted display and retains unconfirmed bytes
 in memory; reopen uses the earlier durable revision.
 
-Remaining PR02a integration: production open/reconnect wiring, a total shadow for
-opaque/rich documents (re-stamping refuses an unprojectable revision today),
-permanent native route ownership after a saved draft is removed, account/session
-generation guards, migration/rollback and production activation. Existing Markdown
-drafts retain their classic owner; no production native replica is adopted yet.
+## Native typing activation (PR02 slice B)
+
+Typing turns on at open only when all of these hold: the switch is on, the server is
+Docs 6, the signed-in user has `abilities.update`, the document is not a pending
+create or delete, no live owner holds it, it projects fully (fully modeled with a
+Markdown shadow), and there is no classic draft or queued classic save. A document
+with a classic draft stays classic until that draft syncs. Everything else that
+reaches native opens PR01's in-memory read-only view and never gains a marker.
+
+- **Owned replica:** restored offline-first, with no request. Online, the raw server
+  state is then fetched and integrated into the same durable owner (journaled before
+  display). A converted Markdown response is never installed over native state.
+- **No replica:** the raw state is fetched, `ReplicaStore.create` writes the marker
+  and the checkpoint, and the replica is restored with typing on.
+- **Marker without a replica** (a crash between the marker and the first manifest):
+  with the switch on, the marker is cleared only when no manifest, quarantine, draft
+  or queued/in-flight save exists, and the unowned route then re-seeds it from the
+  server (or opens classic when offline). Otherwise it stays read-only.
+- **Corrupt or lost marker data:** Profile's "Recover unreadable drafts" row also
+  appears and rebuilds the marker from the scoped manifests on disk and the scopes
+  native drafts name (it refuses while the draft store is unreadable). Folders without
+  a manifest or quarantine claim nothing. A folder that is quarantined, damaged or in
+  a newer format cannot name its document, so the repair writes nothing and every
+  document stays read-only. Two scopes for one document resolve to the drafted one,
+  then the only one with unsent edits; anything still ambiguous also writes nothing.
+  A readable owner is never replaced. When the repair fails over an unreadable folder,
+  the alert offers "Set aside unreadable copies": each such folder moves, bytes intact,
+  to `ReplicaDraftsSetAside` beside the store (never read as a replica), then the repair
+  runs again. A document whose folder was set aside follows its native draft
+  (read-only) or, with none, the server; its unsynced bytes are kept but never sent.
+- **A native draft owns its document** even when the marker does not name it:
+  `nativeOwnership` answers its scope (another server's origin answers unreadable).
+  Seeding never falls back to classic when replica data for the scope is already on
+  disk (corrupt, quarantined, newer format or existing), and the classic editor's
+  local phase never shows a native draft's or native save's Markdown shadow.
+
+**Saves.** Every persisted command arms `NativeReplicaSaveScheduler`: the classic
+autosave interval (10 s trailing, capped at 30 s of continuous typing). It hands the
+verified outbox to `enqueueReplica`, with the cached server copy as title and
+baseline (a stored draft keeps its own baseline). Close and the app going inactive
+or to the background flush it. Reopening a replica whose outbox has no draft (the
+process ended inside the debounce) schedules it. The native view shows the classic
+`SaveStatusIndicator`: unsent journal bytes read "Saved on this device", then the
+coordinator's state (saving, saved, pending sync, retry). A tap retries a raw draft
+through `retryReplicaDraft`, never the classic enqueue. A refused capture freezes
+authoring and reports `.failed`; the journal bytes stay durable.
+
+**Reconnect and accounts.** Coming back online integrates the fetched state again.
+A5's `isLiveReplicaHeld` rules are unchanged; there is no native live socket, and
+a native session never uses the live write path. Every await in open and
+integration rechecks the open's generation and the remembered signed-in user. A
+change of `SessionStore.signInGeneration` closes (flushing under the account checks
+`enqueueReplica` and the sender apply) and reopens a native route, where another
+account's replica is preserved-unavailable. The confirming `/users/me/` of both login
+flows passes its id to `signIn(serverURL:userID:)`, which remembers it before the
+generation moves, so the reopen at that bump already knows the owner; the same account
+re-authenticating types again. A flush while the account is unknown (the cookie-handover
+bump, or a sign-out the view has not reacted to) neither fails nor freezes and leaves
+the save pending, so the status stays "Saved on this device"; the reopen or a status
+tap under the known owner hands the outbox over. `signOut` bumps `signInGeneration` too,
+so a mounted native editor closes. The login flows' confirmation (`confirmSession`)
+accepts any JSON object as before: an id that is not a UUID signs in with the identity
+unknown. `SignedInUserStore.epoch` moves at every
+clear; Home's and Profile's `/users/me/` writers drop an answer whose epoch moved during
+the request. `EditorView`'s reopen and reconnect tasks belong to `NativeEditorOpen`
+(`reopen`, `refreshInBackground`), and close cancels them. The native cache refresh
+also checks the open is still current and the document was not discarded before it
+writes the content cache.
+
+Still open: a total shadow for opaque/rich documents (re-stamping refuses an
+unprojectable revision), clean-replica removal on sign-out, old Markdown-draft
+migration and local-create key migration. Existing Markdown drafts retain their
+classic owner.
 
 > **Amendment (2026-07-03):** the document **lists** (Home, the editor's
 > Subpages section, and the Shared tab) now follow this same

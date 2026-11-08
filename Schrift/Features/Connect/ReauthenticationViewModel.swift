@@ -44,11 +44,10 @@ final class ReauthenticationViewModel {
         errorKey = nil
         defer { isConfirming = false }
 
-        struct Me: Decodable {}
         let client = apiClientFactory(serverURL)
         do {
-            let _: Me = try await client.get("users/me/")
-            try sessionStore.signIn(serverURL: serverURL)
+            let userID = try await client.confirmSession()
+            try sessionStore.signIn(serverURL: serverURL, userID: userID)
         } catch {
             errorKey = .reauth_error_sign_in_failed
         }

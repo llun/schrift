@@ -62,6 +62,9 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         return Environment(
             coordinator: DocumentSaveCoordinator(
                 client: client, draftStore: drafts,
+                replicaStore: ReplicaStore(
+                    directory: cacheDirectory.appendingPathComponent("ReplicaDrafts"),
+                    ownershipStore: ReplicaOwnershipStore(userDefaults: defaults)),
                 contentCache: DocumentContentCacheStore(directory: cacheDirectory),
                 createStore: creates, deleteStore: deletes, listCache: lists, childrenCache: children,
                 serverOrigin: serverOrigin ?? origin, appBuild: "1", backgroundTasks: .noop),
@@ -673,6 +676,32 @@ final class DocumentSaveCoordinatorDeleteTests: XCTestCase {
         XCTAssertEqual(env.drafts.draft(for: revived!.localID)?.markdown, "the user's only copy")
         XCTAssertEqual(revived?.ownerUserID, user, "attributable, so it can actually be sent")
         XCTAssertNil(env.drafts.draft(for: serverID), "nothing is left under the dead id")
+    }
+
+    /// A native draft's Markdown is a lossy shadow, so the lost race never mints a classic
+    /// document from it: the raw draft and replica stay under the dead id, where the raw
+    /// replay never discards them on a 404, and no create record is written.
+    func testAnUndoThatLosesTheRaceNeverRevivesANativeDraftFromItsShadow() async throws {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let scope = ReplicaScope(serverOrigin: origin, ownerUserID: user, org: "docs", documentID: serverID)
+        let manifest = try env.coordinator.replicaStore.create(for: scope, checkpoint: Data([0, 0]))
+        env.drafts.save(
+            PendingDraft(
+                documentID: serverID, title: "Doc", markdown: "the user's only copy", updatedAt: Date(),
+                replica: ReplicaDraftReference(manifest: manifest, markdown: "the user's only copy")))
+        env.coordinator.recordPendingDelete(documentID: serverID, ownerUserID: user)
+        stubDeleteThenGone(log: log, deleteDelay: 0.25)
+
+        let coordinator = env.coordinator
+        let pass = Task { await coordinator.syncPendingDrafts() }
+        await waitUntil { log.methods.contains("DELETE") }
+        coordinator.cancelPendingDelete(documentID: serverID)
+        await pass.value
+
+        XCTAssertNotNil(env.drafts.draft(for: serverID)?.replica, "the raw draft is kept")
+        XCTAssertNotNil(try env.coordinator.replicaStore.restore(for: scope), "and so is its replica")
+        XCTAssertTrue(env.creates.allCreates().isEmpty, "no classic document is minted from the shadow")
     }
 
     /// The send-side gate has two halves and they must bind **independently** — a test that

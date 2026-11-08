@@ -595,13 +595,16 @@ final class EditorViewModel {
     /// Local phase: synchronous, no network, no spinner. Chooses the display
     /// source by precedence — in-flight save, stored draft, cached copy.
     private func restoreLocalContent() {
-        if let pending = saveCoordinator.pendingSave(documentID: documentID) {
+        // A native save's Markdown is only its replica's shadow: the classic
+        // editor never shows or edits it (a marker repair could have dropped
+        // the document, and the shadow may be another account's).
+        if let pending = saveCoordinator.pendingSave(documentID: documentID), pending.replicaRequest == nil {
             install(markdown: pending.markdown, title: pending.title, syncedAt: nil)
             // Continuity: the in-flight/queued content descends from the same server
             // state its draft recorded (enqueue writes both together).
             serverBaseline = saveCoordinator.storedDraft(documentID: documentID)?.baseline
             displaySource = .pendingSave
-        } else if let draft = saveCoordinator.storedDraft(documentID: documentID) {
+        } else if let draft = saveCoordinator.storedDraft(documentID: documentID), draft.replica == nil {
             // New: shown before any fetch (fixes drafts being unreachable
             // offline). The server-wins staleness rule runs at revalidation.
             install(markdown: draft.markdown, title: draft.title, syncedAt: nil)
@@ -1291,17 +1294,19 @@ final class EditorViewModel {
     /// The native reader keeps the same server-exported offline copy as the
     /// classic reader, without installing markdown, advancing its baseline or
     /// starting the classic editor's children/live/save paths.
-    /// This refresh covers content only, not the children cache.
-    func refreshOfflineCacheForNativeReader() async throws -> Bool {
+    /// This refresh covers content only, not the children cache. `isCurrent`
+    /// is the native open's own check (generation and account), so a response
+    /// for a closed open, a sign-out or a deletion never re-caches the body.
+    func refreshOfflineCacheForNativeReader(isCurrent: () -> Bool) async throws -> Bool {
         guard !Task.isCancelled, !availability.isOffline, !isLocalDocument, !isDocumentPendingDelete,
-            !hasPendingNewDocumentEntry
+            !isDocumentDiscarded, !hasPendingNewDocumentEntry
         else { return false }
         let token = availability.token
         let marker = saveCoordinator.saveMarker(documentID: documentID)
         let fetched = try await client.formattedContent(documentID: documentID)
         let (formatted, leafNesting) = await recoveringLeafNesting(fetched, availabilityToken: token)
         guard !Task.isCancelled, availability.permitsResponse(for: token), !isDocumentPendingDelete,
-            !saveCoordinator.mayPredateSave(marker)
+            !isDocumentDiscarded, isCurrent(), !saveCoordinator.mayPredateSave(marker)
         else { return false }
         cacheServerCopy(formatted, leafNesting: leafNesting)
         return true
@@ -2037,7 +2042,14 @@ final class EditorViewModel {
     /// cannot drift into offering a tap that silently does nothing. Deliberately not a
     /// connectivity check: editing offline is supported (the edit is queued as a draft),
     /// and a document whose content never loaded is the case this exists for, on or off.
-    var canStartEditing: Bool { hasLoadedContent }
+    ///
+    /// A native-owned document is never classic-editable, even with the switch off and
+    /// even after a successful save removed its draft. The durable owner marker is the
+    /// authority; an unreadable marker also answers owned, so the classic writer cannot
+    /// guess its way over a replica.
+    var canStartEditing: Bool {
+        hasLoadedContent && !saveCoordinator.isNativeOwned(documentID: documentID)
+    }
 
     /// Called only after initialization/restoration, never from a rerender or reconnect.
     /// Entering via the ordinary gate preserves the unloaded-content save invariant.

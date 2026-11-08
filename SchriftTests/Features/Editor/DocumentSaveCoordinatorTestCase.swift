@@ -65,9 +65,16 @@ class DocumentSaveCoordinatorTestCase: XCTestCase {
         draftSuiteNames.append(suiteName)
         let draftStore = PendingDraftStore(userDefaults: UserDefaults(suiteName: suiteName)!)
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        // Isolate the owner marker and replica storage: the defaults would
+        // otherwise be `UserDefaults.standard` and Application Support, where a
+        // marker left by another run could make a document read-only here.
+        let ownership = ReplicaOwnershipStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+        let replicaStore = ReplicaStore(
+            directory: cacheDirectory.appendingPathComponent("ReplicaDrafts"), ownershipStore: ownership)
         let coordinator = DocumentSaveCoordinator(
             client: client,
             draftStore: draftStore,
+            replicaStore: replicaStore,
             contentCache: contentCache,
             backgroundTasks: backgroundTasks,
             isLiveReplicaHeld: isLiveReplicaHeld

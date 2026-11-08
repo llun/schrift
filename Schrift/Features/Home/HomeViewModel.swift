@@ -587,10 +587,14 @@ final class HomeViewModel {
     /// Best-effort: a failure leaves whatever the last successful fetch stored, which is the
     /// conservative direction — the *send* half re-checks against a live `/users/me/` anyway.
     func refreshSignedInUser() async {
+        let epoch = signedInUser.epoch
         guard let user = try? await client.currentUser() else { return }
+        // The session changed hands during the request: the answer is the previous account's.
+        guard signedInUser.epoch == epoch else { return }
         let previousOwner = signedInUser.userID
         signedInUser.remember(user.id)
-        if previousOwner != user.id { saveCoordinator.pins.sessionIdentityDidChange() }
+        // Unconditional: a sign-in now remembers the new id before this runs.
+        saveCoordinator.pins.sessionIdentityDidChange()
         // Same response, one more consumer: Profile shows this account from disk when there is
         // no network, and a user who never opens Profile while online would otherwise have
         // nothing cached to show. `ProfileViewModel` also write-throughs on its own fetch;

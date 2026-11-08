@@ -355,9 +355,9 @@ enum Strings_sl {
             "Ta vnos s tipkovnico še ni podprt. Dokument je ohranjen v načinu samo za branje.",
         .native_editor_storage_failed:
             "Te spremembe ni bilo mogoče shraniti v napravo. Urejanje je bilo ustavljeno; prej shranjeno besedilo je ohranjeno.",
-        .profile_native_editor: "Izvorni urejevalnik (poskusno, samo za branje)",
+        .profile_native_editor: "Izvorni urejevalnik (poskusno)",
         .profile_native_editor_footer:
-            "Velja ob naslednjem odprtju dokumenta. Podpira Docs 6; urejanje še ni na voljo.",
+            "Velja ob naslednjem odprtju dokumenta. Podpira Docs 6; zaenkrat je na voljo le tipkanje navadnega besedila.",
         .native_editor_preserved_title: "Ohranjen dokument",
         .native_editor_preserved_body:
             "Izvorni bralnik še ne more prikazati strukture tega dokumenta. Izvirna vsebina je ohranjena.",
@@ -409,5 +409,21 @@ enum Strings_sl {
             "Jezik, ki ga uporablja vaš strežnik za e-pošto in deljeno vsebino. Jezik aplikacije najdete v Nastavitvah.",
         // Toast
         .toast_link_copied: "Povezava kopirana",
+        .native_editor_owned_read_only_body:
+            "Ta dokument je shranjen v obliki izvornega urejevalnika. Urejanje ni na voljo, dokler je izvorni urejevalnik izklopljen; vklopite ga v profilu, da nadaljujete.",
+        .native_editor_owned_unavailable_title: "Izvorni dokument ni na voljo",
+        .native_editor_owned_unavailable_body:
+            "Ta dokument pripada izvornemu urejevalniku, vendar njegove shranjene kopije ni mogoče prebrati. Ostaja samo za branje, da ga klasični urejevalnik ne more prepisati.",
+        .profile_recover_drafts: "Obnovi neberljive osnutke",
+        .profile_recover_drafts_footer:
+            "Nekaterih shranjenih osnutkov ni bilo mogoče prebrati. Poskusite jih obnoviti; če obnovitev ne uspe, se nič ne izbriše.",
+        .profile_recover_drafts_title: "Obnovi osnutke",
+        .profile_recover_drafts_success: "Osnutki so obnovljeni.",
+        .profile_recover_drafts_set_aside: "Odloži neberljive kopije",
+        .profile_recover_drafts_set_aside_message:
+            "Nekaterih kopij dokumentov v tej napravi ni mogoče prebrati, zato tukaj ni mogoče urejati nobenega dokumenta. Z odložitvijo se te kopije premaknejo v ločeno mapo v tej napravi. Njihove datoteke se ohranijo, vendar se ne odpirajo več, spremembe v njih, ki niso bile nikoli sinhronizirane, pa ne bodo poslane. Druge dokumente boste nato lahko spet urejali.",
+        .profile_recover_drafts_set_aside_success:
+            "Neberljive kopije so odložene. Druge dokumente je spet mogoče urejati.",
+        .profile_recover_drafts_failure: "Osnutkov ni bilo mogoče obnoviti. Še vedno so shranjeni v tej napravi.",
     ]
 }

@@ -304,4 +304,26 @@ final class ProfileViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.serverVersion)
         XCTAssertEqual(viewModel.user?.email, "ada@example.org")
     }
+
+    /// A load nothing cancelled (the session changed with no restart of the screen's task)
+    /// must not write the previous account's id over the new one.
+    func testAnAnswerFromBeforeTheSessionChangedHandsIsNotRemembered() async {
+        let defaults = makeIsolatedDefaults()
+        let signedIn = SignedInUserStore(userDefaults: defaults)
+        let viewModel = makeViewModel(defaults: defaults)
+        let gate = MockURLProtocol.ResponseGate()
+        MockURLProtocol.stubHandler = { request in
+            let isUser = request.url?.path.contains("users/me") == true
+            return .init(
+                statusCode: 200, headers: [:], body: Self.userFixture, error: nil, releasedBy: isUser ? gate : nil)
+        }
+        let load = Task { await viewModel.load() }
+        await waitUntil { MockURLProtocol.lastRequest != nil }
+        let accountB = UUID()
+        signedIn.clear()
+        signedIn.remember(accountB)
+        gate.open()
+        await load.value
+        XCTAssertEqual(signedIn.userID, accountB)
+    }
 }
