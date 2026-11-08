@@ -132,6 +132,9 @@ final class DocumentSaveCoordinator {
     /// a refused guard). Set by `markFailed` only, from `safeErrorSummary` or a fixed phrase:
     /// never content, a header, a cookie or a token.
     private var failureReasons: [UUID: String] = [:]
+    /// Failed documents whose "Retry" would do nothing (`saveNow` is a no-op for a rejected create
+    /// and for a native capture that froze authoring), so their alert offers Cancel only.
+    private var failuresWithoutRetry: Set<UUID> = []
     private var inFlight: [UUID: Task<Void, Never>] = [:]
     private var inFlightContent: [UUID: PendingSave] = [:]
     private var queued: [UUID: PendingSave] = [:]
@@ -577,22 +580,30 @@ final class DocumentSaveCoordinator {
     /// The one way into `.failed`, so no failure lacks a reason and none keeps a stale one.
     /// `detail` is the request behind *this* failure; callers that have none pass nil, which
     /// also drops a previous failure's request rather than quoting it under the new reason.
-    private func markFailed(_ documentID: UUID, reason: String, detail: RequestFailure? = nil) {
+    private func markFailed(
+        _ documentID: UUID, reason: String, detail: RequestFailure? = nil, offersRetry: Bool = true
+    ) {
         states[documentID] = .failed("Couldn't save changes. Please try again.")
         failureReasons[documentID] = reason
         failureDetails[documentID] = detail
+        if offersRetry { failuresWithoutRetry.remove(documentID) } else { failuresWithoutRetry.insert(documentID) }
     }
+
+    /// Whether the failure alert should offer Retry; false where a retry would silently do nothing.
+    func failureOffersRetry(for documentID: UUID) -> Bool { !failuresWithoutRetry.contains(documentID) }
 
     /// Whether any failure reason or request is still held for the document (tests only: it is how
     /// a reset that forgot `clearFailure` shows, since `failureReport` hides a stale one).
     func holdsFailureRecord(for documentID: UUID) -> Bool {
         failureReasons[documentID] != nil || failureDetails[documentID] != nil
+            || failuresWithoutRetry.contains(documentID)
     }
 
     /// Forgets why a document last failed; for every place its state is reset or dropped.
     private func clearFailure(_ documentID: UUID) {
         failureReasons[documentID] = nil
         failureDetails[documentID] = nil
+        failuresWithoutRetry.remove(documentID)
     }
 
     // MARK: - Native replica ownership
@@ -666,7 +677,8 @@ final class DocumentSaveCoordinator {
     /// rather than claiming a save. Authoring is frozen by the caller.
     func noteReplicaCaptureFailure(documentID: UUID, error: Error) {
         guard inFlight[documentID] == nil, queued[documentID] == nil else { return }
-        markFailed(documentID, reason: "Native capture refused: \(safeErrorSummary(error))")
+        markFailed(
+            documentID, reason: "Native capture refused: \(safeErrorSummary(error))", offersRetry: false)
     }
 
     /// Retry the quarantined draft blobs. On success, rehydrate the conflict
@@ -2477,7 +2489,7 @@ final class DocumentSaveCoordinator {
         // the record and reset the state. Writing here would leave a `.failed` entry keyed to
         // an id nothing owns.
         guard pendingCreates[record.localID] != nil else { return }
-        markFailed(record.localID, reason: "Create rejected: \(reason)")
+        markFailed(record.localID, reason: "Create rejected: \(reason)", offersRetry: false)
     }
 
     /// Content handed to the coordinator this session that the server hasn't

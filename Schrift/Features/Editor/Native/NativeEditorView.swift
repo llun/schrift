@@ -10,6 +10,7 @@ struct NativeEditorView: View {
     /// The classic editor's save status, shown only while typing is enabled.
     var saveStatus: SaveStatusDisplay? = nil
     var saveFailureDetail: String? = nil
+    var saveFailureOffersRetry = true
     var onSave: () -> Void = {}
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.docsTheme) private var theme
@@ -58,7 +59,9 @@ struct NativeEditorView: View {
         .toolbar {
             if let saveStatus, saveStatus != .none {
                 ToolbarItem(placement: .topBarTrailing) {
-                    SaveStatusIndicator(display: saveStatus, failureDetail: saveFailureDetail, onTap: onSave)
+                    SaveStatusIndicator(
+                        display: saveStatus, failureDetail: saveFailureDetail,
+                        failureOffersRetry: saveFailureOffersRetry, onTap: onSave)
                 }
             }
         }

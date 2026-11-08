@@ -425,6 +425,9 @@ final class EditorViewModel {
         saveCoordinator.failureReport(for: documentID)
     }
 
+    /// False where the alert's Retry would do nothing (a rejected create, a frozen native capture).
+    var saveFailureOffersRetry: Bool { saveCoordinator.failureOffersRetry(for: documentID) }
+
     /// The detected sync conflict for this document, if any. The reading surface
     /// shows a "Sync conflict · tap to review" pill and the `ConflictSheetView`
     /// while this is non-nil (reading `@Observable` cross-object state re-renders

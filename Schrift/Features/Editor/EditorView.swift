@@ -314,6 +314,7 @@ struct EditorView: View {
                         ? .native_editor_owned_read_only_body : nil,
                     saveStatus: session.input == nil ? nil : nativeSaveStatus(session),
                     saveFailureDetail: viewModel.saveFailureDetail,
+                    saveFailureOffersRetry: viewModel.saveFailureOffersRetry,
                     onSave: { nativeOpen.saveNow(viewModel: viewModel) })
             case .preservedUnavailable:
                 ContentUnavailableView(
@@ -1208,7 +1209,8 @@ private struct ClassicEditorView: View {
             syncCaptionLabel
         } else {
             SaveStatusIndicator(
-                display: display, failureDetail: viewModel.saveFailureDetail, onTap: { viewModel.saveNow() })
+                display: display, failureDetail: viewModel.saveFailureDetail,
+                failureOffersRetry: viewModel.saveFailureOffersRetry, onTap: { viewModel.saveNow() })
         }
     }
 

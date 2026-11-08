@@ -228,8 +228,10 @@ final class DocumentSaveCoordinatorFailureDetailTests: DocumentSaveCoordinatorTe
         coordinator.enqueue(documentID: documentID, title: "T", markdown: "# One")
         await waitUntilFailed(coordinator, [documentID])
         XCTAssertTrue(failedReport(coordinator).contains("HTTP 403: Refused."))
+        XCTAssertTrue(coordinator.failureOffersRetry(for: documentID), "a failed save can be retried")
 
         coordinator.noteReplicaCaptureFailure(documentID: documentID, error: ReplicaSaveError.pendingCreate)
+        XCTAssertFalse(coordinator.failureOffersRetry(for: documentID), "saveNow is a no-op after a frozen capture")
 
         XCTAssertEqual(failedReport(coordinator), "Native capture refused: ReplicaSaveError.pendingCreate")
         XCTAssertNil(coordinator.failureDetail(for: documentID))
