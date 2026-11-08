@@ -472,16 +472,19 @@ final class BlockNotePreservationTests: XCTestCase {
         XCTAssertTrue(try fragment(state, after: update).contains("<math>x^2</math>"))
     }
 
-    /// Two paragraphs that differ only in their formulas read alike once math is skipped. Editing
-    /// the first must not keep it in the second's place (the second would show the wrong formula
-    /// and lose its own): both are rebuilt from the markdown instead.
-    func testParagraphsThatDifferOnlyInTheirMathAreNotKeptInEachOthersPlace() throws {
-        func math(_ id: String, _ formula: String) -> Node {
-            container(id, textParagraph([.text("Area: "), .element("math", [], [.text(formula)]), .text(" of it.")]))
-        }
-        // The edited intro stops the common prefix from anchoring the first paragraph first.
+    private func mathParagraph(_ id: String, _ formula: String) -> Node {
+        container(id, textParagraph([.text("Area: "), .element("math", [], [.text(formula)]), .text(" of it.")]))
+    }
+
+    /// The paragraphs read the same once math is skipped, so neither may be kept as a shadow: the
+    /// user edited the second, and keeping it in the first one's place would show its formula
+    /// there. Both are rebuilt from the markdown and lose their formulas (as before inline math
+    /// was kept at all). The edited intro stops the common prefix anchoring the first paragraph.
+    private func assertLookAlikeMathParagraphsAreRebuilt(
+        _ first: String, _ second: String, file: StaticString = #filePath, line: UInt = #line
+    ) throws {
         let state = try servedTree([
-            container(idA, textParagraph([.text("Intro")])), math(idB, "x^2"), math(idC, "y^2"),
+            container(idA, textParagraph([.text("Intro")])), mathParagraph(idB, first), mathParagraph(idC, second),
         ])
 
         let update = try save(
@@ -489,7 +492,43 @@ final class BlockNotePreservationTests: XCTestCase {
             base: "Intro\n\nArea:  of it.\n\nArea:  of it.")
         let after = try project(state, after: update)
 
-        XCTAssertFalse(after.blocks.map(\.id).contains(idC), "the edited paragraph is not kept elsewhere")
+        XCTAssertEqual(after.blocks.count, 3, file: file, line: line)
+        XCTAssertFalse(after.blocks.map(\.id).contains(idC), "the edited paragraph is rebuilt", file: file, line: line)
+        XCTAssertFalse(
+            try fragment(state, after: update).contains("<math>\(second)</math>"), "its formula lands nowhere",
+            file: file, line: line)
+        XCTAssertEqual(
+            after.blocks.map { $0.runs.map(\.text).joined() },
+            ["Intro, edited", "Area:  of it.", "Area, edited:  of it."],
+            file: file, line: line)
+    }
+
+    func testLookAlikeMathParagraphsAreBothRebuiltAndLoseTheirFormulas() throws {
+        try assertLookAlikeMathParagraphsAreRebuilt("x^2", "y^2")
+    }
+
+    /// `+` and `-` have no words, so even the formulas' own tokens cannot tell these apart.
+    func testLookAlikeSymbolOnlyFormulasAreBothRebuiltAndLoseTheirFormulas() throws {
+        try assertLookAlikeMathParagraphsAreRebuilt("a+b", "a-b")
+        try assertLookAlikeMathParagraphsAreRebuilt("+", "-")
+    }
+
+    /// A math paragraph that reads like a plain one once math is skipped is never kept in the
+    /// plain paragraph's place: the user edited it, so the plain one stays and it is rebuilt.
+    func testAnEditedMathParagraphDoesNotTakeALookAlikePlainParagraphsPlace() throws {
+        let state = try servedTree([
+            container(idA, textParagraph([.text("Intro")])), container(idB, textParagraph([.text("Area: of it.")])),
+            mathParagraph(idC, "y^2"),
+        ])
+
+        let update = try save(
+            state, "Intro, edited\n\nArea: of it.\n\nArea, edited:  of it.",
+            base: "Intro\n\nArea: of it.\n\nArea:  of it.")
+        let after = try project(state, after: update)
+
+        XCTAssertEqual(after.blocks.count, 3)
+        XCTAssertEqual(after.blocks[1].id, idB, "the plain paragraph stays")
+        XCTAssertFalse(after.blocks.map(\.id).contains(idC))
         XCTAssertFalse(try fragment(state, after: update).contains("y^2"))
     }
 

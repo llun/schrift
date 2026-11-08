@@ -121,19 +121,19 @@ enum BlockNotePreservation {
             guard index < containers.count, let container = containers[index] else { return nil }
             return rule(for: block, container: container)
         }
-        // Skipping inline math can make blocks that differ only in their formulas read alike, and
-        // one could then be kept in its twin's place. Such a block keeps its formula's words, so
-        // it matches no shadow and is rebuilt from the markdown instead.
-        let textWords = rules.compactMap { rule -> [String]? in
-            if case .text(let words)? = rule { return words }
-            return nil
-        }
+        // Skipping inline math can make blocks that differ only in their formulas (or a formula
+        // and none) read alike, and a math block could then be kept in its look-alike's place.
+        // So a math block whose math-free words another top-level block shares gets no rule: it
+        // projects opaque and illegible (math is never inline text), so the plain alignment
+        // cannot anchor it either, and it is rebuilt from the markdown, losing its formula.
+        let walks = containers.map { $0.flatMap(walk(of:)) }
+        var counts: [[String]: Int] = [:]
+        for walk in walks { if let walk { counts[walk.tokens, default: 0] += 1 } }
         return rules.enumerated().map { index, rule in
-            guard case .text(let words)? = rule, textWords.filter({ $0 == words }).count > 1,
-                let container = containers[index], let full = walkedTokens(of: container, skippingMath: false),
-                full != words
+            guard index < walks.count, let walk = walks[index], walk.hasMath, counts[walk.tokens, default: 0] > 1
             else { return rule }
-            return .text(full)
+            if case .invisible? = rule { return rule }  // never a shadow, so it cannot take a slot
+            return nil
         }
     }
 
@@ -175,7 +175,13 @@ enum BlockNotePreservation {
     /// text at all, the string attributes that carry content instead (a diagram's source, a
     /// formula), so a node the export *does* spell as text is still recognised. `nil` when
     /// the walk exceeds `maxItemsPerBlock`.
-    private static func walkedTokens(of container: YType, skippingMath: Bool = true) -> [String]? {
+    private static func walkedTokens(of container: YType) -> [String]? {
+        walk(of: container)?.tokens
+    }
+
+    /// `walkedTokens`, and whether the walk skipped any inline math.
+    private static func walk(of container: YType) -> (tokens: [String], hasMath: Bool)? {
+        var hasMath = false
         var text = ""
         var attributeText = ""
         var visited = 0
@@ -199,8 +205,8 @@ enum BlockNotePreservation {
                     switch current.content {
                     case .string(let units): text += String(decoding: units, as: UTF16.self)
                     // The export drops inline math without a trace, so its words are not the block's.
-                    case .type(let child) where !skippingMath || child.typeRef != .xmlElement(nodeName: "math"):
-                        pending.append(child)
+                    case .type(let child) where child.typeRef == .xmlElement(nodeName: "math"): hasMath = true
+                    case .type(let child): pending.append(child)
                     default: break
                     }
                 }
@@ -210,7 +216,7 @@ enum BlockNotePreservation {
             stack.append(contentsOf: pending.reversed())
         }
         let tokens = signatureTokens(text)
-        return tokens.isEmpty ? signatureTokens(attributeText) : tokens
+        return (tokens.isEmpty ? signatureTokens(attributeText) : tokens, hasMath)
     }
 
     /// The nodes of a block's subtree in document order, each with its nesting depth, and each
