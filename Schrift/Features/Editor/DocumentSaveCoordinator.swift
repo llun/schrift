@@ -575,9 +575,24 @@ final class DocumentSaveCoordinator {
     }
 
     /// The one way into `.failed`, so no failure lacks a reason and none keeps a stale one.
-    private func markFailed(_ documentID: UUID, reason: String) {
+    /// `detail` is the request behind *this* failure; callers that have none pass nil, which
+    /// also drops a previous failure's request rather than quoting it under the new reason.
+    private func markFailed(_ documentID: UUID, reason: String, detail: RequestFailure? = nil) {
         states[documentID] = .failed("Couldn't save changes. Please try again.")
         failureReasons[documentID] = reason
+        failureDetails[documentID] = detail
+    }
+
+    /// Whether any failure reason or request is still held for the document (tests only: it is how
+    /// a reset that forgot `clearFailure` shows, since `failureReport` hides a stale one).
+    func holdsFailureRecord(for documentID: UUID) -> Bool {
+        failureReasons[documentID] != nil || failureDetails[documentID] != nil
+    }
+
+    /// Forgets why a document last failed; for every place its state is reset or dropped.
+    private func clearFailure(_ documentID: UUID) {
+        failureReasons[documentID] = nil
+        failureDetails[documentID] = nil
     }
 
     // MARK: - Native replica ownership
@@ -1141,6 +1156,7 @@ final class DocumentSaveCoordinator {
         for documentID in descendants.reversed() {
             // Reversed, so a document is only ever cleaned up after everything filed inside it.
             states[documentID] = .idle
+            clearFailure(documentID)
             draftStore.remove(documentID: documentID)
             // The draft that referenced them is going, so nothing would ever collect these.
             discardPendingAttachments(documentID: documentID)
@@ -2040,6 +2056,7 @@ final class DocumentSaveCoordinator {
         // chain would find it in the draft either way.) Leaving it behind would strand it under an id
         // nothing will ever push.
         states[localID] = nil
+        clearFailure(localID)
         queued[localID] = nil
         settledSaves[localID] = nil
         lastConfirmedPushMarkdown[localID] = nil
@@ -2222,6 +2239,7 @@ final class DocumentSaveCoordinator {
             // *server's own* re-fetched body with `baseline: nil`, a full overwrite re-encoded
             // through `MarkdownYjs`: precisely the flattening this branch refuses to perform.
             states[serverID] = .idle
+            clearFailure(serverID)
             // **The title is adopted with the body — the local one is not written back.** Two
             // earlier attempts here were both wrong and are worth recording. Pushing the
             // server's markdown back to carry our title re-encodes it through `MarkdownYjs`,
@@ -3854,6 +3872,7 @@ final class DocumentSaveCoordinator {
         // "syncs when online") caption on a document with no unsaved work, offering a retry
         // that `saveNow` would no-op. Mirrors `finish`'s discarded branch.
         states[documentID] = .idle
+        clearFailure(documentID)
     }
 
     /// Removes a stored draft only if it is still exactly the given draft —
@@ -3926,6 +3945,7 @@ final class DocumentSaveCoordinator {
         if isPendingCreate(documentID: documentID) {
             discardLocalSubtree(rootedAt: documentID)
             states[documentID] = .idle
+            clearFailure(documentID)
         } else if let checkpointed = checkpointedRecord(forServerID: documentID) {
             // Clear it under the id it is actually keyed by, and take the local draft with it
             // — that draft is what a later pass would rebuild the document from. The rest
@@ -3971,6 +3991,7 @@ final class DocumentSaveCoordinator {
                 // but nothing filed under it ever learned that id.
                 discardLocalSubtree(rootedAt: checkpointed.localID)
                 states[checkpointed.localID] = .idle
+                clearFailure(checkpointed.localID)
                 draftStore.remove(documentID: checkpointed.localID)
                 queued[checkpointed.localID] = nil
                 settledSaves[checkpointed.localID] = nil
@@ -4009,8 +4030,7 @@ final class DocumentSaveCoordinator {
     private func start(documentID: UUID, save: PendingSave) {
         inFlightContent[documentID] = save
         states[documentID] = .saving
-        failureDetails[documentID] = nil
-        failureReasons[documentID] = nil
+        clearFailure(documentID)
         let diagnosticsMarker = diagnostics?.marker()
         let taskToken = backgroundTasks.begin("SchriftDocumentSave")
         // The draft's baseline is the server copy this edit descends from (the draft is
@@ -4121,6 +4141,7 @@ final class DocumentSaveCoordinator {
         if discardedDuringSave.remove(documentID) != nil {
             queued[documentID] = nil
             states[documentID] = .idle
+            clearFailure(documentID)
             if error == nil, let draft = draftStore.draft(for: documentID),
                 draft.title == save.title, draft.markdown == save.markdown,
                 draft.replica == save.replicaRequest?.reference,
@@ -4132,7 +4153,7 @@ final class DocumentSaveCoordinator {
         }
         if error == nil {
             states[documentID] = .saved(Date())
-            failureReasons[documentID] = nil
+            clearFailure(documentID)
             // **Both** PATCHes landed, so the server now holds this title. An editor still on
             // screen may never have seen it (a background replay can adopt a co-author's rename
             // into this save without the editor refetching), and recording it is what stops that
@@ -4172,12 +4193,13 @@ final class DocumentSaveCoordinator {
             // hook already raised the re-login sheet — so it lands in `.failed`.
             states[documentID] = .pendingSync
         } else {
-            markFailed(documentID, reason: "Save failed: \(error.map(safeErrorSummary) ?? "unknown error")")
-            failureDetails[documentID] = diagnosticsMarker.flatMap { marker in
-                diagnostics?.failure(after: marker, newest: true) {
-                    saveFailureIsRelevant($0, documentID: documentID, error: error)
-                }
-            }
+            markFailed(
+                documentID, reason: "Save failed: \(error.map(safeErrorSummary) ?? "unknown error")",
+                detail: diagnosticsMarker.flatMap { marker in
+                    diagnostics?.failure(after: marker, newest: true) {
+                        saveFailureIsRelevant($0, documentID: documentID, error: error)
+                    }
+                })
         }
         // A revalidation landed while this save was on the wire, so detection was skipped. Now
         // that it has settled the invariant holds again — so decide, before anything can push.

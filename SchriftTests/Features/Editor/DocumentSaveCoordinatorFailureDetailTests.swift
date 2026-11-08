@@ -220,7 +220,23 @@ final class DocumentSaveCoordinatorFailureDetailTests: DocumentSaveCoordinatorTe
             "Native capture refused: ReplicaSaveError.quarantinedDrafts")
     }
 
-    func testASuccessfulSaveClearsTheReason() async {
+    /// A failure that is not a save run (here a native capture refusal) must not quote the request
+    /// the document's previous save died on.
+    func testANewerFailureDoesNotQuoteTheOldRequest() async {
+        let (coordinator, _) = makeLoggedCoordinator()
+        MockURLProtocol.stubHandler = { _ in Self.json(403, "Refused.") }
+        coordinator.enqueue(documentID: documentID, title: "T", markdown: "# One")
+        await waitUntilFailed(coordinator, [documentID])
+        XCTAssertTrue(failedReport(coordinator).contains("HTTP 403: Refused."))
+
+        coordinator.noteReplicaCaptureFailure(documentID: documentID, error: ReplicaSaveError.pendingCreate)
+
+        XCTAssertEqual(failedReport(coordinator), "Native capture refused: ReplicaSaveError.pendingCreate")
+        XCTAssertNil(coordinator.failureDetail(for: documentID))
+    }
+
+    /// A save after a failure lands cleanly: the document is saved and no report is left.
+    func testASaveAfterAFailureLeavesNoReport() async {
         let (coordinator, _) = makeLoggedCoordinator()
         MockURLProtocol.stubHandler = { _ in Self.json(403, "Refused.") }
         coordinator.enqueue(documentID: documentID, title: "T", markdown: "# One")
@@ -232,6 +248,20 @@ final class DocumentSaveCoordinatorFailureDetailTests: DocumentSaveCoordinatorTe
         await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
 
         XCTAssertNil(coordinator.failureReport(for: documentID))
+        XCTAssertFalse(coordinator.holdsFailureRecord(for: documentID))
+    }
+
+    /// Dropping a failed document's state (keep-server) forgets its reason and request.
+    func testResettingAFailedDocumentForgetsItsFailure() async {
+        let (coordinator, _) = makeLoggedCoordinator()
+        MockURLProtocol.stubHandler = { _ in Self.json(403, "Refused.") }
+        coordinator.enqueue(documentID: documentID, title: "T", markdown: "# One")
+        await waitUntilFailed(coordinator, [documentID])
+        XCTAssertTrue(coordinator.holdsFailureRecord(for: documentID))
+
+        coordinator.resolveConflictKeepingServer(documentID: documentID)
+
+        XCTAssertFalse(coordinator.holdsFailureRecord(for: documentID))
     }
 
     func testDisplayPathElidesIDsAndDropsTheQuery() {
