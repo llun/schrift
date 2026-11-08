@@ -418,6 +418,7 @@ enum Strings_en {
         .profile_recover_drafts_set_aside: "Set aside unreadable copies",
         .profile_recover_drafts_set_aside_message:
             "Some documents' copies on this device can't be read, so no document can be edited here. Setting them aside moves those copies to a separate folder on this device. Their files are kept but no longer opened, and changes in them that never synced won't be sent. Other documents can then be edited again.",
+        .profile_recover_drafts_set_aside_success: "Unreadable copies set aside. Other documents can be edited again.",
         .profile_recover_drafts_failure: "Couldn't recover the drafts. They're still saved on this device.",
     ]
 }

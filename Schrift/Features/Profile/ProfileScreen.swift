@@ -36,6 +36,9 @@ struct ProfileScreen: View {
     @State private var holdsUnreadableDrafts = false
     /// The outcome of the last recovery attempt, or nil when no alert is shown.
     @State private var recoverySucceeded: Bool? = nil
+    /// Computed once per recovery attempt: scanning the replica manifests is disk I/O.
+    @State private var offersSetAside = false
+    @State private var recoveredBySettingAside = false
     /// The Appearance sheet is a fitted detent sized to its three rows. It has to
     /// grow with the text inside it, or the last option falls below the fold at
     /// larger sizes with no way to reach it.
@@ -185,7 +188,8 @@ struct ProfileScreen: View {
             Text(
                 loc[
                     recoverySucceeded == true
-                        ? .profile_recover_drafts_success
+                        ? (recoveredBySettingAside
+                            ? .profile_recover_drafts_set_aside_success : .profile_recover_drafts_success)
                         : offersSetAside ? .profile_recover_drafts_set_aside_message : .profile_recover_drafts_failure])
         }
     }
@@ -204,19 +208,25 @@ struct ProfileScreen: View {
         let ownershipRepaired = !saveCoordinator.needsOwnershipRepair || saveCoordinator.repairReplicaOwnership()
         let succeeded = draftsRecovered && ownershipRepaired
         holdsUnreadableDrafts = needsRecovery
+        recoveredBySettingAside = false
+        offersSetAside = refreshOffersSetAside(succeeded: succeeded)
         recoverySucceeded = succeeded
     }
 
     /// The repair failed because a replica folder cannot be read; setting the
     /// unreadable folders aside (bytes kept) is the only way past it.
-    private var offersSetAside: Bool {
-        recoverySucceeded == false && saveCoordinator?.hasUnreadableReplicaFolders == true
+    /// Only while the draft store is readable, since the repair refuses otherwise.
+    private func refreshOffersSetAside(succeeded: Bool) -> Bool {
+        guard !succeeded, let saveCoordinator else { return false }
+        return saveCoordinator.hasUnreadableReplicaFolders && !saveCoordinator.hasUnreadableDrafts
     }
 
     private func setAsideUnreadableReplicas() {
         guard let saveCoordinator else { return }
         let succeeded = saveCoordinator.setAsideUnreadableReplicasAndRepair()
         holdsUnreadableDrafts = needsRecovery
+        recoveredBySettingAside = succeeded
+        offersSetAside = refreshOffersSetAside(succeeded: succeeded)
         // After the alert's own dismissal, which clears the result.
         Task { recoverySucceeded = succeeded }
     }

@@ -409,6 +409,8 @@ enum Strings_pt {
         .profile_recover_drafts_set_aside: "Pôr de parte cópias ilegíveis",
         .profile_recover_drafts_set_aside_message:
             "Algumas cópias de documentos neste dispositivo não podem ser lidas, por isso nenhum documento pode ser editado aqui. Pô-las de parte move essas cópias para uma pasta separada neste dispositivo. Os seus ficheiros são mantidos, mas deixam de ser abertos, e as alterações nunca sincronizadas não serão enviadas. Os outros documentos voltam depois a poder ser editados.",
+        .profile_recover_drafts_set_aside_success:
+            "Cópias ilegíveis postas de parte. Os outros documentos voltam a poder ser editados.",
         .profile_recover_drafts_failure:
             "Não foi possível recuperar os rascunhos. Continuam guardados neste dispositivo.",
     ]

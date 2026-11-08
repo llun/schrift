@@ -537,6 +537,24 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         XCTAssertEqual(coordinator.nativeOwnership(documentID: UUID()), .none, "other documents are editable again")
     }
 
+    func testSettingAsideMovesNothingWhileTheDraftStoreIsUnreadable() throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let scope = try seedReplica(env, typed: "x")
+        let folder = try manifestURL(env, scope).deletingLastPathComponent()
+        try Data("damaged".utf8).write(to: folder.appendingPathComponent("manifest.json"))
+        XCTAssertThrowsError(try env.replicaStore.restore(for: scope))  // quarantined
+        let coordinator = env.model.saveCoordinator
+        XCTAssertTrue(coordinator.hasUnreadableReplicaFolders)
+        env.defaults.set(Data("not json".utf8), forKey: "dev.llun.Schrift.pendingDrafts")
+        XCTAssertTrue(coordinator.hasUnreadableDrafts)
+
+        XCTAssertFalse(coordinator.setAsideUnreadableReplicasAndRepair())
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.path), "the one-way move never happened")
+        XCTAssertTrue(coordinator.hasUnreadableReplicaFolders)
+    }
+
     func testASetAsideDocumentWithADraftStaysReadOnly() async throws {
         let env = makeEnvironment()
         defer { env.clean() }

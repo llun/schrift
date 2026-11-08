@@ -413,6 +413,8 @@ enum Strings_de {
         .profile_recover_drafts_set_aside: "Unlesbare Kopien beiseitelegen",
         .profile_recover_drafts_set_aside_message:
             "Einige Kopien von Dokumenten auf diesem Gerät können nicht gelesen werden, daher lässt sich hier kein Dokument bearbeiten. Beim Beiseitelegen werden diese Kopien in einen separaten Ordner auf diesem Gerät verschoben. Ihre Dateien bleiben erhalten, werden aber nicht mehr geöffnet, und nie synchronisierte Änderungen darin werden nicht gesendet. Andere Dokumente lassen sich danach wieder bearbeiten.",
+        .profile_recover_drafts_set_aside_success:
+            "Unlesbare Kopien beiseitegelegt. Andere Dokumente lassen sich wieder bearbeiten.",
         .profile_recover_drafts_failure:
             "Die Entwürfe konnten nicht wiederhergestellt werden. Sie bleiben auf diesem Gerät gespeichert.",
     ]

@@ -392,6 +392,7 @@ enum Strings_zhHant {
         .profile_recover_drafts_set_aside: "移開無法讀取的副本",
         .profile_recover_drafts_set_aside_message:
             "此裝置上的部分文件副本無法讀取，因此這裡無法編輯任何文件。移開後，這些副本會被移到此裝置上的一個單獨資料夾中。其檔案會保留，但不再開啟，其中從未同步的變更也不會傳送。之後即可再次編輯其他文件。",
+        .profile_recover_drafts_set_aside_success: "已移開無法讀取的副本。現在可再次編輯其他文件。",
         .profile_recover_drafts_failure: "無法復原草稿。它們仍儲存在此裝置上。",
     ]
 }

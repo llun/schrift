@@ -410,6 +410,8 @@ enum Strings_nl {
         .profile_recover_drafts_set_aside: "Onleesbare kopieën apart zetten",
         .profile_recover_drafts_set_aside_message:
             "Sommige kopieën van documenten op dit apparaat zijn onleesbaar, waardoor hier geen document kan worden bewerkt. Apart zetten verplaatst die kopieën naar een aparte map op dit apparaat. De bestanden blijven bewaard maar worden niet meer geopend, en wijzigingen erin die nooit zijn gesynchroniseerd, worden niet verzonden. Andere documenten kun je daarna weer bewerken.",
+        .profile_recover_drafts_set_aside_success:
+            "Onleesbare kopieën apart gezet. Andere documenten kun je weer bewerken.",
         .profile_recover_drafts_failure:
             "De concepten konden niet worden hersteld. Ze blijven op dit apparaat opgeslagen.",
     ]

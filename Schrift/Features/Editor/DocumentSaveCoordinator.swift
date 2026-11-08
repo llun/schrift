@@ -605,7 +605,8 @@ final class DocumentSaveCoordinator {
     /// then repair. A drafted document stays read-only through its draft.
     @discardableResult
     func setAsideUnreadableReplicasAndRepair() -> Bool {
-        guard replicaStore.setAsideUnreadableFolders() else { return false }
+        // The move is one-way: never make it when the repair cannot follow.
+        guard !draftStore.holdsUnreadableData, replicaStore.setAsideUnreadableFolders() else { return false }
         return repairReplicaOwnership()
     }
 

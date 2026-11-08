@@ -422,6 +422,8 @@ enum Strings_sl {
         .profile_recover_drafts_set_aside: "Odloži neberljive kopije",
         .profile_recover_drafts_set_aside_message:
             "Nekaterih kopij dokumentov v tej napravi ni mogoče prebrati, zato tukaj ni mogoče urejati nobenega dokumenta. Z odložitvijo se te kopije premaknejo v ločeno mapo v tej napravi. Njihove datoteke se ohranijo, vendar se ne odpirajo več, spremembe v njih, ki niso bile nikoli sinhronizirane, pa ne bodo poslane. Druge dokumente boste nato lahko spet urejali.",
+        .profile_recover_drafts_set_aside_success:
+            "Neberljive kopije so odložene. Druge dokumente je spet mogoče urejati.",
         .profile_recover_drafts_failure: "Osnutkov ni bilo mogoče obnoviti. Še vedno so shranjeni v tej napravi.",
     ]
 }

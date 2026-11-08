@@ -392,6 +392,7 @@ enum Strings_zhHans {
         .profile_recover_drafts_set_aside: "移开无法读取的副本",
         .profile_recover_drafts_set_aside_message:
             "此设备上的部分文档副本无法读取，因此这里无法编辑任何文档。移开后，这些副本会被移到此设备上的一个单独文件夹中。其文件会保留，但不再打开，其中从未同步的更改也不会发送。之后即可再次编辑其他文档。",
+        .profile_recover_drafts_set_aside_success: "已移开无法读取的副本。现在可再次编辑其他文档。",
         .profile_recover_drafts_failure: "无法恢复草稿。它们仍保存在此设备上。",
     ]
 }
