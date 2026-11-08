@@ -220,4 +220,26 @@ final class HomeViewModelSignedInUserTests: HomeViewModelTestCase {
         XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: "users/me/"), 0)
         XCTAssertEqual(signedIn.userID, known, "and it must not be disturbed")
     }
+
+    /// Account A's `/users/me/` answer landing after B signed in must not name A as the
+    /// session: the replica owner check would then authorize B against A's replica.
+    func testAnAnswerFromBeforeTheSessionChangedHandsIsNotRemembered() async {
+        let gate = MockURLProtocol.ResponseGate()
+        MockURLProtocol.stubHandler = { _ in
+            .init(
+                statusCode: 200, headers: [:],
+                body: Data(#"{"id":"11111111-1111-4111-8111-111111111111"}"#.utf8), error: nil, releasedBy: gate)
+        }
+        let signedIn = makeSignedInUser()
+        let viewModel = makeViewModel(signedInUser: signedIn)
+        let refresh = Task { await viewModel.refreshSignedInUser() }
+        await waitUntil { MockURLProtocol.lastRequest != nil }
+        // What `SessionStore.signIn(serverURL:userID:)` does for account B meanwhile.
+        let accountB = UUID()
+        signedIn.clear()
+        signedIn.remember(accountB)
+        gate.open()
+        await refresh.value
+        XCTAssertEqual(signedIn.userID, accountB)
+    }
 }

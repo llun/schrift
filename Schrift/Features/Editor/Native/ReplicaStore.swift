@@ -71,31 +71,56 @@ final class ReplicaStore {
         return !ownershipStore.hasData && fileManager.fileExists(atPath: directory.path)
     }
 
-    /// Rebuild the owner marker from the scoped manifests on disk. Only the
-    /// explicit Profile recovery action calls this; routine writes never
-    /// overwrite unreadable marker data. Returns whether the marker is now
-    /// readable.
+    /// Rebuild the owner marker from the scoped manifests on disk and the scopes
+    /// native drafts reference (`draftScopes`; a draft's work is native even when
+    /// its folder is gone). Only the explicit Profile recovery action calls this;
+    /// routine writes never overwrite unreadable marker data. Returns whether
+    /// the marker is now readable.
     ///
-    /// A folder without a manifest never committed an edit (a crash inside
-    /// `create`), so it claims nothing. A folder whose manifest cannot be read
-    /// cannot name its document; it stays on disk untouched, but it cannot keep
-    /// every other document read-only forever.
+    /// A folder without a manifest or quarantine never committed an edit (a
+    /// crash inside `create`), so it claims nothing. A folder that is
+    /// quarantined, damaged or in a newer format cannot name its document, so
+    /// nothing is written: a rebuilt marker would call that document classic.
+    /// Two scopes for one document resolve to the drafted one, else the only one
+    /// with unsent edits; anything still ambiguous also writes nothing. Both
+    /// refusals keep every document read-only, the fail-closed direction.
     @discardableResult
-    func repairOwnership() -> Bool {
+    func repairOwnership(draftScopes: [ReplicaScope] = []) -> Bool {
         guard let ownershipStore else { return false }
-        var scopes: [ReplicaScope] = []
+        var candidates = draftScopes.map { (scope: $0, hasOutbox: false) }
         let entries = (try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         for entry in entries where entry.pathExtension != "removed" {
             let file = entry.appendingPathComponent("manifest.json")
-            guard let bytes = try? Data(contentsOf: file),
+            let blocked = entry.appendingPathComponent("Recovery/blocked")
+            guard fileManager.fileExists(atPath: file.path) || fileManager.fileExists(atPath: blocked.path) else {
+                continue
+            }
+            guard !fileManager.fileExists(atPath: blocked.path),
+                let bytes = try? Data(contentsOf: file),
                 let envelope = try? JSONDecoder().decode(Envelope.self, from: bytes),
                 replicaDigest(envelope.manifest) == envelope.digest,
                 let manifest = try? JSONDecoder().decode(ReplicaManifest.self, from: envelope.manifest),
                 manifest.formatVersion == ReplicaManifest.currentFormat, isValid(manifest),
                 // A folder claims only the scope its name was derived from.
                 (try? folder(for: manifest.scope).lastPathComponent) == entry.lastPathComponent
-            else { continue }
-            scopes.append(manifest.scope)
+            else { return false }
+            candidates.append((manifest.scope, !manifest.outbox.isEmpty))
+        }
+        var scopes: [ReplicaScope] = []
+        let byDocument = Dictionary(grouping: candidates) { "\($0.scope.serverOrigin)|\($0.scope.documentID)" }
+        for group in byDocument.values {
+            var distinct: [ReplicaScope] = []
+            for candidate in group where !distinct.contains(candidate.scope) { distinct.append(candidate.scope) }
+            let unsent = group.filter(\.hasOutbox).map(\.scope)
+            if distinct.count == 1 {
+                scopes.append(distinct[0])
+            } else if let drafted = distinct.first(where: { draftScopes.contains($0) }) {
+                scopes.append(drafted)  // one document has at most one draft
+            } else if unsent.count == 1 {
+                scopes.append(unsent[0])
+            } else {
+                return false
+            }
         }
         return ownershipStore.repair(from: scopes)
     }

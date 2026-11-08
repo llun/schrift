@@ -2052,7 +2052,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   first and retains every unsent local segment, including delete-only updates.
   Only a captured HTTP-confirmed outbox prefix may be acknowledged; later edits
   remain queued. These files are backup-included, never evicted and have no sign-out
-  purge. `remove(for:)` (keep-server-version, `discardPendingWork`, so deletion) renames
+  purge. `remove(for:)` (keep-server-version, `discardPendingWork`, so deletion; only for
+  the signed-in owner — another or unknown account keeps its replica, marker and native
+  draft while the rest of the delete completes) renames
   the scope folder to a tombstone before clearing the owner marker and deleting it.
   `ReplicaSaveAdapter.compactIfNeeded` compacts after an ack or raw capture once 64
   covered (non-outbox) segments exist. Production typing is wired by slice B (below).
@@ -2146,8 +2148,18 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   replica is cleared only through `clearNativeOwnership` (no manifest, quarantine,
   draft, queued or in-flight save) and the unowned route re-seeds it. Profile's
   recovery row also runs `repairReplicaOwnership`, which rebuilds corrupt or lost
-  marker data from the scoped manifests (folders without one are skipped; a readable
-  owner is never replaced). No native live socket; a native session never takes the
+  marker data from the scoped manifests and native drafts' scopes (folders without a
+  manifest or quarantine are skipped; a quarantined, damaged or newer-format folder, an
+  unreadable draft store, or two scopes for one document with no draft or single
+  outbox to choose by writes nothing; a readable owner is never replaced). A native
+  draft owns its document without a marker entry; seeding never falls back to classic
+  over replica data already on disk; classic `restoreLocalContent` never shows a
+  native draft or save. Both login flows pass the confirmed id to
+  `signIn(serverURL:userID:)` (remembered before the generation moves); a flush while
+  the account is unknown leaves the outbox for the reopen instead of failing.
+  `SignedInUserStore.epoch` moves at every clear, and the Home/Profile `/users/me/`
+  writers drop answers whose epoch moved. Close cancels `NativeEditorOpen.reopen`/
+  `refreshInBackground`; the native cache refresh checks currency and discard. No native live socket; a native session never takes the
   live write path. `NativeEditorActivationTests` covers these; the native host's
   `--native-open` fixture runs the real `EditorView` route offline over an owned
   replica (`--reset` clears it) and its UI test types, relaunches and checks the text.
@@ -3198,7 +3210,8 @@ markdown write endpoint**. Understand this before touching the save path:
   **That makes the signed-in user id a prerequisite for the whole feature**, and it is
   only ever learned from `client.currentUser()` — so `SignedInUserStore`
   (`dev.llun.Schrift.signedInUserID`) persists it, written through from the root task and
-  Profile and cleared at three moments — when a login hands over its cookies
+  Profile (each dropping an answer whose `epoch` moved during the request), handed over by
+  `signIn(serverURL:userID:)` from the login flows' confirming fetch, and cleared at three moments — when a login hands over its cookies
   (`noteSessionCookiesReplaced`, the moment a possibly-different account takes over), at
   sign-in, and at sign-out — plus re-asked by Home whenever it is unknown. Without it, launching offline (the entire point) yields
   no user id, local documents are not listed, and none can be minted. It is a read-through

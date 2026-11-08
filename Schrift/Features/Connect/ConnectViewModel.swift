@@ -55,11 +55,10 @@ final class ConnectViewModel {
         errorKey = nil
         defer { isSigningIn = false }
 
-        struct Me: Decodable {}
         let client = apiClientFactory(serverURL)
         do {
-            let _: Me = try await client.get("users/me/")
-            try sessionStore.signIn(serverURL: serverURL)
+            let me = try await client.currentUser()
+            try sessionStore.signIn(serverURL: serverURL, userID: me.id)
             recentServers.addServer(serverURL)
         } catch {
             errorKey = .connect_error_sign_in_failed

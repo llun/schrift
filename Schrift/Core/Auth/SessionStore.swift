@@ -122,12 +122,16 @@ final class SessionStore {
         }
     }
 
-    func signIn(serverURL: URL) throws {
+    /// `userID` is the confirming `/users/me/`'s answer. It is remembered before
+    /// `signInGeneration` moves, so a screen reopening on the bump (a native
+    /// replica's owner check) already knows whose session this is.
+    func signIn(serverURL: URL, userID: UUID? = nil) throws {
         userDefaults.set(serverURL, forKey: Self.serverURLKey)
         try keychain.save(Data([1]), forKey: Self.authenticatedKeychainKey)
         // Invalidate the old disk namespace before saving replacement cookies,
         // so an interruption cannot restore new credentials with old images.
         forgetSignedInIdentity()
+        signedInUser.remember(userID)
         let cookiesPersisted = persistSessionCookies(for: serverURL)
         self.serverURL = serverURL
         self.isAuthenticated = true

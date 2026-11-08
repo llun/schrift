@@ -119,4 +119,22 @@ final class ReauthenticationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.errorKey, .reauth_error_sign_in_failed)
         XCTAssertNil(signedIn.userID)
     }
+
+    /// The id is known by the time `signInGeneration` moves, so an editor reopening on that
+    /// bump finds its replica's owner; the same account re-authenticating keeps its id.
+    func testHandleLoginCompleteRemembersTheConfirmedAccount() async throws {
+        let account = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let viewModel = try makeViewModel { _ in
+            .init(statusCode: 200, headers: [:], body: Data(#"{"id":"\#(account.uuidString)"}"#.utf8), error: nil)
+        }
+        let signedIn = SignedInUserStore(userDefaults: userDefaults)
+        signedIn.remember(account)
+        let generation = viewModel.sessionStore.signInGeneration
+
+        await viewModel.handleLoginComplete()
+
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertGreaterThan(viewModel.sessionStore.signInGeneration, generation)
+        XCTAssertEqual(signedIn.userID, account)
+    }
 }

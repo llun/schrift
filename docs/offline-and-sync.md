@@ -76,7 +76,11 @@ scope folder to a `.removed` tombstone, flushes the parent, clears the owner mar
 then deletes the tombstone. An interruption leaves the intact replica or an
 unreachable tombstone, never a half-deleted replica; a crash before the marker is
 cleared leaves the document read-only. Quarantined replicas can be removed too. Sign-out
-never removes a replica.
+never removes a replica. Only the signed-in owner's replica is removed: when another
+account (or an unknown one) is signed in, a discard or a landed deletion leaves that
+owner's replica, marker and native draft in place and completes the rest of the delete
+for the current session. On a shared device B's DELETE of A's document 404s as "already
+gone", and that must not destroy A's unsynced work.
 
 **Owner marker.** `ReplicaOwnershipStore` keeps a versioned, checksummed UserDefaults
 map from `origin|documentID` to the owning scope. `create` writes it before any replica
@@ -153,10 +157,18 @@ reaches native opens PR01's in-memory read-only view and never gains a marker.
   or queued/in-flight save exists, and the unowned route then re-seeds it from the
   server (or opens classic when offline). Otherwise it stays read-only.
 - **Corrupt or lost marker data:** Profile's "Recover unreadable drafts" row also
-  appears and rebuilds the marker from the scoped manifests on disk. Folders without
-  a manifest claim nothing; a folder whose manifest cannot be read cannot name its
-  document, stays on disk untouched and no longer blocks every other document. A
-  readable owner is never replaced.
+  appears and rebuilds the marker from the scoped manifests on disk and the scopes
+  native drafts name (it refuses while the draft store is unreadable). Folders without
+  a manifest or quarantine claim nothing. A folder that is quarantined, damaged or in
+  a newer format cannot name its document, so the repair writes nothing and every
+  document stays read-only. Two scopes for one document resolve to the drafted one,
+  then the only one with unsent edits; anything still ambiguous also writes nothing.
+  A readable owner is never replaced.
+- **A native draft owns its document** even when the marker does not name it:
+  `nativeOwnership` answers its scope (another server's origin answers unreadable).
+  Seeding never falls back to classic when replica data for the scope is already on
+  disk (corrupt, quarantined, newer format or existing), and the classic editor's
+  local phase never shows a native draft's or native save's Markdown shadow.
 
 **Saves.** Every persisted command arms `NativeReplicaSaveScheduler`: the classic
 autosave interval (10 s trailing, capped at 30 s of continuous typing). It hands the
@@ -175,7 +187,17 @@ a native session never uses the live write path. Every await in open and
 integration rechecks the open's generation and the remembered signed-in user. A
 change of `SessionStore.signInGeneration` closes (flushing under the account checks
 `enqueueReplica` and the sender apply) and reopens a native route, where another
-account's replica is preserved-unavailable.
+account's replica is preserved-unavailable. The confirming `/users/me/` of both login
+flows passes its id to `signIn(serverURL:userID:)`, which remembers it before the
+generation moves, so the reopen at that bump already knows the owner; the same account
+re-authenticating types again. A close-time flush while the account is unknown (the
+cookie-handover bump) neither fails nor freezes: the journal is durable and the reopen
+under the known owner hands the outbox over. `SignedInUserStore.epoch` moves at every
+clear; Home's and Profile's `/users/me/` writers drop an answer whose epoch moved during
+the request. `EditorView`'s reopen and reconnect tasks belong to `NativeEditorOpen`
+(`reopen`, `refreshInBackground`), and close cancels them. The native cache refresh
+also checks the open is still current and the document was not discarded before it
+writes the content cache.
 
 Still open: a total shadow for opaque/rich documents (re-stamping refuses an
 unprojectable revision), clean-replica removal on sign-out, old Markdown-draft

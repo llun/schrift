@@ -60,6 +60,7 @@ final class ProfileViewModel {
         // Tolerate failure on either fetch: no error banner, and — the offline rule the list
         // screens already follow — keep the local copy rather than blanking the row. Only a
         // successful fetch may replace it.
+        let epoch = signedInUser.epoch
         async let fetchedUser = try? client.currentUser()
         async let fetchedVersion = try? client.serverConfig().version
         let freshUser = await fetchedUser
@@ -68,8 +69,9 @@ final class ProfileViewModel {
         // response may already be in hand — so without this guard the cancelled load resumes
         // and writes the *old* account back into both stores, undoing the clear that
         // `signIn` just made. That would re-arm `SignedInUserStore` in particular, which
-        // gates whose unsynced documents may be listed and replayed.
-        guard !Task.isCancelled else { return }
+        // gates whose unsynced documents may be listed and replayed. The epoch covers a load
+        // nothing cancelled (a session change with no restart of this screen's task).
+        guard !Task.isCancelled, signedInUser.epoch == epoch else { return }
         if let freshUser, freshUser.carriesAccountDetail {
             lastLoadFetchedUser = true
             user = freshUser

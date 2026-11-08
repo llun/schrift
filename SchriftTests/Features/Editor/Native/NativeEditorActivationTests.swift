@@ -277,7 +277,92 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         XCTAssertEqual(try env.replicaStore.outbox(for: scope)?.updates.count, 1, "the edit stays durable")
     }
 
+    func testCloseDuringReauthenticationKeepsTheJournalForTheReopen() async throws {
+        let env = makeEnvironment()  // the production 10 s cadence: only the close flushes
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route, let scope = session.scope else {
+            return XCTFail("expected a typeable session")
+        }
+        XCTAssertTrue(try XCTUnwrap(session.input).replace(range: NSRange(location: 0, length: 0), with: "x"))
+        // `noteSessionCookiesReplaced`: the identity is forgotten and the view closes and reopens.
+        let identity = SignedInUserStore(userDefaults: env.defaults)
+        identity.clear()
+        open.close()
+        if case .failed = env.model.saveCoordinator.state(for: env.model.documentID) {
+            XCTFail("an unknown account is not a refused capture")
+        }
+        XCTAssertEqual(try env.replicaStore.outbox(for: scope)?.updates.count, 1, "the edit stays durable")
+        await open.open(viewModel: env.model, isOffline: true, canUpdate: true)
+        guard case .preservedUnavailable = open.route else { return XCTFail("unknown account: read-only") }
+        // `signIn` remembers the confirmed (same) account before its own bump.
+        identity.remember(owner)
+        open.close()
+        await open.open(viewModel: env.model, isOffline: true, canUpdate: true)
+        guard case .native(let reopened) = open.route else { return XCTFail("the same account types again") }
+        XCTAssertNotNil(reopened.input)
+        XCTAssertTrue(reopened.hasPendingSave, "the reopen hands the journaled edit over")
+        open.flushPendingSave()
+        XCTAssertNotNil(env.model.saveCoordinator.pendingSave(documentID: env.model.documentID))
+    }
+
+    func testAClosedOpenNeverRecachesTheServerCopy() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        try seedReplica(env, typed: "x")
+        let server = ServerStub(owner: owner, state: seedState())
+        let gate = MockURLProtocol.ResponseGate()
+        server.contentGate = gate
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        // Not the view's `.task`: nothing cancels this one, as for a reopen task.
+        let opening = Task { await open.open(viewModel: env.model, isOffline: false, canUpdate: true) }
+        await waitUntil { server.log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1 }
+        open.close()  // a sign-out or sign-in change
+        gate.open()
+        await opening.value
+        XCTAssertNil(env.model.contentCache.content(for: env.model.documentID))
+    }
+
+    func testADeletedDocumentNeverRecachesTheServerCopy() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        try seedReplica(env, typed: "x")
+        let server = ServerStub(owner: owner, state: seedState())
+        let gate = MockURLProtocol.ResponseGate()
+        server.contentGate = gate
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        let opening = Task { await open.open(viewModel: env.model, isOffline: false, canUpdate: true) }
+        await waitUntil { server.log.count(ofMethod: "GET", urlContaining: "formatted-content") == 1 }
+        env.model.handleDidDelete()
+        gate.open()
+        await opening.value
+        XCTAssertNil(env.model.contentCache.content(for: env.model.documentID))
+    }
+
     // MARK: - Marker leftovers
+
+    func testACorruptReplicaWithoutAMarkerNeverFallsBackToClassic() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let scope = try seedReplica(env, typed: "x")
+        XCTAssertTrue(env.ownership.clear(scope), "a repair that skipped the folder dropped it")
+        try Data("damaged".utf8).write(to: try manifestURL(env, scope))
+        ServerStub(owner: owner, state: seedState()).install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .preservedUnavailable = open.route else {
+            return XCTFail("the classic writer must never open over replica data")
+        }
+    }
 
     func testMarkerWithoutReplicaIsReseededFromTheServer() async throws {
         let env = makeEnvironment()
@@ -354,7 +439,84 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         XCTAssertEqual(coordinator.nativeOwnership(documentID: other.documentID), .owned(other))
     }
 
+    func testRepairKeepsADraftedDocumentWhoseFolderIsGone() throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let scope = try seedReplica(env, typed: "x")
+        let coordinator = env.model.saveCoordinator
+        try coordinator.enqueueReplica(adapter: ReplicaSaveAdapter(store: env.replicaStore, scope: scope), title: "T")
+        try FileManager.default.removeItem(at: try manifestURL(env, scope).deletingLastPathComponent())
+        env.defaults.set(Data([0xff]), forKey: "dev.llun.Schrift.replicaOwnership")
+        XCTAssertTrue(coordinator.repairReplicaOwnership())
+        XCTAssertEqual(
+            env.ownership.owner(documentID: scope.documentID, serverOrigin: scope.serverOrigin), .owned(scope))
+    }
+
+    func testRepairRefusesWhileAFolderCannotBeRead() throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let scope = try seedReplica(env, typed: "x")
+        try Data("damaged".utf8).write(to: try manifestURL(env, scope))
+        XCTAssertThrowsError(try env.replicaStore.restore(for: scope)) {
+            XCTAssertEqual($0 as? ReplicaStoreError, .corrupt)  // and quarantined
+        }
+        env.defaults.set(Data([0xff]), forKey: "dev.llun.Schrift.replicaOwnership")
+        let coordinator = env.model.saveCoordinator
+        XCTAssertFalse(coordinator.repairReplicaOwnership())
+        XCTAssertEqual(coordinator.nativeOwnership(documentID: scope.documentID), .unreadable)
+    }
+
+    func testRepairChoosesTheScopeWithUnsentEditsWhateverTheFolderOrder() throws {
+        // Folder order follows the scope digests, so a first-wins choice is wrong in about half.
+        for typedOwner in [true, false, true, false, true, false, true, false] {
+            let env = makeEnvironment()
+            defer { env.clean() }
+            let mine = try seedReplica(env, typed: typedOwner ? "x" : nil)
+            let theirs = try seedForeignReplica(env, typed: !typedOwner)
+            env.defaults.set(Data([0xff]), forKey: "dev.llun.Schrift.replicaOwnership")
+            XCTAssertTrue(env.model.saveCoordinator.repairReplicaOwnership())
+            XCTAssertEqual(
+                env.model.saveCoordinator.nativeOwnership(documentID: mine.documentID),
+                .owned(typedOwner ? mine : theirs))
+        }
+    }
+
+    func testRepairLeavesAnAmbiguousDocumentUnreadable() throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let mine = try seedReplica(env, typed: nil)
+        try seedForeignReplica(env, typed: false)
+        env.defaults.set(Data([0xff]), forKey: "dev.llun.Schrift.replicaOwnership")
+        XCTAssertFalse(env.model.saveCoordinator.repairReplicaOwnership())
+        XCTAssertEqual(env.model.saveCoordinator.nativeOwnership(documentID: mine.documentID), .unreadable)
+    }
+
     // MARK: - Fixture
+
+    private func manifestURL(_ env: Environment, _ scope: ReplicaScope) throws -> URL {
+        env.replicaDirectory.appendingPathComponent(try scope.directoryName()).appendingPathComponent("manifest.json")
+    }
+
+    /// Another account's folder for the same document, written past the marker
+    /// (which refuses a second owner): what a lost marker can leave behind.
+    @discardableResult
+    private func seedForeignReplica(_ env: Environment, typed: Bool) throws -> ReplicaScope {
+        let scope = ReplicaScope(
+            serverOrigin: env.model.client.serverOrigin, ownerUserID: UUID(), org: "docs",
+            documentID: env.model.documentID)
+        let store = ReplicaStore(directory: env.replicaDirectory)
+        let checkpoint = seedState()
+        _ = try store.create(for: scope, checkpoint: checkpoint)
+        guard typed else { return scope }
+        let doc = YDoc(clientID: 3)
+        defer { doc.destroy() }
+        try doc.applyUpdate(YUpdateDecoder.decode(checkpoint), origin: .remote)
+        let update = try BlockNoteWriter(doc: doc).replaceText(block: Self.firstID, range: 0..<0, with: "y")
+        try ReplicaSaveAdapter(store: store, scope: scope).record(
+            NativeEditCommand(id: UUID(), baseRevision: 0, blockID: Self.firstID, range: 0..<0, replacement: "y"),
+            update: update)
+        return scope
+    }
 
     private func text(_ session: NativeEditorSession, block: Int) -> String {
         session.surface.blocks[block].runs.map(\.text).joined()
@@ -463,6 +625,7 @@ private final class ServerStub: @unchecked Sendable {
     private var _patched: [Data] = []
     private var _titles: [String] = []
     var stateGate: MockURLProtocol.ResponseGate?
+    var contentGate: MockURLProtocol.ResponseGate?
 
     init(owner: UUID, state: Data) {
         self.owner = owner
@@ -519,7 +682,7 @@ private final class ServerStub: @unchecked Sendable {
                 ]
                 return .init(
                     statusCode: 200, headers: json, body: try! JSONSerialization.data(withJSONObject: object),
-                    error: nil)
+                    error: nil, releasedBy: contentGate)
             }
             if request.httpMethod == "PATCH" {
                 let body =

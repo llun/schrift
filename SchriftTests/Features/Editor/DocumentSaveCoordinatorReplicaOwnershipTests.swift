@@ -132,6 +132,51 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
         XCTAssertEqual(f.ownership.owner(documentID: documentID, serverOrigin: f.scope.serverOrigin), .none)
     }
 
+    func testAnotherAccountsDeleteKeepsTheReplicaAndNativeDraft() throws {
+        let f = try fixture()
+        let adapter = try seedReplica(f)
+        try f.coordinator.enqueueReplica(adapter: adapter, title: "Native")
+        // A shared device: B signs in, and B's DELETE of A's document lands (or 404s).
+        SignedInUserStore(userDefaults: f.defaults).remember(UUID())
+        f.coordinator.completeImmediateDelete(documentID: documentID)
+        f.coordinator.resolveConflictKeepingServer(documentID: documentID)
+        XCTAssertNotNil(try f.store.restore(for: f.scope), "A's replica is A's unsynced work")
+        XCTAssertEqual(f.ownership.owner(documentID: documentID, serverOrigin: f.scope.serverOrigin), .owned(f.scope))
+        XCTAssertEqual(f.drafts.draft(for: documentID)?.replica?.scope, f.scope)
+        XCTAssertNil(f.coordinator.pendingSave(documentID: documentID), "B's own delete flow still completes")
+    }
+
+    func testANativeDraftOwnsTheDocumentWhenTheMarkerDoesNotNameIt() throws {
+        let f = try fixture()
+        let adapter = try seedReplica(f)
+        try f.coordinator.enqueueReplica(adapter: adapter, title: "Native")
+        XCTAssertTrue(f.ownership.clear(f.scope), "a repair that could not read the folder dropped it")
+        XCTAssertEqual(f.coordinator.nativeOwnership(documentID: documentID), .owned(f.scope))
+        XCTAssertTrue(f.coordinator.isNativeOwned(documentID: documentID))
+    }
+
+    func testTheClassicLoadNeverShowsANativeDraftsShadow() async throws {
+        let f = try fixture()
+        let adapter = try seedReplica(f)
+        try f.coordinator.enqueueReplica(adapter: adapter, title: "Native")
+        let shadow = try XCTUnwrap(f.drafts.draft(for: documentID)?.markdown)
+        XCTAssertTrue(shadow.contains("xOne"))
+        f.contentCache.save(
+            CachedDocumentContent(
+                documentID: documentID, title: "Cached", markdown: "Server body",
+                syncedAt: Date(timeIntervalSince1970: 1_000_000)))
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let model = EditorViewModel(
+            client: f.client, documentID: documentID, title: "Doc", saveCoordinator: f.coordinator,
+            signedInUser: SignedInUserStore(userDefaults: f.defaults), contentCache: f.contentCache,
+            childrenCache: DocumentChildrenCacheStore(userDefaults: f.defaults), listCache: f.listCache,
+            availability: OnlineAvailability(userDefaults: f.defaults))
+        await model.load()
+        XCTAssertEqual(model.rawMarkdown, "Server body", "the native shadow is never the classic body")
+    }
+
     func testRecoverQuarantinedDraftsRehydratesTheConflictHold() throws {
         let f = try fixture()
         let draft = PendingDraft(

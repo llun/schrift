@@ -336,13 +336,13 @@ struct EditorView: View {
         }
         .onChange(of: showsOffline) { _, offline in
             guard !offline else { return }
-            Task { await nativeOpen.refresh(viewModel: viewModel, isOffline: showsOffline) }
+            nativeOpen.refreshInBackground(viewModel: viewModel, isOffline: showsOffline)
         }
         .onChange(of: signInGeneration) { _, _ in
             // A mounted classic editor keeps its own session handling and is never swapped.
             if case .classic = nativeOpen.route { return }
-            nativeOpen.close()
-            Task { await openNative() }
+            nativeOpen.reopen(
+                viewModel: viewModel, isOffline: showsOffline, canUpdate: pinRow?.abilities.update == true)
         }
     }
 

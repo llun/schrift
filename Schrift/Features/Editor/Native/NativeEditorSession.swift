@@ -199,6 +199,10 @@ final class NativeEditorOpen {
         case state(Data, org: String)
     }
     private var pendingOpen: AsyncStream<OpenResult>.Continuation?
+    /// The reopen and reconnect work `EditorView` starts outside its `.task`;
+    /// close cancels both.
+    private var reopenTask: Task<Void, Never>?
+    private var refreshTask: Task<Void, Never>?
     private let waitForTimeout: @MainActor () async throws -> Void
 
     init(
@@ -309,7 +313,11 @@ final class NativeEditorOpen {
                 guard
                     self?.canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account)
                         == true,
-                    try await viewModel.refreshOfflineCacheForNativeReader()
+                    try await viewModel.refreshOfflineCacheForNativeReader(isCurrent: {
+                        self?.canContinue(
+                            request: request, viewModel: viewModel, isOffline: isOffline, account: account)
+                            == true
+                    })
                 else {
                     continuation.yield(.classic)
                     return
@@ -370,6 +378,20 @@ final class NativeEditorOpen {
             into: session, scope: scope, viewModel: viewModel, request: generation, isOffline: isOffline)
     }
 
+    /// A sign-in change: close, then open again in a task the next close cancels.
+    func reopen(viewModel: EditorViewModel, isOffline: Bool, canUpdate: Bool) {
+        close()
+        reopenTask = Task { [weak self] in
+            await self?.open(viewModel: viewModel, isOffline: isOffline, canUpdate: canUpdate)
+        }
+    }
+
+    /// Reconnect, in a task close cancels; a newer reconnect replaces it.
+    func refreshInBackground(viewModel: EditorViewModel, isOffline: Bool) {
+        refreshTask?.cancel()
+        refreshTask = Task { [weak self] in await self?.refresh(viewModel: viewModel, isOffline: isOffline) }
+    }
+
     /// Background or an explicit tap: hand any debounced save over now.
     func flushPendingSave() {
         guard case .native(let session) = route else { return }
@@ -403,6 +425,12 @@ final class NativeEditorOpen {
             }
             installTyping(session, scope: scope, viewModel: viewModel)
             return .native(session)
+        } catch ReplicaStoreError.alreadyExists, ReplicaStoreError.corrupt, ReplicaStoreError.quarantined,
+            ReplicaStoreError.unsupportedFormat
+        {
+            // A replica is already on disk for this scope, whatever the marker
+            // says: never open the classic writer over it.
+            return .preservedUnavailable
         } catch {
             // Without a marker the classic editor is still the safe owner.
             return coordinator.nativeOwnership(documentID: scope.documentID) == .none
@@ -417,6 +445,7 @@ final class NativeEditorOpen {
         let adapter = ReplicaSaveAdapter(store: coordinator.replicaStore, scope: scope)
         let documentID = scope.documentID
         let contentCache = viewModel.contentCache
+        let signedInUser = viewModel.signedInUser
         let listTitle = viewModel.title
         let scheduler = NativeReplicaSaveScheduler(
             interval: viewModel.autosaveInterval,
@@ -425,7 +454,10 @@ final class NativeEditorOpen {
                 // disk (refreshed at each online open) as title and baseline, so
                 // replay keeps a web rename and checks the body like classic.
                 // A stored draft keeps its own baseline. `enqueueReplica`
-                // refuses another account's scope.
+                // refuses another account's scope. An unknown account (a login
+                // handing over its cookies) is not a refusal: the journal is
+                // durable and the reopen under the known owner hands it over.
+                guard signedInUser.userID != nil else { return }
                 let cached = contentCache.content(for: documentID)
                 try coordinator.enqueueReplica(
                     adapter: adapter, title: cached?.title ?? listTitle,
@@ -473,7 +505,7 @@ final class NativeEditorOpen {
             try session.integrateServerState(state)
             // Refreshes the server title native saves send.
             guard isCurrent() else { return }
-            _ = try await viewModel.refreshOfflineCacheForNativeReader()
+            _ = try await viewModel.refreshOfflineCacheForNativeReader(isCurrent: isCurrent)
         } catch {
             // Offline-first: the restored replica stays on screen. A disk
             // failure inside the integration has already frozen authoring.
@@ -509,6 +541,10 @@ final class NativeEditorOpen {
     func close() {
         isOpen = false
         generation += 1
+        reopenTask?.cancel()
+        reopenTask = nil
+        refreshTask?.cancel()
+        refreshTask = nil
         pendingOpen?.finish()
         pendingOpen = nil
         isPreservedReadOnly = false

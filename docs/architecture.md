@@ -612,7 +612,9 @@ The HTTP outbox is independent of the replay checkpoint and of state vectors.
 Compaction retains pending local update bytes even when the new checkpoint already
 contains their effect. Acknowledging a captured prefix leaves later edits queued;
 delete-only updates require the same HTTP confirmation. There is no eviction or
-sign-out removal; `remove(for:)` is an explicit discard through a tombstone rename.
+sign-out removal; `remove(for:)` is an explicit discard through a tombstone rename,
+and only of the signed-in owner's replica (another account's replica and native draft
+survive a discard or deletion made in another session).
 A durable owner marker (`ReplicaOwnershipStore`), written before any replica file,
 keeps the classic and live writers off a native-owned document even after its draft
 is gone; the open route restores it (typeable only with the switch on), and unknown ownership is read-only. The caller must author a checkpoint for the exact revision,
@@ -706,11 +708,17 @@ refused capture freezes authoring and reports `.failed`. Reconnect integrates th
 fetched state again. The sign-in guard reuses `SessionStore.signInGeneration`
 (threaded to `EditorView`, which closes and reopens a native route on change) plus
 the remembered signed-in user, rechecked after every await; `enqueueReplica` and
-the sender already refuse another account. A marker without a replica is cleared,
+the sender already refuse another account. Both login flows hand the confirmed id to
+`signIn`, which remembers it before the generation moves, and a flush while the
+account is unknown leaves the durable outbox for the reopen. `/users/me/` writers
+drop answers from before the session changed hands (`SignedInUserStore.epoch`), and
+close cancels the reopen and reconnect tasks. A marker without a replica is cleared,
 with the switch on, only when no manifest, quarantine, draft or queued save exists,
 and the unowned route then re-seeds it. Profile's recovery row also rebuilds
-corrupt or lost marker data from the scoped manifests on disk
-(`DocumentSaveCoordinator.repairReplicaOwnership`). No native live socket exists,
+corrupt or lost marker data from the scoped manifests on disk and native drafts
+(`DocumentSaveCoordinator.repairReplicaOwnership`); it writes nothing while a folder
+cannot be read or two scopes claim a document with no draft or single outbox to
+choose by. A native draft owns its document even without a marker entry. No native live socket exists,
 and a native session never takes the live write path. The isolated host's
 `--native-open` fixture runs the real `EditorView` route offline over an owned
 replica; its UI test types, relaunches and finds the text restored.

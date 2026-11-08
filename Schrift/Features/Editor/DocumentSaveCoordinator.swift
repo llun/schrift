@@ -573,8 +573,12 @@ final class DocumentSaveCoordinator {
 
     /// Keyed by the client's origin, the one every replica scope is checked
     /// against — not the separately injected `serverOrigin` of pending creates.
+    /// A native draft owns its document even when the marker does not name it
+    /// (a repair that could not read its folder): its Markdown is only a shadow.
     func nativeOwnership(documentID: UUID) -> ReplicaOwnership {
-        replicaStore.ownership(documentID: documentID, serverOrigin: client.serverOrigin)
+        let marker = replicaStore.ownership(documentID: documentID, serverOrigin: client.serverOrigin)
+        guard marker == .none, let scope = draftStore.draft(for: documentID)?.replica?.scope else { return marker }
+        return scope.serverOrigin == client.serverOrigin ? .owned(scope) : .unreadable
     }
 
     var hasUnreadableDrafts: Bool { draftStore.holdsUnreadableData }
@@ -586,8 +590,12 @@ final class DocumentSaveCoordinator {
     /// Rebuild the owner marker from the scoped manifests on disk. The only
     /// production caller is the Profile recovery row; routine writes never
     /// overwrite unreadable marker data.
+    /// Native drafts name their scope too, so an unreadable draft store refuses.
     @discardableResult
-    func repairReplicaOwnership() -> Bool { replicaStore.repairOwnership() }
+    func repairReplicaOwnership() -> Bool {
+        guard !draftStore.holdsUnreadableData else { return false }
+        return replicaStore.repairOwnership(draftScopes: draftStore.allDrafts().compactMap { $0.replica?.scope })
+    }
 
     /// Clear a marker left by a crash between marking and writing the manifest,
     /// only while nothing unsynced exists anywhere: no replica manifest or
@@ -633,15 +641,23 @@ final class DocumentSaveCoordinator {
     /// Remove a native replica the user explicitly discarded. The marker is
     /// cleared by the store only after the replica is unreachable; a failure
     /// leaves the document read-only rather than classic-editable.
-    private func discardNativeReplica(documentID: UUID) {
-        let scope = draftStore.draft(for: documentID)?.replica?.scope ?? nativeOwnership(documentID: documentID).scope
-        guard let scope else { return }
+    ///
+    /// Only the signed-in owner's: another account's replica and native draft
+    /// (a shared device, where B's DELETE of A's document 404s as "already
+    /// gone") are that account's unsynced work and stay. Returns false when the
+    /// caller must keep the draft for that reason.
+    @discardableResult
+    private func discardNativeReplica(documentID: UUID) -> Bool {
+        let reference = draftStore.draft(for: documentID)?.replica
+        guard let scope = reference?.scope ?? nativeOwnership(documentID: documentID).scope else { return true }
+        guard scope.ownerUserID == signedInUser.userID else { return reference == nil }
         do {
             try replicaStore.remove(for: scope)
         } catch {
             // Keep the marker: the document stays read-only, which is the safe
             // direction. A later discard can retry.
         }
+        return true
     }
 
     // MARK: - Documents created on this device
@@ -3795,8 +3811,7 @@ final class DocumentSaveCoordinator {
         // The user chose the server body, so the native replica is discarded with
         // the draft. The marker goes with it; a failure leaves the document
         // read-only rather than classic-editable.
-        discardNativeReplica(documentID: documentID)
-        draftStore.remove(documentID: documentID)
+        if discardNativeReplica(documentID: documentID) { draftStore.remove(documentID: documentID) }
         // Both bodies that could have named a queued photo are now gone, so nothing would ever
         // collect its record — and the server body the user chose does not reference it either.
         discardPendingAttachments(documentID: documentID)
@@ -3825,7 +3840,7 @@ final class DocumentSaveCoordinator {
     func discardPendingWork(documentID: UUID) {
         // A deleted or explicitly discarded document keeps no native replica.
         // Read the draft/marker before the branches below remove either.
-        discardNativeReplica(documentID: documentID)
+        let mayRemoveDraft = discardNativeReplica(documentID: documentID)
         queued[documentID] = nil
         replayedPushes.remove(documentID)
         // The draft that named them is about to go, so nothing would ever collect these — and an
@@ -3931,7 +3946,7 @@ final class DocumentSaveCoordinator {
                 knownServerTitles[checkpointed.localID] = nil
             }
         }
-        draftStore.remove(documentID: documentID)
+        if mayRemoveDraft { draftStore.remove(documentID: documentID) }
         if inFlight[documentID] != nil {
             discardedDuringSave.insert(documentID)
         }
