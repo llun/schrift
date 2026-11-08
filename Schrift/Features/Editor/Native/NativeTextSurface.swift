@@ -180,12 +180,33 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
             AttributedDocumentProjection.attributedString(blocks: blocks, traits: traits, labels: labels))
     }
 
+    /// Character-level equality with the model's display (O(document); only
+    /// checked after UIKit itself changed storage).
+    var storageMatchesModel: Bool {
+        storage.length == rangeIndex.length
+            && storage.string
+                == AttributedDocumentProjection.attributedString(blocks: blocks, traits: traits, labels: labels).string
+    }
+
     /// Rebuilds storage from the model after UIKit changed it behind the
-    /// command path. Never while frozen: marked text owns storage then.
-    func restoreStorage() {
+    /// command path: only `blockID`'s slice when UIKit changed nothing else,
+    /// otherwise everything. Never while frozen: marked text owns storage then.
+    func restoreStorage(blockID: String? = nil) {
         guard !isFrozen else { return }
-        storage.setAttributedString(
-            AttributedDocumentProjection.attributedString(blocks: blocks, traits: traits, labels: labels))
+        // UIKit changed only this block's slice, so the length difference is
+        // all inside it. Anything else falls back to a full rebuild.
+        let delta = storage.length - rangeIndex.length
+        if let blockID, let position = rangeIndex.position(for: blockID),
+            rangeIndex.entries[position].range.length + delta >= 0
+        {
+            let entry = rangeIndex.entries[position]
+            storage.replaceCharacters(
+                in: NSRange(location: entry.range.location, length: entry.range.length + delta),
+                with: AttributedDocumentProjection.attributedBlock(blocks[position], traits: traits, labels: labels))
+        } else {
+            storage.setAttributedString(
+                AttributedDocumentProjection.attributedString(blocks: blocks, traits: traits, labels: labels))
+        }
     }
 
     /// The engine's composition window. While frozen, UIKit's provisional text
@@ -207,19 +228,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     private func reconcile() {
         if let id = provisionalBlockID {
             provisionalBlockID = nil
-            // UIKit changed only this block's slice, so the length difference
-            // is all inside it. Anything else falls back to a full rebuild.
-            let delta = storage.length - rangeIndex.length
-            if let position = rangeIndex.position(for: id), rangeIndex.entries[position].range.length + delta >= 0 {
-                let entry = rangeIndex.entries[position]
-                storage.replaceCharacters(
-                    in: NSRange(location: entry.range.location, length: entry.range.length + delta),
-                    with: AttributedDocumentProjection.attributedBlock(blocks[position], traits: traits, labels: labels)
-                )
-            } else {
-                storage.setAttributedString(
-                    AttributedDocumentProjection.attributedString(blocks: blocks, traits: traits, labels: labels))
-            }
+            restoreStorage(blockID: id)
         }
         let patches = frozenPatches
         frozenPatches = []

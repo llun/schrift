@@ -187,6 +187,8 @@ final class NativeCompositionRecoveryTests: DocumentEngineTestCase {
         crashed.close()
         var session = try launch(replica)
         var input = try XCTUnwrap(session.input)
+        let pasteboard = UIPasteboard.general.items
+        defer { UIPasteboard.general.items = pasteboard }
 
         input.copyRecovery(try XCTUnwrap(input.composition.pendingRecoveries.first))
 
@@ -305,10 +307,38 @@ final class NativeCompositionRecoveryTests: DocumentEngineTestCase {
 
         XCTAssertEqual(replica.writes.map(\.id), [live.commandID], "the commit used the persisted id")
         XCTAssertTrue(replica.store.provisionalRecoveries(for: replica.scope).isEmpty)
+        XCTAssertNil(try provisionalFile(replica), "the read purges the committed entry from disk")
         let relaunched = try launch(replica)
         defer { relaunched.close() }
         XCTAssertTrue(relaunched.input?.composition.pendingRecoveries.isEmpty == true)
         XCTAssertEqual(try text(relaunched, Self.firstID), "日本First paragraph.", "committed exactly once")
+    }
+
+    func testCompactionPurgesACommittedEntryBeforeDroppingItsJournalProof() throws {
+        let replica = try makeReplica()
+        let session = try launch(replica)
+        compose(session, ["日本"], at: try caret(session, Self.firstID, 0))
+        let live = try XCTUnwrap(replica.store.provisionalRecoveries(for: replica.scope).first)
+        session.textView.unmarkText()
+        session.close()
+        // A crash between the journal append and the provisional cleanup,
+        // then a save acknowledges the edit and compaction drops its entry.
+        try replica.store.writeProvisionalRecoveries([live], for: replica.scope)
+        try replica.store.acknowledge(try XCTUnwrap(replica.store.outbox(for: replica.scope)))
+        let revision = try XCTUnwrap(replica.store.manifest(for: replica.scope)).revision
+
+        try replica.store.compact(for: replica.scope, checkpoint: Data([9]), baseRevision: revision)
+
+        XCTAssertEqual(try replica.store.manifest(for: replica.scope)?.journal, [])
+        XCTAssertNil(try provisionalFile(replica))
+        XCTAssertTrue(
+            replica.store.provisionalRecoveries(for: replica.scope).isEmpty, "committed text never comes back")
+    }
+
+    private func provisionalFile(_ replica: Replica) throws -> Data? {
+        let file = replica.directory.appendingPathComponent(try replica.scope.directoryName())
+            .appendingPathComponent("provisional.json")
+        return FileManager.default.contents(atPath: file.path)
     }
 
     func testRemovingTheReplicaRemovesItsProvisionalText() throws {

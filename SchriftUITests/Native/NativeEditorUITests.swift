@@ -140,5 +140,53 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertFalse(text(of: editor).contains("かな"))
     }
 
+    /// Space, a digit and "。" on the Japanese keyboard: the space is written
+    /// directly (no marked text) and must become one durable command, never
+    /// reverted as unsupported input; the digit and "。" are marked and
+    /// confirmed. Everything survives a relaunch.
+    func testJapaneseKeyboardDirectCharactersAreJournaled() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.025)).tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        let japanese = keyboard.buttons["改行"]
+        for _ in 0..<3 where !japanese.exists {
+            guard keyboard.buttons["Next keyboard"].exists else { break }
+            keyboard.buttons["Next keyboard"].tap()
+        }
+        guard japanese.exists else {
+            throw XCTSkip("No Japanese keyboard on this simulator; the delegate seam covers direct characters")
+        }
+        let before = text(of: editor)
+        keyboard.keys["space"].tap()
+        keyboard.keys["more"].tap()
+        keyboard.keys["1"].tap()
+        let stop = keyboard.keys["。"]
+        XCTAssertTrue(
+            stop.exists,
+            keyboard.keys.allElementsBoundByIndex.map { "\($0.identifier)|\($0.label)" }.joined(separator: ","))
+        stop.tap()
+        // The IME marks digits and punctuation (it offers full-width forms);
+        // only the space went straight in. Return confirms the rest.
+        XCTAssertTrue(keyboard.buttons["Return"].exists)
+        keyboard.buttons["Return"].tap()
+
+        XCTAssertFalse(app.staticTexts["nativeEditor.inputNotice"].exists, "direct input is never reverted")
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        let after = text(of: editor)
+        XCTAssertEqual(after.count, before.count + 3, after)
+        XCTAssertTrue(after.contains("1。") || after.contains("１。"), after)
+
+        app.terminate()
+        app.launchArguments = ["--native-open"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertEqual(text(of: editor), after, "journaled, so it survives a relaunch")
+    }
+
     private func text(of element: XCUIElement) -> String { element.value as? String ?? "" }
 }

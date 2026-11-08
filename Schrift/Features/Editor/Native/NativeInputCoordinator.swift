@@ -17,6 +17,14 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     private let persist: (NativeEditCommand, Data) throws -> Void
     let composition: NativeCompositionSession
     private(set) var noticeKey: L10nKey?
+    /// The active keyboard's language; a seam so tests can stand in for a
+    /// composing keyboard the simulator may not have.
+    @ObservationIgnored var inputLanguage: () -> String? = { nil }
+    /// A single character a composing keyboard was allowed to write itself.
+    /// It either starts marked text, arrives through `insertText`, or is
+    /// written straight to storage (space, digits, punctuation), which
+    /// `textViewDidChange` turns into an ordinary command.
+    @ObservationIgnored private var directInsertion: (range: NSRange, text: String)?
 
     init(
         engine: DocumentEngine, surface: NativeTextSurface, view: NativeTextView,
@@ -30,6 +38,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         self.composition = NativeCompositionSession(
             engine: engine, surface: surface, view: view, persist: persist, recoveryStore: recoveryStore)
         super.init()
+        inputLanguage = { [weak view] in view?.textInputMode?.primaryLanguage }
         view.delegate = self
         view.inputCoordinator = self
         view.isEditable = true
@@ -50,18 +59,35 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     private func allowsUIKitChange(_ range: NSRange, _ text: String) -> Bool {
         guard let view else { return false }
         if view.isApplyingMarkedText || (composition.isActive && view.markedTextRange != nil) { return true }
-        guard let language = view.textInputMode?.primaryLanguage,
-            ["ja", "zh", "yue", "ko"].contains(where: { language.hasPrefix($0) })
+        guard let language = inputLanguage(),
+            ["ja", "zh", "yue", "ko"].contains(where: { language.hasPrefix($0) }),
+            range == view.selectedRange, text.utf16.count == 1,
+            !text.unicodeScalars.contains(where: { CharacterSet.newlines.contains($0) || $0.value == 0xfffc })
         else { return false }
-        return range == view.selectedRange && text.utf16.count == 1
-            && !text.unicodeScalars.contains(where: { CharacterSet.newlines.contains($0) || $0.value == 0xfffc })
+        directInsertion = (range, text)
+        return true
     }
 
-    /// Our overrides never let UIKit write storage outside marked text. A
-    /// change that still arrives here bypassed the journal: restore the
-    /// projection rather than let storage drift from the replica.
+    /// Our overrides never let UIKit write storage outside marked text, except
+    /// a composing keyboard's direct character: undo UIKit's write and submit
+    /// it as an ordinary durable command. Anything else bypassed the journal:
+    /// restore the projection rather than let storage drift from the replica.
     func textViewDidChange(_ textView: UITextView) {
         guard let view, !view.isApplyingMarkedText, !composition.isActive else { return }
+        let direct = directInsertion
+        directInsertion = nil
+        if let direct, let blockID = surface.rangeIndex.entry(atUTF16: direct.range.location)?.blockID,
+            surface.storage.length == surface.rangeIndex.length + direct.text.utf16.count - direct.range.length,
+            (surface.storage.string as NSString).substring(
+                with: NSRange(location: direct.range.location, length: direct.text.utf16.count)) == direct.text
+        {
+            surface.restoreStorage(blockID: blockID)
+            replace(range: direct.range, with: direct.text)
+            return
+        }
+        // A late notification for marked text this view already cleared and
+        // reconciled has nothing to undo.
+        guard !surface.storageMatchesModel else { return }
         surface.restoreStorage()
         noticeKey = .native_editor_input_unavailable
     }
@@ -91,6 +117,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     @discardableResult
     func replace(range: NSRange, with text: String) -> Bool {
+        directInsertion = nil
         guard let view, view.isEditable, !engine.nativeWriteFailed, !engine.isDetached else { return false }
         guard range.length != 0 || !text.isEmpty else { return false }
         // The composition owns input until it reconciles: UIKit's offsets are
@@ -138,6 +165,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// Called by `setMarkedText` before UIKit applies the marked range.
     func beginComposition(markedText: String) -> Bool {
         guard let view, view.isEditable, !engine.nativeWriteFailed, !engine.isDetached else { return false }
+        directInsertion = nil
         let began = composition.begin(markedText: markedText)
         if began { noticeKey = nil }
         return began

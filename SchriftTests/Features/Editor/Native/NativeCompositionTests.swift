@@ -558,6 +558,112 @@ final class NativeCompositionTests: DocumentEngineTestCase {
         assertMatches(session)
     }
 
+    func testBackspaceWithNoMarkedTextLeftCancelsInsteadOfThrowing() throws {
+        let harness = try makeSession()
+        defer { harness.close() }
+        let session = harness.session
+        compose(session, marked: ["に"], at: try caret(session, Self.firstID, 6))
+        // UIKit can drop its marked range (dictation, a keyboard switch) while
+        // the composition is still open; `rangeOfComposedCharacterSequence(at:)`
+        // on the empty string would throw.
+        session.textView.dropMarkedText()
+
+        session.textView.deleteBackward()
+
+        XCTAssertFalse(session.input?.composition.isActive ?? true)
+        XCTAssertEqual(harness.log.commands.count, 0)
+        XCTAssertEqual(try text(session, Self.firstID), "First paragraph.")
+        assertMatches(session)
+    }
+
+    func testDirectCharactersFromAComposingKeyboardAreJournaledNotReverted() throws {
+        // Space, a digit and the ideographic full stop arrive on a Japanese
+        // keyboard without marked text: UIKit writes them itself after the
+        // delegate allowed the keystroke.
+        for character in [" ", "1", "。", "　"] {
+            let harness = try makeSession()
+            defer { harness.close() }
+            let session = harness.session
+            let input = try XCTUnwrap(session.input)
+            input.inputLanguage = { "ja-JP" }
+            let range = NSRange(location: try caret(session, Self.firstID, 6), length: 0)
+            session.textView.selectedRange = range
+
+            XCTAssertTrue(
+                input.textView(
+                    session.textView, shouldChangeTextInRanges: [NSValue(range: range)],
+                    replacementText: character))
+            session.textView.textStorage.replaceCharacters(in: range, with: character)
+            input.textViewDidChange(session.textView)
+
+            XCTAssertNil(input.noticeKey, character)
+            XCTAssertEqual(harness.log.commands.map(\.replacement), [character])
+            XCTAssertEqual(try text(session, Self.firstID), "First \(character)paragraph.")
+            XCTAssertEqual(session.textView.selectedRange, NSRange(location: range.location + 1, length: 0))
+            assertMatches(session)
+            try assertDurableProjection(harness)
+        }
+    }
+
+    func testAnAllowedKeystrokeThatStartsMarkedTextStillCommitsOnce() throws {
+        let harness = try makeSession()
+        defer { harness.close() }
+        let session = harness.session
+        let input = try XCTUnwrap(session.input)
+        input.inputLanguage = { "ja-JP" }
+        let range = NSRange(location: try caret(session, Self.firstID, 6), length: 0)
+        session.textView.selectedRange = range
+        XCTAssertTrue(
+            input.textView(session.textView, shouldChangeTextInRanges: [NSValue(range: range)], replacementText: "n"))
+
+        compose(session, marked: ["n", "に"], at: range.location)
+        input.textViewDidChange(session.textView)
+        session.textView.unmarkText()
+        input.textViewDidChange(session.textView)
+
+        XCTAssertNil(input.noticeKey)
+        XCTAssertEqual(harness.log.commands.map(\.replacement), ["に"])
+        assertMatches(session)
+        try assertDurableProjection(harness)
+    }
+
+    // MARK: - Dictation
+
+    func testDictationResultIsOneDurableCommand() throws {
+        let harness = try makeSession()
+        defer { harness.close() }
+        let session = harness.session
+        session.textView.selectedRange = NSRange(location: try caret(session, Self.firstID, 6), length: 0)
+
+        session.textView.insertDictationResult([DictatedPhrase("spoken ")])
+
+        XCTAssertEqual(harness.log.commands.map(\.replacement), ["spoken "])
+        XCTAssertEqual(try text(session, Self.firstID), "First spoken paragraph.")
+        assertMatches(session)
+        try assertDurableProjection(harness)
+    }
+
+    func testDictationResultOverItsMarkedHypothesisCommitsAndUnfreezes() throws {
+        let harness = try makeSession()
+        defer { harness.close() }
+        let session = harness.session
+        let peer = try makeDoc(clientID: 2)
+        defer { peer.destroy() }
+        let peerEngine = DocumentEngine(doc: peer, surface: HeadlessSurface(blocks: projection(peer)))
+        compose(session, marked: ["おん"], at: try caret(session, Self.firstID, 0))
+
+        session.textView.insertDictationResult([DictatedPhrase("音声")])
+
+        XCTAssertNil(session.textView.markedTextRange)
+        XCTAssertFalse(session.input?.composition.isActive ?? true)
+        XCTAssertEqual(harness.log.commands.map(\.replacement), ["音声"])
+        // The surface is no longer frozen: a peer edit lands immediately.
+        try session.integrateServerState(peerEngine.replaceText(block: Self.thirdID, range: 0..<0, with: "P"))
+        XCTAssertEqual(try text(session, Self.thirdID), "PThird paragraph.")
+        assertMatches(session)
+        try assertDurableProjection(harness)
+    }
+
     // MARK: - Suspended commands
 
     func testOffsetCommandsAndEngineInputAreSuspendedUntilReconciliation() throws {
@@ -631,4 +737,13 @@ private final class RestartingSurface: @preconcurrency EditorSurface {
         deferrals.append(deferred)
         surface.setCompositionDeferred(deferred)
     }
+}
+
+private final class DictatedPhrase: UIDictationPhrase {
+    private let phrase: String
+    init(_ phrase: String) {
+        self.phrase = phrase
+        super.init()
+    }
+    override var text: String { phrase }
 }

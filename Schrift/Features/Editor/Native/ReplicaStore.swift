@@ -253,15 +253,26 @@ final class ReplicaStore {
     /// Provisional (UIKit marked) text, kept in `provisional.json` beside the
     /// manifest and outside it: never journaled, never in the outbox, never
     /// replayed into Yjs. An entry whose command id reached the journal was
-    /// committed before a crash skipped its cleanup, so it is dropped here.
+    /// committed before a crash skipped its cleanup: it is purged from the
+    /// file here, and by `compact` before the journal entry can disappear,
+    /// so committed text never comes back as a recovery offer.
     func provisionalRecoveries(for scope: ReplicaScope) -> [ProvisionalRecovery] {
         // shortcut: an unreadable file reads as empty and the next write replaces it; quarantine it if that ever matters.
-        guard let folder = try? folder(for: scope),
-            let bytes = try? Data(contentsOf: folder.appendingPathComponent("provisional.json")),
+        guard let manifest = try? manifest(for: scope) else { return [] }
+        return (try? purgeCommittedProvisional(manifest)) ?? []
+    }
+
+    /// Drops entries whose command is journaled and rewrites the file if any
+    /// were dropped. Returns the remaining entries.
+    private func purgeCommittedProvisional(_ manifest: ReplicaManifest) throws -> [ProvisionalRecovery] {
+        let file = try folder(for: manifest.scope).appendingPathComponent("provisional.json")
+        guard let bytes = try? Data(contentsOf: file),
             let entries = try? JSONDecoder().decode([ProvisionalRecovery].self, from: bytes)
         else { return [] }
-        let committed = Set(((try? manifest(for: scope))?.journal ?? []).map(\.commandID))
-        return entries.filter { !committed.contains($0.commandID) }
+        let committed = Set(manifest.journal.map(\.commandID))
+        let live = entries.filter { !committed.contains($0.commandID) }
+        if live.count != entries.count { try writeProvisionalRecoveries(live, for: manifest.scope) }
+        return live
     }
 
     /// Replaces the provisional entries atomically (flushed temporary file,
@@ -330,6 +341,9 @@ final class ReplicaStore {
         // Do not replace corrupt recovery data with a new apparently healthy
         // snapshot. This also verifies every outbox segment before pruning.
         _ = try restore(for: scope)
+        // The journal entries about to go are the only proof that provisional
+        // entries with their command ids were committed.
+        _ = try purgeCommittedProvisional(manifest)
         let folder = try folder(for: scope)
         let previous = [manifest.checkpoint] + manifest.journal.map(\.file)
         let file = try writePayload(checkpoint, in: folder, journal: false, operation: .compact)

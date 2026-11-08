@@ -104,9 +104,13 @@ final class NativeTextView: UITextView {
         if inputCoordinator.composition.isActive {
             // Backspace edits the provisional text, never committed storage;
             // an emptied composition cancels.
-            let marked = markedTextRange.flatMap { text(in: $0) } ?? ""
-            let range = (marked as NSString).rangeOfComposedCharacterSequence(at: max(0, marked.utf16.count - 1))
-            let shorter = marked.isEmpty ? "" : (marked as NSString).replacingCharacters(in: range, with: "")
+            let marked = (markedTextRange.flatMap { text(in: $0) } ?? "") as NSString
+            // An empty string has no composed character to find (it throws).
+            let shorter =
+                marked.length == 0
+                ? ""
+                : marked.replacingCharacters(
+                    in: marked.rangeOfComposedCharacterSequence(at: marked.length - 1), with: "")
             setMarkedText(shorter, selectedRange: NSRange(location: shorter.utf16.count, length: 0))
             return
         }
@@ -119,6 +123,12 @@ final class NativeTextView: UITextView {
             range = (textStorage.string as NSString).rangeOfComposedCharacterSequence(at: range.location - 1)
         }
         inputCoordinator.replace(range: range, with: "")
+    }
+
+    /// Dictation's final result is ordinary input: the command path, or the
+    /// commit of a composition its hypothesis started. Never UIKit's own write.
+    override func insertDictationResult(_ dictationResult: [UIDictationPhrase]) {
+        insertText(dictationResult.map(\.text).joined())
     }
 
     /// Clears UIKit's marked state without committing it: the composition
