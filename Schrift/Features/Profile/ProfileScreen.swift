@@ -13,6 +13,10 @@ struct ProfileScreen: View {
     let signInGeneration: Int
     var onSignOut: () -> Void
     var onWorkOfflineChanged: (() -> Void)? = nil
+    /// The coordinator that owns the draft store. Optional so previews and
+    /// tests can render the screen without one; the recovery row only appears
+    /// when a coordinator reports quarantined drafts.
+    var saveCoordinator: DocumentSaveCoordinator? = nil
 
     @AppStorage("schrift.notifications") private var notificationsEnabled: Bool = true
     @AppStorage("schrift.workOffline") private var workOffline: Bool = false
@@ -27,6 +31,11 @@ struct ProfileScreen: View {
     @State private var showAppearanceSheet = false
     @State private var showLanguageSheet = false
     @State private var showThemeSheet = false
+    /// Whether the draft store is holding unreadable blobs. Sticky until an
+    /// explicit successful recovery, so the row stays visible across launches.
+    @State private var holdsUnreadableDrafts = false
+    /// The outcome of the last recovery attempt, or nil when no alert is shown.
+    @State private var recoverySucceeded: Bool? = nil
     /// The Appearance sheet is a fitted detent sized to its three rows. It has to
     /// grow with the text inside it, or the last option falls below the fold at
     /// larger sizes with no way to reach it.
@@ -66,7 +75,10 @@ struct ProfileScreen: View {
         // the view model is `@State` in `MainTabView`, which survives the sheet too. Left
         // unkeyed, an account row loaded for the previous user stays on screen (and stays
         // tappable through to their detail) until the user happens to switch tabs.
-        .task(id: signInGeneration) { await viewModel.loadIfStale(sessionGeneration: signInGeneration) }
+        .task(id: signInGeneration) {
+            holdsUnreadableDrafts = saveCoordinator?.hasUnreadableDrafts ?? false
+            await viewModel.loadIfStale(sessionGeneration: signInGeneration)
+        }
         .sheet(isPresented: $showAppearanceSheet) {
             AppearancePickerSheet()
                 .presentationDetents([.height(appearanceSheetHeight)])
@@ -135,15 +147,49 @@ struct ProfileScreen: View {
     /// The way into every attachment this device has cached. Always enabled: the
     /// list is read from disk, so it works offline, and an empty cache has its
     /// own empty state.
+    ///
+    /// When the draft store is holding blobs it could not decode, this section
+    /// also offers the only production path to `recoverQuarantinedDrafts()`.
+    /// The row is absent otherwise, so the action never appears when there is
+    /// nothing to recover.
     private var filesSection: some View {
-        ListSection(header: loc[.profile_files]) {
+        ListSection(
+            header: loc[.profile_files],
+            footer: holdsUnreadableDrafts ? loc[.profile_recover_drafts_footer] : nil
+        ) {
             NavigationLink(value: ProfileRoute.attachments) {
                 ListRow(icon: .download, title: loc[.profile_attachments], showsChevron: true)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("profile.attachments")
+            if holdsUnreadableDrafts {
+                ListRow(
+                    icon: .history, title: loc[.profile_recover_drafts],
+                    action: recoverDrafts
+                )
+                .accessibilityIdentifier("profile.recoverDrafts")
+            }
         }
+        .alert(
+            loc[.profile_recover_drafts_title],
+            isPresented: Binding(
+                get: { recoverySucceeded != nil },
+                set: { if !$0 { recoverySucceeded = nil } })
+        ) {
+            Button(loc[.common_close]) { recoverySucceeded = nil }
+        } message: {
+            Text(
+                loc[
+                    recoverySucceeded == true
+                        ? .profile_recover_drafts_success : .profile_recover_drafts_failure])
+        }
+    }
+
+    private func recoverDrafts() {
+        let succeeded = saveCoordinator?.recoverQuarantinedDrafts() ?? false
+        holdsUnreadableDrafts = saveCoordinator?.hasUnreadableDrafts ?? false
+        recoverySucceeded = succeeded
     }
 
     // MARK: - 2) Preferences

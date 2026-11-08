@@ -293,6 +293,7 @@ struct EditorView: View {
     var onOpenDocument: ((Document) -> Void)? = nil
     var onCreatedDocument: ((Document) -> Void)? = nil
     @State private var nativeOpen = NativeEditorOpen()
+    @Environment(LocalizationStore.self) private var loc
 
     var body: some View {
         Group {
@@ -300,7 +301,14 @@ struct EditorView: View {
             case .loading:
                 ProgressView()
             case .native(let session):
-                NativeEditorView(session: session, title: viewModel.title)
+                NativeEditorView(
+                    session: session, title: viewModel.title,
+                    preservedNotice: nativeOpen.isPreservedReadOnly
+                        ? .native_editor_owned_read_only_body : nil)
+            case .preservedUnavailable:
+                ContentUnavailableView(
+                    loc[.native_editor_owned_unavailable_title], systemImage: "doc.richtext",
+                    description: Text(loc[.native_editor_owned_unavailable_body]))
             case .classic:
                 ClassicEditorView(
                     viewModel: viewModel, reach: reach, serverHost: serverHost, serverOrigin: serverOrigin,

@@ -396,5 +396,17 @@ enum Strings_pt {
             "O idioma que seu servidor usa para e-mails e conteúdo compartilhado. O idioma do aplicativo está em Preferências.",
         // Toast
         .toast_link_copied: "Link copiado",
+        .native_editor_owned_read_only_body:
+            "Este documento está guardado no formato do editor nativo. A edição não está disponível enquanto o editor nativo estiver desativado; ative-o no perfil para continuar.",
+        .native_editor_owned_unavailable_title: "Documento nativo indisponível",
+        .native_editor_owned_unavailable_body:
+            "Este documento pertence ao editor nativo, mas a cópia guardada não pode ser lida. Permanece só de leitura para que o editor clássico não o possa substituir.",
+        .profile_recover_drafts: "Recuperar rascunhos ilegíveis",
+        .profile_recover_drafts_footer:
+            "Alguns rascunhos guardados não puderam ser lidos. Tente recuperá-los; nada é eliminado se a recuperação falhar.",
+        .profile_recover_drafts_title: "Recuperar rascunhos",
+        .profile_recover_drafts_success: "Rascunhos recuperados.",
+        .profile_recover_drafts_failure:
+            "Não foi possível recuperar os rascunhos. Continuam guardados neste dispositivo.",
     ]
 }

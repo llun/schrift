@@ -402,5 +402,17 @@ enum Strings_es {
             "El idioma que usa tu servidor para los correos electrónicos y el contenido compartido. El idioma de la aplicación está en Preferencias.",
         // Toast
         .toast_link_copied: "Enlace copiado",
+        .native_editor_owned_read_only_body:
+            "Este documento está guardado en el formato del editor nativo. La edición no está disponible mientras el editor nativo esté desactivado; actívalo en el perfil para continuar.",
+        .native_editor_owned_unavailable_title: "Documento nativo no disponible",
+        .native_editor_owned_unavailable_body:
+            "Este documento pertenece al editor nativo, pero su copia guardada no se puede leer. Permanece en solo lectura para que el editor clásico no pueda sobrescribirlo.",
+        .profile_recover_drafts: "Recuperar borradores ilegibles",
+        .profile_recover_drafts_footer:
+            "Algunos borradores guardados no se pudieron leer. Intenta recuperarlos; no se elimina nada si la recuperación falla.",
+        .profile_recover_drafts_title: "Recuperar borradores",
+        .profile_recover_drafts_success: "Borradores recuperados.",
+        .profile_recover_drafts_failure:
+            "No se pudieron recuperar los borradores. Siguen guardados en este dispositivo.",
     ]
 }

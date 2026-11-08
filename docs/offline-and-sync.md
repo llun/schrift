@@ -61,16 +61,43 @@ their effect is already checkpointed. Only confirmation of the captured HTTP bod
 batch permits acknowledgment; newer edits remain pending. State-vector equality
 does not confirm delete sets. The store does not send requests, set saved status,
 own title retry state or use a live socket. Its bytes are backup-included, retained
-on sign-out, never evicted and never logged.
+on sign-out, never evicted and never logged. `ReplicaSaveAdapter.compactIfNeeded`
+is the production call site: after a durable acknowledgment and after each raw
+capture, it compacts once 64 journal segments are covered (acknowledged local or
+integrated remote). Unsent outbox segments never count, and it never re-encodes the
+document after every save. A failed compaction leaves the journal and the save intact.
+
+`ReplicaStore.remove(for:)` is the only delete: keep-server-version,
+`discardPendingWork` and therefore document deletion call it. It renames the whole
+scope folder to a `.removed` tombstone, flushes the parent, clears the owner marker,
+then deletes the tombstone. An interruption leaves the intact replica or an
+unreachable tombstone, never a half-deleted replica; a crash before the marker is
+cleared leaves the document read-only. Quarantined replicas can be removed too. Sign-out
+never removes a replica.
+
+**Owner marker.** `ReplicaOwnershipStore` keeps a versioned, checksummed UserDefaults
+map from `origin|documentID` to the owning scope. `create` writes it before any replica
+file or directory exists, so a crash leaves a marker without a replica (read-only),
+never the reverse. Once marked, `DocumentSaveCoordinator.enqueue` refuses every classic
+and live save for the document even after a successful save removed its draft, and
+`EditorViewModel.canStartEditing` is false. `NativeEditorOpen` checks the marker
+before any network and regardless of the switch: it restores the replica read-only
+(with a "turn the switch on" notice only while the switch is off), and shows a
+preserved-unavailable state when the replica is missing or quarantined, the marker data
+is corrupt, or the replica belongs to another account. Corrupt marker data, or a
+replica directory without any marker data, answers "owned" for every document: ownership
+is unknown, so nothing is classic-editable. One document has one owner; another
+scope's mark is refused and its clear is a no-op.
 
 `PendingDraftStore` now quarantines unreadable blobs before **both** mutating
 operations (`save` and `remove`), retains successive distinct corruptions, and
 keeps `holdsUnreadableData` sticky across healthy writes and relaunches. Explicit
 `recoverQuarantinedDrafts()` succeeds only when all recovery blobs decode; it merges
 by timestamp, preserves newer live edits and persists the merged store before
-clearing quarantine. Failed recovery retains the hold and every blob. Callers must
-recreate `DocumentSaveCoordinator` after successful recovery to rehydrate conflict
-holds. No recovery UI or startup writes have been introduced.
+clearing quarantine. Failed recovery retains the hold and every blob.
+`DocumentSaveCoordinator.recoverQuarantinedDrafts()` wraps it and rehydrates the
+conflict holds of the recovered drafts. Profile's Files section shows "Recover
+unreadable drafts" only while the hold is in force; there are no startup writes.
 
 The save adapter captures a verified outbox and enters the coordinator's existing
 serialized slots. It validates server/config/org/account, sends each stored update
@@ -104,11 +131,12 @@ is idempotent while journal/engine revisions stay aligned. Failed disk persisten
 freezes the mutated graph, keeps the accepted display and retains unconfirmed bytes
 in memory; reopen uses the earlier durable revision.
 
-Remaining PR02a integration: production open/reconnect wiring, a total shadow for
-opaque/rich documents (re-stamping refuses an unprojectable revision today),
-permanent native route ownership after a saved draft is removed, account/session
-generation guards, migration/rollback and production activation. Existing Markdown
-drafts retain their classic owner; no production native replica is adopted yet.
+Remaining PR02a integration: production open/reconnect wiring (creating replicas,
+integrating fetched state), a total shadow for opaque/rich documents (re-stamping
+refuses an unprojectable revision today), account/session generation guards,
+clean-replica removal on sign-out, old-draft migration and production activation.
+Existing Markdown drafts retain their classic owner; no production native replica is
+created yet.
 
 > **Amendment (2026-07-03):** the document **lists** (Home, the editor's
 > Subpages section, and the Shared tab) now follow this same

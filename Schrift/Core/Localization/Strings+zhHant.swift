@@ -382,5 +382,13 @@ enum Strings_zhHant {
         .account_language_footer: "您的伺服器用於電子郵件和共享內容的語言。應用程式本身的語言在偏好設定中。",
         // Toast
         .toast_link_copied: "連結已複製",
+        .native_editor_owned_read_only_body: "此文件以原生編輯器格式儲存。原生編輯器關閉時無法編輯；請在個人資料中開啟後繼續。",
+        .native_editor_owned_unavailable_title: "原生文件無法使用",
+        .native_editor_owned_unavailable_body: "此文件屬於原生編輯器，但無法讀取其已儲存的副本。它將保持唯讀，以免傳統編輯器覆寫它。",
+        .profile_recover_drafts: "復原無法讀取的草稿",
+        .profile_recover_drafts_footer: "部分已儲存的草稿無法讀取。請嘗試復原；如果復原失敗，不會刪除任何內容。",
+        .profile_recover_drafts_title: "復原草稿",
+        .profile_recover_drafts_success: "草稿已復原。",
+        .profile_recover_drafts_failure: "無法復原草稿。它們仍儲存在此裝置上。",
     ]
 }

@@ -57,7 +57,11 @@ class EditorViewModelTestCase: XCTestCase {
         // recording phantom entries into that test's `RequestRecorder`. Same fix as
         // `HomeViewModelTestCase.makeViewModel`.
         let coordinator = DocumentSaveCoordinator(
-            client: client, draftStore: draftStore, contentCache: contentCache,
+            client: client, draftStore: draftStore,
+            replicaStore: ReplicaStore(
+                directory: cacheDirectory.appendingPathComponent("ReplicaDrafts"),
+                ownershipStore: ReplicaOwnershipStore(userDefaults: UserDefaults(suiteName: suiteName)!)),
+            contentCache: contentCache,
             createStore: PendingDocumentCreateStore(userDefaults: UserDefaults(suiteName: suiteName)!),
             deleteStore: PendingDocumentDeleteStore(userDefaults: UserDefaults(suiteName: suiteName)!),
             serverOrigin: "https://docs.example.org", backgroundTasks: .noop)

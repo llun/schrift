@@ -166,7 +166,8 @@ struct MainTabView: View {
                 isOffline: viewModel.isOffline,
                 signInGeneration: signInGeneration,
                 onSignOut: onSignOut,
-                onWorkOfflineChanged: { viewModel.availability.preferencesChanged() }
+                onWorkOfflineChanged: { viewModel.availability.preferencesChanged() },
+                saveCoordinator: viewModel.saveCoordinator
             )
             .navigationDestination(for: ProfileRoute.self) { route in
                 switch route {

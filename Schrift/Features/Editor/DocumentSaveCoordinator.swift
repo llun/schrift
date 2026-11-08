@@ -90,7 +90,11 @@ final class DocumentSaveCoordinator {
 
     private let client: DocsAPIClient
     private let draftStore: PendingDraftStore
-    private let replicaStore: ReplicaStore
+    /// Also carries the durable "native replica owns this document" marker. A
+    /// document it names must never be written by the classic or live editor,
+    /// even after a successful save removed its draft. The native open route
+    /// restores from this same store.
+    let replicaStore: ReplicaStore
     /// The remembered signed-in account, available offline. A raw draft is
     /// rewritten or queued only for its own account; nil fails closed.
     private let signedInUser: SignedInUserStore
@@ -437,7 +441,8 @@ final class DocumentSaveCoordinator {
             cache: listCache, serverOrigin: client.serverOrigin,
             signedInUser: SignedInUserStore(userDefaults: listCache.userDefaults), userDefaults: listCache.userDefaults)
         self.draftStore = draftStore
-        self.replicaStore = replicaStore ?? ReplicaStore()
+        self.replicaStore =
+            replicaStore ?? ReplicaStore(ownershipStore: ReplicaOwnershipStore(userDefaults: listCache.userDefaults))
         self.signedInUser = SignedInUserStore(userDefaults: listCache.userDefaults)
         self.contentCache = contentCache
         self.createStore = createStore
@@ -555,6 +560,52 @@ final class DocumentSaveCoordinator {
     func failureDetail(for documentID: UUID) -> RequestFailure? {
         guard case .failed = state(for: documentID) else { return nil }
         return failureDetails[documentID]
+    }
+
+    // MARK: - Native replica ownership
+
+    /// Whether the durable marker says the native replica owns this document.
+    /// Unreadable or lost marker data answers true for every document: ownership
+    /// is unknown, so the classic writer must not be allowed to guess.
+    func isNativeOwned(documentID: UUID) -> Bool {
+        nativeOwnership(documentID: documentID) != .none
+    }
+
+    /// Keyed by the client's origin, the one every replica scope is checked
+    /// against — not the separately injected `serverOrigin` of pending creates.
+    func nativeOwnership(documentID: UUID) -> ReplicaOwnership {
+        replicaStore.ownership(documentID: documentID, serverOrigin: client.serverOrigin)
+    }
+
+    var hasUnreadableDrafts: Bool { draftStore.holdsUnreadableData }
+
+    /// Retry the quarantined draft blobs. On success, rehydrate the conflict
+    /// holds from the recovered drafts so a hold that was invisible while the
+    /// store was unreadable is in force again. Returns whether recovery
+    /// succeeded; a failure keeps the hold and every blob.
+    @discardableResult
+    func recoverQuarantinedDrafts() -> Bool {
+        guard draftStore.recoverQuarantinedDrafts() else { return false }
+        for draft in draftStore.allDrafts() {
+            if let serverUpdatedAt = draft.conflictServerUpdatedAt {
+                conflicts[draft.documentID] = SyncConflict(serverUpdatedAt: serverUpdatedAt)
+            }
+        }
+        return true
+    }
+
+    /// Remove a native replica the user explicitly discarded. The marker is
+    /// cleared by the store only after the replica is unreachable; a failure
+    /// leaves the document read-only rather than classic-editable.
+    private func discardNativeReplica(documentID: UUID) {
+        let scope = draftStore.draft(for: documentID)?.replica?.scope ?? nativeOwnership(documentID: documentID).scope
+        guard let scope else { return }
+        do {
+            try replicaStore.remove(for: scope)
+        } catch {
+            // Keep the marker: the document stays read-only, which is the safe
+            // direction. A later discard can retry.
+        }
     }
 
     // MARK: - Documents created on this device
@@ -2452,6 +2503,10 @@ final class DocumentSaveCoordinator {
         } else {
             (request, markdown) = try adapter.prepare()
         }
+        // Bounds integrated remote segments too, after the capture verified the
+        // files. Compaction keeps revision, generation and every outbox segment,
+        // so the captured request stays valid.
+        adapter.compactIfNeeded()
         enqueue(
             documentID: id,
             save: PendingSave(title: title, markdown: markdown, replicaRequest: request),
@@ -2465,6 +2520,14 @@ final class DocumentSaveCoordinator {
         // A compatibility writer must never replace a raw-owned draft, even
         // if its Markdown shadow is identical or the native switch is off.
         if draftStore.draft(for: documentID)?.replica != nil, save.replicaRequest == nil {
+            if inFlight[documentID] == nil { states[documentID] = .pendingSync }
+            return
+        }
+        // A successful native save removes its draft, so the draft check above
+        // cannot protect a clean replica. The durable owner marker outlives the
+        // draft: once it names this document, the classic and live writers must
+        // never enqueue for it. Native requests are the only exception.
+        if save.replicaRequest == nil, isNativeOwned(documentID: documentID) {
             if inFlight[documentID] == nil { states[documentID] = .pendingSync }
             return
         }
@@ -2989,6 +3052,11 @@ final class DocumentSaveCoordinator {
         // Prefer the draft — it is the user's newest text. The cached body is the fallback for
         // a document deleted without unsaved edits, which still deserves to come back.
         let draft = draftStore.draft(for: documentID)
+        // A native draft's Markdown is a lossy shadow. Reviving from it would
+        // silently downgrade rich state, so keep the raw replica and draft
+        // instead of minting a classic document from the shadow. The raw replay
+        // never discards this draft on a 404, so the work survives on disk.
+        if draft?.replica != nil { return }
         let cached = contentCache.content(for: documentID)
         let markdown = draft?.markdown ?? cached?.markdown
         guard let markdown else {
@@ -3688,6 +3756,10 @@ final class DocumentSaveCoordinator {
         // Drop the held work FIRST: `clearResolvedConflict` now *starts* whatever the hold was
         // parking, and this is the one resolution where that work must be thrown away, not sent.
         queued[documentID] = nil
+        // The user chose the server body, so the native replica is discarded with
+        // the draft. The marker goes with it; a failure leaves the document
+        // read-only rather than classic-editable.
+        discardNativeReplica(documentID: documentID)
         draftStore.remove(documentID: documentID)
         // Both bodies that could have named a queued photo are now gone, so nothing would ever
         // collect its record — and the server body the user chose does not reference it either.
@@ -3715,6 +3787,9 @@ final class DocumentSaveCoordinator {
     /// then write-through the content cache, recreating the entry the delete just
     /// purged. Nothing purges it again. Remembering the id keeps that write out.
     func discardPendingWork(documentID: UUID) {
+        // A deleted or explicitly discarded document keeps no native replica.
+        // Read the draft/marker before the branches below remove either.
+        discardNativeReplica(documentID: documentID)
         queued[documentID] = nil
         replayedPushes.remove(documentID)
         // The draft that named them is about to go, so nothing would ever collect these — and an

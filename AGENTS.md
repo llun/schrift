@@ -2052,8 +2052,11 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   first and retains every unsent local segment, including delete-only updates.
   Only a captured HTTP-confirmed outbox prefix may be acknowledged; later edits
   remain queued. These files are backup-included, never evicted and have no sign-out
-  purge. Production opening is still read-only: the tested typing/save/restore
-  components await authenticated lifecycle wiring and permanent rollback ownership.
+  purge. `remove(for:)` (keep-server-version, `discardPendingWork`, so deletion) renames
+  the scope folder to a tombstone before clearing the owner marker and deleting it.
+  `ReplicaSaveAdapter.compactIfNeeded` compacts after an ack or raw capture once 64
+  covered (non-outbox) segments exist. Production opening is still read-only: the
+  tested typing/save/restore components await authenticated lifecycle wiring.
   Do not enable native editing until
   durability, coordinator replay and rollback ownership are integrated and tested.
 
@@ -2120,9 +2123,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   quiet no-op until block joins (PR04); at the document end (after the last
   separator, which no block owns) it is refused with a notice, like typing there.
   These are component APIs and tests: the production open/reconnect lifecycle,
-  a total shadow for opaque/rich documents, permanent route
-  ownership after a successful save, sign-in generation guards and feature-switch
-  rollback remain required before activating production typing. No live socket.
+  a total shadow for opaque/rich documents, sign-in generation guards and clean-replica
+  removal on sign-out remain required before activating production typing. No live socket.
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (`@MainActor`), which borrows the replica and resolves
@@ -3772,8 +3774,18 @@ markdown write endpoint**. Understand this before touching the save path:
   - The bytes are document content: **never logged**, and they follow the draft's existing
     store policy — backup-included and **retained on sign-out**, never purged with the content
     cache. Native references stamp account/server/org/document identity, and the raw sender
-    checks the current account. Production session-generation and rollback-route ownership
-    are still required before activation; classic drafts still have no owner stamp.
+    checks the current account. Production session-generation guards are still required
+    before activation; classic drafts still have no owner stamp.
+  - **The owner marker outlives the draft.** `ReplicaOwnershipStore` (UserDefaults,
+    versioned and checksummed, `origin|documentID` → scope) is written before any replica
+    file. While it names a document, `enqueue` refuses every classic/live save,
+    `canStartEditing` is false and `NativeEditorOpen` restores the replica read-only
+    regardless of the switch (re-enabling restores the same replica). A missing or
+    quarantined replica, another account's replica, corrupt marker data, or replica files
+    without marker data all open read-only; never "not owned". Only `ReplicaStore.remove`
+    clears it, after the replica is unreachable. Read ownership through
+    `DocumentSaveCoordinator.nativeOwnership` / `replicaStore`, never a second store
+    instance, and never fall back to `UserDefaults.standard` in tests.
 - **C2c wires the write path into the editor, behind the same weak-delegate seam C1 used
   for reads.** `EditorLiveWriteCoordinating` (`forwardLocalEdit() -> Bool`,
   `flushPendingLiveSnapshot()`) is implemented by `LiveEditingBridge` and held as `weak var

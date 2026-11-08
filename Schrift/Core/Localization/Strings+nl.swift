@@ -397,5 +397,17 @@ enum Strings_nl {
             "De taal die je server gebruikt voor e-mails en gedeelde inhoud. De taal van de app vind je bij Voorkeuren.",
         // Toast
         .toast_link_copied: "Link gekopieerd",
+        .native_editor_owned_read_only_body:
+            "Dit document is opgeslagen in de indeling van de native editor. Bewerken is niet beschikbaar zolang de native editor uit staat; zet hem aan in het profiel om door te gaan.",
+        .native_editor_owned_unavailable_title: "Native document niet beschikbaar",
+        .native_editor_owned_unavailable_body:
+            "Dit document hoort bij de native editor, maar de opgeslagen kopie kan niet worden gelezen. Het blijft alleen-lezen zodat de klassieke editor het niet kan overschrijven.",
+        .profile_recover_drafts: "Onleesbare concepten herstellen",
+        .profile_recover_drafts_footer:
+            "Sommige opgeslagen concepten konden niet worden gelezen. Probeer ze te herstellen; er wordt niets verwijderd als het herstellen mislukt.",
+        .profile_recover_drafts_title: "Concepten herstellen",
+        .profile_recover_drafts_success: "Concepten hersteld.",
+        .profile_recover_drafts_failure:
+            "De concepten konden niet worden hersteld. Ze blijven op dit apparaat opgeslagen.",
     ]
 }

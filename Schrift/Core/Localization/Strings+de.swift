@@ -400,5 +400,17 @@ enum Strings_de {
             "Die Sprache, die Ihr Server für E-Mails und geteilte Inhalte verwendet. Die Sprache der App finden Sie unter Einstellungen.",
         // Toast
         .toast_link_copied: "Link kopiert",
+        .native_editor_owned_read_only_body:
+            "Dieses Dokument ist im Format des nativen Editors gespeichert. Bearbeiten ist nicht möglich, solange der native Editor ausgeschaltet ist; schalte ihn im Profil ein, um fortzufahren.",
+        .native_editor_owned_unavailable_title: "Nativer Inhalt nicht verfügbar",
+        .native_editor_owned_unavailable_body:
+            "Dieses Dokument gehört zum nativen Editor, aber seine gespeicherte Kopie kann nicht gelesen werden. Es bleibt schreibgeschützt, damit der klassische Editor es nicht überschreiben kann.",
+        .profile_recover_drafts: "Unlesbare Entwürfe wiederherstellen",
+        .profile_recover_drafts_footer:
+            "Einige gespeicherte Entwürfe konnten nicht gelesen werden. Versuche, sie wiederherzustellen; bei einem Fehlschlag wird nichts gelöscht.",
+        .profile_recover_drafts_title: "Entwürfe wiederherstellen",
+        .profile_recover_drafts_success: "Entwürfe wiederhergestellt.",
+        .profile_recover_drafts_failure:
+            "Die Entwürfe konnten nicht wiederhergestellt werden. Sie bleiben auf diesem Gerät gespeichert.",
     ]
 }

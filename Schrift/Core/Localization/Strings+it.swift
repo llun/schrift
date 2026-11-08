@@ -395,5 +395,16 @@ enum Strings_it {
             "La lingua che il tuo server utilizza per le e-mail e i contenuti condivisi. La lingua dell'app si trova in Preferenze.",
         // Toast
         .toast_link_copied: "Link copiato",
+        .native_editor_owned_read_only_body:
+            "Questo documento è salvato nel formato dell'editor nativo. La modifica non è disponibile finché l'editor nativo è disattivato; attivalo nel profilo per continuare.",
+        .native_editor_owned_unavailable_title: "Documento nativo non disponibile",
+        .native_editor_owned_unavailable_body:
+            "Questo documento appartiene all'editor nativo, ma la sua copia salvata non è leggibile. Rimane in sola lettura così l'editor classico non può sovrascriverlo.",
+        .profile_recover_drafts: "Recupera bozze illeggibili",
+        .profile_recover_drafts_footer:
+            "Alcune bozze salvate non sono state lette. Prova a recuperarle; se il recupero fallisce non viene eliminato nulla.",
+        .profile_recover_drafts_title: "Recupera bozze",
+        .profile_recover_drafts_success: "Bozze recuperate.",
+        .profile_recover_drafts_failure: "Impossibile recuperare le bozze. Restano salvate su questo dispositivo.",
     ]
 }

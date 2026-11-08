@@ -398,5 +398,17 @@ enum Strings_fr {
             "La langue utilisée par votre serveur pour les e-mails et le contenu partagé. La langue de l’application se trouve dans Préférences.",
         // Toast
         .toast_link_copied: "Lien copié",
+        .native_editor_owned_read_only_body:
+            "Ce document est enregistré au format de l'éditeur natif. La modification est indisponible tant que l'éditeur natif est désactivé ; activez-le dans le profil pour continuer.",
+        .native_editor_owned_unavailable_title: "Document natif indisponible",
+        .native_editor_owned_unavailable_body:
+            "Ce document appartient à l'éditeur natif, mais sa copie enregistrée est illisible. Il reste en lecture seule pour que l'éditeur classique ne puisse pas l'écraser.",
+        .profile_recover_drafts: "Récupérer les brouillons illisibles",
+        .profile_recover_drafts_footer:
+            "Certains brouillons enregistrés n'ont pas pu être lus. Essayez de les récupérer ; rien n'est supprimé en cas d'échec.",
+        .profile_recover_drafts_title: "Récupérer les brouillons",
+        .profile_recover_drafts_success: "Brouillons récupérés.",
+        .profile_recover_drafts_failure:
+            "Impossible de récupérer les brouillons. Ils restent enregistrés sur cet appareil.",
     ]
 }

@@ -2037,7 +2037,14 @@ final class EditorViewModel {
     /// cannot drift into offering a tap that silently does nothing. Deliberately not a
     /// connectivity check: editing offline is supported (the edit is queued as a draft),
     /// and a document whose content never loaded is the case this exists for, on or off.
-    var canStartEditing: Bool { hasLoadedContent }
+    ///
+    /// A native-owned document is never classic-editable, even with the switch off and
+    /// even after a successful save removed its draft. The durable owner marker is the
+    /// authority; an unreadable marker also answers owned, so the classic writer cannot
+    /// guess its way over a replica.
+    var canStartEditing: Bool {
+        hasLoadedContent && !saveCoordinator.isNativeOwned(documentID: documentID)
+    }
 
     /// Called only after initialization/restoration, never from a rerender or reconnect.
     /// Entering via the ordinary gate preserves the unloaded-content save invariant.

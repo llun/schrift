@@ -3,6 +3,10 @@ import SwiftUI
 struct NativeEditorView: View {
     let session: NativeEditorSession
     let title: String
+    /// Shown when the document is native-owned but editing is not enabled.
+    /// The replica is preserved and read-only; the classic writer must not
+    /// open over it.
+    var preservedNotice: L10nKey? = nil
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.docsTheme) private var theme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -25,6 +29,18 @@ struct NativeEditorView: View {
                         unknownBlock: loc[.native_editor_unknown_block])
                 )
                 .id(ObjectIdentifier(session))
+            }
+        }
+        .safeAreaInset(edge: .top) {
+            if let preservedNotice {
+                Text(loc[preservedNotice])
+                    .font(.footnote)
+                    .foregroundStyle(theme.colors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, DocsSpacing.gutter)
+                    .padding(.vertical, DocsSpacing.spaceXS)
+                    .background(theme.colors.surfacePage)
+                    .accessibilityIdentifier("nativeEditor.preservedNotice")
             }
         }
         .safeAreaInset(edge: .bottom) {

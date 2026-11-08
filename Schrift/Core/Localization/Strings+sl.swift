@@ -409,5 +409,16 @@ enum Strings_sl {
             "Jezik, ki ga uporablja vaš strežnik za e-pošto in deljeno vsebino. Jezik aplikacije najdete v Nastavitvah.",
         // Toast
         .toast_link_copied: "Povezava kopirana",
+        .native_editor_owned_read_only_body:
+            "Ta dokument je shranjen v obliki izvornega urejevalnika. Urejanje ni na voljo, dokler je izvorni urejevalnik izklopljen; vklopite ga v profilu, da nadaljujete.",
+        .native_editor_owned_unavailable_title: "Izvorni dokument ni na voljo",
+        .native_editor_owned_unavailable_body:
+            "Ta dokument pripada izvornemu urejevalniku, vendar njegove shranjene kopije ni mogoče prebrati. Ostaja samo za branje, da ga klasični urejevalnik ne more prepisati.",
+        .profile_recover_drafts: "Obnovi neberljive osnutke",
+        .profile_recover_drafts_footer:
+            "Nekaterih shranjenih osnutkov ni bilo mogoče prebrati. Poskusite jih obnoviti; če obnovitev ne uspe, se nič ne izbriše.",
+        .profile_recover_drafts_title: "Obnovi osnutke",
+        .profile_recover_drafts_success: "Osnutki so obnovljeni.",
+        .profile_recover_drafts_failure: "Osnutkov ni bilo mogoče obnoviti. Še vedno so shranjeni v tej napravi.",
     ]
 }

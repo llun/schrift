@@ -438,6 +438,101 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         guard case .classic = open.route else { return XCTFail("an in-flight baseline hid a local draft") }
     }
 
+    func testOwnedDocumentWithSwitchOffRestoresReadOnlyWithoutNetwork() async throws {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        try seedReplica(fixture)
+        let open = NativeEditorOpen(preference: { false })
+        defer { open.close() }
+        await open.open(viewModel: fixture.model, isOffline: false)
+        guard case .native(let session) = open.route else {
+            return XCTFail("an owned document must restore natively even with the switch off")
+        }
+        XCTAssertTrue(open.isPreservedReadOnly)
+        XCTAssertFalse(session.textView.isEditable)
+        XCTAssertNil(session.input, "slice A never enables production typing")
+        XCTAssertEqual(session.surface.blocks.count, 3)
+        XCTAssertNil(MockURLProtocol.lastRequest, "restore must not fetch")
+    }
+
+    func testOwnedDocumentWithMissingReplicaShowsPreservedUnavailable() async throws {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        let scope = try seedReplica(fixture)
+        try fixture.replicaStore.remove(for: scope)
+        // A marker without a replica is the crash-safe direction: read-only.
+        XCTAssertTrue(fixture.ownership.mark(scope))
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: fixture.model, isOffline: false)
+        guard case .preservedUnavailable = open.route else {
+            return XCTFail("a missing replica must stay read-only, never classic")
+        }
+        XCTAssertNil(MockURLProtocol.lastRequest)
+    }
+
+    func testCorruptMarkerShowsPreservedUnavailableForEveryDocument() async {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        fixture.defaults.set(Data([0xff]), forKey: "dev.llun.Schrift.replicaOwnership")
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: fixture.model, isOffline: false)
+        guard case .preservedUnavailable = open.route else {
+            return XCTFail("unknown ownership must stay read-only, never classic")
+        }
+        XCTAssertNil(MockURLProtocol.lastRequest)
+    }
+
+    func testReenablingTheSwitchRestoresTheSameReplica() async throws {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        try seedReplica(fixture)
+        let off = NativeEditorOpen(preference: { false })
+        await off.open(viewModel: fixture.model, isOffline: false)
+        guard case .native(let first) = off.route else { return XCTFail("owned doc must restore") }
+        let blocks = first.surface.blocks
+        off.close()
+        let on = NativeEditorOpen(preference: { true })
+        defer { on.close() }
+        await on.open(viewModel: fixture.model, isOffline: false)
+        guard case .native(let second) = on.route else {
+            return XCTFail("re-enabling the switch must restore the same replica")
+        }
+        XCTAssertEqual(second.surface.blocks, blocks)
+        XCTAssertFalse(on.isPreservedReadOnly, "the turn-it-on notice is only true with the switch off")
+        XCTAssertNil(MockURLProtocol.lastRequest)
+    }
+
+    func testAnotherAccountsReplicaIsNeverShown() async throws {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        try seedReplica(fixture)
+        SignedInUserStore(userDefaults: fixture.defaults).remember(UUID())
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: fixture.model, isOffline: false)
+        guard case .preservedUnavailable = open.route else {
+            return XCTFail("another account's unsynced replica must stay hidden and read-only")
+        }
+        XCTAssertNil(MockURLProtocol.lastRequest)
+    }
+
     private func stub(
         version: String, state: Data, status: Int = 200, gate: MockURLProtocol.ResponseGate? = nil,
         configGate: MockURLProtocol.ResponseGate? = nil, onGatedCompletion: (@Sendable () -> Void)? = nil,
@@ -476,6 +571,8 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         let defaults: UserDefaults
         let suite: String
         let directory: URL
+        let ownership: ReplicaOwnershipStore
+        let replicaStore: ReplicaStore
         func clean() {
             defaults.removePersistentDomain(forName: suite)
             try? FileManager.default.removeItem(at: directory)
@@ -494,8 +591,12 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             cookieProvider: { [] })
         let content = DocumentContentCacheStore(directory: directory)
         let children = DocumentChildrenCacheStore(userDefaults: defaults)
+        let ownership = ReplicaOwnershipStore(userDefaults: defaults)
+        let replicaStore = ReplicaStore(
+            directory: directory.appendingPathComponent("ReplicaDrafts"), ownershipStore: ownership)
         let coordinator = DocumentSaveCoordinator(
-            client: client, draftStore: PendingDraftStore(userDefaults: defaults), contentCache: content,
+            client: client, draftStore: PendingDraftStore(userDefaults: defaults), replicaStore: replicaStore,
+            contentCache: content,
             createStore: PendingDocumentCreateStore(userDefaults: defaults),
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             attachmentStore: PendingAttachmentStore(
@@ -507,7 +608,29 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             signedInUser: SignedInUserStore(userDefaults: defaults), contentCache: content, childrenCache: children,
             listCache: DocumentCacheStore(userDefaults: defaults),
             availability: OnlineAvailability(connectivity: connectivity, userDefaults: defaults))
-        return Fixture(model: model, defaults: defaults, suite: suite, directory: directory)
+        return Fixture(
+            model: model, defaults: defaults, suite: suite, directory: directory,
+            ownership: ownership, replicaStore: replicaStore)
+    }
+
+    /// A durable replica for the fixture's document, with one typed edit.
+    @discardableResult
+    private func seedReplica(_ fixture: Fixture) throws -> ReplicaScope {
+        let owner = UUID()
+        SignedInUserStore(userDefaults: fixture.defaults).remember(owner)
+        let scope = ReplicaScope(
+            serverOrigin: fixture.model.client.serverOrigin, ownerUserID: owner, org: "docs",
+            documentID: fixture.model.documentID)
+        let checkpoint = BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID)
+        _ = try fixture.replicaStore.create(for: scope, checkpoint: checkpoint)
+        let doc = YDoc(clientID: 2)
+        defer { doc.destroy() }
+        try doc.applyUpdate(YUpdateDecoder.decode(checkpoint), origin: .remote)
+        let update = try BlockNoteWriter(doc: doc).replaceText(block: Self.firstID, range: 0..<0, with: "x")
+        try ReplicaSaveAdapter(store: fixture.replicaStore, scope: scope).record(
+            NativeEditCommand(id: UUID(), baseRevision: 0, blockID: Self.firstID, range: 0..<0, replacement: "x"),
+            update: update)
+        return scope
     }
 }
 

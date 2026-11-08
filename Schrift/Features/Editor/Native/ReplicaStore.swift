@@ -4,19 +4,25 @@ import Foundation
 enum ReplicaStoreError: Error, Equatable {
     case invalidScope, alreadyExists, missingReplica, staleRevision, reusedCommand
     case unsupportedFormat, corrupt, quarantined, invalidAcknowledgment
+    /// The durable owner marker could not be written, so creating a replica
+    /// would leave it invisible to the read-only route.
+    case ownershipUnavailable
 }
 
 /// Draft storage, never a re-downloadable cache. There is deliberately no
-/// eviction or sign-out removal API. One main-actor writer serializes each
-/// read/modify/switch, including independently constructed store instances.
-/// Raw files are immutable; an incomplete unreferenced file is not an edit.
+/// eviction or sign-out removal API; `remove(for:)` exists only for an explicit
+/// user discard (keep-server-version, discard pending work, document deletion).
+/// One main-actor writer serializes each read/modify/switch, including
+/// independently constructed store instances. Raw files are immutable; an
+/// incomplete unreferenced file is not an edit.
 @MainActor
 final class ReplicaStore {
-    enum Operation: Equatable { case create, append, acknowledge, compact }
+    enum Operation: Equatable { case create, append, acknowledge, compact, remove }
     enum Boundary: Equatable {
         case payloadWritten, payloadFlushed, payloadDirectoryFlushed
         case manifestWritten, manifestFlushed, manifestSwitched, manifestDirectoryFlushed
         case obsoleteFilesRemoved
+        case replicaRenamed, ownershipCleared
     }
 
     private struct Envelope: Codable {
@@ -26,21 +32,45 @@ final class ReplicaStore {
 
     private let directory: URL
     private let fileManager = FileManager.default
+    /// The durable "native owns this document" marker. Optional so component
+    /// tests can exercise raw storage without UserDefaults; production always
+    /// injects one.
+    let ownershipStore: ReplicaOwnershipStore?
     /// Throwing at a boundary models a process interruption. No catch rewinds
     /// an already switched manifest; the next operation reads disk afresh.
     private let interrupt: ((Operation, Boundary) throws -> Void)?
 
-    init(directory: URL? = nil, interrupt: ((Operation, Boundary) throws -> Void)? = nil) {
+    init(
+        directory: URL? = nil, ownershipStore: ReplicaOwnershipStore? = nil,
+        interrupt: ((Operation, Boundary) throws -> Void)? = nil
+    ) {
         self.directory =
             directory
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("dev.llun.Schrift/ReplicaDrafts", isDirectory: true)
+        self.ownershipStore = ownershipStore
         self.interrupt = interrupt
+    }
+
+    /// The durable owner marker's answer, failing closed when the marker data is
+    /// gone but replica files exist: then ownership is unknown, not absent.
+    func ownership(documentID: UUID, serverOrigin: String) -> ReplicaOwnership {
+        guard let ownershipStore else { return .none }
+        let owner = ownershipStore.owner(documentID: documentID, serverOrigin: serverOrigin)
+        if owner == .none, !ownershipStore.hasData, fileManager.fileExists(atPath: directory.path) {
+            return .unreadable
+        }
+        return owner
     }
 
     func create(for scope: ReplicaScope, checkpoint: Data) throws -> ReplicaManifest {
         guard try readManifest(for: scope) == nil else { throw ReplicaStoreError.alreadyExists }
         let folder = try folder(for: scope)
+        // Mark ownership before any replica file or directory exists. A crash can
+        // then leave a marker without a replica (read-only, safe), never a replica
+        // without a marker (which the classic writer could overwrite), and an
+        // existing root without marker data always means the marker was lost.
+        guard ownershipStore?.mark(scope) ?? true else { throw ReplicaStoreError.ownershipUnavailable }
         try ensureDirectory(folder)
         var root = directory
         var values = URLResourceValues()
@@ -95,6 +125,9 @@ final class ReplicaStore {
         }
         return ReplicaRestore(manifest: manifest, checkpoint: checkpoint, updates: updates)
     }
+
+    /// The committed manifest alone, without reading or verifying payloads.
+    func manifest(for scope: ReplicaScope) throws -> ReplicaManifest? { try readManifest(for: scope) }
 
     func outbox(for scope: ReplicaScope) throws -> ReplicaOutboxBatch? {
         _ = try restore(for: scope)
@@ -159,6 +192,41 @@ final class ReplicaStore {
             try syncDirectory(folder.appendingPathComponent("Journal"))
         }
         try interrupt?(.compact, .obsoleteFilesRemoved)
+    }
+
+    /// Explicitly discard a replica. The whole folder is renamed to a tombstone
+    /// before anything is deleted, so an interruption leaves either the intact
+    /// replica or an unreachable tombstone — never a half-deleted replica that
+    /// could be mistaken for a valid one. The owner marker is cleared only
+    /// after the replica is unreachable; a crash before that leaves the
+    /// document read-only rather than classic-editable.
+    ///
+    /// Quarantined replicas are removed too: the user asked to discard this
+    /// work, and a sticky corruption hold must not make it undeletable. The
+    /// recovery copies go with the folder.
+    func remove(for scope: ReplicaScope) throws {
+        let folder = try folder(for: scope)
+        removeTombstones()
+        guard fileManager.fileExists(atPath: folder.path) else {
+            _ = ownershipStore?.clear(scope)
+            return
+        }
+        let tombstone = directory.appendingPathComponent("\(UUID().uuidString).removed", isDirectory: true)
+        try renameFile(folder, to: tombstone)
+        try syncDirectory(directory)
+        try interrupt?(.remove, .replicaRenamed)
+        _ = ownershipStore?.clear(scope)
+        try interrupt?(.remove, .ownershipCleared)
+        try? fileManager.removeItem(at: tombstone)
+        try? syncDirectory(directory)
+    }
+
+    private func removeTombstones() {
+        guard let entries = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        else { return }
+        for entry in entries where entry.pathExtension == "removed" {
+            try? fileManager.removeItem(at: entry)
+        }
     }
 
     private func folder(for scope: ReplicaScope) throws -> URL {

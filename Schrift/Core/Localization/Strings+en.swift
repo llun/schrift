@@ -405,5 +405,16 @@ enum Strings_en {
             "The language your server uses for emails and shared content. The app's own language is in Preferences.",
         // Toast
         .toast_link_copied: "Link copied",
+        .native_editor_owned_read_only_body:
+            "This document is saved in the native editor's format. Editing is unavailable while the native editor is off; turn it on in Profile to continue.",
+        .native_editor_owned_unavailable_title: "Native document unavailable",
+        .native_editor_owned_unavailable_body:
+            "This document belongs to the native editor, but its saved copy can't be read. It stays read-only so the classic editor can't overwrite it.",
+        .profile_recover_drafts: "Recover unreadable drafts",
+        .profile_recover_drafts_footer:
+            "Some saved drafts couldn't be read. Try to recover them; nothing is deleted if recovery fails.",
+        .profile_recover_drafts_title: "Recover drafts",
+        .profile_recover_drafts_success: "Drafts recovered.",
+        .profile_recover_drafts_failure: "Couldn't recover the drafts. They're still saved on this device.",
     ]
 }

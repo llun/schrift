@@ -612,17 +612,21 @@ The HTTP outbox is independent of the replay checkpoint and of state vectors.
 Compaction retains pending local update bytes even when the new checkpoint already
 contains their effect. Acknowledging a captured prefix leaves later edits queued;
 delete-only updates require the same HTTP confirmation. There is no eviction or
-sign-out removal API. The caller must author a checkpoint for the exact revision,
+sign-out removal; `remove(for:)` is an explicit discard through a tombstone rename.
+A durable owner marker (`ReplicaOwnershipStore`), written before any replica file,
+keeps the classic and live writers off a native-owned document even after its draft
+is gone; the open route restores it read-only, and unknown ownership is read-only. The caller must author a checkpoint for the exact revision,
 restore into a fresh non-colliding client, and stop writing after a disk failure.
 The store does not validate Yjs semantics or perform a network request.
 
 `PendingDraftStore` now preserves every distinct unreadable blob before a write
 reuses the live key. Its hold survives writes/relaunches; explicit recovery retries
 all blobs, merges without replacing newer live drafts, and writes before clearing
-the hold. Recreate the coordinator after recovery so conflict stamps are rehydrated.
+the hold. `DocumentSaveCoordinator.recoverQuarantinedDrafts()` rehydrates conflict
+stamps; Profile offers it while the hold is in force.
 `PendingDraft` now has an optional replica reference; the save component checkpoint
-below describes its reconstruction audit. Production opening, migration ownership
-and typing activation remain subsequent PR02a work. See [offline-and-sync.md](offline-and-sync.md).
+below describes its reconstruction audit. Production open/reconnect wiring,
+migration and typing activation remain subsequent PR02a work. See [offline-and-sync.md](offline-and-sync.md).
 
 **PR02a typing component checkpoint.** Native sessions can explicitly install a
 `NativeInputCoordinator` with a durable-update callback. The production open route

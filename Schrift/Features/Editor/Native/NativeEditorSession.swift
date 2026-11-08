@@ -127,14 +127,27 @@ private final class NativeBlockResolver {
 
 /// Reads the flag at each open. Failed/legacy/offline opens go to the classic
 /// editor; a selected route never changes in response to a preference write.
+///
+/// A document named by the durable owner marker is different: it is restored
+/// read-only from its replica regardless of the switch or connectivity, and it
+/// never falls back to the classic editor. Missing or corrupt marker data is
+/// read-only too, because ownership is unknown rather than absent.
 @MainActor @Observable
 final class NativeEditorOpen {
     enum Route {
         case loading, classic
         case native(NativeEditorSession)
+        /// The marker says native owns this document, but its replica is
+        /// missing or unreadable. Show the preserved read-only explanation;
+        /// never open the classic writer over it.
+        case preservedUnavailable
     }
     private(set) var enabled = false
     private(set) var route: Route
+    /// True when the native route was selected because the document is
+    /// native-owned, not because the experimental switch is on. The view uses
+    /// it to explain why editing is unavailable.
+    private(set) var isPreservedReadOnly = false
     private var isOpen = false
     private let preference: @MainActor () -> Bool
     private var generation = 0
@@ -164,15 +177,39 @@ final class NativeEditorOpen {
         guard !isOpen else { return }
         isOpen = true
         enabled = preference()
+        isPreservedReadOnly = false
         // A reappearing classic editor keeps its SwiftUI identity and local
         // view state while the optional native eligibility read is in flight.
         switch route {
-        case .loading, .native: route = .loading
+        case .loading, .native, .preservedUnavailable: route = .loading
         case .classic: break
         }
         pendingOpen?.finish()
         generation += 1
         let request = generation
+        // Ownership is checked before any network and regardless of the switch.
+        // A native-owned document is restored from its durable replica, or
+        // shown read-only when that replica cannot be read. The coordinator's
+        // store is the one its classic/live refusal reads.
+        let coordinator = viewModel.saveCoordinator
+        switch coordinator.nativeOwnership(documentID: viewModel.documentID) {
+        case .unreadable:
+            route = .preservedUnavailable
+            return
+        case .owned(let scope):
+            // Another account's unsynced replica is never shown to this one.
+            guard scope.ownerUserID == viewModel.signedInUser.userID else {
+                route = .preservedUnavailable
+                return
+            }
+            // Slice A never types in production, so the "turn the switch on"
+            // explanation is only true while the switch is off.
+            isPreservedReadOnly = !enabled
+            route = restoreOwned(scope: scope, store: coordinator.replicaStore)
+            return
+        case .none:
+            break
+        }
         guard canOpen(viewModel, isOffline: isOffline) else {
             route = .classic
             return
@@ -235,6 +272,18 @@ final class NativeEditorOpen {
         do { route = .native(try NativeEditorSession(state: state)) } catch { route = .classic }
     }
 
+    private func restoreOwned(scope: ReplicaScope, store: ReplicaStore) -> Route {
+        do {
+            guard
+                let session = try NativeEditorSession.restore(
+                    store: store, scope: scope, editable: false)
+            else { return .preservedUnavailable }
+            return .native(session)
+        } catch {
+            return .preservedUnavailable
+        }
+    }
+
     private func canContinue(request: Int, viewModel: EditorViewModel, isOffline: Bool) -> Bool {
         generation == request && canOpen(viewModel, isOffline: isOffline)
     }
@@ -255,9 +304,15 @@ final class NativeEditorOpen {
         generation += 1
         pendingOpen?.finish()
         pendingOpen = nil
-        if case .native(let session) = route {
+        isPreservedReadOnly = false
+        switch route {
+        case .native(let session):
             session.close()
             route = .loading
+        case .preservedUnavailable:
+            route = .loading
+        case .loading, .classic:
+            break
         }
     }
 }
