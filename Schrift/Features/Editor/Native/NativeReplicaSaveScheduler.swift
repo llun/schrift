@@ -19,7 +19,7 @@ final class NativeReplicaSaveScheduler {
     /// Returns false when nobody could take the save (the account is unknown):
     /// the edits stay pending on this device.
     private let enqueue: () throws -> Bool
-    private let onFailure: () -> Void
+    private let onFailure: (Error) -> Void
     private var task: Task<Void, Never>?
     private var dirtySince: Date?
     /// Durable journal bytes the coordinator has not been handed yet. The view
@@ -30,7 +30,7 @@ final class NativeReplicaSaveScheduler {
     init(
         interval: Duration = .seconds(10),
         enqueue: @escaping () throws -> Bool,
-        onFailure: @escaping () -> Void
+        onFailure: @escaping (Error) -> Void
     ) {
         self.interval = interval
         self.enqueue = enqueue
@@ -68,7 +68,7 @@ final class NativeReplicaSaveScheduler {
             if try !enqueue() { hasPendingSave = true }
         } catch {
             isFrozen = true
-            onFailure()
+            onFailure(error)
         }
     }
 

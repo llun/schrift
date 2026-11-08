@@ -448,7 +448,7 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         do {
             try enqueue(f)
             XCTFail("another account must not queue this raw draft")
-        } catch ReplicaSaveError.invalidScope {}
+        } catch ReplicaSaveError.otherServerOrAccount {}
         XCTAssertEqual(f.drafts.draft(for: documentID), original)
         XCTAssertEqual(log.count(ofMethod: "PATCH"), 0)
     }

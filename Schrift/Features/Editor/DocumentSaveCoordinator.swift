@@ -128,6 +128,10 @@ final class DocumentSaveCoordinator {
     /// The non-2xx response behind a document's `.failed` state, for the save-failure alert.
     /// Method, path, status and body prefix only — `RequestFailure` carries no credential.
     private var failureDetails: [UUID: RequestFailure] = [:]
+    /// Why a document's save is `.failed` even when no HTTP response says so (a decoding failure,
+    /// a refused guard). Set by `markFailed` only, from `safeErrorSummary` or a fixed phrase:
+    /// never content, a header, a cookie or a token.
+    private var failureReasons: [UUID: String] = [:]
     private var inFlight: [UUID: Task<Void, Never>] = [:]
     private var inFlightContent: [UUID: PendingSave] = [:]
     private var queued: [UUID: PendingSave] = [:]
@@ -562,6 +566,20 @@ final class DocumentSaveCoordinator {
         return failureDetails[documentID]
     }
 
+    /// Everything the "Couldn't save" alert can say about a `.failed` document: the local reason
+    /// (every `.failed` carries one), then the rejecting request when there was one. Nil when the
+    /// document is not failed.
+    func failureReport(for documentID: UUID) -> String? {
+        guard case .failed = state(for: documentID), let reason = failureReasons[documentID] else { return nil }
+        return [reason, failureDetail(for: documentID)?.saveFailureDetail].compactMap { $0 }.joined(separator: "\n\n")
+    }
+
+    /// The one way into `.failed`, so no failure lacks a reason and none keeps a stale one.
+    private func markFailed(_ documentID: UUID, reason: String) {
+        states[documentID] = .failed("Couldn't save changes. Please try again.")
+        failureReasons[documentID] = reason
+    }
+
     // MARK: - Native replica ownership
 
     /// Whether the durable marker says the native replica owns this document.
@@ -631,9 +649,9 @@ final class DocumentSaveCoordinator {
     /// A native capture that could not be prepared. The journal bytes are
     /// durable, but nothing can send them until the refusal clears; report it
     /// rather than claiming a save. Authoring is frozen by the caller.
-    func noteReplicaCaptureFailure(documentID: UUID, message: String) {
+    func noteReplicaCaptureFailure(documentID: UUID, error: Error) {
         guard inFlight[documentID] == nil, queued[documentID] == nil else { return }
-        states[documentID] = .failed(message)
+        markFailed(documentID, reason: "Native capture refused: \(safeErrorSummary(error))")
     }
 
     /// Retry the quarantined draft blobs. On success, rehydrate the conflict
@@ -2336,7 +2354,7 @@ final class DocumentSaveCoordinator {
             // escape). Classify it rather than returning silently, which would be the one exit
             // from this function that leaves the record POSTing on every trigger with nothing
             // recorded. In-memory `.failed`, so a relaunch still retries once.
-            markCreateRejected(record)
+            markCreateRejected(record, reason: safeErrorSummary(error))
             return
         }
         if retryableSaveFailure(docsError) || docsError == .sessionExpired {
@@ -2390,7 +2408,7 @@ final class DocumentSaveCoordinator {
                 // gets for the same error. Without this the record pays a POST plus a probe on
                 // every reconnect, foreground and launch, forever, while the caption reads
                 // "syncs when online".
-                markCreateRejected(record)
+                markCreateRejected(record, reason: "\(safeErrorSummary(docsError)), parent probe forbidden")
                 return
             } catch {
                 // The probe could not answer at all (transport, 5xx). "I couldn't ask" must
@@ -2401,7 +2419,7 @@ final class DocumentSaveCoordinator {
             // non-retryable — every retryable class returned above, and `.routeNotFound`, the
             // one error the probe cannot speak to, returned before we got here. Terminal, as
             // the root path treats the same error.
-            markCreateRejected(record)
+            markCreateRejected(record, reason: safeErrorSummary(docsError))
             return
         }
         // A `.decoding` failure is the one rejection where "the POST failed" is provably the
@@ -2421,7 +2439,7 @@ final class DocumentSaveCoordinator {
             blocked.replayBlockedBuild = appBuild
             updatePendingCreate(blocked)
         }
-        markCreateRejected(record)
+        markCreateRejected(record, reason: safeErrorSummary(docsError))
     }
 
     /// The terminal state for a create the server rejected on the merits.
@@ -2436,12 +2454,12 @@ final class DocumentSaveCoordinator {
     /// has typed into always has its content parked in `queued`. So for those the tap is a
     /// no-op and a relaunch is the only escape. Giving the create pass its own retry
     /// affordance belongs with the UI that can present it.
-    private func markCreateRejected(_ record: PendingDocumentCreate) {
+    private func markCreateRejected(_ record: PendingDocumentCreate, reason: String) {
         // Re-read: this runs after the POST await, and a delete during it has already removed
         // the record and reset the state. Writing here would leave a `.failed` entry keyed to
         // an id nothing owns.
         guard pendingCreates[record.localID] != nil else { return }
-        states[record.localID] = .failed("Couldn't save changes. Please try again.")
+        markFailed(record.localID, reason: "Create rejected: \(reason)")
     }
 
     /// Content handed to the coordinator this session that the server hasn't
@@ -2555,9 +2573,10 @@ final class DocumentSaveCoordinator {
     /// or projected from the raw revision when there is none or it is older.
     func enqueueReplica(adapter: ReplicaSaveAdapter, title: String, baseline: DraftBaseline? = nil) throws {
         let id = adapter.scope.documentID
-        guard adapter.scope.serverOrigin == client.serverOrigin, !draftStore.holdsUnreadableData,
-            !isPendingCreate(documentID: id), adapter.scope.ownerUserID == signedInUser.userID
-        else { throw ReplicaSaveError.invalidScope }
+        guard adapter.scope.serverOrigin == client.serverOrigin, adapter.scope.ownerUserID == signedInUser.userID
+        else { throw ReplicaSaveError.otherServerOrAccount }
+        guard !draftStore.holdsUnreadableData else { throw ReplicaSaveError.quarantinedDrafts }
+        guard !isPendingCreate(documentID: id) else { throw ReplicaSaveError.pendingCreate }
         let previous = draftStore.draft(for: id)
         let (request, markdown): (ReplicaSaveRequest, String)
         if let previous {
@@ -3510,7 +3529,7 @@ final class DocumentSaveCoordinator {
                 }
             } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
                 if draft.replica != nil {
-                    states[draft.documentID] = .failed("Couldn't save changes. Please try again.")
+                    markFailed(draft.documentID, reason: "Draft sync refused: \(safeErrorSummary(error))")
                     continue
                 }
                 // Belt and braces. The guard at the top of the loop means a pending create
@@ -3563,7 +3582,7 @@ final class DocumentSaveCoordinator {
                     if let error = error as? DocsAPIError, retryableSaveFailure(error) {
                         states[draft.documentID] = .pendingSync
                     } else {
-                        states[draft.documentID] = .failed("Couldn't save changes. Please try again.")
+                        markFailed(draft.documentID, reason: "Draft sync failed: \(safeErrorSummary(error))")
                     }
                 }
             }
@@ -3717,7 +3736,7 @@ final class DocumentSaveCoordinator {
         if let reference = draftStore.draft(for: documentID)?.replica,
             reference.scope.ownerUserID != signedInUser.userID
         {
-            states[documentID] = .failed("Couldn't save changes. Please try again.")
+            markFailed(documentID, reason: "Conflict resolution refused: the draft belongs to another account")
             return
         }
         // Defensive only, per the invariant above: were a save somehow in flight, its
@@ -3805,7 +3824,7 @@ final class DocumentSaveCoordinator {
             try enqueueReplica(
                 adapter: ReplicaSaveAdapter(store: replicaStore, scope: reference.scope), title: draft.title)
         } catch {
-            states[documentID] = .failed("Couldn't save changes. Please try again.")
+            markFailed(documentID, reason: "Retry capture refused: \(safeErrorSummary(error))")
         }
     }
 
@@ -3991,6 +4010,7 @@ final class DocumentSaveCoordinator {
         inFlightContent[documentID] = save
         states[documentID] = .saving
         failureDetails[documentID] = nil
+        failureReasons[documentID] = nil
         let diagnosticsMarker = diagnostics?.marker()
         let taskToken = backgroundTasks.begin("SchriftDocumentSave")
         // The draft's baseline is the server copy this edit descends from (the draft is
@@ -4112,6 +4132,7 @@ final class DocumentSaveCoordinator {
         }
         if error == nil {
             states[documentID] = .saved(Date())
+            failureReasons[documentID] = nil
             // **Both** PATCHes landed, so the server now holds this title. An editor still on
             // screen may never have seen it (a background replay can adopt a co-author's rename
             // into this save without the editor refetching), and recording it is what stops that
@@ -4151,7 +4172,7 @@ final class DocumentSaveCoordinator {
             // hook already raised the re-login sheet — so it lands in `.failed`.
             states[documentID] = .pendingSync
         } else {
-            states[documentID] = .failed("Couldn't save changes. Please try again.")
+            markFailed(documentID, reason: "Save failed: \(error.map(safeErrorSummary) ?? "unknown error")")
             failureDetails[documentID] = diagnosticsMarker.flatMap { marker in
                 diagnostics?.failure(after: marker, newest: true) {
                     saveFailureIsRelevant($0, documentID: documentID, error: error)

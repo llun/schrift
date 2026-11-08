@@ -419,10 +419,10 @@ final class EditorViewModel {
         }
     }
 
-    /// Which request the failed save died on and what the server said, for the "Couldn't save"
-    /// alert; nil when the failure had no HTTP response or the save is not failed.
+    /// Why the save failed (the local reason, then the rejecting request and what the server said),
+    /// for the "Couldn't save" alert; nil when the save is not failed.
     var saveFailureDetail: String? {
-        saveCoordinator.failureDetail(for: documentID)?.saveFailureDetail
+        saveCoordinator.failureReport(for: documentID)
     }
 
     /// The detected sync conflict for this document, if any. The reading surface

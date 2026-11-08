@@ -930,6 +930,18 @@ new code reads like the surrounding code.
   because the other request's failure can be recorded first.
   `HomeViewModel.errorDetail` surfaces it under the error message; RootView wires
   the one shared client and the one log together.
+  A failed save explains itself even when no response exists to quote:
+  `DocumentSaveCoordinator` enters `.failed` only through `markFailed(_:reason:)`, which
+  records a reason built by `safeErrorSummary` (error type and case, never the payload —
+  for a `DecodingError` the kind and coding path, ids elided, never its `debugDescription`,
+  which embeds the server's values) or a fixed phrase naming the refused guard
+  (`ReplicaSaveError.otherServerOrAccount`, `.quarantinedDrafts`, `.pendingCreate`, …).
+  `failureReport(for:)` joins that reason with the save's own `RequestFailure` detail
+  (`EditorViewModel.saveFailureDetail`), so `SaveStatusIndicator` (classic and native)
+  shows the "Couldn't save" alert, with Retry and Cancel, for every `.failed` state. The
+  reason is cleared when the next save starts or lands. Never put a raw `\(error)` or a
+  `.network` payload (it can hold a URL) into a reason; `DocsAPIError.decoding`'s payload is
+  already a `safeErrorSummary`.
 - A real 401 additionally fires the client's injected `onSessionExpired` hook
   **before** `.sessionExpired` is thrown (wired to
   `SessionStore.noteSessionExpired()` by the one shared client built in

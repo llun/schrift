@@ -2,6 +2,10 @@ import Foundation
 
 enum ReplicaSaveError: Error, Equatable {
     case incompatibleDraft, staleReference, invalidScope
+    /// `DocumentSaveCoordinator.enqueueReplica`'s own refusals, named so the save-failure alert says
+    /// which guard held: another server or account, an unreadable (quarantined) draft store, or a
+    /// document still waiting to be created.
+    case otherServerOrAccount, quarantinedDrafts, pendingCreate
     /// The raw revision has no total Markdown shadow yet (opaque/rich blocks).
     case unprojectableShadow
 }
