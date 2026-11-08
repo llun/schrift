@@ -88,23 +88,12 @@ final class ReplicaStore {
     func repairOwnership(draftScopes: [ReplicaScope] = []) -> Bool {
         guard let ownershipStore else { return false }
         var candidates = draftScopes.map { (scope: $0, hasOutbox: false) }
-        let entries = (try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-        for entry in entries where entry.pathExtension != "removed" {
-            let file = entry.appendingPathComponent("manifest.json")
-            let blocked = entry.appendingPathComponent("Recovery/blocked")
-            guard fileManager.fileExists(atPath: file.path) || fileManager.fileExists(atPath: blocked.path) else {
-                continue
+        for entry in replicaFolders() {
+            switch read(folder: entry) {
+            case .uncommitted: continue
+            case .unreadable: return false
+            case .manifest(let manifest): candidates.append((manifest.scope, !manifest.outbox.isEmpty))
             }
-            guard !fileManager.fileExists(atPath: blocked.path),
-                let bytes = try? Data(contentsOf: file),
-                let envelope = try? JSONDecoder().decode(Envelope.self, from: bytes),
-                replicaDigest(envelope.manifest) == envelope.digest,
-                let manifest = try? JSONDecoder().decode(ReplicaManifest.self, from: envelope.manifest),
-                manifest.formatVersion == ReplicaManifest.currentFormat, isValid(manifest),
-                // A folder claims only the scope its name was derived from.
-                (try? folder(for: manifest.scope).lastPathComponent) == entry.lastPathComponent
-            else { return false }
-            candidates.append((manifest.scope, !manifest.outbox.isEmpty))
         }
         var scopes: [ReplicaScope] = []
         let byDocument = Dictionary(grouping: candidates) { "\($0.scope.serverOrigin)|\($0.scope.documentID)" }
@@ -123,6 +112,66 @@ final class ReplicaStore {
             }
         }
         return ownershipStore.repair(from: scopes)
+    }
+
+    /// Folders that block `repairOwnership`: quarantined, damaged or in a newer format.
+    var hasUnreadableFolders: Bool {
+        replicaFolders().contains { if case .unreadable = read(folder: $0) { true } else { false } }
+    }
+
+    /// The Profile recovery's way out of a folder no repair can read. Each one is
+    /// moved, bytes intact, into `ReplicaDraftsSetAside` beside this store, which
+    /// nothing reads as a replica; its document then follows its draft (read-only)
+    /// or, with none, the server. Returns false if any move failed.
+    @discardableResult
+    func setAsideUnreadableFolders() -> Bool {
+        let unreadable = replicaFolders().filter { if case .unreadable = read(folder: $0) { true } else { false } }
+        guard !unreadable.isEmpty else { return true }
+        let setAside = directory.deletingLastPathComponent()
+            .appendingPathComponent("ReplicaDraftsSetAside", isDirectory: true)
+        do {
+            try ensureDirectory(setAside)
+            for folder in unreadable {
+                try renameFile(
+                    folder, to: setAside.appendingPathComponent("\(folder.lastPathComponent).\(UUID().uuidString)"))
+            }
+            try syncDirectory(setAside)
+            try syncDirectory(directory)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private enum FolderRead {
+        /// No manifest and no quarantine: a crash inside `create`, which claims nothing.
+        case uncommitted
+        case unreadable
+        case manifest(ReplicaManifest)
+    }
+
+    private func replicaFolders() -> [URL] {
+        let entries = (try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        return entries.filter { $0.pathExtension != "removed" }
+    }
+
+    /// Reads without quarantining: repair and set-aside must not change a folder.
+    private func read(folder entry: URL) -> FolderRead {
+        let file = entry.appendingPathComponent("manifest.json")
+        let blocked = entry.appendingPathComponent("Recovery/blocked")
+        guard fileManager.fileExists(atPath: file.path) || fileManager.fileExists(atPath: blocked.path) else {
+            return .uncommitted
+        }
+        guard !fileManager.fileExists(atPath: blocked.path),
+            let bytes = try? Data(contentsOf: file),
+            let envelope = try? JSONDecoder().decode(Envelope.self, from: bytes),
+            replicaDigest(envelope.manifest) == envelope.digest,
+            let manifest = try? JSONDecoder().decode(ReplicaManifest.self, from: envelope.manifest),
+            manifest.formatVersion == ReplicaManifest.currentFormat, isValid(manifest),
+            // A folder claims only the scope its name was derived from.
+            (try? folder(for: manifest.scope).lastPathComponent) == entry.lastPathComponent
+        else { return .unreadable }
+        return .manifest(manifest)
     }
 
     /// Clear this scope's marker when it has no replica: a crash between

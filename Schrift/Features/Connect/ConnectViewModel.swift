@@ -57,8 +57,8 @@ final class ConnectViewModel {
 
         let client = apiClientFactory(serverURL)
         do {
-            let me = try await client.currentUser()
-            try sessionStore.signIn(serverURL: serverURL, userID: me.id)
+            let userID = try await client.confirmSession()
+            try sessionStore.signIn(serverURL: serverURL, userID: userID)
             recentServers.addServer(serverURL)
         } catch {
             errorKey = .connect_error_sign_in_failed

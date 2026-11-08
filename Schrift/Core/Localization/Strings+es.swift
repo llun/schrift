@@ -412,6 +412,9 @@ enum Strings_es {
             "Algunos borradores guardados no se pudieron leer. Intenta recuperarlos; no se elimina nada si la recuperación falla.",
         .profile_recover_drafts_title: "Recuperar borradores",
         .profile_recover_drafts_success: "Borradores recuperados.",
+        .profile_recover_drafts_set_aside: "Apartar copias ilegibles",
+        .profile_recover_drafts_set_aside_message:
+            "Algunas copias de documentos en este dispositivo no se pueden leer, así que aquí no se puede editar ningún documento. Al apartarlas, esas copias se mueven a una carpeta separada en este dispositivo. Sus archivos se conservan, pero ya no se abren, y los cambios que nunca se sincronizaron no se enviarán. Después, los demás documentos se podrán volver a editar.",
         .profile_recover_drafts_failure:
             "No se pudieron recuperar los borradores. Siguen guardados en este dispositivo.",
     ]

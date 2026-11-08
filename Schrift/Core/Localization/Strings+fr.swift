@@ -408,6 +408,9 @@ enum Strings_fr {
             "Certains brouillons enregistrés n'ont pas pu être lus. Essayez de les récupérer ; rien n'est supprimé en cas d'échec.",
         .profile_recover_drafts_title: "Récupérer les brouillons",
         .profile_recover_drafts_success: "Brouillons récupérés.",
+        .profile_recover_drafts_set_aside: "Mettre de côté les copies illisibles",
+        .profile_recover_drafts_set_aside_message:
+            "Certaines copies de documents sur cet appareil sont illisibles, donc aucun document ne peut être modifié ici. Les mettre de côté déplace ces copies dans un dossier distinct sur cet appareil. Leurs fichiers sont conservés mais ne sont plus ouverts, et les modifications jamais synchronisées qu'elles contiennent ne seront pas envoyées. Les autres documents pourront ensuite être modifiés à nouveau.",
         .profile_recover_drafts_failure:
             "Impossible de récupérer les brouillons. Ils restent enregistrés sur cet appareil.",
     ]

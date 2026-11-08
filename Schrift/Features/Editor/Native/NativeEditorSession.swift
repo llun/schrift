@@ -457,7 +457,7 @@ final class NativeEditorOpen {
                 // refuses another account's scope. An unknown account (a login
                 // handing over its cookies) is not a refusal: the journal is
                 // durable and the reopen under the known owner hands it over.
-                guard signedInUser.userID != nil else { return }
+                guard signedInUser.userID != nil else { return false }
                 let cached = contentCache.content(for: documentID)
                 try coordinator.enqueueReplica(
                     adapter: adapter, title: cached?.title ?? listTitle,
@@ -465,6 +465,7 @@ final class NativeEditorOpen {
                         ?? cached.map {
                             DraftBaseline(serverUpdatedAt: $0.serverUpdatedAt, markdown: $0.markdown, title: $0.title)
                         })
+                return true
             },
             onFailure: { [weak session] in
                 session?.freezeAuthoring()

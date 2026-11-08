@@ -64,4 +64,22 @@ extension DocsAPIClient {
     func currentUser() async throws -> CurrentUser {
         try await get("users/me/")
     }
+
+    /// The login flows' confirming `GET users/me/`. Any JSON object confirms the session, as it
+    /// always has; an `id` that is missing or not a UUID only leaves the identity unknown (nil),
+    /// which Home re-asks for later. Transport and non-2xx failures still throw.
+    func confirmSession() async throws -> UUID? {
+        try await (get("users/me/") as SessionConfirmation).id
+    }
+}
+
+private struct SessionConfirmation: Decodable {
+    let id: UUID?
+
+    private enum CodingKeys: String, CodingKey { case id }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? container.decodeIfPresent(UUID.self, forKey: .id)) ?? nil
+    }
 }

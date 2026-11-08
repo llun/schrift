@@ -177,12 +177,16 @@ struct ProfileScreen: View {
                 get: { recoverySucceeded != nil },
                 set: { if !$0 { recoverySucceeded = nil } })
         ) {
+            if offersSetAside {
+                Button(loc[.profile_recover_drafts_set_aside], action: setAsideUnreadableReplicas)
+            }
             Button(loc[.common_close]) { recoverySucceeded = nil }
         } message: {
             Text(
                 loc[
                     recoverySucceeded == true
-                        ? .profile_recover_drafts_success : .profile_recover_drafts_failure])
+                        ? .profile_recover_drafts_success
+                        : offersSetAside ? .profile_recover_drafts_set_aside_message : .profile_recover_drafts_failure])
         }
     }
 
@@ -201,6 +205,20 @@ struct ProfileScreen: View {
         let succeeded = draftsRecovered && ownershipRepaired
         holdsUnreadableDrafts = needsRecovery
         recoverySucceeded = succeeded
+    }
+
+    /// The repair failed because a replica folder cannot be read; setting the
+    /// unreadable folders aside (bytes kept) is the only way past it.
+    private var offersSetAside: Bool {
+        recoverySucceeded == false && saveCoordinator?.hasUnreadableReplicaFolders == true
+    }
+
+    private func setAsideUnreadableReplicas() {
+        guard let saveCoordinator else { return }
+        let succeeded = saveCoordinator.setAsideUnreadableReplicasAndRepair()
+        holdsUnreadableDrafts = needsRecovery
+        // After the alert's own dismissal, which clears the result.
+        Task { recoverySucceeded = succeeded }
     }
 
     // MARK: - 2) Preferences

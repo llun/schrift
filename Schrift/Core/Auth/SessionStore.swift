@@ -75,7 +75,7 @@ final class SessionStore {
     /// account row: `ProfileViewModel` is `@State` in `MainTabView`, which is **not** rebuilt
     /// across a re-login (the sheet is presented over it), so its in-memory user outlives the
     /// account it belongs to and needs a reason to be re-read. `ProfileScreen` keys its `.task`
-    /// on this. Deliberately not bumped by an expiry or a cancel — that is a failure of a
+    /// on this. Also bumped by `signOut`. Deliberately not bumped by an expiry or a cancel — that is a failure of a
     /// session, not a change of one, and the dismissed-sheet contract is that cached data
     /// keeps showing. Never persisted: what matters is only that it *changes* within a
     /// process, and a fresh launch rebuilds every screen anyway.
@@ -231,6 +231,9 @@ final class SessionStore {
         // Belt-and-braces beside `RootView`'s own clear: a second sign-out path added later
         // should not have to remember this one.
         forgetSignedInIdentity()
+        // A session change like any other: a native editor still mounted closes and reopens
+        // (read-only, no account) instead of typing on under a forgotten identity.
+        signInGeneration += 1
         try keychain.delete(forKey: Self.authenticatedKeychainKey)
         try? keychain.delete(forKey: Self.sessionCookiesKeychainKey)
         deleteServerCookies()

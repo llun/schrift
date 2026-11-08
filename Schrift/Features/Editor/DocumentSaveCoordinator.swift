@@ -597,6 +597,18 @@ final class DocumentSaveCoordinator {
         return replicaStore.repairOwnership(draftScopes: draftStore.allDrafts().compactMap { $0.replica?.scope })
     }
 
+    /// A replica folder the repair cannot read (quarantined, damaged, newer format)
+    /// keeps every document read-only; Profile then offers to set them aside.
+    var hasUnreadableReplicaFolders: Bool { replicaStore.hasUnreadableFolders }
+
+    /// Move the unreadable folders out of use, keeping their bytes on the device,
+    /// then repair. A drafted document stays read-only through its draft.
+    @discardableResult
+    func setAsideUnreadableReplicasAndRepair() -> Bool {
+        guard replicaStore.setAsideUnreadableFolders() else { return false }
+        return repairReplicaOwnership()
+    }
+
     /// Clear a marker left by a crash between marking and writing the manifest,
     /// only while nothing unsynced exists anywhere: no replica manifest or
     /// quarantine, no draft, no queued or in-flight save, and a readable draft

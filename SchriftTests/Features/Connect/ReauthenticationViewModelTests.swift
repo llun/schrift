@@ -137,4 +137,16 @@ final class ReauthenticationViewModelTests: XCTestCase {
         XCTAssertGreaterThan(viewModel.sessionStore.signInGeneration, generation)
         XCTAssertEqual(signedIn.userID, account)
     }
+
+    func testAnUnparseableIdentitySignsInWithTheIdentityUnknown() async throws {
+        let viewModel = try makeViewModel { _ in
+            .init(statusCode: 200, headers: [:], body: Data(#"{"id":42}"#.utf8), error: nil)
+        }
+
+        await viewModel.handleLoginComplete()
+
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertFalse(viewModel.sessionStore.needsReauthentication)
+        XCTAssertNil(SignedInUserStore(userDefaults: userDefaults).userID)
+    }
 }

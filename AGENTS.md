@@ -2151,12 +2151,16 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   marker data from the scoped manifests and native drafts' scopes (folders without a
   manifest or quarantine are skipped; a quarantined, damaged or newer-format folder, an
   unreadable draft store, or two scopes for one document with no draft or single
-  outbox to choose by writes nothing; a readable owner is never replaced). A native
+  outbox to choose by writes nothing; a readable owner is never replaced; the failure
+  alert then offers `setAsideUnreadableReplicasAndRepair`, which moves unreadable folders,
+  bytes intact, to `ReplicaDraftsSetAside` and repairs again). A native
   draft owns its document without a marker entry; seeding never falls back to classic
   over replica data already on disk; classic `restoreLocalContent` never shows a
   native draft or save. Both login flows pass the confirmed id to
   `signIn(serverURL:userID:)` (remembered before the generation moves); a flush while
-  the account is unknown leaves the outbox for the reopen instead of failing.
+  the account is unknown keeps the save pending ("Saved on this device") instead of
+  failing; `signOut` bumps `signInGeneration` too; the confirmation (`confirmSession`)
+  treats an unparseable id as unknown, never as a failed sign-in.
   `SignedInUserStore.epoch` moves at every clear, and the Home/Profile `/users/me/`
   writers drop answers whose epoch moved. Close cancels `NativeEditorOpen.reopen`/
   `refreshInBackground`; the native cache refresh checks currency and discard. No native live socket; a native session never takes the

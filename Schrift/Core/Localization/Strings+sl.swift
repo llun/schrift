@@ -419,6 +419,9 @@ enum Strings_sl {
             "Nekaterih shranjenih osnutkov ni bilo mogoče prebrati. Poskusite jih obnoviti; če obnovitev ne uspe, se nič ne izbriše.",
         .profile_recover_drafts_title: "Obnovi osnutke",
         .profile_recover_drafts_success: "Osnutki so obnovljeni.",
+        .profile_recover_drafts_set_aside: "Odloži neberljive kopije",
+        .profile_recover_drafts_set_aside_message:
+            "Nekaterih kopij dokumentov v tej napravi ni mogoče prebrati, zato tukaj ni mogoče urejati nobenega dokumenta. Z odložitvijo se te kopije premaknejo v ločeno mapo v tej napravi. Njihove datoteke se ohranijo, vendar se ne odpirajo več, spremembe v njih, ki niso bile nikoli sinhronizirane, pa ne bodo poslane. Druge dokumente boste nato lahko spet urejali.",
         .profile_recover_drafts_failure: "Osnutkov ni bilo mogoče obnoviti. Še vedno so shranjeni v tej napravi.",
     ]
 }

@@ -16,7 +16,9 @@ final class NativeReplicaSaveScheduler {
     static let maxDeferral: TimeInterval = 30
 
     private let interval: Duration
-    private let enqueue: () throws -> Void
+    /// Returns false when nobody could take the save (the account is unknown):
+    /// the edits stay pending on this device.
+    private let enqueue: () throws -> Bool
     private let onFailure: () -> Void
     private var task: Task<Void, Never>?
     private var dirtySince: Date?
@@ -27,7 +29,7 @@ final class NativeReplicaSaveScheduler {
 
     init(
         interval: Duration = .seconds(10),
-        enqueue: @escaping () throws -> Void,
+        enqueue: @escaping () throws -> Bool,
         onFailure: @escaping () -> Void
     ) {
         self.interval = interval
@@ -63,7 +65,7 @@ final class NativeReplicaSaveScheduler {
         guard hasPendingSave, !isFrozen else { return }
         hasPendingSave = false
         do {
-            try enqueue()
+            if try !enqueue() { hasPendingSave = true }
         } catch {
             isFrozen = true
             onFailure()

@@ -163,7 +163,11 @@ reaches native opens PR01's in-memory read-only view and never gains a marker.
   a newer format cannot name its document, so the repair writes nothing and every
   document stays read-only. Two scopes for one document resolve to the drafted one,
   then the only one with unsent edits; anything still ambiguous also writes nothing.
-  A readable owner is never replaced.
+  A readable owner is never replaced. When the repair fails over an unreadable folder,
+  the alert offers "Set aside unreadable copies": each such folder moves, bytes intact,
+  to `ReplicaDraftsSetAside` beside the store (never read as a replica), then the repair
+  runs again. A document whose folder was set aside follows its native draft
+  (read-only) or, with none, the server; its unsynced bytes are kept but never sent.
 - **A native draft owns its document** even when the marker does not name it:
   `nativeOwnership` answers its scope (another server's origin answers unreadable).
   Seeding never falls back to classic when replica data for the scope is already on
@@ -190,9 +194,13 @@ change of `SessionStore.signInGeneration` closes (flushing under the account che
 account's replica is preserved-unavailable. The confirming `/users/me/` of both login
 flows passes its id to `signIn(serverURL:userID:)`, which remembers it before the
 generation moves, so the reopen at that bump already knows the owner; the same account
-re-authenticating types again. A close-time flush while the account is unknown (the
-cookie-handover bump) neither fails nor freezes: the journal is durable and the reopen
-under the known owner hands the outbox over. `SignedInUserStore.epoch` moves at every
+re-authenticating types again. A flush while the account is unknown (the cookie-handover
+bump, or a sign-out the view has not reacted to) neither fails nor freezes and leaves
+the save pending, so the status stays "Saved on this device"; the reopen or a status
+tap under the known owner hands the outbox over. `signOut` bumps `signInGeneration` too,
+so a mounted native editor closes. The login flows' confirmation (`confirmSession`)
+accepts any JSON object as before: an id that is not a UUID signs in with the identity
+unknown. `SignedInUserStore.epoch` moves at every
 clear; Home's and Profile's `/users/me/` writers drop an answer whose epoch moved during
 the request. `EditorView`'s reopen and reconnect tasks belong to `NativeEditorOpen`
 (`reopen`, `refreshInBackground`), and close cancels them. The native cache refresh

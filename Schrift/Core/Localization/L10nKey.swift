@@ -445,6 +445,8 @@ enum L10nKey: String, CaseIterable, Sendable {
     case profile_recover_drafts_title = "profile.recover_drafts_title"
     case profile_recover_drafts_success = "profile.recover_drafts_success"
     case profile_recover_drafts_failure = "profile.recover_drafts_failure"
+    case profile_recover_drafts_set_aside = "profile.recover_drafts_set_aside"
+    case profile_recover_drafts_set_aside_message = "profile.recover_drafts_set_aside_message"
     case attachments_empty_title = "attachments.empty_title"  // "No attachments"
     case attachments_empty_body = "attachments.empty_body"  // "Files attached to documents you've opened…"
     case profile_version = "profile.version"  // "Version"

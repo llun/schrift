@@ -117,4 +117,20 @@ final class ConnectViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isPresentingWebLogin)
         XCTAssertEqual(viewModel.pendingServerURL, url)
     }
+
+    /// An identity the client cannot parse is "signed in, identity unknown", never a blocked
+    /// sign-in: the old confirmation accepted any JSON object, and Home learns the id later.
+    func testAnUnparseableIdentitySignsInWithTheIdentityUnknown() async throws {
+        let viewModel = makeViewModel { _ in
+            .init(statusCode: 200, headers: [:], body: Data(#"{"id":"not-a-uuid"}"#.utf8), error: nil)
+        }
+        viewModel.serverURLInput = "docs.llun.dev"
+        viewModel.startSignIn()
+
+        await viewModel.handleLoginComplete()
+
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertTrue(viewModel.sessionStore.isAuthenticated)
+        XCTAssertNil(SignedInUserStore(userDefaults: userDefaults).userID)
+    }
 }

@@ -310,6 +310,26 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         XCTAssertNotNil(env.model.saveCoordinator.pendingSave(documentID: env.model.documentID))
     }
 
+    func testAFlushWithTheAccountUnknownStaysSavedOnThisDevice() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        ServerStub(owner: owner, state: seedState()).install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected a typeable session") }
+        XCTAssertTrue(try XCTUnwrap(session.input).replace(range: NSRange(location: 0, length: 0), with: "x"))
+        let identity = SignedInUserStore(userDefaults: env.defaults)
+        identity.clear()  // a sign-out or cookie handover the view has not reacted to yet
+        open.flushPendingSave()
+        XCTAssertTrue(session.hasPendingSave, "nothing was handed over: still \"Saved on this device\"")
+        XCTAssertNil(env.model.saveCoordinator.pendingSave(documentID: env.model.documentID))
+        identity.remember(owner)
+        open.saveNow(viewModel: env.model)  // the status tap hands it over once the account is known
+        XCTAssertFalse(session.hasPendingSave)
+        XCTAssertNotNil(env.model.saveCoordinator.storedDraft(documentID: env.model.documentID)?.replica)
+    }
+
     func testAClosedOpenNeverRecachesTheServerCopy() async throws {
         let env = makeEnvironment()
         defer { env.clean() }
@@ -489,6 +509,49 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         env.defaults.set(Data([0xff]), forKey: "dev.llun.Schrift.replicaOwnership")
         XCTAssertFalse(env.model.saveCoordinator.repairReplicaOwnership())
         XCTAssertEqual(env.model.saveCoordinator.nativeOwnership(documentID: mine.documentID), .unreadable)
+    }
+
+    func testSettingAsideAnUnreadableFolderKeepsItsBytesAndRepairs() throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let scope = try seedReplica(env, typed: "x")
+        let folder = try manifestURL(env, scope).deletingLastPathComponent()
+        try Data("damaged".utf8).write(to: folder.appendingPathComponent("manifest.json"))
+        XCTAssertThrowsError(try env.replicaStore.restore(for: scope))  // quarantined
+        env.defaults.set(Data([0xff]), forKey: "dev.llun.Schrift.replicaOwnership")
+        let coordinator = env.model.saveCoordinator
+        XCTAssertFalse(coordinator.repairReplicaOwnership())
+        XCTAssertTrue(coordinator.hasUnreadableReplicaFolders)
+        let files = try FileManager.default.subpathsOfDirectory(atPath: folder.path).sorted()
+
+        XCTAssertTrue(coordinator.setAsideUnreadableReplicasAndRepair())
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path), "never read as a replica again")
+        let setAside = env.directory.appendingPathComponent("ReplicaDraftsSetAside")
+        let moved = try XCTUnwrap(try FileManager.default.contentsOfDirectory(atPath: setAside.path).first)
+        XCTAssertEqual(
+            try FileManager.default.subpathsOfDirectory(atPath: setAside.appendingPathComponent(moved).path).sorted(),
+            files, "every byte is kept")
+        XCTAssertFalse(coordinator.needsOwnershipRepair)
+        XCTAssertFalse(coordinator.hasUnreadableReplicaFolders)
+        XCTAssertEqual(coordinator.nativeOwnership(documentID: UUID()), .none, "other documents are editable again")
+    }
+
+    func testASetAsideDocumentWithADraftStaysReadOnly() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let scope = try seedReplica(env, typed: "x")
+        let coordinator = env.model.saveCoordinator
+        try coordinator.enqueueReplica(adapter: ReplicaSaveAdapter(store: env.replicaStore, scope: scope), title: "T")
+        try Data("damaged".utf8).write(to: try manifestURL(env, scope))
+        XCTAssertThrowsError(try env.replicaStore.restore(for: scope))
+        env.defaults.set(Data([0xff]), forKey: "dev.llun.Schrift.replicaOwnership")
+        XCTAssertTrue(coordinator.setAsideUnreadableReplicasAndRepair())
+        XCTAssertEqual(coordinator.nativeOwnership(documentID: scope.documentID), .owned(scope))
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: true, canUpdate: true)
+        guard case .preservedUnavailable = open.route else { return XCTFail("its draft keeps it read-only") }
     }
 
     // MARK: - Fixture

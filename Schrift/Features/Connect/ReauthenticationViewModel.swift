@@ -46,8 +46,8 @@ final class ReauthenticationViewModel {
 
         let client = apiClientFactory(serverURL)
         do {
-            let me = try await client.currentUser()
-            try sessionStore.signIn(serverURL: serverURL, userID: me.id)
+            let userID = try await client.confirmSession()
+            try sessionStore.signIn(serverURL: serverURL, userID: userID)
         } catch {
             errorKey = .reauth_error_sign_in_failed
         }

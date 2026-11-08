@@ -410,6 +410,9 @@ enum Strings_de {
             "Einige gespeicherte Entwürfe konnten nicht gelesen werden. Versuche, sie wiederherzustellen; bei einem Fehlschlag wird nichts gelöscht.",
         .profile_recover_drafts_title: "Entwürfe wiederherstellen",
         .profile_recover_drafts_success: "Entwürfe wiederhergestellt.",
+        .profile_recover_drafts_set_aside: "Unlesbare Kopien beiseitelegen",
+        .profile_recover_drafts_set_aside_message:
+            "Einige Kopien von Dokumenten auf diesem Gerät können nicht gelesen werden, daher lässt sich hier kein Dokument bearbeiten. Beim Beiseitelegen werden diese Kopien in einen separaten Ordner auf diesem Gerät verschoben. Ihre Dateien bleiben erhalten, werden aber nicht mehr geöffnet, und nie synchronisierte Änderungen darin werden nicht gesendet. Andere Dokumente lassen sich danach wieder bearbeiten.",
         .profile_recover_drafts_failure:
             "Die Entwürfe konnten nicht wiederhergestellt werden. Sie bleiben auf diesem Gerät gespeichert.",
     ]

@@ -710,7 +710,9 @@ fetched state again. The sign-in guard reuses `SessionStore.signInGeneration`
 the remembered signed-in user, rechecked after every await; `enqueueReplica` and
 the sender already refuse another account. Both login flows hand the confirmed id to
 `signIn`, which remembers it before the generation moves, and a flush while the
-account is unknown leaves the durable outbox for the reopen. `/users/me/` writers
+account is unknown keeps the save pending ("Saved on this device") for the reopen.
+Sign-out bumps the generation too. An unparseable confirmation id signs in with the
+identity unknown. `/users/me/` writers
 drop answers from before the session changed hands (`SignedInUserStore.epoch`), and
 close cancels the reopen and reconnect tasks. A marker without a replica is cleared,
 with the switch on, only when no manifest, quarantine, draft or queued save exists,
@@ -718,7 +720,9 @@ and the unowned route then re-seeds it. Profile's recovery row also rebuilds
 corrupt or lost marker data from the scoped manifests on disk and native drafts
 (`DocumentSaveCoordinator.repairReplicaOwnership`); it writes nothing while a folder
 cannot be read or two scopes claim a document with no draft or single outbox to
-choose by. A native draft owns its document even without a marker entry. No native live socket exists,
+choose by; the alert can then set the unreadable folders aside (bytes kept in
+`ReplicaDraftsSetAside`, never read) and repair again. A native draft owns its document
+even without a marker entry. No native live socket exists,
 and a native session never takes the live write path. The isolated host's
 `--native-open` fixture runs the real `EditorView` route offline over an owned
 replica; its UI test types, relaunches and finds the text restored.
