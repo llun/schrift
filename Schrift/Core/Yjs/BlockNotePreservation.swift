@@ -122,17 +122,28 @@ enum BlockNotePreservation {
             return rule(for: block, container: container)
         }
         // Skipping inline math can make blocks that differ only in their formulas (or a formula
-        // and none) read alike, and a math block could then be kept in its look-alike's place.
-        // So a math block whose math-free words another top-level block shares gets no rule: it
-        // projects opaque and illegible (math is never inline text), so the plain alignment
-        // cannot anchor it either, and it is rebuilt from the markdown, losing its formula.
-        let walks = containers.map { $0.flatMap(walk(of:)) }
+        // and none) read alike, and a single-block shadow could then go to the wrong one. So a
+        // math block the editor models (a paragraph, heading, quote or childless list item, whose
+        // shadow is one block) gets no rule when another top-level block shares its math-free
+        // words: it projects opaque and illegible (math is never inline text), so the plain
+        // alignment cannot anchor it either, and it is rebuilt from the markdown, losing its
+        // formula. Invisible blocks are never a shadow, so they neither collide nor lose their rule;
+        // a list tree is already tied to its base block, and a multi-block shadow (a table) is kept.
+        let walks = containers.indices.map { index -> (tokens: [String], hasMath: Bool)? in
+            guard index < rules.count, let container = containers[index] else { return nil }
+            if case .invisible? = rules[index] { return nil }
+            return walk(of: container)
+        }
         var counts: [[String]: Int] = [:]
         for walk in walks { if let walk { counts[walk.tokens, default: 0] += 1 } }
         return rules.enumerated().map { index, rule in
-            guard index < walks.count, let walk = walks[index], walk.hasMath, counts[walk.tokens, default: 0] > 1
+            guard case .text? = rule, index < walks.count, let walk = walks[index], walk.hasMath,
+                counts[walk.tokens, default: 0] > 1, let container = containers[index]
             else { return rule }
-            if case .invisible? = rule { return rule }  // never a shadow, so it cannot take a slot
+            let children = liveChildren(of: container)
+            guard children.count == 1, case .type(let element)? = children.first?.content,
+                case .xmlElement(let node)? = element.typeRef, modeledNodes.contains(node)
+            else { return rule }
             return nil
         }
     }

@@ -532,6 +532,78 @@ final class BlockNotePreservationTests: XCTestCase {
         XCTAssertFalse(try fragment(state, after: update).contains("y^2"))
     }
 
+    /// A table holding math whose words a paragraph shares is a multi-block shadow, which cannot
+    /// swap with a paragraph's: it is kept, not flattened into pipe-text paragraphs.
+    func testATableWithMathWhoseWordsAParagraphSharesIsKept() throws {
+        func cell(_ inline: [Node]) -> Node { .element("tableCell", [], [.element("tableParagraph", [], inline)]) }
+        let table = Node.element(
+            "table", [],
+            [
+                .element("tableRow", [], [cell([.text("Name")]), cell([.text("Value")])]),
+                .element("tableRow", [], [cell([.text("Area")]), cell([.element("math", [], [.text("x^2")])])]),
+            ])
+        let state = try servedTree([
+            container(idA, textParagraph([.text("Intro")])), container(idB, table),
+            container(idC, textParagraph([.text("Name, Value, Area.")])),
+        ])
+        let rest = "| Name | Value |\n| --- | --- |\n| Area |  |\n\nName, Value, Area."
+
+        let update = try save(state, "Intro, edited\n\n\(rest)", base: "Intro\n\n\(rest)")
+        let after = try project(state, after: update)
+
+        XCTAssertEqual(after.blocks.map(\.id), [idA, idB, idC])
+        XCTAssertEqual(after.blocks[1].node, "table")
+        XCTAssertTrue(try fragment(state, after: update).contains("<math>x^2</math>"))
+    }
+
+    /// A bullet holding math, with a nested child, whose words a paragraph shares: a list tree is
+    /// tied to its base block, so it keeps its child and formula. (Two *identical* such bullets
+    /// are never placed by words alone, and are rebuilt whatever the math.)
+    func testABulletWithMathAndAChildWhoseWordsAParagraphSharesKeepsThem() throws {
+        let bullet = Node.element(
+            "blockContainer", [("id", .string(idB))],
+            [
+                .element(
+                    "bulletListItem", baseProps,
+                    [.text("Area: "), .element("math", [], [.text("x^2")]), .text(" of it.")]),
+                .element("blockGroup", [], [container(idD, .element("bulletListItem", baseProps, [.text("Child")]))]),
+            ])
+        let state = try servedTree([
+            container(idA, textParagraph([.text("Intro")])), bullet,
+            container(idC, textParagraph([.text("Area of it Child")])),
+        ])
+        let rest = "- Area:  of it.\n  - Child\n\nArea of it Child"
+
+        let update = try save(state, "Intro, edited\n\n\(rest)", base: "Intro\n\n\(rest)")
+        let after = try project(state, after: update)
+
+        XCTAssertEqual(after.blocks.map(\.id), [idA, idB, idC])
+        let xml = try fragment(state, after: update)
+        XCTAssertTrue(xml.contains("<math>x^2</math>"))
+        XCTAssertTrue(xml.contains(idD), "the nested child keeps its container")
+    }
+
+    /// Columns the export never spells are no look-alike, so they cannot cost a unique math
+    /// paragraph its formula.
+    func testColumnsWithTheSameWordsDoNotCostAMathParagraphItsFormula() throws {
+        let columns = Node.element(
+            "columnList", [("id", .string(idB))],
+            [
+                .element(
+                    "column", [("id", .string(idD)), ("width", .int(1))],
+                    [container("left", textParagraph([.text("Area: of it.")]))])
+            ])
+        let state = try servedTree([
+            container(idA, textParagraph([.text("Intro")])), columns, mathParagraph(idC, "x^2"),
+        ])
+
+        let update = try save(state, "Intro, edited\n\nArea:  of it.", base: "Intro\n\nArea:  of it.")
+        let after = try project(state, after: update)
+
+        XCTAssertEqual(after.blocks.map(\.id), [idA, idB, idC])
+        XCTAssertTrue(try fragment(state, after: update).contains("<math>x^2</math>"))
+    }
+
     /// An underlined word mid-sentence is scrubbed into its own unmarked run; the paragraph
     /// must still read like the markdown's one run, or every save drops the underline.
     func testAnUntouchedParagraphWithAnUnderlinedWordKeepsIt() throws {
