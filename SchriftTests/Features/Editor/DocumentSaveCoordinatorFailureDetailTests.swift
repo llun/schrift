@@ -161,6 +161,111 @@ final class DocumentSaveCoordinatorFailureDetailTests: DocumentSaveCoordinatorTe
         XCTAssertEqual(coordinator.failureDetail(for: otherDocumentID)?.displayText, "HTTP 400: Second refused.")
     }
 
+    // MARK: - The reason shown even without an HTTP response
+
+    private func failedReport(_ coordinator: DocumentSaveCoordinator) -> String {
+        coordinator.failureReport(for: documentID) ?? "<nil>"
+    }
+
+    /// The owner's case: the save fails on a response that arrives but does not decode, so the log
+    /// holds no request to quote. The alert still says what failed, and where in the payload.
+    func testADecodingFailureHasAReasonButNoRequest() async {
+        let (coordinator, _) = makeLoggedCoordinator()
+        stubDocs6Fallback(
+            collaboration: .init(
+                statusCode: 200, headers: ["Content-Type": "application/json"],
+                body: Data(#"{"doc": 987654321}"#.utf8), error: nil))
+
+        coordinator.enqueue(documentID: documentID, title: "T", markdown: "# Secret body")
+        await waitUntilFailed(coordinator, [documentID])
+
+        XCTAssertNil(coordinator.failureDetail(for: documentID))
+        let report = failedReport(coordinator)
+        XCTAssertEqual(report, "Save failed: DocsAPIError.decoding: typeMismatch(String) at doc")
+        XCTAssertFalse(report.contains("Secret body"))
+        XCTAssertFalse(report.contains("987654321"), "no payload value")
+    }
+
+    func testAnHTTPFailureShowsTheReasonAndTheRequest() async {
+        let (coordinator, _) = makeLoggedCoordinator()
+        stubDocs6Fallback(collaboration: Self.json(403, "Collaboration refused."))
+
+        coordinator.enqueue(documentID: documentID, title: "T", markdown: "# Mine")
+        await waitUntilFailed(coordinator, [documentID])
+
+        let report = failedReport(coordinator)
+        XCTAssertEqual(
+            report,
+            "Save failed: DocsAPIError.forbidden\n\nGET /collaboration/ydoc/v1/docs/…\nHTTP 403: Collaboration refused."
+        )
+        XCTAssertFalse(report.lowercased().contains(documentID.uuidString.lowercased()))
+    }
+
+    /// `enqueueReplica` refuses another account's scope; the native session reports that refusal
+    /// through `noteReplicaCaptureFailure`, which has no HTTP request at all.
+    func testALocalGuardRefusalNamesTheGuard() throws {
+        let (coordinator, _, _) = makeCoordinator()
+        let scope = ReplicaScope(
+            serverOrigin: "https://docs.example.org", ownerUserID: UUID(), org: "docs", documentID: documentID)
+        let adapter = ReplicaSaveAdapter(store: coordinator.replicaStore, scope: scope)
+        XCTAssertThrowsError(try coordinator.enqueueReplica(adapter: adapter, title: "T")) { error in
+            coordinator.noteReplicaCaptureFailure(documentID: documentID, error: error)
+        }
+        XCTAssertEqual(
+            failedReport(coordinator), "Native capture refused: ReplicaSaveError.otherServerOrAccount")
+
+        coordinator.noteReplicaCaptureFailure(documentID: otherDocumentID, error: ReplicaSaveError.quarantinedDrafts)
+        XCTAssertEqual(
+            coordinator.failureReport(for: otherDocumentID),
+            "Native capture refused: ReplicaSaveError.quarantinedDrafts")
+    }
+
+    /// A failure that is not a save run (here a native capture refusal) must not quote the request
+    /// the document's previous save died on.
+    func testANewerFailureDoesNotQuoteTheOldRequest() async {
+        let (coordinator, _) = makeLoggedCoordinator()
+        MockURLProtocol.stubHandler = { _ in Self.json(403, "Refused.") }
+        coordinator.enqueue(documentID: documentID, title: "T", markdown: "# One")
+        await waitUntilFailed(coordinator, [documentID])
+        XCTAssertTrue(failedReport(coordinator).contains("HTTP 403: Refused."))
+        XCTAssertTrue(coordinator.failureOffersRetry(for: documentID), "a failed save can be retried")
+
+        coordinator.noteReplicaCaptureFailure(documentID: documentID, error: ReplicaSaveError.pendingCreate)
+        XCTAssertFalse(coordinator.failureOffersRetry(for: documentID), "saveNow is a no-op after a frozen capture")
+
+        XCTAssertEqual(failedReport(coordinator), "Native capture refused: ReplicaSaveError.pendingCreate")
+        XCTAssertNil(coordinator.failureDetail(for: documentID))
+    }
+
+    /// A save after a failure lands cleanly: the document is saved and no report is left.
+    func testASaveAfterAFailureLeavesNoReport() async {
+        let (coordinator, _) = makeLoggedCoordinator()
+        MockURLProtocol.stubHandler = { _ in Self.json(403, "Refused.") }
+        coordinator.enqueue(documentID: documentID, title: "T", markdown: "# One")
+        await waitUntilFailed(coordinator, [documentID])
+        XCTAssertNotNil(coordinator.failureReport(for: documentID))
+
+        MockURLProtocol.stubHandler = { _ in .init(statusCode: 200, headers: [:], body: Data(), error: nil) }
+        coordinator.enqueue(documentID: documentID, title: "T", markdown: "# Two")
+        await waitUntil { self.isSaved(coordinator.state(for: self.documentID)) }
+
+        XCTAssertNil(coordinator.failureReport(for: documentID))
+        XCTAssertFalse(coordinator.holdsFailureRecord(for: documentID))
+    }
+
+    /// Dropping a failed document's state (keep-server) forgets its reason and request.
+    func testResettingAFailedDocumentForgetsItsFailure() async {
+        let (coordinator, _) = makeLoggedCoordinator()
+        MockURLProtocol.stubHandler = { _ in Self.json(403, "Refused.") }
+        coordinator.enqueue(documentID: documentID, title: "T", markdown: "# One")
+        await waitUntilFailed(coordinator, [documentID])
+        XCTAssertTrue(coordinator.holdsFailureRecord(for: documentID))
+
+        coordinator.resolveConflictKeepingServer(documentID: documentID)
+
+        XCTAssertFalse(coordinator.holdsFailureRecord(for: documentID))
+    }
+
     func testDisplayPathElidesIDsAndDropsTheQuery() {
         let failure = RequestFailure(
             method: "PATCH", path: "documents/\(documentID.uuidString.lowercased())/content/?token=secret",

@@ -70,6 +70,8 @@ struct SaveStatusIndicator: View {
     /// Why the save failed (request + server message); when set, tapping `.retry` shows it
     /// in an alert whose Retry button does the retry.
     var failureDetail: String?
+    /// False hides the alert's Retry (Cancel only) where retrying would do nothing.
+    var failureOffersRetry = true
     var onTap: () -> Void
     @State private var isShowingFailureDetail = false
 
@@ -86,7 +88,7 @@ struct SaveStatusIndicator: View {
         }
         .animation(DocsMotion.saveStatusAnimation(reduceMotion: reduceMotion), value: display)
         .alert(loc[.editor_save_failed_title], isPresented: $isShowingFailureDetail) {
-            Button(loc[.common_retry], action: onTap)
+            if failureOffersRetry { Button(loc[.common_retry], action: onTap) }
             Button(loc[.common_cancel], role: .cancel) {}
         } message: {
             Text(failureDetail ?? "")

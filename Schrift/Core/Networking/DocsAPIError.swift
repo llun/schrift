@@ -11,6 +11,8 @@ enum DocsAPIError: Error, Equatable {
     case routeNotFound
     case rateLimited(retryAfter: TimeInterval?)
     case network(String)
+    /// The payload is a `safeErrorSummary` (never a raw `DecodingError` description, which embeds
+    /// the server's values); the save-failure alert quotes it.
     case decoding(String)
     case server(statusCode: Int)
 }

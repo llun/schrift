@@ -467,10 +467,9 @@ final class NativeEditorOpen {
                         })
                 return true
             },
-            onFailure: { [weak session] in
+            onFailure: { [weak session] error in
                 session?.freezeAuthoring()
-                coordinator.noteReplicaCaptureFailure(
-                    documentID: documentID, message: "Couldn't save changes. Please try again.")
+                coordinator.noteReplicaCaptureFailure(documentID: documentID, error: error)
             })
         session.enableTyping(
             persist: { command, update in

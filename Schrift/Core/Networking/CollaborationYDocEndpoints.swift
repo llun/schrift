@@ -168,7 +168,7 @@ extension DocsAPIClient {
                 baseBlocks: baseMarkdown.map { MarkdownYjs.blockNoteBlocks(from: $0, serverOrigin: origin) },
                 serverOrigin: origin)
         } catch {
-            throw DocsAPIError.decoding("collaboration document: \(error)")
+            throw DocsAPIError.decoding("collaboration document: \(safeErrorSummary(error))")
         }
         guard let update else { return }
         try await applyCollaborationYDocUpdate(documentID: documentID, org: org, update: update)

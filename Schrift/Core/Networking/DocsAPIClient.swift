@@ -125,7 +125,7 @@ actor DocsAPIClient {
         do {
             return try JSONDecoder.docsAPI.decode(T.self, from: data)
         } catch {
-            throw DocsAPIError.decoding("\(error)")
+            throw DocsAPIError.decoding(safeErrorSummary(error))
         }
     }
 

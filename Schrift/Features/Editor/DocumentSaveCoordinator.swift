@@ -128,6 +128,13 @@ final class DocumentSaveCoordinator {
     /// The non-2xx response behind a document's `.failed` state, for the save-failure alert.
     /// Method, path, status and body prefix only — `RequestFailure` carries no credential.
     private var failureDetails: [UUID: RequestFailure] = [:]
+    /// Why a document's save is `.failed` even when no HTTP response says so (a decoding failure,
+    /// a refused guard). Set by `markFailed` only, from `safeErrorSummary` or a fixed phrase:
+    /// never content, a header, a cookie or a token.
+    private var failureReasons: [UUID: String] = [:]
+    /// Failed documents whose "Retry" would do nothing (`saveNow` is a no-op for a rejected create
+    /// and for a native capture that froze authoring), so their alert offers Cancel only.
+    private var failuresWithoutRetry: Set<UUID> = []
     private var inFlight: [UUID: Task<Void, Never>] = [:]
     private var inFlightContent: [UUID: PendingSave] = [:]
     private var queued: [UUID: PendingSave] = [:]
@@ -562,6 +569,43 @@ final class DocumentSaveCoordinator {
         return failureDetails[documentID]
     }
 
+    /// Everything the "Couldn't save" alert can say about a `.failed` document: the local reason
+    /// (every `.failed` carries one), then the rejecting request when there was one. Nil when the
+    /// document is not failed.
+    func failureReport(for documentID: UUID) -> String? {
+        guard case .failed = state(for: documentID), let reason = failureReasons[documentID] else { return nil }
+        return [reason, failureDetail(for: documentID)?.saveFailureDetail].compactMap { $0 }.joined(separator: "\n\n")
+    }
+
+    /// The one way into `.failed`, so no failure lacks a reason and none keeps a stale one.
+    /// `detail` is the request behind *this* failure; callers that have none pass nil, which
+    /// also drops a previous failure's request rather than quoting it under the new reason.
+    private func markFailed(
+        _ documentID: UUID, reason: String, detail: RequestFailure? = nil, offersRetry: Bool = true
+    ) {
+        states[documentID] = .failed("Couldn't save changes. Please try again.")
+        failureReasons[documentID] = reason
+        failureDetails[documentID] = detail
+        if offersRetry { failuresWithoutRetry.remove(documentID) } else { failuresWithoutRetry.insert(documentID) }
+    }
+
+    /// Whether the failure alert should offer Retry; false where a retry would silently do nothing.
+    func failureOffersRetry(for documentID: UUID) -> Bool { !failuresWithoutRetry.contains(documentID) }
+
+    /// Whether any failure reason or request is still held for the document (tests only: it is how
+    /// a reset that forgot `clearFailure` shows, since `failureReport` hides a stale one).
+    func holdsFailureRecord(for documentID: UUID) -> Bool {
+        failureReasons[documentID] != nil || failureDetails[documentID] != nil
+            || failuresWithoutRetry.contains(documentID)
+    }
+
+    /// Forgets why a document last failed; for every place its state is reset or dropped.
+    private func clearFailure(_ documentID: UUID) {
+        failureReasons[documentID] = nil
+        failureDetails[documentID] = nil
+        failuresWithoutRetry.remove(documentID)
+    }
+
     // MARK: - Native replica ownership
 
     /// Whether the durable marker says the native replica owns this document.
@@ -631,9 +675,10 @@ final class DocumentSaveCoordinator {
     /// A native capture that could not be prepared. The journal bytes are
     /// durable, but nothing can send them until the refusal clears; report it
     /// rather than claiming a save. Authoring is frozen by the caller.
-    func noteReplicaCaptureFailure(documentID: UUID, message: String) {
+    func noteReplicaCaptureFailure(documentID: UUID, error: Error) {
         guard inFlight[documentID] == nil, queued[documentID] == nil else { return }
-        states[documentID] = .failed(message)
+        markFailed(
+            documentID, reason: "Native capture refused: \(safeErrorSummary(error))", offersRetry: false)
     }
 
     /// Retry the quarantined draft blobs. On success, rehydrate the conflict
@@ -1123,6 +1168,7 @@ final class DocumentSaveCoordinator {
         for documentID in descendants.reversed() {
             // Reversed, so a document is only ever cleaned up after everything filed inside it.
             states[documentID] = .idle
+            clearFailure(documentID)
             draftStore.remove(documentID: documentID)
             // The draft that referenced them is going, so nothing would ever collect these.
             discardPendingAttachments(documentID: documentID)
@@ -2022,6 +2068,7 @@ final class DocumentSaveCoordinator {
         // chain would find it in the draft either way.) Leaving it behind would strand it under an id
         // nothing will ever push.
         states[localID] = nil
+        clearFailure(localID)
         queued[localID] = nil
         settledSaves[localID] = nil
         lastConfirmedPushMarkdown[localID] = nil
@@ -2204,6 +2251,7 @@ final class DocumentSaveCoordinator {
             // *server's own* re-fetched body with `baseline: nil`, a full overwrite re-encoded
             // through `MarkdownYjs`: precisely the flattening this branch refuses to perform.
             states[serverID] = .idle
+            clearFailure(serverID)
             // **The title is adopted with the body — the local one is not written back.** Two
             // earlier attempts here were both wrong and are worth recording. Pushing the
             // server's markdown back to carry our title re-encodes it through `MarkdownYjs`,
@@ -2336,7 +2384,7 @@ final class DocumentSaveCoordinator {
             // escape). Classify it rather than returning silently, which would be the one exit
             // from this function that leaves the record POSTing on every trigger with nothing
             // recorded. In-memory `.failed`, so a relaunch still retries once.
-            markCreateRejected(record)
+            markCreateRejected(record, reason: safeErrorSummary(error))
             return
         }
         if retryableSaveFailure(docsError) || docsError == .sessionExpired {
@@ -2390,7 +2438,7 @@ final class DocumentSaveCoordinator {
                 // gets for the same error. Without this the record pays a POST plus a probe on
                 // every reconnect, foreground and launch, forever, while the caption reads
                 // "syncs when online".
-                markCreateRejected(record)
+                markCreateRejected(record, reason: "\(safeErrorSummary(docsError)), parent probe forbidden")
                 return
             } catch {
                 // The probe could not answer at all (transport, 5xx). "I couldn't ask" must
@@ -2401,7 +2449,7 @@ final class DocumentSaveCoordinator {
             // non-retryable — every retryable class returned above, and `.routeNotFound`, the
             // one error the probe cannot speak to, returned before we got here. Terminal, as
             // the root path treats the same error.
-            markCreateRejected(record)
+            markCreateRejected(record, reason: safeErrorSummary(docsError))
             return
         }
         // A `.decoding` failure is the one rejection where "the POST failed" is provably the
@@ -2421,7 +2469,7 @@ final class DocumentSaveCoordinator {
             blocked.replayBlockedBuild = appBuild
             updatePendingCreate(blocked)
         }
-        markCreateRejected(record)
+        markCreateRejected(record, reason: safeErrorSummary(docsError))
     }
 
     /// The terminal state for a create the server rejected on the merits.
@@ -2436,12 +2484,12 @@ final class DocumentSaveCoordinator {
     /// has typed into always has its content parked in `queued`. So for those the tap is a
     /// no-op and a relaunch is the only escape. Giving the create pass its own retry
     /// affordance belongs with the UI that can present it.
-    private func markCreateRejected(_ record: PendingDocumentCreate) {
+    private func markCreateRejected(_ record: PendingDocumentCreate, reason: String) {
         // Re-read: this runs after the POST await, and a delete during it has already removed
         // the record and reset the state. Writing here would leave a `.failed` entry keyed to
         // an id nothing owns.
         guard pendingCreates[record.localID] != nil else { return }
-        states[record.localID] = .failed("Couldn't save changes. Please try again.")
+        markFailed(record.localID, reason: "Create rejected: \(reason)", offersRetry: false)
     }
 
     /// Content handed to the coordinator this session that the server hasn't
@@ -2555,9 +2603,10 @@ final class DocumentSaveCoordinator {
     /// or projected from the raw revision when there is none or it is older.
     func enqueueReplica(adapter: ReplicaSaveAdapter, title: String, baseline: DraftBaseline? = nil) throws {
         let id = adapter.scope.documentID
-        guard adapter.scope.serverOrigin == client.serverOrigin, !draftStore.holdsUnreadableData,
-            !isPendingCreate(documentID: id), adapter.scope.ownerUserID == signedInUser.userID
-        else { throw ReplicaSaveError.invalidScope }
+        guard adapter.scope.serverOrigin == client.serverOrigin, adapter.scope.ownerUserID == signedInUser.userID
+        else { throw ReplicaSaveError.otherServerOrAccount }
+        guard !draftStore.holdsUnreadableData else { throw ReplicaSaveError.quarantinedDrafts }
+        guard !isPendingCreate(documentID: id) else { throw ReplicaSaveError.pendingCreate }
         let previous = draftStore.draft(for: id)
         let (request, markdown): (ReplicaSaveRequest, String)
         if let previous {
@@ -3510,7 +3559,7 @@ final class DocumentSaveCoordinator {
                 }
             } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
                 if draft.replica != nil {
-                    states[draft.documentID] = .failed("Couldn't save changes. Please try again.")
+                    markFailed(draft.documentID, reason: "Draft sync refused: \(safeErrorSummary(error))")
                     continue
                 }
                 // Belt and braces. The guard at the top of the loop means a pending create
@@ -3563,7 +3612,7 @@ final class DocumentSaveCoordinator {
                     if let error = error as? DocsAPIError, retryableSaveFailure(error) {
                         states[draft.documentID] = .pendingSync
                     } else {
-                        states[draft.documentID] = .failed("Couldn't save changes. Please try again.")
+                        markFailed(draft.documentID, reason: "Draft sync failed: \(safeErrorSummary(error))")
                     }
                 }
             }
@@ -3717,7 +3766,7 @@ final class DocumentSaveCoordinator {
         if let reference = draftStore.draft(for: documentID)?.replica,
             reference.scope.ownerUserID != signedInUser.userID
         {
-            states[documentID] = .failed("Couldn't save changes. Please try again.")
+            markFailed(documentID, reason: "Conflict resolution refused: the draft belongs to another account")
             return
         }
         // Defensive only, per the invariant above: were a save somehow in flight, its
@@ -3805,7 +3854,7 @@ final class DocumentSaveCoordinator {
             try enqueueReplica(
                 adapter: ReplicaSaveAdapter(store: replicaStore, scope: reference.scope), title: draft.title)
         } catch {
-            states[documentID] = .failed("Couldn't save changes. Please try again.")
+            markFailed(documentID, reason: "Retry capture refused: \(safeErrorSummary(error))")
         }
     }
 
@@ -3835,6 +3884,7 @@ final class DocumentSaveCoordinator {
         // "syncs when online") caption on a document with no unsaved work, offering a retry
         // that `saveNow` would no-op. Mirrors `finish`'s discarded branch.
         states[documentID] = .idle
+        clearFailure(documentID)
     }
 
     /// Removes a stored draft only if it is still exactly the given draft —
@@ -3907,6 +3957,7 @@ final class DocumentSaveCoordinator {
         if isPendingCreate(documentID: documentID) {
             discardLocalSubtree(rootedAt: documentID)
             states[documentID] = .idle
+            clearFailure(documentID)
         } else if let checkpointed = checkpointedRecord(forServerID: documentID) {
             // Clear it under the id it is actually keyed by, and take the local draft with it
             // — that draft is what a later pass would rebuild the document from. The rest
@@ -3952,6 +4003,7 @@ final class DocumentSaveCoordinator {
                 // but nothing filed under it ever learned that id.
                 discardLocalSubtree(rootedAt: checkpointed.localID)
                 states[checkpointed.localID] = .idle
+                clearFailure(checkpointed.localID)
                 draftStore.remove(documentID: checkpointed.localID)
                 queued[checkpointed.localID] = nil
                 settledSaves[checkpointed.localID] = nil
@@ -3990,7 +4042,7 @@ final class DocumentSaveCoordinator {
     private func start(documentID: UUID, save: PendingSave) {
         inFlightContent[documentID] = save
         states[documentID] = .saving
-        failureDetails[documentID] = nil
+        clearFailure(documentID)
         let diagnosticsMarker = diagnostics?.marker()
         let taskToken = backgroundTasks.begin("SchriftDocumentSave")
         // The draft's baseline is the server copy this edit descends from (the draft is
@@ -4101,6 +4153,7 @@ final class DocumentSaveCoordinator {
         if discardedDuringSave.remove(documentID) != nil {
             queued[documentID] = nil
             states[documentID] = .idle
+            clearFailure(documentID)
             if error == nil, let draft = draftStore.draft(for: documentID),
                 draft.title == save.title, draft.markdown == save.markdown,
                 draft.replica == save.replicaRequest?.reference,
@@ -4112,6 +4165,7 @@ final class DocumentSaveCoordinator {
         }
         if error == nil {
             states[documentID] = .saved(Date())
+            clearFailure(documentID)
             // **Both** PATCHes landed, so the server now holds this title. An editor still on
             // screen may never have seen it (a background replay can adopt a co-author's rename
             // into this save without the editor refetching), and recording it is what stops that
@@ -4151,12 +4205,13 @@ final class DocumentSaveCoordinator {
             // hook already raised the re-login sheet — so it lands in `.failed`.
             states[documentID] = .pendingSync
         } else {
-            states[documentID] = .failed("Couldn't save changes. Please try again.")
-            failureDetails[documentID] = diagnosticsMarker.flatMap { marker in
-                diagnostics?.failure(after: marker, newest: true) {
-                    saveFailureIsRelevant($0, documentID: documentID, error: error)
-                }
-            }
+            markFailed(
+                documentID, reason: "Save failed: \(error.map(safeErrorSummary) ?? "unknown error")",
+                detail: diagnosticsMarker.flatMap { marker in
+                    diagnostics?.failure(after: marker, newest: true) {
+                        saveFailureIsRelevant($0, documentID: documentID, error: error)
+                    }
+                })
         }
         // A revalidation landed while this save was on the wire, so detection was skipped. Now
         // that it has settled the invariant holds again — so decide, before anything can push.
