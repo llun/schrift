@@ -250,6 +250,37 @@ final class ReplicaStore {
         return ReplicaRestore(manifest: manifest, checkpoint: checkpoint, updates: updates)
     }
 
+    /// Provisional (UIKit marked) text, kept in `provisional.json` beside the
+    /// manifest and outside it: never journaled, never in the outbox, never
+    /// replayed into Yjs. An entry whose command id reached the journal was
+    /// committed before a crash skipped its cleanup, so it is dropped here.
+    func provisionalRecoveries(for scope: ReplicaScope) -> [ProvisionalRecovery] {
+        // shortcut: an unreadable file reads as empty and the next write replaces it; quarantine it if that ever matters.
+        guard let folder = try? folder(for: scope),
+            let bytes = try? Data(contentsOf: folder.appendingPathComponent("provisional.json")),
+            let entries = try? JSONDecoder().decode([ProvisionalRecovery].self, from: bytes)
+        else { return [] }
+        let committed = Set(((try? manifest(for: scope))?.journal ?? []).map(\.commandID))
+        return entries.filter { !committed.contains($0.commandID) }
+    }
+
+    /// Replaces the provisional entries atomically (flushed temporary file,
+    /// rename, directory flush); an empty list removes the file. Requires the
+    /// replica folder, so a removed replica cannot regain recovery text.
+    func writeProvisionalRecoveries(_ entries: [ProvisionalRecovery], for scope: ReplicaScope) throws {
+        let folder = try folder(for: scope)
+        let file = folder.appendingPathComponent("provisional.json")
+        if entries.isEmpty {
+            guard fileManager.fileExists(atPath: file.path) else { return }
+            try fileManager.removeItem(at: file)
+        } else {
+            let temporary = folder.appendingPathComponent("\(UUID().uuidString).pending")
+            try writeFlushed(JSONEncoder().encode(entries), to: temporary)
+            try renameFile(temporary, to: file)
+        }
+        try syncDirectory(folder)
+    }
+
     /// The committed manifest alone, without reading or verifying payloads.
     func manifest(for scope: ReplicaScope) throws -> ReplicaManifest? { try readManifest(for: scope) }
 
@@ -529,4 +560,16 @@ final class ReplicaStore {
     }
 
     private func posixError() -> NSError { NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+}
+
+/// One IME composition's provisional text, persisted for explicit recovery
+/// (insert at the caret, copy or discard). `.composing` is a live composition,
+/// or an interrupted one after a relaunch; `.orphaned` is a commit whose
+/// target was deleted or replaced. Never written to Yjs automatically.
+struct ProvisionalRecovery: Codable, Equatable, Sendable {
+    enum State: String, Codable, Sendable { case composing, orphaned }
+    let commandID: UUID
+    let blockID: String
+    var text: String
+    var state: State
 }

@@ -645,9 +645,9 @@ reprojection use the engine index. No full projection/snapshot encoding occurs p
 key; tests bound touched-entry, projection and incremental-byte counts on 5,000 blocks.
 
 Separators, multiblock ranges, unsupported/opaque/scrubbed blocks, newline input and
-invalid UTF-16 boundaries are refused before transactions. `setMarkedText` is
-intercepted before UIKit mutates anything and falls back to preserved read-only
-content with an explanation. UIKit undo remains disabled. A failed mutation or
+invalid UTF-16 boundaries are refused before transactions. Marked text (IME) is
+handled by the PR03 composition session below; a composition this editor cannot
+support keeps the preserved read-only refusal. UIKit undo remains disabled. A failed mutation or
 append freezes the unsafe replica and retains any returned unconfirmed update in memory;
 the accepted display and earlier durable journal remain intact.
 The isolated native host's `--native-typing` fixture enables this component against
@@ -727,6 +727,36 @@ and a native session never takes the live write path. The isolated host's
 `--native-open` fixture runs the real `EditorView` route offline over an owned
 replica; its UI test types, relaunches and finds the text restored.
 
+**PR03 IME composition and provisional recovery.** `NativeCompositionSession` ships
+marked-text input through the engine for one block. `setMarkedText` and
+`setAttributedMarkedText` (the system Japanese/Chinese keyboards' entry point) in a
+typeable block capture both replacement endpoints as a `RelativeEditorRange` before UIKit
+owns the marked range (an insertion at the caret, or a selected-text replacement inside
+one block), then let UIKit own the provisional range in storage. Provisional text never
+enters Yjs. A composing keyboard first asks the text view's delegate about the raw
+keystroke; for a `ja`/`zh`/`yue`/`ko` input mode a one-character insertion at the
+selection proceeds to the overridden marking/insertion entry points instead of becoming
+a Latin command, and `textViewDidChange` restores the projection if UIKit ever writes
+storage behind the command path. While text is marked the whole text view is frozen
+(`NativeTextSurface.setCompositionDeferred(true)`): remote patches still integrate into
+the replica (the engine defers the composing block), but the surface buffers every
+patch, defers theme/width restyles, and offset-based commands and selection publication
+are suspended, because document-wide UIKit offsets are stale until reconciliation.
+Commit (`unmarkText`, writing what UIKit displays, or `insertText` replacing the marked
+text) resolves the anchors and writes the string once as one durable `NativeEditCommand`
+through `DocumentEngine.compositionCommitted(text:commandID:persist:)`
+(journal-before-publication, the same `ReplicaStore.append` path as typing), then delivers
+one `.other` rebuild. Reconciliation replaces only the provisional block's storage slice,
+then applies the buffered patches and any deferred restyle. A target deleted or replaced
+during the composition returns `.orphaned`: nothing is written, and a commit is never
+redirected into a new text under the same block id. Cancel (empty marked text) writes
+nothing, reconciles and returns the caret to the composition start; focus loss that never
+reached `unmarkText` also writes nothing but keeps the text for recovery. A multi-block
+selection or an opaque/placeholder target keeps the preserved read-only refusal
+(`native_editor_marked_unavailable`). Provisional text is persisted beside the journal
+for explicit recovery (see `docs/offline-and-sync.md`); the view offers orphaned and
+interrupted text with Insert at cursor, Copy and Discard, never inserting it by itself.
+
 **Selection.** `setSelection(EditorSelection?)` captures directed anchor/head
 endpoints as `YRelativePosition`s. Each `EditorPosition` holds a block id,
 block-relative UTF-16 offset, and affinity (`assoc`, default -1). Negative
@@ -747,22 +777,30 @@ non-addressable shape returns nil. Only locally captured positions enter this
 path; no arbitrary peer root names are resolved.
 
 **Composition.** `compositionBegan(blockID:at:assoc:)` captures an insertion
-anchor (the selection head if `at` is omitted), and signals surface deferral.
-`CompositionQueue` invalidates that block's patches from every origin while
-updates continue integrating into the replica. Independent block patches still
-flow. A list operation removing/reinserting the composing block, or any `.reset`,
+anchor (the selection head if `at` is omitted); `compositionBegan(blockID:replacing:)`
+captures both endpoints of a same-block replacement range (the native IME path),
+and both signal surface deferral. `CompositionQueue` invalidates that block's
+patches from every origin while updates continue integrating into the replica
+(remote data is accepted during a composition; the queue defers only the composing
+block). Independent block patches still flow. A list operation removing/reinserting the composing block, or any `.reset`,
 defers the entire list and all subsequent patches because later transitions may
 depend on the held structure. No stale deltas are replayed or retained.
 `compositionCommitted(text:)` inserts the composed string at the resolved anchor
 through `BlockNoteWriter` in one `.localUser` transaction, returns its update for
 broadcast, and captures the collapsed selection after the inserted UTF-16 text
-inside that same transaction, before observers or cleanup can edit it. Capture
+inside that same transaction, before observers or cleanup can edit it. The durable
+`compositionCommitted(text:commandID:persist:)` holds delivery until `persist` journals
+the command's bytes and returns `.committed(Data)` or `.orphaned` (the target was deleted or
+replaced: no write, never redirected into a new text under the same block id). The
+commit stamps `nativeCommand`, so its own echo is deduplicated and the durable
+owner's unjournaled-transaction guard does not fire. Capture
 errors propagate through the writer error/rebuild path; no failed capture is
 silently replaced by nil (transactions have no rollback). Later edits remap the
 captured caret, and later deletion/replacement invalidates it normally. The
 write's own delta is discarded too. Commit and `compositionCancelled()` then
 deliver one `.replaceBlock` projected from the replica (a fresh whole-list `.reset` for the
-structural fallback) before clearing deferral. Cancel writes nothing. A deleted,
+structural fallback) before clearing deferral. Cancel writes nothing and returns the
+caret to the resolved start of the replaced span. A deleted,
 replaced or non-addressable original text drops the commit write, returns the
 empty update, and still rebuilds. Rebuild and deferral completion share the
 serialized delivery queue so surface callbacks can transact without reentrant
@@ -802,8 +840,8 @@ and must always be applied by optimistic surfaces. Only the write transaction is
 changes when a surface skips the local edit it already displayed.
 Detach clears selection/deferral and drops deferred work without a rebuild;
 later intents throw `.detached`. A deferred surface intentionally differs
-from projection until commit/cancel restores equality. Native marked-text and
-device validation remain phase 2 work; this contract is proven headlessly.
+from projection until commit/cancel restores equality. The engine contract is
+proven headlessly; the native IME surface is the PR03 composition session above.
 
 **Buffering.** `YDoc.afterTransaction` runs in the observer phase, where a text
 delta is valid but the store is still pre-gc/pre-merge, so the engine only

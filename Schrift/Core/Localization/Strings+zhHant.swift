@@ -332,6 +332,13 @@ enum Strings_zhHant {
         .native_editor_unknown_block: "不支援的區塊",
         .native_editor_input_unavailable: "原生編輯器暫不支援此輸入。",
         .native_editor_marked_unavailable: "暫不支援此鍵盤輸入。你的文件已保留為唯讀模式。",
+        .native_editor_composition_orphaned:
+            "無法加入這段文字，因為其段落已變更。",
+        .native_editor_recovery_interrupted:
+            "編輯器關閉時這段文字仍在輸入中，尚未加入。",
+        .native_editor_recovery_insert: "在游標處插入",
+        .native_editor_recovery_copy: "複製",
+        .native_editor_recovery_discard: "捨棄",
         .native_editor_storage_failed: "無法在你的裝置上儲存此次編輯。編輯已停止，先前儲存的文字已保留。",
         .profile_native_editor: "原生編輯器（實驗性）",
         .profile_native_editor_footer: "下次開啟文件時生效。支援 Docs 6，目前僅支援輸入純文字。",

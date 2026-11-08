@@ -348,6 +348,13 @@ enum Strings_en {
         .native_editor_input_unavailable: "This input isn't supported in the native editor yet.",
         .native_editor_marked_unavailable:
             "This keyboard input isn't supported yet. Your document is preserved in read-only mode.",
+        .native_editor_composition_orphaned:
+            "This text couldn't be added because its paragraph changed.",
+        .native_editor_recovery_interrupted:
+            "This text was still being typed when the editor closed. It wasn't added.",
+        .native_editor_recovery_insert: "Insert at cursor",
+        .native_editor_recovery_copy: "Copy",
+        .native_editor_recovery_discard: "Discard",
         .native_editor_storage_failed:
             "Couldn't save this edit on your device. Editing has stopped; previously saved text is preserved.",
         .profile_native_editor: "Native editor (experimental)",

@@ -77,6 +77,47 @@ struct RelativeEditorPosition {
     }
 }
 
+/// A same-block replacement range captured before composition. Both endpoints
+/// resolve independently against the current replica, so a deleted or replaced
+/// target resolves to nil instead of redirecting into a new text under the same
+/// block id. A collapsed range keeps the insertion affinity; a non-empty range
+/// keeps text a peer inserts at either boundary outside the replaced span.
+struct RelativeEditorRange {
+    let blockID: String
+    let start: RelativeEditorPosition
+    let end: RelativeEditorPosition
+
+    init(blockID: String, range: Range<Int>, assoc: Int = -1, index: BlockIndex) throws {
+        guard range.lowerBound >= 0, range.upperBound >= range.lowerBound else {
+            throw DocumentEngineError.invalidPosition
+        }
+        self.blockID = blockID
+        if range.isEmpty {
+            let position = EditorPosition(blockID: blockID, offset: range.lowerBound, assoc: assoc)
+            start = try RelativeEditorPosition(position, index: index)
+            end = start
+        } else {
+            // The start follows text inserted at it and the end stays before
+            // text inserted at it: a peer's boundary insertion is not part of
+            // what the user selected, so it survives the replacement.
+            start = try RelativeEditorPosition(
+                EditorPosition(blockID: blockID, offset: range.lowerBound, assoc: 0), index: index)
+            end = try RelativeEditorPosition(
+                EditorPosition(blockID: blockID, offset: range.upperBound, assoc: -1), index: index)
+        }
+    }
+
+    func resolve(in doc: YDoc, index: BlockIndex) -> Range<Int>? {
+        guard let start = start.resolve(in: doc, index: index),
+            let end = end.resolve(in: doc, index: index),
+            start.blockID == end.blockID
+        else { return nil }
+        // A peer deleting the whole selected span can resolve the endpoints
+        // crossed; the replacement then collapses to an insertion at the start.
+        return start.offset..<max(start.offset, end.offset)
+    }
+}
+
 struct RelativeEditorSelection {
     let anchor: RelativeEditorPosition
     let head: RelativeEditorPosition

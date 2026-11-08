@@ -334,6 +334,13 @@ enum Strings_th {
         .native_editor_unknown_block: "บล็อกที่ไม่รองรับ",
         .native_editor_input_unavailable: "ตัวแก้ไขเนทีฟยังไม่รองรับการป้อนข้อมูลแบบนี้",
         .native_editor_marked_unavailable: "ยังไม่รองรับการป้อนข้อมูลจากคีย์บอร์ดแบบนี้ เอกสารของคุณถูกเก็บรักษาไว้ในโหมดอ่านอย่างเดียว",
+        .native_editor_composition_orphaned:
+            "ไม่สามารถเพิ่มข้อความนี้ได้เนื่องจากย่อหน้าเปลี่ยนไป",
+        .native_editor_recovery_interrupted:
+            "ข้อความนี้ยังพิมพ์ไม่เสร็จขณะที่ตัวแก้ไขปิดลง จึงยังไม่ได้เพิ่ม",
+        .native_editor_recovery_insert: "แทรกที่เคอร์เซอร์",
+        .native_editor_recovery_copy: "คัดลอก",
+        .native_editor_recovery_discard: "ทิ้ง",
         .native_editor_storage_failed: "ไม่สามารถบันทึกการแก้ไขนี้บนอุปกรณ์ของคุณได้ การแก้ไขหยุดลงแล้ว ข้อความที่บันทึกไว้ก่อนหน้านี้ยังคงอยู่",
         .profile_native_editor: "ตัวแก้ไขเนทีฟ (ทดลอง)",
         .profile_native_editor_footer: "มีผลเมื่อเปิดเอกสารครั้งถัดไป รองรับ Docs 6 ขณะนี้พิมพ์ได้เฉพาะข้อความธรรมดาเท่านั้น",

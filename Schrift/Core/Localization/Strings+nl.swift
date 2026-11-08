@@ -340,6 +340,13 @@ enum Strings_nl {
         .native_editor_input_unavailable: "Deze invoer wordt nog niet ondersteund in de native editor.",
         .native_editor_marked_unavailable:
             "Deze toetsenbordinvoer wordt nog niet ondersteund. Je document is behouden in alleen-lezenmodus.",
+        .native_editor_composition_orphaned:
+            "Deze tekst kon niet worden toegevoegd omdat de alinea is gewijzigd.",
+        .native_editor_recovery_interrupted:
+            "Deze tekst werd nog getypt toen de editor sloot. De tekst is niet toegevoegd.",
+        .native_editor_recovery_insert: "Invoegen bij cursor",
+        .native_editor_recovery_copy: "Kopiëren",
+        .native_editor_recovery_discard: "Weggooien",
         .native_editor_storage_failed:
             "Deze wijziging kon niet op je apparaat worden opgeslagen. Bewerken is gestopt; eerder opgeslagen tekst is behouden.",
         .profile_native_editor: "Native editor (experimenteel)",

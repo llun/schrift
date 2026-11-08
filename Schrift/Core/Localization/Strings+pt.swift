@@ -339,6 +339,13 @@ enum Strings_pt {
         .native_editor_input_unavailable: "Esta entrada ainda não é suportada no editor nativo.",
         .native_editor_marked_unavailable:
             "Esta entrada de teclado ainda não é suportada. O documento foi preservado em modo somente leitura.",
+        .native_editor_composition_orphaned:
+            "Não foi possível adicionar este texto porque o parágrafo mudou.",
+        .native_editor_recovery_interrupted:
+            "Este texto ainda estava a ser escrito quando o editor fechou. Não foi adicionado.",
+        .native_editor_recovery_insert: "Inserir no cursor",
+        .native_editor_recovery_copy: "Copiar",
+        .native_editor_recovery_discard: "Descartar",
         .native_editor_storage_failed:
             "Não foi possível guardar esta edição no dispositivo. A edição foi interrompida; o texto guardado anteriormente foi preservado.",
         .profile_native_editor: "Editor nativo (experimental)",

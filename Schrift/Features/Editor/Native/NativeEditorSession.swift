@@ -75,7 +75,10 @@ final class NativeEditorSession {
     ) {
         guard !isClosed, !hasUnsupportedRoot, input == nil else { return }
         saveScheduler = scheduler
-        input = NativeInputCoordinator(engine: engine, surface: surface, view: textView, persist: persist)
+        // A restored replica keeps IME provisional text beside its journal.
+        let recoveryStore = replicaStore.flatMap { store in replicaScope.map { (store: store, scope: $0) } }
+        input = NativeInputCoordinator(
+            engine: engine, surface: surface, view: textView, persist: persist, recoveryStore: recoveryStore)
     }
 
     /// Journal bytes not yet handed to the coordinator. They are durable on

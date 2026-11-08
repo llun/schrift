@@ -48,11 +48,16 @@ struct NativeEditorView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            if let key = session.input?.noticeKey {
-                Text(loc[key])
-                    .font(.footnote)
-                    .padding()
-                    .accessibilityIdentifier("nativeEditor.inputNotice")
+            VStack(spacing: 0) {
+                if let input = session.input, let recovery = input.composition.pendingRecoveries.first {
+                    recoveryBanner(recovery, input: input)
+                }
+                if let key = session.input?.noticeKey {
+                    Text(loc[key])
+                        .font(.footnote)
+                        .padding()
+                        .accessibilityIdentifier("nativeEditor.inputNotice")
+                }
             }
         }
         .toolbar {
@@ -65,6 +70,41 @@ struct NativeEditorView: View {
         .background(theme.colors.surfacePage)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+extension NativeEditorView {
+    /// Uncommitted IME text is never inserted silently: the user chooses.
+    fileprivate func recoveryBanner(_ recovery: ProvisionalRecovery, input: NativeInputCoordinator) -> some View {
+        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+            Text(
+                loc[
+                    recovery.state == .orphaned
+                        ? .native_editor_composition_orphaned : .native_editor_recovery_interrupted]
+            )
+            .font(.footnote)
+            .foregroundStyle(theme.colors.textSecondary)
+            Text(recovery.text)
+                .font(.body)
+                .lineLimit(3)
+                .accessibilityIdentifier("nativeEditor.recovery.text")
+            HStack(spacing: DocsSpacing.spaceSM) {
+                Button(loc[.native_editor_recovery_insert]) { input.insertRecovery(recovery) }
+                    .accessibilityIdentifier("nativeEditor.recovery.insert")
+                Button(loc[.native_editor_recovery_copy]) { input.copyRecovery(recovery) }
+                    .accessibilityIdentifier("nativeEditor.recovery.copy")
+                Spacer()
+                Button(loc[.native_editor_recovery_discard], role: .destructive) { input.discardRecovery(recovery) }
+                    .accessibilityIdentifier("nativeEditor.recovery.discard")
+            }
+            .font(.footnote.weight(.semibold))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, DocsSpacing.gutter)
+        .padding(.vertical, DocsSpacing.spaceSM)
+        .background(theme.colors.surfacePage)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("nativeEditor.recovery")
     }
 }
 
