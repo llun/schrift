@@ -314,6 +314,23 @@ final class NativeCompositionRecoveryTests: DocumentEngineTestCase {
         XCTAssertEqual(try text(relaunched, Self.firstID), "日本First paragraph.", "committed exactly once")
     }
 
+    func testAFailedPurgeRewriteStillReturnsTheUncommittedEntries() throws {
+        let replica = try makeReplica()
+        let session = try launch(replica)
+        compose(session, ["日本"], at: try caret(session, Self.firstID, 0))
+        let committed = try XCTUnwrap(replica.store.provisionalRecoveries(for: replica.scope).first)
+        session.textView.unmarkText()
+        session.close()
+        let live = ProvisionalRecovery(commandID: UUID(), blockID: Self.thirdID, text: "まだ", state: .composing)
+        try replica.store.writeProvisionalRecoveries([committed, live], for: replica.scope)
+        let failing = ReplicaStore(directory: replica.directory) { operation, _ in
+            if operation == .provisional { throw DiskError.full }
+        }
+
+        XCTAssertEqual(failing.provisionalRecoveries(for: replica.scope), [live], "the only copy of uncommitted text")
+        XCTAssertEqual(replica.store.provisionalRecoveries(for: replica.scope), [live], "a later read purges")
+    }
+
     func testCompactionPurgesACommittedEntryBeforeDroppingItsJournalProof() throws {
         let replica = try makeReplica()
         let session = try launch(replica)

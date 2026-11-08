@@ -605,6 +605,52 @@ final class NativeCompositionTests: DocumentEngineTestCase {
         }
     }
 
+    func testADirectKeystrokeOverAMultiBlockSelectionNeverCorruptsStorage() throws {
+        let harness = try makeSession()
+        defer { harness.close() }
+        let session = harness.session
+        let input = try XCTUnwrap(session.input)
+        input.inputLanguage = { "ja-JP" }
+        let start = try caret(session, Self.firstID, 10)
+        let range = NSRange(location: start, length: try caret(session, Self.secondID, 5) - start)
+        session.textView.selectedRange = range
+
+        let allowed = input.textView(
+            session.textView, shouldChangeTextInRanges: [NSValue(range: range)], replacementText: " ")
+        if allowed {
+            // What UIKit does once the delegate lets it write: across the separator.
+            session.textView.textStorage.replaceCharacters(in: range, with: " ")
+            input.textViewDidChange(session.textView)
+        }
+
+        XCTAssertFalse(allowed, "UIKit is never allowed to write across a separator")
+        XCTAssertEqual(harness.log.commands.count, 0)
+        XCTAssertEqual(input.noticeKey, .native_editor_input_unavailable)
+        assertMatches(session)
+        try assertDurableProjection(harness)
+    }
+
+    func testEndingEditingDropsAnUnusedDirectKeystrokeAllowance() throws {
+        let harness = try makeSession()
+        defer { harness.close() }
+        let session = harness.session
+        let input = try XCTUnwrap(session.input)
+        input.inputLanguage = { "ja-JP" }
+        let range = NSRange(location: try caret(session, Self.firstID, 6), length: 0)
+        session.textView.selectedRange = range
+        XCTAssertTrue(
+            input.textView(session.textView, shouldChangeTextInRanges: [NSValue(range: range)], replacementText: " "))
+
+        input.textViewDidEndEditing(session.textView)
+        // A stale change after editing ended is not the keystroke that was allowed.
+        session.textView.textStorage.replaceCharacters(in: range, with: " ")
+        input.textViewDidChange(session.textView)
+
+        XCTAssertEqual(harness.log.commands.count, 0)
+        XCTAssertEqual(input.noticeKey, .native_editor_input_unavailable)
+        assertMatches(session)
+    }
+
     func testAnAllowedKeystrokeThatStartsMarkedTextStillCommitsOnce() throws {
         let harness = try makeSession()
         defer { harness.close() }

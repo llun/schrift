@@ -62,7 +62,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         guard let language = inputLanguage(),
             ["ja", "zh", "yue", "ko"].contains(where: { language.hasPrefix($0) }),
             range == view.selectedRange, text.utf16.count == 1,
-            !text.unicodeScalars.contains(where: { CharacterSet.newlines.contains($0) || $0.value == 0xfffc })
+            !text.unicodeScalars.contains(where: { CharacterSet.newlines.contains($0) || $0.value == 0xfffc }),
+            // The same single-block shape the command path accepts: UIKit must
+            // never write across a separator or into a placeholder.
+            let entry = surface.rangeIndex.entry(atUTF16: range.location),
+            let position = surface.rangeIndex.position(for: entry.blockID),
+            range.location >= entry.textRange.location, NSMaxRange(range) <= NSMaxRange(entry.textRange),
+            !AttributedDocumentProjection.isPlaceholder(surface.blocks[position])
         else { return false }
         directInsertion = (range, text)
         return true
@@ -82,7 +88,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 with: NSRange(location: direct.range.location, length: direct.text.utf16.count)) == direct.text
         {
             surface.restoreStorage(blockID: blockID)
-            replace(range: direct.range, with: direct.text)
+            // A refused command must still leave storage equal to the model.
+            if !replace(range: direct.range, with: direct.text), !surface.storageMatchesModel {
+                surface.restoreStorage()
+            }
             return
         }
         // A late notification for marked text this view already cleared and
@@ -110,6 +119,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// UIKit. A composition still active here was never confirmed: end it
     /// without writing and keep its text as an explicit recovery entry.
     func textViewDidEndEditing(_ textView: UITextView) {
+        // An allowance for a keystroke that never arrived ends with editing.
+        directInsertion = nil
         guard composition.isActive else { return }
         view?.dropMarkedText()
         composition.interrupt()
@@ -220,6 +231,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     }
 
     func stopAfterStorageFailure() {
+        directInsertion = nil
         view?.isEditable = false
         view?.resignFirstResponder()
         noticeKey = .native_editor_storage_failed
@@ -229,6 +241,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// opaque target): keep the preserved read-only refusal and never let
     /// provisional text become committed content.
     func refuseComposition() {
+        directInsertion = nil
         noticeKey = .native_editor_marked_unavailable
         view?.isEditable = false
         view?.resignFirstResponder()
