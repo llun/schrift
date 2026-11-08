@@ -384,6 +384,111 @@ final class BlockNotePreservationTests: XCTestCase {
         XCTAssertEqual(prop("level", of: changed.blocks[1]), .int(3))
     }
 
+    // MARK: - Web shapes the golden encoder cannot write
+
+    /// A node of a served document built item by item (`servedTree`).
+    private indirect enum Node {
+        case element(String, [(key: String, value: YAnyValue)], [Node])
+        case text(String)
+    }
+
+    private func container(_ id: String, _ content: Node) -> Node {
+        .element("blockContainer", [("id", .string(id))], [content])
+    }
+
+    private func textParagraph(_ inline: [Node]) -> Node { .element("paragraph", baseProps, inline) }
+
+    /// `blocks` as the children of the root `blockGroup`, written straight into a replica.
+    private func servedTree(_ blocks: [Node]) throws -> Data {
+        let doc = YDoc(clientID: 1)
+        defer { doc.destroy() }
+        try doc.transact(local: true) { tx in
+            try insert(tx, [.element("blockGroup", [], blocks)], into: doc.get(BlockNoteYjs.fragmentField))
+        }
+        return try YStateEncoder.encodeStateAsUpdate(doc)
+    }
+
+    private func insert(_ tx: YTransaction, _ nodes: [Node], into parent: YType) throws {
+        var left: YItem?
+        for node in nodes {
+            switch node {
+            case .text(let string):
+                let text = YType(typeRef: .xmlText)
+                left = try YWrite.insertAfter(tx, into: parent, after: left, [.type(text)])
+                try YWrite.insertAfter(tx, into: text, after: nil, [.string(Array(string.utf16))])
+            case .element(let name, let attributes, let children):
+                let element = YType(typeRef: .xmlElement(nodeName: name))
+                left = try YWrite.insertAfter(tx, into: parent, after: left, [.type(element)])
+                for attribute in attributes {
+                    try YWrite.mapSet(tx, on: element, key: attribute.key, .any([attribute.value]))
+                }
+                try insert(tx, children, into: element)
+            }
+        }
+    }
+
+    private func fragment(_ state: Data, after update: Data?) throws -> String {
+        let doc = YDoc(clientID: 999)
+        defer { doc.destroy() }
+        try doc.applyUpdate(try YUpdateDecoder.decode(state))
+        if let update { try doc.applyUpdate(try YUpdateDecoder.decode(update)) }
+        return YXMLString.fragment(doc)
+    }
+
+    /// The web's columns are a `columnList` straight in the `blockGroup`, not in a
+    /// `blockContainer`, with their own id. Refusing that shape failed every save of the page
+    /// (`.decoding`, no HTTP failure to show). The export never spells columns, so they stay.
+    func testColumnsBesideAnEditAreKeptAndTheEditLands() throws {
+        let idE = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+        let column = Node.element(
+            "column", [("id", .string(idC)), ("width", .int(1))],
+            [container(idD, textParagraph([.text("Left column")]))])
+        let state = try servedTree([
+            container(idA, textParagraph([.text("One")])),
+            .element("columnList", [("id", .string(idB))], [column]),
+            container(idE, textParagraph([.text("Two")])),
+        ])
+
+        let update = try save(state, "One\n\nTwo, edited", base: "One\n\nTwo")
+        let after = try project(state, after: update)
+
+        XCTAssertEqual(after.blocks.map(\.id), [idA, idB, idE])
+        XCTAssertEqual(after.blocks[1].node, "columnList")
+        XCTAssertEqual(after.blocks[2].runs, [InlineRun("Two, edited")])
+        XCTAssertTrue(try fragment(state, after: update).contains("Left column"))
+    }
+
+    /// The export drops inline math without a trace ("Area:  of it."), so its words must not
+    /// stop the untouched paragraph around it from being recognised and kept.
+    func testAnUntouchedParagraphWithInlineMathKeepsTheMath() throws {
+        let state = try servedTree([
+            container(idA, textParagraph([.text("Intro")])),
+            container(idB, textParagraph([.text("Area: "), .element("math", [], [.text("x^2")]), .text(" of it.")])),
+        ])
+
+        let update = try save(state, "Intro, edited\n\nArea:  of it.", base: "Intro\n\nArea:  of it.")
+
+        XCTAssertEqual(try project(state, after: update).blocks.map(\.id), [idA, idB])
+        XCTAssertTrue(try fragment(state, after: update).contains("<math>x^2</math>"))
+    }
+
+    /// An underlined word mid-sentence is scrubbed into its own unmarked run; the paragraph
+    /// must still read like the markdown's one run, or every save drops the underline.
+    func testAnUntouchedParagraphWithAnUnderlinedWordKeepsIt() throws {
+        let underlined = BlockNoteBlock(
+            node: "paragraph", props: baseProps,
+            runs: [
+                InlineRun("A "), InlineRun("word", marks: [(key: "underline", valueJSON: "{}")]), InlineRun(" here."),
+            ],
+            id: idB)
+        let state = served([paragraph("Intro", id: idA), underlined])
+
+        let update = try save(state, "Intro, edited\n\nA word here.", base: "Intro\n\nA word here.")
+
+        XCTAssertEqual(try project(state, after: update).blocks.map(\.id), [idA, idB])
+        XCTAssertTrue(try fragment(state, after: update).contains("<underline>word</underline>"))
+    }
+
     // MARK: - Pieces
 
     func testWordsIgnoreMarkdownSyntaxLinkTargetsAndHTML() {

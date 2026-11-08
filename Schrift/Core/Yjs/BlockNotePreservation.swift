@@ -148,7 +148,9 @@ enum BlockNotePreservation {
         // it could not read (a mention, a hard break: opaque with no runs) falls through to
         // its words.
         if modeledNodes.contains(node), !hasNestedChildren, block.node == node, !block.runs.isEmpty {
-            return .exact(node: node, props: props, runs: block.runs)
+            // Coalesced as the markdown parser's runs are: an underlined word mid-sentence is
+            // scrubbed to its own unmarked run, which must still read like its shadow's.
+            return .exact(node: node, props: props, runs: YBlockProjection.inlineRuns(of: element) ?? block.runs)
         }
         guard let tokens = walkedTokens(of: container), !tokens.isEmpty else { return nil }
         return .text(tokens)
@@ -182,7 +184,8 @@ enum BlockNotePreservation {
                 if !current.deleted {
                     switch current.content {
                     case .string(let units): text += String(decoding: units, as: UTF16.self)
-                    case .type(let child): pending.append(child)
+                    // The export drops inline math without a trace, so its words are not the block's.
+                    case .type(let child) where child.typeRef != .xmlElement(nodeName: "math"): pending.append(child)
                     default: break
                     }
                 }
