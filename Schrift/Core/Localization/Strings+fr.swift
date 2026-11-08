@@ -342,9 +342,9 @@ enum Strings_fr {
             "Cette saisie au clavier n’est pas encore prise en charge. Votre document est préservé en lecture seule.",
         .native_editor_storage_failed:
             "Impossible d’enregistrer cette modification sur votre appareil. La modification s’est arrêtée ; le texte précédemment enregistré est préservé.",
-        .profile_native_editor: "Éditeur natif (expérimental, lecture seule)",
+        .profile_native_editor: "Éditeur natif (expérimental)",
         .profile_native_editor_footer:
-            "S’applique à la prochaine ouverture d’un document. Compatible avec Docs 6 ; la modification n’est pas encore disponible.",
+            "S’applique à la prochaine ouverture d’un document. Compatible avec Docs 6 ; pour l’instant, seule la saisie de texte brut est disponible.",
         .native_editor_preserved_title: "Document préservé",
         .native_editor_preserved_body:
             "La structure de ce document ne peut pas encore être affichée par le lecteur natif. Son contenu original est préservé.",

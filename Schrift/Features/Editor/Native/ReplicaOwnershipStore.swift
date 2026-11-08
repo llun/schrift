@@ -110,6 +110,33 @@ final class ReplicaOwnershipStore {
         return write(entries)
     }
 
+    /// Rebuild the blob from the scopes whose replicas exist on disk.
+    ///
+    /// This is the only writer that may replace an unreadable blob, and it is
+    /// reachable only from the explicit Profile recovery action. A readable
+    /// blob is merged rather than replaced, so a marker for a document whose
+    /// replica is gone (the crash-safe direction) is never silently dropped,
+    /// and an existing owner is never replaced. When the blob is unreadable the
+    /// entries are rebuilt from disk alone: a marker with no replica protects
+    /// nothing, because there is no native data behind it.
+    @discardableResult
+    func repair(from scopes: [ReplicaScope]) -> Bool {
+        var entries: [String: ReplicaScope]
+        switch read() {
+        case .missing:
+            entries = [:]
+        case .entries(let existing):
+            entries = existing
+        case .unreadable:
+            entries = [:]
+        }
+        for scope in scopes where scope.isValid {
+            let key = Self.key(documentID: scope.documentID, serverOrigin: scope.serverOrigin)
+            entries[key] = entries[key] ?? scope
+        }
+        return write(entries)
+    }
+
     /// Whether any marker data exists, readable or not. A replica directory
     /// without it means the marker was lost: ownership is unknown, not absent.
     var hasData: Bool { userDefaults.data(forKey: Self.key) != nil }

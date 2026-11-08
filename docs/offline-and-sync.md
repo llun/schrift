@@ -7,9 +7,12 @@
 > [`architecture.md`](architecture.md) for the overall architecture and
 > [`AGENTS.md`](../AGENTS.md) for the operational conventions.
 
-> **PR02a checkpoint (2026-11-07):** the native editor is still read-only. A
-> standalone `ReplicaStore` now provides the persistence foundation below;
-> native typing, save/reconnect/reopen integration and migration are not enabled.
+> **PR02 activation (slice B, 2026-11-08):** with the default-off
+> `schrift.nativeEditor` switch on, eligible Docs 6 documents type into a durable
+> replica and save through the coordinator; see "Native typing activation" below.
+> Old Markdown-draft migration, local-create key migration and a total shadow for
+> rich documents are not done. The checkpoints below record how the components
+> were built.
 
 > **Typing component checkpoint:** the native input coordinator and command/echo
 > path now exist and are covered by `NativeTypingTests`. Explicitly enabled test
@@ -81,9 +84,9 @@ file or directory exists, so a crash leaves a marker without a replica (read-onl
 never the reverse. Once marked, `DocumentSaveCoordinator.enqueue` refuses every classic
 and live save for the document even after a successful save removed its draft, and
 `EditorViewModel.canStartEditing` is false. `NativeEditorOpen` checks the marker
-before any network and regardless of the switch: it restores the replica read-only
-(with a "turn the switch on" notice only while the switch is off), and shows a
-preserved-unavailable state when the replica is missing or quarantined, the marker data
+before any network and regardless of the switch: it restores the replica (read-only
+with a "turn the switch on" notice while the switch is off), and shows a
+preserved-unavailable state when the replica is quarantined or missing (re-seeded with the switch on; see below), the marker data
 is corrupt, or the replica belongs to another account. Corrupt marker data, or a
 replica directory without any marker data, answers "owned" for every document: ownership
 is unknown, so nothing is classic-editable. One document has one owner; another
@@ -131,12 +134,53 @@ is idempotent while journal/engine revisions stay aligned. Failed disk persisten
 freezes the mutated graph, keeps the accepted display and retains unconfirmed bytes
 in memory; reopen uses the earlier durable revision.
 
-Remaining PR02a integration: production open/reconnect wiring (creating replicas,
-integrating fetched state), a total shadow for opaque/rich documents (re-stamping
-refuses an unprojectable revision today), account/session generation guards,
-clean-replica removal on sign-out, old-draft migration and production activation.
-Existing Markdown drafts retain their classic owner; no production native replica is
-created yet.
+## Native typing activation (PR02 slice B)
+
+Typing turns on at open only when all of these hold: the switch is on, the server is
+Docs 6, the signed-in user has `abilities.update`, the document is not a pending
+create or delete, no live owner holds it, it projects fully (fully modeled with a
+Markdown shadow), and there is no classic draft or queued classic save. A document
+with a classic draft stays classic until that draft syncs. Everything else that
+reaches native opens PR01's in-memory read-only view and never gains a marker.
+
+- **Owned replica:** restored offline-first, with no request. Online, the raw server
+  state is then fetched and integrated into the same durable owner (journaled before
+  display). A converted Markdown response is never installed over native state.
+- **No replica:** the raw state is fetched, `ReplicaStore.create` writes the marker
+  and the checkpoint, and the replica is restored with typing on.
+- **Marker without a replica** (a crash between the marker and the first manifest):
+  with the switch on, the marker is cleared only when no manifest, quarantine, draft
+  or queued/in-flight save exists, and the unowned route then re-seeds it from the
+  server (or opens classic when offline). Otherwise it stays read-only.
+- **Corrupt or lost marker data:** Profile's "Recover unreadable drafts" row also
+  appears and rebuilds the marker from the scoped manifests on disk. Folders without
+  a manifest claim nothing; a folder whose manifest cannot be read cannot name its
+  document, stays on disk untouched and no longer blocks every other document. A
+  readable owner is never replaced.
+
+**Saves.** Every persisted command arms `NativeReplicaSaveScheduler`: the classic
+autosave interval (10 s trailing, capped at 30 s of continuous typing). It hands the
+verified outbox to `enqueueReplica`, with the cached server copy as title and
+baseline (a stored draft keeps its own baseline). Close and the app going inactive
+or to the background flush it. Reopening a replica whose outbox has no draft (the
+process ended inside the debounce) schedules it. The native view shows the classic
+`SaveStatusIndicator`: unsent journal bytes read "Saved on this device", then the
+coordinator's state (saving, saved, pending sync, retry). A tap retries a raw draft
+through `retryReplicaDraft`, never the classic enqueue. A refused capture freezes
+authoring and reports `.failed`; the journal bytes stay durable.
+
+**Reconnect and accounts.** Coming back online integrates the fetched state again.
+A5's `isLiveReplicaHeld` rules are unchanged; there is no native live socket, and
+a native session never uses the live write path. Every await in open and
+integration rechecks the open's generation and the remembered signed-in user. A
+change of `SessionStore.signInGeneration` closes (flushing under the account checks
+`enqueueReplica` and the sender apply) and reopens a native route, where another
+account's replica is preserved-unavailable.
+
+Still open: a total shadow for opaque/rich documents (re-stamping refuses an
+unprojectable revision), clean-replica removal on sign-out, old Markdown-draft
+migration and local-create key migration. Existing Markdown drafts retain their
+classic owner.
 
 > **Amendment (2026-07-03):** the document **lists** (Home, the editor's
 > Subpages section, and the Shared tab) now follow this same

@@ -345,9 +345,9 @@ enum Strings_de {
             "Diese Tastatureingabe wird noch nicht unterstützt. Ihr Dokument bleibt im schreibgeschützten Modus erhalten.",
         .native_editor_storage_failed:
             "Diese Änderung konnte nicht auf Ihrem Gerät gespeichert werden. Das Bearbeiten wurde beendet; zuvor gespeicherter Text bleibt erhalten.",
-        .profile_native_editor: "Nativer Editor (experimentell, schreibgeschützt)",
+        .profile_native_editor: "Nativer Editor (experimentell)",
         .profile_native_editor_footer:
-            "Gilt beim nächsten Öffnen eines Dokuments. Unterstützt Docs 6; Bearbeiten ist noch nicht verfügbar.",
+            "Gilt beim nächsten Öffnen eines Dokuments. Unterstützt Docs 6; bisher ist nur die Eingabe von reinem Text möglich.",
         .native_editor_preserved_title: "Dokument erhalten",
         .native_editor_preserved_body:
             "Der native Leser kann die Struktur dieses Dokuments noch nicht anzeigen. Der ursprüngliche Inhalt bleibt erhalten.",

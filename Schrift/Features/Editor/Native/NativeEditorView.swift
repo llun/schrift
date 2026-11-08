@@ -7,6 +7,10 @@ struct NativeEditorView: View {
     /// The replica is preserved and read-only; the classic writer must not
     /// open over it.
     var preservedNotice: L10nKey? = nil
+    /// The classic editor's save status, shown only while typing is enabled.
+    var saveStatus: SaveStatusDisplay? = nil
+    var saveFailureDetail: String? = nil
+    var onSave: () -> Void = {}
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.docsTheme) private var theme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -49,6 +53,13 @@ struct NativeEditorView: View {
                     .font(.footnote)
                     .padding()
                     .accessibilityIdentifier("nativeEditor.inputNotice")
+            }
+        }
+        .toolbar {
+            if let saveStatus, saveStatus != .none {
+                ToolbarItem(placement: .topBarTrailing) {
+                    SaveStatusIndicator(display: saveStatus, failureDetail: saveFailureDetail, onTap: onSave)
+                }
             }
         }
         .background(theme.colors.surfacePage)

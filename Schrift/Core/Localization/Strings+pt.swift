@@ -341,9 +341,9 @@ enum Strings_pt {
             "Esta entrada de teclado ainda não é suportada. O documento foi preservado em modo somente leitura.",
         .native_editor_storage_failed:
             "Não foi possível guardar esta edição no dispositivo. A edição foi interrompida; o texto guardado anteriormente foi preservado.",
-        .profile_native_editor: "Editor nativo (experimental, só de leitura)",
+        .profile_native_editor: "Editor nativo (experimental)",
         .profile_native_editor_footer:
-            "Aplica-se na próxima abertura de um documento. Suporta Docs 6; a edição ainda não está disponível.",
+            "Aplica-se na próxima abertura de um documento. Suporta Docs 6; por enquanto só é possível escrever texto simples.",
         .native_editor_preserved_title: "Documento preservado",
         .native_editor_preserved_body:
             "O leitor nativo ainda não consegue apresentar a estrutura deste documento. O conteúdo original está preservado.",

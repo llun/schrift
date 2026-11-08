@@ -346,9 +346,9 @@ enum Strings_es {
             "Esta entrada de teclado aún no es compatible. Tu documento se conserva en modo de solo lectura.",
         .native_editor_storage_failed:
             "No se pudo guardar este cambio en tu dispositivo. La edición se ha detenido; el texto guardado anteriormente se conserva.",
-        .profile_native_editor: "Editor nativo (experimental, solo lectura)",
+        .profile_native_editor: "Editor nativo (experimental)",
         .profile_native_editor_footer:
-            "Se aplica al abrir el próximo documento. Compatible con Docs 6; la edición aún no está disponible.",
+            "Se aplica al abrir el próximo documento. Compatible con Docs 6; por ahora solo se puede escribir texto sin formato.",
         .native_editor_preserved_title: "Documento conservado",
         .native_editor_preserved_body:
             "El lector nativo aún no puede mostrar la estructura de este documento. Su contenido original se conserva.",

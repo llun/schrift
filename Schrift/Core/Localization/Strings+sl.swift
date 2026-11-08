@@ -355,9 +355,9 @@ enum Strings_sl {
             "Ta vnos s tipkovnico še ni podprt. Dokument je ohranjen v načinu samo za branje.",
         .native_editor_storage_failed:
             "Te spremembe ni bilo mogoče shraniti v napravo. Urejanje je bilo ustavljeno; prej shranjeno besedilo je ohranjeno.",
-        .profile_native_editor: "Izvorni urejevalnik (poskusno, samo za branje)",
+        .profile_native_editor: "Izvorni urejevalnik (poskusno)",
         .profile_native_editor_footer:
-            "Velja ob naslednjem odprtju dokumenta. Podpira Docs 6; urejanje še ni na voljo.",
+            "Velja ob naslednjem odprtju dokumenta. Podpira Docs 6; zaenkrat je na voljo le tipkanje navadnega besedila.",
         .native_editor_preserved_title: "Ohranjen dokument",
         .native_editor_preserved_body:
             "Izvorni bralnik še ne more prikazati strukture tega dokumenta. Izvirna vsebina je ohranjena.",

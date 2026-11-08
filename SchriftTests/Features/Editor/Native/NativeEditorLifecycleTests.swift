@@ -453,7 +453,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         }
         XCTAssertTrue(open.isPreservedReadOnly)
         XCTAssertFalse(session.textView.isEditable)
-        XCTAssertNil(session.input, "slice A never enables production typing")
+        XCTAssertNil(session.input, "the switch is off, so the replica stays read-only")
         XCTAssertEqual(session.surface.blocks.count, 3)
         XCTAssertNil(MockURLProtocol.lastRequest, "restore must not fetch")
     }
@@ -466,9 +466,11 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         }
         let scope = try seedReplica(fixture)
         try fixture.replicaStore.remove(for: scope)
-        // A marker without a replica is the crash-safe direction: read-only.
+        // A marker without a replica is the crash-safe direction: read-only
+        // while the switch is off (with it on, slice B re-seeds it; see
+        // NativeEditorActivationTests).
         XCTAssertTrue(fixture.ownership.mark(scope))
-        let open = NativeEditorOpen(preference: { true })
+        let open = NativeEditorOpen(preference: { false })
         defer { open.close() }
         await open.open(viewModel: fixture.model, isOffline: false)
         guard case .preservedUnavailable = open.route else {
@@ -507,7 +509,8 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         off.close()
         let on = NativeEditorOpen(preference: { true })
         defer { on.close() }
-        await on.open(viewModel: fixture.model, isOffline: false)
+        // Offline: with the switch on an online open also integrates the server state.
+        await on.open(viewModel: fixture.model, isOffline: true)
         guard case .native(let second) = on.route else {
             return XCTFail("re-enabling the switch must restore the same replica")
         }

@@ -350,9 +350,9 @@ enum Strings_en {
             "This keyboard input isn't supported yet. Your document is preserved in read-only mode.",
         .native_editor_storage_failed:
             "Couldn't save this edit on your device. Editing has stopped; previously saved text is preserved.",
-        .profile_native_editor: "Native editor (experimental, read-only)",
+        .profile_native_editor: "Native editor (experimental)",
         .profile_native_editor_footer:
-            "Applies when you next open a document. Supports Docs 6; editing is not available yet.",
+            "Applies when you next open a document. Supports Docs 6; only plain-text typing is available so far.",
         .native_editor_preserved_title: "Preserved document",
         .native_editor_preserved_body:
             "This document has a structure the native reader cannot display yet. Its original content is preserved.",

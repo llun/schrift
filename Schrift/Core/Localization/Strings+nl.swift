@@ -342,9 +342,9 @@ enum Strings_nl {
             "Deze toetsenbordinvoer wordt nog niet ondersteund. Je document is behouden in alleen-lezenmodus.",
         .native_editor_storage_failed:
             "Deze wijziging kon niet op je apparaat worden opgeslagen. Bewerken is gestopt; eerder opgeslagen tekst is behouden.",
-        .profile_native_editor: "Native editor (experimenteel, alleen-lezen)",
+        .profile_native_editor: "Native editor (experimenteel)",
         .profile_native_editor_footer:
-            "Wordt toegepast wanneer je een document opnieuw opent. Ondersteunt Docs 6; bewerken is nog niet beschikbaar.",
+            "Wordt toegepast wanneer je een document opnieuw opent. Ondersteunt Docs 6; voorlopig kun je alleen platte tekst typen.",
         .native_editor_preserved_title: "Document behouden",
         .native_editor_preserved_body:
             "De native lezer kan de structuur van dit document nog niet weergeven. De oorspronkelijke inhoud blijft behouden.",

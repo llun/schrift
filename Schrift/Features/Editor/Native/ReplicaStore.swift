@@ -63,6 +63,56 @@ final class ReplicaStore {
         return owner
     }
 
+    /// Marker data is missing or does not decode while replica files exist, so
+    /// every document is read-only until the marker is rebuilt.
+    var needsOwnershipRepair: Bool {
+        guard let ownershipStore else { return false }
+        if ownershipStore.holdsUnreadableData { return true }
+        return !ownershipStore.hasData && fileManager.fileExists(atPath: directory.path)
+    }
+
+    /// Rebuild the owner marker from the scoped manifests on disk. Only the
+    /// explicit Profile recovery action calls this; routine writes never
+    /// overwrite unreadable marker data. Returns whether the marker is now
+    /// readable.
+    ///
+    /// A folder without a manifest never committed an edit (a crash inside
+    /// `create`), so it claims nothing. A folder whose manifest cannot be read
+    /// cannot name its document; it stays on disk untouched, but it cannot keep
+    /// every other document read-only forever.
+    @discardableResult
+    func repairOwnership() -> Bool {
+        guard let ownershipStore else { return false }
+        var scopes: [ReplicaScope] = []
+        let entries = (try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        for entry in entries where entry.pathExtension != "removed" {
+            let file = entry.appendingPathComponent("manifest.json")
+            guard let bytes = try? Data(contentsOf: file),
+                let envelope = try? JSONDecoder().decode(Envelope.self, from: bytes),
+                replicaDigest(envelope.manifest) == envelope.digest,
+                let manifest = try? JSONDecoder().decode(ReplicaManifest.self, from: envelope.manifest),
+                manifest.formatVersion == ReplicaManifest.currentFormat, isValid(manifest),
+                // A folder claims only the scope its name was derived from.
+                (try? folder(for: manifest.scope).lastPathComponent) == entry.lastPathComponent
+            else { continue }
+            scopes.append(manifest.scope)
+        }
+        return ownershipStore.repair(from: scopes)
+    }
+
+    /// Clear this scope's marker when it has no replica: a crash between
+    /// marking and the first manifest. Refuses while a manifest or a
+    /// quarantine hold exists; the coordinator also requires no draft.
+    @discardableResult
+    func clearOwnership(for scope: ReplicaScope) -> Bool {
+        do {
+            guard try readManifest(for: scope) == nil else { return false }
+        } catch {
+            return false
+        }
+        return ownershipStore?.clear(scope) ?? true
+    }
+
     func create(for scope: ReplicaScope, checkpoint: Data) throws -> ReplicaManifest {
         guard try readManifest(for: scope) == nil else { throw ReplicaStoreError.alreadyExists }
         let folder = try folder(for: scope)

@@ -11,6 +11,8 @@ struct HomeSplitView: View {
     let serverHost: String
     /// Server origin for the editor's off-origin image gate (`imageLoadPolicy`).
     let serverOrigin: String
+    /// See `EditorView.signInGeneration`.
+    var signInGeneration: Int = 0
 
     @State private var selectedRoute: DocumentEditorRoute?
 
@@ -67,7 +69,8 @@ struct HomeSplitView: View {
                         Task { await viewModel.load() }
                     },
                     onOpenDocument: { self.selectedRoute = DocumentEditorRoute(document: $0) },
-                    onCreatedDocument: { self.selectedRoute = DocumentEditorRoute(createdDocument: $0) }
+                    onCreatedDocument: { self.selectedRoute = DocumentEditorRoute(createdDocument: $0) },
+                    signInGeneration: signInGeneration
                 )
                 .id(selectedDocument.id)
                 // Unfolded, the iPhone Duo's crease can cross the detail even with the sidebar shown.

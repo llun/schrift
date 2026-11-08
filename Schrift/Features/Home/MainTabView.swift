@@ -109,7 +109,9 @@ struct MainTabView: View {
         if horizontalSizeClass == .regular {
             // The split view owns its own create action: it opens a document by
             // selecting it, not by pushing onto this shell's path.
-            HomeSplitView(viewModel: viewModel, serverHost: serverHost, serverOrigin: serverOrigin)
+            HomeSplitView(
+                viewModel: viewModel, serverHost: serverHost, serverOrigin: serverOrigin,
+                signInGeneration: signInGeneration)
         } else {
             NavigationStack(path: $docsPath) {
                 DocumentListView(
@@ -224,7 +226,8 @@ struct MainTabView: View {
                 Task { await viewModel.load() }
             },
             onOpenDocument: { push(DocumentEditorRoute(document: $0), path: path) },
-            onCreatedDocument: { push(DocumentEditorRoute(createdDocument: $0), path: path) }
+            onCreatedDocument: { push(DocumentEditorRoute(createdDocument: $0), path: path) },
+            signInGeneration: signInGeneration
         )
         // The editor is a full-screen surface: the tab bar steps aside for it,
         // and returns when the stack pops. Its navigation bar is the system's

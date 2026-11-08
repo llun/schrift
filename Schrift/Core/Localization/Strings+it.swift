@@ -341,9 +341,9 @@ enum Strings_it {
             "Questo input da tastiera non è ancora supportato. Il documento è conservato in sola lettura.",
         .native_editor_storage_failed:
             "Impossibile salvare questa modifica sul dispositivo. La modifica è stata interrotta; il testo salvato in precedenza è conservato.",
-        .profile_native_editor: "Editor nativo (sperimentale, sola lettura)",
+        .profile_native_editor: "Editor nativo (sperimentale)",
         .profile_native_editor_footer:
-            "Si applica alla prossima apertura di un documento. Supporta Docs 6; la modifica non è ancora disponibile.",
+            "Si applica alla prossima apertura di un documento. Supporta Docs 6; per ora è disponibile solo la digitazione di testo semplice.",
         .native_editor_preserved_title: "Documento conservato",
         .native_editor_preserved_body:
             "Il lettore nativo non può ancora visualizzare la struttura di questo documento. Il contenuto originale è conservato.",

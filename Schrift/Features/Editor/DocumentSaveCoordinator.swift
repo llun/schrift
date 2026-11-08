@@ -579,6 +579,42 @@ final class DocumentSaveCoordinator {
 
     var hasUnreadableDrafts: Bool { draftStore.holdsUnreadableData }
 
+    /// Marker data is missing or does not decode while replica files exist, so
+    /// every document is read-only until the marker is rebuilt.
+    var needsOwnershipRepair: Bool { replicaStore.needsOwnershipRepair }
+
+    /// Rebuild the owner marker from the scoped manifests on disk. The only
+    /// production caller is the Profile recovery row; routine writes never
+    /// overwrite unreadable marker data.
+    @discardableResult
+    func repairReplicaOwnership() -> Bool { replicaStore.repairOwnership() }
+
+    /// Clear a marker left by a crash between marking and writing the manifest,
+    /// only while nothing unsynced exists anywhere: no replica manifest or
+    /// quarantine, no draft, no queued or in-flight save, and a readable draft
+    /// store. Anything else keeps the document read-only.
+    @discardableResult
+    func clearNativeOwnership(scope: ReplicaScope) -> Bool {
+        let id = scope.documentID
+        guard scope.serverOrigin == client.serverOrigin, !draftStore.holdsUnreadableData,
+            draftStore.draft(for: id) == nil, inFlight[id] == nil, queued[id] == nil
+        else { return false }
+        return replicaStore.clearOwnership(for: scope)
+    }
+
+    /// Whether a live collaboration replica currently owns this document. A
+    /// native session never uses the live write path, so it must not author
+    /// while the live owner holds the document.
+    func isLiveHeld(documentID: UUID) -> Bool { isLiveReplicaHeld(documentID) }
+
+    /// A native capture that could not be prepared. The journal bytes are
+    /// durable, but nothing can send them until the refusal clears; report it
+    /// rather than claiming a save. Authoring is frozen by the caller.
+    func noteReplicaCaptureFailure(documentID: UUID, message: String) {
+        guard inFlight[documentID] == nil, queued[documentID] == nil else { return }
+        states[documentID] = .failed(message)
+    }
+
     /// Retry the quarantined draft blobs. On success, rehydrate the conflict
     /// holds from the recovered drafts so a hold that was invisible while the
     /// store was unreadable is in force again. Returns whether recovery

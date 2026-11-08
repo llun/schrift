@@ -76,7 +76,7 @@ struct ProfileScreen: View {
         // unkeyed, an account row loaded for the previous user stays on screen (and stays
         // tappable through to their detail) until the user happens to switch tabs.
         .task(id: signInGeneration) {
-            holdsUnreadableDrafts = saveCoordinator?.hasUnreadableDrafts ?? false
+            holdsUnreadableDrafts = needsRecovery
             await viewModel.loadIfStale(sessionGeneration: signInGeneration)
         }
         .sheet(isPresented: $showAppearanceSheet) {
@@ -186,9 +186,20 @@ struct ProfileScreen: View {
         }
     }
 
+    /// Unreadable drafts, or native owner-marker data that is corrupt or lost
+    /// while replicas exist (every document read-only until it is rebuilt).
+    private var needsRecovery: Bool {
+        guard let saveCoordinator else { return false }
+        return saveCoordinator.hasUnreadableDrafts || saveCoordinator.needsOwnershipRepair
+    }
+
     private func recoverDrafts() {
-        let succeeded = saveCoordinator?.recoverQuarantinedDrafts() ?? false
-        holdsUnreadableDrafts = saveCoordinator?.hasUnreadableDrafts ?? false
+        guard let saveCoordinator else { return }
+        let draftsRecovered = !saveCoordinator.hasUnreadableDrafts || saveCoordinator.recoverQuarantinedDrafts()
+        // Rebuilds the marker from the scoped manifests on disk.
+        let ownershipRepaired = !saveCoordinator.needsOwnershipRepair || saveCoordinator.repairReplicaOwnership()
+        let succeeded = draftsRecovered && ownershipRepaired
+        holdsUnreadableDrafts = needsRecovery
         recoverySucceeded = succeeded
     }
 

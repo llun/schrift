@@ -2042,7 +2042,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   local-replica adapter. The isolated `SchriftNativeTestHost` hosts the production
   reader; `--native-large` chooses 5,000 paragraphs. No shipping launch arguments.
 
-- **PR02a persistence checkpoint (production save wiring pending).**
+- **PR02a persistence checkpoint.**
   `Native/ReplicaStore` is a main-actor, throwing draft store under Application
   Support's `dev.llun.Schrift/ReplicaDrafts`, scoped by server/account/org/document.
   Immutable checkpoint/journal bytes and directory entries are flushed before a
@@ -2055,15 +2055,11 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   purge. `remove(for:)` (keep-server-version, `discardPendingWork`, so deletion) renames
   the scope folder to a tombstone before clearing the owner marker and deleting it.
   `ReplicaSaveAdapter.compactIfNeeded` compacts after an ack or raw capture once 64
-  covered (non-outbox) segments exist. Production opening is still read-only: the
-  tested typing/save/restore components await authenticated lifecycle wiring.
-  Do not enable native editing until
-  durability, coordinator replay and rollback ownership are integrated and tested.
+  covered (non-outbox) segments exist. Production typing is wired by slice B (below).
 
-- **PR02a typing checkpoint (component wired; production activation deferred).**
-  `NativeEditorSession.enableTyping(persist:)` installs `NativeInputCoordinator`.
-  This entry point is for the future coordinator-backed route and isolated tests;
-  `NativeEditorOpen` still selects a read-only session. The delegate always refuses
+- **PR02a typing checkpoint.**
+  `NativeEditorSession.enableTyping(persist:scheduler:)` installs `NativeInputCoordinator`
+  for the slice B open route and isolated tests. The delegate always refuses
   UIKit's own mutation and submits one `NativeEditCommand` (UUID, base revision,
   block-relative UTF-16 range) through `DocumentEngine.replaceText(_:persist:)`.
   Writer target and echo reprojection both resolve through `BlockIndex` without a
@@ -2085,7 +2081,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   checkpoint/journal files; its UI test checks keyboard input and Return refusal.
   This flag belongs only to the test host, never the shipping app.
 
-- **PR02a save/restore component checkpoint (production activation still deferred).**
+- **PR02a save/restore component checkpoint.**
   `ReplicaSaveAdapter.record` only appends local incremental bytes. Explicit save
   preparation verifies the durable store and captures an immutable outbox batch;
   `enqueueReplica` uses the same coordinator pending/in-flight/held slots, conflict
@@ -2122,9 +2118,39 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   and stops input with the storage-failed notice. Backspace at a block start is a
   quiet no-op until block joins (PR04); at the document end (after the last
   separator, which no block owns) it is refused with a notice, like typing there.
-  These are component APIs and tests: the production open/reconnect lifecycle,
-  a total shadow for opaque/rich documents, sign-in generation guards and clean-replica
-  removal on sign-out remain required before activating production typing. No live socket.
+  Still open: a total shadow for opaque/rich documents, clean-replica removal on
+  sign-out, old Markdown-draft and local-create key migration. No live socket.
+
+- **PR02 activation (slice B), behind the default-off switch.** `NativeEditorOpen.open(
+  viewModel:isOffline:canUpdate:)` enables typing only when the switch is on, the server
+  is Docs 6, the remembered signed-in user owns the scope, `canUpdate`
+  (`pinRow.abilities.update`, nil fails closed) holds, the document is not a pending
+  create/delete, `isLiveHeld` is false, `session.canType` (fully modeled with a Markdown
+  shadow) and there is no classic draft or queued save (a classic draft stays classic
+  until it syncs). An owned replica is restored offline-first, then
+  `integrateServerState` merges the fetched raw state into the same owner; never install
+  a converted response over it. An unowned eligible document is seeded by
+  `ReplicaStore.create` (marker first) and restored. Anything else keeps PR01's in-memory
+  read-only session with no marker. Each persisted command calls
+  `NativeReplicaSaveScheduler.schedule()` (classic `autosaveInterval`, 30 s cap), which
+  hands the verified outbox to `enqueueReplica` with the content cache's server title
+  and baseline. Close and inactive/background flush it; a reopened replica with an
+  outbox and no pending save schedules one. A refused capture freezes authoring and
+  calls `noteReplicaCaptureFailure`. The native view shows `SaveStatusIndicator`
+  (unsent journal bytes → "Saved on this device"); its tap is
+  `NativeEditorOpen.saveNow`, never the classic `saveNow`. Reconnect calls
+  `refresh`, which integrates again. Every await in open/integration rechecks the
+  open's generation and `signedInUser.userID`; `EditorView` takes
+  `SessionStore.signInGeneration` (via `EditorScreen`/`HomeSplitView`) and closes and
+  reopens a non-classic route when it changes. With the switch on, a marker without a
+  replica is cleared only through `clearNativeOwnership` (no manifest, quarantine,
+  draft, queued or in-flight save) and the unowned route re-seeds it. Profile's
+  recovery row also runs `repairReplicaOwnership`, which rebuilds corrupt or lost
+  marker data from the scoped manifests (folders without one are skipped; a readable
+  owner is never replaced). No native live socket; a native session never takes the
+  live write path. `NativeEditorActivationTests` covers these; the native host's
+  `--native-open` fixture runs the real `EditorView` route offline over an owned
+  replica (`--reset` clears it) and its UI test types, relaunches and checks the text.
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (`@MainActor`), which borrows the replica and resolves
@@ -3774,16 +3800,18 @@ markdown write endpoint**. Understand this before touching the save path:
   - The bytes are document content: **never logged**, and they follow the draft's existing
     store policy — backup-included and **retained on sign-out**, never purged with the content
     cache. Native references stamp account/server/org/document identity, and the raw sender
-    checks the current account. Production session-generation guards are still required
-    before activation; classic drafts still have no owner stamp.
+    checks the current account. The open route rechecks the sign-in generation and
+    account after every await (slice B); classic drafts still have no owner stamp.
   - **The owner marker outlives the draft.** `ReplicaOwnershipStore` (UserDefaults,
     versioned and checksummed, `origin|documentID` → scope) is written before any replica
     file. While it names a document, `enqueue` refuses every classic/live save,
-    `canStartEditing` is false and `NativeEditorOpen` restores the replica read-only
-    regardless of the switch (re-enabling restores the same replica). A missing or
+    `canStartEditing` is false and `NativeEditorOpen` restores the replica regardless of
+    the switch (read-only while it is off; re-enabling restores the same replica). A
     quarantined replica, another account's replica, corrupt marker data, or replica files
-    without marker data all open read-only; never "not owned". Only `ReplicaStore.remove`
-    clears it, after the replica is unreachable. Read ownership through
+    without marker data all open read-only; never "not owned". `ReplicaStore.remove`
+    clears it after the replica is unreachable; the only other clear is
+    `clearNativeOwnership` for a marker with no replica and nothing unsynced, and the
+    only rebuild is Profile's `repairReplicaOwnership`. Read ownership through
     `DocumentSaveCoordinator.nativeOwnership` / `replicaStore`, never a second store
     instance, and never fall back to `UserDefaults.standard` in tests.
 - **C2c wires the write path into the editor, behind the same weak-delegate seam C1 used
