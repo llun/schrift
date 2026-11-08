@@ -350,6 +350,11 @@ enum Strings_sl {
         .profile_work_offline: "Delo brez povezave",
         .native_editor_preserved_block: "%@ (ohranjeno, še ni mogoče urejati)",
         .native_editor_unknown_block: "Nepodprt blok",
+        .native_editor_input_unavailable: "Ta vnos v izvornem urejevalniku še ni podprt.",
+        .native_editor_marked_unavailable:
+            "Ta vnos s tipkovnico še ni podprt. Dokument je ohranjen v načinu samo za branje.",
+        .native_editor_storage_failed:
+            "Te spremembe ni bilo mogoče shraniti v napravo. Urejanje je bilo ustavljeno; prej shranjeno besedilo je ohranjeno.",
         .profile_native_editor: "Izvorni urejevalnik (poskusno, samo za branje)",
         .profile_native_editor_footer:
             "Velja ob naslednjem odprtju dokumenta. Podpira Docs 6; urejanje še ni na voljo.",

@@ -345,6 +345,11 @@ enum Strings_en {
         .profile_work_offline: "Work offline",
         .native_editor_preserved_block: "%@ (preserved, not editable yet)",
         .native_editor_unknown_block: "Unsupported block",
+        .native_editor_input_unavailable: "This input isn't supported in the native editor yet.",
+        .native_editor_marked_unavailable:
+            "This keyboard input isn't supported yet. Your document is preserved in read-only mode.",
+        .native_editor_storage_failed:
+            "Couldn't save this edit on your device. Editing has stopped; previously saved text is preserved.",
         .profile_native_editor: "Native editor (experimental, read-only)",
         .profile_native_editor_footer:
             "Applies when you next open a document. Supports Docs 6; editing is not available yet.",

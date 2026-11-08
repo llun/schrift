@@ -341,6 +341,11 @@ enum Strings_es {
         .profile_work_offline: "Trabajar sin conexión",
         .native_editor_preserved_block: "%@ (conservado, aún no editable)",
         .native_editor_unknown_block: "Bloque no compatible",
+        .native_editor_input_unavailable: "Esta entrada aún no es compatible con el editor nativo.",
+        .native_editor_marked_unavailable:
+            "Esta entrada de teclado aún no es compatible. Tu documento se conserva en modo de solo lectura.",
+        .native_editor_storage_failed:
+            "No se pudo guardar este cambio en tu dispositivo. La edición se ha detenido; el texto guardado anteriormente se conserva.",
         .profile_native_editor: "Editor nativo (experimental, solo lectura)",
         .profile_native_editor_footer:
             "Se aplica al abrir el próximo documento. Compatible con Docs 6; la edición aún no está disponible.",

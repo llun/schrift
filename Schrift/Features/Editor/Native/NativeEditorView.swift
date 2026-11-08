@@ -27,6 +27,14 @@ struct NativeEditorView: View {
                 .id(ObjectIdentifier(session))
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            if let key = session.input?.noticeKey {
+                Text(loc[key])
+                    .font(.footnote)
+                    .padding()
+                    .accessibilityIdentifier("nativeEditor.inputNotice")
+            }
+        }
         .background(theme.colors.surfacePage)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)

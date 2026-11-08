@@ -2042,6 +2042,88 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   local-replica adapter. The isolated `SchriftNativeTestHost` hosts the production
   reader; `--native-large` chooses 5,000 paragraphs. No shipping launch arguments.
 
+- **PR02a persistence checkpoint (production save wiring pending).**
+  `Native/ReplicaStore` is a main-actor, throwing draft store under Application
+  Support's `dev.llun.Schrift/ReplicaDrafts`, scoped by server/account/org/document.
+  Immutable checkpoint/journal bytes and directory entries are flushed before a
+  checksummed manifest is atomically switched. Only referenced files are accepted;
+  interrupted uncommitted files are ignored. Restore verifies every committed file
+  and quarantines corruption with a sticky replay/write hold. Compaction switches
+  first and retains every unsent local segment, including delete-only updates.
+  Only a captured HTTP-confirmed outbox prefix may be acknowledged; later edits
+  remain queued. These files are backup-included, never evicted and have no sign-out
+  purge. Production opening is still read-only: the tested typing/save/restore
+  components await authenticated lifecycle wiring and permanent rollback ownership.
+  Do not enable native editing until
+  durability, coordinator replay and rollback ownership are integrated and tested.
+
+- **PR02a typing checkpoint (component wired; production activation deferred).**
+  `NativeEditorSession.enableTyping(persist:)` installs `NativeInputCoordinator`.
+  This entry point is for the future coordinator-backed route and isolated tests;
+  `NativeEditorOpen` still selects a read-only session. The delegate always refuses
+  UIKit's own mutation and submits one `NativeEditCommand` (UUID, base revision,
+  block-relative UTF-16 range) through `DocumentEngine.replaceText(_:persist:)`.
+  Writer target and echo reprojection both resolve through `BlockIndex` without a
+  document-wide ID walk. The engine buffers patches until the incremental update
+  callback returns durably, then advances revision and delivers stamped emissions.
+  The surface deduplicates exact command emissions, never all `.localUser` patches;
+  untagged locals and `.other` rebuilds always apply. No whole-document projection
+  or state encoding is performed per keystroke.
+  Non-simple/unprojectable/opaque text, placeholders, invalid/surrogate-splitting
+  UTF-16 ranges, separators/multiblock edits and newlines/inline object characters
+  are rejected before mutation. `setMarkedText` never invokes UIKit's implementation:
+  it preserves the committed display, makes the view read-only and explains why.
+  Undo is disabled. A write/cleanup/persistence failure freezes authoring and
+  delivery, retains any returned unconfirmed bytes in memory and preserves the pre-edit
+  display plus existing durable files; never retry against that mutated graph.
+  `NativeTypingTests` exercises the real UIKit delegate, replayed storage equality,
+  echo/repair/refusal/error cases and per-key counters on 5,000 paragraphs.
+  The isolated native test host supports `--native-typing` with disposable raw
+  checkpoint/journal files; its UI test checks keyboard input and Return refusal.
+  This flag belongs only to the test host, never the shipping app.
+
+- **PR02a save/restore component checkpoint (production activation still deferred).**
+  `ReplicaSaveAdapter.record` only appends local incremental bytes. Explicit save
+  preparation verifies the durable store and captures an immutable outbox batch;
+  `enqueueReplica` uses the same coordinator pending/in-flight/held slots, conflict
+  stamps, title half-land result, permission errors and background-task lifetime.
+  It verifies Docs 6 config/org and the current account before sending the existing
+  collaboration-ydoc PATCH; it never takes the legacy snapshot route or a Markdown
+  diff. A whole captured body batch is acknowledged durably before title is tried.
+  Partial batches retain all bytes for idempotent retry. Later journal revisions
+  retain the draft and `.pendingSync`, even if they share a Markdown shadow; the next
+  replay re-stamps that reference and shadow from the current raw revision (same
+  scope/format/generation, matching shadow, revision not ahead of the journal) and
+  refuses anything else. A raw save never writes the classic content cache. Raw
+  enqueue and "Keep mine" require the remembered signed-in owner (`SignedInUserStore`,
+  nil fails closed); a failed raw capture after "Keep mine" reports `.failed`.
+  `enqueueReplica` never takes a caller shadow: it re-captures the stored draft's
+  verified one (`prepare(markdown:expected:)`, non-optional) or projects a first
+  capture from raw (`prepare()`). `saveNow` retries a raw-owned `.failed`/
+  `.pendingSync` draft through `retryReplicaDraft`, never the refused classic enqueue.
+  `PendingDraft.replica` is optional-on-decode and stamps scope/format/generation/
+  revision plus canonical shadow digest. Classic/live enqueues cannot overwrite
+  such drafts. Conflict/title/finish rewrites preserve the reference; old-draft
+  adoption, Markdown attachment rewrites and pending-create migration refuse it.
+  Raw replay shares `draftSyncDecision` and title adoption but never deletes a raw
+  draft on discard/403/404. A5's `isLiveReplicaHeld` skip stays before replay reads
+  and is rechecked after account/fetch awaits; held native requests resume through
+  the existing release funnel after that hold clears.
+  `NativeEditorSession.restore` replays checkpoint+journal into a fresh non-colliding
+  author client and initializes the engine from the durable revision. Server-state
+  integration journals remote bytes before releasing display patches, including
+  idempotent no-op updates; remote sequences never enter the local outbox. Disk or
+  cleanup failure freezes the unsafe graph and keeps the accepted display intact.
+  A restored durable session installs `onUnjournaledTransaction`: any unjournaled
+  transaction freezes the engine rather than drifting `revision` from the manifest,
+  and stops input with the storage-failed notice. Backspace at a block start is a
+  quiet no-op until block joins (PR04); at the document end (after the last
+  separator, which no block owns) it is refused with a notice, like typing there.
+  These are component APIs and tests: the production open/reconnect lifecycle,
+  a total shadow for opaque/rich documents, permanent route
+  ownership after a successful save, sign-in generation guards and feature-switch
+  rollback remain required before activating production typing. No live socket.
+
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (`@MainActor`), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below
@@ -3103,14 +3185,16 @@ markdown write endpoint**. Understand this before touching the save path:
   content, which is why it asks (`holdsUnreadableData`). Not the *only* irreversible
   consumer, though: `init`'s conflict rehydration reads the same empty answer and silently
   drops every persisted hold, after which the next `enqueue` full-overwrites a server body
-  the user was warned about — that one predates the replay. **And the guard buys a window,
-  not a guarantee**: the flag is not sticky, and every mutating method on that store is a
-  read-modify-write through the same all-or-nothing `loadAll`, so the first `save` on *any*
-  document replaces the damaged bytes, clears the flag, and lets the next pass do exactly
-  what the guard prevented at launch. Quarantine on that store is owed, and until it lands
-  **every field added to `PendingDraft`/`DraftBaseline` must stay Optional-on-decode** — a
-  non-optional addition gates the replay on every existing device, then un-gates it
-  destructively on the first keystroke.
+  the user was warned about — that one predates the replay. **The hold is now sticky**:
+  `save` and `remove` quarantine unreadable bytes before reusing the live key. The first
+  blob lives at `…pendingDrafts.unreadable`, further distinct blobs at
+  `…pendingDrafts.unreadable.additional`; none is discarded by another document's write.
+  `recoverQuarantinedDrafts` retries decoding all blobs, merges newer drafts, writes the
+  live key before clearing quarantine and is idempotent. A failed recovery retains every
+  blob and the hold. Recovery callers must recreate the coordinator to rehydrate recovered
+  conflict stamps before replay; there is no automatic recovery UI yet.
+  **Every field added to `PendingDraft`/`DraftBaseline` must still stay Optional-on-decode**;
+  quarantine is recovery protection, not a reason to break existing drafts.
   **The create store's `try?` decode is all-or-nothing, so an undecodable blob means the
   records are *unknown*, not absent** — which would disarm every hold and let the
   next sync pass delete every offline-created document's only copy.
@@ -3665,29 +3749,31 @@ markdown write endpoint**. Understand this before touching the save path:
   server's state on Docs 6). Content is preserved and the replay is still conflict-checked like
   any other, but CRDT history for that one save is flattened. C2c wires this live-snapshot save
   into the editor (below); never bypass the coordinator to persist a live edit.
-- **TODO: drafts will carry the replica bytes (not implemented yet).** The
-  markdown-only draft above is today's behaviour, **no longer a rule to preserve**: persisting
-  the raw Yjs replica bytes in `PendingDraft` is the planned direction (lossless offline rich
-  edits). This bullet is the one place its constraints live (`docs/architecture.md` and
+- **Drafts will carry the replica bytes — approved 2026-11-04; native component implemented
+  in PR02a, production activation pending.** Native drafts now reference the scoped
+  `ReplicaStore` checkpoint/journal through optional `PendingDraft.replica`; large bytes
+  stay out of UserDefaults. The classic live-snapshot draft above remains Markdown-only.
+  This bullet is the one place the raw draft's constraints live (`docs/architecture.md` and
   `docs/offline-and-sync.md` only point here):
-  - The field stays **Optional-on-decode** until `PendingDraftStore` quarantine lands — the
+  - The field stays **Optional-on-decode**, even with `PendingDraftStore` quarantine — the
     standing rule in the on-device create bullet ("every field added to
     `PendingDraft`/`DraftBaseline` must stay Optional-on-decode").
   - The draft **keeps `markdown`** beside the bytes: `draftSyncDecision` compares canonical
     markdown, and the classic paths still need a body.
   - The bytes are resent **only while the draft's markdown is canonically equal to their
     projection** — the same `canonicalMarkdown` test `draftSyncDecision` uses, not byte
-    equality. **Every `PendingDraft(...)` reconstruction** in `DocumentSaveCoordinator` (nine
+    equality — **and** the scope/format/generation/revision matches the verified raw store.
+    **Every `PendingDraft(...)` reconstruction** in `DocumentSaveCoordinator` (nine
     today: `enqueue`'s whole-draft rebuild — the trap the conflict-stamp carry rule already
     guards — plus the conflict stamp, `adoptServerTitle`, `finish`'s stamp,
-    `commitResolvedAttachment`'s in-place draft rewrite, and the rest) must carry, update or
-    drop the bytes, and the classic `.push` replay must never resend stale bytes over newer
-    keystrokes.
+    `commitResolvedAttachment`'s in-place draft rewrite, and the rest) must preserve/update
+    raw provenance or hold the operation. They have been audited in the component checkpoint;
+    the classic `.push` path must never flatten a raw-owned draft.
   - The bytes are document content: **never logged**, and they follow the draft's existing
     store policy — backup-included and **retained on sign-out**, never purged with the content
-    cache. `PendingDraft` has no owner field today; if replay must be limited to the account
-    that wrote the bytes, that needs an owner stamp and a replay gate like the create records'
-    `isReplayable`, not a sign-out purge.
+    cache. Native references stamp account/server/org/document identity, and the raw sender
+    checks the current account. Production session-generation and rollback-route ownership
+    are still required before activation; classic drafts still have no owner stamp.
 - **C2c wires the write path into the editor, behind the same weak-delegate seam C1 used
   for reads.** `EditorLiveWriteCoordinating` (`forwardLocalEdit() -> Bool`,
   `flushPendingLiveSnapshot()`) is implemented by `LiveEditingBridge` and held as `weak var
@@ -3890,8 +3976,8 @@ markdown write endpoint**. Understand this before touching the save path:
   `DocumentContentCacheStore`'s `isExcludedFromBackup` line and has **no eviction**;
   `contentCacheEvictions` selects by recency and here would delete the only copy of a
   photo still on screen). Records follow the *create* store's corruption discipline —
-  quarantine-on-detect plus a **sticky** `holdsUnreadableData`, not
-  `PendingDraftStore`'s detection-only flag — because the first write after a corrupt
+  quarantine-on-detect plus a **sticky** `holdsUnreadableData`, now also used by
+  `PendingDraftStore` — because the first write after a corrupt
   read would otherwise rebuild the blob and leave every surviving placeholder
   record-less, each one holding its document's saves with nothing left to explain why.
   Every field added must stay Optional-on-decode.

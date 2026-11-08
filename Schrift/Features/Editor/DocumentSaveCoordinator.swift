@@ -46,11 +46,13 @@ final class DocumentSaveCoordinator {
         /// `finish` is byte-for-byte identical between the
         /// two paths — only which network primitive `start` calls differs.
         let liveSnapshot: Data?
+        let replicaRequest: ReplicaSaveRequest?
 
-        init(title: String, markdown: String, liveSnapshot: Data? = nil) {
+        init(title: String, markdown: String, liveSnapshot: Data? = nil, replicaRequest: ReplicaSaveRequest? = nil) {
             self.title = title
             self.markdown = markdown
             self.liveSnapshot = liveSnapshot
+            self.replicaRequest = replicaRequest
         }
     }
 
@@ -88,6 +90,10 @@ final class DocumentSaveCoordinator {
 
     private let client: DocsAPIClient
     private let draftStore: PendingDraftStore
+    private let replicaStore: ReplicaStore
+    /// The remembered signed-in account, available offline. A raw draft is
+    /// rewritten or queued only for its own account; nil fails closed.
+    private let signedInUser: SignedInUserStore
     private let contentCache: DocumentContentCacheStore
     private let createStore: PendingDocumentCreateStore
     let pins: DocumentPinCoordinator
@@ -408,6 +414,7 @@ final class DocumentSaveCoordinator {
     init(
         client: DocsAPIClient,
         draftStore: PendingDraftStore = PendingDraftStore(),
+        replicaStore: ReplicaStore? = nil,
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         createStore: PendingDocumentCreateStore = PendingDocumentCreateStore(),
         deleteStore: PendingDocumentDeleteStore = PendingDocumentDeleteStore(),
@@ -430,6 +437,8 @@ final class DocumentSaveCoordinator {
             cache: listCache, serverOrigin: client.serverOrigin,
             signedInUser: SignedInUserStore(userDefaults: listCache.userDefaults), userDefaults: listCache.userDefaults)
         self.draftStore = draftStore
+        self.replicaStore = replicaStore ?? ReplicaStore()
+        self.signedInUser = SignedInUserStore(userDefaults: listCache.userDefaults)
         self.contentCache = contentCache
         self.createStore = createStore
         self.deleteStore = deleteStore
@@ -534,7 +543,7 @@ final class DocumentSaveCoordinator {
             PendingDraft(
                 documentID: documentID, title: draft.title, markdown: draft.markdown,
                 updatedAt: draft.updatedAt, baseline: draft.baseline,
-                lastPushedMarkdown: draft.lastPushedMarkdown, conflictServerUpdatedAt: stamp))
+                lastPushedMarkdown: draft.lastPushedMarkdown, conflictServerUpdatedAt: stamp, replica: draft.replica))
     }
 
     func state(for documentID: UUID) -> DocSaveState {
@@ -1278,17 +1287,10 @@ final class DocumentSaveCoordinator {
         // takes the `start` path against a server the user was warned about. That one predates
         // this PR and is untouched here.)
         //
-        // **This buys less than `createStoreUnreadable` does, and the difference matters.**
-        // That flag is read once at init and is sticky, backed by a quarantine key. This one is
-        // recomputed per pass over bytes that two very ordinary callers overwrite: `enqueue`'s
-        // `draftStore.save` on any keystroke for *any* document, and `discardPendingWork`'s
-        // `remove`. Both are read-modify-writes through `loadAll`, which answers `[:]` for a
-        // corrupt blob — so the first of them replaces the damaged bytes, this flag goes false,
-        // and the next pass does exactly what the guard exists to prevent: POST under the mint
-        // title, pass the both-drafts guard on the same nil, enqueue `""`, and delete the
-        // records. The hold lasts until the first save on any document, not until the schema is
-        // fixed. Strictly better than firing at launch, but the thing that would make it mean
-        // anything past that write is the quarantine `PendingDraftStore` still owes.
+        // Read through on each pass. Draft quarantine now makes this sticky
+        // across unrelated healthy writes and launches, until explicit recovery
+        // can decode every retained blob. Unknown bodies must never become empty
+        // create payloads or let the replay remove their only create records.
         guard !draftStore.holdsUnreadableData else { return }
         // Which account is in front of us. Asked once per pass, and only when there is
         // something to send: `isReplayable` needs it, and this is the layer that *can* await
@@ -1306,6 +1308,9 @@ final class DocumentSaveCoordinator {
             // is already guarded on the record still existing — so this guard is about the
             // wasted create, not the write-back.)
             guard let record = pendingCreates[snapshot.localID] else { continue }
+            guard draftStore.draft(for: record.localID)?.replica == nil,
+                record.syncedServerID.flatMap({ draftStore.draft(for: $0)?.replica }) == nil
+            else { continue }
             // **A sub-page waits for its parent to become a real document.** A child created
             // under a parent this device has not yet POSTed carries that parent's *local* id
             // in its own `parentID`, and POSTing it would name `documents/{local-uuid}/
@@ -1542,6 +1547,7 @@ final class DocumentSaveCoordinator {
             // on in memory, unrepairable (that method needs a draft to write to), so the hold
             // is silently lost at the next relaunch.
             if draftStore.draft(for: record.localID) == nil, let orphan = draftStore.draft(for: serverID),
+                orphan.replica == nil,
                 !mayPredateSave(marker), inFlight[serverID] == nil, !hasOpenEditor(documentID: serverID)
             {
                 draftStore.save(
@@ -1747,6 +1753,9 @@ final class DocumentSaveCoordinator {
         // resume reads an already-removed local draft as empty and overwrites good content
         // with "".
         let migrated = draftStore.draft(for: serverID)
+        // Native key/file migration is not a Markdown copy. Preserve both
+        // owners until the native pending-create migration is implemented.
+        guard draft?.replica == nil, migrated?.replica == nil else { return }
         // First **non-nil**, not first non-empty — and that distinction is load-bearing if a
         // second draft remover is ever added. `carriedPush` below keys off
         // `draft == nil && queued[localID] == nil`, which concedes that `draft == nil` with
@@ -2424,10 +2433,41 @@ final class DocumentSaveCoordinator {
             baseline: baseline)
     }
 
+    /// Capture only verified durable journal bytes. Old Markdown drafts keep
+    /// their classic owner; only an existing raw generation may be advanced.
+    /// The shadow is never the caller's: it is the stored draft's verified one,
+    /// or projected from the raw revision when there is none or it is older.
+    func enqueueReplica(adapter: ReplicaSaveAdapter, title: String, baseline: DraftBaseline? = nil) throws {
+        let id = adapter.scope.documentID
+        guard adapter.scope.serverOrigin == client.serverOrigin, !draftStore.holdsUnreadableData,
+            !isPendingCreate(documentID: id), adapter.scope.ownerUserID == signedInUser.userID
+        else { throw ReplicaSaveError.invalidScope }
+        let previous = draftStore.draft(for: id)
+        let (request, markdown): (ReplicaSaveRequest, String)
+        if let previous {
+            guard let reference = previous.replica, reference.scope == adapter.scope else {
+                throw ReplicaSaveError.incompatibleDraft
+            }
+            (request, markdown) = try adapter.prepare(markdown: previous.markdown, expected: reference)
+        } else {
+            (request, markdown) = try adapter.prepare()
+        }
+        enqueue(
+            documentID: id,
+            save: PendingSave(title: title, markdown: markdown, replicaRequest: request),
+            baseline: baseline ?? previous?.baseline)
+    }
+
     /// The shared core of both public entry points. Classic and live saves differ only in the
     /// `PendingSave` handed here (a live save carries `liveSnapshot` bytes and a projected
     /// `markdown`); the draft write, enqueue-hold, and latest-wins logic below are identical.
     private func enqueue(documentID: UUID, save: PendingSave, baseline: DraftBaseline?) {
+        // A compatibility writer must never replace a raw-owned draft, even
+        // if its Markdown shadow is identical or the native switch is off.
+        if draftStore.draft(for: documentID)?.replica != nil, save.replicaRequest == nil {
+            if inFlight[documentID] == nil { states[documentID] = .pendingSync }
+            return
+        }
         // The draft carries the last-confirmed-push so `draftSyncDecision` rule 1 can
         // recognise our own writes on the next replay (even across a relaunch).
         //
@@ -2450,7 +2490,8 @@ final class DocumentSaveCoordinator {
                 lastPushedMarkdown: lastPushed,
                 // Carry the hold through: `enqueue` rebuilds the whole draft, so omitting this
                 // would silently erase a persisted conflict on the next keystroke.
-                conflictServerUpdatedAt: conflicts[documentID]?.serverUpdatedAt))
+                conflictServerUpdatedAt: conflicts[documentID]?.serverUpdatedAt,
+                replica: save.replicaRequest?.reference))
         // A local document's *displayed* title comes from its draft (`pendingLocalDocuments`
         // overlays it, so a rename shows in lists before the replay lands), and this is the
         // write that changes it. Without the bump, `HomeViewModel`'s memo — keyed on the
@@ -2495,6 +2536,7 @@ final class DocumentSaveCoordinator {
         let namesPendingAttachment = markdownReferencesPendingAttachment(save.markdown)
         if isPendingCreate(documentID: documentID) || isPendingDelete(documentID: documentID)
             || conflicts[documentID] != nil || inFlight[documentID] != nil || namesPendingAttachment
+            || (save.replicaRequest != nil && isLiveReplicaHeld(documentID))
         {
             queued[documentID] = save
             // **A held save is not a saved save.** Nothing else moves the state on this
@@ -2527,6 +2569,7 @@ final class DocumentSaveCoordinator {
             if isPendingCreate(documentID: documentID) || conflicts[documentID] != nil
                 || isPendingDelete(documentID: documentID)
                 || (inFlight[documentID] == nil && namesPendingAttachment)
+                || (save.replicaRequest != nil && inFlight[documentID] == nil && isLiveReplicaHeld(documentID))
             {
                 states[documentID] = .pendingSync
             }
@@ -3122,6 +3165,12 @@ final class DocumentSaveCoordinator {
     /// re-enqueue the placeholder with no record left to resolve it: a permanent hold whose only
     /// escape is deleting the image. Within one turn that interleaving cannot happen.
     private func commitResolvedAttachment(_ localID: UUID, documentID: UUID, resolvedURL: String) {
+        // A Markdown URL rewrite cannot author the corresponding rich update.
+        // Keep the attachment record and raw provenance until native media
+        // editing owns this operation; never flatten a raw-owned draft.
+        guard draftStore.draft(for: documentID)?.replica == nil,
+            queued[documentID]?.replicaRequest == nil
+        else { return }
         if let draft = draftStore.draft(for: documentID) {
             let rewritten = markdownRewritingPendingAttachment(
                 draft.markdown, localID: localID, resolvedURL: resolvedURL)
@@ -3178,6 +3227,17 @@ final class DocumentSaveCoordinator {
 
     private func runSyncPass(isLaunchRecovery: Bool) async {
         for draft in draftStore.allDrafts() {
+            if let reference = draft.replica {
+                guard reference.scope.documentID == draft.documentID,
+                    reference.scope.serverOrigin == client.serverOrigin,
+                    reference.matches(markdown: draft.markdown),
+                    reference.formatVersion == ReplicaManifest.currentFormat,
+                    !draftStore.holdsUnreadableData
+                else { continue }
+                if queued[draft.documentID]?.replicaRequest != nil, !isLiveReplicaHeld(draft.documentID) {
+                    releaseHeldSave(documentID: draft.documentID)
+                }
+            }
             // A document the server has never seen cannot be reconciled against it: the GET
             // below would 404, and the catch at the bottom of this loop removes the draft on
             // a 404 — which for a locally-created document is the user's only copy. This
@@ -3214,6 +3274,12 @@ final class DocumentSaveCoordinator {
             // over it and never discard it here.
             if conflicts[draft.documentID] != nil { continue }
             do {
+                if let reference = draft.replica {
+                    guard try await client.currentUser().id == reference.scope.ownerUserID else { continue }
+                    guard !isLiveReplicaHeld(draft.documentID), inFlight[draft.documentID] == nil,
+                        queued[draft.documentID] == nil, draftStore.draft(for: draft.documentID) == draft
+                    else { continue }
+                }
                 let formatted = try await client.formattedContent(documentID: draft.documentID)
                 // The session may have started editing/saving this document
                 // while we awaited — a stale replay would clobber the newer
@@ -3240,9 +3306,15 @@ final class DocumentSaveCoordinator {
                     // (adopting the server's when the user never renamed); the baseline advances
                     // with it, or a *second* remote rename would read as "both renamed" (see
                     // `adoptedBaseline`).
-                    enqueue(
-                        documentID: draft.documentID, title: title, markdown: draft.markdown,
-                        baseline: adoptedBaseline(draft.baseline, draftTitle: draft.title, pushingTitle: title))
+                    let baseline = adoptedBaseline(draft.baseline, draftTitle: draft.title, pushingTitle: title)
+                    if let reference = draft.replica {
+                        try enqueueReplica(
+                            adapter: ReplicaSaveAdapter(store: replicaStore, scope: reference.scope),
+                            title: title, baseline: baseline)
+                    } else {
+                        enqueue(
+                            documentID: draft.documentID, title: title, markdown: draft.markdown, baseline: baseline)
+                    }
                     // Marked only if the save actually started: a hold (conflict, pending delete,
                     // pending attachment) parks it, and a mark left on a parked save would make a
                     // later unrelated save of this document look like a replay.
@@ -3256,6 +3328,10 @@ final class DocumentSaveCoordinator {
                     // mirror, so the hold it established silently died at the next relaunch.
                     recordConflict(documentID: draft.documentID, serverUpdatedAt: formatted.updatedAt)
                 case .discardServerWins:
+                    if draft.replica != nil {
+                        recordConflict(documentID: draft.documentID, serverUpdatedAt: formatted.updatedAt)
+                        continue
+                    }
                     // Legacy (baseline-less) drafts only — rule 3's tolerance fallback.
                     switch state(for: draft.documentID) {
                     case .pendingSync:
@@ -3300,6 +3376,10 @@ final class DocumentSaveCoordinator {
                     }
                 }
             } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
+                if draft.replica != nil {
+                    states[draft.documentID] = .failed("Couldn't save changes. Please try again.")
+                    continue
+                }
                 // Belt and braces. The guard at the top of the loop means a pending create
                 // never reaches this GET, but this is the line that would delete the only
                 // copy of a locally-created document if it ever did — so it states the
@@ -3346,6 +3426,13 @@ final class DocumentSaveCoordinator {
                 draftStore.remove(documentID: draft.documentID)
             } catch {
                 // Leave the draft for a later sync (e.g. offline right now).
+                if draft.replica != nil {
+                    if let error = error as? DocsAPIError, retryableSaveFailure(error) {
+                        states[draft.documentID] = .pendingSync
+                    } else {
+                        states[draft.documentID] = .failed("Couldn't save changes. Please try again.")
+                    }
+                }
             }
         }
     }
@@ -3380,7 +3467,7 @@ final class DocumentSaveCoordinator {
                 documentID: documentID, title: title, markdown: draft.markdown, updatedAt: draft.updatedAt,
                 baseline: adoptedBaseline(draft.baseline, draftTitle: draft.title, pushingTitle: title),
                 lastPushedMarkdown: draft.lastPushedMarkdown,
-                conflictServerUpdatedAt: draft.conflictServerUpdatedAt))
+                conflictServerUpdatedAt: draft.conflictServerUpdatedAt, replica: draft.replica))
     }
 
     /// The editor observed the server's title on a response that `mayPredateSave` has cleared
@@ -3463,6 +3550,7 @@ final class DocumentSaveCoordinator {
         // uploads is released by the second one to land, not the first. Asking the content
         // rather than tracking which record just finished is what makes that automatic.
         guard !markdownReferencesPendingAttachment(held.markdown) else { return }
+        guard held.replicaRequest == nil || !isLiveReplicaHeld(documentID) else { return }
         queued[documentID] = nil
 
         start(documentID: documentID, save: held)
@@ -3491,6 +3579,14 @@ final class DocumentSaveCoordinator {
     /// wins — an accepted race, recoverable from the server's version history).
     func resolveConflictKeepingLocal(documentID: UUID) {
         let resolved = conflicts[documentID]
+        // Another signed-in account must never rewrite, release or send this raw draft:
+        // the conflict, baseline and queued work all stay exactly as they are.
+        if let reference = draftStore.draft(for: documentID)?.replica,
+            reference.scope.ownerUserID != signedInUser.userID
+        {
+            states[documentID] = .failed("Couldn't save changes. Please try again.")
+            return
+        }
         // Defensive only, per the invariant above: were a save somehow in flight, its
         // `finish` would pick the held slot up anyway, so dropping out here is safe.
         guard inFlight[documentID] == nil else {
@@ -3546,7 +3642,7 @@ final class DocumentSaveCoordinator {
                     lastPushedMarkdown: draft.lastPushedMarkdown,
                     // The user answered: the hold is released, on disk as well as in memory
                     // (`clearResolvedConflict` below rewrites this to nil).
-                    conflictServerUpdatedAt: nil))
+                    conflictServerUpdatedAt: nil, replica: draft.replica))
         }
         // Releases the record AND starts whatever the hold was parking.
         clearResolvedConflict(documentID: documentID)
@@ -3555,8 +3651,28 @@ final class DocumentSaveCoordinator {
             let draft = draftStore.draft(for: documentID)
         {
             // Re-read: the draft above may have just had its baseline advanced.
-            enqueue(
-                documentID: documentID, title: draft.title, markdown: draft.markdown, baseline: draft.baseline)
+            if draft.replica != nil {
+                // The conflict is already cleared, so a failed capture must not read as a no-op.
+                retryReplicaDraft(documentID: documentID)
+            } else {
+                enqueue(documentID: documentID, title: draft.title, markdown: draft.markdown, baseline: draft.baseline)
+            }
+        }
+    }
+
+    /// The manual retry of a raw-owned draft (the classic `enqueue` is refused for one).
+    /// It re-captures the stored draft through the raw path; a capture that still fails
+    /// reports `.failed`, never a silent no-op. Holds (conflict, pending create/delete,
+    /// live replica) still apply through `enqueue`.
+    func retryReplicaDraft(documentID: UUID) {
+        guard inFlight[documentID] == nil, queued[documentID] == nil,
+            let draft = draftStore.draft(for: documentID), let reference = draft.replica
+        else { return }
+        do {
+            try enqueueReplica(
+                adapter: ReplicaSaveAdapter(store: replicaStore, scope: reference.scope), title: draft.title)
+        } catch {
+            states[documentID] = .failed("Couldn't save changes. Please try again.")
         }
     }
 
@@ -3749,7 +3865,17 @@ final class DocumentSaveCoordinator {
                 // the save still counts as failed (retryability is classified from the same
                 // error) but the server holds our body, so `finish` must record the push.
                 let titleFailure: DocsAPIError?
-                if let snapshot = save.liveSnapshot {
+                if let request = save.replicaRequest {
+                    try await request.adapter.saveBody(request, client: client)
+                    do {
+                        try await client.updateTitle(documentID: documentID, title: save.title)
+                        titleFailure = nil
+                    } catch let error as DocsAPIError {
+                        titleFailure = error
+                    } catch {
+                        titleFailure = .network(String(describing: error))
+                    }
+                } else if let snapshot = save.liveSnapshot {
                     // Live-collaboration snapshot: write the CRDT bytes verbatim, through the same route as
                     // the classic body (`saveContentViaRoute`).
                     titleFailure = try await client.saveLiveSnapshot(
@@ -3822,7 +3948,7 @@ final class DocumentSaveCoordinator {
                     PendingDraft(
                         documentID: documentID, title: draft.title, markdown: draft.markdown,
                         updatedAt: draft.updatedAt, baseline: draft.baseline, lastPushedMarkdown: save.markdown,
-                        conflictServerUpdatedAt: conflicts[documentID]?.serverUpdatedAt))
+                        conflictServerUpdatedAt: conflicts[documentID]?.serverUpdatedAt, replica: draft.replica))
             }
         }
         // Deleted or revoked while this save was on the wire: write no local copy,
@@ -3837,7 +3963,9 @@ final class DocumentSaveCoordinator {
             queued[documentID] = nil
             states[documentID] = .idle
             if error == nil, let draft = draftStore.draft(for: documentID),
-                draft.title == save.title, draft.markdown == save.markdown
+                draft.title == save.title, draft.markdown == save.markdown,
+                draft.replica == save.replicaRequest?.reference,
+                save.replicaRequest.map({ $0.adapter.isCurrent($0) }) ?? true
             {
                 draftStore.remove(documentID: documentID)
             }
@@ -3854,7 +3982,8 @@ final class DocumentSaveCoordinator {
             // a landed PATCH must not resurrect it.
             knownServerTitles[documentID] = save.title
             if let draft = draftStore.draft(for: documentID), draft.title == save.title,
-                draft.markdown == save.markdown
+                draft.markdown == save.markdown, draft.replica == save.replicaRequest?.reference,
+                save.replicaRequest.map({ $0.adapter.isCurrent($0) }) ?? true
             {
                 draftStore.remove(documentID: documentID)
             }
@@ -3862,14 +3991,20 @@ final class DocumentSaveCoordinator {
             // The save PATCHes are void, so there is no server `updated_at` to
             // record: `serverUpdatedAt` is nil (truthfully "unknown after a void
             // save") and `syncedAt` is the client wall-clock of the confirmed save.
-            contentCache.save(
-                CachedDocumentContent(
-                    documentID: documentID,
-                    title: save.title,
-                    markdown: save.markdown,
-                    syncedAt: Date(),
-                    serverUpdatedAt: nil
-                ))
+            // A raw save's Markdown is a lossy shadow, never the classic cache's body.
+            if save.replicaRequest == nil {
+                contentCache.save(
+                    CachedDocumentContent(
+                        documentID: documentID,
+                        title: save.title,
+                        markdown: save.markdown,
+                        syncedAt: Date(),
+                        serverUpdatedAt: nil
+                    ))
+            }
+            if let request = save.replicaRequest, !request.adapter.isCurrent(request) {
+                states[documentID] = .pendingSync
+            }
         } else if let docsError = error as? DocsAPIError, retryableSaveFailure(docsError) {
             // Transient/transport failure (offline, 5xx, rate limit): the edit is
             // safely on-device as a draft; mark it queued for sync rather than a
@@ -3933,7 +4068,8 @@ final class DocumentSaveCoordinator {
             // stamps it `.pendingSync`.
             guard conflicts[documentID] == nil, !isPendingCreate(documentID: documentID),
                 !isPendingDelete(documentID: documentID),
-                !markdownReferencesPendingAttachment(next.markdown)
+                !markdownReferencesPendingAttachment(next.markdown),
+                next.replicaRequest == nil || !isLiveReplicaHeld(documentID)
 
             else {
                 queued[documentID] = next

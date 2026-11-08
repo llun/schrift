@@ -598,6 +598,92 @@ durable typing/legacy adapters and complete block chrome belong to later PRs.
 The generated project includes an isolated production-reader fixture host and
 UI smoke test; `--native-large` supplies the 5,000-paragraph scroll fixture.
 
+**PR02a persistence checkpoint.** `ReplicaStore` and `ReplicaManifest` add the
+durable storage foundation used by the session/save component APIs. Production
+native opening remains read-only. The main-actor store hashes the
+server/account/org/document scope into an Application Support directory, retains
+backup-included immutable checkpoint/update files, and flushes files and directory
+entries before switching a checksummed manifest. Restore verifies all referenced
+files; corrupt committed state is copied into recovery storage and blocked rather
+than treated as empty. Unreferenced interrupted writes are ignored. Replay returns
+checkpoint plus ordered updates; their Yjs client IDs remain intact.
+
+The HTTP outbox is independent of the replay checkpoint and of state vectors.
+Compaction retains pending local update bytes even when the new checkpoint already
+contains their effect. Acknowledging a captured prefix leaves later edits queued;
+delete-only updates require the same HTTP confirmation. There is no eviction or
+sign-out removal API. The caller must author a checkpoint for the exact revision,
+restore into a fresh non-colliding client, and stop writing after a disk failure.
+The store does not validate Yjs semantics or perform a network request.
+
+`PendingDraftStore` now preserves every distinct unreadable blob before a write
+reuses the live key. Its hold survives writes/relaunches; explicit recovery retries
+all blobs, merges without replacing newer live drafts, and writes before clearing
+the hold. Recreate the coordinator after recovery so conflict stamps are rehydrated.
+`PendingDraft` now has an optional replica reference; the save component checkpoint
+below describes its reconstruction audit. Production opening, migration ownership
+and typing activation remain subsequent PR02a work. See [offline-and-sync.md](offline-and-sync.md).
+
+**PR02a typing component checkpoint.** Native sessions can explicitly install a
+`NativeInputCoordinator` with a durable-update callback. The production open route
+does not invoke that entry point yet. The delegate rejects UIKit's default mutation
+and sends a command ID, base revision and block-relative UTF-16 replacement to the
+engine. Before mutation, the engine validates the canonical indexed simple-text
+target, readable fidelity and character boundaries. After the writer returns its
+incremental update, patch delivery stays held until the persistence callback succeeds.
+The surface applies each stamped command emission once; it still applies untagged
+local patches and every authoritative `.other` rebuild. This avoids provisional
+storage and double-application altogether. Both target resolution and settled
+reprojection use the engine index. No full projection/snapshot encoding occurs per
+key; tests bound touched-entry, projection and incremental-byte counts on 5,000 blocks.
+
+Separators, multiblock ranges, unsupported/opaque/scrubbed blocks, newline input and
+invalid UTF-16 boundaries are refused before transactions. `setMarkedText` is
+intercepted before UIKit mutates anything and falls back to preserved read-only
+content with an explanation. UIKit undo remains disabled. A failed mutation or
+append freezes the unsafe replica and retains any returned unconfirmed update in memory;
+the accepted display and earlier durable journal remain intact. Native production
+activation, coordinator saves, offline restoration and migration ownership remain
+subsequent integration work.
+The isolated native host's `--native-typing` fixture enables this component against
+disposable journal files; a UI test exercises keyboard input and Return refusal.
+Production launch arguments and default routing remain unchanged.
+
+**PR02a save and restore component checkpoint.** `ReplicaSaveAdapter` captures
+verified journal bytes for `DocumentSaveCoordinator.enqueueReplica`. The coordinator
+reuses its existing save slots, enqueue holds, conflict/title logic, error states
+and background lifetime. A native request verifies the same server, Docs 6 org and
+current account, then uses the existing collaboration-ydoc PATCH directly. It never
+invokes the legacy live-snapshot fallback or a Markdown encoder/diff. Only a fully
+confirmed captured body batch is durably acknowledged; title follows, with the
+same half-land contract as classic saves. Newer outbox revisions keep honest
+pending state and their draft even when their Markdown shadow did not change.
+
+The optional draft reference names scope, raw format, generation, revision and a
+canonical shadow digest. Existing Markdown drafts cannot be adopted implicitly;
+compatibility writers cannot replace a raw-owned draft. All nine coordinator draft
+constructions were audited: conflict/title/finish rewrites preserve provenance;
+create/migration and attachment rewrites are held when raw provenance exists.
+`runSyncPass` keeps A5's live-replica skip, including post-await rechecks. It replays
+matching raw references through the native path, preserves raw drafts on 403/404
+and uses the existing conflict/title decisions without a Markdown overwrite.
+
+Offline restoration is available as a component API: `NativeEditorSession.restore`
+replays raw checkpoint and journal, checks for unresolved dependencies, selects a
+new non-colliding author client and restores the durable revision. Reconnect bytes
+can merge into this same owner through a remote journal/delivery barrier. Even an
+idempotent remote update advances the matching journal/engine revision and never
+enters the local outbox. Failed remote persistence freezes writes before publishing
+the changed display. A draft reference older than the journal
+is re-stamped from the current raw revision during replay; an incompatible one is
+refused, and a first capture projects its shadow from raw rather than trusting the
+caller. A durable session freezes on any unjournaled transaction (with the
+storage-failed notice) so the engine revision cannot drift from the manifest.
+Backspace at a block start is a quiet no-op until block joins exist (PR04); at the
+document end it is refused with a notice. Production lifecycle wiring, permanent
+migration/rollback ownership, a total shadow for opaque documents and sign-in
+generation guards remain before activation. Native production opening is still read-only.
+
 **Selection.** `setSelection(EditorSelection?)` captures directed anchor/head
 endpoints as `YRelativePosition`s. Each `EditorPosition` holds a block id,
 block-relative UTF-16 offset, and affinity (`assoc`, default -1). Negative

@@ -17,9 +17,9 @@ import Foundation
 /// - `.text`: each delta's `range` is in the surface's **pre-change** text.
 ///   Content inspection cannot tell "already applied" from "not applied" (a
 ///   displayed `"a"` plus a delete of `0..<1` is ambiguous), so the patch
-///   carries `origin`. A surface that applied a local intent optimistically
-///   skips the `.localUser` patch for that edit; a surface that did not (or a
-///   remote patch) applies it. Phase 2 may refine this with command ids.
+///   carries an optional command stamp. Reconcile that exact command, never
+///   suppress all `.localUser` patches. Native input intercepts UIKit before
+///   its mutation and applies the engine echo after the journal is durable.
 /// - `.replaceBlock`: assign the snapshot; idempotent.
 /// - `.props`: assign the attribute set; idempotent.
 /// - `.insert`: skip blocks whose id is already present; `.remove`: skip ids
@@ -62,16 +62,20 @@ extension EditorSurface {
 /// per-block changes, then insertions.
 struct BlockPatch: Equatable {
     var changes: [BlockChange]
-    /// Who caused the transaction. A surface that applied a local intent
-    /// optimistically skips `.localUser` patches for that edit; a surface with
-    /// no optimism (or any `.remote` patch) applies everything. Composition
+    /// Present only for explicitly identified native commands. Untagged local
+    /// patches and authoritative `.other` rebuilds must always be applied.
+    var nativeCommand: NativePatchStamp?
+    /// Who caused the transaction. Origin alone never identifies an already
+    /// displayed command; `nativeCommand` identifies its individual emissions.
+    /// Untagged patches always apply. Composition
     /// rebuilds are always `.other`, never `.localUser`, and must always be
     /// applied: they include discarded peer edits as well as committed text.
     var origin: BlockPatchOrigin
 
-    init(_ changes: [BlockChange] = [], origin: BlockPatchOrigin = .other) {
+    init(_ changes: [BlockChange] = [], origin: BlockPatchOrigin = .other, nativeCommand: NativePatchStamp? = nil) {
         self.changes = changes
         self.origin = origin
+        self.nativeCommand = nativeCommand
     }
 
     var isEmpty: Bool { changes.isEmpty }

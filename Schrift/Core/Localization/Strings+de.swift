@@ -340,6 +340,11 @@ enum Strings_de {
         .profile_work_offline: "Offline arbeiten",
         .native_editor_preserved_block: "%@ (erhalten, noch nicht bearbeitbar)",
         .native_editor_unknown_block: "Nicht unterstützter Block",
+        .native_editor_input_unavailable: "Diese Eingabe wird im nativen Editor noch nicht unterstützt.",
+        .native_editor_marked_unavailable:
+            "Diese Tastatureingabe wird noch nicht unterstützt. Ihr Dokument bleibt im schreibgeschützten Modus erhalten.",
+        .native_editor_storage_failed:
+            "Diese Änderung konnte nicht auf Ihrem Gerät gespeichert werden. Das Bearbeiten wurde beendet; zuvor gespeicherter Text bleibt erhalten.",
         .profile_native_editor: "Nativer Editor (experimentell, schreibgeschützt)",
         .profile_native_editor_footer:
             "Gilt beim nächsten Öffnen eines Dokuments. Unterstützt Docs 6; Bearbeiten ist noch nicht verfügbar.",

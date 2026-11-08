@@ -427,6 +427,17 @@ final class DocumentSaveCoordinatorCreateTests: XCTestCase {
         XCTAssertNotNil(
             createStore.create(for: local.id),
             "and the record survives, so a shipped decode fix can still recover the body")
+
+        // A write to an unrelated document must not clear the unknown-drafts
+        // hold. This used to erase the damaged blob and let the next pass POST
+        // the local document with an empty body.
+        let drafts = PendingDraftStore(userDefaults: defaults)
+        drafts.remove(documentID: UUID())
+        XCTAssertTrue(drafts.holdsUnreadableData)
+        await coordinator.syncPendingDrafts()
+        XCTAssertEqual(log.count(ofMethod: "POST", urlContaining: "documents/"), 0)
+        XCTAssertNotNil(createStore.create(for: local.id))
+        XCTAssertEqual(defaults.data(forKey: "dev.llun.Schrift.pendingDrafts.unreadable"), Data("not json".utf8))
     }
 
     /// The **other** deleting line in `runSyncPass` — the `.discardServerWins` launch branch —

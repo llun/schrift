@@ -7,6 +7,109 @@
 > [`architecture.md`](architecture.md) for the overall architecture and
 > [`AGENTS.md`](../AGENTS.md) for the operational conventions.
 
+> **PR02a checkpoint (2026-11-07):** the native editor is still read-only. A
+> standalone `ReplicaStore` now provides the persistence foundation below;
+> native typing, save/reconnect/reopen integration and migration are not enabled.
+
+> **Typing component checkpoint:** the native input coordinator and command/echo
+> path now exist and are covered by `NativeTypingTests`. Explicitly enabled test
+> sessions journal each incremental update before its echo reaches storage. Input
+> stays within one indexed simple-text block; separators, placeholders, malformed
+> ranges and marked text are refused before mutation. Marked input switches to a
+> preserved read-only state with an explanation, and system undo is disabled.
+> A failed append stops authoring and retains unconfirmed update bytes without
+> publishing the rejected edit. Production opening still does not enable typing:
+> coordinator save/reopen and migration ownership must be integrated first.
+
+> **Save/restore component checkpoint:** `ReplicaSaveAdapter` now uses the shared
+> coordinator for raw Docs 6 PATCH batches, body acknowledgment, title half-land,
+> permission errors and conflicts. Optional replica provenance prevents raw drafts
+> from replaying through a Markdown writer. A5's live-replica skip is preserved.
+> `NativeEditorSession.restore` provides raw offline replay and a fresh author ID;
+> remote integration journals before display. Production opening/reconnect,
+> permanent rollback ownership, sign-in generation guards and shadow refresh for
+> journal revisions newer than a saved reference are still pending. The shipping
+> native route remains read-only.
+
+## Native replica persistence foundation (PR02a checkpoint)
+
+`ReplicaManifest` stamps server origin, authenticated account, collaboration org,
+document, format, generation, revision, checkpoint sequence, journal order, local
+outbox sequences and HTTP acknowledgment. SHA-256 checks cover the manifest and
+each referenced file. The directory key is a hash of the entire scope; reading a
+different account/server/org/document cannot discover or replay another scope.
+
+`ReplicaStore` serializes writes on the main actor. It creates immutable checkpoint
+and journal files under Application Support (`dev.llun.Schrift/ReplicaDrafts`),
+flushes bytes and parent directory entries, then flushes and atomically renames a
+new manifest. A successful append is the boundary before an edit may be published
+or sent. Any append failure must stop authoring: a Yjs transaction cannot roll back.
+No projection or whole-document encoding happens inside append. Restoration verifies
+the checkpoint and every retained segment before returning any content; the caller
+applies checkpoint then ordered journal bytes into its own fresh-client replica.
+Yjs duplicate replay is idempotent, including delete-only updates.
+
+Files absent from the committed manifest are interrupted/unaccepted writes and are
+ignored, including partial trailing files. Corrupt or missing committed files block
+replay and writes; available evidence is copied into a `Recovery` directory before
+a durable blocking marker is installed. Originals remain intact. Unknown future
+manifest formats are retained and refused. There is no automatic corruption repair.
+
+Compaction writes a new checkpoint for the exact current revision, switches the
+manifest, then deletes only obsolete files. It retains local outbox bytes even if
+their effect is already checkpointed. Only confirmation of the captured HTTP body
+batch permits acknowledgment; newer edits remain pending. State-vector equality
+does not confirm delete sets. The store does not send requests, set saved status,
+own title retry state or use a live socket. Its bytes are backup-included, retained
+on sign-out, never evicted and never logged.
+
+`PendingDraftStore` now quarantines unreadable blobs before **both** mutating
+operations (`save` and `remove`), retains successive distinct corruptions, and
+keeps `holdsUnreadableData` sticky across healthy writes and relaunches. Explicit
+`recoverQuarantinedDrafts()` succeeds only when all recovery blobs decode; it merges
+by timestamp, preserves newer live edits and persists the merged store before
+clearing quarantine. Failed recovery retains the hold and every blob. Callers must
+recreate `DocumentSaveCoordinator` after successful recovery to rehydrate conflict
+holds. No recovery UI or startup writes have been introduced.
+
+The save adapter captures a verified outbox and enters the coordinator's existing
+serialized slots. It validates server/config/org/account, sends each stored update
+through the existing collaboration-ydoc PATCH and acknowledges the entire captured
+batch only after every PATCH confirms. Title is attempted afterward. A title-only
+retry after relaunch uses the persisted body acknowledgment and sends no body bytes.
+A newer journal revision keeps the draft and pending state; canonical Markdown
+equality alone never proves a rich revision saved. The next replay re-stamps such a
+draft from the current raw revision (same scope, format and generation, a matching
+shadow, a revision not ahead of the journal) and sends the newer bytes; anything else
+is refused. Partial batches retain every sequence for idempotent retry. No legacy
+route, live socket or Markdown diff is used. A raw save never writes its lossy shadow
+into the classic content cache. Raw drafts are queued, and "Keep mine" rewrites them,
+only for the remembered signed-in owner. The shadow is never caller-supplied: a
+stored draft's verified shadow is re-captured, or a first capture is projected from
+raw. A manual retry (`saveNow`) of a raw draft re-runs the raw capture
+(`retryReplicaDraft`). A failed raw capture after "Keep mine"
+reports `.failed` instead of a silent no-op.
+
+`PendingDraft.replica` is optional-on-decode. The nine coordinator constructions now
+either preserve scope/format/generation/revision/shadow provenance or explicitly hold
+operations that cannot update it losslessly (pending-create migration and attachment
+rewrites). Old Markdown drafts cannot be silently adopted. Classic/live enqueue
+cannot erase raw ownership. Raw replay retains the existing conflict/title logic
+and A5 guards and never discards raw work on a legacy discard decision or 403/404.
+
+Component restoration replays checkpoint+journal into a fresh non-colliding client,
+restores engine revision, and merges/journals fetched remote state before any display
+patch is released. Remote updates do not enter the outbox. Duplicate remote replay
+is idempotent while journal/engine revisions stay aligned. Failed disk persistence
+freezes the mutated graph, keeps the accepted display and retains unconfirmed bytes
+in memory; reopen uses the earlier durable revision.
+
+Remaining PR02a integration: production open/reconnect wiring, a total shadow for
+opaque/rich documents (re-stamping refuses an unprojectable revision today),
+permanent native route ownership after a saved draft is removed, account/session
+generation guards, migration/rollback and production activation. Existing Markdown
+drafts retain their classic owner; no production native replica is adopted yet.
+
 > **Amendment (2026-07-03):** the document **lists** (Home, the editor's
 > Subpages section, and the Shared tab) now follow this same
 > seed-synchronously / revalidate-silently pattern via `DocumentCacheStore`
@@ -1867,27 +1970,15 @@ already-recorded ghost residual below, not a new one.
   the conflict is discharged, and the pending autosave full-overwrites the co-author. The
   retain/release wiring below is what closes it; recorded separately because the consequence
   named there is mid-swap edit loss, which is not this.
-- **`PendingDraftStore` still has no quarantine, where `PendingDocumentCreateStore` does.**
-  Its `loadAll` is the same all-or-nothing `try?` decode, so one undecodable blob makes every
-  draft on the device read as absent. It now at least *detects* that (`holdsUnreadableData`),
-  and `runCreatePass` returns on it — because the replay is what turns a nil draft read into
-  **destroyed content**: it would POST each record under its mint title, pass
-  `finishMigration`'s both-drafts guard (which reads the same nil), enqueue `""`, and then
-  `removePendingCreate`, taking the one thing that could have driven a recovery after a shipped
-  decode fix. (It is not the only irreversible consumer — `init`'s conflict rehydration reads
-  the same empty answer and silently drops every persisted hold, after which the next `enqueue`
-  full-overwrites a server the user was warned about. That one predates the replay.)
-
-  **The guard buys a window, not a guarantee, and that is the part worth remembering.** The
-  flag is not sticky and every mutating method on that store is a read-modify-write through the
-  same all-or-nothing `loadAll`, so the first `save` on **any** document — one keystroke in any
-  open editor — replaces the damaged bytes, clears the flag, and lets the following pass POST
-  and delete the records exactly as it would have at launch. What is owed is the other half the
-  create store has: quarantine the bytes before the key is reused, and make the flag sticky.
-  Drafts are full document bodies, so the blast radius is larger than the records'. The same
-  reasoning gives `PendingDraft`/`DraftBaseline` the create record's obligation: **every field
-  added must stay Optional-on-decode**, or the addition gates the replay on every existing
-  device and then un-gates it destructively on the first keystroke.
+- **[Implemented in this checkpoint] `PendingDraftStore` quarantine.**
+  The all-or-nothing decode still treats unknown drafts as unknown, and
+  `runCreatePass` holds rather than POSTing empty bodies. Both `save` and `remove`
+  now retain unreadable bytes before replacing the live key, including successive
+  distinct corruptions. `holdsUnreadableData` stays true across healthy writes and
+  relaunches until explicit recovery can decode and merge every retained blob.
+  Optional-on-decode additions remain required. Recovery callers must recreate
+  the coordinator so recovered conflict stamps are rehydrated; recovery UI is
+  still owed. See the persistence checkpoint above for the current API and tests.
 - **An escape for a checkpoint that keeps 404ing with work under its server id.** The
   start-over now declines while a `serverID` draft survives, so a genuinely deleted
   document leaves the record checkpointed indefinitely: three GETs plus a `/users/me/` per trigger — four, once `runSyncPass` also fetches the surviving draft's document, the body on

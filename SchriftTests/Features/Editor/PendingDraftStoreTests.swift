@@ -179,11 +179,7 @@ final class PendingDraftStoreTests: XCTestCase {
         XCTAssertEqual(first.draft(for: draft.documentID), draft, "reading the other suite evicts nothing")
     }
 
-    /// Bytes written behind the store's back after a memoized read — what a schema slip looks
-    /// like on a device, and what the coordinator's unreadable-drafts tests do — are seen at
-    /// once, and with exactly the old corruption semantics: unknown while damaged, then replaced
-    /// wholesale by the next write (the documented, owed-quarantine behavior — not made worse).
-    func testCorruptionAfterAMemoizedReadIsDetectedAndTheNextWriteReplacesIt() {
+    func testCorruptionAfterAMemoizedReadSurvivesNextWriteAndRelaunch() {
         let (store, userDefaults) = makeStore()
         let draft = makeDraft()
         store.save(draft)
@@ -199,8 +195,47 @@ final class PendingDraftStoreTests: XCTestCase {
         let other = makeDraft(id: "22222222-2222-4222-8222-222222222222")
         store.save(other)
 
-        XCTAssertFalse(store.holdsUnreadableData)
+        XCTAssertTrue(store.holdsUnreadableData)
+        XCTAssertEqual(userDefaults.data(forKey: "dev.llun.Schrift.pendingDrafts.unreadable"), Data("not json".utf8))
+        XCTAssertTrue(PendingDraftStore(userDefaults: userDefaults).holdsUnreadableData)
         XCTAssertEqual(store.allDrafts(), [other])
+    }
+
+    func testRemoveAlsoQuarantinesAndRepeatedCorruptionPreservesEveryDistinctBlob() {
+        let (store, defaults) = makeStore()
+        let first = Data("first damaged blob".utf8)
+        let second = Data("second damaged blob".utf8)
+        defaults.set(first, forKey: "dev.llun.Schrift.pendingDrafts")
+        store.remove(documentID: UUID())
+        defaults.set(second, forKey: "dev.llun.Schrift.pendingDrafts")
+        store.save(makeDraft())
+        XCTAssertEqual(defaults.data(forKey: "dev.llun.Schrift.pendingDrafts.unreadable"), first)
+        XCTAssertEqual(
+            defaults.array(forKey: "dev.llun.Schrift.pendingDrafts.unreadable.additional") as? [Data], [second])
+        XCTAssertFalse(store.recoverQuarantinedDrafts())
+        XCTAssertTrue(store.holdsUnreadableData)
+        XCTAssertEqual(store.allDrafts(), [makeDraft()])
+    }
+
+    func testRecoveryAfterDecoderRepairMergesWithoutOverwritingNewerLiveWork() throws {
+        let (store, defaults) = makeStore()
+        let old = makeDraft(markdown: "old")
+        let recovered = makeDraft(id: "22222222-2222-4222-8222-222222222222")
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        // A repaired decoder can now read the quarantined blob. Inject the
+        // readable recovery payload directly to model that app upgrade.
+        let bytes = try encoder.encode([old.documentID.uuidString: old, recovered.documentID.uuidString: recovered])
+        defaults.set(bytes, forKey: "dev.llun.Schrift.pendingDrafts.unreadable")
+        let newer = makeDraft(markdown: "new", updatedAt: Date(timeIntervalSince1970: 3_000))
+        store.save(newer)
+        XCTAssertTrue(store.holdsUnreadableData)
+        XCTAssertTrue(store.recoverQuarantinedDrafts())
+        XCTAssertFalse(store.holdsUnreadableData)
+        XCTAssertEqual(store.draft(for: old.documentID), newer)
+        XCTAssertEqual(store.draft(for: recovered.documentID), recovered)
+        XCTAssertTrue(store.recoverQuarantinedDrafts(), "a repeated recovery is harmless")
+        XCTAssertFalse(PendingDraftStore(userDefaults: defaults).holdsUnreadableData)
     }
 
     func testRemovingThePersistentDomainAfterAMemoizedReadIsSeen() {
@@ -215,5 +250,28 @@ final class PendingDraftStoreTests: XCTestCase {
 
         XCTAssertNil(store.draft(for: draft.documentID))
         XCTAssertFalse(store.holdsUnreadableData, "no data is not unreadable data")
+    }
+
+    func testOptionalReplicaProvenanceRoundTripsAndOldDraftsStillDecode() throws {
+        let (store, defaults) = makeStore()
+        let old = makeDraft()
+        store.save(old)
+        XCTAssertNil(PendingDraftStore(userDefaults: defaults).draft(for: old.documentID)?.replica)
+        let scope = ReplicaScope(
+            serverOrigin: "https://docs.example", ownerUserID: UUID(), org: "docs", documentID: old.documentID)
+        let manifest = ReplicaManifest(
+            formatVersion: 1, scope: scope, generation: UUID(), revision: 0,
+            checkpointSequence: 0,
+            checkpoint: ReplicaFile(
+                name: "\(UUID().uuidString).bin", byteCount: 2, digest: replicaDigest(Data([0, 0]))),
+            journal: [], outbox: [], httpAcknowledgedThrough: 0, projectionCacheVersion: 1)
+        let reference = ReplicaDraftReference(manifest: manifest, markdown: old.markdown)
+        let native = PendingDraft(
+            documentID: old.documentID, title: old.title, markdown: old.markdown,
+            updatedAt: old.updatedAt, replica: reference)
+        store.save(native)
+        XCTAssertEqual(PendingDraftStore(userDefaults: defaults).draft(for: old.documentID), native)
+        XCTAssertTrue(reference.matches(markdown: old.markdown))
+        XCTAssertFalse(reference.matches(markdown: "other"))
     }
 }

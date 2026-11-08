@@ -3,17 +3,21 @@ import Observation
 
 /// PR01's sole replica owner. It is deliberately separate from the live
 /// collaboration manager: the classic bridge never attaches to this replica.
-@MainActor
+@MainActor @Observable
 final class NativeEditorSession {
     private var doc: YDoc?
     let engine: DocumentEngine
     let textView: NativeTextView
     let surface: NativeTextSurface
     let hasUnsupportedRoot: Bool
+    private(set) var input: NativeInputCoordinator?
+    private var replicaScope: ReplicaScope?
+    private var replicaStore: ReplicaStore?
     var isClosed: Bool { doc == nil }
 
     init(
         state: Data,
+        revision: UInt64 = 0,
         makeReplica: () throws -> YDoc = { YDoc(clientID: UInt.random(in: 1...UInt(UInt32.max)), gc: true) }
     ) throws {
         let doc = try makeReplica()
@@ -25,55 +29,100 @@ final class NativeEditorSession {
         }
         let projected = YBlockProjection.project(doc)
         let view = NativeTextView()
+        let resolver = NativeBlockResolver()
         let surface = NativeTextSurface(
             blocks: projected.blocks.map(BlockSnapshot.init), storage: view.textStorage, traits: view.traitCollection,
-            reprojectBlock: { [weak doc] id in
-                guard let doc else { return nil }
-                return Self.projectBlock(id, from: doc)
-            })
+            reprojectBlock: { resolver.engine?.nativeSnapshot(for: $0) })
         self.doc = doc
         self.textView = view
         self.surface = surface
         self.hasUnsupportedRoot = projected.blocks.isEmpty && !projected.isFullyRenderable
         // The initial projection is installed before hooks accept transactions.
-        self.engine = DocumentEngine(doc: doc, surface: surface)
+        self.engine = DocumentEngine(doc: doc, surface: surface, revision: revision)
+        resolver.engine = engine
     }
 
     func close() {
         guard let doc else { return }
+        textView.isEditable = false
+        textView.delegate = nil
+        textView.inputCoordinator = nil
+        input = nil
         self.doc = nil
         doc.destroy()
     }
 
+    /// Only enable after a raw checkpoint is durable. Production route wiring
+    /// waits for the coordinator-backed save/reopen ownership path.
+    func enableTyping(persist: @escaping (NativeEditCommand, Data) throws -> Void) {
+        guard !isClosed, !hasUnsupportedRoot, input == nil else { return }
+        input = NativeInputCoordinator(engine: engine, surface: surface, view: textView, persist: persist)
+    }
+
+    /// Offline restoration never rebuilds rich state from a Markdown shadow.
+    /// Retained structs keep their original client IDs; new authoring uses an
+    /// ID absent from the restored store. No live manager/socket is attached.
+    static func restore(store: ReplicaStore, scope: ReplicaScope, editable: Bool = false) throws -> NativeEditorSession?
+    {
+        guard let restored = try store.restore(for: scope) else { return nil }
+        let session = try NativeEditorSession(state: Data([0, 0]), revision: restored.manifest.revision) {
+            let doc = YDoc(clientID: UInt.random(in: 1...UInt(UInt32.max)))
+            do {
+                try doc.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
+                for update in restored.updates { try doc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote) }
+                guard doc.store.pendingStructs == nil, doc.store.pendingDs == nil else {
+                    throw ReplicaStoreError.corrupt
+                }
+                var fresh = UInt.random(in: 1...UInt(UInt32.max))
+                while doc.store.clients[fresh] != nil { fresh = UInt.random(in: 1...UInt(UInt32.max)) }
+                doc.clientID = fresh
+                return doc
+            } catch {
+                doc.destroy()
+                throw error
+            }
+        }
+        session.replicaScope = scope
+        session.replicaStore = store
+        session.engine.onUnjournaledTransaction = { [weak session] in session?.input?.stopAfterStorageFailure() }
+        if editable {
+            let adapter = ReplicaSaveAdapter(store: store, scope: scope)
+            session.enableTyping { try adapter.record($0, update: $1) }
+        }
+        return session
+    }
+
+    /// Reconnect fetches merge into the same owner. The new server bytes are
+    /// journaled before any resulting surface patch is published.
+    func integrateServerState(_ state: Data) throws {
+        guard let doc, let scope = replicaScope, let store = replicaStore else { throw ReplicaSaveError.invalidScope }
+        let update = state.isEmpty ? Data([0, 0]) : state
+        let decoded = try YUpdateDecoder.decode(update)
+        do {
+            try engine.durablyIntegrateRemote(
+                update: update,
+                apply: {
+                    try doc.applyUpdate(decoded, origin: .remote)
+                    guard doc.store.pendingStructs == nil, doc.store.pendingDs == nil else {
+                        throw ReplicaStoreError.corrupt
+                    }
+                },
+                persist: { revision in
+                    try store.append(update, for: scope, commandID: UUID(), baseRevision: revision, origin: .remote)
+                })
+        } catch {
+            if engine.nativeWriteFailed { input?.stopAfterStorageFailure() }
+            throw error
+        }
+    }
+
     isolated deinit { doc?.destroy() }
 
-    private static func projectBlock(_ id: String, from doc: YDoc) -> BlockSnapshot? {
-        // Engine patches name top-level blocks. Look only at root/container
-        // identity, not a writer's stricter validation of unrelated rich nodes.
-        func children(_ type: YType) -> [YItem] {
-            var result: [YItem] = []
-            var item = type.start
-            while let current = item {
-                if !current.deleted && current.countable { result.append(current) }
-                item = current.right
-            }
-            return result
-        }
-        guard let root = doc.share[BlockNoteYjs.fragmentField] else { return nil }
-        let roots = children(root)
-        guard roots.count == 1, case .type(let group) = roots[0].content,
-            group.typeRef == .xmlElement(nodeName: "blockGroup")
-        else { return nil }
-        let matches = children(group).filter { item in
-            guard case .type(let container) = item.content,
-                container.typeRef == .xmlElement(nodeName: "blockContainer"),
-                let candidate = BlockIndex.blockID(of: container)
-            else { return false }
-            return candidate.utf16.elementsEqual(id.utf16)
-        }
-        guard matches.count == 1 else { return nil }
-        return BlockSnapshot(YBlockProjection.projectBlock(matches[0]))
-    }
+}
+
+@MainActor
+private final class NativeBlockResolver {
+    weak var engine: DocumentEngine?
 }
 
 /// Reads the flag at each open. Failed/legacy/offline opens go to the classic

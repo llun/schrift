@@ -16,9 +16,9 @@ import Foundation
 ///   bytes to the key, wipe it with `removePersistentDomain`, and run many suites one after the
 ///   other. A mirror of the *store* would need invalidating on every one of those; a memo keyed
 ///   on the bytes cannot go stale, so one slot can be shared by every instance and every suite.
-/// - **Exactly the old semantics, including corrupt data.** An undecodable blob is memoized as
+/// - **Decode semantics, including corrupt data.** An undecodable blob is memoized as
 ///   undecodable (`nil`) — still "unknown, not absent" for `holdsUnreadableData`, still read as
-///   empty by the store's load, so a later write replaces it exactly as before.
+///   empty by the store's load. Quarantine and recovery belong to the store, not this memo.
 /// - **Writes do not seed it.** A write encodes the store's whole dictionary; seeding the memo
 ///   with the dictionary it encoded would hand readers values that never went through the
 ///   decoder, and the `.millisecondsSince1970` date round trip is not bit-exact (a baseline's
