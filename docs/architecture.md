@@ -56,7 +56,7 @@ Notable behavior that post-dates the original v1 scope and is reflected below:
 
 ## Summary
 
-A native SwiftUI iOS/iPadOS app that acts as a client for [La Suite Numérique Docs](https://github.com/suitenumerique/docs) ("Impress"), targeting a self-hosted instance at `docs.llun.dev`. Visual design comes from the `Docs iOS Design System` Claude Design handoff bundle (imported from `Docs iOS Design System-handoff.zip`). v1 scope: browse/search documents, view rendered content, basic non-realtime editing (save replaces content), and sharing/permissions management. No real-time collaborative editing.
+A native SwiftUI iOS/iPadOS app that acts as a client for [La Suite Numérique Docs](https://github.com/suitenumerique/docs) ("Impress"), targeting a self-hosted instance at `docs.llun.dev`. Visual design comes from the `Docs iOS Design System` design handoff bundle. v1 scope: browse/search documents, view rendered content, basic non-realtime editing (save replaces content), and sharing/permissions management. No real-time collaborative editing.
 
 ## Goals
 
@@ -414,7 +414,7 @@ site:
   before the writer landed. Plan decision 6 does not re-point it in phase 1;
   `BlockNoteIncrementalSaveTests` pins its bytes.
 
-The re-point was gated on a session-local parity lane (never committed): 1000 seeds ×
+The re-point was gated on a parity lane (an out-of-tree harness, run once): 1000 seeds ×
 3 sequential random edits over paragraphs, headings, list items, check lists, code
 blocks, quotes, dividers and images — text edits with marks/links/emoji, prop changes,
 kind changes, inserts, deletes, moves and empty blocks — each applied to two identical
@@ -507,7 +507,7 @@ them, which is BlockNote's own rule. No incremental byte pin moved.
   builders emit the same `InlinePiece` vocabulary, and `BlockNoteWrite` maps either
   output into `YContent` through one shared `content(of:)`. Don't add a third way to
   turn runs into pieces.
-- **Verification.** A session-local differential-fuzz harness (never committed — the
+- **Verification.** A differential-fuzz harness run once out of tree (the
   zero-dependency rule) drove roughly 26,000 seeds / 400,000 oracle-verified renders
   against node yjs 13.6.31 across three lanes — BMP text edits, concurrent multi-peer
   convergence, and interop with `mergeUpdates`/gc/`diffUpdate` — and found zero
@@ -922,7 +922,7 @@ one and adds the outbound write path on top of it.
   drive two real `DocumentCollaborationManager`s through a paired fake-socket relay and
   assert convergence at the **projected-document** level (never store bytes) across the
   handshake, one-way edit propagation, and concurrent edits from both peers. A
-  session-local differential-fuzz harness (never committed, per the zero-dependency
+  differential-fuzz harness run once out of tree (per the zero-dependency
   rule) additionally drove roughly 25,000 seeds / 162,000 document-level comparisons
   against node yjs 13.6.31 across handshake-diff (including merged/gc'd-peer state
   vectors), broadcast/concurrent, and producer-shape lanes, with **0 divergences**; the
@@ -1199,11 +1199,11 @@ trigger (reconnect, foreground, launch). Until then it waits while the editor ho
 the replica, and classic saves outside `runSyncPass` (retry, autosave after live mode
 disengages) can still race the socket, as on legacy servers. Details live in `AGENTS.md`.
 
-**Switch-on evidence (2026-11-07, S4/S5; labs `RESULTS.md`):** on the real yhub server,
+**Switch-on evidence (S4/S5):** on the real yhub server,
 snapshot and live sync for a document filled with every web block were byte-identical.
 Schrift's core re-encoded them identically to yjs 13.6.33. The web cursor arrived as
 y-prosemirror relative-position JSON and resolved correctly, and off-main decode passed.
-The remaining on-device end-to-end check is the owner's TestFlight step on this build.
+The on-device end-to-end check is not yet verified with a TestFlight build.
 Rollback is reverting `ServerConfig.yWebSocketLiveCollaborationEnabled` to `false`.
 
 **C3 (shipped):** the user-facing toggle is a **Profile → Preferences → "Live
@@ -1216,8 +1216,8 @@ the sibling Notifications/Work-offline rows) backed by
 `DocumentCollaborationManagerLifecycleTests.testAvailabilityTracksTheLivePreferenceFlagMidSession`,
 which fails if anyone "optimizes" it into a captured Bool. **The preference default is OFF /
 opt-in** (decision 2026-07-21). The real-server S4/S5 checks above support enabling the
-Docs 6 server capability; the owner will run the remaining on-device end-to-end WebSocket
-check in TestFlight for this build. Deliberate,
+Docs 6 server capability; the remaining on-device end-to-end WebSocket
+check is not yet verified with a TestFlight build. Deliberate,
 documented semantics: the flag is read lazily, so a flip affects **newly requested
 sessions** (opening a document, reconnect, resume) — it does not retroactively open or
 close sockets on screens already showing a document; fully consistent from the next
@@ -1422,7 +1422,7 @@ diff-against-state-vector) and `encodeStateVector` are byte-identical to yjs's.
 Bytes are compared only where **both sides are settled** — an unsettled store may
 legitimately differ (an accepted re-tiling, a pending stash a `diffUpdate` never
 resolves), and a settledness *disagreement* is itself a finding. The harness is
-session-local scratch tooling, never committed (the zero-dependency rule); what it
+out-of-tree tooling (the zero-dependency rule); what it
 finds is promoted to fixtures here. The same technique is proven in this repo on
 `InlineMarkdown`.
 

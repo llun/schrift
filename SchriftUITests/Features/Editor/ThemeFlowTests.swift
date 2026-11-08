@@ -135,7 +135,15 @@ final class ThemeFlowTests: XCTestCase {
         paper.tap()
         capture(app, "theme-paper-accessibility-picker")
         app.buttons["Close"].tap()
-        app.buttons["profile.account"].tap()
+        // Scrolling to the theme row left Profile offset, and at this size the account row is
+        // taller than the slack above it: scroll until it sits fully below the navigation bar.
+        let account = app.buttons["profile.account"]
+        let navBar = app.navigationBars.firstMatch
+        XCTAssertTrue(navBar.waitForExistence(timeout: 5))
+        for _ in 0..<8 where account.frame.minY < navBar.frame.maxY { app.scrollViews.firstMatch.swipeDown() }
+        XCTAssertGreaterThanOrEqual(account.frame.minY, navBar.frame.maxY)
+        XCTAssertTrue(account.isHittable)
+        account.tap()
         XCTAssertTrue(app.staticTexts["Full name"].waitForExistence(timeout: 5))
         capture(app, "theme-paper-accessibility-account")
         app.terminate()

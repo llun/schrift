@@ -26,8 +26,7 @@ This file is the shorter, operational "how we write code here" companion.
 ## Task workflow — start here
 
 The rest of this file is reference; this is the order to work in. Each step
-names the section with the details. Delegation and model choice follow
-[Working with Sub-Agents](#working-with-sub-agents).
+names the section with the details.
 
 1. **Orient.** Skim this file's headings, then read the sections your task
    touches in full. Architecture rationale lives in the design spec
@@ -71,9 +70,9 @@ names the section with the details. Delegation and model choice follow
    (the PR template, `.github/PULL_REQUEST_TEMPLATE.md`, embeds this list):
    - `swift format --recursive --in-place Schrift SchriftTests SchriftUITests` has been run;
    - the full test suite passes locally;
-     (in a Claude Code cloud session the test suite cannot run, and the
-     formatter only can when a Swift toolchain is available — see
-     [Claude Code cloud sessions (Linux)](#claude-code-cloud-sessions-linux);
+     (on Linux the test suite cannot run, and the formatter only can when a
+     Swift toolchain is available — see
+     [Working without Xcode (Linux)](#working-without-xcode-linux);
      the `Build & Test` check stands in for whatever couldn't run, and it must
      be green)
    - new/changed behavior is covered by tests;
@@ -83,36 +82,6 @@ names the section with the details. Delegation and model choice follow
    - the [PR review loop](#pr-review-loop--required-for-all-agent-work) has
      run and every thread is resolved;
    - **`Build & Test` is green on the latest pushed state.**
-
-## Working with Sub-Agents
-
-When to delegate, which model to use and how much effort to spend come from one
-guide, kept in the `llun/labs` repository and not repeated here:
-[`agents-bridge/config/routing/shared.md`](https://github.com/llun/labs/blob/main/agents-bridge/config/routing/shared.md)
-and, for Claude Code,
-[`claude.md`](https://github.com/llun/labs/blob/main/agents-bridge/config/routing/claude.md)
-beside it. On the owner's Mac it is already loaded through `~/.claude/CLAUDE.md`.
-
-Where the guide can't be read and the `delegate` tool is missing (cloud
-sessions), follow this summary of it:
-
-- Delegate work that runs in parallel, is bulk reading or editing, or needs a
-  fresh, independent context (review, verification). Do the rest in the main
-  thread.
-- Set `model` and `effort` on every Claude sub-agent: `haiku`/`low` (Fast),
-  `sonnet`/`medium` (Everyday), `sonnet`/`high` (Heavy), `opus`/`high`
-  (Frontier). Start at the tier that fits and go one up only after a wrong or
-  shallow answer. Use `xhigh` only for a bug that survived a fix, and never make
-  `max` a default.
-- Sub-agents see none of this conversation, so name the files, the goal and what
-  done looks like. Give parallel writers separate worktrees, and check their
-  diff and tests.
-
-Whichever agent runs them, never run two `xcodegen`/`xcodebuild` jobs at once in
-the same checkout, and never two `xcodebuild test` runs on the same simulator
-even from separate worktrees: they kill each other
-([Testing conventions](#testing-conventions)). Run tests one at a time or give
-each run its own simulator and `-derivedDataPath`.
 
 ## Build, run, test
 
@@ -219,9 +188,9 @@ each run its own simulator and `-derivedDataPath`.
   don't have to run everything locally every time, but a push that makes a PR
   ready for review/merge must arrive with the checks already satisfied: run the
   formatter (`swift format --recursive --in-place Schrift SchriftTests SchriftUITests`) and the
-  full test suite locally first (except in a Claude Code cloud session, where
+  full test suite locally first (except on Linux, where
   the test suite cannot run and the formatter may be unavailable — see
-  [Claude Code cloud sessions (Linux)](#claude-code-cloud-sessions-linux)),
+  [Working without Xcode (Linux)](#working-without-xcode-linux)),
   then confirm the PR's **`Build & Test`** check
   is green on the final pushed state. Never merge — and never declare a PR
   done — while that check is red, pending, or hasn't run; if CI fails, fixing
@@ -328,11 +297,10 @@ each run its own simulator and `-derivedDataPath`.
   CI path must do the same, or the build fails with "Project Schrift.xcodeproj
   does not exist at the root of the repository."
 
-## Claude Code cloud sessions (Linux)
+## Working without Xcode (Linux)
 
-Development may happen in Claude Code cloud sessions, which run on **Linux** —
-no Xcode, no `xcodebuild`, no iOS simulators, no Apple SDKs. In a cloud
-session:
+Some environments (for example a Linux container) have **no Xcode**, no
+`xcodebuild`, no iOS simulators and no Apple SDKs. In those environments:
 
 - **Never attempt to build, test, or run the app.** UIKit/SwiftUI/XCTest and
   every Apple framework are unavailable; any `xcodebuild`/`xcrun` invocation
@@ -345,7 +313,7 @@ session:
   (`Core/Yjs` and the other pure-logic layers are Foundation-only and could be
   extracted into a SwiftPM package to enable `swift test` on Linux, but that
   is a deliberate, separate change — don't do it as a side effect.)
-- **Before every push from a cloud session, do what Linux allows:**
+- **Before every push, do what Linux allows:**
   - Formatting: if a Swift 6 toolchain is available, run
     `swift format --recursive --in-place Schrift SchriftTests SchriftUITests` and commit the
     result — the PR checks fail on any unformatted file. If no toolchain is
@@ -353,20 +321,22 @@ session:
     120 columns) and expect the CI formatting gate to be the arbiter.
   - `xcodegen generate` is unavailable too — treat `project.yml` edits as
     unverified until CI builds them.
-- **Commit conventions in cloud sessions:**
-  - One logical change per commit; **Conventional Commit** messages (the PR
-    title becomes the squash-commit subject that drives the release version —
-    see [Build, run, test](#build-run-test)).
-  - When fixing a CI failure on your **own PR branch**, amend the previous
-    commit and `git push --force-with-lease` instead of stacking fixup
-    commits. This is compatible with the safety rule against force-pushing
-    **shared** branches — a PR branch you authored is not shared; never
-    force-push `main`. If the force-push is rejected, a normal follow-up
-    commit is acceptable because PRs are squash-merged anyway. Don't amend
-    commits that an active [review-loop](#pr-review-loop--required-for-all-agent-work)
-    round has already commented on — line-anchored review threads pin to a
-    `commit_id`, and rewriting it orphans them; review-loop fixes are pushed
-    as normal commits.
+
+## Commit conventions
+
+- One logical change per commit; **Conventional Commit** messages (the PR
+  title becomes the squash-commit subject that drives the release version —
+  see [Build, run, test](#build-run-test)).
+- When fixing a CI failure on your **own PR branch**, amend the previous
+  commit and `git push --force-with-lease` instead of stacking fixup
+  commits. This is compatible with the safety rule against force-pushing
+  **shared** branches — a PR branch you authored is not shared; never
+  force-push `main`. If the force-push is rejected, a normal follow-up
+  commit is acceptable because PRs are squash-merged anyway. Don't amend
+  commits that a [review](#pr-review-loop--required-for-all-agent-work)
+  round has already commented on — line-anchored review threads pin to a
+  `commit_id`, and rewriting it orphans them; review fixes are pushed
+  as normal commits.
 
 ## Repository layout
 
@@ -534,8 +504,6 @@ Signing.xcconfig         committed signing config; optionally #include?s the git
                          Local.xcconfig (copy Local.xcconfig.example) holding your
                          DEVELOPMENT_TEAM — never put a team id in project.yml
 Gemfile / .ruby-version  fastlane Ruby deps (bundle install)
-.claude/settings.json    committed Claude Code project settings — disables commit/PR
-                         attribution text and the session-URL trailer
 .swift-format            swift-format config (4-space indent, 120 cols) enforced by PR checks
 ```
 
@@ -1103,8 +1071,8 @@ new code reads like the surrounding code.
 ### Design system (`DesignSystem`)
 
 - <a id="sketch-source-of-truth"></a>**Sketch source of truth.** The design
-  lives in the separate [`llun/sketch`](https://github.com/llun/sketch) repo
-  (checked out beside this one as `sketch/`), under `Schrift/`:
+  lives in the separate [`llun/sketch`](https://github.com/llun/sketch) repo,
+  under `Schrift/`:
   - `Schrift/Schrift.sketch` is the **component library only** — colors,
     type, symbols and components. When a change alters the design (a token, a
     component's shape, size or states, a new component), update the matching
@@ -1112,13 +1080,9 @@ new code reads like the surrounding code.
   - **App screens are never placed in the Sketch file.** They are generated as
     HTML into `Schrift/Screens/` (an `index.html` viewer plus its assets).
     When a change alters a screen, regenerate the affected screens there.
-  - Commit and push the sketch repo **directly to its default branch** — no
-    PR. Only the code change in this repo goes through the normal PR flow.
-  - Then publish it: run `scripts/publish.sh` in the sketch checkout. It tests
-    and builds the site and uploads it to the sketch repo's GitHub release
-    `site` with the GitHub CLI (`gh auth login` once); the VM deploys it to
-    <https://sketch.llun.dev/> within 10 minutes. Pushing alone does not update
-    the site.
+  - Publishing the site is described in the sketch repo's
+    [README](https://github.com/llun/sketch/blob/main/readme.md). Pushing
+    alone does not update <https://sketch.llun.dev/>.
 - **App identity:** `docs/assets/app-icon/make-svg.mjs` is the source of truth
   for the app icon and the sign-in logo; `export.sh` beside it renders every PNG
   (icon default/dark/tinted, logo Any/Dark). Change the geometry there and
@@ -1920,12 +1884,12 @@ that are easy to violate and expensive to discover:
   (different items, same rendered content) — B6 is instead verified by applying the
   same edit on both sides and comparing the **projected document** and cross-peer
   convergence; `YItem.integrate`/merge/gc/the encoders are untouched by B6. A
-  session-local differential fuzz (never committed, zero-dep rule) ran ~26k seeds /
+  differential fuzz run once with an out-of-tree harness (zero-dep rule) ran ~26k seeds /
   ~400k oracle-verified renders against node yjs across BMP, concurrent-convergence,
   and `mergeUpdates`/gc/`diffUpdate` interop lanes — 0 divergences after fixing one
   bug the fuzz found (a raw UTF-16-unit diff splitting a surrogate pair; the
   code-point snap above is the fix). **B5b's re-point was gated on a parity lane**
-  (session-local, never committed): 1000 seeds × 3 sequential random edits over
+  (an out-of-tree harness, run once): 1000 seeds × 3 sequential random edits over
   paragraphs, headings, list items, check lists, code blocks, quotes, dividers and
   images — text edits with marks/links/emoji, prop changes, kind changes, inserts,
   deletes, moves and empty blocks — applying each edit to two identical replicas
@@ -2024,7 +1988,7 @@ that are easy to violate and expensive to discover:
   from yjs 13.6.33, checking seed XML and all 17 edits. They hold XML and update bytes only; the captures' text deltas are not committed yet. B2's cursor positions are pinned separately by `YRelativePositionTests` (relative positions captured from yjs 13.6.33).
 - **Verify against the oracle, not against reasoning.** Golden fixtures
   (`YIntegration*Tests`) pin each YATA branch from real yjs; the differential fuzz
-  harness (session-local scratch, never committed — zero-dep rule) compares the
+  harness (an out-of-tree harness, zero-dep rule) compares the
   whole store against a node yjs oracle across randomized op scripts and delivery
   orders. **A green run only proves there is no bug in the shapes the generator can
   build** — 11,986 clean comparisons missed a critical bug because the corpus
@@ -3789,9 +3753,11 @@ markdown write endpoint**. Understand this before touching the save path:
   in PR02a, production activation pending.** Native drafts now reference the scoped
   `ReplicaStore` checkpoint/journal through optional `PendingDraft.replica`; large bytes
   stay out of UserDefaults. The classic live-snapshot draft above remains Markdown-only.
-  The raw draft's constraints are:
+  This bullet is the one place the raw draft's constraints live (`docs/architecture.md` and
+  `docs/offline-and-sync.md` only point here):
   - The field stays **Optional-on-decode**, even with `PendingDraftStore` quarantine — the
-    standing compatibility rule in the on-device create bullet.
+    standing rule in the on-device create bullet ("every field added to
+    `PendingDraft`/`DraftBaseline` must stay Optional-on-decode").
   - The draft **keeps `markdown`** beside the bytes: `draftSyncDecision` compares canonical
     markdown, and the classic paths still need a body.
   - The bytes are resent **only while the draft's markdown is canonically equal to their
@@ -3905,8 +3871,8 @@ markdown write endpoint**. Understand this before touching the save path:
     sync-engine surface). **Opt-in behind the default-off `schrift.liveCollaboration`
     flag — the C3 Profile toggle (Profile → Preferences → "Live collaboration", an
     `@AppStorage(LiveCollaborationPreference.key)` switch) is the only writer. The
-    default stays off; the owner will run the on-device end-to-end WebSocket check in
-    TestFlight for this build. The flag is read lazily, so a
+    default stays off; the on-device end-to-end WebSocket check is not yet
+    verified with a TestFlight build. The flag is read lazily, so a
     flip affects newly requested sessions, not screens already open.** Docs 6's yhub
     collaboration server speaks plain y-websocket at
     `/collaboration/ws/v1/{org}/{documentID}`, not Hocuspocus. Its transport is enabled;
@@ -3949,11 +3915,11 @@ markdown write endpoint**. Understand this before touching the save path:
   `schrift.liveCollaboration` user preference still gates session availability.
   A server permission change mid-session is not re-read by the client; the server enforces
   write permission, and refetching abilities on reset belongs with native live editing (phase 2 PR09).
-  **Switch-on evidence (2026-11-07, S4/S5; labs `RESULTS.md`):** on the real yhub server,
+  **Switch-on evidence (S4/S5):** on the real yhub server,
   snapshot and live sync for a document filled with every web block were byte-identical;
   Schrift's core re-encoded them identically to yjs 13.6.33; the web cursor arrived as
   y-prosemirror relative-position JSON and resolved correctly; off-main decode passed.
-  The remaining on-device end-to-end check is the owner's TestFlight step on this build.
+  The on-device end-to-end check is not yet verified with a TestFlight build.
   Rollback is reverting `ServerConfig.yWebSocketLiveCollaborationEnabled` to `false`.
   A dropped socket does not reconnect automatically: it is rebuilt on a network reachability
   change or foreground resume. Peer edits stop arriving until then; local edits still reach
@@ -5139,8 +5105,11 @@ markdown write endpoint**. Understand this before touching the save path:
   simulator builds ad-hoc sign for free, and the Keychain tests require the test
   host's ad-hoc signature/entitlements — an unsigned host fails with
   `errSecMissingEntitlement (-34018)` (see `docs/ci.md`).
+- **Never run two `xcodegen`/`xcodebuild` jobs at once in the same checkout.**
+  Run tests one at a time, or give each run its own simulator and
+  `-derivedDataPath` (see the next bullet).
 - **Two `xcodebuild test` runs on the same simulator kill each other.** With
-  several worktrees checked out (the usual state here), a concurrent run in
+  several worktrees checked out, a concurrent run in
   another one aborts yours with `Test crashed with signal kill`/`signal term` and
   "Restarting after unexpected exit, crash, or test timeout" — blaming whichever
   slow test happened to be running, a different one each time. Suspect the
@@ -5209,12 +5178,7 @@ markdown write endpoint**. Understand this before touching the save path:
 - **This `AGENTS.md` is the single source of truth for agent/contributor
   guidance.** Put agent-facing conventions, workflow, and safety rules **here**,
   and here only. Everything in this file applies to every agent and new
-  contributor, including Claude Code, Codex, and Cursor. Never duplicate this
-  guidance in a separate agent-specific file. The one
-  exception is delegation and model routing, which
-  [Working with Sub-Agents](#working-with-sub-agents) takes from `llun/labs`. If an `AGENTS.override.md` is added
-  later, it layers **on top of** this file (it augments this guidance; it does not
-  wholesale replace it).
+  contributor. Never duplicate this guidance in a separate agent-specific file.
 - **Design and architecture decisions live in the living docs under `docs/`**
   ([`docs/README.md`](docs/README.md) indexes them:
   [`docs/architecture.md`](docs/architecture.md),
@@ -5225,19 +5189,13 @@ markdown write endpoint**. Understand this before touching the save path:
   with a short dated `Revised:` line or amendment blockquote at the top when it
   helps a future reader; otherwise just keep the body current. Don't let a doc
   drift from the shipped app.
-- **Never commit plans or "superpowers" workflow documents to the repository.**
-  Do **not** add a `docs/superpowers/`, `docs/plans/`, or `docs/specs/` folder, and
-  do **not** commit per-feature dated plan files (`YYYY-MM-DD-<name>.md`) — the
-  repo deliberately has none, and `docs/superpowers/**` is git-ignored to keep it
-  that way. A plan, spec draft, or task brief produced *while working* (e.g. by a
-  brainstorming / writing-plans / subagent-driven-development workflow) is
-  **session-local scratch**: keep it out of the commit. Anything worth preserving
-  from it belongs in this `AGENTS.md` or the living `docs/` above, rewritten as
+- **Do not commit plans, specs or task briefs.** Do not add a `docs/plans/` or
+  `docs/specs/` folder, and do not commit per-feature dated plan files
+  (`YYYY-MM-DD-<name>.md`); the repo deliberately has none. Fold lasting
+  guidance into this `AGENTS.md` or the living `docs/` above, rewritten as
   **current guidance**, not filed as a dated point-in-time record.
-- `.superpowers/` at the repo root is exactly that session-local scratch (task
-  briefs/reports, progress notes), git-ignored via the repo `.gitignore`. Never
-  commit it, and don't treat its contents as current state — it is leftover
-  history from past sessions.
+- **Local scratch stays out of git.** `.superpowers/` and `docs/superpowers/` are
+  git-ignored scratch locations; never force-add anything from them.
 - Keep the **living docs** accurate when behavior changes: this `AGENTS.md`,
   `README.md`, the design docs under `docs/`, `docs/testflight-setup.md`,
   `docs/ci.md`, and the CI/build sources (`project.yml`,
@@ -5250,41 +5208,33 @@ Whenever an AI agent works on this repository, the resulting pull request must
 go through the following review loop. Run it **every time** new work is pushed
 to a PR that is ready for review — on the initial push and after every
 follow-up push made outside an active loop. Pushes made while addressing
-comments (steps 2–3) do **not** start a new loop: the re-review that follows
-them is simply the next round and counts toward the same round cap in step 4.
+comments (step 2) do **not** start a new loop: the re-review that follows
+them is simply the next round and counts toward the same round cap in step 3.
 
-1. **Review with a fresh sub-agent.** Spawn a reviewer sub-agent that did not
-   write the change (model per
-   [Working with Sub-Agents](#working-with-sub-agents)) to review **all**
-   the code in the PR (the full diff, not just the latest commit) —
-   correctness, the conventions in this file, test coverage, and the
-   [Safety](#safety--never-add-anything-dangerous) rules. Post **everything it
-   finds as review comments on the PR** — anchored to the relevant file and
-   line when the finding maps to a line in the diff, otherwise as a top-level
-   PR comment naming the file.
+1. **Independent review.** Have a reviewer with a fresh context, who did not
+   write the change, review **all** the code in the PR (the full diff, not
+   just the latest commit) — correctness, the conventions in this file, test
+   coverage, and the [Safety](#safety--never-add-anything-dangerous) rules.
+   Post **everything it finds as review comments on the PR** — anchored to
+   the relevant file and line when the finding maps to a line in the diff,
+   otherwise as a top-level PR comment naming the file.
 2. **Address every comment.** Fix each finding (or explain in the thread why
    no change is needed). Then push
    the fixes, **reply to each comment** describing what was done, and **mark
    the thread as resolved** (a top-level PR comment has no resolvable thread —
    a reply on the PR conversation recording the outcome counts as resolving
    it).
-3. **Re-request bot reviews.** If other review bots are installed (e.g.
-   **Kilo bot** — a name given only as an example; detect which bots actually
-   exist from the PR's own review/comment activity), ask them to re-review
-   whenever commits have been pushed since their last completed review, or
-   when they have not completed any review of the current pushed state — but
-   never re-request a bot that already timed out on the current pushed state.
-   After re-requesting, **wait up to 20 minutes for the bot to finish and do
-   not interrupt it**; if it has not completed by then — including never
-   having started — treat it as timed out on the current pushed state and
-   continue to step 4, which decides whether another round runs. Address,
-   reply to, and resolve its comments exactly as in step 2.
-4. **Repeat** steps 1–3 until a full round surfaces **no new issues to
-   address** *and* every active bot has reviewed (or timed out on) the latest
-   pushed state, or **20 rounds** have run in the current loop — whichever
+3. **Repeat** steps 1–2 until a full round surfaces **no new issues to
+   address**, or **20 rounds** have run in the current loop — whichever
    comes first. A follow-up push outside an active loop starts a fresh cap.
    If the cap is hit with issues still open, say so explicitly on the PR
    instead of stopping silently.
+
+If an automated review bot runs on PRs, treat its comments like any other
+finding and give it up to 20 minutes to finish before the round ends. Re-request
+its review only when there are commits newer than its last review, and never
+re-request a bot that already timed out on the current pushed state. A round
+ends only when every active bot has reviewed or timed out.
 
 The loop — and the agent's work — is **not finished until the PR's `Build &
 Test` check is green on the latest pushed state**. A CI failure on the PR is
@@ -5305,10 +5255,6 @@ checks, and never merge around a red check.
   `gh api graphql -f query='query{repository(owner:"<owner>",name:"<repo>"){pullRequest(number:<n>){reviewThreads(first:100){nodes{id isResolved path comments(first:1){nodes{databaseId body}}}}}}}'`;
   resolve one:
   `gh api graphql -f query='mutation{resolveReviewThread(input:{threadId:"<id>"}){thread{isResolved}}}'`.
-- Re-request a bot review:
-  `gh api repos/<owner>/<repo>/pulls/<n>/requested_reviewers -f 'reviewers[]=<bot-login>'`
-  (or the bot's own trigger comment). Detect installed bots from the PR's
-  existing review/comment activity — as of 2026-07 this repo has none.
 
 ## Safety — never add anything dangerous
 
