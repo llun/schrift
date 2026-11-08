@@ -2777,7 +2777,8 @@ markdown write endpoint**. Understand this before touching the save path:
   `YBlockProjection` projects it opaque as `unknownNode:columnList` with that id — projected
   id-less, it tripped the empty-id refusal below and **every** save of a page with columns
   failed as `.decoding` with no HTTP failure to show (seen on TestFlight 0.103–0.106). The `.text`
-  words skip inline `math` (the export drops it without a trace), and `.exact` compares the
+  words skip inline `math` (the export drops it without a trace) — unless two blocks would then read
+  alike, which keep the formula's words and are rebuilt rather than kept in each other's place — and `.exact` compares the
   replica's runs coalesced like the parser's (an underlined word mid-sentence is scrubbed into
   its own run), or an untouched paragraph holding either was rebuilt and lost it. Anything the
   user edited no longer matches and is written from the markdown as before. A **nested

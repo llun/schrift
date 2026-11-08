@@ -472,6 +472,27 @@ final class BlockNotePreservationTests: XCTestCase {
         XCTAssertTrue(try fragment(state, after: update).contains("<math>x^2</math>"))
     }
 
+    /// Two paragraphs that differ only in their formulas read alike once math is skipped. Editing
+    /// the first must not keep it in the second's place (the second would show the wrong formula
+    /// and lose its own): both are rebuilt from the markdown instead.
+    func testParagraphsThatDifferOnlyInTheirMathAreNotKeptInEachOthersPlace() throws {
+        func math(_ id: String, _ formula: String) -> Node {
+            container(id, textParagraph([.text("Area: "), .element("math", [], [.text(formula)]), .text(" of it.")]))
+        }
+        // The edited intro stops the common prefix from anchoring the first paragraph first.
+        let state = try servedTree([
+            container(idA, textParagraph([.text("Intro")])), math(idB, "x^2"), math(idC, "y^2"),
+        ])
+
+        let update = try save(
+            state, "Intro, edited\n\nArea:  of it.\n\nArea, edited:  of it.",
+            base: "Intro\n\nArea:  of it.\n\nArea:  of it.")
+        let after = try project(state, after: update)
+
+        XCTAssertFalse(after.blocks.map(\.id).contains(idC), "the edited paragraph is not kept elsewhere")
+        XCTAssertFalse(try fragment(state, after: update).contains("y^2"))
+    }
+
     /// An underlined word mid-sentence is scrubbed into its own unmarked run; the paragraph
     /// must still read like the markdown's one run, or every save drops the underline.
     func testAnUntouchedParagraphWithAnUnderlinedWordKeepsIt() throws {

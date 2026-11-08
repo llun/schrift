@@ -117,9 +117,23 @@ enum BlockNotePreservation {
     /// `BlockNoteIncrementalSave.oldBlocks` projects them.
     static func rules(for old: [ProjectedBlock], in doc: YDoc) -> [Rule?] {
         let containers = topLevelContainers(of: doc)
-        return old.enumerated().map { index, block in
+        let rules = old.enumerated().map { index, block -> Rule? in
             guard index < containers.count, let container = containers[index] else { return nil }
             return rule(for: block, container: container)
+        }
+        // Skipping inline math can make blocks that differ only in their formulas read alike, and
+        // one could then be kept in its twin's place. Such a block keeps its formula's words, so
+        // it matches no shadow and is rebuilt from the markdown instead.
+        let textWords = rules.compactMap { rule -> [String]? in
+            if case .text(let words)? = rule { return words }
+            return nil
+        }
+        return rules.enumerated().map { index, rule in
+            guard case .text(let words)? = rule, textWords.filter({ $0 == words }).count > 1,
+                let container = containers[index], let full = walkedTokens(of: container, skippingMath: false),
+                full != words
+            else { return rule }
+            return .text(full)
         }
     }
 
@@ -161,7 +175,7 @@ enum BlockNotePreservation {
     /// text at all, the string attributes that carry content instead (a diagram's source, a
     /// formula), so a node the export *does* spell as text is still recognised. `nil` when
     /// the walk exceeds `maxItemsPerBlock`.
-    private static func walkedTokens(of container: YType) -> [String]? {
+    private static func walkedTokens(of container: YType, skippingMath: Bool = true) -> [String]? {
         var text = ""
         var attributeText = ""
         var visited = 0
@@ -185,7 +199,8 @@ enum BlockNotePreservation {
                     switch current.content {
                     case .string(let units): text += String(decoding: units, as: UTF16.self)
                     // The export drops inline math without a trace, so its words are not the block's.
-                    case .type(let child) where child.typeRef != .xmlElement(nodeName: "math"): pending.append(child)
+                    case .type(let child) where !skippingMath || child.typeRef != .xmlElement(nodeName: "math"):
+                        pending.append(child)
                     default: break
                     }
                 }
