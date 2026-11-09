@@ -310,6 +310,38 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return applyStructural(entry.blockID, .join, refusal: nil)
     }
 
+    /// Tab and Shift-Tab, and the bar's Indent/Outdent (BlockNote's
+    /// `nestBlock`/`unnestBlock`): one durable tree move of the caret's block,
+    /// with its children. A move changes no text, so the selection stays where
+    /// it was. Where BlockNote does nothing (a list's first block, a root block,
+    /// the depth bound, a selection across blocks) it is a quiet no-op.
+    @discardableResult
+    func indent() -> Bool { moveBlock(.indent) }
+
+    @discardableResult
+    func outdent() -> Bool { moveBlock(.outdent) }
+
+    /// Hardware Tab: two spaces in a code block (BlockNote's
+    /// `indentLineWithTab`), else `indent()`.
+    @discardableResult
+    func insertTab() -> Bool {
+        guard let view, let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location) else { return false }
+        return isCode(entry.blockID) ? replace(range: view.selectedRange, with: "  ") : indent()
+    }
+
+    private func moveBlock(_ kind: NativeEditCommand.Kind) -> Bool {
+        directInsertion = nil
+        guard let view, view.isEditable, !engine.nativeWriteFailed, !engine.isDetached,
+            view.markedTextRange == nil, !composition.isActive
+        else { return false }
+        let selection = view.selectedRange
+        guard let entry = surface.rangeIndex.entry(atUTF16: selection.location),
+            selection.location <= NSMaxRange(entry.textRange),
+            NSMaxRange(selection) <= NSMaxRange(entry.textRange)
+        else { return false }
+        return applyStructural(entry.blockID, kind, refusal: nil, keeping: selection)
+    }
+
     /// `refusal` is the notice for an unsupported shape; nil keeps it quiet.
     /// `keeping` is a selection to restore instead of the command's caret.
     private func applyStructural(

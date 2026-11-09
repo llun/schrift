@@ -2243,8 +2243,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   heading/list item start → paragraph; only a paragraph `joinBlocks` into the block above
   (an empty same-type block above is removed instead). The returned caret is the lower
   block's start (the old id at offset 0 of non-empty text, where the writer inserts the
-  empty block above) or the join point. Every refusal (opaque, placeholder, code, nested
-  children, inline nodes, toggle headings, the first block, a locked destination) throws
+  empty block above) or the join point. Every refusal (opaque, placeholder, code, an
+  unreadable or locked child that would move, inline nodes, toggle headings, the first block, a locked destination) throws
   `.unsupportedNativeInput` before `nativeCommand` is set; a `BlockNoteWriter.Error` thrown
   after arming but before any transaction (no stamped emission, so nothing was written) is
   also a refusal, never the freeze. Return shows the input notice,
@@ -2269,7 +2269,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   the keyboard delete key over a selection, Return over a selection, dictation's final
   result, UITextInput `replace`, paste and cut. Line breaks (CRLF, CR, U+2028/9, NEL)
   normalize to "\n" first. **Validate every block from first to last before arming**:
-  opaque, placeholder, code, nested children, inline nodes or a toggle heading anywhere
+  opaque, placeholder, code, inline nodes, a toggle heading or a block outside the first
+  block's group (another depth, or a middle block's children) anywhere
   throws `.unsupportedNativeInput` (notice `native_editor_range_unavailable`, no write,
   never the freeze). `BlockNoteWriter.replaceRange(from:at:to:at:lines:newIDs:)` takes
   indexed targets (no document walk) and writes one transaction, ProseMirror's replace:
@@ -2308,7 +2309,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `testShiftArrowSelectionAcrossParagraphsIsReplacedDurably`.
 
 - **PR05a inline marks, links and colours.** The engine projects with
-  `YBlockProjection.project/projectBlock(nativeMarks: true)` (snapshots, `.replaceBlock`,
+  `YBlockProjection.project/projectBlock(nativeMarks: true)` (since PR06a through
+  `NativeBlockProjection`; snapshots, `.replaceBlock`,
   `.reset`, `nativeSnapshot`): every stored mark stays in the runs, known or not, and none
   makes a block lossy, because the native save writes raw Yjs. The default (`false`) still
   scrubs what Markdown cannot spell for the classic live path, the save shadow and
@@ -2386,6 +2388,67 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   (checkbox, heading-level and type-change bytes/XML against the node captures),
   `NativeAccessibilityTests`, the host UI test `testCheckboxTapSurvivesRelaunch`
   (`--native-blocks` seeds a heading, checklist, code, lists, quote and divider).
+
+- **PR06a tree projection, nested prose, indent/outdent.** `Core/Yjs/NativeBlockProjection`
+  projects the whole `blockGroup → blockContainer → blockGroup …` tree in preorder: each
+  block reads exactly as `YBlockProjection.projectBlock(…, nestedChildren: true)` (the
+  classic per-block read; the default `false` keeps a block with children opaque for
+  every classic caller, and a flat document projects identically), followed by its
+  children one level deeper. `NativeBlockSnapshot` carries `depth`, the parent and a
+  `NativeBlockHandle` (the index's per-engine `generation`, the integrated container
+  `YID`, the string id as link metadata); `BlockSnapshot` gains `depth`/`parentID` only, so
+  surfaces still compare semantically. A missing or repeated id makes that container
+  opaque and it stands for its subtree (not projected; the index is non-canonical, so the
+  engine refuses input and resets until it is fixed); a block at depth
+  `NativeBlockProjection.maxDepth` (64) with children is opaque (bounded recursion).
+  Opacity does not spread: an unknown block's children are ordinary blocks.
+  `BlockIndex` indexes every block in preorder by the same descent rule
+  (`nestedGroup(of:)`: exactly the content element then one group), with depth, parent,
+  group, nested group and handle; `blockID(for:)` is the innermost container. A nested
+  block's text keeps the `.text` fast path and its attributes `.props`. Any group
+  membership or container child-list change rebuilds the index and diffs the preorder:
+  removed ids, inserts anchored after the previous kept id, `.replaceBlock` for a kept id
+  whose container, depth or parent changed (a clone-and-delete move), and a peer's
+  reorder removes and reinserts only the span between the common prefix and suffix.
+  **Tree commands** (`BlockNoteTreeCommands.swift`) are BlockNote 0.56's `nestBlock`/
+  `unnestBlock` for one block: `sinkListItem` (last child of the previous sibling, in its
+  group or a new one, its own children with it) and `liftListItem` (`liftToOuterList`:
+  after its parent, the following siblings appended to its children, an emptied group
+  removed). Yjs cannot reparent an integrated node, so each copies every raw value
+  (`snapshot`/`insertCopy`, before writing) and deletes the original in one transaction;
+  the string ids survive, the items do not, and a peer's concurrent edit inside the moved
+  block lands in the deleted original, as with y-prosemirror. `.indent`/`.outdent` are
+  one `applyStructural` command each, validated before arming (`requireMovable`): every
+  moved block (the block and its children; for an outdent also the following siblings and
+  theirs) must be non-opaque and unlocked, an indent needs a readable previous sibling
+  in the same group and keeps the deepest moved block within
+  `BlockNoteWriter.maxNestingDepth` (16), an outdent needs a parent; refusals are quiet
+  no-ops. A move changes no text, so `NativeInputCoordinator.indent()/outdent()` keep
+  the view's selection and re-capture it. Keyboard rules, BlockNote's order: Return in an
+  empty list item resets it to a paragraph first, then Return in an empty nested block
+  outdents it (not under a toggle heading, which keeps empty children); Backspace at a
+  nested start follows the installed 0.56 `KeyboardShortcutsExtension.ts`: reset a
+  non-paragraph, then merge into the block above (`joinBlocks` into the previous
+  sibling's last descendant, or `BlockNoteWriter.mergeIntoParent` for a first child,
+  whose children take its place and whose emptied group goes), and outdent only as the
+  last fallback when that merge cannot happen (code or an unreadable block above). No
+  node capture exists for a nested-source Backspace; `NativeStructuralTests` pins the
+  order and `BlockNoteTreeOracleTests` the merge. Return splits a
+  nested block into a sibling at its depth; a split or join that copies children checks
+  them first; a range must stay in one group. `NativeTextView` binds Tab/Shift-Tab as key
+  commands with priority over UIKit and routes a typed "\t" to `insertTab()` (two spaces
+  in a code block, BlockNote's `indentLineWithTab`, else indent); the formatting bar has
+  Outdent/Indent (`nativeEditor.format.outdent`/`.indent`, the classic strings).
+  Rendering: each level indents one scaled `listGutter`, the projection stamps
+  `nativeDepth`, and chrome, panels and checkboxes start at that indent; numbering is per
+  sibling run (`listNumbers` keys the previous number by parent). The save shadow and
+  `canType` use `NativeBlockProjection.markdownShadow`: a flat document's classic shadow,
+  else the tree indented (Markdown keeps list nesting, other nesting reads flat), so a
+  nested list stays typeable and savable. Tests: `NativeTreeProjectionTests`,
+  `NativeIndentTests`, `BlockNoteTreeOracleTests` (`f-sink-bullet`, `enter-empty-nested`)
+  and the host UI test `testTabNestsTheSecondBulletAndSurvivesRelaunch` (`--native-tree`
+  seeds two bullets and host-only caret/depth controls). Toggles, folding and subtree
+  move/copy/clipboard/drag come in later PR06 slices.
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (`@MainActor`), which borrows the replica and resolves
@@ -2501,22 +2564,23 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   never mutates on its own, so it applies every patch regardless of origin and
   equals the projection after each step. There is no optimistic overlay (plan
   §2.3).
-- **`.text` has exactly one shape.** A block gets `.text` only when (a) it has no
-  nested children (no nested `blockGroup`), (b) its content element has exactly
+- **`.text` has exactly one shape.** A block, at any depth, gets `.text` only when
+  (a) its container holds its content element and at most one nested `blockGroup`,
+  (b) its content element has exactly
   one child, an `XmlText`, with no inline nodes — so the projection's runs *are*
   that text — and (c) the only change to it in this transaction is that text (no
   attribute, structural or container change). Everything else touched in a block
-  escalates to `.replaceBlock` of the top-level block, rebuilt from that block's
-  projection: a nested block's text, a nested group's child list, a nested
-  content element's attributes, a parent's text when it has children, several
-  `XmlText` children (no sibling-offset math), a container replaced in place
-  under the same id (the index tracks the container `YItem`, not just the id), or
+  escalates to `.replaceBlock` of that block, rebuilt from its projection:
+  several `XmlText` children (no sibling-offset math), a container replaced in place
+  under the same id or moved to another depth or parent (the index tracks the
+  container `YItem`, not just the id), or
   props and text changed together. `.text` and `.props` also need the block to
   have projected as-is *before* the transaction and after it (readable props, a
   text of strings and marks with readable links; `BlockIndex.Entry.isProjectable`),
-  because an opaque block's surface copy came from a `.replaceBlock`. Only the root `blockGroup` produces
-  `.insert`/`.remove`; a nested group never does. A reorder in the root group is
-  a `.remove` + `.insert` (the surface holds an ordered list). A change to the
+  because an opaque block's surface copy came from a `.replaceBlock`. Any group's
+  membership change produces `.insert`/`.remove` from the preorder diff (PR06a); a
+  reorder is a `.remove` + `.insert` of the moved span (the surface holds an ordered
+  list). A change to the
   fragment root, or a root group that is not the one the index recorded, a
   container's `id` changed in place, or any transaction while
   `BlockIndex.isCanonical` is false, is a `.reset` of the projected document.
@@ -2527,10 +2591,11 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   refreshes, and projects no block. The index holds one cached run list per
   simple block, a second copy of the document's text. The emit loop iterates
   only the touched ids, ordered by the index's position map — never
-  `index.order`. A root-group change (membership, split/join) rebuilds the index
+  `index.order`. A tree change (any group's membership, a container's children:
+  split/join/move) rebuilds the index
   — O(document), reading each block's text for `isProjectable` — and projects
-  the touched blocks, one at a time (`YBlockProjection.projectBlock`); a nested
-  change only refreshes its top-level entry. A replica the id-keyed index cannot
+  the touched blocks, one at a time (`NativeBlockProjection.projectBlock`); any
+  other change only refreshes its own entry. A replica the id-keyed index cannot
   mirror (`BlockIndex.isCanonical` false: several root children, an id-less or
   non-container group child, a repeated id) resets on every transaction until
   it is canonical again. `DocumentEnginePatchCostTests` and

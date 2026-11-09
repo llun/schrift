@@ -108,13 +108,16 @@ enum BlockChange: Equatable {
     /// Only the content element's attributes changed; the block's structure and
     /// text are untouched. `props` is the complete new attribute set.
     case props(blockID: String, props: [ProjectedProp])
-    /// New blocks, in order, after `after` (`nil` = at the start).
+    /// New blocks, in order, after `after` (`nil` = at the start), in the
+    /// preorder list: a nested block follows its parent or previous sibling's
+    /// last descendant, and carries its own `depth`/`parentID`.
     case insert(after: String?, blocks: [BlockSnapshot])
     /// Blocks that left the document.
     case remove(blockIDs: [String])
     /// The whole-block fallback: inline nodes, split/join, a type change, a
-    /// mixed text-and-format delta, a nested change, a container replacement,
-    /// or anything else the delta cannot express.
+    /// mixed text-and-format delta, a container replacement (a clone-and-delete
+    /// move to another depth or parent), or anything else the delta cannot
+    /// express.
     case replaceBlock(blockID: String, block: BlockSnapshot)
     /// The whole block list, replacing whatever the surface holds. Emitted when
     /// the fragment root or the root group is added, removed or replaced — a
@@ -197,26 +200,42 @@ struct TextMark: Equatable, Sendable {
     var valueJSON: String
 }
 
-/// A block as a surface renders it: identity, kind, attributes and inline runs.
-/// The surface never decides whether a block is writable. `isOpaque` only
-/// distinguishes preserved placeholders from genuinely empty text blocks.
+/// A block as a surface renders it: identity, kind, attributes and inline runs,
+/// and where it sits in the tree (PR06a): the native projection is a preorder
+/// list, so `depth` and `parentID` are all a renderer needs to indent and to
+/// number per sibling run. The surface never decides whether a block is
+/// writable. `isOpaque` only distinguishes preserved placeholders from
+/// genuinely empty text blocks.
 struct BlockSnapshot: Equatable {
     var id: String
     var node: String
     var props: [ProjectedProp]
     var runs: [InlineRun]
     var isOpaque: Bool
+    var depth = 0
+    var parentID: String?
 
-    init(id: String, node: String, props: [ProjectedProp], runs: [InlineRun], isOpaque: Bool = false) {
+    init(
+        id: String, node: String, props: [ProjectedProp], runs: [InlineRun], isOpaque: Bool = false, depth: Int = 0,
+        parentID: String? = nil
+    ) {
         self.id = id
         self.node = node
         self.props = props
         self.runs = runs
         self.isOpaque = isOpaque
+        self.depth = depth
+        self.parentID = parentID
     }
 
     init(_ block: ProjectedBlock) {
         self.init(
             id: block.id, node: block.node, props: block.props, runs: block.runs, isOpaque: block.fidelity.isOpaque)
+    }
+
+    init(_ native: NativeBlockSnapshot) {
+        self.init(native.block)
+        depth = native.depth
+        parentID = native.parentID
     }
 }

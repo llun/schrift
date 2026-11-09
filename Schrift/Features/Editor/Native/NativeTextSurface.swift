@@ -164,10 +164,16 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         }
     }
 
-    /// The block's slice, numbered by the run of numbered items it ends.
+    /// The block's slice, numbered by the run of numbered siblings it ends
+    /// (and, in preorder, their children between them).
     private func rendered(_ block: BlockSnapshot, at position: Int) -> NSAttributedString {
         var first = position
-        while first > 0, blocks[first - 1].node == "numberedListItem" { first -= 1 }
+        while first > 0,
+            blocks[first - 1].depth > block.depth
+                || (blocks[first - 1].depth == block.depth && blocks[first - 1].node == "numberedListItem")
+        {
+            first -= 1
+        }
         let run = Array(blocks[first..<position]) + [block]
         return AttributedDocumentProjection.attributedBlock(
             block, traits: traits, labels: labels,

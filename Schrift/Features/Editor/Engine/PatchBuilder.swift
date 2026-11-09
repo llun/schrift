@@ -4,17 +4,19 @@ import Foundation
 ///
 /// **O(touched blocks).** The classification reads `transaction.changed` — the
 /// types whose *direct* children changed — so a keystroke visits one `XmlText`
-/// and projects no block at all. Only a structural change (a group's child list
-/// moved) walks that group, and only a block the delta cannot express is
-/// projected, one block at a time (`YBlockProjection.projectBlock`). The
-/// counters below are the test seam for that claim.
+/// and projects no block at all. Only a tree change (a group's child list or a
+/// container's children changed) rebuilds the index and diffs its preorder,
+/// and only a block the delta cannot express is projected, one block at a time
+/// (`NativeBlockProjection.projectBlock`). The counters below are the test
+/// seam for that claim.
 ///
-/// **One rule for `.text`.** A block gets a `.text` patch only when all three
-/// hold: it has no nested children; its content element has exactly one child,
-/// an `XmlText` (no inline nodes, no sibling text children); and the only change
-/// to it in this transaction is that text. Everything else touched in a block —
-/// attributes, structure, a container replacement, a nested change — becomes a
-/// `.replaceBlock` of the top-level block from its projection. A props-only
+/// **One rule for `.text`.** A block, at any depth, gets a `.text` patch only
+/// when all three hold: its container holds its content element (and at most
+/// one nested group); that element has exactly one child, an `XmlText` (no
+/// inline nodes, no sibling text children); and the only change to it in this
+/// transaction is that text. Everything else touched in a block — attributes,
+/// structure, a container replacement, a move to another depth or parent —
+/// becomes a `.replaceBlock` of that block from its projection. A props-only
 /// change is still `.props`. A fragment-root or root-group replacement is a
 /// `.reset` of the whole surface.
 struct PatchBuilder {
@@ -45,8 +47,7 @@ struct PatchBuilder {
         var structural: Set<String> = []
         var props: Set<String> = []
         var touched: [String] = []
-        var groups: [YType] = []
-        var rootGroupChanged = false
+        var treeChanged = false
         var resync = rootAppeared || !index.isCanonical
 
         func touch(_ id: String) {
@@ -89,15 +90,11 @@ struct PatchBuilder {
                 continue
             }
             if type.typeRef == .xmlElement(nodeName: "blockGroup") {
-                if index.isRootGroup(type) {
-                    // A new root-group object is a replacement, not a diff.
-                    if index.rootGroupItem !== type.item { resync = true }
-                    groups.append(type)
-                    rootGroupChanged = true
-                } else if let id = index.blockID(for: type) {
-                    touch(id)
-                    structural.insert(id)
-                }
+                // A new root-group object is a replacement, not a diff.
+                if index.isRootGroup(type), index.rootGroupItem !== type.item { resync = true }
+                // Membership of any group, root or nested: the preorder diff
+                // below says which blocks came, went or moved.
+                treeChanged = true
                 continue
             }
             // A container's `id` changed in place (possibly to an unreadable
@@ -109,6 +106,11 @@ struct PatchBuilder {
             guard let id = index.blockID(for: type) else { continue }
             touch(id)
             if type.typeRef == .xmlElement(nodeName: "blockContainer") || entry.subs.contains(nil) {
+                // A container's child list (a nested group added or removed)
+                // is a tree change too; its own shape may also have changed.
+                if type.typeRef == .xmlElement(nodeName: "blockContainer"), entry.subs.contains(nil) {
+                    treeChanged = true
+                }
                 structural.insert(id)
             } else if let block = index.entries[id], block.element === type, block.isSimpleContainer,
                 block.isProjectable
@@ -120,57 +122,57 @@ struct PatchBuilder {
             }
         }
 
-        // A root-group change that leaves a shape the index cannot mirror
-        // (an id-less or duplicate container, a stray child) resyncs too.
-        if resync || groups.contains(where: { !BlockIndex.isCanonical(group: $0) }) {
-            let blocks = YBlockProjection.project(doc, nativeMarks: true).blocks.map(BlockSnapshot.init)
-            index.rebuild()
-            return BlockPatch([.reset(blocks)], origin: origin)
-        }
+        if resync { return reset(origin) }
 
         var changes: [BlockChange] = []
         var removed: [String] = []
+        var inserted: Set<String> = []
         var inserts: [(after: String?, blocks: [BlockSnapshot])] = []
 
-        for group in groups {
-            let current = index.containers(in: group)
-            let previous = index.groupOrder[ObjectIdentifier(group)] ?? []
-            let currentIDs = current.map(\.id)
-            let previousSet = Set(previous)
-            let currentSet = Set(currentIDs)
-            let survivorsInPreviousOrder = previous.filter { currentSet.contains($0) }
-            let survivorsInCurrentOrder = currentIDs.filter { previousSet.contains($0) }
-            if survivorsInPreviousOrder != survivorsInCurrentOrder {
-                // A reorder. The surface holds an ordered list, so the only
-                // patch that expresses a move is remove-then-insert; moves are
-                // rare and correctness beats a minimal diff.
-                removed.append(contentsOf: previous)
-                inserts.append((nil, current.map { snapshot($0.item) }))
-            } else {
-                removed.append(contentsOf: previous.filter { !currentSet.contains($0) })
-                var pending: [BlockSnapshot] = []
-                var after: String?
-                for (id, item) in current {
-                    if previousSet.contains(id) {
-                        // Same id, different container object: the block was
-                        // replaced in place. Membership alone cannot see it.
-                        if index.entries[id]?.containerItem !== item {
-                            index.setContainer(id, item: item)
-                            touch(id)
-                            structural.insert(id)
-                        }
-                        if !pending.isEmpty {
-                            inserts.append((after, pending))
-                            pending = []
-                        }
-                        after = id
-                    } else {
-                        pending.append(snapshot(item))
-                    }
-                }
-                if !pending.isEmpty { inserts.append((after, pending)) }
+        if treeChanged {
+            let previous = index
+            index.rebuild()
+            // A shape the id-keyed index cannot mirror (an id-less or repeated
+            // container, a stray group child) resyncs.
+            guard index.isCanonical else { return reset(origin) }
+            // Blocks kept in place: in both orders, and in the same relative
+            // order. When survivors were reordered (a peer's move), the span
+            // between the common prefix and suffix is removed and reinserted.
+            var kept = Set(previous.order).intersection(index.order)
+            let before = previous.order.filter(kept.contains)
+            let after = index.order.filter(kept.contains)
+            if before != after {
+                var prefix = 0
+                while before[prefix] == after[prefix] { prefix += 1 }
+                var suffix = 0
+                while before[before.count - 1 - suffix] == after[after.count - 1 - suffix] { suffix += 1 }
+                kept.subtract(before[prefix..<(before.count - suffix)])
             }
-            index.setGroupOrder(group, currentIDs)
+            removed = previous.order.filter { !kept.contains($0) }
+            var pending: [BlockSnapshot] = []
+            var anchor: String?
+            for id in index.order {
+                guard let entry = index.entries[id] else { continue }
+                guard kept.contains(id), let old = previous.entries[id] else {
+                    inserted.insert(id)
+                    pending.append(snapshot(entry))
+                    continue
+                }
+                if !pending.isEmpty {
+                    inserts.append((anchor, pending))
+                    pending = []
+                }
+                anchor = id
+                // Same id, another container (a clone-and-delete move or an
+                // in-place replacement), or a new depth/parent.
+                if old.containerItem !== entry.containerItem || old.depth != entry.depth
+                    || old.parentID != entry.parentID
+                {
+                    touch(id)
+                    structural.insert(id)
+                }
+            }
+            if !pending.isEmpty { inserts.append((anchor, pending)) }
         }
 
         // Iterate the touched ids only, in document order — never `index.order`.
@@ -178,21 +180,21 @@ struct PatchBuilder {
         // as a fresh snapshot: a per-block change for it would address a block
         // the same patch just took away.
         let removedSet = Set(removed)
-        let ordered = touched.filter { !removedSet.contains($0) }.sorted {
+        let ordered = touched.filter { !removedSet.contains($0) && !inserted.contains($0) }.sorted {
             (index.position[$0] ?? Int.max) < (index.position[$1] ?? Int.max)
         }
         for id in ordered {
             visitedEntries += 1
             if structural.contains(id) || (props.contains(id) && textDeltas[id] != nil) {
                 guard let entry = index.entries[id] else { continue }
-                changes.append(.replaceBlock(blockID: id, block: snapshot(entry.containerItem)))
+                changes.append(.replaceBlock(blockID: id, block: snapshot(entry)))
             } else if props.contains(id), let entry = index.entries[id] {
                 // Unreadable props make the projection opaque (no props, no
                 // runs): only a whole-block patch says that.
                 if let element = entry.element, let blockProps = YBlockProjection.props(of: element) {
                     changes.append(.props(blockID: id, props: blockProps))
                 } else {
-                    changes.append(.replaceBlock(blockID: id, block: snapshot(entry.containerItem)))
+                    changes.append(.replaceBlock(blockID: id, block: snapshot(entry)))
                 }
             } else if let deltas = textDeltas[id], !deltas.isEmpty {
                 changes.append(.text(blockID: id, deltas: deltas))
@@ -202,19 +204,31 @@ struct PatchBuilder {
         if !removed.isEmpty { changes.insert(.remove(blockIDs: removed), at: 0) }
         for insert in inserts { changes.append(.insert(after: insert.after, blocks: insert.blocks)) }
 
-        // Only a root-group change alters the block list; a nested change leaves
-        // the index's entries valid, so it never pays for a rebuild.
-        if rootGroupChanged {
-            index.rebuild()
-        } else {
+        // A tree change already rebuilt the index; anything else leaves its
+        // entries valid, so it never pays for a rebuild.
+        if !treeChanged {
             for id in touched { index.refresh(id) }
         }
         return BlockPatch(changes, origin: origin)
     }
 
-    private mutating func snapshot(_ item: YItem) -> BlockSnapshot {
+    private mutating func reset(_ origin: BlockPatchOrigin) -> BlockPatch {
+        index.rebuild()
+        let blocks = NativeBlockProjection.project(doc, generation: index.generation).blocks.map(BlockSnapshot.init)
+        return BlockPatch([.reset(blocks)], origin: origin)
+    }
+
+    private mutating func snapshot(_ entry: BlockIndex.Entry) -> BlockSnapshot {
         projectedBlocks += 1
-        return BlockSnapshot(YBlockProjection.projectBlock(item, nativeMarks: true))
+        return BlockSnapshot(nativeSnapshot(entry))
+    }
+
+    /// One block at its indexed depth and parent, as the tree projection
+    /// reads it. O(block); not counted (the engine's own reads use it).
+    func nativeSnapshot(_ entry: BlockIndex.Entry) -> NativeBlockSnapshot {
+        NativeBlockProjection.projectBlock(
+            entry.containerItem, depth: entry.depth, parent: entry.parentID.flatMap { index.entries[$0]?.handle },
+            generation: index.generation)
     }
 
     // MARK: - Delta mapping

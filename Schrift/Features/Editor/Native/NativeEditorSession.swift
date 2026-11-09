@@ -33,7 +33,7 @@ final class NativeEditorSession {
             doc.destroy()
             throw error
         }
-        let projected = YBlockProjection.project(doc, nativeMarks: true)
+        let projected = NativeBlockProjection.project(doc)
         let view = NativeTextView()
         let resolver = NativeBlockResolver()
         let surface = NativeTextSurface(
@@ -44,10 +44,9 @@ final class NativeEditorSession {
         self.surface = surface
         self.hasUnsupportedRoot = projected.blocks.isEmpty && !projected.isFullyRenderable
         // Marks never make the native projection lossy (raw Yjs write-back keeps
-        // them all); the Markdown shadow is the classic projection's, as
-        // `ReplicaSaveAdapter` captures it, which drops what Markdown cannot spell.
-        self.canType =
-            projected.isFullyModeled && YBlockProjection.projectedMarkdown(YBlockProjection.project(doc)) != nil
+        // them all); the Markdown shadow is the one `ReplicaSaveAdapter`
+        // captures, which drops what Markdown cannot spell.
+        self.canType = projected.isFullyModeled && NativeBlockProjection.markdownShadow(doc) != nil
         // The initial projection is installed before hooks accept transactions.
         self.engine = DocumentEngine(doc: doc, surface: surface, revision: revision)
         resolver.engine = engine

@@ -105,6 +105,7 @@ private struct NativeOpenFixture: View {
         }
         .overlay {
             if ProcessInfo.processInfo.arguments.contains("--native-ime") { SyntheticIMEControls() }
+            if ProcessInfo.processInfo.arguments.contains("--native-tree") { TreeControls() }
         }
         .task {
             guard model == nil else { return }
@@ -182,6 +183,16 @@ private struct NativeOpenFixture: View {
                         BlockNoteBlock(node: "divider", props: [], runs: [], id: "owned-divider"),
                     ], at: 0)
             }
+            // `--native-tree`: two bullets first, for Tab.
+            if ProcessInfo.processInfo.arguments.contains("--native-tree") {
+                blocks.insert(
+                    contentsOf: [
+                        BlockNoteBlock(
+                            node: "bulletListItem", props: style, runs: [InlineRun("Tree first")], id: "owned-tree-1"),
+                        BlockNoteBlock(
+                            node: "bulletListItem", props: style, runs: [InlineRun("Tree second")], id: "owned-tree-2"),
+                    ], at: 0)
+            }
             _ = try replicaStore.create(for: scope, checkpoint: BlockNoteYjs.encode(blocks, clientID: 1))
         }
         let content = DocumentContentCacheStore(directory: directory.appendingPathComponent("Content"))
@@ -233,11 +244,53 @@ private struct SyntheticIMEControls: View {
         textView()?.setMarkedText(text, selectedRange: NSRange(location: (text as NSString).length, length: 0))
     }
 
-    @MainActor private static func textView() -> NativeTextView? {
-        func find(_ view: UIView) -> NativeTextView? {
-            (view as? NativeTextView) ?? view.subviews.lazy.compactMap(find).first
+    @MainActor private static func textView() -> NativeTextView? { mountedTextView() }
+}
+
+@MainActor private func mountedTextView() -> NativeTextView? {
+    func find(_ view: UIView) -> NativeTextView? {
+        (view as? NativeTextView) ?? view.subviews.lazy.compactMap(find).first
+    }
+    return UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+        .lazy.compactMap(find).first
+}
+
+/// `--native-tree`: puts the caret at the second bullet's start, as a tap
+/// there would, and reads every block's depth back from the mounted storage
+/// (the nesting is otherwise only an indent on screen).
+private struct TreeControls: View {
+    @State private var depths = ""
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Button("Caret in second") { Self.placeCaret(in: "owned-tree-2") }
+                .accessibilityIdentifier("tree.caret")
+            Button("Read tree") { depths = Self.depths() }
+                .accessibilityIdentifier("tree.read")
+            Text(depths).accessibilityIdentifier("tree.depths")
         }
-        return UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
-            .lazy.compactMap(find).first
+        .buttonStyle(.bordered)
+    }
+
+    @MainActor private static func blocks() -> [(id: String, location: Int, depth: Int)] {
+        guard let storage = mountedTextView()?.textStorage else { return [] }
+        var blocks: [(id: String, location: Int, depth: Int)] = []
+        storage.enumerateAttribute(.nativeBlockID, in: NSRange(location: 0, length: storage.length)) {
+            value, range, _ in
+            guard let id = value as? String, blocks.last?.id != id else { return }
+            let depth = storage.attribute(.nativeDepth, at: range.location, effectiveRange: nil) as? Int ?? 0
+            blocks.append((id, range.location, depth))
+        }
+        return blocks
+    }
+
+    @MainActor private static func placeCaret(in blockID: String) {
+        guard let view = mountedTextView(), let block = blocks().first(where: { $0.id == blockID }) else { return }
+        view.selectedRange = NSRange(location: block.location, length: 0)
+        view.delegate?.textViewDidChangeSelection?(view)
+    }
+
+    @MainActor private static func depths() -> String {
+        blocks().prefix(3).map { String($0.depth) }.joined(separator: ",")
     }
 }

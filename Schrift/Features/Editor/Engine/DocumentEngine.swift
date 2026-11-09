@@ -96,7 +96,14 @@ final class DocumentEngine {
             let entry = builder.index.entries[blockID]
         else { return nil }
         nativeSnapshotCount += 1
-        return BlockSnapshot(YBlockProjection.projectBlock(entry.containerItem, nativeMarks: true))
+        return BlockSnapshot(builder.nativeSnapshot(entry))
+    }
+
+    /// The tree projection of one indexed block, with its handle. Nil when
+    /// the index is not canonical or does not hold the id.
+    func nativeBlock(_ blockID: String) -> NativeBlockSnapshot? {
+        guard !isDetached, builder.index.isCanonical, let entry = builder.index.entries[blockID] else { return nil }
+        return builder.nativeSnapshot(entry)
     }
 
     init(doc: YDoc, surface: EditorSurface? = nil, revision: UInt64 = 0) {
@@ -141,7 +148,7 @@ final class DocumentEngine {
         // and stays refused.
         guard builder.index.isCanonical, let entry = builder.index.entries[command.blockID],
             entry.isProjectable,
-            !YBlockProjection.projectBlock(entry.containerItem, nativeMarks: true).fidelity.isOpaque,
+            !builder.nativeSnapshot(entry).block.fidelity.isOpaque,
             entry.isSimpleContainer, let element = entry.element,
             case .xmlElement(let node)? = element.typeRef, writer.schemas[node] != nil,
             entry.isSimpleText || element.length == 0,
@@ -198,9 +205,13 @@ final class DocumentEngine {
     /// commands run (see `BlockNoteWriter`): Return on an empty list item
     /// resets it to a paragraph in place; Backspace at the start of a heading
     /// or list item resets it to a paragraph; only a paragraph joins the block
-    /// above. Every refusal is validated before `nativeCommand` is set, so an
-    /// unsupported shape (opaque, placeholder, inline nodes, nested children,
-    /// code, the first block, such a block anywhere in a range) throws
+    /// above. Tree rules (PR06a): Return in an empty nested block outdents it,
+    /// Backspace at a nested paragraph's start merges into the block above (a
+    /// first child into its parent) and outdents only when it cannot, and `.indent`/
+    /// `.outdent` are `sinkListItem`/`liftListItem`. Every refusal is validated
+    /// before `nativeCommand` is set, so an unsupported shape (opaque,
+    /// placeholder, inline nodes, a child that cannot move, code, the first
+    /// block, such a block anywhere in a range) throws
     /// `.unsupportedNativeInput` and never freezes the engine. Returns the
     /// caret the surface should place.
     @discardableResult
@@ -230,7 +241,13 @@ final class DocumentEngine {
                 // No block is created, so `newID` stays unused: one model id.
                 write = { try self.writer.setBlockType(block: command.blockID, to: "paragraph") }
                 caret = { start(command.blockID) }
+            } else if units.isEmpty, try outdentsOnEmptyReturn(command.blockID) {
+                // BlockNote's next Enter rule: an empty nested block outdents
+                // (its parent's `emptyChildEnter` is "outdent"). One command.
+                write = try lift(command.blockID)
+                caret = { start(command.blockID) }
             } else {
+                try requireMovableChildren(command.blockID)
                 write = { try self.writer.splitBlock(block: command.blockID, at: offset, newID: newID) }
                 // At the start of non-empty text the writer inserts the empty
                 // block above, so the caret stays with the text, under the old id.
@@ -242,13 +259,32 @@ final class DocumentEngine {
                 caret = { start(command.blockID) }
                 break
             }
-            guard let position = builder.index.position[command.blockID], position > 0 else {
-                throw DocumentEngineError.unsupportedNativeInput
-            }
-            let previousID = builder.index.order[position - 1]
-            // The destination is written too: it must be typeable and unlocked.
+            // BlockNote's `mergeBlocksCommand`: into the block above (the
+            // previous sibling's last descendant, or a first child's parent).
+            // A nested block outdents only when that merge cannot happen.
+            let index = builder.index
+            guard let entry = index.entries[command.blockID], let position = index.position[command.blockID],
+                position > 0
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            let previousID = index.order[position - 1]
+            let firstChild =
+                entry.depth > 0 && index.groupOrder[ObjectIdentifier(entry.group)]?.first == command.blockID
+            // The destination is written too: it must be unlocked.
             try requireEditableBlock(previousID)
-            let aboveLength = try structuralTarget(previousID).units.count
+            let aboveLength: Int
+            do {
+                aboveLength = try structuralTarget(previousID).units.count
+                try requireMovableChildren(command.blockID)
+            } catch DocumentEngineError.unsupportedNativeInput where entry.depth > 0 {
+                write = try lift(command.blockID)
+                caret = { start(command.blockID) }
+                break
+            }
+            if firstChild {
+                write = { try self.writer.mergeIntoParent(block: command.blockID) }
+                caret = { EditorPosition(blockID: previousID, offset: aboveLength, assoc: -1) }
+                break
+            }
             write = { try self.writer.joinBlocks(block: command.blockID) }
             // An empty block above with the same type and props is removed
             // instead and the source keeps its id: the caret is its start.
@@ -256,16 +292,43 @@ final class DocumentEngine {
                 self.builder.index.entries[previousID] != nil
                     ? EditorPosition(blockID: previousID, offset: aboveLength, assoc: -1) : start(command.blockID)
             }
+        case .indent:
+            // `sinkListItem`: under the previous sibling, which must be a
+            // readable block of the same group; the moved subtree must stay
+            // within `maxNestingDepth`.
+            let index = builder.index
+            guard let entry = index.entries[command.blockID],
+                let siblings = index.groupOrder[ObjectIdentifier(entry.group)],
+                let at = siblings.firstIndex(of: command.blockID), at > 0,
+                let previous = index.entries[siblings[at - 1]], previous.isSimpleContainer,
+                !builder.nativeSnapshot(previous).block.fidelity.isOpaque
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            try requireEditableBlock(previous.id)
+            let deepest = try requireMovable(command.blockID, including: { $0 > entry.depth })
+            guard deepest <= BlockNoteWriter.maxNestingDepth else { throw DocumentEngineError.unsupportedNativeInput }
+            let item = entry.containerItem
+            let offset = try caretOffset(in: command.blockID)
+            write = { try self.writer.sinkListItem(in: try self.writer.indexedTarget(item, id: command.blockID)) }
+            caret = { EditorPosition(blockID: command.blockID, offset: offset, assoc: -1) }
+        case .outdent:
+            let offset = try caretOffset(in: command.blockID)
+            write = try lift(command.blockID)
+            caret = { EditorPosition(blockID: command.blockID, offset: offset, assoc: -1) }
         case .range(let range):
             // Every block the range touches is validated before arming: an
             // opaque block, a placeholder, code, nested children, inline nodes
             // or a toggle heading anywhere refuses the whole command.
             let index = builder.index
             guard let lower = index.position[command.blockID], let upper = index.position[range.endBlockID],
-                lower <= upper
+                lower <= upper, let group = index.entries[command.blockID]?.group
             else { throw DocumentEngineError.unsupportedNativeInput }
             var endUnits = units
             for position in stride(from: lower + 1, through: upper, by: 1) {
+                // Siblings of one group only: a range across depths, or over a
+                // block with children it would delete, waits for subtree commands.
+                guard index.entries[index.order[position]]?.group === group else {
+                    throw DocumentEngineError.unsupportedNativeInput
+                }
                 try requireEditableBlock(index.order[position])
                 endUnits = try structuralTarget(index.order[position]).units
             }
@@ -396,6 +459,67 @@ final class DocumentEngine {
 
     private static let listItemNodes: Set<String> = ["bulletListItem", "numberedListItem", "checkListItem"]
 
+    /// `liftListItem` for a nested block, validated: its parent is unlocked,
+    /// and it, its children and the siblings after it (which become its
+    /// children) are all readable and unlocked, so the clone loses nothing.
+    private func lift(_ blockID: String) throws -> () throws -> Data {
+        guard let entry = builder.index.entries[blockID], entry.depth > 0, let parentID = entry.parentID else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        try requireEditableBlock(parentID)
+        _ = try requireMovable(blockID, including: { $0 >= entry.depth })
+        let item = entry.containerItem
+        return { try self.writer.liftListItem(in: try self.writer.indexedTarget(item, id: blockID)) }
+    }
+
+    /// Return in an empty block: BlockNote outdents a nested one unless its
+    /// parent keeps empty children (an open toggle; native toggles are open).
+    private func outdentsOnEmptyReturn(_ blockID: String) throws -> Bool {
+        guard let parentID = builder.index.entries[blockID]?.parentID else { return false }
+        guard let element = builder.index.entries[parentID]?.element,
+            element.typeRef == .xmlElement(nodeName: "heading")
+        else { return true }
+        return YBlockProjection.props(of: element)?.contains(ProjectedProp(key: "isToggleable", value: .bool(true)))
+            == false
+    }
+
+    /// A split or join copies the block's children into another container:
+    /// each must be readable and unlocked.
+    private func requireMovableChildren(_ blockID: String) throws {
+        guard let entry = builder.index.entries[blockID], entry.nestedGroup != nil else { return }
+        _ = try requireMovable(blockID, including: { $0 > entry.depth })
+    }
+
+    /// Validates every block a clone-and-delete moves: `blockID` and the
+    /// blocks after it in preorder whose depth `including` accepts (stopping
+    /// at the first it does not). Each must be unlocked and not opaque, so its
+    /// copy is a proven lossless one. Returns the deepest depth after the move
+    /// would add one level (the caller's bound).
+    private func requireMovable(_ blockID: String, including: (Int) -> Bool) throws -> Int {
+        let index = builder.index
+        guard let start = index.position[blockID], let depth = index.entries[blockID]?.depth else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        var deepest = depth + 1
+        var position = start
+        repeat {
+            guard let entry = index.entries[index.order[position]],
+                !builder.nativeSnapshot(entry).block.fidelity.isOpaque
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            try requireEditableBlock(entry.id)
+            deepest = max(deepest, entry.depth + 1)
+            position += 1
+        } while position < index.order.count && including(index.entries[index.order[position]]?.depth ?? -1)
+        return deepest
+    }
+
+    /// The selection head's offset when it is in `blockID`, else 0. A tree
+    /// move changes no text, so the caret keeps its offset in the clone.
+    private func caretOffset(in blockID: String) throws -> Int {
+        guard let head = try currentSelection()?.head, head.blockID == blockID else { return 0 }
+        return head.offset
+    }
+
     /// What the slash menu converts a paragraph into. Divider, media and
     /// nested blocks wait for PR06.
     static let slashTypes: Set<String> = [
@@ -442,13 +566,13 @@ final class DocumentEngine {
     }
 
     /// A block a structural command may address: a writable simple text, or an
-    /// empty text-capable element the writer gives an XmlText on first insert.
-    /// Inline nodes, nested children, opaque/scrubbed content and code stay refused.
+    /// empty text-capable element the writer gives an XmlText on first insert,
+    /// at any depth. Inline nodes, opaque/scrubbed content and code stay refused.
     private func structuralTarget(_ blockID: String, allowCode: Bool = false) throws -> (node: String, units: [UInt16])
     {
         guard builder.index.isCanonical, let entry = builder.index.entries[blockID],
             entry.isProjectable,
-            !YBlockProjection.projectBlock(entry.containerItem, nativeMarks: true).fidelity.isOpaque,
+            !builder.nativeSnapshot(entry).block.fidelity.isOpaque,
             entry.isSimpleContainer, let element = entry.element,
             case .xmlElement(let node)? = element.typeRef,
             writer.schemas[node] != nil, allowCode || node != "codeBlock",
@@ -527,17 +651,17 @@ final class DocumentEngine {
     func joinBlocks(block: String) throws -> Data {
         try requireEditableBlock(block)
         if !deferredBlockIDs.isEmpty {
-            // A join writes both the source and the previous sibling's last
-            // descendant. Check their outermost indexed blocks as well, so a
-            // nested destination cannot bypass a composing ancestor's lock.
-            let target = try writer.find(block)
-            if let source = builder.index.blockID(for: target.container) { try requireEditableBlock(source) }
-            var previous = target.item.left
-            while previous?.deleted == true { previous = previous?.left }
-            if let previous, case .type(let type) = previous.content,
-                let destination = builder.index.blockID(for: type)
-            {
-                try requireEditableBlock(destination)
+            // A join writes the source and the previous sibling's last
+            // descendant, the block before it in preorder; its children move
+            // into its place.
+            let index = builder.index
+            if let position = index.position[block], let depth = index.entries[block]?.depth {
+                if position > 0 { try requireEditableBlock(index.order[position - 1]) }
+                var next = position + 1
+                while next < index.order.count, let entry = index.entries[index.order[next]], entry.depth > depth {
+                    try requireEditableBlock(entry.id)
+                    next += 1
+                }
             }
         }
         return try writer.joinBlocks(block: block)
@@ -741,11 +865,10 @@ final class DocumentEngine {
         if !composing.requiresReset, builder.index.isCanonical,
             let entry = builder.index.entries[composing.blockID]
         {
-            change = .replaceBlock(
-                blockID: entry.id,
-                block: BlockSnapshot(YBlockProjection.projectBlock(entry.containerItem, nativeMarks: true)))
+            change = .replaceBlock(blockID: entry.id, block: BlockSnapshot(builder.nativeSnapshot(entry)))
         } else {
-            change = .reset(YBlockProjection.project(doc, nativeMarks: true).blocks.map(BlockSnapshot.init))
+            change = .reset(
+                NativeBlockProjection.project(doc, generation: builder.index.generation).blocks.map(BlockSnapshot.init))
         }
         composition = nil
         buffered.append(.patch(BlockPatch([change], origin: origin)))

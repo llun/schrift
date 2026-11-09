@@ -23,21 +23,9 @@ final class DocumentEngineReviewFixTests: DocumentEngineTestCase {
         ]
     }
 
-    private func rootGroup(_ doc: YDoc) throws -> YType {
-        let root = try XCTUnwrap(doc.share[BlockNoteYjs.fragmentField])
-        var item = root.start
-        while let current = item {
-            defer { item = current.right }
-            if case .type(let type) = current.content, type.typeRef == .xmlElement(nodeName: "blockGroup") {
-                return type
-            }
-        }
-        throw XCTSkip("no root group")
-    }
+    // MARK: - 1. Nested text is the nested block's own text (PR06a)
 
-    // MARK: - 1. Nested text escalates to the top-level block
-
-    func testNestedBlockTextChangeReplacesTheTopLevelBlock() throws {
+    func testNestedBlockTextChangeIsTheNestedBlocksText() throws {
         let doc = try makeDoc(nestedSeed(), clientID: 1)
         defer { doc.destroy() }
         let surface = HeadlessSurface(blocks: projection(doc))
@@ -46,22 +34,16 @@ final class DocumentEngineReviewFixTests: DocumentEngineTestCase {
         try engine.replaceText(block: Self.childID, range: 0..<0, with: "X")
 
         let patch = try XCTUnwrap(surface.appliedPatches.last)
-        XCTAssertTrue(
-            patch.changes.contains {
-                if case .replaceBlock(let id, _) = $0 { return id == Self.parentID } else { return false }
-            },
-            "a nested text change must rebuild the top-level block, got \(patch.changes)")
-        XCTAssertFalse(
-            patch.changes.contains {
-                if case .text(let id, _) = $0 { return id == Self.parentID } else { return false }
-            },
-            "nested offsets must never be emitted as the parent's text")
+        XCTAssertEqual(
+            patch.changes,
+            [.text(blockID: Self.childID, deltas: [TextDelta(range: 0..<0, replacement: "X", marks: [])])],
+            "a nested text change keeps the text fast path, never the parent's offsets")
         assertSurfaceMatchesProjection(surface, doc, "after the nested text change")
     }
 
-    // MARK: - 2. A nested group change is not a top-level insert
+    // MARK: - 2. A nested split inserts after the nested block
 
-    func testNestedGroupChangeDoesNotEmitAPhantomInsert() throws {
+    func testNestedSplitInsertsTheNewBlockAfterTheNestedOne() throws {
         let doc = try makeDoc(nestedSeed(), clientID: 1)
         defer { doc.destroy() }
         let surface = HeadlessSurface(blocks: projection(doc))
@@ -70,10 +52,12 @@ final class DocumentEngineReviewFixTests: DocumentEngineTestCase {
         try engine.splitBlock(block: Self.childID, at: 3, newID: Self.splitID)
 
         let patch = try XCTUnwrap(surface.appliedPatches.last)
-        XCTAssertFalse(
-            patch.changes.contains { if case .insert = $0 { return true } else { return false } },
-            "a nested group must not produce a top-level insert, got \(patch.changes)")
-        XCTAssertEqual(surface.blocks.count, 1)
+        XCTAssertTrue(
+            patch.changes.contains {
+                if case .insert(Self.childID?, let blocks) = $0 { return blocks.map(\.id) == [Self.splitID] }
+                return false
+            }, "the new sibling follows the nested block, got \(patch.changes)")
+        XCTAssertEqual(surface.blocks.map(\.depth), [0, 1, 1])
         assertSurfaceMatchesProjection(surface, doc, "after the nested split")
     }
 
@@ -82,27 +66,28 @@ final class DocumentEngineReviewFixTests: DocumentEngineTestCase {
     func testAReorderInTheRootGroupEmitsRemoveAndInsert() throws {
         let doc = try makeDoc(clientID: 1)
         defer { doc.destroy() }
-        let group = try rootGroup(doc)
-        // The index remembers the replica as [second, third, first]; the replica
-        // is [first, second, third]. A membership-neutral group change must be
-        // read as a reorder, not as "nothing changed".
-        var index = BlockIndex(doc: doc)
-        index.setGroupOrder(group, [Self.secondID, Self.thirdID, Self.firstID])
-        var builder = PatchBuilder(doc: doc, index: index)
-
-        var patch = BlockPatch()
-        try doc.transact { tx in
-            let bare = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
-            let item = try YWrite.insertAfter(tx, into: group, after: nil, [.type(bare)])
-            item?.delete(tx)
-            patch = builder.build(tx)
+        let surface = HeadlessSurface(blocks: projection(doc))
+        let engine = DocumentEngine(doc: doc, surface: surface)
+        // A peer's move is a clone and delete under the same id: [first,
+        // second, third] becomes [second, third, first]. Membership is
+        // unchanged, so only the order says something moved.
+        let writer = BlockNoteWriter(doc: doc)
+        let first = try writer.find(Self.firstID)
+        let third = try writer.find(Self.thirdID)
+        let copy = try writer.snapshot(first.container, block: Self.firstID, depth: 0)
+        try writer.transaction { tx in
+            try writer.insertCopy(tx, copy, into: first.group, after: third.item)
+            first.item.delete(tx)
         }
 
+        let patch = try XCTUnwrap(surface.appliedPatches.last)
         XCTAssertTrue(patch.changes.contains { if case .remove = $0 { return true } else { return false } })
         let inserted = patch.changes.compactMap { change -> [BlockSnapshot]? in
             if case .insert(_, let blocks) = change { return blocks } else { return nil }
         }.flatMap { $0 }
-        XCTAssertEqual(inserted.map(\.id), [Self.firstID, Self.secondID, Self.thirdID])
+        XCTAssertEqual(inserted.map(\.id), [Self.secondID, Self.thirdID, Self.firstID])
+        assertSurfaceMatchesProjection(surface, doc, "after the move")
+        _ = engine
     }
 
     // MARK: - 4. The root is re-resolved after an empty start

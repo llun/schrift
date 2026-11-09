@@ -95,12 +95,39 @@ final class NativeTextView: UITextView {
             inputCoordinator.insertNewline()
             return
         }
+        // Tab nests the block (a hardware Tab without the key command below).
+        if text == "\t" {
+            inputCoordinator.insertTab()
+            return
+        }
         if inputCoordinator.composition.isActive {
             dropMarkedText()
             inputCoordinator.commitComposition(text: text)
             return
         }
         inputCoordinator.replace(range: selectedRange, with: text)
+    }
+
+    /// Tab and Shift-Tab nest and unnest the block, as in BlockNote, ahead of
+    /// UIKit's own Tab (a tab character) and focus movement.
+    override var keyCommands: [UIKeyCommand]? {
+        guard inputCoordinator != nil, isEditable else { return super.keyCommands }
+        let commands = [
+            UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(nativeIndent)),
+            UIKeyCommand(input: "\t", modifierFlags: .shift, action: #selector(nativeOutdent)),
+        ]
+        for command in commands { command.wantsPriorityOverSystemBehavior = true }
+        return (super.keyCommands ?? []) + commands
+    }
+
+    @objc private func nativeIndent() {
+        guard isEditable, markedTextRange == nil else { return }
+        inputCoordinator?.insertTab()
+    }
+
+    @objc private func nativeOutdent() {
+        guard isEditable, markedTextRange == nil else { return }
+        inputCoordinator?.outdent()
     }
 
     override func deleteBackward() {

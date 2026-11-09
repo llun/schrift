@@ -179,6 +179,12 @@ private struct NativeFormattingBar: View {
                 colors(NativeMark.backgroundColor, label: .native_editor_format_background_color) {
                     Text(verbatim: "A").padding(.horizontal, 4).background(theme.colors.brandFillSubtle)
                 }
+                button(id: "outdent", label: loc[.editor_format_outdent], isOn: false, action: { input.outdent() }) {
+                    MaterialSymbol(.format_indent_decrease, size: 20, scales: false)
+                }
+                button(id: "indent", label: loc[.editor_format_indent], isOn: false, action: { input.indent() }) {
+                    MaterialSymbol(.format_indent_increase, size: 20, scales: false)
+                }
             }
         }
         .scrollIndicators(.hidden)

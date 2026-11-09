@@ -118,7 +118,7 @@ enum YBlockProjection {}
 extension YBlockProjection {
     /// Non-deleted child items of a type, in list order. Includes non-countable
     /// items (formats) when `includeFormats` — the text fold needs them.
-    private static func children(of type: YType, includeFormats: Bool) -> [YItem] {
+    static func children(of type: YType, includeFormats: Bool) -> [YItem] {
         var result: [YItem] = []
         var item = type.start
         while let current = item {
@@ -179,10 +179,19 @@ extension YBlockProjection {
     /// Projects one block container — the engine's whole-block fallback (B6).
     /// Same classification as `project(_:)`, one block at a time, so a patch
     /// costs O(touched blocks) rather than O(document).
+    ///
+    /// `nestedChildren` is the native tree projection's reading
+    /// (`NativeBlockProjection`): a container whose children are exactly its
+    /// content element and one nested `blockGroup` projects that element, and
+    /// the caller projects the group's blocks itself. The default keeps such a
+    /// block opaque (`"nested children"`), as every classic caller needs.
     static func projectBlock(
-        _ containerItem: YItem, interlinkingOrigin: String? = nil, nativeMarks: Bool = false
+        _ containerItem: YItem, interlinkingOrigin: String? = nil, nativeMarks: Bool = false,
+        nestedChildren: Bool = false
     ) -> ProjectedBlock {
-        projectContainer(containerItem, interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks)
+        projectContainer(
+            containerItem, interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks,
+            nestedChildren: nestedChildren)
     }
 
     /// The content element's attributes, sorted, or `nil` when one is
@@ -196,7 +205,7 @@ extension YBlockProjection {
     /// either returns a fully classified block or an `.opaque` one recording
     /// why — never a trap or a thrown error.
     private static func projectContainer(
-        _ containerItem: YItem, interlinkingOrigin: String?, nativeMarks: Bool
+        _ containerItem: YItem, interlinkingOrigin: String?, nativeMarks: Bool, nestedChildren: Bool = false
     ) -> ProjectedBlock {
         guard case .type(let containerType) = containerItem.content,
             containerType.typeRef == .xmlElement(nodeName: "blockContainer")
@@ -225,11 +234,26 @@ extension YBlockProjection {
             if containerChildren.count == 2, case .type(let second) = containerChildren[1].content,
                 second.typeRef == .xmlElement(nodeName: "blockGroup")
             {
+                if nestedChildren, case .type(let first) = containerChildren[0].content,
+                    first.typeRef != .xmlElement(nodeName: "blockGroup")
+                {
+                    return projectElement(
+                        containerChildren[0], id: id, interlinkingOrigin: interlinkingOrigin,
+                        nativeMarks: nativeMarks)
+                }
                 return opaqueBlock(id: id, reason: "nested children")
             }
             return opaqueBlock(id: id, reason: "unexpected container shape")
         }
-        guard case .type(let element) = containerChildren[0].content,
+        return projectElement(
+            containerChildren[0], id: id, interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks)
+    }
+
+    /// The content element's half of `projectContainer`: props, runs and fidelity.
+    private static func projectElement(
+        _ elementItem: YItem, id: String, interlinkingOrigin: String?, nativeMarks: Bool
+    ) -> ProjectedBlock {
+        guard case .type(let element) = elementItem.content,
             case .xmlElement(let node)? = element.typeRef
         else {
             return opaqueBlock(id: id, reason: "unexpected container shape")
@@ -882,7 +906,11 @@ extension YBlockProjection {
     ///
     /// `nil` under exactly the same conditions `projectedMarkdown` returns
     /// `nil`.
-    static func renderedEditorDocument(_ document: ProjectedDocument) -> (
+    ///
+    /// `indents` (the native tree shadow, one depth per block) nests each
+    /// rendered block; `serializeMarkdown` keeps only the list nesting Markdown
+    /// can spell. `nil`, every classic caller, renders the flat document.
+    static func renderedEditorDocument(_ document: ProjectedDocument, indents: [Int]? = nil) -> (
         blocks: [ProjectedEditorBlock], markdown: String
     )? {
         guard document.isFullyRenderable else { return nil }
@@ -891,11 +919,12 @@ extension YBlockProjection {
             var rendered: [EditorBlock] = []
             for (i, block) in document.blocks.enumerated() {
                 guard let (kind, text) = editorBlock(block, escapeAll: escalated.contains(i)) else { return nil }
-                rendered.append(EditorBlock(kind: kind, text: text))
+                rendered.append(EditorBlock(kind: kind, text: text, indent: indents?[i] ?? 0))
             }
             let markdown = serializeMarkdown(rendered)
             if let failing = firstMismatch(
-                markdown: markdown, rendered: rendered, against: document, escalated: escalated)
+                markdown: markdown, rendered: rendered, against: document, escalated: escalated,
+                checksIndent: indents != nil)
             {
                 if escalated.contains(failing) { return nil }  // escaping didn't fix it
                 escalated.insert(failing)
@@ -914,8 +943,8 @@ extension YBlockProjection {
     /// (`parseEditorBlocks`) back to an equivalent document. A thin projection
     /// of `renderedEditorDocument` — see that function for the escalation
     /// loop and boundedness argument, which live there now.
-    static func projectedMarkdown(_ document: ProjectedDocument) -> String? {
-        renderedEditorDocument(document)?.markdown
+    static func projectedMarkdown(_ document: ProjectedDocument, indents: [Int]? = nil) -> String? {
+        renderedEditorDocument(document, indents: indents)?.markdown
     }
 
     /// Re-parses `markdown` and compares it, block by block, against the
@@ -948,21 +977,31 @@ extension YBlockProjection {
     /// index has already been escalated, it falls back to re-reporting one
     /// of them, which is exactly what makes the caller's
     /// `escalated.contains(failing)` check terminate the loop.
+    ///
+    /// `checksIndent` (the native tree shadow) also requires each re-parsed
+    /// block's indent to be the one `serializeMarkdown` spells for it (the
+    /// requested indent, normalized the way the serializer normalizes it).
     private static func firstMismatch(
-        markdown: String, rendered: [EditorBlock], against document: ProjectedDocument, escalated: Set<Int>
+        markdown: String, rendered: [EditorBlock], against document: ProjectedDocument, escalated: Set<Int>,
+        checksIndent: Bool = false
     ) -> Int? {
         var kept: [(originalIndex: Int, kind: BlockKind, text: String, runs: [InlineRun])] = []
+        var keptBlocks: [EditorBlock] = []
         for (index, pair) in zip(document.blocks, rendered).enumerated() {
             let (block, editorBlock) = pair
             if case .paragraph = editorBlock.kind, editorBlock.text.isEmpty { continue }
             kept.append((index, editorBlock.kind, editorBlock.text, block.runs))
+            keptBlocks.append(editorBlock)
         }
+        let spelled = checksIndent ? normalizedListIndents(keptBlocks).map(\.indent) : nil
         let reparsed = parseEditorBlocks(markdown)
 
         for i in 0..<min(kept.count, reparsed.count) {
             let expected = kept[i]
             let candidate = reparsed[i]
-            guard candidate.kind == expected.kind else { return expected.originalIndex }
+            guard candidate.kind == expected.kind, spelled.map({ $0[i] == candidate.indent }) != false else {
+                return expected.originalIndex
+            }
             switch expected.kind {
             case .codeBlock:
                 if candidate.text != expected.text { return expected.originalIndex }

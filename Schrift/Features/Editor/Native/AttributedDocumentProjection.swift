@@ -14,6 +14,8 @@ extension NSAttributedString.Key {
     static let nativeCodeLanguage = NSAttributedString.Key("schrift.native.codeLanguage")
     static let nativeCalloutEmoji = NSAttributedString.Key("schrift.native.calloutEmoji")
     static let nativeCalloutBackground = NSAttributedString.Key("schrift.native.calloutBackground")
+    /// A nested block's depth (PR06a), so chrome and panels start at its indent.
+    static let nativeDepth = NSAttributedString.Key("schrift.native.depth")
 }
 
 struct NativeEditorLabels: Equatable {
@@ -59,24 +61,25 @@ enum AttributedDocumentProjection {
     }
 
     /// BlockNote 0.56's numbering (`NumberedListIndexingDecorationPlugin`): a
-    /// numbered item continues the one directly above it; the first of a run
+    /// numbered item continues its previous sibling; the first of a run
     /// starts at its `start` prop (unset or 0 is 1). Nil for other blocks.
+    /// `blocks` is preorder, so a parent's children run between its siblings.
     static func listNumbers(in blocks: [BlockSnapshot]) -> [Int?] {
-        var previous: Int?
+        var previous: [String?: Int] = [:]
         return blocks.map { block in
             guard block.node == "numberedListItem", !isPlaceholder(block) else {
-                previous = nil
+                previous[block.parentID] = nil
                 return nil
             }
             let number: Int
-            if let previous {
-                number = previous &+ 1
+            if let last = previous[block.parentID] {
+                number = last &+ 1
             } else if case .int(let start)? = block.props.first(where: { $0.key == "start" })?.value, start != 0 {
                 number = start
             } else {
                 number = 1
             }
-            previous = number
+            previous[block.parentID] = number
             return number
         }
     }
@@ -144,10 +147,16 @@ enum AttributedDocumentProjection {
         let metrics = UIFontMetrics(forTextStyle: .body)
         func scaled(_ value: CGFloat) -> CGFloat { metrics.scaledValue(for: value, compatibleWith: traits) }
         func prop(_ key: String) -> YAnyValue? { block.props.first { $0.key == key }?.value }
+        // Each level nests one list gutter further in, chrome and all.
+        let depth = scaled(NativeBlockMetrics.listGutter) * CGFloat(block.depth)
         func indent(_ leading: CGFloat, trailing: CGFloat = 0) {
-            paragraph.firstLineHeadIndent = leading
-            paragraph.headIndent = leading
+            paragraph.firstLineHeadIndent = depth + leading
+            paragraph.headIndent = depth + leading
             paragraph.tailIndent = -trailing
+        }
+        if block.depth > 0 {
+            attributes[.nativeDepth] = block.depth
+            indent(0)
         }
         let padding = EditorBlockMetrics.decorationPadding
         switch block.node {
