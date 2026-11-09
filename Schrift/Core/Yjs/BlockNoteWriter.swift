@@ -117,7 +117,15 @@ struct BlockNoteWriter {
     /// successful no-op there, returning an empty update.
     @discardableResult
     func formatRange(block: String, range: NSRange, attributes: YTextAttributes) throws -> Data {
-        let target = try find(block)
+        try formatRange(in: try find(block), range: range, attributes: attributes)
+    }
+
+    /// `formatRange` against an already-resolved target, so a caller applying
+    /// one command across several blocks walks the document once per block
+    /// instead of once per intent.
+    @discardableResult
+    func formatRange(in target: Target, range: NSRange, attributes: YTextAttributes) throws -> Data {
+        let block = target.id
         let parts = try inline(target.element, block: block)
         let bounds = try clamp(range, parts: parts)
         return try transaction { _ in
@@ -133,6 +141,13 @@ struct BlockNoteWriter {
                 start = end
             }
         }
+    }
+
+    /// `Range<Int>` spelling of `formatRange(in:)`, for the engine.
+    @discardableResult
+    func formatRange(in target: Target, range: Range<Int>, attributes: YTextAttributes) throws -> Data {
+        try formatRange(
+            in: target, range: NSRange(location: range.lowerBound, length: range.count), attributes: attributes)
     }
 
     /// `Range<Int>` spelling of `formatRange`, for callers below the UI seam.

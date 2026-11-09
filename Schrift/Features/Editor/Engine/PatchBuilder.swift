@@ -123,7 +123,7 @@ struct PatchBuilder {
         // A root-group change that leaves a shape the index cannot mirror
         // (an id-less or duplicate container, a stray child) resyncs too.
         if resync || groups.contains(where: { !BlockIndex.isCanonical(group: $0) }) {
-            let blocks = YBlockProjection.project(doc).blocks.map(BlockSnapshot.init)
+            let blocks = YBlockProjection.project(doc, nativeMarks: true).blocks.map(BlockSnapshot.init)
             index.rebuild()
             return BlockPatch([.reset(blocks)], origin: origin)
         }
@@ -214,7 +214,7 @@ struct PatchBuilder {
 
     private mutating func snapshot(_ item: YItem) -> BlockSnapshot {
         projectedBlocks += 1
-        return BlockSnapshot(YBlockProjection.projectBlock(item))
+        return BlockSnapshot(YBlockProjection.projectBlock(item, nativeMarks: true))
     }
 
     // MARK: - Delta mapping
@@ -267,8 +267,8 @@ struct PatchBuilder {
     }
 
     /// A pure format change: each retained range is replaced by its own current
-    /// text carrying the marks the replica now holds. A range whose marks are
-    /// not uniform cannot be one `TextDelta`, so the block is rebuilt.
+    /// text carrying the marks the replica now holds, one delta per run of
+    /// uniform marks, so a mixed range is still a marks-only `.text` patch.
     private static func formatDeltas(_ delta: [YDeltaOp], text: YType) -> [TextDelta]? {
         guard let units = textUnits(text) else { return nil }
         var cursor = 0
@@ -278,11 +278,13 @@ struct PatchBuilder {
             let range = cursor..<(cursor + Int(length))
             cursor = range.upperBound
             guard op.attributes != nil else { continue }
-            guard range.upperBound <= units.count else { return nil }
-            guard let marks = uniformMarks(in: text, range: range) else { return nil }
-            out.append(
-                TextDelta(
-                    range: range, replacement: String(decoding: units[range], as: UTF16.self), marks: marks))
+            guard range.upperBound <= units.count, let runs = markRuns(in: text, range: range) else { return nil }
+            for run in runs {
+                out.append(
+                    TextDelta(
+                        range: run.range, replacement: String(decoding: units[run.range], as: UTF16.self),
+                        marks: run.marks))
+            }
         }
         return out
     }
@@ -306,9 +308,16 @@ struct PatchBuilder {
 
     /// The marks in force over `range`, or `nil` when they are not uniform.
     private static func uniformMarks(in text: YType, range: Range<Int>) -> [TextMark]? {
+        guard let runs = markRuns(in: text, range: range), runs.count <= 1 else { return nil }
+        return runs.first?.marks ?? []
+    }
+
+    /// `range` split into maximal runs of equal marks, in order, or `nil` when
+    /// the text holds something other than strings and formats.
+    private static func markRuns(in text: YType, range: Range<Int>) -> [(range: Range<Int>, marks: [TextMark])]? {
         var open: [(key: String, valueJSON: String)] = []
         var index = 0
-        var result: [TextMark]?
+        var runs: [(range: Range<Int>, marks: [TextMark])] = []
         var item = text.start
         while let current = item, index < range.upperBound {
             defer { item = current.right }
@@ -319,16 +328,21 @@ struct PatchBuilder {
                 if valueJSON != "null" { open.append((key, valueJSON)) }
             case .string(let units):
                 let end = index + units.count
-                if end > range.lowerBound {
+                let lower = max(index, range.lowerBound)
+                let upper = min(end, range.upperBound)
+                if lower < upper {
                     let marks = open.map { TextMark(key: $0.key, valueJSON: $0.valueJSON) }
-                    if let result, result != marks { return nil }
-                    result = marks
+                    if let last = runs.last, last.marks == marks, last.range.upperBound == lower {
+                        runs[runs.count - 1].range = last.range.lowerBound..<upper
+                    } else {
+                        runs.append((lower..<upper, marks))
+                    }
                 }
                 index = end
             default:
                 return nil
             }
         }
-        return result ?? []
+        return runs
     }
 }

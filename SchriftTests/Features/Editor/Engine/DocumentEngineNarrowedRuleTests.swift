@@ -288,9 +288,9 @@ final class DocumentEngineNarrowedRuleTests: DocumentEngineTestCase {
         assertSurfaceMatchesProjection(surface, doc, "after editing text in opaque shapes")
     }
 
-    // MARK: - 11. Unknown marks follow the projection's vocabulary
+    // MARK: - 11. The engine keeps every mark (the native projection)
 
-    func testUnknownMarksReplaceTheBlock() throws {
+    func testUnknownMarksStayInTextPatches() throws {
         let blocks = [
             BlockNoteBlock(node: "paragraph", props: Self.paragraphProps, runs: [InlineRun("abc")], id: Self.firstID)
         ]
@@ -303,10 +303,18 @@ final class DocumentEngineNarrowedRuleTests: DocumentEngineTestCase {
             block: Self.firstID, range: 0..<0, with: "X", marks: [TextMark(key: "underline", valueJSON: "{}")])
 
         let patch = try XCTUnwrap(surface.appliedPatches.last)
-        XCTAssertTrue(hasReplace(patch, Self.firstID), "unknown marks must rebuild, got \(patch.changes)")
+        XCTAssertEqual(
+            patch.changes,
+            [
+                .text(
+                    blockID: Self.firstID,
+                    deltas: [
+                        TextDelta(range: 0..<0, replacement: "X", marks: [TextMark(key: "underline", valueJSON: "{}")])
+                    ])
+            ])
         let runs = try XCTUnwrap(block(surface, Self.firstID)).runs
-        XCTAssertEqual(runs.map(\.text), ["X", "abc"], "scrubbing a mark preserves the projection's run boundary")
-        XCTAssertTrue(runs.allSatisfy { $0.marks.isEmpty })
+        XCTAssertEqual(runs.map(\.text), ["X", "abc"])
+        XCTAssertEqual(runs.map { $0.marks.map(\.key) }, [["underline"], []])
         assertSurfaceMatchesProjection(surface, doc, "after inserting text with an unknown mark")
     }
 

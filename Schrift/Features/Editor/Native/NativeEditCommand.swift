@@ -2,10 +2,14 @@ import Foundation
 
 /// One prevalidated command in replica UTF-16 coordinates. Ordinary typing
 /// replaces a block-relative range; Return and boundary Backspace are
-/// structural and carry no replacement text.
+/// structural and carry no replacement text; a mark command changes only the
+/// attributes of a range.
 struct NativeEditCommand: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
-        case replace(range: Range<Int>, replacement: String)
+        /// Ordinary typing. `marks` is the complete mark set the inserted text
+        /// carries; `nil` inherits Yjs's marks, those of the character before
+        /// the range.
+        case replace(range: Range<Int>, replacement: String, marks: [TextMark]? = nil)
         /// Return at `offset`: a split whose new block takes `newID`, or an
         /// empty list item's reset to a paragraph (no block, `newID` unused).
         case split(offset: Int, newID: String)
@@ -16,6 +20,9 @@ struct NativeEditCommand: Equatable, Sendable {
         /// pasting or dictating over a selection) or text with newlines, which
         /// split blocks. `blockID` is the range's first block.
         case range(NativeRangeCommand)
+        /// One mark change over a range that may span blocks. `blockID` is the
+        /// range's first block; the text is untouched.
+        case marks(NativeMarkCommand)
     }
 
     let id: UUID
@@ -31,19 +38,22 @@ struct NativeEditCommand: Equatable, Sendable {
     }
 
     /// The ordinary-typing spelling.
-    init(id: UUID, baseRevision: UInt64, blockID: String, range: Range<Int>, replacement: String) {
+    init(
+        id: UUID, baseRevision: UInt64, blockID: String, range: Range<Int>, replacement: String,
+        marks: [TextMark]? = nil
+    ) {
         self.init(
             id: id, baseRevision: baseRevision, blockID: blockID,
-            kind: .replace(range: range, replacement: replacement))
+            kind: .replace(range: range, replacement: replacement, marks: marks))
     }
 
     /// The inserted text for an ordinary or range command; empty for a
-    /// structural one.
+    /// structural or mark command.
     var replacement: String {
         switch kind {
-        case .replace(_, let replacement): return replacement
+        case .replace(_, let replacement, _): return replacement
         case .range(let range): return range.replacement
-        case .split, .join: return ""
+        case .split, .join, .marks: return ""
         }
     }
 }

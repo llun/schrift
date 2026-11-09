@@ -73,8 +73,9 @@ class DocumentEngineTestCase: XCTestCase {
     }
 
     /// The replica's projection in the surface's vocabulary.
+    /// The engine's reading: every stored mark kept (`nativeMarks`).
     func projection(_ doc: YDoc) -> [BlockSnapshot] {
-        YBlockProjection.project(doc).blocks.map(BlockSnapshot.init)
+        YBlockProjection.project(doc, nativeMarks: true).blocks.map(BlockSnapshot.init)
     }
 
     /// The invariant every scenario asserts after every step.

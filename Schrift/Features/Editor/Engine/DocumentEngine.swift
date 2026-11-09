@@ -96,7 +96,7 @@ final class DocumentEngine {
             let entry = builder.index.entries[blockID]
         else { return nil }
         nativeSnapshotCount += 1
-        return BlockSnapshot(YBlockProjection.projectBlock(entry.containerItem))
+        return BlockSnapshot(YBlockProjection.projectBlock(entry.containerItem, nativeMarks: true))
     }
 
     init(doc: YDoc, surface: EditorSurface? = nil, revision: UInt64 = 0) {
@@ -133,7 +133,7 @@ final class DocumentEngine {
         guard nativeCommand == nil, !holdingDurableRemote, !isFlushing, composition == nil,
             revision == command.baseRevision, revision < UInt64.max
         else { throw DocumentEngineError.staleNativeCommand }
-        guard case .replace(let range, let replacement) = command.kind else {
+        guard case .replace(let range, let replacement, let marks) = command.kind else {
             throw DocumentEngineError.unsupportedNativeInput
         }
         // An empty text-capable element has no XmlText yet; the writer creates
@@ -146,7 +146,8 @@ final class DocumentEngine {
             entry.isSimpleText || element.length == 0,
             !replacement.unicodeScalars.contains(where: {
                 CharacterSet.newlines.contains($0) || $0.value == 0xfffc
-            })
+            }),
+            marks?.allSatisfy({ Self.isMarkValue($0) && $0.valueJSON != "null" }) != false
         else { throw DocumentEngineError.unsupportedNativeInput }
         let target = try writer.indexedTarget(entry.containerItem, id: command.blockID)
         let units = entry.runs.flatMap { Array($0.text.utf16) }
@@ -163,7 +164,8 @@ final class DocumentEngine {
         do {
             let update = try writer.replaceText(
                 in: target, range: NSRange(location: range.lowerBound, length: range.count),
-                with: replacement)
+                with: replacement,
+                marks: marks.map { YTextAttributes($0.map { ($0.key, $0.valueJSON) }) })
             unconfirmedNativeUpdate = update
             try persist(update)
             revision += 1
@@ -289,6 +291,42 @@ final class DocumentEngine {
                 }
                 return EditorPosition(blockID: id, offset: line.utf16.count, assoc: -1)
             }
+        case .marks(let marks):
+            // A mark change over a range that may span blocks. Every block with
+            // text in the range is validated before arming, as `.range` does;
+            // an end at the next block's start touches nothing there. Only the
+            // named attributes change ("null" removes), so the text is never
+            // touched and the patch is marks-only.
+            let index = builder.index
+            guard let lower = index.position[command.blockID], let upper = index.position[marks.endBlockID],
+                lower <= upper, !marks.attributes.isEmpty,
+                marks.attributes.allSatisfy({ Self.isMarkValue($0) })
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            var segments: [(item: YItem, id: String, range: Range<Int>)] = []
+            for position in lower...upper {
+                let id = index.order[position]
+                if position == upper, position > lower, marks.endOffset == 0 { break }
+                if position > lower { try requireEditableBlock(id) }
+                let blockUnits = position == lower ? units : try structuralTarget(id).units
+                let start = position == lower ? marks.startOffset : 0
+                let end = position == upper ? marks.endOffset : blockUnits.count
+                guard Self.isBoundary(start, in: blockUnits), Self.isBoundary(end, in: blockUnits), start <= end,
+                    let item = index.entries[id]?.containerItem
+                else { throw DocumentEngineError.unsupportedNativeInput }
+                if start < end { segments.append((item, id, start..<end)) }
+            }
+            guard !segments.isEmpty else { throw DocumentEngineError.unsupportedNativeInput }
+            let attributes = YTextAttributes(marks.attributes.map { ($0.key, $0.valueJSON) })
+            write = {
+                try self.writer.transaction { _ in
+                    for segment in segments {
+                        let target = try self.writer.indexedTarget(segment.item, id: segment.id)
+                        try self.writer.formatRange(in: target, range: segment.range, attributes: attributes)
+                    }
+                }
+            }
+            // The surface keeps the selection; this is its start.
+            caret = { EditorPosition(blockID: command.blockID, offset: marks.startOffset, assoc: -1) }
         }
         nativeCommand = command
         nativeEmission = 0
@@ -319,6 +357,17 @@ final class DocumentEngine {
     }
 
     private static let listItemNodes: Set<String> = ["bulletListItem", "numberedListItem", "checkListItem"]
+
+    /// A mark a command may write: a key and either "null" (removal) or a JSON
+    /// object, with a readable href for a link. Anything else would make the
+    /// block unprojectable after the write.
+    private static func isMarkValue(_ mark: TextMark) -> Bool {
+        guard !mark.key.isEmpty else { return false }
+        if mark.valueJSON == "null" { return true }
+        if mark.key == "link" { return YBlockProjection.linkHref(from: mark.valueJSON) != nil }
+        return mark.valueJSON.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) }
+            is [String: Any]
+    }
 
     /// A UTF-16 offset in `units` that does not split a surrogate pair.
     private static func isBoundary(_ offset: Int, in units: [UInt16]) -> Bool {
@@ -626,9 +675,10 @@ final class DocumentEngine {
             let entry = builder.index.entries[composing.blockID]
         {
             change = .replaceBlock(
-                blockID: entry.id, block: BlockSnapshot(YBlockProjection.projectBlock(entry.containerItem)))
+                blockID: entry.id,
+                block: BlockSnapshot(YBlockProjection.projectBlock(entry.containerItem, nativeMarks: true)))
         } else {
-            change = .reset(YBlockProjection.project(doc).blocks.map(BlockSnapshot.init))
+            change = .reset(YBlockProjection.project(doc, nativeMarks: true).blocks.map(BlockSnapshot.init))
         }
         composition = nil
         buffered.append(.patch(BlockPatch([change], origin: origin)))

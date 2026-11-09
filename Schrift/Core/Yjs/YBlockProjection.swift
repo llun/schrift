@@ -142,7 +142,15 @@ extension YBlockProjection {
     /// `interlinkingLinkInline` node — see the file overview. `nil` (the
     /// default) makes every such node opaque rather than affecting any other
     /// block, so existing callers are unchanged.
-    static func project(_ doc: YDoc, interlinkingOrigin: String? = nil) -> ProjectedDocument {
+    ///
+    /// `nativeMarks` is the native editor's reading (it writes raw Yjs, so no
+    /// mark is lost on write-back): every stored mark, known or not, stays in
+    /// the runs and none makes a block lossy. The default scrubs marks the
+    /// markdown export cannot spell, which the classic live path and the save
+    /// shadow need.
+    static func project(
+        _ doc: YDoc, interlinkingOrigin: String? = nil, nativeMarks: Bool = false
+    ) -> ProjectedDocument {
         guard let root = doc.share[BlockNoteYjs.fragmentField] else {
             return ProjectedDocument(blocks: [], isFullyRenderable: true, isFullyModeled: true)  // empty replica
         }
@@ -158,7 +166,8 @@ extension YBlockProjection {
         }
         var blocks: [ProjectedBlock] = []
         for containerItem in children(of: group, includeFormats: false) {
-            blocks.append(projectContainer(containerItem, interlinkingOrigin: interlinkingOrigin))
+            blocks.append(
+                projectContainer(containerItem, interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks))
         }
         let renderable = blocks.allSatisfy { !$0.fidelity.isOpaque }
         let modeled = renderable && blocks.allSatisfy { $0.fidelity == .modeled }
@@ -170,8 +179,10 @@ extension YBlockProjection {
     /// Projects one block container — the engine's whole-block fallback (B6).
     /// Same classification as `project(_:)`, one block at a time, so a patch
     /// costs O(touched blocks) rather than O(document).
-    static func projectBlock(_ containerItem: YItem, interlinkingOrigin: String? = nil) -> ProjectedBlock {
-        projectContainer(containerItem, interlinkingOrigin: interlinkingOrigin)
+    static func projectBlock(
+        _ containerItem: YItem, interlinkingOrigin: String? = nil, nativeMarks: Bool = false
+    ) -> ProjectedBlock {
+        projectContainer(containerItem, interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks)
     }
 
     /// The content element's attributes, sorted, or `nil` when one is
@@ -184,7 +195,9 @@ extension YBlockProjection {
     /// Builds one projected block from a `blockGroup` child item. Every branch
     /// either returns a fully classified block or an `.opaque` one recording
     /// why — never a trap or a thrown error.
-    private static func projectContainer(_ containerItem: YItem, interlinkingOrigin: String?) -> ProjectedBlock {
+    private static func projectContainer(
+        _ containerItem: YItem, interlinkingOrigin: String?, nativeMarks: Bool
+    ) -> ProjectedBlock {
         guard case .type(let containerType) = containerItem.content,
             containerType.typeRef == .xmlElement(nodeName: "blockContainer")
         else {
@@ -244,7 +257,7 @@ extension YBlockProjection {
         // must not; divider/image must carry no runs) is independent of
         // whether any individual mark key is one the app recognizes.
         let structural = classifyStructure(node: node, props: props, runs: rawRuns)
-        let (scrubbedRuns, markReasons) = scrubUnknownMarks(rawRuns)
+        let (scrubbedRuns, markReasons) = nativeMarks ? (rawRuns, []) : scrubUnknownMarks(rawRuns)
         let fidelity = mergingMarkReasons(markReasons, into: structural)
         return ProjectedBlock(id: id, node: node, props: props, runs: scrubbedRuns, fidelity: fidelity)
     }
@@ -444,8 +457,7 @@ extension YBlockProjection {
         a.map { [$0.key, $0.valueJSON] } == b.map { [$0.key, $0.valueJSON] }
     }
 
-    /// The mark keys the projection keeps; the engine's `.text` patches use
-    /// the same set.
+    /// The mark keys the classic projection keeps (`nativeMarks` keeps them all).
     static let renderableMarkKeys: Set<String> = ["bold", "italic", "code", "strike", "link"]
 
     /// Drops any mark whose key isn't in the vocabulary the app's markdown

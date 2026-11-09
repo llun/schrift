@@ -30,9 +30,9 @@ struct BlockIndex {
         let isSimpleText: Bool
         /// True when, at the time the entry was built, the projection read this
         /// block's props and text as-is: a simple container, readable props,
-        /// and — when the element is a sole `XmlText` — only strings and known
-        /// marks with readable links. Otherwise the projection dropped or
-        /// scrubbed content the surface's copy therefore lacks, and a fast-path
+        /// and — when the element is a sole `XmlText` — only strings and marks
+        /// with readable links. Otherwise the projection dropped content the
+        /// surface's copy therefore lacks, and a fast-path
         /// patch computed from the replica could not be applied to it.
         let isProjectable: Bool
         /// The sole text's runs when the entry was built — the surface's copy,
@@ -228,9 +228,9 @@ struct BlockIndex {
     }
 
     /// True when the projection reads this text as runs unchanged: only strings
-    /// and formats, every format a known mark, and every link readable. An
-    /// embed or a bad link makes the block opaque; an unknown mark is scrubbed,
-    /// and the scrub keeps run splits a `.text` patch cannot reproduce.
+    /// and formats, and every link readable. An embed or a bad link makes the
+    /// block opaque. Any mark key is fine: the engine projects with
+    /// `nativeMarks`, which keeps every mark, known or not.
     static func projectsAsText(_ text: YType) -> Bool {
         var item = text.start
         while let current = item {
@@ -240,7 +240,6 @@ struct BlockIndex {
             case .string: continue
             case .format(let key, let valueJSON):
                 guard valueJSON != "null" else { continue }
-                guard YBlockProjection.renderableMarkKeys.contains(key) else { return false }
                 if key == "link", YBlockProjection.linkHref(from: valueJSON) == nil { return false }
             default: return false
             }
