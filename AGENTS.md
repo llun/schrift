@@ -2305,6 +2305,42 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `NativeEditingTestCase` harness) and the host UI test
   `testShiftArrowSelectionAcrossParagraphsIsReplacedDurably`.
 
+- **PR05a inline marks, links and colours.** The engine projects with
+  `YBlockProjection.project/projectBlock(nativeMarks: true)` (snapshots, `.replaceBlock`,
+  `.reset`, `nativeSnapshot`): every stored mark stays in the runs, known or not, and none
+  makes a block lossy, because the native save writes raw Yjs. The default (`false`) still
+  scrubs what Markdown cannot spell for the classic live path, the save shadow and
+  `BlockNotePreservation`; never flip it there. `BlockIndex.projectsAsText` therefore accepts
+  any mark key (an unreadable link stays opaque), and `canType` is the native projection's
+  `isFullyModeled` plus a classic-projection Markdown shadow, as `ReplicaSaveAdapter`
+  captures it. A mark change is one `.marks(NativeMarkCommand)` (first block + start offset,
+  end block + offset, only the changed keys; `"null"` removes) through `applyStructural`:
+  every block with text in the range is validated before arming like `.range` (an end at the
+  next block's start touches nothing there), values must be `"null"` or a JSON object with a
+  readable link href, and one grouped transaction calls `BlockNoteWriter.formatRange(in:)` per
+  block, so the text is untouched. `PatchBuilder.formatDeltas` splits a format range into one
+  `.text` delta per run of uniform marks, so a mixed range is still marks-only. Values are
+  BlockNote 0.56's: `{}` for bold/italic/underline/strike/code, `{"stringValue":"red"}` for
+  `textColor`/`backgroundColor` (names in `NativeMark.colors`), `{"href":…}` built by
+  `NativeMark.linkValue` like the Markdown writer. `NativeInputCoordinator`: `toggleMark` over
+  a selection is off when every character has it, else on everywhere (a mixed run turns all
+  on); at a caret it only sets the pending typing marks (ProseMirror's stored marks, dropped
+  by a user selection change). Typing takes ProseMirror's `$pos.marks()` / `marksAcross`
+  (`NativeMarkSelection`; link and unknown keys are non-inclusive) and sends them as
+  `.replace(…, marks:)` only when they differ from what Yjs inherits (the character before), so
+  plain typing writes the bytes it always did. `activeMarks` (common marks of the selection,
+  or the caret's typing marks) drives `NativeFormattingBar` in `NativeEditorView` (the classic
+  bar's tokens and labels, `nativeEditor.format.<key>` identifiers, `.isSelected` when on) and
+  the view's `typingAttributes`. Links reuse `LinkEditorSheet` and `sanitizedLinkURL`: an
+  unchanged label is one `.marks` command, a new or edited label is one `.replace` with the link
+  in its marks (one block only; across blocks it is refused with a notice), a caret inside a
+  link edits the whole link, Remove writes `link: null`. Colours render as shared dynamic
+  `UIColor`s from BlockNote's palette, so light/dark changes neither storage nor Yjs and a Dynamic
+  Type restyle writes no transaction. Not yet: code's `excludes` (code and other marks combine),
+  IME commits ignore a pending caret toggle, hardware ⌘B/⌘I. Tests: `NativeFormattingTests`,
+  `NativeMarkOracleTests` (bold on/off byte-identical, typed marks/link/colour to the capture's
+  XML), the host UI test `testBoldOnASelectedWordSurvivesRelaunch`.
+
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (`@MainActor`), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below
@@ -2431,9 +2467,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   under the same id (the index tracks the container `YItem`, not just the id), or
   props and text changed together. `.text` and `.props` also need the block to
   have projected as-is *before* the transaction and after it (readable props, a
-  text of strings and known marks with readable links; `BlockIndex.Entry.isProjectable`),
-  because an opaque or mark-scrubbed block's surface copy came from a
-  `.replaceBlock`. Only the root `blockGroup` produces
+  text of strings and marks with readable links; `BlockIndex.Entry.isProjectable`),
+  because an opaque block's surface copy came from a `.replaceBlock`. Only the root `blockGroup` produces
   `.insert`/`.remove`; a nested group never does. A reorder in the root group is
   a `.remove` + `.insert` (the surface holds an ordered list). A change to the
   fragment root, or a root group that is not the one the index recorded, a
@@ -2455,8 +2490,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   it is canonical again. `DocumentEnginePatchCostTests` and
   `DocumentEngineNarrowedRuleTests.testTextTransactionVisitsOnlyTouchedEntries`
   pin the counters and what they measure. A delta that both rewrites text and
-  re-marks it, or a format range whose marks are not uniform, escalates to
-  `.replaceBlock` rather than guessing.
+  re-marks it escalates to `.replaceBlock` rather than guessing; a format range
+  whose marks are not uniform is one `.text` delta per uniform run.
 - **`TextDelta.marks` is never `nil` from the builder.** `nil` means *inherit*
   the marks in force at the insertion point (the surface's convenience form for
   a local keystroke). The builder always sends the complete set, including `[]`

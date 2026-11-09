@@ -22,6 +22,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// The general pasteboard; tests use a uniquely named one.
     @ObservationIgnored var pasteboard: UIPasteboard = .general
     private(set) var noticeKey: L10nKey?
+    /// What the formatting bar shows: the marks every selected character
+    /// carries, or at a caret the marks typing there would carry.
+    private(set) var activeMarks: [TextMark] = []
+    /// A toggle at a caret (ProseMirror's stored marks): the marks the next
+    /// typed text carries. Nothing is written until text is typed, and a
+    /// selection change drops it.
+    @ObservationIgnored private var pendingTypingMarks: [TextMark]?
     /// The active keyboard's language; a seam so tests can stand in for a
     /// composing keyboard the simulator may not have.
     @ObservationIgnored var inputLanguage: () -> String? = { nil }
@@ -44,12 +51,16 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             engine: engine, surface: surface, view: view, persist: persist, recoveryStore: recoveryStore)
         self.selection = NativeSelectionCoordinator(engine: engine, surface: surface, view: view)
         super.init()
-        surface.onPatchApplied = { [weak self] in self?.selection.restore(after: $0) }
+        surface.onPatchApplied = { [weak self] patch in
+            self?.selection.restore(after: patch)
+            self?.refreshSelectionMarks()
+        }
         inputLanguage = { [weak view] in view?.textInputMode?.primaryLanguage }
         view.delegate = self
         view.inputCoordinator = self
         view.isEditable = true
         view.allowsEditingTextAttributes = false
+        refreshSelectionMarks()
     }
 
     func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
@@ -156,11 +167,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         guard let view, !view.isApplyingMarkedText, view.markedTextRange == nil, !composition.isActive else {
             return
         }
+        if !surface.isApplyingPatch { pendingTypingMarks = nil }
         selection.selectionDidChange()
+        refreshSelectionMarks()
     }
 
+    /// `marks`, when given, is the complete mark set the text carries (a link
+    /// edit); otherwise typing takes the marks at the caret.
     @discardableResult
-    func replace(range: NSRange, with text: String) -> Bool {
+    func replace(range: NSRange, with text: String, marks: [TextMark]? = nil) -> Bool {
         directInsertion = nil
         guard let view, view.isEditable, !engine.nativeWriteFailed, !engine.isDetached else { return false }
         guard range.length != 0 || !text.isEmpty else { return false }
@@ -200,9 +215,12 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         let offset = range.location - entry.textRange.location
         let command = NativeEditCommand(
             id: UUID(), baseRevision: engine.revision, blockID: entry.blockID,
-            range: offset..<(offset + range.length), replacement: text)
+            range: offset..<(offset + range.length), replacement: text,
+            marks: text.isEmpty
+                ? nil : typingMarks(marks, runs: surface.blocks[position].runs, offset..<(offset + range.length)))
         do {
             try engine.replaceText(command) { try persist(command, $0) }
+            pendingTypingMarks = nil
             selection.place(NSRange(location: range.location + text.utf16.count, length: 0))
             noticeKey = nil
             return true
@@ -280,11 +298,16 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     }
 
     /// `refusal` is the notice for an unsupported shape; nil keeps it quiet.
-    private func applyStructural(_ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?) -> Bool {
+    /// `keeping` is a selection to restore instead of the command's caret.
+    private func applyStructural(
+        _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, keeping: NSRange? = nil
+    ) -> Bool {
         let command = NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: blockID, kind: kind)
         do {
             let caret = try engine.applyStructural(command) { try persist(command, $0) }
-            if let entry = surface.rangeIndex.entry(for: caret.blockID) {
+            if let keeping {
+                selection.place(keeping)
+            } else if let entry = surface.rangeIndex.entry(for: caret.blockID) {
                 selection.place(
                     NSRange(location: entry.textRange.location + min(caret.offset, entry.textRange.length), length: 0))
             }
@@ -300,6 +323,158 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             }
             return false
         }
+    }
+
+    // MARK: - Marks
+
+    /// Typing's marks: an explicit set, a pending toggle, or ProseMirror's
+    /// marks at the caret (or across the replaced range). Nil when that is
+    /// what Yjs inherits anyway, so plain typing writes what it always did.
+    private func typingMarks(_ explicit: [TextMark]?, runs: [InlineRun], _ range: Range<Int>) -> [TextMark]? {
+        let marks =
+            explicit ?? pendingTypingMarks
+            ?? (range.isEmpty
+                ? NativeMarkSelection.typing(runs, at: range.lowerBound)
+                : NativeMarkSelection.typing(runs, replacing: range))
+        return NativeMarkSelection.same(marks, NativeMarkSelection.inherited(runs, at: range.lowerBound)) ? nil : marks
+    }
+
+    private var canFormat: Bool {
+        guard let view else { return false }
+        return view.isEditable && !engine.nativeWriteFailed && !engine.isDetached && view.markedTextRange == nil
+            && !composition.isActive
+    }
+
+    /// Republishes `activeMarks` and the caret's typing attributes (what UIKit
+    /// shows marked text with), after a selection change or a patch.
+    func refreshSelectionMarks() {
+        guard let view, view.markedTextRange == nil, !composition.isActive else { return }
+        let range = view.selectedRange
+        let index = surface.rangeIndex
+        var marks: [TextMark] = []
+        var block: BlockSnapshot?
+        if range.length > 0 {
+            marks = NativeMarkSelection.common(in: surface.blocks, index: index, range: range) ?? []
+        } else if let caret = index.textPosition(atUTF16: range.location),
+            !AttributedDocumentProjection.isPlaceholder(surface.blocks[caret.position])
+        {
+            block = surface.blocks[caret.position]
+            marks =
+                pendingTypingMarks ?? NativeMarkSelection.typing(surface.blocks[caret.position].runs, at: caret.offset)
+        }
+        if marks != activeMarks { activeMarks = marks }
+        guard range.length == 0, let block else { return }
+        var typing = view.typingAttributes
+        for key in [NSAttributedString.Key.underlineStyle, .strikethroughStyle, .backgroundColor] { typing[key] = nil }
+        typing.merge(AttributedDocumentProjection.markAttributes(block: block, marks: marks, traits: surface.traits)) {
+            $1
+        }
+        typing[.link] = nil
+        view.typingAttributes = typing
+    }
+
+    /// Bold, italic, underline, strike or code. Over a selection, one durable
+    /// command: off when every character has it, otherwise on everywhere (a
+    /// mixed run turns all on). At a caret it only changes what typing carries.
+    @discardableResult
+    func toggleMark(_ key: String) -> Bool {
+        let isOn = activeMarks.contains { $0.key == key }
+        return setMark(key, value: isOn ? nil : "{}")
+    }
+
+    /// A text or background colour by BlockNote name; nil removes it.
+    @discardableResult
+    func setColor(_ key: String, name: String?) -> Bool {
+        setMark(key, value: name.map(NativeMark.colorValue))
+    }
+
+    private func setMark(_ key: String, value: String?) -> Bool {
+        guard let view, canFormat else { return false }
+        let range = view.selectedRange
+        guard range.length > 0 else {
+            var marks = activeMarks.filter { $0.key != key }
+            if let value { marks.append(TextMark(key: key, valueJSON: value)) }
+            pendingTypingMarks = marks
+            refreshSelectionMarks()
+            return true
+        }
+        return applyMarks([TextMark(key: key, valueJSON: value ?? "null")], over: range)
+    }
+
+    private func applyMarks(_ attributes: [TextMark], over range: NSRange) -> Bool {
+        let index = surface.rangeIndex
+        guard let start = index.textPosition(atUTF16: range.location),
+            let end = index.textPosition(atUTF16: NSMaxRange(range), isUpperBound: true)
+        else {
+            noticeKey = .native_editor_range_unavailable
+            return false
+        }
+        let command = NativeMarkCommand(
+            startOffset: start.offset, endBlockID: index.entries[end.position].blockID, endOffset: end.offset,
+            attributes: attributes)
+        return applyStructural(
+            index.entries[start.position].blockID, .marks(command), refusal: .native_editor_range_unavailable,
+            keeping: range)
+    }
+
+    /// What the link sheet edits: the selection (its link when the whole
+    /// selection is one), or the link around a caret, or a new link at it.
+    func linkTarget() -> NativeLinkTarget? {
+        guard let view, canFormat else { return nil }
+        let range = view.selectedRange
+        if range.length > 0 {
+            let href = (NativeMarkSelection.common(in: surface.blocks, index: surface.rangeIndex, range: range) ?? [])
+                .first { $0.key == NativeMark.link }.flatMap { YBlockProjection.linkHref(from: $0.valueJSON) }
+            let label = NativeClipboard.plainText(for: range, surface: surface) ?? ""
+            return NativeLinkTarget(range: range, label: label, href: href)
+        }
+        guard let entry = surface.rangeIndex.entry(atUTF16: range.location),
+            let position = surface.rangeIndex.position(for: entry.blockID),
+            !AttributedDocumentProjection.isPlaceholder(surface.blocks[position])
+        else { return nil }
+        let offset = range.location - entry.textRange.location
+        guard let link = NativeMarkSelection.linkRange(surface.blocks[position].runs, at: offset) else {
+            return NativeLinkTarget(range: range, label: "", href: nil)
+        }
+        let linkRange = NSRange(location: entry.textRange.location + link.range.lowerBound, length: link.range.count)
+        let label = NativeClipboard.plainText(for: linkRange, surface: surface) ?? ""
+        return NativeLinkTarget(range: linkRange, label: label, href: link.href)
+    }
+
+    /// Saves the sheet with the classic editor's URL rules; false keeps it
+    /// open. An unchanged label is one mark command; a new or edited label
+    /// is typed with the link (one block only).
+    @discardableResult
+    func applyLink(label: String, url: String, to target: NativeLinkTarget) -> Bool {
+        guard let href = sanitizedLinkURL(url) else { return false }
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = trimmed.isEmpty ? href : trimmed
+        let mark = TextMark(key: NativeMark.link, valueJSON: NativeMark.linkValue(href))
+        if target.range.length > 0, text == target.label.trimmingCharacters(in: .whitespacesAndNewlines) {
+            _ = applyMarks([mark], over: target.range)
+            return true
+        }
+        guard let entry = surface.rangeIndex.entry(atUTF16: target.range.location),
+            let position = surface.rangeIndex.position(for: entry.blockID),
+            NSMaxRange(target.range) <= NSMaxRange(entry.textRange)
+        else {
+            noticeKey = .native_editor_range_unavailable
+            return true
+        }
+        let offset = target.range.location - entry.textRange.location
+        let runs = surface.blocks[position].runs
+        let around =
+            target.range.length == 0
+            ? NativeMarkSelection.typing(runs, at: offset)
+            : NativeMarkSelection.typing(runs, replacing: offset..<(offset + target.range.length))
+        _ = replace(range: target.range, with: text, marks: around.filter { $0.key != NativeMark.link } + [mark])
+        return true
+    }
+
+    @discardableResult
+    func removeLink(_ target: NativeLinkTarget) -> Bool {
+        guard canFormat, target.range.length > 0 else { return false }
+        return applyMarks([TextMark(key: NativeMark.link, valueJSON: "null")], over: target.range)
     }
 
     // MARK: - Clipboard

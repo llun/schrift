@@ -192,7 +192,7 @@ struct TextDelta: Equatable {
 
 /// One inline mark: a BlockNote attribute key and its raw JSON value
 /// (`"{}"` for a boolean mark, `{"href":"…"}` for a link, `"null"` to remove).
-struct TextMark: Equatable {
+struct TextMark: Equatable, Sendable {
     var key: String
     var valueJSON: String
 }

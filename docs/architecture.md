@@ -818,6 +818,25 @@ takes only the pasteboard's plain string, so rich content contributes its text, 
 refuses whole a paste over 200,000 UTF-16 units or 2,000 lines. The
 lossless rich clipboard is PR06. IME over a multi-block selection keeps PR03's refusal.
 
+**PR05a Inline marks, links and colours.** Marks are Yjs format attributes beside the
+text, in BlockNote 0.56's vocabulary (`{}` for bold, italic, underline, strike and code;
+`{"stringValue":"<name>"}` for text and background colour; `{"href":…}` for a link), never
+characters in it. The engine reads the replica with `YBlockProjection`'s `nativeMarks`
+option, which keeps every stored mark — including ones this build does not know — in the
+snapshots, so a rebuild never normalises one away and no mark makes a document read-only;
+the classic projection (live path, Markdown shadow, save preservation) still scrubs them.
+A formatting action is one durable `.marks(NativeMarkCommand)` through `applyStructural`,
+validated over every block it touches before arming, and written as one grouped
+`formatRange` per block that changes only the named keys; the patch is `.text` deltas that
+rewrite each range with its own text (one per uniform run), so the text never changes.
+Toggling follows BlockNote: a selection whose every character has the mark turns it off,
+anything else (a partial or mixed run) turns it on everywhere; at a caret the toggle only
+changes what the next typed text carries. Typing uses ProseMirror's marks at the caret
+(links and unknown marks do not grow from their edges) and writes them explicitly only
+when Yjs's own inheritance would differ. Links use the classic editor's sheet and URL
+rules. Colours are dynamic colours keyed by BlockNote's names, so a theme change rewrites
+neither storage nor the replica.
+
 **Selection.** `setSelection(EditorSelection?)` captures directed anchor/head
 endpoints as `YRelativePosition`s. Each `EditorPosition` holds a block id,
 block-relative UTF-16 offset, and affinity (`assoc`, default -1). Negative
@@ -936,8 +955,8 @@ children (no sibling-offset math), a container replaced in place under the same
 id (the index tracks the container `YItem`, not just the id), or props and text
 changed together. `.text` and `.props` also need the block to have projected
 as-is before the transaction and after it (readable props, a text of strings and
-known marks with readable links; `BlockIndex.Entry.isProjectable`), because an
-opaque or mark-scrubbed block's surface copy came from a `.replaceBlock`. Only
+marks with readable links; `BlockIndex.Entry.isProjectable`), because an
+opaque block's surface copy came from a `.replaceBlock`. Only
 the root `blockGroup` produces `.insert`/`.remove`; a
 reorder there is a `.remove` + `.insert`. A change to the fragment root, or a
 root group that is not the one the index recorded, a container's `id` changed

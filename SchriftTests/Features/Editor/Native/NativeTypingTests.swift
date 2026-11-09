@@ -299,17 +299,22 @@ final class NativeTypingTests: DocumentEngineTestCase {
         XCTAssertEqual(input.noticeKey, .native_editor_input_unavailable)
     }
 
-    func testUnreadableMarksCannotTurnScrubbedDisplayIntoAWriterTarget() throws {
+    /// PR05a: a mark this build does not know is kept in the snapshot and the
+    /// replica (the native save writes raw Yjs), so its block stays typeable
+    /// and an edit beside it never drops it. Typing does not extend it.
+    func testUnknownMarksStayTypeableAndStored() throws {
         let session = try session([
             BlockNoteBlock(
                 node: "paragraph", props: Self.paragraphProps,
                 runs: [InlineRun("future", marks: [("unknown-extension", "{}")])], id: Self.firstID)
         ])
         defer { session.close() }
-        session.enableTyping { _, _ in XCTFail("projection scrubbed an unknown mark") }
-        let original = session.textView.textStorage.string
-        XCTAssertFalse(try XCTUnwrap(session.input).replace(range: NSRange(location: 0, length: 0), with: "x"))
-        XCTAssertEqual(session.textView.textStorage.string, original)
+        var writes = 0
+        session.enableTyping { _, _ in writes += 1 }
+        XCTAssertTrue(try XCTUnwrap(session.input).replace(range: NSRange(location: 0, length: 0), with: "x"))
+        XCTAssertEqual(writes, 1)
+        XCTAssertEqual(session.surface.blocks.first?.runs.map(\.text), ["x", "future"])
+        XCTAssertEqual(session.surface.blocks.first?.runs.last?.marks.map(\.key), ["unknown-extension"])
         XCTAssertFalse(session.engine.nativeWriteFailed)
     }
 

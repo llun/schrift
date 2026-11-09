@@ -111,6 +111,35 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertEqual(text(of: editor).components(separatedBy: "\n"), joined, "the journal restores both commands")
     }
 
+    /// A double tap selects a word; Bold is one durable mark command, so the
+    /// word is still bold (the button reads as selected) after a relaunch.
+    func testBoldOnASelectedWordSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        let word = editor.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.025))
+        word.doubleTap()
+        let bold = app.buttons["nativeEditor.format.bold"]
+        XCTAssertTrue(bold.waitForExistence(timeout: 5))
+        XCTAssertFalse(bold.isSelected)
+        bold.tap()
+        XCTAssertTrue(bold.isSelected, "the selection is bold")
+        XCTAssertFalse(app.staticTexts["nativeEditor.inputNotice"].exists)
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        let before = text(of: editor)
+        app.terminate()
+
+        app.launchArguments = ["--native-open"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertEqual(text(of: editor), before, "a mark never changes the text")
+        word.doubleTap()
+        XCTAssertTrue(bold.waitForExistence(timeout: 5))
+        XCTAssertTrue(bold.isSelected, "the journal restores the mark")
+    }
+
     /// The production open route (`EditorView` → `NativeEditorOpen`) over an
     /// owned replica, offline: real keyboard input is journaled durably,
     /// reported as saved on this device and restored after a relaunch.

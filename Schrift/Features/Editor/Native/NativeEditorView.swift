@@ -15,6 +15,7 @@ struct NativeEditorView: View {
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.docsTheme) private var theme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var linkTarget: NativeLinkTarget?
 
     var body: some View {
         Group {
@@ -59,7 +60,29 @@ struct NativeEditorView: View {
                         .padding()
                         .accessibilityIdentifier("nativeEditor.inputNotice")
                 }
+                if let input = session.input {
+                    NativeFormattingBar(input: input) { linkTarget = $0 }
+                }
             }
+        }
+        .sheet(item: $linkTarget) { target in
+            LinkEditorSheet(
+                request: EditorViewModel.LinkEditorRequest(
+                    blockID: UUID(),
+                    span: target.href.map {
+                        InlineLinkSpan(range: target.range, labelRange: target.range, label: target.label, url: $0)
+                    },
+                    label: target.label, url: target.href ?? "", range: target.range),
+                onSave: { label, url in
+                    guard session.input?.applyLink(label: label, url: url, to: target) == true else { return false }
+                    linkTarget = nil
+                    return true
+                },
+                onRemove: {
+                    session.input?.removeLink(target)
+                    linkTarget = nil
+                },
+                onCancel: { linkTarget = nil })
         }
         .toolbar {
             if let saveStatus, saveStatus != .none {
@@ -109,6 +132,95 @@ extension NativeEditorView {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("nativeEditor.recovery")
     }
+}
+
+/// The native editor's formatting bar: the classic bar's tokens and labels
+/// over the selection's marks. Each action is at most one durable command.
+private struct NativeFormattingBar: View {
+    let input: NativeInputCoordinator
+    let editLink: (NativeLinkTarget) -> Void
+    @Environment(LocalizationStore.self) private var loc
+    @Environment(\.docsTheme) private var theme
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: DocsSpacing.space4xs) {
+                toggle("bold", label: .editor_format_bold) { MaterialSymbol(.format_bold, size: 20, scales: false) }
+                toggle("italic", label: .editor_format_italic) {
+                    MaterialSymbol(.format_italic, size: 20, scales: false)
+                }
+                toggle("underline", label: .native_editor_format_underline) { Text(verbatim: "U").underline() }
+                toggle("strike", label: .native_editor_format_strike) { Text(verbatim: "S").strikethrough() }
+                toggle("code", label: .native_editor_format_code) {
+                    MaterialSymbol(.data_object, size: 20, scales: false)
+                }
+                button(id: NativeMark.link, label: loc[.editor_format_link], isOn: isOn(NativeMark.link)) {
+                    if let target = input.linkTarget() { editLink(target) }
+                } glyph: {
+                    MaterialSymbol(.link, size: 20, scales: false)
+                }
+                colors(NativeMark.textColor, label: .native_editor_format_text_color) {
+                    Text(verbatim: "A")
+                }
+                colors(NativeMark.backgroundColor, label: .native_editor_format_background_color) {
+                    Text(verbatim: "A").padding(.horizontal, 4).background(theme.colors.brandFillSubtle)
+                }
+            }
+        }
+        .scrollIndicators(.hidden)
+        .padding(.horizontal, DocsSpacing.space2xs)
+        .padding(.vertical, DocsSpacing.space3xs)
+        .glassEffect(.regular, in: Capsule())
+        .padding(.horizontal, DocsSpacing.gutter)
+        .padding(.bottom, DocsSpacing.space2xs)
+    }
+
+    private func isOn(_ key: String) -> Bool { input.activeMarks.contains { $0.key == key } }
+
+    private func toggle(_ key: String, label: L10nKey, @ViewBuilder glyph: () -> some View) -> some View {
+        button(id: key, label: loc[label], isOn: isOn(key), action: { input.toggleMark(key) }, glyph: glyph)
+    }
+
+    private func colors(_ key: String, label: L10nKey, @ViewBuilder glyph: () -> some View) -> some View {
+        Menu {
+            Button(loc[.native_editor_color_default]) { input.setColor(key, name: nil) }
+            ForEach(NativeMark.colors, id: \.self) { name in
+                Button(loc[Self.colorLabels[name] ?? .native_editor_color_default]) { input.setColor(key, name: name) }
+            }
+        } label: {
+            circle(isOn: isOn(key), glyph: glyph)
+        }
+        .accessibilityLabel(loc[label])
+        .accessibilityIdentifier("nativeEditor.format.\(key)")
+    }
+
+    private func button(
+        id: String, label: String, isOn: Bool, action: @escaping () -> Void, @ViewBuilder glyph: () -> some View
+    ) -> some View {
+        Button(action: action) { circle(isOn: isOn, glyph: glyph) }
+            .buttonStyle(.plain)
+            .accessibilityLabel(label)
+            .accessibilityAddTraits(isOn ? .isSelected : [])
+            .accessibilityIdentifier("nativeEditor.format.\(id)")
+    }
+
+    /// The classic bar's 44pt circle; the brand fill marks a mark that is on.
+    private func circle(isOn: Bool, @ViewBuilder glyph: () -> some View) -> some View {
+        glyph()
+            .font(DocsFont.body.weight(.semibold))
+            .frame(width: DocsSpacing.rowMinHeight, height: DocsSpacing.rowMinHeight)
+            .foregroundStyle(isOn ? theme.colors.textBrand : theme.colors.textPrimary)
+            .background(isOn ? theme.colors.brandFillSubtle : .clear)
+            .clipShape(Circle())
+            .contentShape(Circle())
+    }
+
+    private static let colorLabels: [String: L10nKey] = [
+        "gray": .native_editor_color_gray, "brown": .native_editor_color_brown, "red": .native_editor_color_red,
+        "orange": .native_editor_color_orange, "yellow": .native_editor_color_yellow,
+        "green": .native_editor_color_green, "blue": .native_editor_color_blue,
+        "purple": .native_editor_color_purple, "pink": .native_editor_color_pink,
+    ]
 }
 
 private struct NativeTextCanvas: UIViewRepresentable {
