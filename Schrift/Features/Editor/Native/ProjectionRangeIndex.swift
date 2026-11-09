@@ -66,6 +66,23 @@ struct ProjectionRangeIndex {
     /// Separators map to their structural owner. The end-of-document boundary
     /// has no owner; it is not a character in the last block's XmlText.
     func entry(atUTF16 offset: Int) -> Entry? {
+        position(atUTF16: offset).map { entries[$0] }
+    }
+
+    /// A document offset as a block position and an offset in that block's
+    /// displayed text: a separator is its block's text end. As a range's upper
+    /// bound the end-of-document boundary is the last block's text end; as a
+    /// caret it has no owner.
+    func textPosition(atUTF16 offset: Int, isUpperBound: Bool = false) -> (position: Int, offset: Int)? {
+        if isUpperBound, offset == length, let last = entries.indices.last {
+            return (last, entries[last].textRange.length)
+        }
+        guard let position = position(atUTF16: offset) else { return nil }
+        let entry = entries[position]
+        return (position, min(offset - entry.textRange.location, entry.textRange.length))
+    }
+
+    private func position(atUTF16 offset: Int) -> Int? {
         guard offset >= 0, offset < length else { return nil }
         var lower = 0
         var upper = entries.count
@@ -73,7 +90,7 @@ struct ProjectionRangeIndex {
             let middle = (lower + upper) / 2
             if NSMaxRange(entries[middle].range) <= offset { lower = middle + 1 } else { upper = middle }
         }
-        return lower < entries.count ? entries[lower] : nil
+        return lower < entries.count ? lower : nil
     }
 
     func documentRange(blockID: String, textRange: Range<Int>) -> NSRange? {

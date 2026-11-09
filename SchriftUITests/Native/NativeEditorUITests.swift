@@ -64,6 +64,53 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertEqual(text(of: editor).components(separatedBy: "\n"), after, "the journal restores the structure")
     }
 
+    /// Shift-Right on the hardware keyboard selects from inside the first
+    /// paragraph into the second; typing replaces the selection as one durable
+    /// range command (the paragraphs join) that a relaunch restores.
+    func testShiftArrowSelectionAcrossParagraphsIsReplacedDurably() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.025)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        editor.typeText("alpha")
+        let lines = text(of: editor).components(separatedBy: "\n")
+        guard lines.count > 2, let caret = lines[0].range(of: "alpha")?.upperBound else {
+            return XCTFail(lines.prefix(3).joined(separator: "|"))
+        }
+        // The rest of the first paragraph, its separator and three characters.
+        for _ in 0..<(lines[0][caret...].count + 4) {
+            editor.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: .shift)
+        }
+        editor.typeText("omega")
+        let after = text(of: editor).components(separatedBy: "\n")
+        XCTAssertEqual(after.first, String(lines[0][..<caret]) + "omega" + String(lines[1].dropFirst(3)))
+        XCTAssertEqual(after.count, lines.count - 1, "the two paragraphs joined")
+        XCTAssertFalse(app.staticTexts["nativeEditor.inputNotice"].exists)
+
+        // The keyboard's delete key over a selection reaching the next
+        // paragraph's start. (`typeKey` delivers no event at all for the
+        // delete and forward-delete keys here.)
+        guard let omega = after[0].range(of: "omega")?.upperBound else { return XCTFail(after[0]) }
+        let tail = after[0][omega...].count
+        for _ in 0..<(tail + 1) { editor.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: .shift) }
+        editor.typeText(XCUIKeyboardKey.delete.rawValue)
+        let joined = text(of: editor).components(separatedBy: "\n")
+        XCTAssertEqual(joined.first, String(after[0].prefix(after[0].count - tail)) + after[1])
+        XCTAssertEqual(joined.count, after.count - 1)
+        XCTAssertFalse(
+            app.staticTexts["nativeEditor.inputNotice"].exists, "Backspace over a selection is never refused")
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        app.terminate()
+
+        app.launchArguments = ["--native-open"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertEqual(text(of: editor).components(separatedBy: "\n"), joined, "the journal restores both commands")
+    }
+
     /// The production open route (`EditorView` → `NativeEditorOpen`) over an
     /// owned replica, offline: real keyboard input is journaled durably,
     /// reported as saved on this device and restored after a relaunch.

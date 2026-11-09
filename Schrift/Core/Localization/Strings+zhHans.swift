@@ -331,6 +331,8 @@ enum Strings_zhHans {
         .native_editor_preserved_block: "%@（已保留，暂不可编辑）",
         .native_editor_unknown_block: "不支持的块",
         .native_editor_input_unavailable: "原生编辑器暂不支持此输入。",
+        .native_editor_range_unavailable: "此选区包含原生编辑器暂时无法更改的内容。",
+        .native_editor_paste_too_large: "粘贴的内容对原生编辑器来说太大。每次最多粘贴 2,000 行。",
         .native_editor_marked_unavailable: "暂不支持此键盘输入。你的文档已保留为只读模式。",
         .native_editor_composition_orphaned:
             "无法添加这段文字，因为其段落已更改。",

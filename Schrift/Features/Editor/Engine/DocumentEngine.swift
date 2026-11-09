@@ -181,7 +181,9 @@ final class DocumentEngine {
         }
     }
 
-    /// One durable structural command: Return or boundary Backspace. The same
+    /// One durable structural command: Return, boundary Backspace or a range
+    /// replacement (`.range`: typing, deleting, pasting or dictating over a
+    /// selection that may span blocks, newlines splitting blocks). The same
     /// journal-before-publication barrier as `replaceText`: the writer's
     /// incremental bytes are persisted before the surface sees the patch, and
     /// the command's own echo is stamped so the surface reconciles once (and
@@ -193,8 +195,9 @@ final class DocumentEngine {
     /// or list item resets it to a paragraph; only a paragraph joins the block
     /// above. Every refusal is validated before `nativeCommand` is set, so an
     /// unsupported shape (opaque, placeholder, inline nodes, nested children,
-    /// code, the first block) throws `.unsupportedNativeInput` and never
-    /// freezes the engine. Returns the caret the surface should place.
+    /// code, the first block, such a block anywhere in a range) throws
+    /// `.unsupportedNativeInput` and never freezes the engine. Returns the
+    /// caret the surface should place.
     @discardableResult
     func applyStructural(
         _ command: NativeEditCommand, persist: (Data) throws -> Void
@@ -213,10 +216,9 @@ final class DocumentEngine {
         case .replace:
             throw DocumentEngineError.unsupportedNativeInput
         case .split(let offset, let newID):
-            guard !newID.isEmpty, builder.index.entries[newID] == nil, offset >= 0, offset <= units.count,
-                offset == 0 || offset == units.count || !(0xd800...0xdbff).contains(units[offset - 1])
-                    || !(0xdc00...0xdfff).contains(units[offset])
-            else { throw DocumentEngineError.unsupportedNativeInput }
+            guard !newID.isEmpty, builder.index.entries[newID] == nil, Self.isBoundary(offset, in: units) else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
             if Self.listItemNodes.contains(node), units.isEmpty {
                 // No block is created, so `newID` stays unused: one model id.
                 write = { try self.writer.setBlockType(block: command.blockID, to: "paragraph") }
@@ -246,6 +248,46 @@ final class DocumentEngine {
             caret = {
                 self.builder.index.entries[previousID] != nil
                     ? EditorPosition(blockID: previousID, offset: aboveLength, assoc: -1) : start(command.blockID)
+            }
+        case .range(let range):
+            // Every block the range touches is validated before arming: an
+            // opaque block, a placeholder, code, nested children, inline nodes
+            // or a toggle heading anywhere refuses the whole command.
+            let index = builder.index
+            guard let lower = index.position[command.blockID], let upper = index.position[range.endBlockID],
+                lower <= upper
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            var endUnits = units
+            for position in stride(from: lower + 1, through: upper, by: 1) {
+                try requireEditableBlock(index.order[position])
+                endUnits = try structuralTarget(index.order[position]).units
+            }
+            let lines = NativeRangeCommand.lines(of: range.replacement)
+            let ids = range.newBlockIDs
+            guard Self.isBoundary(range.startOffset, in: units), Self.isBoundary(range.endOffset, in: endUnits),
+                lower < upper || range.startOffset < range.endOffset
+                    || (range.startOffset == range.endOffset && !range.replacement.isEmpty),
+                // "\n" is the only separator; the coordinator normalizes line breaks.
+                !range.replacement.unicodeScalars.contains(where: {
+                    $0.value == 0xfffc || ($0 != "\n" && CharacterSet.newlines.contains($0))
+                }),
+                ids.count == lines.count - 1, Set(ids).count == ids.count,
+                ids.allSatisfy({ !$0.isEmpty && index.entries[$0] == nil }),
+                let first = index.entries[command.blockID]?.containerItem,
+                let last = index.entries[range.endBlockID]?.containerItem
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            write = {
+                try self.writer.replaceRange(
+                    from: try self.writer.indexedTarget(first, id: command.blockID), at: range.startOffset,
+                    to: try self.writer.indexedTarget(last, id: range.endBlockID), at: range.endOffset,
+                    lines: lines, newIDs: ids)
+            }
+            caret = {
+                guard let id = ids.last, let line = lines.last else {
+                    return EditorPosition(
+                        blockID: command.blockID, offset: range.startOffset + lines[0].utf16.count, assoc: -1)
+                }
+                return EditorPosition(blockID: id, offset: line.utf16.count, assoc: -1)
             }
         }
         nativeCommand = command
@@ -277,6 +319,13 @@ final class DocumentEngine {
     }
 
     private static let listItemNodes: Set<String> = ["bulletListItem", "numberedListItem", "checkListItem"]
+
+    /// A UTF-16 offset in `units` that does not split a surrogate pair.
+    private static func isBoundary(_ offset: Int, in units: [UInt16]) -> Bool {
+        guard offset >= 0, offset <= units.count else { return false }
+        return offset == 0 || offset == units.count
+            || !(0xd800...0xdbff).contains(units[offset - 1]) || !(0xdc00...0xdfff).contains(units[offset])
+    }
 
     /// A block a structural command may address: a writable simple text, or an
     /// empty text-capable element the writer gives an XmlText on first insert.
@@ -402,6 +451,16 @@ final class DocumentEngine {
     func currentSelection() throws -> EditorSelection? {
         try requireAttached()
         return selection?.resolve(in: doc, index: builder.index)
+    }
+
+    /// `currentSelection` endpoint by endpoint, so a surface can fall back from
+    /// one whose block disappeared to the one that survived. Nil when there is
+    /// no selection.
+    func currentSelectionEndpoints() throws -> (anchor: EditorPosition?, head: EditorPosition?)? {
+        try requireAttached()
+        return selection.map {
+            ($0.anchor.resolve(in: doc, index: builder.index), $0.head.resolve(in: doc, index: builder.index))
+        }
     }
 
     /// Captures an insertion anchor, normally the current selection's head.

@@ -331,6 +331,8 @@ enum Strings_zhHant {
         .native_editor_preserved_block: "%@（已保留，暫不可編輯）",
         .native_editor_unknown_block: "不支援的區塊",
         .native_editor_input_unavailable: "原生編輯器暫不支援此輸入。",
+        .native_editor_range_unavailable: "此選取範圍包含原生編輯器暫時無法變更的內容。",
+        .native_editor_paste_too_large: "貼上的內容對原生編輯器來說太大。每次最多貼上 2,000 行。",
         .native_editor_marked_unavailable: "暫不支援此鍵盤輸入。你的文件已保留為唯讀模式。",
         .native_editor_composition_orphaned:
             "無法加入這段文字，因為其段落已變更。",

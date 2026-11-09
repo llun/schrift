@@ -248,6 +248,89 @@ struct BlockNoteWriter {
         }
     }
 
+    /// ProseMirror's replace over a selection that may span sibling blocks, as
+    /// plain text lines, in one transaction. `start` keeps its id, type, props
+    /// and its content before `startOffset`, then takes the first line. Each
+    /// later line becomes a new block named by `newIDs` (in order; a list item's
+    /// kind for a list item, else a paragraph, default props, like
+    /// `splitBlock`), and the last line's block (`start` itself for one line)
+    /// takes `end`'s content after `endOffset`. Every block between is removed,
+    /// and `end` when it is not `start`, so one empty line joins `end` into
+    /// `start`. The new text inherits the marks at `startOffset`; new lines are
+    /// unmarked. Both targets must be live siblings in one group with `start`
+    /// first. The caller validates every block between (this writer removes
+    /// them whatever they hold) and that `newIDs` are unused. Code, toggle
+    /// headings and nested children that would move or be removed throw before
+    /// anything is written.
+    @discardableResult
+    func replaceRange(
+        from start: Target, at startOffset: Int, to end: Target, at endOffset: Int, lines: [String],
+        newIDs: [String]
+    ) throws -> Data {
+        let same = start.item === end.item
+        for target in [start, end] {
+            let props = try properties(target.element, block: target.id)
+            if target.node == "codeBlock"
+                || (target.node == "heading" && props.contains { $0.key == "isToggleable" && $0.value == .bool(true) })
+            {
+                throw Error.unsupportedBlockType(target.node)
+            }
+        }
+        if (!same && end.nested != nil) || (lines.count > 1 && start.nested != nil) {
+            throw Error.unsupportedBlockType(start.nested != nil ? start.node : end.node)
+        }
+        guard !lines.isEmpty, newIDs.count == lines.count - 1, !newIDs.contains(where: \.isEmpty),
+            Set(newIDs).count == newIDs.count, start.group === end.group
+        else { throw Error.malformedBlock(start.id) }
+        var middle: [YItem] = []
+        if !same {
+            var item = start.item.right
+            while let current = item, current !== end.item {
+                if !current.deleted { middle.append(current) }
+                item = current.right
+            }
+            // Never delete to the end of the group: `end` must follow `start`.
+            guard item === end.item else { throw Error.malformedBlock(end.id) }
+        }
+        let startParts = try inline(start.element, block: start.id)
+        let startLength = try length(startParts)
+        let endParts = same ? startParts : try inline(end.element, block: end.id)
+        let endLength = try length(endParts)
+        let lower = snap(startParts, min(max(0, startOffset), startLength))
+        let upper = snap(endParts, min(max(0, endOffset), endLength), forward: true)
+        guard !same || lower <= upper else { throw Error.malformedBlock(start.id) }
+        // Copied before any delete: the content that follows the range.
+        let suffix = try snapshots(endParts, range: upper..<endLength, block: end.id)
+        let node = Self.splitKeepsType.contains(start.node) ? start.node : "paragraph"
+        let defaults = Self.propSchemas[node] ?? []
+        return try transaction { tx in
+            // One same-block line is a plain replacement; otherwise everything
+            // after `lower` leaves `start` and the suffix returns from its copy.
+            try remove(tx, parts: startParts, range: lower..<(same && lines.count == 1 ? upper : startLength))
+            if !lines[0].isEmpty {
+                let current = try inline(start.element, block: start.id)
+                let (text, offset) = try textPosition(tx, element: start.element, parts: current, at: lower)
+                try text.insert(UInt(offset), lines[0], nil)
+            }
+            if lines.count == 1, !same { try append(tx, suffix, into: start.element) }
+            var left = start.item
+            for (index, id) in newIDs.enumerated() {
+                let line = lines[index + 1]
+                var content: [Copy] = line.isEmpty ? [] : [.text([.run(InlineRun(line))])]
+                if index == newIDs.count - 1 { content += suffix }
+                let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+                guard let item = try YWrite.insertAfter(tx, into: start.group, after: left, [.type(container)]) else {
+                    throw Error.malformedBlock(id)
+                }
+                try buildElement(tx, into: container, after: nil, node: node, props: defaults, children: content)
+                try YWrite.mapSet(tx, on: container, key: "id", .any([.string(id)]))
+                left = item
+            }
+            for item in middle { item.delete(tx) }
+            if !same { end.item.delete(tx) }
+        }
+    }
+
     /// BlockNote's `updateBlock` type change: replaces only the content element,
     /// keeping the container/id and any nested group. `props` override; every
     /// other prop of the new type keeps the block's existing value or takes its

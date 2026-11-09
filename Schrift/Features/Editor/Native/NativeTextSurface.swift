@@ -35,6 +35,12 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     /// fast patches. Value-only fixtures may omit this callback.
     private let reprojectBlock: ((String) -> BlockSnapshot?)?
     var labels: NativeEditorLabels { presentation.labels }
+    /// True while a patch edits storage: UIKit's own selection adjustments
+    /// then are not the user's and must not be published.
+    private(set) var isApplyingPatch = false
+    /// Called after each patch reaches storage, so the selection coordinator
+    /// can restore the relative selection.
+    var onPatchApplied: ((BlockPatch) -> Void)?
 
     init(
         blocks: [BlockSnapshot], storage: NSTextStorage, traits: UITraitCollection = .current,
@@ -65,6 +71,12 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
             }
             lastNativeStamp = stamp
         }
+        // Defers run in reverse: storage ends editing before the callback.
+        defer {
+            isApplyingPatch = false
+            onPatchApplied?(patch)
+        }
+        isApplyingPatch = true
         storage.beginEditing()
         defer { storage.endEditing() }
         for change in patch.changes {

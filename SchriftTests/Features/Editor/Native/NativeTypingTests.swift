@@ -132,7 +132,10 @@ final class NativeTypingTests: DocumentEngineTestCase {
         XCTAssertEqual(view.textStorage.string, expected)
     }
 
-    func testReturnSeparatorsMultiblockRangesAndInvalidUTF16AreRefusedBeforeMutation() throws {
+    /// Newlines and ranges across separators are range commands since PR04b
+    /// (`NativeRangeCommandTests`); object characters, invalid ranges and
+    /// surrogate splits stay refused.
+    func testObjectCharactersInvalidRangesAndSurrogateSplitsAreRefusedBeforeMutation() throws {
         let session = try session()
         defer { session.close() }
         var writes = 0
@@ -141,9 +144,8 @@ final class NativeTypingTests: DocumentEngineTestCase {
         let original = session.textView.textStorage.string
         let first = try XCTUnwrap(session.surface.rangeIndex.entry(for: Self.firstID))
         for (range, replacement) in [
-            (NSRange(location: 0, length: 0), "\n"), (NSRange(location: 0, length: 0), "\r\n"),
-            (NSRange(location: 0, length: 0), "\u{2028}"), (NSRange(location: 0, length: 0), "\u{fffc}"),
-            (first.separatorRange, ""), (NSRange(location: first.separatorRange.location, length: 2), "x"),
+            (NSRange(location: 0, length: 0), "\u{fffc}"), (first.separatorRange, "\u{fffc}"),
+            (NSRange(location: 0, length: 0), "a\u{fffc}\nb"),
             (NSRange(location: -1, length: 0), "x"), (NSRange(location: 0, length: Int.max), "x"),
         ] {
             XCTAssertFalse(input.replace(range: range, with: replacement))

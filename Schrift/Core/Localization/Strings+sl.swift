@@ -351,6 +351,9 @@ enum Strings_sl {
         .native_editor_preserved_block: "%@ (ohranjeno, še ni mogoče urejati)",
         .native_editor_unknown_block: "Nepodprt blok",
         .native_editor_input_unavailable: "Ta vnos v izvornem urejevalniku še ni podprt.",
+        .native_editor_range_unavailable: "Ta izbor vsebuje vsebino, ki je izvorni urejevalnik še ne more spremeniti.",
+        .native_editor_paste_too_large:
+            "To lepljenje je preveliko za izvorni urejevalnik. Naenkrat prilepite največ 2.000 vrstic.",
         .native_editor_marked_unavailable:
             "Ta vnos s tipkovnico še ni podprt. Dokument je ohranjen v načinu samo za branje.",
         .native_editor_composition_orphaned:

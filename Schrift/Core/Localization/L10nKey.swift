@@ -427,6 +427,8 @@ enum L10nKey: String, CaseIterable, Sendable {
     case native_editor_owned_unavailable_title = "native.editor.owned_unavailable_title"
     case native_editor_owned_unavailable_body = "native.editor.owned_unavailable_body"
     case native_editor_input_unavailable = "native.editor.input_unavailable"
+    case native_editor_range_unavailable = "native.editor.range_unavailable"
+    case native_editor_paste_too_large = "native.editor.paste_too_large"
     case native_editor_marked_unavailable = "native.editor.marked_unavailable"
     case native_editor_composition_orphaned = "native.editor.composition_orphaned"
     case native_editor_recovery_interrupted = "native.editor.recovery_interrupted"
