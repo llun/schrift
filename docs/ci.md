@@ -94,8 +94,18 @@ the push run is the post-merge verification of the real `main` history
    ad-hoc entitlements and fail with `errSecMissingEntitlement (-34018)` in a
    fully unsigned host.
 
-On a test failure the `TestResults.xcresult` bundle is uploaded as a run artifact
-(7-day retention) for debugging.
+The Test step is two `xcodebuild test-without-building` runs sharing one simulator and one
+build: the unit bundle (`-skip-testing` of both UI bundles), then the two UI bundles with
+`-retry-tests-on-failure -test-iterations 2`. Only UI tests are retried: they fail on a starved
+hosted simulator for reasons the app does not control (a late touch digitizer, a keyboard that
+rises late, an accessibility audit that runs out of time), while a unit test that fails once is a
+real bug. xcodebuild reruns just the tests that failed; one that passes on the second attempt does
+not fail the job, and one that fails both attempts does. Both runs always execute, so a unit
+failure never hides UI results. A retried test is still visible in the result bundle, so a test
+that keeps needing its retry is a flake to fix, not a pass to ignore.
+
+On a test failure the `TestResults-unit.xcresult` and `TestResults-ui.xcresult` bundles are
+uploaded as one run artifact (7-day retention) for debugging.
 
 Runs are per-PR concurrency-cancelled: a new push cancels the in-flight run
 for that PR, so a "cancelled" Build & Test run right after a push is normal —

@@ -5462,6 +5462,13 @@ markdown write endpoint**. Understand this before touching the save path:
   press and `ChecklistHitTests`' offset taps still wait for the target's frame to hold still
   (`waitForStableFrame`); that is a precondition, and the frame was stable in every captured
   failure. Read `docs/ci.md` before changing any of it.
+- Other UI-test waits follow the same rule: wait for the state the next step needs, not for existence.
+  `NativeEditorUITests` focuses through `focusFirstParagraph` (editor frame settled, then a settled
+  keyboard), reads typed text with a waited predicate, and stops at its first failed step
+  (`continueAfterFailure = false`). The all-completed checklist flows wait for the reveal's frame to
+  settle before measuring or pressing it, and for the editing rows to exist. The reading-controls
+  accessibility audit reruns once only when XCTest reports its `-56` "Audit failed to complete in time"
+  budget error; findings are recorded as failures, never thrown, so they still fail the test.
 
 ## Docs convention
 

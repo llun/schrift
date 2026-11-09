@@ -1,6 +1,12 @@
 import XCTest
 
 final class NativeEditorUITests: XCTestCase {
+    /// A failed step must stop the test there: carrying on cascades through every later wait (a hosted run
+    /// of one failure took twice as long as a pass) and buries the step that actually broke.
+    override func setUp() {
+        continueAfterFailure = false
+    }
+
     func testProductionReaderScrollsWithoutOfferingEditingControls() {
         let app = XCUIApplication()
         app.launch()
@@ -172,18 +178,16 @@ final class NativeEditorUITests: XCTestCase {
         app.launchArguments = ["--native-open", "--reset"]
         app.launch()
         let editor = app.textViews["nativeEditor.text"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.025)).tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        focusFirstParagraph(of: editor, in: app)
         editor.typeText("durableproof")
-        XCTAssertTrue((editor.value as? String)?.lowercased().contains("durableproof") == true)
-        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForText(of: editor, containing: "durableproof"), text(of: editor))
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 10))
         app.terminate()
 
         app.launchArguments = ["--native-open"]
         app.launch()
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        XCTAssertTrue((editor.value as? String)?.lowercased().contains("durableproof") == true)
+        XCTAssertTrue(waitForText(of: editor, containing: "durableproof"), text(of: editor))
     }
 
     /// Synthetic marked text (the host's `--native-ime` buttons) in the real
@@ -324,4 +328,32 @@ final class NativeEditorUITests: XCTestCase {
     }
 
     private func text(of element: XCUIElement) -> String { element.value as? String ?? "" }
+
+    /// Taps into the first paragraph only once the editor holds still, then waits for the keyboard to
+    /// finish rising. A bare `waitForExistence` passes while the view is still laying out (the tap then
+    /// lands where the paragraph no longer is and nothing is focused) and while the keyboard is still
+    /// animating in (it is already "there", but not yet taking keys). On failure the screen is attached,
+    /// so a hosted run shows whether the tap or the keyboard was the missing step.
+    private func focusFirstParagraph(of editor: XCUIElement, in app: XCUIApplication) {
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(editor.waitForStableFrame(), "The editor must stop moving before it is tapped")
+        XCTAssertTrue(editor.isHittable)
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.025)).tap()
+        let keyboard = app.keyboards.firstMatch
+        guard keyboard.waitForExistence(timeout: 10), keyboard.waitForStableFrame() else {
+            let screen = XCTAttachment(screenshot: app.screenshot())
+            screen.name = "Editor tap did not raise a settled keyboard"
+            screen.lifetime = .keepAlways
+            add(screen)
+            return XCTFail("The tap must focus the editor and raise a settled keyboard before typing")
+        }
+    }
+
+    /// Typed text is read back through the accessibility tree, which can trail the keystrokes; wait for the
+    /// value instead of reading it once.
+    private func waitForText(of element: XCUIElement, containing needle: String) -> Bool {
+        let present = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS[c] %@", needle), object: element)
+        return XCTWaiter.wait(for: [present], timeout: 10) == .completed
+    }
 }
