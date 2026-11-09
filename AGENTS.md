@@ -2088,10 +2088,10 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   untagged locals and `.other` rebuilds always apply. No whole-document projection
   or state encoding is performed per keystroke.
   Non-simple/unprojectable/opaque text, placeholders, invalid/surrogate-splitting
-  UTF-16 ranges, separators/multiblock edits and newlines/inline object characters
-  are rejected before mutation. Marked text (IME) is handled by the PR03 composition
-  session below; a composition this editor cannot support keeps the preserved
-  read-only refusal. Undo is disabled. A write/cleanup/persistence failure freezes
+  UTF-16 ranges and inline object characters are rejected before mutation; ranges
+  across separators and newline input are PR04b range commands (below). Marked text
+  (IME) is handled by the PR03 composition session below; a composition this editor
+  cannot support keeps the preserved read-only refusal. Undo is disabled. A write/cleanup/persistence failure freezes
   authoring and delivery, retains any returned unconfirmed bytes in memory and
   preserves the pre-edit display plus existing durable files; never retry against
   that mutated graph.
@@ -2259,7 +2259,45 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `NativeStructuralTests` (real view over a restored durable replica: split start/middle/end,
   heading/list/empty list, joins, resets, refusals, peer edit, Return→IME, scroll, relaunch,
   converged XML against the node captures) and the host UI test `testReturnAndBackspaceAreDurableStructureAfterRelaunch`.
-  Multi-block selection, paste and dictation across blocks are PR04b.
+
+- **PR04b selection and structural range input.** Anything `NativeInputCoordinator.replace`
+  gets that is not one block's text without a line break is one `.range(NativeRangeCommand)`
+  command (first block + start offset, end block + offset, plain text, coordinator-minted
+  ids for the blocks its newlines create) through `applyStructural`: typing, Backspace or
+  the keyboard delete key over a selection, Return over a selection, dictation's final
+  result, UITextInput `replace`, paste and cut. Line breaks (CRLF, CR, U+2028/9, NEL)
+  normalize to "\n" first. **Validate every block from first to last before arming**:
+  opaque, placeholder, code, nested children, inline nodes or a toggle heading anywhere
+  throws `.unsupportedNativeInput` (notice `native_editor_range_unavailable`, no write,
+  never the freeze). `BlockNoteWriter.replaceRange(from:at:to:at:lines:newIDs:)` takes
+  indexed targets (no document walk) and writes one transaction, ProseMirror's replace:
+  the first block keeps id/type/props + the first line; later lines are new blocks (list
+  item kind, else paragraph, default props, like Return); the last line takes the end
+  block's tail; blocks between and the end block are removed. It never walks past the
+  group's end (the end must follow the start) and refuses nested children that would move.
+  `NativeRangeCommandTests` checks a one-separator delete against the merge capture and a
+  pasted "\n" against the split capture. The end-of-document boundary ends a range (the
+  last block's text end, `ProjectionRangeIndex.textPosition(atUTF16:isUpperBound:)`) but
+  is never a caret: deleting only the last separator is refused with a notice.
+  `NativeSelectionCoordinator` publishes UIKit's selection (skipped while
+  `NativeTextSurface.isApplyingPatch` or text is marked) as directed relative positions:
+  direction comes from which end moved (Shift-arrows), and a non-empty range uses assoc 0
+  at its start and -1 at its end so a peer's boundary insertion stays outside. It restores
+  the view from `DocumentEngine.currentSelectionEndpoints()` after every patch except the
+  editor's own stamped echo (`NativeTextSurface.onPatchApplied`); commands place their caret
+  through `selection.place`. One vanished endpoint collapses to the survivor; both gone
+  moves the caret to the start of the block after the head's old block, else the end of the
+  one before. An endpoint in a placeholder clears the engine selection. `NativeClipboard`
+  + the view's `copy:`/`cut:`/`paste:`/`pasteAndMatchStyle:` overrides: copy is one line
+  per block (placeholders omitted), cut is copy plus one range delete (a refused delete
+  leaves the pasteboard), paste reads only `UIPasteboard.string`; the lossless rich
+  clipboard is PR06. `NativeInputCoordinator.pasteboard` is a seam (tests use
+  `UIPasteboard.withUniqueName()`). The simulator's software delete key over a selection
+  arrives as `shouldChangeTextInRanges` with the selection; XCUITest `typeKey` delivers
+  nothing for delete/forward-delete. IME over a multi-block selection keeps PR03's refusal.
+  Tests: `NativeSelectionTests`, `NativeRangeCommandTests`, `NativeClipboardTests` (shared
+  `NativeEditingTestCase` harness) and the host UI test
+  `testShiftArrowSelectionAcrossParagraphsIsReplacedDurably`.
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (`@MainActor`), which borrows the replica and resolves

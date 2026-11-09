@@ -337,6 +337,8 @@ enum Strings_it {
         .native_editor_preserved_block: "%@ (conservato, non ancora modificabile)",
         .native_editor_unknown_block: "Blocco non supportato",
         .native_editor_input_unavailable: "Questo input non è ancora supportato nell’editor nativo.",
+        .native_editor_range_unavailable:
+            "Questa selezione include contenuti che l’editor nativo non può ancora modificare.",
         .native_editor_marked_unavailable:
             "Questo input da tastiera non è ancora supportato. Il documento è conservato in sola lettura.",
         .native_editor_composition_orphaned:

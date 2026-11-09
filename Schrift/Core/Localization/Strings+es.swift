@@ -342,6 +342,7 @@ enum Strings_es {
         .native_editor_preserved_block: "%@ (conservado, aún no editable)",
         .native_editor_unknown_block: "Bloque no compatible",
         .native_editor_input_unavailable: "Esta entrada aún no es compatible con el editor nativo.",
+        .native_editor_range_unavailable: "Esta selección incluye contenido que el editor nativo aún no puede cambiar.",
         .native_editor_marked_unavailable:
             "Esta entrada de teclado aún no es compatible. Tu documento se conserva en modo de solo lectura.",
         .native_editor_composition_orphaned:

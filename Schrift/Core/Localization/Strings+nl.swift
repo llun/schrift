@@ -338,6 +338,7 @@ enum Strings_nl {
         .native_editor_preserved_block: "%@ (behouden, nog niet bewerkbaar)",
         .native_editor_unknown_block: "Niet-ondersteund blok",
         .native_editor_input_unavailable: "Deze invoer wordt nog niet ondersteund in de native editor.",
+        .native_editor_range_unavailable: "Deze selectie bevat inhoud die de native editor nog niet kan wijzigen.",
         .native_editor_marked_unavailable:
             "Deze toetsenbordinvoer wordt nog niet ondersteund. Je document is behouden in alleen-lezenmodus.",
         .native_editor_composition_orphaned:

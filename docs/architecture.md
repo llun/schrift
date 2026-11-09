@@ -644,8 +644,9 @@ storage and double-application altogether. Both target resolution and settled
 reprojection use the engine index. No full projection/snapshot encoding occurs per
 key; tests bound touched-entry, projection and incremental-byte counts on 5,000 blocks.
 
-Separators, multiblock ranges, unsupported/opaque/scrubbed blocks, newline input and
-invalid UTF-16 boundaries are refused before transactions. Marked text (IME) is
+Unsupported/opaque/scrubbed blocks, object characters and invalid UTF-16 boundaries
+are refused before transactions; ranges across separators and newline input became
+range commands in PR04b (below). Marked text (IME) is
 handled by the PR03 composition session below; a composition this editor cannot
 support keeps the preserved read-only refusal. UIKit undo remains disabled. A failed mutation or
 append freezes the unsafe replica and retains any returned unconfirmed update in memory;
@@ -776,8 +777,42 @@ deletes at a block start by replacing the separator before the caret rather than
 `deleteBackward`; the command path treats that exact shape as the same Backspace. With text marked, Return
 commits the composition and never splits it. Patches reconcile slices (`.text`,
 `.insert`, `.remove`), never the whole storage, so the scroll offset holds. Quote blocks
-are not writer-supported and stay refused, like typing in them. Multi-block selection,
-paste and dictation across blocks are PR04b.
+are not writer-supported and stay refused, like typing in them.
+
+**PR04b Selection and structural range input.** A replacement over a document range
+that may span blocks, or text containing a line break, is one `NativeEditCommand`
+(`.range(NativeRangeCommand)`: the first block's start offset, the end block and offset,
+plain replacement text and the coordinator-minted ids for the blocks its newlines create)
+through the same `applyStructural` barrier. The engine validates every block from the
+first to the last before arming: an opaque block, a placeholder, code, nested children,
+inline nodes or a toggle heading anywhere refuses the whole command with
+`native_editor_range_unavailable` and no write, never the freeze. The writer's
+`replaceRange` then deletes the span, joins the last block's tail onto the last line and
+inserts the text in one grouped transaction, which is ProseMirror's replace over a
+selection: the first block keeps its id, type and props; each later line is a new block
+(a list item's kind, else a paragraph, default props, as Return makes); the blocks
+between and the end block are removed. A range from a paragraph's end to the next start
+writes exactly BlockNote's merge, and a pasted line break exactly its Enter (checked
+against the node captures). `NativeInputCoordinator.replace` sends anything that is not
+one block's text without a line break here, so typing, Backspace or the delete key over a
+selection, Return over a selection, dictation's final result, UITextInput `replace` and
+paste each arrive once. Every line break (CRLF, CR, U+2028, U+2029, NEL) becomes "\n".
+The end-of-document boundary can end a range (the last block's end) but is never a caret.
+
+`NativeSelectionCoordinator` publishes UIKit's selection on every change (not while a
+patch edits storage or text is marked) as directed engine relative positions: UIKit's
+range is unordered, so direction comes from which end moved, as hardware Shift-arrows
+move it. A non-empty range keeps a peer's insertion at either boundary outside it. After
+every patch that is not the editor's own command echo it restores the view from
+`currentSelectionEndpoints()`: a vanished endpoint collapses the selection to the one
+that survived, and with both gone the caret moves to the start of the block after the
+head's old block (else the end of the one before it). A peer's split resolves an end in
+the moved text to the split point. An endpoint in a placeholder is not tracked.
+`NativeClipboard` and the view's `copy:`/`cut:`/`paste:`/`pasteAndMatchStyle:` overrides
+give a plain-text clipboard: copy is one line per block (placeholders contribute nothing);
+cut is copy plus one range delete, leaving the pasteboard unchanged when refused; paste
+takes only the pasteboard's plain string, so rich content contributes its text. The
+lossless rich clipboard is PR06. IME over a multi-block selection keeps PR03's refusal.
 
 **Selection.** `setSelection(EditorSelection?)` captures directed anchor/head
 endpoints as `YRelativePosition`s. Each `EditorPosition` holds a block id,

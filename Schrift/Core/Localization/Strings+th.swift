@@ -333,6 +333,7 @@ enum Strings_th {
         .native_editor_preserved_block: "%@ (เก็บรักษาไว้ ยังแก้ไขไม่ได้)",
         .native_editor_unknown_block: "บล็อกที่ไม่รองรับ",
         .native_editor_input_unavailable: "ตัวแก้ไขเนทีฟยังไม่รองรับการป้อนข้อมูลแบบนี้",
+        .native_editor_range_unavailable: "ส่วนที่เลือกมีเนื้อหาที่ตัวแก้ไขเนทีฟยังเปลี่ยนแปลงไม่ได้",
         .native_editor_marked_unavailable: "ยังไม่รองรับการป้อนข้อมูลจากคีย์บอร์ดแบบนี้ เอกสารของคุณถูกเก็บรักษาไว้ในโหมดอ่านอย่างเดียว",
         .native_editor_composition_orphaned:
             "ไม่สามารถเพิ่มข้อความนี้ได้เนื่องจากย่อหน้าเปลี่ยนไป",

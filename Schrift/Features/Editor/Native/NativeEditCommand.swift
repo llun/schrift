@@ -12,6 +12,10 @@ struct NativeEditCommand: Equatable, Sendable {
         /// Backspace at `blockID`'s start: a paragraph joins the block above;
         /// a heading or list item resets to a paragraph.
         case join
+        /// One replacement over a range that may span blocks (typing, deleting,
+        /// pasting or dictating over a selection) or text with newlines, which
+        /// split blocks. `blockID` is the range's first block.
+        case range(NativeRangeCommand)
     }
 
     let id: UUID
@@ -33,10 +37,14 @@ struct NativeEditCommand: Equatable, Sendable {
             kind: .replace(range: range, replacement: replacement))
     }
 
-    /// The inserted text for an ordinary command; empty for a structural one.
+    /// The inserted text for an ordinary or range command; empty for a
+    /// structural one.
     var replacement: String {
-        if case .replace(_, let replacement) = kind { return replacement }
-        return ""
+        switch kind {
+        case .replace(_, let replacement): return replacement
+        case .range(let range): return range.replacement
+        case .split, .join: return ""
+        }
     }
 }
 

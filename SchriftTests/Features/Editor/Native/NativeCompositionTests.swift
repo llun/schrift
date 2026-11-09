@@ -624,8 +624,14 @@ final class NativeCompositionTests: DocumentEngineTestCase {
         }
 
         XCTAssertFalse(allowed, "UIKit is never allowed to write across a separator")
-        XCTAssertEqual(harness.log.commands.count, 0)
-        XCTAssertEqual(input.noticeKey, .native_editor_input_unavailable)
+        // The keystroke is one range command over the selection (PR04b).
+        XCTAssertEqual(harness.log.commands.count, 1)
+        guard case .range(let range)? = harness.log.commands.first?.kind else {
+            return XCTFail("a range command")
+        }
+        XCTAssertEqual(range.endBlockID, Self.secondID)
+        XCTAssertNil(input.noticeKey)
+        XCTAssertEqual(try text(session, Self.firstID), "First para d paragraph has bold words inside it.")
         assertMatches(session)
         try assertDurableProjection(harness)
     }

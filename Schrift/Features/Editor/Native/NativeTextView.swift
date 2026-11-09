@@ -139,6 +139,32 @@ final class NativeTextView: UITextView {
         insertText(dictationResult.map(\.text).joined())
     }
 
+    /// UIKit's own copy would put the attributed slice, placeholder labels
+    /// included, on the pasteboard; while typing is enabled copy is plain text,
+    /// one line per block.
+    override func copy(_ sender: Any?) {
+        guard let inputCoordinator else { return super.copy(sender) }
+        inputCoordinator.copySelection()
+    }
+
+    /// UIKit's cut copies and then deletes through the delegate; route it once
+    /// as copy plus one range delete instead.
+    override func cut(_ sender: Any?) {
+        guard let inputCoordinator, isEditable, markedTextRange == nil else { return }
+        inputCoordinator.cutSelection()
+    }
+
+    /// Plain text only, as one command over the selection (PR06 brings the
+    /// lossless rich clipboard).
+    override func paste(_ sender: Any?) {
+        guard let inputCoordinator, isEditable, markedTextRange == nil else { return }
+        inputCoordinator.pasteFromPasteboard()
+    }
+
+    override func pasteAndMatchStyle(_ sender: Any?) {
+        paste(sender)
+    }
+
     /// Clears UIKit's marked state without committing it: the composition
     /// session decides what (if anything) is written.
     func dropMarkedText() {

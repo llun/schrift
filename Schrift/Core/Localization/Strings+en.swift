@@ -346,6 +346,7 @@ enum Strings_en {
         .native_editor_preserved_block: "%@ (preserved, not editable yet)",
         .native_editor_unknown_block: "Unsupported block",
         .native_editor_input_unavailable: "This input isn't supported in the native editor yet.",
+        .native_editor_range_unavailable: "This selection includes content the native editor can't change yet.",
         .native_editor_marked_unavailable:
             "This keyboard input isn't supported yet. Your document is preserved in read-only mode.",
         .native_editor_composition_orphaned:
