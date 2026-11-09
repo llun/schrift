@@ -17,7 +17,7 @@ enum ReplicaStoreError: Error, Equatable {
 /// incomplete unreferenced file is not an edit.
 @MainActor
 final class ReplicaStore {
-    enum Operation: Equatable { case create, append, acknowledge, compact, remove }
+    enum Operation: Equatable { case create, append, acknowledge, compact, remove, provisional }
     enum Boundary: Equatable {
         case payloadWritten, payloadFlushed, payloadDirectoryFlushed
         case manifestWritten, manifestFlushed, manifestSwitched, manifestDirectoryFlushed
@@ -250,6 +250,52 @@ final class ReplicaStore {
         return ReplicaRestore(manifest: manifest, checkpoint: checkpoint, updates: updates)
     }
 
+    /// Provisional (UIKit marked) text, kept in `provisional.json` beside the
+    /// manifest and outside it: never journaled, never in the outbox, never
+    /// replayed into Yjs. An entry whose command id reached the journal was
+    /// committed before a crash skipped its cleanup: it is purged from the
+    /// file here, and by `compact` before the journal entry can disappear,
+    /// so committed text never comes back as a recovery offer.
+    func provisionalRecoveries(for scope: ReplicaScope) -> [ProvisionalRecovery] {
+        // shortcut: an unreadable file reads as empty and the next write replaces it; quarantine it if that ever matters.
+        guard let manifest = try? manifest(for: scope) else { return [] }
+        let read = readProvisional(manifest)
+        // A failed rewrite still returns the live entries: they are the only
+        // copy of uncommitted text. The next read or compaction purges again.
+        if read.hadCommitted { try? writeProvisionalRecoveries(read.live, for: scope) }
+        return read.live
+    }
+
+    /// The entries whose command is not journaled, and whether any were.
+    private func readProvisional(_ manifest: ReplicaManifest) -> (live: [ProvisionalRecovery], hadCommitted: Bool) {
+        guard let file = try? folder(for: manifest.scope).appendingPathComponent("provisional.json"),
+            let bytes = try? Data(contentsOf: file),
+            let entries = try? JSONDecoder().decode([ProvisionalRecovery].self, from: bytes)
+        else { return ([], false) }
+        let committed = Set(manifest.journal.map(\.commandID))
+        let live = entries.filter { !committed.contains($0.commandID) }
+        return (live, live.count != entries.count)
+    }
+
+    /// Replaces the provisional entries atomically (flushed temporary file,
+    /// rename, directory flush); an empty list removes the file. Requires the
+    /// replica folder, so a removed replica cannot regain recovery text.
+    func writeProvisionalRecoveries(_ entries: [ProvisionalRecovery], for scope: ReplicaScope) throws {
+        let folder = try folder(for: scope)
+        let file = folder.appendingPathComponent("provisional.json")
+        if entries.isEmpty {
+            guard fileManager.fileExists(atPath: file.path) else { return }
+            try fileManager.removeItem(at: file)
+        } else {
+            let temporary = folder.appendingPathComponent("\(UUID().uuidString).pending")
+            try writeFlushed(
+                JSONEncoder().encode(entries), to: temporary,
+                afterWrite: { try self.interrupt?(.provisional, .payloadWritten) })
+            try renameFile(temporary, to: file)
+        }
+        try syncDirectory(folder)
+    }
+
     /// The committed manifest alone, without reading or verifying payloads.
     func manifest(for scope: ReplicaScope) throws -> ReplicaManifest? { try readManifest(for: scope) }
 
@@ -299,6 +345,10 @@ final class ReplicaStore {
         // Do not replace corrupt recovery data with a new apparently healthy
         // snapshot. This also verifies every outbox segment before pruning.
         _ = try restore(for: scope)
+        // The journal entries about to go are the only proof that provisional
+        // entries with their command ids were committed.
+        let provisional = readProvisional(manifest)
+        if provisional.hadCommitted { try writeProvisionalRecoveries(provisional.live, for: scope) }
         let folder = try folder(for: scope)
         let previous = [manifest.checkpoint] + manifest.journal.map(\.file)
         let file = try writePayload(checkpoint, in: folder, journal: false, operation: .compact)
@@ -529,4 +579,16 @@ final class ReplicaStore {
     }
 
     private func posixError() -> NSError { NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+}
+
+/// One IME composition's provisional text, persisted for explicit recovery
+/// (insert at the caret, copy or discard). `.composing` is a live composition,
+/// or an interrupted one after a relaunch; `.orphaned` is a commit whose
+/// target was deleted or replaced. Never written to Yjs automatically.
+struct ProvisionalRecovery: Codable, Equatable, Sendable {
+    enum State: String, Codable, Sendable { case composing, orphaned }
+    let commandID: UUID
+    let blockID: String
+    var text: String
+    var state: State
 }

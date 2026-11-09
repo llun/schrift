@@ -332,6 +332,13 @@ enum Strings_zhHans {
         .native_editor_unknown_block: "不支持的块",
         .native_editor_input_unavailable: "原生编辑器暂不支持此输入。",
         .native_editor_marked_unavailable: "暂不支持此键盘输入。你的文档已保留为只读模式。",
+        .native_editor_composition_orphaned:
+            "无法添加这段文字，因为其段落已更改。",
+        .native_editor_recovery_interrupted:
+            "编辑器关闭时这段文字仍在输入中，尚未添加。",
+        .native_editor_recovery_insert: "在光标处插入",
+        .native_editor_recovery_copy: "复制",
+        .native_editor_recovery_discard: "丢弃",
         .native_editor_storage_failed: "无法在你的设备上保存此次编辑。编辑已停止，之前保存的文字已保留。",
         .profile_native_editor: "原生编辑器（实验性）",
         .profile_native_editor_footer: "下次打开文档时生效。支持 Docs 6，目前仅支持输入纯文本。",

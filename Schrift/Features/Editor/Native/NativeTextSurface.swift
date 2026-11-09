@@ -19,6 +19,18 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     private(set) var traits: UITraitCollection
     private var presentation: NativeTextPresentation
     private var lastNativeStamp: NativePatchStamp?
+    /// UIKit owns the marked range while a composition is active. Any
+    /// programmatic storage edit — a peer patch, a restyle, a selection
+    /// publication — can cancel it, so patches are buffered and presentation
+    /// changes deferred until the engine's final deferral-complete signal.
+    private var isFrozen = false
+    private var frozenPatches: [BlockPatch] = []
+    /// The block whose storage slice UIKit's marked text changed. Set by the
+    /// composition session before the engine freezes; reconciliation rebuilds
+    /// only this slice, so the rest of storage (and the scroll position) is
+    /// never replaced.
+    var provisionalBlockID: String?
+    private var pendingPresentation: (traits: UITraitCollection, labels: NativeEditorLabels)?
     /// Replica-backed surfaces use the owner's settled projection to validate
     /// fast patches. Value-only fixtures may omit this callback.
     private let reprojectBlock: ((String) -> BlockSnapshot?)?
@@ -40,6 +52,10 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     }
 
     func applyPatch(_ patch: BlockPatch) {
+        guard !isFrozen else {
+            frozenPatches.append(patch)
+            return
+        }
         if patch.origin == .localUser, let stamp = patch.nativeCommand {
             if let last = lastNativeStamp,
                 stamp.baseRevision < last.baseRevision
@@ -148,11 +164,79 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         // Keep this ahead of every mutation, including replacing cached inputs:
         // selection-driven SwiftUI updates must leave TextKit interactions alone.
         guard presentation != next else { return }
-        presentation = next
+        // A restyle is a programmatic storage edit and would cancel marked text.
+        guard !isFrozen else {
+            pendingPresentation = (traits, labels)
+            return
+        }
+        applyPresentation(traits, labels: labels)
+    }
+
+    private func applyPresentation(_ traits: UITraitCollection, labels: NativeEditorLabels) {
+        presentation = NativeTextPresentation(contentSize: traits.preferredContentSizeCategory, labels: labels)
         self.traits = traits
         rangeIndex = ProjectionRangeIndex(blocks: blocks, labels: labels)
         storage.setAttributedString(
             AttributedDocumentProjection.attributedString(blocks: blocks, traits: traits, labels: labels))
+    }
+
+    /// Character-level equality with the model's display (O(document); only
+    /// checked after UIKit itself changed storage).
+    var storageMatchesModel: Bool {
+        storage.length == rangeIndex.length
+            && storage.string
+                == AttributedDocumentProjection.attributedString(blocks: blocks, traits: traits, labels: labels).string
+    }
+
+    /// Rebuilds storage from the model after UIKit changed it behind the
+    /// command path: only `blockID`'s slice when UIKit changed nothing else,
+    /// otherwise everything. Never while frozen: marked text owns storage then.
+    func restoreStorage(blockID: String? = nil) {
+        guard !isFrozen else { return }
+        // UIKit changed only this block's slice, so the length difference is
+        // all inside it. Anything else falls back to a full rebuild.
+        let delta = storage.length - rangeIndex.length
+        if let blockID, let position = rangeIndex.position(for: blockID),
+            rangeIndex.entries[position].range.length + delta >= 0
+        {
+            let entry = rangeIndex.entries[position]
+            storage.replaceCharacters(
+                in: NSRange(location: entry.range.location, length: entry.range.length + delta),
+                with: AttributedDocumentProjection.attributedBlock(blocks[position], traits: traits, labels: labels))
+        } else {
+            storage.setAttributedString(
+                AttributedDocumentProjection.attributedString(blocks: blocks, traits: traits, labels: labels))
+        }
+    }
+
+    /// The engine's composition window. While frozen, UIKit's provisional text
+    /// is the only storage change; the model stays at the pre-composition state
+    /// and every patch is buffered. Completion reconciles once: restore the
+    /// model's display of the provisional block (dropping provisional text),
+    /// apply the buffered patches at model coordinates, then apply any
+    /// deferred restyle.
+    func setCompositionDeferred(_ deferred: Bool) {
+        if deferred {
+            isFrozen = true
+            return
+        }
+        guard isFrozen else { return }
+        isFrozen = false
+        reconcile()
+    }
+
+    private func reconcile() {
+        if let id = provisionalBlockID {
+            provisionalBlockID = nil
+            restoreStorage(blockID: id)
+        }
+        let patches = frozenPatches
+        frozenPatches = []
+        for patch in patches { applyPatch(patch) }
+        if let pending = pendingPresentation {
+            pendingPresentation = nil
+            applyPresentation(pending.traits, labels: pending.labels)
+        }
     }
 
     private func replace(at position: Int, with block: BlockSnapshot) {

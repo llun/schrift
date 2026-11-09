@@ -353,6 +353,13 @@ enum Strings_sl {
         .native_editor_input_unavailable: "Ta vnos v izvornem urejevalniku še ni podprt.",
         .native_editor_marked_unavailable:
             "Ta vnos s tipkovnico še ni podprt. Dokument je ohranjen v načinu samo za branje.",
+        .native_editor_composition_orphaned:
+            "Tega besedila ni bilo mogoče dodati, ker se je odstavek spremenil.",
+        .native_editor_recovery_interrupted:
+            "To besedilo ste še vnašali, ko se je urejevalnik zaprl. Ni bilo dodano.",
+        .native_editor_recovery_insert: "Vstavi pri kazalcu",
+        .native_editor_recovery_copy: "Kopiraj",
+        .native_editor_recovery_discard: "Zavrzi",
         .native_editor_storage_failed:
             "Te spremembe ni bilo mogoče shraniti v napravo. Urejanje je bilo ustavljeno; prej shranjeno besedilo je ohranjeno.",
         .profile_native_editor: "Izvorni urejevalnik (poskusno)",

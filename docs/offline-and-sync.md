@@ -18,8 +18,9 @@
 > path now exist and are covered by `NativeTypingTests`. Explicitly enabled test
 > sessions journal each incremental update before its echo reaches storage. Input
 > stays within one indexed simple-text block; separators, placeholders, malformed
-> ranges and marked text are refused before mutation. Marked input switches to a
-> preserved read-only state with an explanation, and system undo is disabled.
+> ranges are refused before mutation. Marked (IME) input is now a PR03 composition
+> (see "Provisional IME text" below); only unsupported shapes still switch to a
+> preserved read-only state with an explanation. System undo is disabled.
 > A failed append stops authoring and retains unconfirmed update bytes without
 > publishing the rejected edit. Production opening still does not enable typing:
 > coordinator save/reopen and migration ownership must be integrated first.
@@ -81,6 +82,21 @@ account (or an unknown one) is signed in, a discard or a landed deletion leaves 
 owner's replica, marker and native draft in place and completes the rest of the delete
 for the current session. On a shared device B's DELETE of A's document 404s as "already
 gone", and that must not destroy A's unsynced work.
+
+**Provisional IME text (PR03).** UIKit marked text that is not yet committed lives in
+`provisional.json` inside the same scope folder, beside the manifest and outside it.
+`ReplicaStore.writeProvisionalRecoveries` replaces the whole entry list atomically
+(flushed temporary file, rename, directory flush) on every marked-text change; commit
+and cancel remove the entry, and an empty list deletes the file. Each entry carries the
+composition's command id, block id, text and state (`composing`, or `orphaned` when the
+commit's target was deleted or replaced). It is never part of the manifest, journal or
+outbox, so it is never sent, broadcast or replayed into Yjs, and nothing commits it
+after a crash. `provisionalRecoveries(for:)` drops an entry whose command id is already
+in the journal (a crash after the append, before the cleanup). After a relaunch the
+remaining entries are offered in the editor with Insert at cursor (an ordinary durable
+command), Copy and Discard. The file shares the replica's scope, backup and sign-out
+policy, and `remove(for:)` deletes it with the folder. An unreadable file reads as empty
+and is replaced by the next write.
 
 **Owner marker.** `ReplicaOwnershipStore` keeps a versioned, checksummed UserDefaults
 map from `origin|documentID` to the owning scope. `create` writes it before any replica

@@ -340,6 +340,13 @@ enum Strings_fr {
         .native_editor_input_unavailable: "Cette saisie n’est pas encore prise en charge dans l’éditeur natif.",
         .native_editor_marked_unavailable:
             "Cette saisie au clavier n’est pas encore prise en charge. Votre document est préservé en lecture seule.",
+        .native_editor_composition_orphaned:
+            "Ce texte n’a pas pu être ajouté car son paragraphe a changé.",
+        .native_editor_recovery_interrupted:
+            "Ce texte était encore en cours de saisie à la fermeture de l’éditeur. Il n’a pas été ajouté.",
+        .native_editor_recovery_insert: "Insérer au curseur",
+        .native_editor_recovery_copy: "Copier",
+        .native_editor_recovery_discard: "Supprimer",
         .native_editor_storage_failed:
             "Impossible d’enregistrer cette modification sur votre appareil. La modification s’est arrêtée ; le texte précédemment enregistré est préservé.",
         .profile_native_editor: "Éditeur natif (expérimental)",

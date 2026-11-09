@@ -2089,11 +2089,12 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   or state encoding is performed per keystroke.
   Non-simple/unprojectable/opaque text, placeholders, invalid/surrogate-splitting
   UTF-16 ranges, separators/multiblock edits and newlines/inline object characters
-  are rejected before mutation. `setMarkedText` never invokes UIKit's implementation:
-  it preserves the committed display, makes the view read-only and explains why.
-  Undo is disabled. A write/cleanup/persistence failure freezes authoring and
-  delivery, retains any returned unconfirmed bytes in memory and preserves the pre-edit
-  display plus existing durable files; never retry against that mutated graph.
+  are rejected before mutation. Marked text (IME) is handled by the PR03 composition
+  session below; a composition this editor cannot support keeps the preserved
+  read-only refusal. Undo is disabled. A write/cleanup/persistence failure freezes
+  authoring and delivery, retains any returned unconfirmed bytes in memory and
+  preserves the pre-edit display plus existing durable files; never retry against
+  that mutated graph.
   `NativeTypingTests` exercises the real UIKit delegate, replayed storage equality,
   echo/repair/refusal/error cases and per-key counters on 5,000 paragraphs.
   The isolated native test host supports `--native-typing` with disposable raw
@@ -2185,6 +2186,52 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `--native-open` fixture runs the real `EditorView` route offline over an owned
   replica (`--reset` clears it) and its UI test types, relaunches and checks the text.
 
+- **PR03 IME composition, one block, with provisional recovery.** `Native/NativeCompositionSession`
+  owns a UIKit marked-text composition. `setMarkedText`, and `setAttributedMarkedText`
+  (the entry point the system Japanese/Chinese keyboards use), in a typeable block
+  capture both replacement endpoints as a `RelativeEditorRange` **before** UIKit owns
+  the marked range (an insertion at the caret, or a selected-text replacement inside one
+  block), then let UIKit own the provisional range in storage. Provisional text is never
+  written to Yjs. A composing keyboard asks the delegate before its first keystroke:
+  for a `ja`/`zh`/`yue`/`ko` input mode a one-character insertion at the selection is
+  allowed through to the overridden `setMarkedText`/`insertText` instead of becoming a
+  Latin command (`allowsUIKitChange`); `textViewDidChange` restores the projection if
+  UIKit ever changed storage behind the command path. While text is marked the whole
+  view is frozen (`NativeTextSurface.setCompositionDeferred(true)`): remote patches still
+  enter the replica (the engine defers the composing block), but the surface buffers
+  every patch, defers theme/width restyles and the coordinator refuses offset commands
+  and selection publication, because document-wide UIKit offsets are stale until
+  reconciliation. Commit (`unmarkText`, which writes what UIKit displays, or
+  `insertText` replacing the marked text) resolves the anchors and writes the string
+  **once** as one durable `NativeEditCommand` through
+  `DocumentEngine.compositionCommitted(text:commandID:persist:)` (journal before
+  publication, the same `ReplicaStore.append` path as typing), then delivers one
+  `.other` rebuild; reconciliation replaces only the provisional block's storage slice
+  (`provisionalBlockID`), applies the buffered patches, then the deferred restyle.
+  Backspace inside marked text edits the marked string; an emptied composition cancels.
+  A target deleted or replaced during the composition returns `.orphaned`: nothing is
+  written and the commit is never redirected into a new text under the same block id.
+  Cancel writes nothing and returns the caret to the composition start. Focus loss that
+  never reached `unmarkText` writes nothing and keeps the text for recovery. A
+  multi-block selection or an opaque/placeholder target keeps the preserved read-only
+  refusal (`native_editor_marked_unavailable`).
+  **Recovery.** With a replica store, every marked-text change rewrites
+  `provisional.json` in the scope folder (`ReplicaStore.writeProvisionalRecoveries`,
+  flushed temporary file + rename + directory flush); commit and cancel remove the
+  entry. It is not in the manifest, journal or outbox, is never broadcast and is never
+  replayed or committed automatically. An entry whose command id reached the journal
+  was committed before a crash skipped its cleanup and is dropped on read. Orphaned
+  commits and entries left by a crash or relaunch mid-composition are
+  `pendingRecoveries`; `NativeEditorView` shows them with a notice
+  (`native_editor_composition_orphaned` / `native_editor_recovery_interrupted`) and
+  Insert at cursor (the ordinary command path; a refused caret keeps the entry), Copy
+  and Discard. `remove(for:)` takes the file with the replica folder.
+  `NativeCompositionTests` and `NativeCompositionRecoveryTests` drive synthetic
+  `setMarkedText`/`unmarkText` on a real `NativeTextView`; the native host's
+  `--native-ime` buttons do the same in the running `--native-open` route, and
+  `testJapaneseKeyboardComposesAndConfirmsOnce` types with the real Japanese Romaji
+  keyboard when the simulator has it enabled (skipped otherwise).
+
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (`@MainActor`), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below
@@ -2215,9 +2262,22 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   not an entry point for peer-supplied relative positions.
 - **Composition deferral lives in the engine.** `compositionBegan(blockID:at:assoc:)`
   captures an insertion anchor, using the current selection head when `at` is
-  omitted. `compositionCommitted(text:)` inserts the composed string at the
-  resolved anchor through the writer in one `.localUser` transaction and returns
-  update bytes; `compositionCancelled()` performs no write. The engine signals
+  omitted; `compositionBegan(blockID:replacing:)` captures both endpoints of a
+  same-block replacement range (the native IME path; a peer insertion at either
+  boundary stays outside the replaced span, and a peer deletion of the whole span
+  collapses it to an insertion). `compositionCommitted(text:)`
+  inserts the composed string at the resolved anchor through the writer in one
+  `.localUser` transaction and returns update bytes; the durable
+  `compositionCommitted(text:commandID:persist:)` holds delivery until `persist`
+  journals the `NativeEditCommand` (that id, the current revision, the resolved range)
+  and returns `.committed(Data)` or `.orphaned` (the target was deleted or
+  replaced: no write, never redirected into a new text under the same block id).
+  The commit stamps `nativeCommand`, so its own echo is deduplicated and the durable
+  owner's unjournaled-transaction guard does not fire. `compositionCancelled()`
+  performs no write and returns the caret to the resolved start of the replaced span.
+  `isComposing` reports an active composition. Remote data is accepted **during** a
+  composition (`durablyIntegrateRemote` no longer refuses): the queue defers the
+  composing block and the surface buffers the rest. The engine signals
   `EditorSurface.setCompositionDeferred(true/false)` (recorded by `HeadlessSurface`).
   While active, changes to that block from every origin, including the commit's
   own write, are discarded from delivery; other blocks keep updating. Commit or
@@ -2255,7 +2315,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   Detach drops deferral without rebuilding, clears selection, and
   rejects all later composition/selection intents as `.detached`. Surface equality
   with projection is intentionally suspended for deferred content, and restored
-  on commit/cancel. This remains headless; real IME validation belongs to phase 2.
+  on commit/cancel. The engine stays headless; the native IME surface is the
+  PR03 composition session above.
 - **The engine borrows the replica; it never owns it.** `DocumentCollaborationManager`
   keeps the one-owner rule. `YDoc.onDestroy` fires at the start of `destroy()`
   and the engine detaches there — hooks cleared, buffered patches dropped (even

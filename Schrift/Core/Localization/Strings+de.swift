@@ -343,6 +343,13 @@ enum Strings_de {
         .native_editor_input_unavailable: "Diese Eingabe wird im nativen Editor noch nicht unterstützt.",
         .native_editor_marked_unavailable:
             "Diese Tastatureingabe wird noch nicht unterstützt. Ihr Dokument bleibt im schreibgeschützten Modus erhalten.",
+        .native_editor_composition_orphaned:
+            "Dieser Text konnte nicht eingefügt werden, weil sich sein Absatz geändert hat.",
+        .native_editor_recovery_interrupted:
+            "Dieser Text wurde noch eingegeben, als der Editor geschlossen wurde. Er wurde nicht eingefügt.",
+        .native_editor_recovery_insert: "Am Cursor einfügen",
+        .native_editor_recovery_copy: "Kopieren",
+        .native_editor_recovery_discard: "Verwerfen",
         .native_editor_storage_failed:
             "Diese Änderung konnte nicht auf Ihrem Gerät gespeichert werden. Das Bearbeiten wurde beendet; zuvor gespeicherter Text bleibt erhalten.",
         .profile_native_editor: "Nativer Editor (experimentell)",

@@ -56,6 +56,9 @@ final class DocumentEngine {
     private var isFlushing = false
     private let previousAfterTransaction: ((YTransaction) -> Void)?
     private(set) var isDetached = false
+    /// True between `compositionBegan` and its commit/cancel. The surface stays
+    /// frozen until the final deferral-complete signal.
+    var isComposing: Bool { composition != nil }
     private(set) var revision: UInt64
     private var nativeCommand: NativeEditCommand?
     private var nativeEmission = 0
@@ -173,11 +176,16 @@ final class DocumentEngine {
     /// The owner applies remote bytes; the engine only holds delivery until
     /// their journal entry is durable. One accepted update advances the shared
     /// revision even when Yjs replay is an idempotent no-op.
+    ///
+    /// Remote data is accepted **during** a composition: the composing block's
+    /// changes are deferred by the queue and every other block's patch is
+    /// buffered by the surface until reconciliation. Only local commands are
+    /// refused while text is marked.
     func durablyIntegrateRemote(
         update: Data, apply: () throws -> Void, persist: (UInt64) throws -> Void
     ) throws {
         try requireCompositionBoundary()
-        guard nativeCommand == nil, !holdingDurableRemote, !isFlushing, composition == nil, revision < UInt64.max else {
+        guard nativeCommand == nil, !holdingDurableRemote, !isFlushing, revision < UInt64.max else {
             throw DocumentEngineError.insideTransaction
         }
         holdingDurableRemote = true
@@ -288,13 +296,27 @@ final class DocumentEngine {
             }
             position = head
         }
-        let anchor = try RelativeEditorPosition(position, index: builder.index)
+        try beginComposition(blockID: blockID, range: position.offset..<position.offset, assoc: position.assoc)
+    }
+
+    /// Captures both endpoints of a same-block replacement range before UIKit
+    /// owns the marked text. The commit replaces exactly that span, so a
+    /// selected-text composition writes once instead of inserting beside it.
+    func compositionBegan(blockID: String, replacing range: Range<Int>) throws {
+        try requireCompositionBoundary()
+        try requireEditableBlock(blockID)
+        guard composition == nil else { throw DocumentEngineError.compositionAlreadyActive }
+        try beginComposition(blockID: blockID, range: range, assoc: -1)
+    }
+
+    private func beginComposition(blockID: String, range: Range<Int>, assoc: Int) throws {
+        let captured = try RelativeEditorRange(blockID: blockID, range: range, assoc: assoc, index: builder.index)
         // Selection can address any projectable single text; composing also
         // requires a block the writer supports.
         guard let element = builder.index.entries[blockID]?.element,
             case .xmlElement(let node)? = element.typeRef, BlockNoteWriter.propSchemas[node] != nil
         else { throw DocumentEngineError.invalidPosition }
-        composition = CompositionQueue(anchor: anchor)
+        composition = CompositionQueue(range: captured)
         compositionGeneration &+= 1
         deferredBlockIDs.insert(blockID)
         // A previous composition may have ended logically inside applyPatch,
@@ -311,42 +333,102 @@ final class DocumentEngine {
     /// by one current snapshot; callers can broadcast the returned update.
     @discardableResult
     func compositionCommitted(text: String) throws -> Data {
+        switch try commitComposition(text: text, persist: nil) {
+        case .committed(let update): return update
+        case .orphaned: return Data([0, 0])
+        }
+    }
+
+    /// The durable commit: the same single write as one `NativeEditCommand`
+    /// (`commandID`, the current revision, the resolved replica range), but patch
+    /// delivery stays held until `persist` has journaled the incremental bytes.
+    /// A target that was deleted or replaced is reported as `.orphaned` and
+    /// never redirected into a new text under the same block id.
+    @discardableResult
+    func compositionCommitted(
+        text: String, commandID: UUID, persist: (NativeEditCommand, Data) throws -> Void
+    ) throws -> CompositionCommitResult {
+        try withoutActuallyEscaping(persist) { try commitComposition(text: text, commandID: commandID, persist: $0) }
+    }
+
+    private func commitComposition(
+        text: String, commandID: UUID = UUID(), persist: ((NativeEditCommand, Data) throws -> Void)?
+    ) throws -> CompositionCommitResult {
         try requireCompositionBoundary()
         guard let composing = composition else { throw DocumentEngineError.compositionNotActive }
-        guard let position = composing.anchor.resolve(in: doc, index: builder.index) else {
+        guard let range = composing.range.resolve(in: doc, index: builder.index) else {
             finishComposition(origin: .other)
-            return Data([0, 0])
+            return .orphaned
         }
+        let blockID = composing.blockID
+        // One identified command, so the write's own echo is stamped and the
+        // durable owner's unjournaled-transaction guard does not fire.
+        let command = NativeEditCommand(
+            id: commandID, baseRevision: revision, blockID: blockID, range: range, replacement: text)
+        nativeCommand = command
+        nativeEmission = 0
         let update: Data
         do {
             update = try writer.transaction { _ in
-                try writer.replaceText(block: position.blockID, range: position.offset..<position.offset, with: text)
+                try writer.replaceText(block: blockID, range: range, with: text)
                 // Capture before cleanup/observers can edit or replace the text.
                 // Refresh only this entry in a temporary index: an empty element
                 // can now have the XmlText the writer just created. A failed
                 // capture propagates through the same error/rebuild path as a
                 // writer failure; it is never silently converted to nil.
                 var captureIndex = builder.index
-                captureIndex.refresh(position.blockID)
+                captureIndex.refresh(blockID)
                 let caret = EditorPosition(
-                    blockID: position.blockID, offset: position.offset + text.utf16.count, assoc: -1)
+                    blockID: blockID, offset: range.lowerBound + text.utf16.count, assoc: -1)
                 selection = try RelativeEditorSelection(
                     EditorSelection(anchor: caret, head: caret), index: captureIndex)
             }
         } catch {
+            nativeCommand = nil
             if !isDetached { finishComposition(origin: .other) }
             throw error
         }
-        guard !isDetached else { return update }
+        guard !isDetached else {
+            nativeCommand = nil
+            return .committed(update)
+        }
+        unconfirmedNativeUpdate = update
+        do {
+            try persist?(command, update)
+        } catch {
+            // Transactions have no rollback. Stop all authoring and delivery,
+            // drop the provisional display and keep the unconfirmed bytes only
+            // for diagnostics; nothing retries against the mutated graph.
+            nativeCommand = nil
+            nativeWriteFailed = true
+            buffered = []
+            composition = nil
+            if isDeferringComposition {
+                isDeferringComposition = false
+                deferredBlockIDs = []
+                isWholeListDeferred = false
+                surface?.setCompositionDeferred(false)
+            }
+            throw error
+        }
+        revision += 1
+        unconfirmedNativeUpdate = nil
+        nativeCommand = nil
         // The snapshot also contains discarded peer changes, so an optimistic
         // surface must apply it even when it already displayed the marked text.
         finishComposition(origin: .other)
-        return update
+        return .committed(update)
     }
 
+    /// No write. The caret returns to the resolved start of the replaced span,
+    /// so a cancelled composition leaves the selection where it began.
     func compositionCancelled() throws {
         try requireCompositionBoundary()
-        guard composition != nil else { throw DocumentEngineError.compositionNotActive }
+        guard let composing = composition else { throw DocumentEngineError.compositionNotActive }
+        if let range = composing.range.resolve(in: doc, index: builder.index) {
+            let caret = EditorPosition(blockID: composing.blockID, offset: range.lowerBound, assoc: -1)
+            selection = try RelativeEditorSelection(EditorSelection(anchor: caret, head: caret), index: builder.index)
+        }
         finishComposition(origin: .other)
     }
 
@@ -354,7 +436,7 @@ final class DocumentEngine {
         guard let composing = composition else { return }
         let change: BlockChange
         if !composing.requiresReset, builder.index.isCanonical,
-            let entry = builder.index.entries[composing.anchor.blockID]
+            let entry = builder.index.entries[composing.blockID]
         {
             change = .replaceBlock(
                 blockID: entry.id, block: BlockSnapshot(YBlockProjection.projectBlock(entry.containerItem)))
@@ -489,6 +571,14 @@ final class DocumentEngine {
         doc.onDestroy = nil
         if wasComposing { surface?.setCompositionDeferred(false) }
     }
+}
+
+/// The outcome of a composition commit. `.orphaned` means the captured target
+/// was deleted or replaced: nothing was written, and the caller keeps the text
+/// for explicit recovery rather than redirecting it into another block.
+enum CompositionCommitResult: Equatable {
+    case committed(Data)
+    case orphaned
 }
 
 /// The engine's lifecycle errors.

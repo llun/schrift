@@ -1,13 +1,19 @@
 /// Invalidates composing-block deltas rather than storing them for replay.
 /// Independent block changes still flow. Once a structural change involving
 /// this block makes list coordinates unsafe, everything waits for a full reset.
+///
+/// The queue holds a same-block replacement range, not just an insertion
+/// point: UIKit's marked text may replace a selection, and both endpoints must
+/// be captured before the provisional text exists.
 struct CompositionQueue {
-    let anchor: RelativeEditorPosition
+    let range: RelativeEditorRange
     private(set) var requiresReset = false
+
+    var blockID: String { range.blockID }
 
     mutating func filter(_ patch: BlockPatch) -> BlockPatch {
         guard !requiresReset else { return BlockPatch(origin: patch.origin) }
-        let id = anchor.blockID
+        let id = blockID
         if patch.changes.contains(where: { change in
             switch change {
             case .reset: return true

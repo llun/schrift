@@ -181,12 +181,17 @@ final class NativeTypingTests: DocumentEngineTestCase {
         XCTAssertFalse(try XCTUnwrap(duplicate.input).replace(range: NSRange(location: 0, length: 0), with: "x"))
     }
 
-    func testMarkedTextIsInterceptedBeforeMutationAndUndoIsDisabled() throws {
+    func testUnsupportedMarkedTextKeepsTheReadOnlyRefusalAndUndoIsDisabled() throws {
         let session = try session()
         defer { session.close() }
         session.enableTyping { _, _ in XCTFail("marked text must never become a write") }
         let original = session.textView.attributedText
-        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        // A cross-block selection is not a supported composition (PR03).
+        let first = try XCTUnwrap(session.surface.rangeIndex.entry(for: Self.firstID))
+        let second = try XCTUnwrap(session.surface.rangeIndex.entry(for: Self.secondID))
+        session.textView.selectedRange = NSRange(
+            location: first.textRange.location + 10,
+            length: second.textRange.location + 5 - first.textRange.location - 10)
         session.textView.setMarkedText("仮", selectedRange: NSRange(location: 1, length: 0))
         XCTAssertEqual(session.input?.noticeKey, .native_editor_marked_unavailable)
         XCTAssertNil(session.textView.markedTextRange)

@@ -103,6 +103,9 @@ private struct NativeOpenFixture: View {
                 ProgressView()
             }
         }
+        .overlay {
+            if ProcessInfo.processInfo.arguments.contains("--native-ime") { SyntheticIMEControls() }
+        }
         .task {
             guard model == nil else { return }
             model = try? Self.makeModel()
@@ -174,4 +177,37 @@ private final class OfflineURLProtocol: URLProtocol {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() { client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet)) }
     override func stopLoading() {}
+}
+
+/// `--native-ime`: the host's synthetic marked-text path. Each button sends the
+/// UITextInput calls a Japanese keyboard makes to the mounted production
+/// `NativeTextView`, while the real keyboard and first responder stay up. The
+/// simulator's keyboards cannot be changed from a UI test, so this is the
+/// layer between the unit tests and TestFlight.
+private struct SyntheticIMEControls: View {
+    var body: some View {
+        VStack(spacing: 8) {
+            Button("Compose にほん") { Self.mark("にほん") }
+                .accessibilityIdentifier("ime.compose")
+            Button("Convert 日本") { Self.mark("日本") }
+                .accessibilityIdentifier("ime.convert")
+            Button("Commit") { Self.textView()?.unmarkText() }
+                .accessibilityIdentifier("ime.commit")
+            Button("Compose かな") { Self.mark("かな") }
+                .accessibilityIdentifier("ime.composeKana")
+        }
+        .buttonStyle(.bordered)
+    }
+
+    @MainActor private static func mark(_ text: String) {
+        textView()?.setMarkedText(text, selectedRange: NSRange(location: (text as NSString).length, length: 0))
+    }
+
+    @MainActor private static func textView() -> NativeTextView? {
+        func find(_ view: UIView) -> NativeTextView? {
+            (view as? NativeTextView) ?? view.subviews.lazy.compactMap(find).first
+        }
+        return UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+            .lazy.compactMap(find).first
+    }
 }

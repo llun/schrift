@@ -339,6 +339,13 @@ enum Strings_it {
         .native_editor_input_unavailable: "Questo input non è ancora supportato nell’editor nativo.",
         .native_editor_marked_unavailable:
             "Questo input da tastiera non è ancora supportato. Il documento è conservato in sola lettura.",
+        .native_editor_composition_orphaned:
+            "Impossibile aggiungere questo testo perché il suo paragrafo è cambiato.",
+        .native_editor_recovery_interrupted:
+            "Questo testo era ancora in fase di digitazione quando l’editor si è chiuso. Non è stato aggiunto.",
+        .native_editor_recovery_insert: "Inserisci al cursore",
+        .native_editor_recovery_copy: "Copia",
+        .native_editor_recovery_discard: "Elimina",
         .native_editor_storage_failed:
             "Impossibile salvare questa modifica sul dispositivo. La modifica è stata interrotta; il testo salvato in precedenza è conservato.",
         .profile_native_editor: "Editor nativo (sperimentale)",
