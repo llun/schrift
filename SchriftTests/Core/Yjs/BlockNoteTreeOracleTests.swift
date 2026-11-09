@@ -128,6 +128,25 @@ final class BlockNoteTreeOracleTests: XCTestCase {
     /// `mergeIntoParent` (no capture exists for a nested-source Backspace):
     /// the content joins the parent's end and the block's children take its
     /// place; a sole child without children takes the group with it.
+    /// A sole child whose own nested group is empty leaves no empty group
+    /// behind in its parent (review round 1).
+    func testMergeIntoParentRemovesAGroupLeftEmptyByAChildWithAnEmptyGroup() throws {
+        let doc = try doc([block("q", [block("only")])])
+        defer { doc.destroy() }
+        let writer = BlockNoteWriter(doc: doc)
+        let only = try writer.find("only")
+        try writer.transaction { tx in
+            try YWrite.insertAfter(
+                tx, into: only.container, after: only.elementItem,
+                [.type(YType(typeRef: .xmlElement(nodeName: "blockGroup")))])
+        }
+        try writer.mergeIntoParent(block: "only")
+        XCTAssertEqual(
+            YXMLString.fragment(doc),
+            #"<blockgroup><blockcontainer id="q"><paragraph \#(Self.props)>qonly</paragraph></blockcontainer></blockgroup>"#
+        )
+    }
+
     func testMergeIntoParentPromotesChildrenAndRemovesAnEmptiedGroup() throws {
         let doc = try doc([block("p", [block("a", [block("a1")]), block("b")])])
         defer { doc.destroy() }

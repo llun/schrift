@@ -101,12 +101,17 @@ struct BlockIndex {
         return item.parentType === root
     }
 
-    /// The block id a changed type belongs to: the innermost `blockContainer`
-    /// on its parent chain. `nil` for a change at the root or the root group.
+    /// The block id a changed type belongs to: the innermost indexed
+    /// `blockContainer` on its parent chain. A change inside a subtree the
+    /// index does not descend into (an opaque or too-deep block's) belongs to
+    /// that nearest indexed ancestor, which the surface shows. `nil` for a
+    /// change at the root or the root group.
     func blockID(for type: YType) -> String? {
         var current: YType? = type
         while let candidate = current {
-            if candidate.typeRef == .xmlElement(nodeName: "blockContainer"), let id = Self.blockID(of: candidate) {
+            if candidate.typeRef == .xmlElement(nodeName: "blockContainer"), let id = Self.blockID(of: candidate),
+                entries[id]?.container === candidate
+            {
                 return id
             }
             current = candidate.item?.parentType

@@ -923,7 +923,8 @@ extension YBlockProjection {
             }
             let markdown = serializeMarkdown(rendered)
             if let failing = firstMismatch(
-                markdown: markdown, rendered: rendered, against: document, escalated: escalated)
+                markdown: markdown, rendered: rendered, against: document, escalated: escalated,
+                checksIndent: indents != nil)
             {
                 if escalated.contains(failing) { return nil }  // escaping didn't fix it
                 escalated.insert(failing)
@@ -976,21 +977,31 @@ extension YBlockProjection {
     /// index has already been escalated, it falls back to re-reporting one
     /// of them, which is exactly what makes the caller's
     /// `escalated.contains(failing)` check terminate the loop.
+    ///
+    /// `checksIndent` (the native tree shadow) also requires each re-parsed
+    /// block's indent to be the one `serializeMarkdown` spells for it (the
+    /// requested indent, normalized the way the serializer normalizes it).
     private static func firstMismatch(
-        markdown: String, rendered: [EditorBlock], against document: ProjectedDocument, escalated: Set<Int>
+        markdown: String, rendered: [EditorBlock], against document: ProjectedDocument, escalated: Set<Int>,
+        checksIndent: Bool = false
     ) -> Int? {
         var kept: [(originalIndex: Int, kind: BlockKind, text: String, runs: [InlineRun])] = []
+        var keptBlocks: [EditorBlock] = []
         for (index, pair) in zip(document.blocks, rendered).enumerated() {
             let (block, editorBlock) = pair
             if case .paragraph = editorBlock.kind, editorBlock.text.isEmpty { continue }
             kept.append((index, editorBlock.kind, editorBlock.text, block.runs))
+            keptBlocks.append(editorBlock)
         }
+        let spelled = checksIndent ? normalizedListIndents(keptBlocks).map(\.indent) : nil
         let reparsed = parseEditorBlocks(markdown)
 
         for i in 0..<min(kept.count, reparsed.count) {
             let expected = kept[i]
             let candidate = reparsed[i]
-            guard candidate.kind == expected.kind else { return expected.originalIndex }
+            guard candidate.kind == expected.kind, spelled.map({ $0[i] == candidate.indent }) != false else {
+                return expected.originalIndex
+            }
             switch expected.kind {
             case .codeBlock:
                 if candidate.text != expected.text { return expected.originalIndex }

@@ -292,8 +292,7 @@ struct BlockNoteWriter {
 
     /// `mergeBlocksCommand`'s other half (`mergeIntoParent`): a first child's
     /// content joins the end of its parent's, and its own children take its
-    /// place in the parent's group; a sole child without children takes the
-    /// group with it. A code block on either side throws
+    /// place in the parent's group; a group left empty is removed. A code block on either side throws
     /// `unsupportedBlockType`; a block that is not a first child, or a root
     /// block, throws `noPreviousBlock`.
     @discardableResult
@@ -313,16 +312,13 @@ struct BlockNoteWriter {
                 return try snapshot(kid, block: block, depth: 0)
             }
         }
-        let alone = children(target.group).count == 1 && kids == nil
         return try transaction { tx in
             try append(tx, copies, into: above.element)
-            if alone {
-                groupItem.delete(tx)
-                return
-            }
             var left = target.item
             for kid in kids ?? [] { left = try insertCopy(tx, kid, into: target.group, after: left) }
             target.item.delete(tx)
+            // A group left empty goes (an empty nested group adds no children).
+            if children(target.group).isEmpty { groupItem.delete(tx) }
         }
     }
 

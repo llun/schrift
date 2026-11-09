@@ -94,6 +94,25 @@ final class NativeTreeProjectionTests: NativeEditingTestCase {
         XCTAssertEqual(index.entries[tree.blocks.last!.id]?.isProjectable, false, "no fast path into it")
     }
 
+    /// A peer's change inside a subtree the index does not descend into (past
+    /// the depth bound) is the nearest indexed block's: it is rebuilt, never
+    /// dropped (review round 1).
+    func testAChangeBelowTheBoundRebuildsTheNearestIndexedBlock() throws {
+        let levels = NativeBlockProjection.maxDepth + 3
+        let doc = try makeDoc([chain(levels)], clientID: 1)
+        defer { doc.destroy() }
+        let surface = HeadlessSurface(blocks: projection(doc))
+        let engine = DocumentEngine(doc: doc, surface: surface)
+        let capped = "level-\(NativeBlockProjection.maxDepth)"
+        try BlockNoteWriter(doc: doc).replaceText(block: "level-\(levels - 1)", range: 0..<0, with: "Peer ")
+        let patch = try XCTUnwrap(surface.appliedPatches.last)
+        XCTAssertTrue(
+            patch.changes.contains { if case .replaceBlock(capped, _) = $0 { return true } else { return false } },
+            "got \(patch.changes)")
+        assertSurfaceMatchesProjection(surface, doc, "after the hidden change")
+        _ = engine
+    }
+
     func testDuplicateAndMissingIDsMakeThatSubtreeOpaqueAndReadOnly() throws {
         let harness = try makeHarness([
             paragraph("first", "First"), nested(paragraph("dup", "One"), [paragraph("kid", "Kid")]),
