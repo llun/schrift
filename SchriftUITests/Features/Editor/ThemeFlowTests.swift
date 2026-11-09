@@ -130,7 +130,12 @@ final class ThemeFlowTests: XCTestCase {
         capture(app, "theme-paper-accessibility-profile")
         app.buttons["profile.theme"].tap()
         let paper = app.buttons["theme.paper"]
-        if !paper.isHittable { app.swipeUp() }
+        // The picker is a sheet: its rows do not exist until it has presented, and at this text size the
+        // Paper row may sit below the fold. Wait for the row, scroll it into view, then let it hold still
+        // so the tap lands on it (a bare `isHittable` on a row that is not there yet fails the lookup).
+        XCTAssertTrue(paper.waitForExistence(timeout: 10), "The theme picker must present its rows")
+        for _ in 0..<4 where !paper.isHittable { app.swipeUp() }
+        XCTAssertTrue(paper.waitForStableFrame(), "The Paper row must stop moving before it is tapped")
         XCTAssertTrue(paper.isHittable)
         paper.tap()
         capture(app, "theme-paper-accessibility-picker")

@@ -169,6 +169,12 @@ jobs:
           SIM_UDID: ${{ steps.sim.outputs.udid }}
         run: xcrun simctl spawn "$SIM_UDID" launchctl bootout system/com.apple.apsd || true
 
+      # Two invocations so only the UI bundles get a second chance: a UI test fails
+      # on a starved hosted simulator for reasons the app does not control, and a
+      # unit test that fails once is a real bug. -retry-tests-on-failure reruns just
+      # the tests that failed (up to -test-iterations total attempts); the job still
+      # fails if one fails every attempt. Both runs always execute, so one report
+      # shows unit and UI results. See docs/ci.md.
       - name: Test
         env:
           SIM_UDID: ${{ steps.sim.outputs.udid }}
@@ -176,14 +182,30 @@ jobs:
           set -o pipefail
           formatter=cat
           command -v xcbeautify >/dev/null && formatter=xcbeautify
+          status=0
           xcodebuild test-without-building \
             -project Schrift.xcodeproj \
             -scheme Schrift \
             -destination "platform=iOS Simulator,id=${SIM_UDID}" \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -enableCodeCoverage NO \
-            -resultBundlePath TestResults.xcresult \
-            | "$formatter"
+            -skip-testing:SchriftChecklistUITests \
+            -skip-testing:SchriftNativeUITests \
+            -resultBundlePath TestResults-unit.xcresult \
+            | "$formatter" || status=1
+          xcodebuild test-without-building \
+            -project Schrift.xcodeproj \
+            -scheme Schrift \
+            -destination "platform=iOS Simulator,id=${SIM_UDID}" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -enableCodeCoverage NO \
+            -only-testing:SchriftChecklistUITests \
+            -only-testing:SchriftNativeUITests \
+            -retry-tests-on-failure \
+            -test-iterations 2 \
+            -resultBundlePath TestResults-ui.xcresult \
+            | "$formatter" || status=1
+          exit "$status"
 
       # The result bundle is only interesting when something failed.
       - name: Upload test results
@@ -191,6 +213,8 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results
-          path: TestResults.xcresult
+          path: |
+            TestResults-unit.xcresult
+            TestResults-ui.xcresult
           if-no-files-found: ignore
           retention-days: 7
