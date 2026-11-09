@@ -2439,6 +2439,11 @@ final class EditorViewModel {
         if cursorRequest?.token == previousToken {
             focusBlock(targetID, cursorAt: range.location + (replacement as NSString).length)
         }
+        // `updateText` derived the slash menu from the caret before this input; re-derive it now
+        // that the caret is where the input left it.
+        if let index = blockIndex(targetID) {
+            slashQueryText = slashQuery(text: blocks[index].text, kind: blocks[index].kind, caret: selection?.location)
+        }
         return true
     }
 

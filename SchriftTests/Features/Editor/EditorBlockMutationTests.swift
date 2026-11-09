@@ -552,6 +552,28 @@ final class EditorBlockMutationTests: XCTestCase {
         XCTAssertEqual(viewModel.focusedBlockID, block.id)
     }
 
+    /// Input routed to a pending target (after Return moved the caret to a new block) is
+    /// published before the caret moves, so the menu must use the caret the input produces.
+    func testSlashTypedThroughPendingKeyboardInputOpensWithTheRightQuery() {
+        let first = EditorBlock(kind: .paragraph, text: "lead")
+        let target = EditorBlock(kind: .paragraph, text: "")
+        let viewModel = makeViewModel(blocks: [first, target])
+        viewModel.focusedBlockID = target.id
+        viewModel.selection = NSRange(location: 0, length: 0)
+        viewModel.cursorRequest = EditorViewModel.CursorRequest(blockID: target.id, offset: 0)
+
+        XCTAssertTrue(viewModel.applyPendingKeyboardInput(from: first.id, text: "/", consumedCursorToken: nil))
+        XCTAssertEqual(viewModel.blocks[1].text, "/")
+        XCTAssertEqual(viewModel.slashQueryText, "")
+
+        XCTAssertTrue(viewModel.applyPendingKeyboardInput(from: first.id, text: "h", consumedCursorToken: nil))
+        XCTAssertEqual(viewModel.slashQueryText, "h")
+
+        viewModel.applySlashSelection(allSlashMenuItems.first { $0.id == "heading1" }!)
+        XCTAssertEqual(viewModel.blocks[1].kind, .heading(level: 1))
+        XCTAssertEqual(viewModel.blocks[1].text, "")
+    }
+
     func testSlashMenuFollowsTheCaretNotTheWholeParagraph() {
         let block = EditorBlock(kind: .paragraph, text: "")
         let viewModel = makeViewModel(blocks: [block])
