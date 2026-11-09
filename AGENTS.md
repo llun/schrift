@@ -2328,7 +2328,10 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   by a user selection change). Typing takes ProseMirror's `$pos.marks()` / `marksAcross`
   (`NativeMarkSelection`; link and unknown keys are non-inclusive) and sends them as
   `.replace(…, marks:)` only when they differ from what Yjs inherits (the character before), so
-  plain typing writes the bytes it always did. `activeMarks` (common marks of the selection,
+  plain typing inside a run writes the bytes it always did. At a run's start the explicit marks
+  differ from Yjs inheritance, for example typing at offset 0 before a bold run now continues bold
+  as ProseMirror does, so those bytes change. Code is treated as inclusive; this is unconfirmed
+  against BlockNote 0.56. `activeMarks` (common marks of the selection,
   or the caret's typing marks) drives `NativeFormattingBar` in `NativeEditorView` (the classic
   bar's tokens and labels, `nativeEditor.format.<key>` identifiers, `.isSelected` when on) and
   the view's `typingAttributes`. Links reuse `LinkEditorSheet` and `sanitizedLinkURL`: an
