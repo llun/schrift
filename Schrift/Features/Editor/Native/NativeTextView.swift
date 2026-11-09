@@ -91,6 +91,10 @@ final class NativeTextView: UITextView {
             super.insertText(text)
             return
         }
+        if text == "\n" || text == "\r" {
+            inputCoordinator.insertNewline()
+            return
+        }
         if inputCoordinator.composition.isActive {
             dropMarkedText()
             inputCoordinator.commitComposition(text: text)
@@ -116,10 +120,14 @@ final class NativeTextView: UITextView {
         }
         var range = selectedRange
         if range.length == 0 {
-            // Nothing precedes the document start, and Backspace at a block start would join
-            // blocks (PR04): both are quiet no-ops. Every other caret takes the command path,
-            // which refuses the document-end boundary's separator with a notice.
-            guard range.location > 0, !inputCoordinator.isBlockStart(range.location) else { return }
+            // A block start is structural (PR04a): a join or a reset to a
+            // paragraph, else a quiet no-op. Every other caret takes the command
+            // path, which refuses the document-end boundary's separator with a notice.
+            if inputCoordinator.isBlockStart(range.location) {
+                inputCoordinator.deleteBackwardAtBlockStart()
+                return
+            }
+            guard range.location > 0 else { return }
             range = (textStorage.string as NSString).rangeOfComposedCharacterSequence(at: range.location - 1)
         }
         inputCoordinator.replace(range: range, with: "")

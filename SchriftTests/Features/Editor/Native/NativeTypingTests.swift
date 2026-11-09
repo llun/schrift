@@ -274,21 +274,19 @@ final class NativeTypingTests: DocumentEngineTestCase {
         assertMatches(session)
     }
 
-    func testBackspaceAtABlockStartIsAQuietNoOpUntilBlockJoinsExist() throws {
+    func testBackspaceAtTheFirstBlockIsQuietAndAtTheDocumentEndShowsANotice() throws {
         let session = try session()
         defer { session.close() }
         var writes = 0
         session.enableTyping { _, _ in writes += 1 }
         let input = try XCTUnwrap(session.input)
         let original = session.textView.textStorage.string
-        for id in [Self.secondID, Self.thirdID] {
-            let entry = try XCTUnwrap(session.surface.rangeIndex.entry(for: id))
-            session.textView.selectedRange = NSRange(location: entry.textRange.location, length: 0)
-            session.textView.deleteBackward()
-        }
+        // The first block has nothing above it: a quiet no-op, not an error.
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.textView.deleteBackward()
         XCTAssertEqual(session.textView.textStorage.string, original)
         XCTAssertEqual(writes, 0)
-        XCTAssertNil(input.noticeKey, "a block join is deferred, not an input error")
+        XCTAssertNil(input.noticeKey)
         XCTAssertTrue(session.textView.isEditable)
         // The end-of-document caret sits after the last separator, which no block owns:
         // Backspace there is refused with a notice, like typing there, never swallowed.

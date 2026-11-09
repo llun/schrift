@@ -133,10 +133,18 @@ final class DocumentEngine {
         guard nativeCommand == nil, !holdingDurableRemote, !isFlushing, composition == nil,
             revision == command.baseRevision, revision < UInt64.max
         else { throw DocumentEngineError.staleNativeCommand }
+        guard case .replace(let range, let replacement) = command.kind else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        // An empty text-capable element has no XmlText yet; the writer creates
+        // one on the first insertion. An element with inline nodes is not empty
+        // and stays refused.
         guard builder.index.isCanonical, let entry = builder.index.entries[command.blockID],
-            entry.isSimpleText, entry.isProjectable, let text = entry.textType,
-            !YBlockProjection.projectBlock(entry.containerItem).fidelity.isOpaque,
-            !command.replacement.unicodeScalars.contains(where: {
+            entry.isProjectable, !YBlockProjection.projectBlock(entry.containerItem).fidelity.isOpaque,
+            entry.isSimpleContainer, let element = entry.element,
+            case .xmlElement(let node)? = element.typeRef, BlockNoteWriter.propSchemas[node] != nil,
+            entry.isSimpleText || element.length == 0,
+            !replacement.unicodeScalars.contains(where: {
                 CharacterSet.newlines.contains($0) || $0.value == 0xfffc
             })
         else { throw DocumentEngineError.unsupportedNativeInput }
@@ -147,15 +155,15 @@ final class DocumentEngine {
             return offset == 0 || offset == units.count
                 || !(0xd800...0xdbff).contains(units[offset - 1]) || !(0xdc00...0xdfff).contains(units[offset])
         }
-        guard text.length == UInt(units.count), validBoundary(command.range.lowerBound),
-            validBoundary(command.range.upperBound)
+        guard entry.textType.map({ $0.length == UInt(units.count) }) ?? units.isEmpty,
+            validBoundary(range.lowerBound), validBoundary(range.upperBound)
         else { throw DocumentEngineError.unsupportedNativeInput }
         nativeCommand = command
         nativeEmission = 0
         do {
             let update = try writer.replaceText(
-                in: target, range: NSRange(location: command.range.lowerBound, length: command.range.count),
-                with: command.replacement)
+                in: target, range: NSRange(location: range.lowerBound, length: range.count),
+                with: replacement)
             unconfirmedNativeUpdate = update
             try persist(update)
             revision += 1
@@ -171,6 +179,126 @@ final class DocumentEngine {
             buffered = []
             throw error
         }
+    }
+
+    /// One durable structural command: Return or boundary Backspace. The same
+    /// journal-before-publication barrier as `replaceText`: the writer's
+    /// incremental bytes are persisted before the surface sees the patch, and
+    /// the command's own echo is stamped so the surface reconciles once (and
+    /// the durable owner's unjournaled-transaction guard does not fire).
+    ///
+    /// The keyboard-level choices follow BlockNote 0.56 before its block
+    /// commands run (see `BlockNoteWriter`): Return on an empty list item
+    /// resets it to a paragraph in place; Backspace at the start of a heading
+    /// or list item resets it to a paragraph; only a paragraph joins the block
+    /// above. Every refusal is validated before `nativeCommand` is set, so an
+    /// unsupported shape (opaque, placeholder, inline nodes, nested children,
+    /// code, the first block) throws `.unsupportedNativeInput` and never
+    /// freezes the engine. Returns the caret the surface should place.
+    @discardableResult
+    func applyStructural(
+        _ command: NativeEditCommand, persist: (Data) throws -> Void
+    ) throws -> EditorPosition {
+        try requireCompositionBoundary()
+        try requireEditableBlock(command.blockID)
+        guard nativeCommand == nil, !holdingDurableRemote, !isFlushing, composition == nil,
+            revision == command.baseRevision, revision < UInt64.max
+        else { throw DocumentEngineError.staleNativeCommand }
+        let (node, units) = try structuralTarget(command.blockID)
+        let write: () throws -> Data
+        // Resolved after the write, against the post-write index.
+        let caret: () -> EditorPosition
+        func start(_ id: String) -> EditorPosition { EditorPosition(blockID: id, offset: 0, assoc: -1) }
+        switch command.kind {
+        case .replace:
+            throw DocumentEngineError.unsupportedNativeInput
+        case .split(let offset, let newID):
+            guard !newID.isEmpty, builder.index.entries[newID] == nil, offset >= 0, offset <= units.count,
+                offset == 0 || offset == units.count || !(0xd800...0xdbff).contains(units[offset - 1])
+                    || !(0xdc00...0xdfff).contains(units[offset])
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            if Self.listItemNodes.contains(node), units.isEmpty {
+                // No block is created, so `newID` stays unused: one model id.
+                write = { try self.writer.setBlockType(block: command.blockID, to: "paragraph") }
+                caret = { start(command.blockID) }
+            } else {
+                write = { try self.writer.splitBlock(block: command.blockID, at: offset, newID: newID) }
+                // At the start of non-empty text the writer inserts the empty
+                // block above, so the caret stays with the text, under the old id.
+                caret = { start(offset == 0 && !units.isEmpty ? command.blockID : newID) }
+            }
+        case .join:
+            if node != "paragraph" {
+                write = { try self.writer.setBlockType(block: command.blockID, to: "paragraph") }
+                caret = { start(command.blockID) }
+                break
+            }
+            guard let position = builder.index.position[command.blockID], position > 0 else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            let previousID = builder.index.order[position - 1]
+            // The destination is written too: it must be typeable and unlocked.
+            try requireEditableBlock(previousID)
+            let aboveLength = try structuralTarget(previousID).units.count
+            write = { try self.writer.joinBlocks(block: command.blockID) }
+            // An empty block above with the same type and props is removed
+            // instead and the source keeps its id: the caret is its start.
+            caret = {
+                self.builder.index.entries[previousID] != nil
+                    ? EditorPosition(blockID: previousID, offset: aboveLength, assoc: -1) : start(command.blockID)
+            }
+        }
+        nativeCommand = command
+        nativeEmission = 0
+        do {
+            let update = try write()
+            let position = caret()
+            unconfirmedNativeUpdate = update
+            try persist(update)
+            revision += 1
+            unconfirmedNativeUpdate = nil
+            nativeCommand = nil
+            flush()
+            return position
+        } catch {
+            nativeCommand = nil
+            // The writer validates before its transaction, and every transaction
+            // stamps an emission: a writer refusal with none wrote nothing (for
+            // example a malformed or duplicate id elsewhere that `find` walks).
+            if nativeEmission == 0, error is BlockNoteWriter.Error {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            // Transactions have no rollback. Stop all authoring and delivery
+            // rather than retry against a graph whose bytes were not confirmed.
+            nativeWriteFailed = true
+            buffered = []
+            throw error
+        }
+    }
+
+    private static let listItemNodes: Set<String> = ["bulletListItem", "numberedListItem", "checkListItem"]
+
+    /// A block a structural command may address: a writable simple text, or an
+    /// empty text-capable element the writer gives an XmlText on first insert.
+    /// Inline nodes, nested children, opaque/scrubbed content and code stay refused.
+    private func structuralTarget(_ blockID: String) throws -> (node: String, units: [UInt16]) {
+        guard builder.index.isCanonical, let entry = builder.index.entries[blockID],
+            entry.isProjectable, !YBlockProjection.projectBlock(entry.containerItem).fidelity.isOpaque,
+            entry.isSimpleContainer, let element = entry.element,
+            case .xmlElement(let node)? = element.typeRef,
+            BlockNoteWriter.propSchemas[node] != nil, node != "codeBlock",
+            entry.isSimpleText || element.length == 0,
+            // `splitBlock` refuses a toggle heading (Enter depends on view state).
+            // It already projects opaque; refuse it here too, by the writer's rule.
+            node != "heading"
+                || YBlockProjection.props(of: element)?.contains(ProjectedProp(key: "isToggleable", value: .bool(true)))
+                    == false
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let units = entry.runs.flatMap { Array($0.text.utf16) }
+        guard entry.textType.map({ $0.length == UInt(units.count) }) ?? units.isEmpty else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        return (node, units)
     }
 
     /// The owner applies remote bytes; the engine only holds delivery until

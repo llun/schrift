@@ -46,6 +46,16 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     }
 
     func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+        // Key input reaches `NativeTextView.insertText`, which never asks the
+        // delegate; this covers UIKit paths that do, so Return routes once.
+        if Self.isNewline(text), view?.isApplyingMarkedText != true {
+            guard range.length == 0 else {
+                noticeKey = .native_editor_input_unavailable
+                return false
+            }
+            _ = insertNewline()
+            return false
+        }
         if allowsUIKitChange(range, text) { return true }
         _ = replace(range: range, with: text)
         return false
@@ -106,6 +116,14 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     func textView(_ textView: UITextView, shouldChangeTextInRanges ranges: [NSValue], replacementText text: String)
         -> Bool
     {
+        if Self.isNewline(text), view?.isApplyingMarkedText != true {
+            guard ranges.count == 1, let range = ranges.first?.rangeValue, range.length == 0 else {
+                noticeKey = .native_editor_input_unavailable
+                return false
+            }
+            _ = insertNewline()
+            return false
+        }
         if ranges.count == 1, let range = ranges.first?.rangeValue, allowsUIKitChange(range, text) { return true }
         guard ranges.count == 1, let range = ranges.first?.rangeValue else {
             noticeKey = .native_editor_input_unavailable
@@ -134,6 +152,14 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // The composition owns input until it reconciles: UIKit's offsets are
         // stale and a second command would race the commit.
         guard view.markedTextRange == nil, !composition.isActive else { return false }
+        // The software keyboard deletes the separator before a block start
+        // through the delegate or UITextInput `replace`, not `deleteBackward`:
+        // it is the same boundary Backspace.
+        if text.isEmpty, range.length == 1, view.selectedRange == NSRange(location: NSMaxRange(range), length: 0),
+            isBlockStart(NSMaxRange(range))
+        {
+            return deleteBackwardAtBlockStart()
+        }
         // Subtraction, rather than NSMaxRange, also rejects overflowing ranges.
         guard range.location >= 0, range.length >= 0, range.location <= surface.storage.length,
             range.length <= surface.storage.length - range.location,
@@ -164,6 +190,70 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             }
             return false
         }
+    }
+
+    /// Return: one durable structural command at the caret. While text is
+    /// marked, Return commits the composition (PR03) and never splits it.
+    @discardableResult
+    func insertNewline() -> Bool {
+        directInsertion = nil
+        guard let view, view.isEditable, !engine.nativeWriteFailed, !engine.isDetached else { return false }
+        if composition.isActive {
+            view.dropMarkedText()
+            return commitComposition()
+        }
+        let selection = view.selectedRange
+        guard view.markedTextRange == nil, selection.length == 0,
+            let entry = surface.rangeIndex.entry(atUTF16: selection.location),
+            let position = surface.rangeIndex.position(for: entry.blockID),
+            selection.location <= NSMaxRange(entry.textRange),
+            !AttributedDocumentProjection.isPlaceholder(surface.blocks[position])
+        else {
+            noticeKey = .native_editor_input_unavailable
+            return false
+        }
+        let offset = selection.location - entry.textRange.location
+        return applyStructural(entry.blockID, .split(offset: offset, newID: UUID().uuidString), quiet: false)
+    }
+
+    /// Backspace at a block's start: the engine joins a paragraph into the
+    /// block above, or resets a heading or list item to a paragraph. The first
+    /// paragraph and a block above that is opaque, a placeholder or not
+    /// writable text stay a quiet no-op.
+    @discardableResult
+    func deleteBackwardAtBlockStart() -> Bool {
+        directInsertion = nil
+        guard let view, view.isEditable, !engine.nativeWriteFailed, !engine.isDetached,
+            view.markedTextRange == nil, !composition.isActive, view.selectedRange.length == 0,
+            isBlockStart(view.selectedRange.location),
+            let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location)
+        else { return false }
+        return applyStructural(entry.blockID, .join, quiet: true)
+    }
+
+    private func applyStructural(_ blockID: String, _ kind: NativeEditCommand.Kind, quiet: Bool) -> Bool {
+        guard let view else { return false }
+        let command = NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: blockID, kind: kind)
+        do {
+            let caret = try engine.applyStructural(command) { try persist(command, $0) }
+            if let entry = surface.rangeIndex.entry(for: caret.blockID) {
+                view.selectedRange = NSRange(
+                    location: entry.textRange.location + min(caret.offset, entry.textRange.length), length: 0)
+            }
+            noticeKey = nil
+            return true
+        } catch {
+            if engine.nativeWriteFailed {
+                stopAfterStorageFailure()
+            } else if !quiet || error as? DocumentEngineError != .unsupportedNativeInput {
+                noticeKey = .native_editor_input_unavailable
+            }
+            return false
+        }
+    }
+
+    private static func isNewline(_ text: String) -> Bool {
+        text == "\n" || text == "\r"
     }
 
     /// The end-of-document boundary has no owner, so it is never a block start.

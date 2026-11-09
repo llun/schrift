@@ -651,7 +651,7 @@ support keeps the preserved read-only refusal. UIKit undo remains disabled. A fa
 append freezes the unsafe replica and retains any returned unconfirmed update in memory;
 the accepted display and earlier durable journal remain intact.
 The isolated native host's `--native-typing` fixture enables this component against
-disposable journal files; a UI test exercises keyboard input and Return refusal.
+disposable journal files; a UI test exercises keyboard input and a Return split.
 Production launch arguments and default routing remain unchanged.
 
 **PR02a save and restore component checkpoint.** `ReplicaSaveAdapter` captures
@@ -684,8 +684,8 @@ is re-stamped from the current raw revision during replay; an incompatible one i
 refused, and a first capture projects its shadow from raw rather than trusting the
 caller. A durable session freezes on any unjournaled transaction (with the
 storage-failed notice) so the engine revision cannot drift from the manifest.
-Backspace at a block start is a quiet no-op until block joins exist (PR04); at the
-document end it is refused with a notice. Permanent migration/rollback ownership
+Backspace at a block start is structural (PR04a, below); at the document end it is
+refused with a notice. Permanent migration/rollback ownership
 and a total shadow for opaque documents remain open; production activation is below.
 
 **PR02 activation (slice B).** With the default-off switch on, `NativeEditorOpen`
@@ -756,6 +756,28 @@ selection or an opaque/placeholder target keeps the preserved read-only refusal
 (`native_editor_marked_unavailable`). Provisional text is persisted beside the journal
 for explicit recovery (see `docs/offline-and-sync.md`); the view offers orphaned and
 interrupted text with Insert at cursor, Copy and Discard, never inserting it by itself.
+
+**PR04a Return and boundary Backspace.** Return at a caret and Backspace at a block
+start are one `NativeEditCommand` each (`.split(offset:newID:)`, `.join`) through
+`DocumentEngine.applyStructural(_:persist:)`: the same journal-before-publication
+barrier, stamped echo and unjournaled-transaction exemption as typing. The keyboard
+choices BlockNote 0.56 makes before its block commands are made here too: Return
+splits through the writer's `splitBlock` (a heading's new block is a paragraph, a list
+item's the same kind, default props, the new id minted once by the coordinator); Return
+in an empty list item resets it to a paragraph in place, so no id is minted into the
+model; Backspace at a heading or list item start resets it to a paragraph; only a
+paragraph joins the block above through `joinBlocks`. The caret goes to the start of
+the lower block (the old id at offset 0 of non-empty text, where the writer inserts the
+empty block above) or the join point. Opaque, placeholder, code, nested and inline-node
+blocks are refused before mutation: Return with a notice, Backspace as a quiet no-op,
+as is Backspace at the first paragraph. `NativeTextView.insertText` routes key-input
+Return once, and the delegate covers UIKit paths that ask it. The software keyboard
+deletes at a block start by replacing the separator before the caret rather than calling
+`deleteBackward`; the command path treats that exact shape as the same Backspace. With text marked, Return
+commits the composition and never splits it. Patches reconcile slices (`.text`,
+`.insert`, `.remove`), never the whole storage, so the scroll offset holds. Quote blocks
+are not writer-supported and stay refused, like typing in them. Multi-block selection,
+paste and dictation across blocks are PR04b.
 
 **Selection.** `setSelection(EditorSelection?)` captures directed anchor/head
 endpoints as `YRelativePosition`s. Each `EditorPosition` holds a block id,
