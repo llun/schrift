@@ -1,0 +1,110 @@
+Schrift/Features/Editor/Engine/PatchBuilder.swift
+  s_dc239db0cc1c9d::t_82cfead9eabb0d 126,217
+  s_dc239db0cc1c9d::t_25338b629d0fc3 270-271,281-287,311-317,320,331-333,335-339,346
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_dc239db0cc1c9d::t_89d3000de94a3e 345-359
+Schrift/Core/Localization/Strings+pt.swift
+  s_dc239db0cc1c9d::t_89d3000de94a3e 355-369
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_dc239db0cc1c9d::t_82cfead9eabb0d 99,136,167-168,294,300-301,304,307,311,317,320-322,324-327,329,681
+  s_dc239db0cc1c9d::t_80e3413f3387a7 310
+  s_dc239db0cc1c9d::t_7f3f579463bc96 295-299,302-303,305-306,308-309,312-316,318-319,323,328,361-370
+  s_dc239db0cc1c9d::t_7102e3686b9313 149-150
+  s_dc239db0cc1c9d::t_59296bfa28299d 678-679
+  s_dc239db0cc1c9d::t_516623a6a80bd2 371
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  s_dc239db0cc1c9d::t_82cfead9eabb0d 54-57,63,172
+  s_dc239db0cc1c9d::t_59296bfa28299d 219-220,362-363
+  s_dc239db0cc1c9d::t_64b40a396b35f4 25-31,170,175-176,178,218,223,301-304,308-310
+  s_dc239db0cc1c9d::t_4438550a505070 328-361,364-367,369-479
+  s_dc239db0cc1c9d::t_d4bbdef2ba2954 368
+Schrift/Features/Editor/Native/AttributedDocumentProjection.swift
+  s_dc239db0cc1c9d::t_82cfead9eabb0d 73-77,90-91,93-94,96-104,107-108,111-118,124-126,128,130-132,134,146
+  s_dc239db0cc1c9d::t_e7abb32888b535 86-89,92,95,105-106,109-110,119-123,127,129,133,135-145
+  s_dc239db0cc1c9d::t_31696fd419d14c 147
+Schrift/Core/Localization/Strings+de.swift
+  s_dc239db0cc1c9d::t_89d3000de94a3e 359-373
+Schrift/Features/Editor/Engine/BlockIndex.swift
+  s_dc239db0cc1c9d::t_82cfead9eabb0d 231
+  s_dc239db0cc1c9d::t_4d2d02f47dc4f0 33-35,232-233
+Schrift/Core/Localization/Strings+it.swift
+  s_dc239db0cc1c9d::t_89d3000de94a3e 355-369
+Schrift/Features/Editor/Native/NativeEditorView.swift
+  s_dc239db0cc1c9d::t_9a16e9117a7c07 18,63-65,68-86,137-223
+  s_dc239db0cc1c9d::t_945dc38a616055 224-225
+Schrift/Features/Editor/Native/NativeFormattingCommands.swift
+  s_dc239db0cc1c9d::t_82cfead9eabb0d 1-2,15,17,21-27,38-39,45-51,54,63-65,79-80,118-119,138,148
+  s_dc239db0cc1c9d::t_0ac25892af7e53 3-14,16,18-20,28-34,36-37,40-44,52-53,55-62,66-78,81-117,120-137,139-147
+  s_dc239db0cc1c9d::t_0fe90d6060c461 35
+SchriftTests/Features/Editor/Native/NativeFormattingTests.swift
+  s_dc239db0cc1c9d::t_609910d5f090b7 98
+  s_dc239db0cc1c9d::t_59296bfa28299d 115-116
+  s_dc239db0cc1c9d::t_57f8be4f00e538 339
+  s_dc239db0cc1c9d::t_8689971ea4bca3 1-64,66-97,99-107,109-114,117-139,142-314,317-334,337-338,341-405
+  s_dc239db0cc1c9d::t_900bee1535dda5 65,108,140-141,315-316,335-336,340
+AGENTS.md
+  s_dc239db0cc1c9d::t_01d9384b9a7f98 2308-2343,2470-2471,2493-2494
+Schrift/Features/Editor/Native/NativeEditCommand.swift
+  s_dc239db0cc1c9d::t_82cfead9eabb0d 5-6,9,12,23-25,41-44,47,51,54,56
+  s_dc239db0cc1c9d::t_7f3f579463bc96 10-11
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_dc239db0cc1c9d::t_44ce937c22f944 46-48,50
+  s_dc239db0cc1c9d::t_82cfead9eabb0d 36,49
+Schrift/Core/Localization/Strings+es.swift
+  s_dc239db0cc1c9d::t_89d3000de94a3e 359-373
+SchriftUITests/Native/NativeEditorUITests.swift
+  s_dc239db0cc1c9d::t_3c8f303d1551ba 114-142
+docs/architecture.md
+  s_dc239db0cc1c9d::t_01d9384b9a7f98 821-839,958-959
+Schrift/Core/Yjs/BlockNoteWriter.swift
+  s_dc239db0cc1c9d::t_82cfead9eabb0d 120-128
+  s_dc239db0cc1c9d::t_240a2e4ee57395 146-152
+Schrift/Core/Localization/Strings+th.swift
+  s_dc239db0cc1c9d::t_89d3000de94a3e 347-361
+SchriftTests/Features/Editor/Engine/DocumentEngineNarrowedRuleTests.swift
+  s_dc239db0cc1c9d::t_59296bfa28299d 311-313
+  s_dc239db0cc1c9d::t_38c69d80dab7e5 291,293,306-310,314,316-317
+Schrift/Core/Localization/Strings+sl.swift
+  s_dc239db0cc1c9d::t_89d3000de94a3e 368-382
+Schrift/Core/Localization/Strings+en.swift
+  s_dc239db0cc1c9d::t_89d3000de94a3e 363-377
+Schrift/Core/Yjs/YBlockProjection.swift
+  s_dc239db0cc1c9d::t_baf951b89ecccb 145-153,169-170,182-185,198-200,260
+  s_dc239db0cc1c9d::t_5d0c5b6092039d 460
+Schrift/Core/Localization/Strings+fr.swift
+  s_dc239db0cc1c9d::t_89d3000de94a3e 356-370
+Schrift/Core/Localization/Strings+nl.swift
+  s_dc239db0cc1c9d::t_89d3000de94a3e 355-369
+SchriftTests/Features/Editor/Engine/DocumentEngineTestCase.swift
+  s_dc239db0cc1c9d::t_38c69d80dab7e5 76,78
+Schrift/Features/Editor/Engine/EditorSurface.swift
+  s_dc239db0cc1c9d::t_82cfead9eabb0d 195
+SchriftTests/Core/Yjs/NativeMarkOracleTests.swift
+  s_dc239db0cc1c9d::t_bf5df70c78e5cd 16,23,32,43,47
+  s_dc239db0cc1c9d::t_c91353827c1723 50-51
+  s_dc239db0cc1c9d::t_ddb435b87fb2f5 17,22
+  s_dc239db0cc1c9d::t_cd7b83ba618fd0 18-21,33-34,41,57-59
+  s_dc239db0cc1c9d::t_3e183f4ea5b3c8 1-15,24-31,35-40,42,44-46,48-49,52-56,60-76
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_dc239db0cc1c9d::t_89d3000de94a3e 345-359
+Schrift/Core/Localization/L10nKey.swift
+  s_dc239db0cc1c9d::t_89d3000de94a3e 439-453
+SchriftTests/Features/Editor/Native/NativeTypingTests.swift
+  s_dc239db0cc1c9d::t_38c69d80dab7e5 302-305,312-317
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a1908574d3a7ae2ecd18d2b691281c5c007ec6d8",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
