@@ -205,9 +205,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         view.selectedRange = NSRange(location: visibleLocation(range.location, forward: forward), length: 0)
     }
 
-    /// After a fold or a restored selection: an endpoint in folded content
-    /// moves back to the end of the visible block before it (the toggle's
-    /// title), and the engine's selection follows.
+    /// After a fold or a restored selection: a start inside folded content
+    /// moves forward to the end of its hidden run, an end moves back to the
+    /// run's start, and a caret (or a selection within one run) collapses to
+    /// the end of the toggle's title. The engine's selection follows.
     ///
     /// A selection is trimmed to visible content, never grown over the fold:
     /// a start in a folded run moves forward to its end, an end backward to
