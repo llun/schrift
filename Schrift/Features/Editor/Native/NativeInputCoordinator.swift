@@ -62,7 +62,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         super.init()
         surface.onPatchApplied = { [weak self] patch in
             self?.selection.restore(after: patch)
+            // A restore may land in content this patch folded away.
+            self?.keepSelectionVisible()
             self?.refreshSelectionMarks()
+        }
+        // A fold sends no selection change; the caret must not stay in what it hid.
+        let relayout = surface.onFoldChange
+        surface.onFoldChange = { [weak self] in
+            relayout?()
+            self?.keepSelectionVisible()
         }
         inputLanguage = { [weak view] in view?.textInputMode?.primaryLanguage }
         view.delegate = self
@@ -102,7 +110,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             let entry = surface.rangeIndex.entry(atUTF16: range.location),
             let position = surface.rangeIndex.position(for: entry.blockID),
             range.location >= entry.textRange.location, NSMaxRange(range) <= NSMaxRange(entry.textRange),
-            !AttributedDocumentProjection.isPlaceholder(surface.blocks[position])
+            !AttributedDocumentProjection.isPlaceholder(surface.blocks[position]),
+            // UIKit must never write into folded content either (PR06b).
+            !surface.isHidden(position: position)
         else { return false }
         directInsertion = (range, text)
         return true
@@ -185,18 +195,39 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         refreshSelectionMarks()
     }
 
-    /// A caret never rests in folded content: it moves past the folded run,
-    /// forward when it moved forward, else back to the end of the visible
-    /// block before (the toggle's title).
+    /// A caret UIKit placed never rests in folded content: it moves past the
+    /// folded run when it moved forward, else (or with no previous caret) back
+    /// to the end of the visible block before it, the toggle's title.
     private func revealCaret(in view: NativeTextView) {
         let range = view.selectedRange
-        guard range.length == 0, surface.isHidden(atUTF16: range.location),
-            let run = surface.hiddenRanges.first(where: { NSLocationInRange(range.location, $0) })
-        else { return }
-        let forward = range.location >= (lastCaret ?? 0)
-        let after = NSMaxRange(run) < surface.storage.length ? NSMaxRange(run) : nil
-        let target = forward ? after ?? max(0, run.location - 1) : max(0, run.location - 1)
-        view.selectedRange = NSRange(location: target, length: 0)
+        guard range.length == 0, surface.isHidden(atUTF16: range.location) else { return }
+        let forward = lastCaret.map { range.location > $0 } ?? false
+        view.selectedRange = NSRange(location: visibleLocation(range.location, forward: forward), length: 0)
+    }
+
+    /// After a fold or a restored selection: an endpoint in folded content
+    /// moves back to the end of the visible block before it (the toggle's
+    /// title), and the engine's selection follows.
+    private func keepSelectionVisible() {
+        guard let view, view.markedTextRange == nil, !composition.isActive else { return }
+        let range = view.selectedRange
+        let lower = visibleLocation(range.location, forward: false)
+        let upper = visibleLocation(NSMaxRange(range), forward: false)
+        guard lower != range.location || upper != NSMaxRange(range) else { return }
+        let visible = NSRange(location: lower, length: max(0, upper - lower))
+        lastCaret = visible.location
+        selection.place(visible)
+    }
+
+    /// `location` itself when it is shown; otherwise the start of the first
+    /// visible block after its folded run (`forward`, when there is one) or the
+    /// text end of the visible block before it.
+    private func visibleLocation(_ location: Int, forward: Bool) -> Int {
+        guard surface.isHidden(atUTF16: location),
+            let run = surface.hiddenRanges.first(where: { NSLocationInRange(location, $0) })
+        else { return location }
+        if forward, NSMaxRange(run) < surface.storage.length { return NSMaxRange(run) }
+        return max(0, run.location - 1)
     }
 
     /// `marks`, when given, is the complete mark set the text carries (a link

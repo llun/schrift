@@ -644,12 +644,13 @@ extension YBlockProjection {
                 continue
             }
             if prop.key == "isToggleable" {
-                // `.bool(true)` already returned `.opaque` above (classic); only
-                // `.bool(false)` is modeled here — the app's own encoder emits
-                // `.bool(false)` explicitly, and absence never reaches this loop.
-                // Any other value type is data a markdown write-back can't
-                // honor (there is no bool to round-trip), so it's lossy rather
-                // than silently falling through as modeled.
+                // Either bool is modeled here: classically `.bool(true)` already
+                // returned `.opaque` above, so only `.bool(false)` (which the
+                // app's own encoder emits explicitly) reaches this loop; under
+                // `nativeMarks` a toggle heading's `.bool(true)` is modeled too
+                // (PR06b). Absence never reaches this loop. Any other value
+                // type is data a write-back can't honor (there is no bool to
+                // round-trip), so it's lossy rather than silently modeled.
                 if case .bool = prop.value {
                 } else {
                     reasons.append("prop:isToggleable")

@@ -9,6 +9,7 @@ enum NativeClipboard {
     /// The selected text of every block in the range, one line per block. A
     /// range from a block's end to the next block's start is one line break.
     /// Preserved placeholders contribute nothing: their label is not content.
+    /// Neither does a folded toggle's hidden content (PR06b): copy is what shows.
     /// Nil when nothing copyable is selected, so the pasteboard is left alone.
     @MainActor
     static func plainText(for range: NSRange, surface: NativeTextSurface) -> String? {
@@ -19,7 +20,9 @@ enum NativeClipboard {
         var lines: [String] = []
         for position in start.position...end.position {
             let block = surface.blocks[position]
-            guard !AttributedDocumentProjection.isPlaceholder(block) else { continue }
+            guard !AttributedDocumentProjection.isPlaceholder(block), !surface.isHidden(position: position) else {
+                continue
+            }
             // The model's text, not the display: a code block's line breaks are "\n".
             let text = block.runs.map(\.text).joined() as NSString
             let lower = position == start.position ? start.offset : 0

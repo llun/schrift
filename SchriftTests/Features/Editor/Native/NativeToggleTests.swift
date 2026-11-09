@@ -429,6 +429,104 @@ final class NativeToggleTests: NativeEditingTestCase {
         try assertConsistent(harness, localCommands: 4)
     }
 
+    // MARK: - Folded content and every input path (review round 1)
+
+    /// A caret that is in folded content anyway (placed by code, not UIKit's
+    /// delegate) edits nothing: a composing keyboard's direct keystroke and
+    /// marked text are refused like typing (dictation's final result is
+    /// `insertText`), paste, Tab and UITextInput `replace`.
+    func testNoInputPathWritesIntoFoldedContent() throws {
+        let harness = try makeHarness(seed())
+        defer { harness.close() }
+        let session = harness.session
+        let view = harness.view
+        harness.input.inputLanguage = { "ja" }
+        let hidden = NSRange(location: try location(session, "c1", 2), length: 0)
+        // Strands the caret without the delegate's reveal, as a path that
+        // skipped it would.
+        func strand() {
+            let delegate = view.delegate
+            view.delegate = nil
+            view.selectedRange = hidden
+            view.delegate = delegate
+            XCTAssertEqual(view.selectedRange, hidden)
+        }
+        XCTAssertTrue(session.surface.isHidden(atUTF16: hidden.location))
+        strand()
+        XCTAssertFalse(harness.input.textView(view, shouldChangeTextIn: hidden, replacementText: "a"))
+        view.insertText("x")
+        harness.pasteboard.string = "pasted"
+        strand()
+        view.paste(nil)
+        strand()
+        let position = try XCTUnwrap(view.position(from: view.beginningOfDocument, offset: hidden.location))
+        view.replace(try XCTUnwrap(view.textRange(from: position, to: position)), withText: "r")
+        strand()
+        view.insertText("\t")
+        XCTAssertEqual(texts(session), ["Intro", "Title", "Hidden one", "Hidden task", "Inner", "After"])
+        XCTAssertEqual(try block(session, "c1").depth, 1)
+        try assertConsistent(harness, localCommands: 0)
+
+        strand()
+        view.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+        XCTAssertFalse(harness.input.composition.isActive, "no composition starts in folded content")
+        view.unmarkText()
+        XCTAssertEqual(texts(session), ["Intro", "Title", "Hidden one", "Hidden task", "Inner", "After"])
+        XCTAssertTrue(harness.log.commands.isEmpty)
+        XCTAssertEqual(session.engine.revision, 0)
+    }
+
+    /// Folding the toggle the caret is in, or a peer folding it away (a
+    /// parent turned into a toggle), moves the caret to the end of the
+    /// visible title, so typing goes on there.
+    func testFoldingMovesTheCaretOutOfTheHiddenChildren() throws {
+        let harness = try makeHarness(seed())
+        defer { harness.close() }
+        let session = harness.session
+        // With no caret before it, a caret UIKit puts in folded content goes
+        // back to the title, not forward.
+        try caret(harness, "c1", 3)
+        XCTAssertEqual(harness.view.selectedRange, NSRange(location: try location(session, "t", 5), length: 0))
+
+        session.surface.setExpanded("t", true)
+        try caret(harness, "c1", 3)
+        session.surface.setExpanded("t", false)
+        XCTAssertEqual(harness.view.selectedRange, NSRange(location: try location(session, "t", 5), length: 0))
+        XCTAssertEqual(try session.engine.currentSelection()?.head.blockID, "t")
+        harness.view.insertText("!")
+        XCTAssertEqual(text(of: try block(session, "t")), "Title!")
+        try assertConsistent(harness, localCommands: 1)
+
+        var parent = paragraph("h", "Parent")
+        parent.children = [paragraph("k", "Kid")]
+        let peered = try makeHarness([paragraph("a", "A"), parent])
+        defer { peered.close() }
+        try caret(peered, "k", 2)
+        let peer = try makeDoc([paragraph("a", "A"), parent], clientID: 2)
+        defer { peer.destroy() }
+        let writer = BlockNoteWriter(doc: peer, schemas: BlockNoteWriter.nativePropSchemas)
+        try peered.session.integrateServerState(try writer.setBlockType(block: "h", to: "toggleListItem"))
+        XCTAssertTrue(peered.session.surface.isHidden(blockID: "k"))
+        XCTAssertEqual(
+            peered.view.selectedRange, NSRange(location: try location(peered.session, "h", 6), length: 0))
+        peered.view.insertText("x")
+        XCTAssertEqual(text(of: try block(peered.session, "h")), "Parentx")
+        try assertConsistent(peered, localCommands: 1)
+    }
+
+    /// Copy is what shows: a folded toggle's children are left out.
+    func testCopySkipsFoldedContent() throws {
+        let harness = try makeHarness(seed())
+        defer { harness.close() }
+        try select(harness, from: ("intro", 2), to: ("after", 2))
+        harness.input.copySelection()
+        XCTAssertEqual(harness.pasteboard.string, "tro\nTitle\nAf")
+        harness.session.surface.setExpanded("t", true)
+        try select(harness, from: ("intro", 2), to: ("after", 2))
+        harness.input.copySelection()
+        XCTAssertEqual(harness.pasteboard.string, "tro\nTitle\nHidden one\nHidden task\nInner\nAf")
+    }
+
     // MARK: - Relaunch
 
     func testRelaunchReplaysTogglesAndFoldsThemAgain() throws {
