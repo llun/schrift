@@ -317,6 +317,47 @@ final class NativeStructuralTests: DocumentEngineTestCase {
 
     /// A toggle heading projects opaque and `splitBlock` refuses it: Return is
     /// refused before the command is armed, through the view and the engine.
+    /// PR06a, BlockNote 0.56's Backspace order at a nested block's start
+    /// (KeyboardShortcutsExtension.ts): reset a non-paragraph, then merge into
+    /// the block above (the previous sibling's last descendant, or a first
+    /// child's parent, whose group its children join), outdenting only when
+    /// that merge cannot happen (`NativeIndentTests`). One command each.
+    func testBackspaceAtANestedStartResetsThenMergesIntoTheBlockAbove() throws {
+        var x = listItem("bulletListItem", "x", "Ex")
+        x.children = [paragraph("x1", "Deep")]
+        var a = listItem("bulletListItem", "a", "Alpha")
+        a.children = [x, listItem("bulletListItem", "y", "Why")]
+        let harness = try makeHarness([a, paragraph("tail", "Tail")])
+        defer { harness.close() }
+        let session = harness.session
+        try place(session, "y", 0)
+        session.textView.deleteBackward()
+        XCTAssertEqual(try block(session, "y").node, "paragraph")
+        XCTAssertEqual(try block(session, "y").depth, 1)
+        try assertConsistent(harness, localCommands: 1)
+        // Into the previous sibling's last descendant, not an outdent.
+        session.textView.deleteBackward()
+        XCTAssertEqual(session.surface.blocks.map(\.id), ["a", "x", "x1", "tail"])
+        XCTAssertEqual(text(of: try block(session, "x1")), "DeepWhy")
+        XCTAssertEqual(session.textView.selectedRange.location, try caret(session, "x1", 4))
+        try assertConsistent(harness, localCommands: 2)
+        // A first child merges into its parent; its own child takes its place.
+        try place(session, "x", 0)
+        session.textView.deleteBackward()
+        session.textView.deleteBackward()
+        XCTAssertEqual(session.surface.blocks.map(\.id), ["a", "x1", "tail"])
+        XCTAssertEqual(text(of: try block(session, "a")), "AlphaEx")
+        XCTAssertEqual(try block(session, "x1").parentID, "a")
+        XCTAssertEqual(session.textView.selectedRange.location, try caret(session, "a", 5))
+        try assertConsistent(harness, localCommands: 4)
+        // A sole child without children takes the group with it.
+        try place(session, "x1", 0)
+        session.textView.deleteBackward()
+        XCTAssertEqual(session.surface.blocks.map { text(of: $0) }, ["AlphaExDeepWhy", "Tail"])
+        XCTAssertEqual(session.surface.blocks.map(\.depth), [0, 0])
+        try assertConsistent(harness, localCommands: 5)
+    }
+
     func testReturnInAToggleHeadingIsRefusedWithoutFreezing() throws {
         let toggle = BlockNoteBlock(
             node: "heading", props: Self.paragraphProps + [("level", .int(1)), ("isToggleable", .bool(true))],

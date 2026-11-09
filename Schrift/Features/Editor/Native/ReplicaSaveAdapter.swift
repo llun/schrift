@@ -97,7 +97,7 @@ final class ReplicaSaveAdapter {
         try doc.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
         for update in restored.updates { try doc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote) }
         guard doc.store.pendingStructs == nil, doc.store.pendingDs == nil else { throw ReplicaStoreError.corrupt }
-        guard let markdown = YBlockProjection.projectedMarkdown(YBlockProjection.project(doc)) else {
+        guard let markdown = NativeBlockProjection.markdownShadow(doc) else {
             throw ReplicaSaveError.unprojectableShadow
         }
         return markdown

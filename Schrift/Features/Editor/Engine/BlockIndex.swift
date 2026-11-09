@@ -6,11 +6,10 @@ import Foundation
 /// `XmlText`, and resolving it to its block is a walk up the parent chain, not
 /// a walk across the document.
 ///
-/// Only the root `blockGroup`'s containers are indexed, mirroring
-/// `YBlockProjection`: a block with nested children projects opaque, so its
-/// descendants are not blocks the engine can address. A change inside such a
-/// subtree resolves to the outermost container, which is the block the surface
-/// knows.
+/// Every block of the tree is indexed in preorder (PR06a), mirroring
+/// `NativeBlockProjection`: a container whose children are its content element
+/// and one nested `blockGroup` is indexed, then its group's blocks one level
+/// deeper. A change resolves to the innermost container on its parent chain.
 struct BlockIndex {
     struct Entry {
         let id: String
@@ -21,9 +20,9 @@ struct BlockIndex {
         /// inline nodes, several text children, or a leaf — shapes the `.text`
         /// fast path must not address.
         let textType: YType?
-        /// True when the container's only countable child is its content
-        /// element — no nested `blockGroup`, no stray content — the one shape
-        /// `YBlockProjection` reads props and runs from.
+        /// True when the container's countable children are its content
+        /// element, optionally followed by one nested `blockGroup` — the
+        /// shapes `NativeBlockProjection` reads props and runs from.
         let isSimpleContainer: Bool
         /// True when the container is simple and the element's only countable
         /// child is an `XmlText`.
@@ -38,7 +37,19 @@ struct BlockIndex {
         /// The sole text's runs when the entry was built — the surface's copy,
         /// which a `.text` patch is checked against. `[]` unless `isSimpleText`.
         let runs: [InlineRun]
+        /// 0 for a root block, one more per nested group.
+        let depth: Int
+        /// The block whose nested group holds this one; nil at the root.
+        let parentID: String?
+        /// The `blockGroup` holding this container.
+        let group: YType
+        /// The container's own nested `blockGroup`, when it has children.
+        let nestedGroup: YType?
+        let handle: NativeBlockHandle
     }
+
+    /// One per index (one per engine): handles from another replica never match.
+    let generation = UUID()
 
     private(set) var entries: [String: Entry] = [:]
     /// Block ids in document order.
@@ -46,9 +57,7 @@ struct BlockIndex {
     /// Block id → its position in `order`, so a patch can iterate touched ids
     /// in document order without scanning the whole list.
     private(set) var position: [String: Int] = [:]
-    /// The ordered block ids the root `blockGroup` held when the index last saw
-    /// it. Nested groups are not tracked: a change inside one escalates to a
-    /// `.replaceBlock` of its top-level block, so there is nothing to diff.
+    /// The ordered block ids each `blockGroup` held when the index last saw it.
     private(set) var groupOrder: [ObjectIdentifier: [String]] = [:]
     /// The root group's item, so a replacement (same id, new object) is visible.
     private(set) var rootGroupItem: YItem?
@@ -92,19 +101,17 @@ struct BlockIndex {
         return item.parentType === root
     }
 
-    /// The block id a changed type belongs to: the outermost `blockContainer`
-    /// on its parent chain. `nil` for a change at the root or a group.
+    /// The block id a changed type belongs to: the innermost `blockContainer`
+    /// on its parent chain. `nil` for a change at the root or the root group.
     func blockID(for type: YType) -> String? {
         var current: YType? = type
-        var outermost: YType?
         while let candidate = current {
-            if candidate.typeRef == .xmlElement(nodeName: "blockContainer"), Self.blockID(of: candidate) != nil {
-                outermost = candidate
+            if candidate.typeRef == .xmlElement(nodeName: "blockContainer"), let id = Self.blockID(of: candidate) {
+                return id
             }
             current = candidate.item?.parentType
         }
-        guard let outermost else { return nil }
-        return Self.blockID(of: outermost)
+        return nil
     }
 
     /// The containers of a group, in list order, with their readable ids.
@@ -125,18 +132,12 @@ struct BlockIndex {
     /// Re-reads one block after a change. O(block), never O(document).
     mutating func refresh(_ id: String) {
         guard let entry = entries[id] else { return }
-        entries[id] = Self.entry(id: id, item: entry.containerItem)
-    }
-
-    /// Points an id at a new container item — a container replaced in place
-    /// keeps its id but is a different object, and the entry must follow it.
-    mutating func setContainer(_ id: String, item: YItem) {
-        entries[id] = Self.entry(id: id, item: item)
+        entries[id] = makeEntry(id: id, item: entry.containerItem, depth: entry.depth, parentID: entry.parentID)
     }
 
     /// Re-reads the whole index, including each block's text for
-    /// `isProjectable`. Only a root-group change or a reset pays for this: a
-    /// split/join/insert/remove is rare, a keystroke is not.
+    /// `isProjectable`. Only a group or container structure change or a reset
+    /// pays for this: a split/join/insert/remove/move is rare, a keystroke is not.
     mutating func rebuild() {
         entries = [:]
         order = []
@@ -151,30 +152,39 @@ struct BlockIndex {
             isCanonical = rootChildren.isEmpty
             return
         }
-        isCanonical = rootChildren.count == 1 && Self.isCanonical(group: group)
+        isCanonical = rootChildren.count == 1
         rootGroupItem = group.item
-        let containers = containers(in: group)
-        groupOrder[ObjectIdentifier(group)] = containers.map(\.id)
-        for (index, container) in containers.enumerated() {
-            entries[container.id] = Self.entry(id: container.id, item: container.item)
-            order.append(container.id)
-            position[container.id] = index
-        }
+        index(group, depth: 0, parentID: nil)
     }
 
-    mutating func setGroupOrder(_ group: YType, _ ids: [String]) {
-        groupOrder[ObjectIdentifier(group)] = ids
+    /// Preorder, with `NativeBlockProjection`'s descent rule and depth bound.
+    private mutating func index(_ group: YType, depth: Int, parentID: String?) {
+        if !Self.isCanonical(group: group) { isCanonical = false }
+        let containers = containers(in: group)
+        groupOrder[ObjectIdentifier(group)] = containers.map(\.id)
+        for container in containers {
+            guard entries[container.id] == nil else {
+                isCanonical = false
+                continue
+            }
+            let entry = makeEntry(id: container.id, item: container.item, depth: depth, parentID: parentID)
+            entries[container.id] = entry
+            position[container.id] = order.count
+            order.append(container.id)
+            if let nested = entry.nestedGroup { index(nested, depth: depth + 1, parentID: container.id) }
+        }
     }
 
     // MARK: - Reading the replica
 
     /// True when every countable child of `group` is a container with a
-    /// readable id, and no id repeats.
+    /// readable, non-empty id, and no id repeats in it. (`rebuild` also
+    /// refuses an id repeated across groups.)
     static func isCanonical(group: YType) -> Bool {
         var seen: Set<String> = []
         for child in countableChildren(of: group) {
             guard case .type(let type) = child.content, type.typeRef == .xmlElement(nodeName: "blockContainer"),
-                let id = blockID(of: type), seen.insert(id).inserted
+                let id = blockID(of: type), !id.isEmpty, seen.insert(id).inserted
             else { return false }
         }
         return true
@@ -190,28 +200,31 @@ struct BlockIndex {
         return nil
     }
 
-    private static func entry(id: String, item: YItem) -> Entry {
+    private func makeEntry(id: String, item: YItem, depth: Int, parentID: String?) -> Entry {
+        let handle = NativeBlockHandle(generation: generation, itemID: item.id, stringID: id)
+        let group = item.parentType ?? YType()
         guard case .type(let container) = item.content else {
             return Entry(
                 id: id, containerItem: item, container: YType(), element: nil, textType: nil,
-                isSimpleContainer: false, isSimpleText: false, isProjectable: false, runs: [])
+                isSimpleContainer: false, isSimpleText: false, isProjectable: false, runs: [], depth: depth,
+                parentID: parentID, group: group, nestedGroup: nil, handle: handle)
         }
         // Counted the way `YBlockProjection` counts children (countable items
-        // only), so the fast paths accept exactly the shapes it projects.
-        let containerChildren = countableChildren(of: container)
+        // only), so the fast paths accept exactly the shapes it projects. A
+        // block at the projection's depth bound with children is opaque there.
+        let containerChildren = Self.countableChildren(of: container)
+        let nestedGroup =
+            depth < NativeBlockProjection.maxDepth ? NativeBlockProjection.nestedGroup(of: container) : nil
         var element: YType?
-        for child in containerChildren {
-            if case .type(let type) = child.content, type.typeRef != .xmlElement(nodeName: "blockGroup"),
-                case .xmlElement = type.typeRef
-            {
-                element = type
-                break
-            }
+        if let first = containerChildren.first, case .type(let type) = first.content,
+            type.typeRef != .xmlElement(nodeName: "blockGroup"), case .xmlElement = type.typeRef
+        {
+            element = type
         }
-        let isSimpleContainer = containerChildren.count == 1 && element != nil
+        let isSimpleContainer = element != nil && (containerChildren.count == 1 || nestedGroup != nil)
         var textType: YType?
         if isSimpleContainer, let element {
-            let elementChildren = countableChildren(of: element)
+            let elementChildren = Self.countableChildren(of: element)
             if elementChildren.count == 1, case .type(let type) = elementChildren[0].content,
                 type.typeRef == .xmlText
             {
@@ -220,11 +233,12 @@ struct BlockIndex {
         }
         let isProjectable =
             isSimpleContainer && element.map { YBlockProjection.props(of: $0) != nil } == true
-            && textType.map(projectsAsText) != false
+            && textType.map(Self.projectsAsText) != false
         return Entry(
             id: id, containerItem: item, container: container, element: element, textType: textType,
             isSimpleContainer: isSimpleContainer, isSimpleText: textType != nil, isProjectable: isProjectable,
-            runs: isProjectable ? textType.flatMap(YBlockProjection.textRuns) ?? [] : [])
+            runs: isProjectable ? textType.flatMap(YBlockProjection.textRuns) ?? [] : [], depth: depth,
+            parentID: parentID, group: group, nestedGroup: nestedGroup, handle: handle)
     }
 
     /// True when the projection reads this text as runs unchanged: only strings

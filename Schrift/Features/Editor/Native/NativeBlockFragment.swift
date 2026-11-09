@@ -79,13 +79,20 @@ final class NativeBlockFragment: NSTextLayoutFragment {
     private func drawChrome(
         _ type: String, at fragmentOrigin: CGPoint, in context: CGContext, controls: NativeBlockControls
     ) {
-        // x from the text container's leading edge, y from the fragment's top.
-        let point = CGPoint(x: fragmentOrigin.x - layoutFragmentFrame.minX, y: fragmentOrigin.y)
+        // A nested block's chrome starts at its depth's indent (PR06a).
+        let inset =
+            CGFloat(attribute(.nativeDepth, as: Int.self) ?? 0)
+            * UIFontMetrics(forTextStyle: .body).scaledValue(
+                for: NativeBlockMetrics.listGutter, compatibleWith: controls.traits)
+        // x from the indent's leading edge, y from the fragment's top.
+        let point = CGPoint(x: fragmentOrigin.x - layoutFragmentFrame.minX + inset, y: fragmentOrigin.y)
         let lead = textLayoutManager?.textContainer?.lineFragmentPadding ?? 0
         let font: UIFont = attribute(.font) ?? UIFont.preferredFont(forTextStyle: .body)
         let style: NSParagraphStyle? = attribute(.paragraphStyle)
+        // The paragraph's own indent past its depth's.
+        let headIndent = (style?.headIndent ?? 0) - inset
         let text = textBounds
-        let width = containerWidth
+        let width = containerWidth - inset
         let padding = EditorBlockMetrics.decorationPadding
         func panel(_ rect: CGRect, _ color: UIColor) {
             context.setFillColor(color.cgColor)
@@ -98,7 +105,7 @@ final class NativeBlockFragment: NSTextLayoutFragment {
             guard let line = firstLineMetrics else { return }
             let diameter = max(4, (font.xHeight * 0.55).rounded())
             let center = CGPoint(
-                x: point.x + lead + (style?.headIndent ?? 0) / 2, y: point.y + line.baseline - font.xHeight / 2)
+                x: point.x + lead + headIndent / 2, y: point.y + line.baseline - font.xHeight / 2)
             context.setFillColor(controls.color(\.textPrimary).cgColor)
             context.fillEllipse(
                 in: CGRect(x: center.x - diameter / 2, y: center.y - diameter / 2, width: diameter, height: diameter))
@@ -108,7 +115,7 @@ final class NativeBlockFragment: NSTextLayoutFragment {
             let label = NSAttributedString(
                 string: "\(number).", attributes: [.font: digits, .foregroundColor: controls.color(\.textPrimary)])
             let size = label.size()
-            let right = lead + (style?.headIndent ?? 0) - EditorBlockMetrics.adornmentSpacing / 2
+            let right = lead + headIndent - EditorBlockMetrics.adornmentSpacing / 2
             label.draw(
                 at: CGPoint(x: point.x + max(0, right - size.width), y: point.y + line.baseline - digits.ascender))
         case "quote":

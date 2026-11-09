@@ -770,8 +770,8 @@ in an empty list item resets it to a paragraph in place, so no id is minted into
 model; Backspace at a heading or list item start resets it to a paragraph; only a
 paragraph joins the block above through `joinBlocks`. The caret goes to the start of
 the lower block (the old id at offset 0 of non-empty text, where the writer inserts the
-empty block above) or the join point. Opaque, placeholder, code, nested and inline-node
-blocks are refused before mutation: Return with a notice, Backspace as a quiet no-op,
+empty block above) or the join point. Opaque, placeholder, code and inline-node
+blocks (and, since PR06a, an unreadable or locked child a split or join would move) are refused before mutation: Return with a notice, Backspace as a quiet no-op,
 as is Backspace at the first paragraph. `NativeTextView.insertText` routes key-input
 Return once, and the delegate covers UIKit paths that ask it. The software keyboard
 deletes at a block start by replacing the separator before the caret rather than calling
@@ -785,8 +785,8 @@ that may span blocks, or text containing a line break, is one `NativeEditCommand
 (`.range(NativeRangeCommand)`: the first block's start offset, the end block and offset,
 plain replacement text and the coordinator-minted ids for the blocks its newlines create)
 through the same `applyStructural` barrier. The engine validates every block from the
-first to the last before arming: an opaque block, a placeholder, code, nested children,
-inline nodes or a toggle heading anywhere refuses the whole command with
+first to the last before arming: an opaque block, a placeholder, code, inline nodes, a
+toggle heading or a block outside the first block's group (PR06a) anywhere refuses the whole command with
 `native_editor_range_unavailable` and no write, never the freeze. The writer's
 `replaceRange` then deletes the span, joins the last block's tail onto the last line and
 inserts the text in one grouped transaction, which is ProseMirror's replace over a
@@ -849,6 +849,29 @@ validated `.props` command, BlockNote's same-type `updateBlock`, never a type ch
 slash-menu choice is one `.blockType` command that removes only the "/query" token before the
 caret (the paragraph's other text stays) and changes the type in one transaction. Code keeps its line breaks as source: Return and multi-line paste stay in
 the block, displayed as U+2028 so the block is one TextKit paragraph.
+
+**PR06a Tree projection, nested prose and indent/outdent.** `NativeBlockProjection` is the
+native read: the whole block tree in preorder, each block read exactly as the classic
+per-block projection reads it (`projectBlock(…, nestedChildren: true)`; the classic
+default keeps a block with children opaque for its own callers) plus `depth`, parent and a
+`NativeBlockHandle` (per-engine generation, integrated container id, string id as
+metadata). A missing or repeated id, or nesting past depth 64, makes that block an opaque
+placeholder standing for its subtree; opacity never spreads to an unknown block's
+children. `BlockIndex` indexes the same tree in preorder, so nested text keeps the `.text`
+fast path and nested attributes `.props`; a group membership or container child change
+rebuilds the index and diffs the preorder into `.remove`, anchored `.insert`s and
+`.replaceBlock` for a kept block whose container, depth or parent changed. Tab/Shift-Tab and
+the bar's Indent/Outdent are BlockNote's `nestBlock`/`unnestBlock` for one block, one
+validated `applyStructural` command each: the writer (`BlockNoteTreeCommands`) copies every
+moved block losslessly and deletes the original in one transaction (Yjs cannot reparent an
+integrated node), so ids survive but identity does not, and a peer's concurrent edit inside
+a moved block is lost as it is in BlockNote. Every moved block must be readable and unlocked
+and the deepest stays within 16 levels. Return in an empty nested block outdents it (an
+empty list item first becomes a paragraph); Backspace at a nested paragraph's start
+merges it into the block above (a first child into its parent), as BlockNote does, and
+outdents it only when that merge cannot happen. Each level indents one scaled list gutter and numbers per sibling run. The save
+shadow indents list nesting (`NativeBlockProjection.markdownShadow`), so a nested list stays
+typeable and savable.
 
 **Selection.** `setSelection(EditorSelection?)` captures directed anchor/head
 endpoints as `YRelativePosition`s. Each `EditorPosition` holds a block id,
@@ -957,21 +980,20 @@ ids already present/absent. `HeadlessSurface` never mutates on its own and
 therefore applies every patch and always equals the projection. There is no
 optimistic overlay.
 
-**`.text` has exactly one shape.** A block gets `.text` only when it has no
-nested children, its content element has exactly one child — an `XmlText` with
+**`.text` has exactly one shape.** A block at any depth gets `.text` only when its
+container holds its content element (and at most one nested group), that element
+has exactly one child — an `XmlText` with
 no inline nodes, so the projection's runs *are* that text — and the only change
 to it in this transaction is that text. Everything else touched in a block
-escalates to `.replaceBlock` of the top-level block, rebuilt from that block's
-projection: a nested block's text, a nested group's child list, a nested content
-element's attributes, a parent's text when it has children, several `XmlText`
-children (no sibling-offset math), a container replaced in place under the same
-id (the index tracks the container `YItem`, not just the id), or props and text
-changed together. `.text` and `.props` also need the block to have projected
+escalates to `.replaceBlock` of that block, rebuilt from its projection: several
+`XmlText` children (no sibling-offset math), a container replaced in place or
+moved under the same id (the index tracks the container `YItem`, depth and
+parent, not just the id), or props and text changed together. `.text` and `.props` also need the block to have projected
 as-is before the transaction and after it (readable props, a text of strings and
 marks with readable links; `BlockIndex.Entry.isProjectable`), because an
-opaque block's surface copy came from a `.replaceBlock`. Only
-the root `blockGroup` produces `.insert`/`.remove`; a
-reorder there is a `.remove` + `.insert`. A change to the fragment root, or a
+opaque block's surface copy came from a `.replaceBlock`. Any
+group's membership change produces `.insert`/`.remove` from the preorder diff; a
+reorder is a `.remove` + `.insert` of the moved span. A change to the fragment root, or a
 root group that is not the one the index recorded, a container's `id` changed
 in place, or any transaction while `BlockIndex.isCanonical` is false, is a
 `.reset` of the projected document.
@@ -984,11 +1006,11 @@ a keystroke visits one `XmlText`, folds that one text to check its deltas
 against the index's cached runs (`TextDelta.apply`; the index keeps one run
 list per simple block) and again when the entry refreshes, projects no block, and the emit loop
 iterates only the touched ids ordered by the index's position map — never
-`index.order`. Text and prop changes are O(touched blocks). A root-group change
-(membership, split/join) rebuilds the index — O(document), reading each block's
-text for `isProjectable` — and projects only the touched blocks, one at a time
-(`YBlockProjection.projectBlock`); a nested change only refreshes its top-level
-entry. A replica the id-keyed index cannot mirror (`BlockIndex.isCanonical`
+`index.order`. Text and prop changes are O(touched blocks). A tree change (any
+group's membership or a container's children: split/join/move) rebuilds the index —
+O(document), reading each block's text for `isProjectable` — and projects only the
+touched blocks, one at a time (`NativeBlockProjection.projectBlock`); any other change
+only refreshes its own entry. A replica the id-keyed index cannot mirror (`BlockIndex.isCanonical`
 false: several root children, an id-less or non-container group child, a
 repeated id) resets on every transaction until it is canonical again. `DocumentEnginePatchCostTests` and
 `DocumentEngineNarrowedRuleTests.testTextTransactionVisitsOnlyTouchedEntries`

@@ -31,6 +31,10 @@ struct NativeEditCommand: Equatable, Sendable {
         /// the "/query" range deleted in the same transaction, `props` the new
         /// type's overrides (a heading's level).
         case blockType(node: String, props: [ProjectedProp], removing: Range<Int>)
+        /// Sinks `blockID` into its previous sibling (`sinkListItem`).
+        case indent
+        /// Lifts `blockID` out of its parent (`liftListItem`).
+        case outdent
     }
 
     let id: UUID
@@ -61,7 +65,7 @@ struct NativeEditCommand: Equatable, Sendable {
         switch kind {
         case .replace(_, let replacement, _): return replacement
         case .range(let range): return range.replacement
-        case .split, .join, .marks, .props, .blockType: return ""
+        case .split, .join, .marks, .props, .blockType, .indent, .outdent: return ""
         }
     }
 }

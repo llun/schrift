@@ -24,6 +24,7 @@ import Foundation
 /// `mergeBlocksCommand`, `updateBlock`); keyboard-level choices made before
 /// those commands run (Backspace resetting a list item to a paragraph, Enter
 /// resetting an empty list item or outdenting an empty nested block) are the caller's.
+/// Tab and Shift-Tab's tree moves are `BlockNoteTreeCommands.swift`.
 struct BlockNoteWriter {
     enum Error: Swift.Error, Equatable {
         case missingBlock(String)
@@ -71,6 +72,9 @@ struct BlockNoteWriter {
     /// Recursion bound for copied subtrees: a nested block is three XML levels
     /// (container, group, container), so this allows 64 block levels plus inline nodes.
     private static let maxCopyDepth = 3 * 64 + 8
+    /// The deepest block level the native editor nests to (root blocks are
+    /// depth 0); `sinkListItem`'s caller refuses a move past it.
+    static let maxNestingDepth = 16
 
     let doc: YDoc
     /// The block types this writer edits: `propSchemas` unless the caller
@@ -237,7 +241,7 @@ struct BlockNoteWriter {
     /// empty with the same type and props, it is removed instead and this
     /// block, with its id and children, takes its place. The first sibling
     /// throws `noPreviousBlock` (BlockNote would merge a first child into its
-    /// parent; not implemented). A code block on either side throws
+    /// parent: `mergeIntoParent`). A code block on either side throws
     /// `unsupportedBlockType`, as BlockNote refuses that merge; so does any
     /// block type outside `propSchemas` on the way (a previous image, quote or
     /// toggle list item, even where BlockNote would merge into its last
@@ -280,6 +284,42 @@ struct BlockNoteWriter {
         }
         return try transaction { tx in
             try append(tx, copies, into: above.element)
+            var left = target.item
+            for kid in kids ?? [] { left = try insertCopy(tx, kid, into: target.group, after: left) }
+            target.item.delete(tx)
+        }
+    }
+
+    /// `mergeBlocksCommand`'s other half (`mergeIntoParent`): a first child's
+    /// content joins the end of its parent's, and its own children take its
+    /// place in the parent's group; a sole child without children takes the
+    /// group with it. A code block on either side throws
+    /// `unsupportedBlockType`; a block that is not a first child, or a root
+    /// block, throws `noPreviousBlock`.
+    @discardableResult
+    func mergeIntoParent(block: String) throws -> Data {
+        let target = try find(block)
+        guard let groupItem = target.group.item, let parent = groupItem.parentType,
+            parent.typeRef == .xmlElement(nodeName: "blockContainer"), let parentItem = parent.item,
+            let outer = parentItem.parentType, children(target.group).first === target.item
+        else { throw Error.noPreviousBlock(block) }
+        let above = try resolve(parentItem, group: outer, id: block)
+        for node in [target.node, above.node] where node == "codeBlock" { throw Error.unsupportedBlockType(node) }
+        let source = try inline(target.element, block: block)
+        let copies = try snapshots(source, range: 0..<(try length(source)), block: block)
+        let kids = try target.nested.map { nested in
+            try children(nested.type).map { item -> Copy in
+                guard case .type(let kid) = item.content else { throw Error.malformedBlock(block) }
+                return try snapshot(kid, block: block, depth: 0)
+            }
+        }
+        let alone = children(target.group).count == 1 && kids == nil
+        return try transaction { tx in
+            try append(tx, copies, into: above.element)
+            if alone {
+                groupItem.delete(tx)
+                return
+            }
             var left = target.item
             for kid in kids ?? [] { left = try insertCopy(tx, kid, into: target.group, after: left) }
             target.item.delete(tx)
@@ -448,7 +488,7 @@ struct BlockNoteWriter {
         let group: YType
     }
 
-    private func children(_ type: YType) -> [YItem] {
+    func children(_ type: YType) -> [YItem] {
         var result: [YItem] = []
         var item = type.start
         while let current = item {
@@ -655,12 +695,12 @@ struct BlockNoteWriter {
 
     // MARK: - Lossless copies (never reuse an integrated YType)
 
-    private enum TextValue {
+    enum TextValue {
         case run(InlineRun)
         case embed(String, YTextAttributes)
     }
 
-    private indirect enum Copy {
+    indirect enum Copy {
         case text([TextValue])
         case element(String, [(key: String, value: YAnyValue)], [Copy])
     }
@@ -691,7 +731,7 @@ struct BlockNoteWriter {
         return result
     }
 
-    private func snapshot(_ type: YType, range: Range<Int>? = nil, block: String, depth: Int) throws -> Copy {
+    func snapshot(_ type: YType, range: Range<Int>? = nil, block: String, depth: Int) throws -> Copy {
         guard depth < Self.maxCopyDepth else { throw Error.malformedBlock(block) }
         if type.typeRef == .xmlText {
             var marks = YTextAttributes()
@@ -744,7 +784,7 @@ struct BlockNoteWriter {
 
     /// Inserts a copied element (a whole block container) after `left`.
     @discardableResult
-    private func insertCopy(_ tx: YTransaction, _ copy: Copy, into parent: YType, after left: YItem) throws -> YItem {
+    func insertCopy(_ tx: YTransaction, _ copy: Copy, into parent: YType, after left: YItem?) throws -> YItem {
         guard case .element(let node, let props, let nested) = copy else { throw Error.malformedBlock("#text") }
         return try buildElement(tx, into: parent, after: left, node: node, props: props, children: nested)
     }

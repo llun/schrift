@@ -101,8 +101,14 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
                 let size = DocsSpacing.rowMinHeight
                 let button = checkboxes[id] ?? makeCheckbox(id)
                 configure(checkbox: button, checked: attributes[.nativeChecked] as? Bool == true, enabled: enabled)
+                // The gutter after the depth's indent (PR06a).
+                let inset =
+                    CGFloat(attributes[.nativeDepth] as? Int ?? 0)
+                    * UIFontMetrics(forTextStyle: .body).scaledValue(
+                        for: NativeBlockMetrics.listGutter, compatibleWith: textView.traitCollection)
                 button.frame = CGRect(
-                    x: lead + indent / 2 - size / 2, y: frame.minY + midY - size / 2, width: size, height: size)
+                    x: lead + inset + (indent - inset) / 2 - size / 2, y: frame.minY + midY - size / 2, width: size,
+                    height: size)
             case "codeBlock":
                 visibleCode.insert(id)
                 let language = attributes[.nativeCodeLanguage] as? String ?? "text"

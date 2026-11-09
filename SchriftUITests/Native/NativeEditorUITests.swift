@@ -164,6 +164,38 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertEqual(checkbox.value as? String, "Done", "the journal restores the tick")
     }
 
+    /// Tab on the second bullet nests it under the first: one durable tree
+    /// move in the production open route, still nested after a relaunch (the
+    /// nested list keeps a Markdown shadow, so it reopens typeable).
+    func testTabNestsTheSecondBulletAndSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-tree"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.025)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let depths = app.staticTexts["tree.depths"]
+        app.buttons["tree.read"].tap()
+        XCTAssertEqual(depths.label, "0,0,0")
+        app.buttons["tree.caret"].tap()
+        app.typeKey(XCUIKeyboardKey.tab, modifierFlags: [])
+        app.buttons["tree.read"].tap()
+        XCTAssertEqual(depths.label, "0,1,0", "Tab nested the second bullet")
+        XCTAssertFalse(app.staticTexts["nativeEditor.inputNotice"].exists)
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        let before = text(of: editor)
+        app.terminate()
+
+        app.launchArguments = ["--native-open", "--native-tree"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertEqual(text(of: editor), before, "a move never changes the text")
+        app.buttons["tree.read"].tap()
+        XCTAssertEqual(depths.label, "0,1,0", "the journal restores the nesting")
+        XCTAssertTrue(app.buttons["nativeEditor.format.indent"].waitForExistence(timeout: 5), "still typeable")
+    }
+
     /// The production open route (`EditorView` → `NativeEditorOpen`) over an
     /// owned replica, offline: real keyboard input is journaled durably,
     /// reported as saved on this device and restored after a relaunch.

@@ -150,9 +150,9 @@ final class DocumentEngineNarrowedRuleTests: DocumentEngineTestCase {
         _ = engine
     }
 
-    // MARK: - 4. Nested element attributes
+    // MARK: - 4. Nested element attributes (PR06a: the nested block's own props)
 
-    func testNestedElementAttributesReplaceTheTopLevelBlock() throws {
+    func testNestedElementAttributesAreTheNestedBlocksProps() throws {
         let doc = try makeDoc(nestedSeed(), clientID: 1)
         defer { doc.destroy() }
         let surface = HeadlessSurface(blocks: projection(doc))
@@ -162,16 +162,15 @@ final class DocumentEngineNarrowedRuleTests: DocumentEngineTestCase {
 
         let patch = try XCTUnwrap(surface.appliedPatches.last)
         XCTAssertTrue(
-            hasReplace(patch, Self.parentID), "nested attributes must rebuild the parent, got \(patch.changes)")
-        XCTAssertFalse(
-            patch.changes.contains { if case .props = $0 { return true } else { return false } },
-            "a nested attribute change is not the parent's props")
+            patch.changes.contains { if case .props(Self.childID, _) = $0 { return true } else { return false } },
+            "a nested attribute change is the nested block's props, got \(patch.changes)")
+        XCTAssertFalse(hasReplace(patch, Self.parentID), "the parent is untouched")
         assertSurfaceMatchesProjection(surface, doc, "after the nested attribute change")
     }
 
-    // MARK: - 5. Parent text with nested children
+    // MARK: - 5. Parent text with nested children (PR06a: still a text patch)
 
-    func testParentTextEditWithNestedChildrenReplacesTheBlock() throws {
+    func testParentTextEditWithNestedChildrenIsAText() throws {
         let doc = try makeDoc(nestedSeed(), clientID: 1)
         defer { doc.destroy() }
         let surface = HeadlessSurface(blocks: projection(doc))
@@ -180,7 +179,9 @@ final class DocumentEngineNarrowedRuleTests: DocumentEngineTestCase {
         try engine.replaceText(block: Self.parentID, range: 0..<0, with: "X")
 
         let patch = try XCTUnwrap(surface.appliedPatches.last)
-        XCTAssertTrue(hasReplace(patch, Self.parentID), "a parent with children must rebuild, got \(patch.changes)")
+        XCTAssertEqual(
+            patch.changes,
+            [.text(blockID: Self.parentID, deltas: [TextDelta(range: 0..<0, replacement: "X", marks: [])])])
         assertSurfaceMatchesProjection(surface, doc, "after the parent text edit")
     }
 
