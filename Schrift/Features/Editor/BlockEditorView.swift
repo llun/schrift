@@ -513,6 +513,7 @@ struct BlockEditorRow: View {
         case .selectionChanged(let range):
             if viewModel.focusedBlockID == blockID {
                 viewModel.selection = range
+                viewModel.refreshSlashQuery()
             }
         case .beganEditing:
             if viewModel.focusedBlockID != blockID {

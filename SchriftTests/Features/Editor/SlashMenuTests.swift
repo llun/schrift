@@ -9,6 +9,10 @@ final class SlashMenuTests: XCTestCase {
         XCTAssertNil(slashQuery(text: "/head", kind: .bulletItem))
         XCTAssertNil(slashQuery(text: "no slash", kind: .paragraph))
         XCTAssertNil(slashQuery(text: "middle / slash", kind: .paragraph))
+        XCTAssertEqual(slashQuery(text: "/h1 Notes", kind: .paragraph, caret: 3), "h1")
+        XCTAssertNil(slashQuery(text: "/h1 Notes", kind: .paragraph, caret: 5))
+        XCTAssertNil(slashQuery(text: "/h1", kind: .paragraph, caret: 0))
+        XCTAssertEqual(slashTokenLength(text: "/h1 Notes", kind: .paragraph, caret: 3), 3)
     }
 
     func testEmptyQueryReturnsAllItems() {

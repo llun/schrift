@@ -89,11 +89,25 @@ let allSlashMenuItems: [SlashMenuItem] = [
         keywords: ["file", "attachment", "pdf", "doc", "document", "upload"]),
 ]
 
-/// Non-nil when the block's text is a slash command in progress ("/" plus the
-/// query typed so far). Only paragraphs can host the slash menu.
-func slashQuery(text: String, kind: BlockKind) -> String? {
-    guard kind == .paragraph, text.hasPrefix("/") else { return nil }
-    return String(text.dropFirst())
+/// UTF-16 length of the "/query" token at the start of a paragraph: the block starts with "/"
+/// and the caret sits after it with no whitespace in between, the same rule as the native
+/// editor's `slashToken`. A nil caret means the end of the text (typing); a caret past the end
+/// is clamped. Only paragraphs can host the slash menu.
+func slashTokenLength(text: String, kind: BlockKind, caret: Int? = nil) -> Int? {
+    let units = Array(text.utf16)
+    let end = min(max(caret ?? units.count, 0), units.count)
+    guard kind == .paragraph, end >= 1, units.first == 0x2F,
+        !String(decoding: units[1..<end], as: UTF16.self).contains(where: \.isWhitespace)
+    else { return nil }
+    return end
+}
+
+/// Non-nil when the block's text is a slash command in progress ("/" plus the query typed so
+/// far, up to the caret). Text after the caret is not part of the query.
+func slashQuery(text: String, kind: BlockKind, caret: Int? = nil) -> String? {
+    slashTokenLength(text: text, kind: kind, caret: caret).map {
+        String(decoding: Array(text.utf16)[1..<$0], as: UTF16.self)
+    }
 }
 
 /// Offline drops only what has nowhere to go. **File** still POSTs a multipart attachment
