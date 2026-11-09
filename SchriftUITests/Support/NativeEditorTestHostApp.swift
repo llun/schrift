@@ -23,6 +23,21 @@ struct NativeEditorTestHostApp: App {
                 id: "fixture-\(index)")
         }
         blocks.insert(BlockNoteBlock(node: "table", props: [], runs: [], id: "preserved-table"), at: 1)
+        // `--native-toggle`: a toggle list item with two children first (PR06b).
+        if ProcessInfo.processInfo.arguments.contains("--native-toggle") {
+            let style = blocks[0].props
+            blocks.insert(
+                BlockNoteBlock(
+                    node: "toggleListItem", props: style, runs: [InlineRun("Toggle title")], id: "fixture-toggle",
+                    children: [
+                        BlockNoteBlock(
+                            node: "paragraph", props: style, runs: [InlineRun("Folded child one")],
+                            id: "fixture-toggle-1"),
+                        BlockNoteBlock(
+                            node: "paragraph", props: style, runs: [InlineRun("Folded child two")],
+                            id: "fixture-toggle-2"),
+                    ]), at: 0)
+        }
         fixture = BlockNoteYjs.encode(blocks, clientID: 1)
     }
 

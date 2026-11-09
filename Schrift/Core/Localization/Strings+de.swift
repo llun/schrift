@@ -249,6 +249,8 @@ enum Strings_de {
         .editor_slash_checklist: "Checkliste",
         .editor_slash_quote: "Zitat",
         .editor_slash_code_block: "Codeblock",
+        .editor_slash_toggle_list: "Aufklappbare Liste",
+        .editor_slash_toggle_heading: "Aufklappbare Überschrift",
         .editor_slash_divider: "Trennlinie",
         .editor_slash_photo: "Foto",
 
@@ -373,6 +375,9 @@ enum Strings_de {
         .native_editor_color_pink: "Rosa",
         .native_editor_page_break: "Seitenumbruch",
         .native_editor_code_language: "Programmiersprache",
+        .native_editor_toggle: "Aufklappen oder zuklappen",
+        .native_editor_toggle_expanded: "Aufgeklappt",
+        .native_editor_toggle_collapsed: "Zugeklappt",
         .profile_native_editor: "Nativer Editor (experimentell)",
         .profile_native_editor_footer:
             "Gilt beim nächsten Öffnen eines Dokuments. Unterstützt Docs 6 mit Text, Formatierung, Links, Überschriften, Listen, Checklisten, Zitaten und Codeblöcken; andere Blöcke bleiben erhalten, sind aber noch nicht bearbeitbar.",

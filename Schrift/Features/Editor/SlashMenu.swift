@@ -6,6 +6,9 @@ enum SlashMenuAction: Equatable, Sendable {
     case convert(BlockKind)
     case insertPhoto
     case insertAttachment
+    /// A toggle list item, or a level-1 toggle heading: native editor only
+    /// (`NativeInputCoordinator.slashItems`); the classic menu never offers it.
+    case toggle(heading: Bool)
 
     /// True for the actions that must reach the server **now** — the only items withheld
     /// offline or on a document that has no server id yet.
@@ -19,7 +22,7 @@ enum SlashMenuAction: Equatable, Sendable {
     var requiresImmediateUpload: Bool {
         switch self {
         case .insertAttachment: return true
-        case .insertPhoto, .convert: return false
+        case .insertPhoto, .convert, .toggle: return false
         }
     }
 }
@@ -88,6 +91,15 @@ let allSlashMenuItems: [SlashMenuItem] = [
         id: "file", title: "File", titleKey: .editor_slash_file, icon: .description, action: .insertAttachment,
         keywords: ["file", "attachment", "pdf", "doc", "document", "upload"]),
 ]
+
+/// The native editor's toggle items (PR06b). Not in `allSlashMenuItems`: the
+/// classic editor has no toggle block.
+let toggleListSlashItem = SlashMenuItem(
+    id: "toggleList", title: "Toggle list", titleKey: .editor_slash_toggle_list, icon: .chevron_right,
+    action: .toggle(heading: false), keywords: ["toggle", "collapsible", "list", "details"])
+let toggleHeadingSlashItem = SlashMenuItem(
+    id: "toggleHeading", title: "Toggle heading", titleKey: .editor_slash_toggle_heading, icon: .expand_more,
+    action: .toggle(heading: true), keywords: ["toggle", "collapsible", "heading", "details"])
 
 /// UTF-16 length of the "/query" token at the start of a paragraph: the block starts with "/"
 /// and the caret sits after it with no whitespace in between, the same rule as the native

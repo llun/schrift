@@ -239,6 +239,8 @@ enum Strings_zhHans {
         .editor_slash_checklist: "清单",
         .editor_slash_quote: "引用",
         .editor_slash_code_block: "代码块",
+        .editor_slash_toggle_list: "可折叠列表",
+        .editor_slash_toggle_heading: "可折叠标题",
         .editor_slash_divider: "分隔线",
         .editor_slash_photo: "照片",
 
@@ -359,6 +361,9 @@ enum Strings_zhHans {
         .native_editor_color_pink: "粉色",
         .native_editor_page_break: "分页符",
         .native_editor_code_language: "代码语言",
+        .native_editor_toggle: "展开或收起",
+        .native_editor_toggle_expanded: "已展开",
+        .native_editor_toggle_collapsed: "已收起",
         .profile_native_editor: "原生编辑器（实验性）",
         .profile_native_editor_footer: "下次打开文档时生效。支持 Docs 6 的文本、格式、链接、标题、列表、清单、引用和代码块；其他块会保留，但暂时无法编辑。",
         .native_editor_preserved_title: "文档已保留",

@@ -340,8 +340,10 @@ against real BlockNote + yjs 13.6.33 and inlined in `BlockNoteWriterCaptures`:
   offset; the new block takes the rest and the nested children, and is a list item
   for list items, a paragraph otherwise, with default props. At offset 0 of
   non-empty content an empty block is inserted above, so the text keeps its id.
-  Code blocks (Enter is a line break) and toggle headings (Enter depends on the
-  toggle's open state) are refused. An offset inside a surrogate pair snaps back to
+  Code blocks (Enter is a line break) are refused, and so is a toggle unless the
+  caller passes its open state (`toggleOpen`, PR06b): closed, the split keeps the
+  children with the toggle; open, the text after the caret becomes a new first
+  child. An offset inside a surrogate pair snaps back to
   the pair's start; BlockNote itself writes U+FFFD into both halves there. Enter on
   an empty *nested* block outdents it in BlockNote (`emptyChildEnter: "outdent"`);
   the writer splits, and outdenting is the caller's choice.
@@ -786,7 +788,7 @@ that may span blocks, or text containing a line break, is one `NativeEditCommand
 plain replacement text and the coordinator-minted ids for the blocks its newlines create)
 through the same `applyStructural` barrier. The engine validates every block from the
 first to the last before arming: an opaque block, a placeholder, code, inline nodes, a
-toggle heading or a block outside the first block's group (PR06a) anywhere refuses the whole command with
+toggle (PR06b) or a block outside the first block's group (PR06a) anywhere refuses the whole command with
 `native_editor_range_unavailable` and no write, never the freeze. The writer's
 `replaceRange` then deletes the span, joins the last block's tail onto the last line and
 inserts the text in one grouped transaction, which is ProseMirror's replace over a
@@ -872,6 +874,31 @@ merges it into the block above (a first child into its parent), as BlockNote doe
 outdents it only when that merge cannot happen. Each level indents one scaled list gutter and numbers per sibling run. The save
 shadow indents list nesting (`NativeBlockProjection.markdownShadow`), so a nested list stays
 typeable and savable.
+
+**PR06b Toggles and local folding.** Under the native flag the projection models
+BlockNote 0.56's `toggleListItem` and a heading with `isToggleable: true` (the classic
+projection keeps both opaque, so classic callers, preservation and golden bytes are
+unchanged): the title is the block's text, the children its nested group, and a
+disclosure button in the gutter (a real `UIButton` with an expanded/collapsed value)
+folds it. **Folding is a presentation layer over the projection, never data.**
+`NativeTextSurface` keeps the expanded toggle ids in memory for the open document
+(collapsed by default, as BlockNote) and which positions they hide. Storage, the block
+list and the range index always hold the whole projection, hidden children included;
+the TextKit 2 content-storage delegate simply does not enumerate a hidden paragraph,
+so it is neither laid out nor drawn. That is how the storage/projection invariant holds
+while children are hidden: every patch, a peer's edit inside folded children included,
+applies to storage exactly as when unfolded, and unfolding is only a layout
+invalidation that shows the updated text. A fold writes no Yjs and no storage. A toggle
+that gains a child opens. VoiceOver reads the text without folded content
+(`accessibilityValue`), the Headings rotor skips it and folded blocks have no controls.
+Hidden content is never edited by a visible command: a range or mark command touching a
+folded toggle's children is refused before arming, no command targets a hidden block, a
+caret placed in folded content moves past it, and a Backspace merge into a folded
+toggle's hidden last descendant unfolds it first. Enter and Backspace follow the
+installed 0.56 keyboard rules, with the open state carried in the split command (an
+open toggle's Enter starts its children, a closed one splits and keeps them, an empty
+toggle resets); the slash menu offers Toggle heading and Toggle list. A toggle has no
+Markdown shadow yet, so production keeps such a document read-only, like a callout.
 
 **Selection.** `setSelection(EditorSelection?)` captures directed anchor/head
 endpoints as `YRelativePosition`s. Each `EditorPosition` holds a block id,

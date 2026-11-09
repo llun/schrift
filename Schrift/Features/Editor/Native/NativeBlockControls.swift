@@ -2,18 +2,26 @@ import SwiftUI
 import UIKit
 
 /// The native surface's real, accessible block controls: a checkbox button per
-/// visible checklist item and a language menu per visible code block, placed
-/// over their fragments, plus the VoiceOver Headings rotor. Each action is one
-/// durable prop command through the input coordinator; without one (the
-/// read-only reader) the controls show their state but are disabled.
+/// visible checklist item, a language menu per visible code block and a
+/// disclosure button per visible toggle, placed over their fragments, plus the
+/// VoiceOver Headings rotor. Each checkbox or language action is one durable
+/// prop command through the input coordinator; without one (the read-only
+/// reader) those controls show their state but are disabled. Folding is view
+/// state, so the disclosure button works in the reader too.
 ///
 /// Also the TextKit 2 layout delegate, so every fragment is a
-/// `NativeBlockFragment` that reads its theme and labels here.
+/// `NativeBlockFragment` that reads its theme and labels here, and the content
+/// storage delegate that leaves a folded toggle's children out of layout.
 @MainActor
-final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDelegate {
+final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDelegate,
+    @preconcurrency NSTextContentStorageDelegate
+{
     private weak var textView: NativeTextView?
+    /// The surface whose fold state decides which paragraphs are laid out.
+    weak var surface: NativeTextSurface?
     private(set) var checkboxes: [String: UIButton] = [:]
     private(set) var languageButtons: [String: UIButton] = [:]
+    private(set) var toggleButtons: [String: UIButton] = [:]
 
     /// The display theme (a personal preference, never document data). A
     /// change only redraws.
@@ -61,6 +69,26 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         return fragment
     }
 
+    // MARK: - NSTextContentStorageDelegate (folding)
+
+    /// A folded toggle's children are not enumerated, so TextKit 2 neither
+    /// lays them out nor draws them, and the viewport, caret navigation and
+    /// controls skip them. Storage still holds them: the surface equals the
+    /// projection while they are hidden.
+    func textContentManager(
+        _ textContentManager: NSTextContentManager, shouldEnumerate textElement: NSTextElement,
+        options: NSTextContentManager.EnumerationOptions = []
+    ) -> Bool {
+        guard let surface, let location = textElement.elementRange?.location else { return true }
+        let offset = textContentManager.offset(from: textContentManager.documentRange.location, to: location)
+        return !surface.isHidden(atUTF16: offset)
+    }
+
+    /// Re-lays out after a fold change. Storage and the replica are untouched.
+    func foldDidChange() {
+        invalidateChrome()
+    }
+
     /// Redraws the laid-out fragments (theme, labels, light/dark). Storage and
     /// the replica are untouched; TextKit re-lays out only the viewport.
     func invalidateChrome() {
@@ -82,6 +110,7 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         let enabled = textView.isEditable && textView.inputCoordinator != nil
         var visibleChecks = Set<String>()
         var visibleCode = Set<String>()
+        var visibleToggles = Set<String>()
         layout.enumerateTextLayoutFragments(from: viewport.location, options: []) { fragment in
             guard fragment.rangeInElement.location.compare(viewport.endLocation) == .orderedAscending else {
                 return false
@@ -94,6 +123,17 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
             // Where this block's text starts, from the view's leading edge.
             let indent = (attributes[.paragraphStyle] as? NSParagraphStyle)?.headIndent ?? 0
             let lead = textView.textContainerInset.left + textView.textContainer.lineFragmentPadding
+            if attributes[.nativeToggle] as? Bool == true {
+                visibleToggles.insert(id)
+                let midY = fragment.firstLineMetrics?.midY ?? frame.height / 2
+                let size = DocsSpacing.rowMinHeight
+                let button = toggleButtons[id] ?? makeToggle(id)
+                configure(toggle: button, expanded: surface?.isExpanded(id) == true)
+                let inset = CGFloat(attributes[.nativeDepth] as? Int ?? 0) * gutter(textView)
+                button.frame = CGRect(
+                    x: lead + inset + (indent - inset) / 2 - size / 2, y: frame.minY + midY - size / 2, width: size,
+                    height: size)
+            }
             switch fragment.blockType {
             case "checkListItem":
                 visibleChecks.insert(id)
@@ -102,10 +142,7 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
                 let button = checkboxes[id] ?? makeCheckbox(id)
                 configure(checkbox: button, checked: attributes[.nativeChecked] as? Bool == true, enabled: enabled)
                 // The gutter after the depth's indent (PR06a).
-                let inset =
-                    CGFloat(attributes[.nativeDepth] as? Int ?? 0)
-                    * UIFontMetrics(forTextStyle: .body).scaledValue(
-                        for: NativeBlockMetrics.listGutter, compatibleWith: textView.traitCollection)
+                let inset = CGFloat(attributes[.nativeDepth] as? Int ?? 0) * gutter(textView)
                 button.frame = CGRect(
                     x: lead + inset + (indent - inset) / 2 - size / 2, y: frame.minY + midY - size / 2, width: size,
                     height: size)
@@ -133,6 +170,45 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
             button.removeFromSuperview()
             languageButtons[id] = nil
         }
+        for (id, button) in toggleButtons where !visibleToggles.contains(id) {
+            button.removeFromSuperview()
+            toggleButtons[id] = nil
+        }
+    }
+
+    private func gutter(_ textView: UITextView) -> CGFloat {
+        UIFontMetrics(forTextStyle: .body).scaledValue(
+            for: NativeBlockMetrics.listGutter, compatibleWith: textView.traitCollection)
+    }
+
+    /// The disclosure triangle: a real button whose value says whether the
+    /// toggle is expanded. A tap folds or unfolds it (view state only).
+    private func makeToggle(_ blockID: String) -> UIButton {
+        let button = UIButton(configuration: .plain())
+        button.isAccessibilityElement = true
+        button.accessibilityIdentifier = "nativeEditor.toggle.\(blockID)"
+        button.addAction(
+            UIAction { [weak self] _ in
+                guard let surface = self?.surface else { return }
+                surface.setExpanded(blockID, !surface.isExpanded(blockID))
+            }, for: .primaryActionTriggered)
+        textView?.addSubview(button)
+        toggleButtons[blockID] = button
+        return button
+    }
+
+    private func configure(toggle button: UIButton, expanded: Bool) {
+        var configuration = UIButton.Configuration.plain()
+        configuration.image = UIImage(
+            systemName: expanded ? "chevron.down" : "chevron.right",
+            withConfiguration: UIImage.SymbolConfiguration(textStyle: .footnote, scale: .medium))
+        configuration.baseForegroundColor = color(\.textSecondary)
+        button.configuration = configuration
+        // BlockNote's fixed name, with the state as the value (`aria-expanded`).
+        button.accessibilityLabel = labels.toggle
+        button.accessibilityValue = expanded ? labels.expanded : labels.collapsed
+        button.accessibilityExpandedStatus = expanded ? .expanded : .collapsed
+        button.accessibilityTraits = .button
     }
 
     private func makeCheckbox(_ blockID: String) -> UIButton {
@@ -203,7 +279,8 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
 
     // MARK: - VoiceOver Headings rotor
 
-    /// Every non-empty heading's text range in storage, in document order.
+    /// Every non-empty heading's text range in storage, in document order,
+    /// except those folded away (VoiceOver never reaches folded content).
     /// Headings carry `accessibilityTextHeadingLevel`, so VoiceOver also
     /// announces the level when it reads them.
     func headingRanges() -> [NSRange] {
@@ -211,7 +288,7 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         var ranges: [NSRange] = []
         // One run per block (its id); the last character is its separator.
         storage.enumerateAttribute(.nativeBlockID, in: NSRange(location: 0, length: storage.length)) { id, range, _ in
-            guard id != nil, range.length > 1,
+            guard id != nil, range.length > 1, surface?.isHidden(atUTF16: range.location) != true,
                 storage.attribute(.accessibilityTextHeadingLevel, at: range.location, effectiveRange: nil) != nil
             else { return }
             ranges.append(NSRange(location: range.location, length: range.length - 1))

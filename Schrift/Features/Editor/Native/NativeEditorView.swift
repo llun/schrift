@@ -36,7 +36,9 @@ struct NativeEditorView: View {
                         pageBreak: loc[.native_editor_page_break], codeLanguage: loc[.native_editor_code_language],
                         markDone: loc[.editor_checklist_done_a11y], markNotDone: loc[.editor_checklist_not_done_a11y],
                         done: loc[.editor_checklist_state_done_a11y],
-                        notDone: loc[.editor_checklist_state_not_done_a11y]),
+                        notDone: loc[.editor_checklist_state_not_done_a11y], toggle: loc[.native_editor_toggle],
+                        expanded: loc[.native_editor_toggle_expanded],
+                        collapsed: loc[.native_editor_toggle_collapsed]),
                     theme: theme
                 )
                 .id(ObjectIdentifier(session))

@@ -43,6 +43,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// written straight to storage (space, digits, punctuation), which
     /// `textViewDidChange` turns into an ordinary command.
     @ObservationIgnored private var directInsertion: (range: NSRange, text: String)?
+    /// The last caret UIKit reported, so a caret moving into folded content
+    /// keeps its direction past it.
+    @ObservationIgnored private var lastCaret: Int?
 
     init(
         engine: DocumentEngine, surface: NativeTextSurface, view: NativeTextView,
@@ -59,7 +62,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         super.init()
         surface.onPatchApplied = { [weak self] patch in
             self?.selection.restore(after: patch)
+            // A restore may land in content this patch folded away.
+            self?.keepSelectionVisible()
             self?.refreshSelectionMarks()
+        }
+        // A fold sends no selection change; the caret must not stay in what it hid.
+        let relayout = surface.onFoldChange
+        surface.onFoldChange = { [weak self] in
+            relayout?()
+            self?.keepSelectionVisible()
         }
         inputLanguage = { [weak view] in view?.textInputMode?.primaryLanguage }
         view.delegate = self
@@ -99,7 +110,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             let entry = surface.rangeIndex.entry(atUTF16: range.location),
             let position = surface.rangeIndex.position(for: entry.blockID),
             range.location >= entry.textRange.location, NSMaxRange(range) <= NSMaxRange(entry.textRange),
-            !AttributedDocumentProjection.isPlaceholder(surface.blocks[position])
+            !AttributedDocumentProjection.isPlaceholder(surface.blocks[position]),
+            // UIKit must never write into folded content either (PR06b).
+            !surface.isHidden(position: position)
         else { return false }
         directInsertion = (range, text)
         return true
@@ -173,9 +186,69 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         guard let view, !view.isApplyingMarkedText, view.markedTextRange == nil, !composition.isActive else {
             return
         }
-        if !surface.isApplyingPatch { pendingTypingMarks = nil }
+        if !surface.isApplyingPatch {
+            pendingTypingMarks = nil
+            revealCaret(in: view)
+        }
+        lastCaret = view.selectedRange.location
         selection.selectionDidChange()
         refreshSelectionMarks()
+    }
+
+    /// A caret UIKit placed never rests in folded content: it moves past the
+    /// folded run when it moved forward, else (or with no previous caret) back
+    /// to the end of the visible block before it, the toggle's title.
+    private func revealCaret(in view: NativeTextView) {
+        let range = view.selectedRange
+        guard range.length == 0, surface.isHidden(atUTF16: range.location) else { return }
+        let forward = lastCaret.map { range.location > $0 } ?? false
+        view.selectedRange = NSRange(location: visibleLocation(range.location, forward: forward), length: 0)
+    }
+
+    /// After a fold or a restored selection: a start inside folded content
+    /// moves forward to the end of its hidden run, an end moves back to the
+    /// run's start, and a caret (or a selection within one run) collapses to
+    /// the end of the toggle's title. The engine's selection follows.
+    ///
+    /// A selection is trimmed to visible content, never grown over the fold:
+    /// a start in a folded run moves forward to its end, an end backward to
+    /// its start, and both in one run (or a caret) collapse to the title's
+    /// end. A selection with no endpoint in folded content is left alone, so
+    /// this never fights a drag over visible text.
+    private func keepSelectionVisible() {
+        guard let view, view.markedTextRange == nil, !composition.isActive else { return }
+        let range = view.selectedRange
+        let start = hiddenRun(at: range.location)
+        let end = range.length > 0 ? hiddenRun(at: NSMaxRange(range)) : start
+        guard start != nil || end != nil else { return }
+        let visible: NSRange
+        if let run = start ?? end, range.length == 0 || start == end {
+            visible = NSRange(location: max(0, run.location - 1), length: 0)
+        } else {
+            let lower = start.map(NSMaxRange) ?? range.location
+            let upper = end?.location ?? NSMaxRange(range)
+            visible = NSRange(location: lower, length: max(0, upper - lower))
+        }
+        guard visible != range else { return }
+        lastCaret = visible.location
+        selection.place(visible)
+    }
+
+    /// The folded run holding `location`, if it is hidden.
+    private func hiddenRun(at location: Int) -> NSRange? {
+        guard surface.isHidden(atUTF16: location) else { return nil }
+        return surface.hiddenRanges.first { NSLocationInRange(location, $0) }
+    }
+
+    /// `location` itself when it is shown; otherwise the start of the first
+    /// visible block after its folded run (`forward`, when there is one) or the
+    /// text end of the visible block before it.
+    private func visibleLocation(_ location: Int, forward: Bool) -> Int {
+        guard surface.isHidden(atUTF16: location),
+            let run = surface.hiddenRanges.first(where: { NSLocationInRange(location, $0) })
+        else { return location }
+        if forward, NSMaxRange(run) < surface.storage.length { return NSMaxRange(run) }
+        return max(0, run.location - 1)
     }
 
     /// `marks`, when given, is the complete mark set the text carries (a link
@@ -214,7 +287,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             !text.contains("\n") || isCode(entry.blockID)
         else { return replaceRange(range, with: text) }
         guard let position = surface.rangeIndex.position(for: entry.blockID),
-            !AttributedDocumentProjection.isPlaceholder(surface.blocks[position])
+            !AttributedDocumentProjection.isPlaceholder(surface.blocks[position]), !surface.isHidden(position: position)
         else {
             noticeKey = .native_editor_input_unavailable
             return false
@@ -254,6 +327,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             noticeKey = .native_editor_input_unavailable
             return false
         }
+        guard !touchesFoldedContent(start.position, end.position) else {
+            noticeKey = .native_editor_range_unavailable
+            return false
+        }
         let lines = NativeRangeCommand.lines(of: text)
         let command = NativeRangeCommand(
             startOffset: start.offset, endBlockID: index.entries[end.position].blockID, endOffset: end.offset,
@@ -287,8 +364,18 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // BlockNote's Enter in a code block inserts a line break in the block.
         if isCode(entry.blockID) { return replace(range: selection, with: "\n") }
         let offset = selection.location - entry.textRange.location
+        // BlockNote's Enter reads whether the toggle (or a toggle parent) is open.
+        let open = Set([entry.blockID, surface.blocks[position].parentID].compactMap { $0 }.filter(surface.isExpanded))
         return applyStructural(
-            entry.blockID, .split(offset: offset, newID: UUID().uuidString), refusal: .native_editor_input_unavailable)
+            entry.blockID, .split(offset: offset, newID: UUID().uuidString, open: open),
+            refusal: .native_editor_input_unavailable)
+    }
+
+    /// The folded-content rule (PR06b): a range or mark command that touches
+    /// any block inside a collapsed toggle is refused before it is armed, so
+    /// hidden content is never edited by a visible selection.
+    private func touchesFoldedContent(_ first: Int, _ last: Int) -> Bool {
+        first <= last && (first...last).contains { surface.isHidden(position: $0) }
     }
 
     private func isCode(_ blockID: String) -> Bool {
@@ -305,8 +392,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         guard let view, view.isEditable, !engine.nativeWriteFailed, !engine.isDetached,
             view.markedTextRange == nil, !composition.isActive, view.selectedRange.length == 0,
             isBlockStart(view.selectedRange.location),
-            let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location)
+            let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location),
+            let position = surface.rangeIndex.position(for: entry.blockID)
         else { return false }
+        // A paragraph merges into the block above it in preorder; when that is
+        // a folded toggle's hidden last descendant, the toggle unfolds first,
+        // so the merge never edits hidden content.
+        if surface.blocks[position].node == "paragraph", position > 0, surface.isHidden(position: position - 1) {
+            surface.reveal(surface.blocks[position - 1].id)
+        }
         return applyStructural(entry.blockID, .join, refusal: nil)
     }
 
@@ -347,6 +441,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     private func applyStructural(
         _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, keeping: NSRange? = nil
     ) -> Bool {
+        // Folded content is never the target of a command.
+        guard !surface.isHidden(blockID: blockID) else {
+            if let refusal { noticeKey = refusal }
+            return false
+        }
         let command = NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: blockID, kind: kind)
         do {
             let caret = try engine.applyStructural(command) { try persist(command, $0) }
@@ -458,6 +557,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         guard let start = index.textPosition(atUTF16: range.location),
             let end = index.textPosition(atUTF16: NSMaxRange(range), isUpperBound: true)
         else {
+            noticeKey = .native_editor_range_unavailable
+            return false
+        }
+        guard !touchesFoldedContent(start.position, end.position) else {
             noticeKey = .native_editor_range_unavailable
             return false
         }
@@ -588,10 +691,29 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return 0..<caret
     }
 
-    /// The slash items this editor can apply, in the classic menu's order.
-    static let slashItems = allSlashMenuItems.filter { slashType($0.action) != nil }
+    /// The slash items this editor can apply, in the classic menu's order,
+    /// with the native-only toggles after Heading 3 and the checklist.
+    static let slashItems = allSlashMenuItems.filter { slashType($0.action) != nil }.flatMap { item in
+        switch item.id {
+        case "heading3": [item, toggleHeadingSlashItem]
+        case "checklist": [item, toggleListSlashItem]
+        default: [item]
+        }
+    }
 
     private static func slashType(_ action: SlashMenuAction) -> (node: String, props: [ProjectedProp])? {
+        if case .toggle(let heading) = action {
+            // BlockNote's "Toggle List" and "Toggle Heading" (level 1) items.
+            return heading
+                ? (
+                    "heading",
+                    [
+                        ProjectedProp(key: "level", value: .int(1)),
+                        ProjectedProp(key: "isToggleable", value: .bool(true)),
+                    ]
+                )
+                : ("toggleListItem", [])
+        }
         guard case .convert(let kind) = action else { return nil }
         switch kind {
         case .paragraph: return ("paragraph", [])
@@ -738,6 +860,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// provisional text become committed content.
     func refuseComposition() {
         directInsertion = nil
+        // Folding is view state and never locks the editor: a composition that
+        // would start in folded content is cancelled (nothing was marked or
+        // written), the keyboard is told, and the caret moves out of the fold.
+        if let view, surface.isHidden(atUTF16: view.selectedRange.location) {
+            view.unmarkText()
+            keepSelectionVisible()
+            noticeKey = .native_editor_range_unavailable
+            return
+        }
         noticeKey = .native_editor_marked_unavailable
         view?.isEditable = false
         view?.resignFirstResponder()

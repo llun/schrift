@@ -195,7 +195,9 @@ final class NativeCompositionSession {
             let position = surface.rangeIndex.position(for: entry.blockID),
             selection.location >= entry.textRange.location,
             NSMaxRange(selection) <= NSMaxRange(entry.textRange),
-            !AttributedDocumentProjection.isPlaceholder(surface.blocks[position])
+            !AttributedDocumentProjection.isPlaceholder(surface.blocks[position]),
+            // Folded content is never edited (PR06b): the engine knows nothing of folding.
+            !surface.isHidden(position: position)
         else { return nil }
         return (
             entry.blockID,

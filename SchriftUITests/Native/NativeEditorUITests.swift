@@ -202,6 +202,45 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(app.buttons["nativeEditor.format.indent"].waitForExistence(timeout: 5), "still typeable")
     }
 
+    /// PR06b: the disclosure button folds and unfolds a toggle in the native
+    /// host. Folded, the children leave the text VoiceOver reads; typing
+    /// elsewhere leaves them alone, and unfolding shows them intact.
+    func testFoldedToggleKeepsItsChildrenWhileTypingElsewhere() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-typing", "--native-toggle"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(editor.waitForStableFrame())
+        let triangle = app.buttons["nativeEditor.toggle.fixture-toggle"]
+        XCTAssertTrue(triangle.waitForExistence(timeout: 5))
+        XCTAssertEqual(triangle.label, "Expand or collapse")
+        XCTAssertEqual(triangle.value as? String, "Collapsed", "a toggle opens collapsed, as in BlockNote")
+        XCTAssertFalse(text(of: editor).contains("Folded child"))
+        triangle.tap()
+        XCTAssertEqual(triangle.value as? String, "Expanded")
+        XCTAssertTrue(text(of: editor).contains("Folded child one\nFolded child two"), text(of: editor))
+        triangle.tap()
+        XCTAssertEqual(triangle.value as? String, "Collapsed")
+        XCTAssertFalse(text(of: editor).contains("Folded child"))
+
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 10))
+        XCTAssertTrue(keyboard.waitForStableFrame())
+        editor.typeText("elsewhere")
+        XCTAssertTrue(waitForText(of: editor, containing: "elsewhere"), text(of: editor))
+        XCTAssertFalse(app.staticTexts["nativeEditor.inputNotice"].exists)
+        XCTAssertFalse(text(of: editor).contains("Folded child"))
+
+        triangle.tap()
+        XCTAssertEqual(triangle.value as? String, "Expanded")
+        let unfolded = text(of: editor)
+        XCTAssertTrue(unfolded.hasPrefix("Toggle title\nFolded child one\nFolded child two\n"), unfolded)
+        XCTAssertEqual(unfolded.components(separatedBy: "Folded child").count, 3, "both children, once each")
+        XCTAssertTrue(unfolded.contains("elsewhere"))
+    }
+
     /// The production open route (`EditorView` → `NativeEditorOpen`) over an
     /// owned replica, offline: real keyboard input is journaled durably,
     /// reported as saved on this device and restored after a relaunch.

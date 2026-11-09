@@ -42,6 +42,24 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     /// can restore the relative selection.
     var onPatchApplied: ((BlockPatch) -> Void)?
 
+    // MARK: Folding (PR06b)
+
+    /// The toggles this reader expanded, by block id: view state for this open
+    /// document only, never stored and never in Yjs. A toggle not named here
+    /// is collapsed, BlockNote's default (`defaultToggledState`).
+    private(set) var expanded: Set<String> = []
+    /// Per block position: inside a collapsed toggle. Folding hides layout
+    /// only (`NativeBlockControls` skips these paragraphs in TextKit 2), so
+    /// storage, `blocks` and the range index stay the full projection and
+    /// every patch, local or remote, lands in hidden blocks as anywhere else.
+    private(set) var hidden: [Bool] = []
+    /// Each toggle's direct child count, so a toggle that gains a child opens
+    /// (BlockNote's toggle frame `update`).
+    private var toggleChildren: [String: Int] = [:]
+    /// Called after the hidden set changed, once storage editing ended: the
+    /// view re-lays out. Never a storage edit.
+    var onFoldChange: (() -> Void)?
+
     init(
         blocks: [BlockSnapshot], storage: NSTextStorage, traits: UITraitCollection = .current,
         reprojectBlock: ((String) -> BlockSnapshot?)? = nil
@@ -55,6 +73,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
             contentSize: traits.preferredContentSizeCategory, labels: NativeEditorLabels())
         storage.setAttributedString(
             AttributedDocumentProjection.attributedString(blocks: blocks, traits: traits, labels: labels))
+        _ = refreshFolding()
     }
 
     func applyPatch(_ patch: BlockPatch) {
@@ -71,9 +90,11 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
             }
             lastNativeStamp = stamp
         }
+        var foldChanged = false
         // Defers run in reverse: storage ends editing before the callback.
         defer {
             isApplyingPatch = false
+            if foldChanged { onFoldChange?() }
             onPatchApplied?(patch)
         }
         isApplyingPatch = true
@@ -148,7 +169,85 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                     AttributedDocumentProjection.attributedString(blocks: blocks, traits: traits, labels: labels))
             }
         }
-        if renumbers { renumberLists() }
+        if renumbers {
+            renumberLists()
+            // Only a non-text patch moves, adds or retypes a block.
+            foldChanged = refreshFolding()
+        }
+    }
+
+    func isExpanded(_ blockID: String) -> Bool { expanded.contains(blockID) }
+
+    /// Folds or unfolds a toggle: view state only. Storage, the projection and
+    /// Yjs are untouched; the view re-lays out.
+    func setExpanded(_ blockID: String, _ open: Bool) {
+        guard open != expanded.contains(blockID) else { return }
+        if open { expanded.insert(blockID) } else { expanded.remove(blockID) }
+        if refreshFolding() { onFoldChange?() }
+    }
+
+    /// Unfolds every collapsed toggle above `blockID`, so it is laid out.
+    func reveal(_ blockID: String) {
+        var parent = rangeIndex.position(for: blockID).flatMap { blocks[$0].parentID }
+        var opened = false
+        while let id = parent, let position = rangeIndex.position(for: id) {
+            if AttributedDocumentProjection.isToggle(blocks[position]) {
+                opened = expanded.insert(id).inserted || opened
+            }
+            parent = blocks[position].parentID
+        }
+        if opened, refreshFolding() { onFoldChange?() }
+    }
+
+    /// Whether the block at `position` sits inside a collapsed toggle.
+    func isHidden(position: Int) -> Bool { hidden.indices.contains(position) && hidden[position] }
+
+    func isHidden(blockID: String) -> Bool { rangeIndex.position(for: blockID).map(isHidden(position:)) ?? false }
+
+    /// The hidden block (or its separator) at a document offset.
+    func isHidden(atUTF16 offset: Int) -> Bool {
+        rangeIndex.textPosition(atUTF16: offset).map { isHidden(position: $0.position) } ?? false
+    }
+
+    /// Each run of hidden blocks as one document range, in order.
+    var hiddenRanges: [NSRange] {
+        var ranges: [NSRange] = []
+        for (position, entry) in rangeIndex.entries.enumerated() where isHidden(position: position) {
+            if let last = ranges.last, NSMaxRange(last) == entry.range.location {
+                ranges[ranges.count - 1].length += entry.range.length
+            } else {
+                ranges.append(entry.range)
+            }
+        }
+        return ranges
+    }
+
+    /// Recomputes which blocks are hidden (O(document), only after a non-text
+    /// patch or a fold change) and opens a toggle that gained a child. True
+    /// when the hidden set changed.
+    private func refreshFolding() -> Bool {
+        var counts: [String: Int] = [:]
+        for block in blocks { if let parent = block.parentID { counts[parent, default: 0] += 1 } }
+        var toggles: [String: Int] = [:]
+        for block in blocks where AttributedDocumentProjection.isToggle(block) {
+            let count = counts[block.id] ?? 0
+            if let before = toggleChildren[block.id], count > before { expanded.insert(block.id) }
+            toggles[block.id] = count
+        }
+        toggleChildren = toggles
+        var next: [Bool] = []
+        next.reserveCapacity(blocks.count)
+        // The depth of the outermost collapsed toggle being walked: deeper blocks are hidden.
+        var folded: Int?
+        for block in blocks {
+            if let depth = folded, block.depth <= depth { folded = nil }
+            next.append(folded != nil)
+            if folded == nil, AttributedDocumentProjection.isToggle(block), !expanded.contains(block.id) {
+                folded = block.depth
+            }
+        }
+        defer { hidden = next }
+        return next != hidden
     }
 
     /// A numbered item's number depends on the blocks above it, so an insert,

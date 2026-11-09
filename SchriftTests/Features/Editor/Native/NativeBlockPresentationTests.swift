@@ -415,8 +415,11 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
         ]
         XCTAssertEqual(
             NativeInputCoordinator.slashItems.map(\.id),
-            ["paragraph", "heading1", "heading2", "heading3", "bullet", "numbered", "checklist", "quote", "code"],
-            "divider, photo and file wait for PR06")
+            [
+                "paragraph", "heading1", "heading2", "heading3", "toggleHeading", "bullet", "numbered", "checklist",
+                "toggleList", "quote", "code",
+            ],
+            "divider, photo and file wait for later slices; the toggles are NativeToggleTests'")
         for (itemID, node, level) in expected {
             let harness = try makeHarness([paragraph("p", "Above"), paragraph("s", "")])
             defer { harness.close() }

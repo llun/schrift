@@ -576,13 +576,17 @@ extension YBlockProjection {
         case "paragraph", "bulletListItem":
             return classifyDefaultsOnly(props, defaults: baseDefaults)
         case "heading":
-            return classifyHeading(props)
+            return classifyHeading(props, nativeMarks: nativeMarks)
         case "numberedListItem":
             return classifyNumberedListItem(props, nativeMarks: nativeMarks)
         case "checkListItem":
             return classifyCheckListItem(props)
         case "quote":
             return classifyDefaultsOnly(props, defaults: quoteDefaults)
+        // BlockNote 0.56's toggle list item (PR06b): native only, like callout.
+        case "toggleListItem":
+            return nativeMarks
+                ? classifyDefaultsOnly(props, defaults: baseDefaults) : .opaque(reason: "unknownNode:toggleListItem")
         case "callout":
             return nativeMarks
                 ? classifyDefaultsOnly(props, defaults: calloutDefaults) : .opaque(reason: "unknownNode:callout")
@@ -617,7 +621,9 @@ extension YBlockProjection {
         return reasons.isEmpty ? .modeled : .lossy(reasons: reasons)
     }
 
-    private static func classifyHeading(_ props: [ProjectedProp]) -> ProjectionFidelity {
+    /// `nativeMarks`: the native tree projection models a toggle heading
+    /// (PR06b): its children are its nested group, its folding view state.
+    private static func classifyHeading(_ props: [ProjectedProp], nativeMarks: Bool = false) -> ProjectionFidelity {
         // Collapsible headings are structural (they own children), which this
         // flat projection cannot express — opaque, not lossy. Same for a
         // missing/out-of-range level: there is no default to fall back to.
@@ -627,7 +633,7 @@ extension YBlockProjection {
         guard case .int(let level) = levelValue, (1...6).contains(level) else {
             return .opaque(reason: "invalid heading level")
         }
-        if case .bool(true)? = value(for: "isToggleable", in: props) {
+        if !nativeMarks, case .bool(true)? = value(for: "isToggleable", in: props) {
             return .opaque(reason: "toggleable heading")
         }
         let known: Set<String> = ["backgroundColor", "textColor", "textAlignment", "level", "isToggleable"]
@@ -638,13 +644,14 @@ extension YBlockProjection {
                 continue
             }
             if prop.key == "isToggleable" {
-                // `.bool(true)` already returned `.opaque` above; only
-                // `.bool(false)` is modeled here — the app's own encoder emits
-                // `.bool(false)` explicitly, and absence never reaches this loop.
-                // Any other value type is data a markdown write-back can't
-                // honor (there is no bool to round-trip), so it's lossy rather
-                // than silently falling through as modeled.
-                if case .bool(false) = prop.value {
+                // Either bool is modeled here: classically `.bool(true)` already
+                // returned `.opaque` above, so only `.bool(false)` (which the
+                // app's own encoder emits explicitly) reaches this loop; under
+                // `nativeMarks` a toggle heading's `.bool(true)` is modeled too
+                // (PR06b). Absence never reaches this loop. Any other value
+                // type is data a write-back can't honor (there is no bool to
+                // round-trip), so it's lossy rather than silently modeled.
+                if case .bool = prop.value {
                 } else {
                     reasons.append("prop:isToggleable")
                 }

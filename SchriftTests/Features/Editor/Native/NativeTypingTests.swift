@@ -164,9 +164,8 @@ final class NativeTypingTests: DocumentEngineTestCase {
     func testOpaqueAndPlaceholderBlocksAndDuplicateIDsAreReadOnly() throws {
         let blocks = [
             BlockNoteBlock(node: "table", props: [], runs: [], id: "table"),
-            BlockNoteBlock(
-                node: "heading", props: Self.paragraphProps + [("level", .int(1)), ("isToggleable", .bool(true))],
-                runs: [InlineRun("toggle")], id: "toggle"),
+            // A toggle heading is a native block since PR06b; an unknown node is not.
+            BlockNoteBlock(node: "futureBlock", props: [], runs: [InlineRun("future")], id: "future"),
         ]
         let session = try session(blocks)
         defer { session.close() }

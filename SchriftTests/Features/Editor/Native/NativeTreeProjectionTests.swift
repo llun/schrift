@@ -190,7 +190,7 @@ final class NativeTreeProjectionTests: NativeEditingTestCase {
         let session = harness.session
         setSelection(harness, NSRange(location: try location(session, "a1", 5), length: 0))
         session.textView.insertText("\n")
-        guard case .split(_, let newID)? = harness.log.commands.last?.kind else { return XCTFail("not a split") }
+        guard case .split(_, let newID, _)? = harness.log.commands.last?.kind else { return XCTFail("not a split") }
         let new = try block(session, newID)
         XCTAssertEqual(new.node, "bulletListItem")
         XCTAssertEqual(new.depth, 1)
@@ -202,7 +202,7 @@ final class NativeTreeProjectionTests: NativeEditingTestCase {
         // Return in a block with children: the new block takes them (BlockNote).
         setSelection(harness, NSRange(location: try location(session, "a2", 5), length: 0))
         session.textView.insertText("\n")
-        guard case .split(_, let second)? = harness.log.commands.last?.kind else { return XCTFail("not a split") }
+        guard case .split(_, let second, _)? = harness.log.commands.last?.kind else { return XCTFail("not a split") }
         XCTAssertEqual(try block(session, "a2x").parentID, second)
         try assertConsistent(harness, localCommands: 2)
     }

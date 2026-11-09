@@ -86,7 +86,7 @@ final class NativeStructuralTests: DocumentEngineTestCase {
     }
 
     private func newID(_ harness: Harness, file: StaticString = #filePath, line: UInt = #line) -> String {
-        guard case .split(_, let id)? = harness.log.commands.last?.kind else {
+        guard case .split(_, let id, _)? = harness.log.commands.last?.kind else {
             XCTFail("the last command is not a split", file: file, line: line)
             return ""
         }
@@ -315,8 +315,6 @@ final class NativeStructuralTests: DocumentEngineTestCase {
         try assertConsistent(harness, localCommands: 1)
     }
 
-    /// A toggle heading projects opaque and `splitBlock` refuses it: Return is
-    /// refused before the command is armed, through the view and the engine.
     /// PR06a, BlockNote 0.56's Backspace order at a nested block's start
     /// (KeyboardShortcutsExtension.ts): reset a non-paragraph, then merge into
     /// the block above (the previous sibling's last descendant, or a first
@@ -356,32 +354,6 @@ final class NativeStructuralTests: DocumentEngineTestCase {
         XCTAssertEqual(session.surface.blocks.map { text(of: $0) }, ["AlphaExDeepWhy", "Tail"])
         XCTAssertEqual(session.surface.blocks.map(\.depth), [0, 0])
         try assertConsistent(harness, localCommands: 5)
-    }
-
-    func testReturnInAToggleHeadingIsRefusedWithoutFreezing() throws {
-        let toggle = BlockNoteBlock(
-            node: "heading", props: Self.paragraphProps + [("level", .int(1)), ("isToggleable", .bool(true))],
-            runs: [InlineRun("Toggle")], id: "toggle")
-        let harness = try makeHarness([toggle, paragraph("body", "Body")])
-        defer { harness.close() }
-        let session = harness.session
-        XCTAssertTrue(try block(session, "toggle").isOpaque)
-        try place(session, "toggle", 0)
-        session.textView.insertText("\n")
-        XCTAssertEqual(session.input?.noticeKey, .native_editor_input_unavailable)
-        for kind: NativeEditCommand.Kind in [.split(offset: 3, newID: "new"), .join] {
-            XCTAssertThrowsError(
-                try session.engine.applyStructural(
-                    NativeEditCommand(id: UUID(), baseRevision: 0, blockID: "toggle", kind: kind)
-                ) { _ in XCTFail("a refusal must not persist") }
-            ) { XCTAssertEqual($0 as? DocumentEngineError, .unsupportedNativeInput) }
-        }
-        XCTAssertEqual(session.engine.revision, 0)
-        // Typing elsewhere still works: nothing froze.
-        try place(session, "body", 0)
-        session.textView.insertText("x")
-        XCTAssertEqual(text(of: try block(session, "body")), "xBody")
-        try assertConsistent(harness, localCommands: 1)
     }
 
     // MARK: - Concurrency, IME and scroll

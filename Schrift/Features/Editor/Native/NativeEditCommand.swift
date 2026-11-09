@@ -12,9 +12,13 @@ struct NativeEditCommand: Equatable, Sendable {
         case replace(range: Range<Int>, replacement: String, marks: [TextMark]? = nil)
         /// Return at `offset`: a split whose new block takes `newID`, or an
         /// empty list item's reset to a paragraph (no block, `newID` unused).
-        case split(offset: Int, newID: String)
+        /// `open` names the expanded toggles among the block and its parent:
+        /// BlockNote's Enter reads that view state (PR06b), which never
+        /// reaches Yjs. Toggles not named are closed, BlockNote's default.
+        case split(offset: Int, newID: String, open: Set<String> = [])
         /// Backspace at `blockID`'s start: a paragraph joins the block above;
-        /// a heading or list item resets to a paragraph.
+        /// a heading or list item resets to a paragraph, a toggle heading to
+        /// a heading.
         case join
         /// One replacement over a range that may span blocks (typing, deleting,
         /// pasting or dictating over a selection) or text with newlines, which

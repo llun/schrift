@@ -257,6 +257,8 @@ enum Strings_sl {
         .editor_slash_checklist: "Kontrolni seznam",
         .editor_slash_quote: "Citat",
         .editor_slash_code_block: "Blok kode",
+        .editor_slash_toggle_list: "Zložljiv seznam",
+        .editor_slash_toggle_heading: "Zložljiv naslov",
         .editor_slash_divider: "Ločilna črta",
         .editor_slash_photo: "Fotografija",
 
@@ -382,6 +384,9 @@ enum Strings_sl {
         .native_editor_color_pink: "Rožnata",
         .native_editor_page_break: "Prelom strani",
         .native_editor_code_language: "Programski jezik kode",
+        .native_editor_toggle: "Razširi ali strni",
+        .native_editor_toggle_expanded: "Razširjeno",
+        .native_editor_toggle_collapsed: "Strnjeno",
         .profile_native_editor: "Izvorni urejevalnik (poskusno)",
         .profile_native_editor_footer:
             "Velja ob naslednjem odprtju dokumenta. Podpira Docs 6 z besedilom, oblikovanjem, povezavami, naslovi, seznami, kontrolnimi seznami, citati in bloki kode; drugi bloki so ohranjeni, vendar jih še ni mogoče urejati.",

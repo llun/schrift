@@ -246,6 +246,8 @@ enum Strings_nl {
         .editor_slash_checklist: "Checklist",
         .editor_slash_quote: "Citaat",
         .editor_slash_code_block: "Codeblok",
+        .editor_slash_toggle_list: "Uitklapbare lijst",
+        .editor_slash_toggle_heading: "Uitklapbare kop",
         .editor_slash_divider: "Scheidingslijn",
         .editor_slash_photo: "Foto",
 
@@ -369,6 +371,9 @@ enum Strings_nl {
         .native_editor_color_pink: "Roze",
         .native_editor_page_break: "Pagina-einde",
         .native_editor_code_language: "Codetaal",
+        .native_editor_toggle: "Uitklappen of inklappen",
+        .native_editor_toggle_expanded: "Uitgeklapt",
+        .native_editor_toggle_collapsed: "Ingeklapt",
         .profile_native_editor: "Native editor (experimenteel)",
         .profile_native_editor_footer:
             "Wordt toegepast wanneer je een document opnieuw opent. Ondersteunt Docs 6 met tekst, opmaak, links, koppen, lijsten, checklists, citaten en codeblokken; andere blokken blijven behouden, maar zijn nog niet bewerkbaar.",

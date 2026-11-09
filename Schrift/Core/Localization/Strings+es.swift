@@ -250,6 +250,8 @@ enum Strings_es {
         .editor_slash_checklist: "Lista de tareas",
         .editor_slash_quote: "Cita",
         .editor_slash_code_block: "Bloque de código",
+        .editor_slash_toggle_list: "Lista plegable",
+        .editor_slash_toggle_heading: "Encabezado plegable",
         .editor_slash_divider: "Separador",
         .editor_slash_photo: "Foto",
 
@@ -373,6 +375,9 @@ enum Strings_es {
         .native_editor_color_pink: "Rosa",
         .native_editor_page_break: "Salto de página",
         .native_editor_code_language: "Lenguaje del código",
+        .native_editor_toggle: "Expandir o contraer",
+        .native_editor_toggle_expanded: "Expandido",
+        .native_editor_toggle_collapsed: "Contraído",
         .profile_native_editor: "Editor nativo (experimental)",
         .profile_native_editor_footer:
             "Se aplica al abrir el próximo documento. Compatible con Docs 6: texto, formato, enlaces, títulos, listas, listas de tareas, citas y bloques de código; los demás bloques se conservan, pero aún no se pueden editar.",
