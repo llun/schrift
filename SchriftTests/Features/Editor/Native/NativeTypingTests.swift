@@ -274,7 +274,7 @@ final class NativeTypingTests: DocumentEngineTestCase {
         assertMatches(session)
     }
 
-    func testBackspaceAtTheFirstBlockStartAndDocumentEndAreQuietNoOps() throws {
+    func testBackspaceAtTheFirstBlockIsQuietAndAtTheDocumentEndShowsANotice() throws {
         let session = try session()
         defer { session.close() }
         var writes = 0

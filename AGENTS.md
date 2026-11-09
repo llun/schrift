@@ -2243,8 +2243,10 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   (an empty same-type block above is removed instead). The returned caret is the lower
   block's start (the old id at offset 0 of non-empty text, where the writer inserts the
   empty block above) or the join point. Every refusal (opaque, placeholder, code, nested
-  children, inline nodes, the first block, a locked destination) throws
-  `.unsupportedNativeInput` before `nativeCommand` is set: Return shows the input notice,
+  children, inline nodes, toggle headings, the first block, a locked destination) throws
+  `.unsupportedNativeInput` before `nativeCommand` is set; a `BlockNoteWriter.Error` thrown
+  after arming but before any transaction (no stamped emission, so nothing was written) is
+  also a refusal, never the freeze. Return shows the input notice,
   Backspace stays a quiet no-op. `replaceText` also accepts an empty text-capable element
   (the new block a split leaves), which the writer gives an XmlText. `NativeTextView.insertText`
   routes key-input Return exactly once (it never calls super, so the delegate is not asked);
@@ -2256,7 +2258,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   the scroll offset holds. Quote is not in `BlockNoteWriter.propSchemas` and stays refused.
   `NativeStructuralTests` (real view over a restored durable replica: split start/middle/end,
   heading/list/empty list, joins, resets, refusals, peer edit, Return→IME, scroll, relaunch,
-  node-oracle bytes) and the host UI test `testReturnAndBackspaceAreDurableStructureAfterRelaunch`.
+  converged XML against the node captures) and the host UI test `testReturnAndBackspaceAreDurableStructureAfterRelaunch`.
   Multi-block selection, paste and dictation across blocks are PR04b.
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above

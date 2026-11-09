@@ -261,9 +261,15 @@ final class DocumentEngine {
             flush()
             return position
         } catch {
+            nativeCommand = nil
+            // The writer validates before its transaction, and every transaction
+            // stamps an emission: a writer refusal with none wrote nothing (for
+            // example a malformed or duplicate id elsewhere that `find` walks).
+            if nativeEmission == 0, error is BlockNoteWriter.Error {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
             // Transactions have no rollback. Stop all authoring and delivery
             // rather than retry against a graph whose bytes were not confirmed.
-            nativeCommand = nil
             nativeWriteFailed = true
             buffered = []
             throw error
@@ -281,7 +287,12 @@ final class DocumentEngine {
             entry.isSimpleContainer, let element = entry.element,
             case .xmlElement(let node)? = element.typeRef,
             BlockNoteWriter.propSchemas[node] != nil, node != "codeBlock",
-            entry.isSimpleText || element.length == 0
+            entry.isSimpleText || element.length == 0,
+            // `splitBlock` refuses a toggle heading (Enter depends on view state).
+            // It already projects opaque; refuse it here too, by the writer's rule.
+            node != "heading"
+                || YBlockProjection.props(of: element)?.contains(ProjectedProp(key: "isToggleable", value: .bool(true)))
+                    == false
         else { throw DocumentEngineError.unsupportedNativeInput }
         let units = entry.runs.flatMap { Array($0.text.utf16) }
         guard entry.textType.map({ $0.length == UInt(units.count) }) ?? units.isEmpty else {

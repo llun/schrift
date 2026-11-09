@@ -315,6 +315,34 @@ final class NativeStructuralTests: DocumentEngineTestCase {
         try assertConsistent(harness, localCommands: 1)
     }
 
+    /// A toggle heading projects opaque and `splitBlock` refuses it: Return is
+    /// refused before the command is armed, through the view and the engine.
+    func testReturnInAToggleHeadingIsRefusedWithoutFreezing() throws {
+        let toggle = BlockNoteBlock(
+            node: "heading", props: Self.paragraphProps + [("level", .int(1)), ("isToggleable", .bool(true))],
+            runs: [InlineRun("Toggle")], id: "toggle")
+        let harness = try makeHarness([toggle, paragraph("body", "Body")])
+        defer { harness.close() }
+        let session = harness.session
+        XCTAssertTrue(try block(session, "toggle").isOpaque)
+        try place(session, "toggle", 0)
+        session.textView.insertText("\n")
+        XCTAssertEqual(session.input?.noticeKey, .native_editor_input_unavailable)
+        for kind: NativeEditCommand.Kind in [.split(offset: 3, newID: "new"), .join] {
+            XCTAssertThrowsError(
+                try session.engine.applyStructural(
+                    NativeEditCommand(id: UUID(), baseRevision: 0, blockID: "toggle", kind: kind)
+                ) { _ in XCTFail("a refusal must not persist") }
+            ) { XCTAssertEqual($0 as? DocumentEngineError, .unsupportedNativeInput) }
+        }
+        XCTAssertEqual(session.engine.revision, 0)
+        // Typing elsewhere still works: nothing froze.
+        try place(session, "body", 0)
+        session.textView.insertText("x")
+        XCTAssertEqual(text(of: try block(session, "body")), "xBody")
+        try assertConsistent(harness, localCommands: 1)
+    }
+
     // MARK: - Concurrency, IME and scroll
 
     /// A peer that never saw the split edits the same block; its durable
@@ -493,12 +521,12 @@ final class NativeStructuralTests: DocumentEngineTestCase {
 
     // MARK: - Node oracle (yjs 13.6.33 + BlockNote 0.56.0 captures)
 
-    func testSplitBytesMatchTheNodeOracle() throws {
+    func testSplitConvergesToTheNodeOracleXML() throws {
         try assertOracle(
             BlockNote056SplitParagraphTests.checkpoints, blockID: "p-c", kind: .split(offset: 5, newID: "1"))
     }
 
-    func testJoinBytesMatchTheNodeOracle() throws {
+    func testJoinConvergesToTheNodeOracleXML() throws {
         try assertOracle(BlockNote056MergeParagraphsTests.checkpoints, blockID: "p-d-second", kind: .join)
     }
 
