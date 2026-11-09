@@ -13,7 +13,7 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(reader.isHittable)
     }
 
-    func testDisposableNativeTypingFixtureAcceptsTextAndRefusesReturn() {
+    func testDisposableNativeTypingFixtureAcceptsTextAndSplitsOnReturn() {
         let app = XCUIApplication()
         app.launchArguments = ["--native-typing"]
         app.launch()
@@ -22,11 +22,46 @@ final class NativeEditorUITests: XCTestCase {
         editor.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.025)).tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         editor.typeText("xyzproof")
-        XCTAssertTrue((editor.value as? String)?.lowercased().contains("xyzproof") == true)
-        let beforeReturn = editor.value as? String
+        XCTAssertTrue(text(of: editor).lowercased().contains("xyzproof"))
+        let blocks = text(of: editor).components(separatedBy: "\n").count
         editor.typeText("\n")
-        XCTAssertTrue(app.staticTexts["nativeEditor.inputNotice"].waitForExistence(timeout: 5))
-        XCTAssertEqual(editor.value as? String, beforeReturn)
+        XCTAssertEqual(text(of: editor).components(separatedBy: "\n").count, blocks + 1, "Return splits once")
+        XCTAssertFalse(app.staticTexts["nativeEditor.inputNotice"].exists)
+    }
+
+    /// Return and Backspace on the real keyboard in the production open route:
+    /// a split, a second Return's empty block joined away again, and the
+    /// structure restored from the journal after a relaunch.
+    func testReturnAndBackspaceAreDurableStructureAfterRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.025)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let before = text(of: editor).components(separatedBy: "\n")
+        editor.typeText("alpha")
+        editor.typeText("\n")
+        editor.typeText("\n")
+        XCTAssertEqual(text(of: editor).components(separatedBy: "\n").count, before.count + 2)
+        editor.typeText(XCUIKeyboardKey.delete.rawValue)
+        XCTAssertFalse(app.staticTexts["nativeEditor.inputNotice"].exists, "Backspace is never refused here")
+        XCTAssertEqual(text(of: editor).components(separatedBy: "\n").count, before.count + 1)
+        editor.typeText("beta")
+        let after = text(of: editor).components(separatedBy: "\n")
+        XCTAssertEqual(after.count, before.count + 1, after.prefix(4).joined(separator: "|"))
+        let split = after.firstIndex { $0.hasSuffix("alpha") }
+        XCTAssertNotNil(split, after.prefix(4).joined(separator: "|"))
+        if let split { XCTAssertTrue(after[split + 1].hasPrefix("beta"), after[split + 1]) }
+        XCTAssertFalse(app.staticTexts["nativeEditor.inputNotice"].exists)
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        app.terminate()
+
+        app.launchArguments = ["--native-open"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertEqual(text(of: editor).components(separatedBy: "\n"), after, "the journal restores the structure")
     }
 
     /// The production open route (`EditorView` → `NativeEditorOpen`) over an

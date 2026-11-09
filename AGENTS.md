@@ -2098,7 +2098,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `NativeTypingTests` exercises the real UIKit delegate, replayed storage equality,
   echo/repair/refusal/error cases and per-key counters on 5,000 paragraphs.
   The isolated native test host supports `--native-typing` with disposable raw
-  checkpoint/journal files; its UI test checks keyboard input and Return refusal.
+  checkpoint/journal files; its UI test checks keyboard input and a Return split.
   This flag belongs only to the test host, never the shipping app.
 
 - **PR02a save/restore component checkpoint.**
@@ -2135,9 +2135,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   cleanup failure freezes the unsafe graph and keeps the accepted display intact.
   A restored durable session installs `onUnjournaledTransaction`: any unjournaled
   transaction freezes the engine rather than drifting `revision` from the manifest,
-  and stops input with the storage-failed notice. Backspace at a block start is a
-  quiet no-op until block joins (PR04); at the document end (after the last
-  separator, which no block owns) it is refused with a notice, like typing there.
+  and stops input with the storage-failed notice. Backspace at a block start is
+  structural (PR04a below); at the document end (after the last separator, which
+  no block owns) it is refused with a notice, like typing there.
   Still open: a total shadow for opaque/rich documents, clean-replica removal on
   sign-out, old Markdown-draft and local-create key migration. No live socket.
 
@@ -2231,6 +2231,33 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `--native-ime` buttons do the same in the running `--native-open` route, and
   `testJapaneseKeyboardComposesAndConfirmsOnce` types with the real Japanese Romaji
   keyboard when the simulator has it enabled (skipped otherwise).
+
+- **PR04a Return and boundary Backspace.** Each is one `NativeEditCommand` (`.split(offset:
+  newID:)` / `.join`; `.replace` is typing) through `DocumentEngine.applyStructural(_:persist:)`:
+  journal before publication, a stamped echo applied once, never the unjournaled freeze.
+  It follows BlockNote 0.56's keyboard layer before calling the writer: Return →
+  `splitBlock` (heading → heading + paragraph, list item → same kind, default props, the
+  coordinator mints the one new id); Return in an empty list item → `setBlockType`
+  paragraph in place (no block, so the minted id never reaches the model); Backspace at a
+  heading/list item start → paragraph; only a paragraph `joinBlocks` into the block above
+  (an empty same-type block above is removed instead). The returned caret is the lower
+  block's start (the old id at offset 0 of non-empty text, where the writer inserts the
+  empty block above) or the join point. Every refusal (opaque, placeholder, code, nested
+  children, inline nodes, the first block, a locked destination) throws
+  `.unsupportedNativeInput` before `nativeCommand` is set: Return shows the input notice,
+  Backspace stays a quiet no-op. `replaceText` also accepts an empty text-capable element
+  (the new block a split leaves), which the writer gives an XmlText. `NativeTextView.insertText`
+  routes key-input Return exactly once (it never calls super, so the delegate is not asked);
+  the delegate's newline branch covers other UIKit paths. The simulator's software keyboard
+  deletes at a block start by replacing the separator before the caret (delegate or UITextInput
+  `replace`), not `deleteBackward`: `replace(range:with:)` routes that exact shape to the same
+  boundary Backspace. Marked text: Return commits the
+  composition (PR03) and does not split. Patches insert/remove slices, never `.reset`, so
+  the scroll offset holds. Quote is not in `BlockNoteWriter.propSchemas` and stays refused.
+  `NativeStructuralTests` (real view over a restored durable replica: split start/middle/end,
+  heading/list/empty list, joins, resets, refusals, peer edit, Return→IME, scroll, relaunch,
+  node-oracle bytes) and the host UI test `testReturnAndBackspaceAreDurableStructureAfterRelaunch`.
+  Multi-block selection, paste and dictation across blocks are PR04b.
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (`@MainActor`), which borrows the replica and resolves
