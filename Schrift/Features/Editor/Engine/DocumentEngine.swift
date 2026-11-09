@@ -166,7 +166,7 @@ final class DocumentEngine {
         nativeEmission = 0
         do {
             let update = try writer.replaceText(
-                in: target, range: NSRange(location: range.lowerBound, length: range.count),
+                in: target, range: range,
                 with: replacement,
                 marks: marks.map { YTextAttributes($0.map { ($0.key, $0.valueJSON) }) })
             unconfirmedNativeUpdate = update
@@ -359,7 +359,7 @@ final class DocumentEngine {
                     let target = try self.writer.indexedTarget(item, id: command.blockID)
                     if !removing.isEmpty {
                         try self.writer.replaceText(
-                            in: target, range: NSRange(location: removing.lowerBound, length: removing.count), with: "")
+                            in: target, range: removing, with: "")
                     }
                     try self.writer.setBlockType(in: target, to: type, props: props.map { ($0.key, $0.value) })
                 }

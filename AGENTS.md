@@ -2374,9 +2374,11 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   path, never a type change; an unchanged value sends nothing. The **slash menu** reuses
   `SlashMenuView` (`available: NativeInputCoordinator.slashItems`: paragraph, heading 1–3,
   bullet, numbered, checklist, quote, code; divider, photo and file wait for PR06): a
-  paragraph whose whole text is "/query" shows it, and a choice is one
-  `.blockType(node:props:removing:)` that deletes the query and `setBlockType`s in one
-  transaction, as BlockNote's suggestion menu does. Return in a code block, and pasting
+  paragraph that starts with "/" and has the caret after a whitespace-free "/query" shows
+  it, and a choice is one `.blockType(node:props:removing:)` that deletes only that token
+  (text after the caret stays; the classic editor clears the whole block) and
+  `setBlockType`s in one transaction, as BlockNote's suggestion menu does. The engine has no
+  `NSRange`/UIKit (`DocumentEngineBoundaryTests`); the writer has `Range<Int>` overloads. Return in a code block, and pasting
   lines into one, is one `.replace` that keeps "\n" in the block (the engine accepts "\n"
   only for `codeBlock`). Under `nativeMarks` the projection also models `callout`,
   `pageBreak` and any numbered `start` (undefined or ≥ 1), so such documents stay

@@ -462,6 +462,34 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
         try assertConsistent(harness, localCommands: 0)
     }
 
+    /// "/" typed in front of existing text: the choice consumes only the
+    /// "/query" token before the caret, never the user's text after it.
+    func testSlashChoiceKeepsTheTextAfterTheQuery() throws {
+        let harness = try makeHarness([paragraph("p", "Notes from meeting")])
+        defer { harness.close() }
+        let session = harness.session
+        setSelection(harness, NSRange(location: try location(session, "p", 0), length: 0))
+        for character in ["/", "h", "1"] { harness.view.insertText(character) }
+        XCTAssertEqual(text(of: try block(session, "p")), "/h1Notes from meeting")
+        XCTAssertEqual(harness.input.slashMenuQuery, "h1")
+        let heading = try XCTUnwrap(NativeInputCoordinator.slashItems.first { $0.id == "heading1" })
+        XCTAssertTrue(harness.input.applySlashItem(heading))
+        XCTAssertEqual(
+            harness.log.commands.last?.kind,
+            .blockType(node: "heading", props: [ProjectedProp(key: "level", value: .int(1))], removing: 0..<3))
+        XCTAssertEqual(try block(session, "p").node, "heading")
+        XCTAssertEqual(text(of: try block(session, "p")), "Notes from meeting", "the user's text stays")
+        try assertConsistent(harness, localCommands: 4)
+
+        // A query with a space in it is prose, not a command.
+        let second = try makeHarness([paragraph("q", "/h1 x")])
+        defer { second.close() }
+        setSelection(second, NSRange(location: try location(second.session, "q", 5), length: 0))
+        XCTAssertNil(second.input.slashMenuQuery)
+        XCTAssertFalse(second.input.applySlashItem(heading))
+        try assertConsistent(second, localCommands: 0)
+    }
+
     /// "/code" in BlockNote's own empty paragraph, then the menu: the XML
     /// BlockNote's query clear and `updateBlock` leave.
     func testSlashToCodeConvergesToTheNodeCapture() throws {

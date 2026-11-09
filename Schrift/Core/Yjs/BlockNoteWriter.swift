@@ -105,6 +105,15 @@ struct BlockNoteWriter {
             marks: marks)
     }
 
+    /// `Range<Int>` spelling of `replaceText(in:)`, for the engine.
+    @discardableResult
+    func replaceText(in target: Target, range: Range<Int>, with text: String, marks: YTextAttributes? = nil)
+        throws -> Data
+    {
+        try replaceText(
+            in: target, range: NSRange(location: range.lowerBound, length: range.count), with: text, marks: marks)
+    }
+
     /// `replaceText` against an already-resolved target, so a caller applying
     /// several intents to one block walks the document once (`find` is a
     /// whole-document walk). The target must still be live: a kind change

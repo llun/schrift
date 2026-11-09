@@ -846,8 +846,8 @@ no marker character exists in storage or Yjs. Checkboxes and the code-language m
 buttons laid over the visible fragments; headings carry their level for VoiceOver and a
 Headings rotor walks them. Each prop edit (checked, start, language, emoji, level) is its own
 validated `.props` command, BlockNote's same-type `updateBlock`, never a type change; a
-slash-menu choice is one `.blockType` command that removes the "/query" and changes the type
-in one transaction. Code keeps its line breaks as source: Return and multi-line paste stay in
+slash-menu choice is one `.blockType` command that removes only the "/query" token before the
+caret (the paragraph's other text stays) and changes the type in one transaction. Code keeps its line breaks as source: Return and multi-line paste stay in
 the block, displayed as U+2028 so the block is one TextKit paragraph.
 
 **Selection.** `setSelection(EditorSelection?)` captures directed anchor/head

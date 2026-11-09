@@ -28,6 +28,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// The slash command at the caret (the text after "/" in a paragraph that
     /// is only that command), which `NativeEditorView` shows the menu for.
     private(set) var slashMenuQuery: String?
+    /// The "/query" token the menu's choice removes: from the paragraph's
+    /// start to the caret. Text after the caret is the user's and stays.
+    @ObservationIgnored private var slashToken: Range<Int>?
     /// A toggle at a caret (ProseMirror's stored marks): the marks the next
     /// typed text carries. Nothing is written until text is typed, and a
     /// selection change drops it.
@@ -363,17 +366,22 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         let index = surface.rangeIndex
         var marks: [TextMark] = []
         var block: BlockSnapshot?
+        var caretOffset = 0
         if range.length > 0 {
             marks = NativeMarkSelection.common(in: surface.blocks, index: index, range: range) ?? []
         } else if let caret = index.textPosition(atUTF16: range.location),
             !AttributedDocumentProjection.isPlaceholder(surface.blocks[caret.position])
         {
             block = surface.blocks[caret.position]
+            caretOffset = caret.offset
             marks =
                 pendingTypingMarks ?? NativeMarkSelection.typing(surface.blocks[caret.position].runs, at: caret.offset)
         }
         if marks != activeMarks { activeMarks = marks }
-        let query = block.flatMap { $0.node == "paragraph" ? slashQuery(text: text(of: $0), kind: .paragraph) : nil }
+        slashToken = block.flatMap { Self.slashToken(in: $0, caret: caretOffset) }
+        let query = block.flatMap { block in
+            slashToken.map { String(decoding: Array(text(of: block).utf16)[1..<$0.upperBound], as: UTF16.self) }
+        }
         if query != slashMenuQuery { slashMenuQuery = query }
         guard range.length == 0, let block else { return }
         var typing = view.typingAttributes
@@ -527,15 +535,25 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// editor cannot author yet (divider, photo, file) are not offered.
     @discardableResult
     func applySlashItem(_ item: SlashMenuItem) -> Bool {
-        guard let view, canFormat, view.selectedRange.length == 0, slashMenuQuery != nil,
+        guard let view, canFormat, view.selectedRange.length == 0, let token = slashToken,
             let type = Self.slashType(item.action),
-            let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location),
-            let block = block(entry.blockID)
+            let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location)
         else { return false }
         return applyStructural(
-            entry.blockID,
-            .blockType(node: type.node, props: type.props, removing: 0..<text(of: block).utf16.count),
+            entry.blockID, .blockType(node: type.node, props: type.props, removing: token),
             refusal: .native_editor_input_unavailable)
+    }
+
+    /// A paragraph starting with "/" and the caret after it, with no
+    /// whitespace between: that "/query" is the command. Unlike the classic
+    /// editor (which clears the whole block), only the token is consumed, as
+    /// BlockNote's suggestion menu does, so "/h1Notes" keeps "Notes".
+    private static func slashToken(in block: BlockSnapshot, caret: Int) -> Range<Int>? {
+        let units = Array(block.runs.map(\.text).joined().utf16)
+        guard block.node == "paragraph", caret >= 1, caret <= units.count, units.first == 0x2F,
+            !String(decoding: units[1..<caret], as: UTF16.self).contains(where: \.isWhitespace)
+        else { return nil }
+        return 0..<caret
     }
 
     /// The slash items this editor can apply, in the classic menu's order.
