@@ -241,6 +241,8 @@ enum Strings_th {
         .editor_slash_checklist: "รายการตรวจสอบ",
         .editor_slash_quote: "อ้างอิง",
         .editor_slash_code_block: "บล็อกโค้ด",
+        .editor_slash_toggle_list: "รายการแบบย่อ/ขยายได้",
+        .editor_slash_toggle_heading: "หัวข้อแบบย่อ/ขยายได้",
         .editor_slash_divider: "เส้นแบ่ง",
         .editor_slash_photo: "รูปภาพ",
 
@@ -361,6 +363,9 @@ enum Strings_th {
         .native_editor_color_pink: "ชมพู",
         .native_editor_page_break: "ตัวแบ่งหน้า",
         .native_editor_code_language: "ภาษาของโค้ด",
+        .native_editor_toggle: "ขยายหรือย่อ",
+        .native_editor_toggle_expanded: "ขยายแล้ว",
+        .native_editor_toggle_collapsed: "ย่อแล้ว",
         .profile_native_editor: "ตัวแก้ไขเนทีฟ (ทดลอง)",
         .profile_native_editor_footer:
             "มีผลเมื่อเปิดเอกสารครั้งถัดไป รองรับ Docs 6 สำหรับข้อความ การจัดรูปแบบ ลิงก์ หัวข้อ รายการ รายการตรวจสอบ คำอ้างอิง และบล็อกโค้ด บล็อกอื่นจะถูกเก็บรักษาไว้แต่ยังแก้ไขไม่ได้",

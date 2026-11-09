@@ -241,6 +241,8 @@ enum Strings_en {
         .editor_slash_checklist: "Checklist",
         .editor_slash_quote: "Quote",
         .editor_slash_code_block: "Code block",
+        .editor_slash_toggle_list: "Toggle list",
+        .editor_slash_toggle_heading: "Toggle heading",
         .editor_slash_divider: "Divider",
         .editor_slash_photo: "Photo",
 
@@ -377,6 +379,9 @@ enum Strings_en {
         .native_editor_color_pink: "Pink",
         .native_editor_page_break: "Page break",
         .native_editor_code_language: "Code language",
+        .native_editor_toggle: "Expand or collapse",
+        .native_editor_toggle_expanded: "Expanded",
+        .native_editor_toggle_collapsed: "Collapsed",
         .profile_native_editor: "Native editor (experimental)",
         .profile_native_editor_footer:
             "Applies when you next open a document. Supports Docs 6 with text, formatting, links, headings, lists, checklists, quotes and code blocks; other blocks are kept but can't be edited yet.",

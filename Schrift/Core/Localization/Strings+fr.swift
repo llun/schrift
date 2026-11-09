@@ -246,6 +246,8 @@ enum Strings_fr {
         .editor_slash_checklist: "Liste de tâches",
         .editor_slash_quote: "Citation",
         .editor_slash_code_block: "Bloc de code",
+        .editor_slash_toggle_list: "Liste repliable",
+        .editor_slash_toggle_heading: "Titre repliable",
         .editor_slash_divider: "Séparateur",
         .editor_slash_photo: "Photo",
 
@@ -370,6 +372,9 @@ enum Strings_fr {
         .native_editor_color_pink: "Rose",
         .native_editor_page_break: "Saut de page",
         .native_editor_code_language: "Langage du code",
+        .native_editor_toggle: "Déplier ou replier",
+        .native_editor_toggle_expanded: "Déplié",
+        .native_editor_toggle_collapsed: "Replié",
         .profile_native_editor: "Éditeur natif (expérimental)",
         .profile_native_editor_footer:
             "S’applique à la prochaine ouverture d’un document. Compatible avec Docs 6 : texte, mise en forme, liens, titres, listes, listes de tâches, citations et blocs de code ; les autres blocs sont conservés mais ne sont pas encore modifiables.",

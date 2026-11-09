@@ -220,6 +220,23 @@ final class NativeTextView: UITextView {
     /// delegate that draws block chrome (PR05b).
     private(set) var blockControls: NativeBlockControls!
 
+    /// VoiceOver reads the text without a folded toggle's children, which
+    /// layout also leaves out (PR06b). With nothing folded, the whole text.
+    override var accessibilityValue: String? {
+        get {
+            let ranges = blockControls?.surface?.hiddenRanges ?? []
+            let text = textStorage.string as NSString
+            var visible = ""
+            var location = 0
+            for range in ranges {
+                visible += text.substring(with: NSRange(location: location, length: range.location - location))
+                location = NSMaxRange(range)
+            }
+            return visible + text.substring(from: location)
+        }
+        set { super.accessibilityValue = newValue }
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         blockControls?.layoutControls()
@@ -230,6 +247,8 @@ final class NativeTextView: UITextView {
         precondition(textLayoutManager != nil, "The native editor requires TextKit 2")
         blockControls = NativeBlockControls(textView: self)
         textLayoutManager?.delegate = blockControls
+        // Folded toggle children are left out of layout (PR06b).
+        (textLayoutManager?.textContentManager as? NSTextContentStorage)?.delegate = blockControls
         accessibilityCustomRotors = [blockControls.headingRotor]
         // Chrome colours resolve at draw time: light/dark only redraws.
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: NativeTextView, _) in

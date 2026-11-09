@@ -239,6 +239,8 @@ enum Strings_zhHant {
         .editor_slash_checklist: "核取清單",
         .editor_slash_quote: "引文",
         .editor_slash_code_block: "程式碼區塊",
+        .editor_slash_toggle_list: "可摺疊列表",
+        .editor_slash_toggle_heading: "可摺疊標題",
         .editor_slash_divider: "分隔線",
         .editor_slash_photo: "照片",
 
@@ -359,6 +361,9 @@ enum Strings_zhHant {
         .native_editor_color_pink: "粉紅色",
         .native_editor_page_break: "分頁符號",
         .native_editor_code_language: "程式碼語言",
+        .native_editor_toggle: "展開或收合",
+        .native_editor_toggle_expanded: "已展開",
+        .native_editor_toggle_collapsed: "已收合",
         .profile_native_editor: "原生編輯器（實驗性）",
         .profile_native_editor_footer: "下次開啟文件時生效。支援 Docs 6 的文字、格式、連結、標題、清單、核取清單、引文和程式碼區塊；其他區塊會保留，但暫時無法編輯。",
         .native_editor_preserved_title: "文件已保留",

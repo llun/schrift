@@ -56,18 +56,34 @@ struct BlockNoteWriter {
     }()
 
     /// The native editor's table (PR05b): the classic six plus BlockNote 0.56's
-    /// `quote` and Docs' `callout`, in their schema order. Only the native engine
-    /// constructs a writer with it; the classic live reconcile keeps
-    /// `propSchemas`, so its quote/callout fallbacks are unchanged.
+    /// `quote`, Docs' `callout` and (PR06b) `toggleListItem` (`defaultProps`,
+    /// per the installed `ToggleListItem/block.ts`), in their schema order. Only
+    /// the native engine constructs a writer with it; the classic live
+    /// reconcile keeps `propSchemas`, so its fallbacks are unchanged. The
+    /// heading's `isToggleable` is already in the classic table.
     static let nativePropSchemas: [String: [(key: String, value: YAnyValue)]] = propSchemas.merging([
+        "toggleListItem": [
+            ("backgroundColor", .string("default")), ("textColor", .string("default")),
+            ("textAlignment", .string("left")),
+        ],
         "quote": [("backgroundColor", .string("default")), ("textColor", .string("default"))],
         "callout": [
             ("textAlignment", .string("left")), ("backgroundColor", .string("default")), ("emoji", .string("💡")),
         ],
     ]) { classic, _ in classic }
 
-    /// BlockNote `splitKeepsType`: a split list item makes another list item.
-    private static let splitKeepsType: Set<String> = ["bulletListItem", "numberedListItem", "checkListItem"]
+    /// BlockNote `splitKeepsType`: a split list item makes another list item
+    /// (a toggle list item too; a toggle heading splits into a paragraph).
+    private static let splitKeepsType: Set<String> = [
+        "bulletListItem", "numberedListItem", "checkListItem", "toggleListItem",
+    ]
+
+    /// A toggle block (BlockNote's `createToggleFrame`): a toggle list item, or
+    /// a heading with `isToggleable: true`.
+    static func isToggle(node: String, props: [(key: String, value: YAnyValue)]) -> Bool {
+        node == "toggleListItem"
+            || (node == "heading" && props.contains { $0.key == "isToggleable" && $0.value == .bool(true) })
+    }
 
     /// Recursion bound for copied subtrees: a nested block is three XML levels
     /// (container, group, container), so this allows 64 block levels plus inline nodes.
@@ -192,10 +208,19 @@ struct BlockNoteWriter {
     /// non-empty content an empty block is inserted above instead, so the
     /// original keeps its id, content and children. An offset inside a
     /// surrogate pair snaps back to the pair's start (BlockNote writes U+FFFD
-    /// into both halves). Code blocks (Enter is a line break) and toggle
-    /// headings (Enter depends on view state) throw `unsupportedBlockType`.
+    /// into both halves). Code blocks (Enter is a line break) throw
+    /// `unsupportedBlockType`.
+    ///
+    /// A toggle's Enter depends on its view state (`isToggleOpen`), which the
+    /// caller passes as `toggleOpen` (PR06b, the installed 0.56 toggle blocks'
+    /// `experimental_keyboard`). `nil` refuses a toggle (classic callers).
+    /// Closed (`false`): the split keeps the children with the toggle
+    /// (`splitKeepsChildren`). Open (`true`, `enter: "into-children"`): the
+    /// text after `offset` becomes a new first child, a paragraph with default
+    /// props, in the toggle's group or a new one; the existing children stay.
+    /// The insert-above rule at offset 0 of non-empty content comes first.
     @discardableResult
-    func splitBlock(block: String, at offset: Int, newID: String) throws -> Data {
+    func splitBlock(block: String, at offset: Int, newID: String, toggleOpen: Bool? = nil) throws -> Data {
         let target = try find(block)
         guard !newID.isEmpty else { throw Error.malformedBlock(newID) }
         do {
@@ -205,10 +230,8 @@ struct BlockNoteWriter {
         } catch Error.unsupportedBlockType {
             throw Error.duplicateID(newID)
         }
-        let props = try properties(target.element, block: block)
-        if target.node == "codeBlock"
-            || (target.node == "heading" && props.contains { $0.key == "isToggleable" && $0.value == .bool(true) })
-        {
+        let isToggle = Self.isToggle(node: target.node, props: try properties(target.element, block: block))
+        if target.node == "codeBlock" || (isToggle && toggleOpen == nil) {
             throw Error.unsupportedBlockType(target.node)
         }
         let parts = try inline(target.element, block: block)
@@ -227,10 +250,34 @@ struct BlockNoteWriter {
             return try transaction { tx in try insertBlock(tx, after: target.item.left, content: [], kids: nil) }
         }
         let suffix = try snapshots(parts, range: index..<count, block: block)
-        let kids = try target.nested.map { try snapshot($0.type, block: block, depth: 0) }
+        if isToggle, toggleOpen == true {
+            return try transaction { tx in
+                try remove(tx, parts: parts, range: index..<count)
+                let group: YType
+                if let nested = target.nested {
+                    group = nested.type
+                } else {
+                    group = YType(typeRef: .xmlElement(nodeName: "blockGroup"))
+                    guard
+                        try YWrite.insertAfter(tx, into: target.container, after: target.elementItem, [.type(group)])
+                            != nil
+                    else { throw Error.malformedBlock(block) }
+                }
+                let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+                try YWrite.insertAfter(tx, into: group, after: nil, [.type(container)])
+                try buildElement(
+                    tx, into: container, after: nil, node: "paragraph", props: schemas["paragraph"] ?? [],
+                    children: suffix)
+                try YWrite.mapSet(tx, on: container, key: "id", .any([.string(newID)]))
+            }
+        }
+        // A closed toggle keeps its hidden children; any other block hands them
+        // to the text after the caret.
+        let keepsChildren = isToggle
+        let kids = keepsChildren ? nil : try target.nested.map { try snapshot($0.type, block: block, depth: 0) }
         return try transaction { tx in
             try remove(tx, parts: parts, range: index..<count)
-            target.nested?.item.delete(tx)
+            if !keepsChildren { target.nested?.item.delete(tx) }
             try insertBlock(tx, after: target.item, content: suffix, kids: kids)
         }
     }
@@ -333,9 +380,9 @@ struct BlockNoteWriter {
     /// `start`. The new text inherits the marks at `startOffset`; new lines are
     /// unmarked. Both targets must be live siblings in one group with `start`
     /// first. The caller validates every block between (this writer removes
-    /// them whatever they hold) and that `newIDs` are unused. Code, toggle
-    /// headings and nested children that would move or be removed throw before
-    /// anything is written.
+    /// them whatever they hold) and that `newIDs` are unused. Code, toggles
+    /// (their split depends on view state) and nested children that would move
+    /// or be removed throw before anything is written.
     @discardableResult
     func replaceRange(
         from start: Target, at startOffset: Int, to end: Target, at endOffset: Int, lines: [String],
@@ -343,9 +390,8 @@ struct BlockNoteWriter {
     ) throws -> Data {
         let same = start.item === end.item
         for target in [start, end] {
-            let props = try properties(target.element, block: target.id)
-            if target.node == "codeBlock"
-                || (target.node == "heading" && props.contains { $0.key == "isToggleable" && $0.value == .bool(true) })
+            if try target.node == "codeBlock"
+                || Self.isToggle(node: target.node, props: properties(target.element, block: target.id))
             {
                 throw Error.unsupportedBlockType(target.node)
             }

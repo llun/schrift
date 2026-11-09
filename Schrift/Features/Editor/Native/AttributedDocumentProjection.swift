@@ -16,6 +16,9 @@ extension NSAttributedString.Key {
     static let nativeCalloutBackground = NSAttributedString.Key("schrift.native.calloutBackground")
     /// A nested block's depth (PR06a), so chrome and panels start at its indent.
     static let nativeDepth = NSAttributedString.Key("schrift.native.depth")
+    /// A toggle list item or toggle heading (PR06b): its disclosure button sits
+    /// in the gutter. Whether it is folded is view state, never an attribute.
+    static let nativeToggle = NSAttributedString.Key("schrift.native.toggle")
 }
 
 struct NativeEditorLabels: Equatable {
@@ -27,6 +30,9 @@ struct NativeEditorLabels: Equatable {
     var markNotDone = Strings_en.table[.editor_checklist_not_done_a11y]!
     var done = Strings_en.table[.editor_checklist_state_done_a11y]!
     var notDone = Strings_en.table[.editor_checklist_state_not_done_a11y]!
+    var toggle = Strings_en.table[.native_editor_toggle]!
+    var expanded = Strings_en.table[.native_editor_toggle_expanded]!
+    var collapsed = Strings_en.table[.native_editor_toggle_collapsed]!
 }
 
 /// Disposable presentation, never a serialization or write-back source.
@@ -37,8 +43,14 @@ struct NativeEditorLabels: Equatable {
 enum AttributedDocumentProjection {
     private static let prose: Set<String> = [
         "paragraph", "heading", "bulletListItem", "numberedListItem", "checkListItem", "codeBlock", "quote",
-        "callout", "divider", "pageBreak",
+        "callout", "divider", "pageBreak", "toggleListItem",
     ]
+
+    /// A toggle list item or toggle heading that renders as text (PR06b).
+    static func isToggle(_ block: BlockSnapshot) -> Bool {
+        !isPlaceholder(block)
+            && BlockNoteWriter.isToggle(node: block.node, props: block.props.map { ($0.key, $0.value) })
+    }
 
     /// A code block's "\n" is displayed as U+2028 (one UTF-16 unit, so offsets
     /// are unchanged): one TextKit paragraph, one panel. Yjs keeps "\n".
@@ -157,6 +169,11 @@ enum AttributedDocumentProjection {
         if block.depth > 0 {
             attributes[.nativeDepth] = block.depth
             indent(0)
+        }
+        if isToggle(block) {
+            // The disclosure button's gutter, like a list marker's.
+            attributes[.nativeToggle] = true
+            indent(scaled(NativeBlockMetrics.listGutter))
         }
         let padding = EditorBlockMetrics.decorationPadding
         switch block.node {

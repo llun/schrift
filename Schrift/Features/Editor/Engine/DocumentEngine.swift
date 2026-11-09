@@ -233,29 +233,37 @@ final class DocumentEngine {
         switch command.kind {
         case .replace:
             throw DocumentEngineError.unsupportedNativeInput
-        case .split(let offset, let newID):
+        case .split(let offset, let newID, let open):
             guard !newID.isEmpty, builder.index.entries[newID] == nil, Self.isBoundary(offset, in: units) else {
                 throw DocumentEngineError.unsupportedNativeInput
             }
-            if Self.listItemNodes.contains(node), units.isEmpty {
-                // No block is created, so `newID` stays unused: one model id.
-                write = { try self.writer.setBlockType(block: command.blockID, to: "paragraph") }
+            let toggle = isToggle(command.blockID)
+            if Self.listItemNodes.contains(node) || toggle, units.isEmpty {
+                // `emptyEnterResets`: a list item or toggle list item becomes a
+                // paragraph, a toggle heading a heading (`resetsTo`), children
+                // kept. No block is created, so `newID` stays unused.
+                write = { try self.resetOnBackspaceOrEnter(command.blockID, node: node) }
                 caret = { start(command.blockID) }
-            } else if units.isEmpty, try outdentsOnEmptyReturn(command.blockID) {
+            } else if units.isEmpty, try outdentsOnEmptyReturn(command.blockID, open: open) {
                 // BlockNote's next Enter rule: an empty nested block outdents
                 // (its parent's `emptyChildEnter` is "outdent"). One command.
                 write = try lift(command.blockID)
                 caret = { start(command.blockID) }
             } else {
-                try requireMovableChildren(command.blockID)
-                write = { try self.writer.splitBlock(block: command.blockID, at: offset, newID: newID) }
+                // A toggle keeps its children (closed: `splitKeepsChildren`;
+                // open: the text goes into a new first child), so none move.
+                if !toggle { try requireMovableChildren(command.blockID) }
+                let toggleOpen = toggle ? open.contains(command.blockID) : nil
+                write = {
+                    try self.writer.splitBlock(block: command.blockID, at: offset, newID: newID, toggleOpen: toggleOpen)
+                }
                 // At the start of non-empty text the writer inserts the empty
                 // block above, so the caret stays with the text, under the old id.
                 caret = { start(offset == 0 && !units.isEmpty ? command.blockID : newID) }
             }
         case .join:
             if node != "paragraph" {
-                write = { try self.writer.setBlockType(block: command.blockID, to: "paragraph") }
+                write = { try self.resetOnBackspaceOrEnter(command.blockID, node: node) }
                 caret = { start(command.blockID) }
                 break
             }
@@ -323,6 +331,8 @@ final class DocumentEngine {
                 lower <= upper, let group = index.entries[command.blockID]?.group
             else { throw DocumentEngineError.unsupportedNativeInput }
             var endUnits = units
+            // A toggle's split depends on its view state: a range touching one is refused.
+            guard !isToggle(command.blockID) else { throw DocumentEngineError.unsupportedNativeInput }
             for position in stride(from: lower + 1, through: upper, by: 1) {
                 // Siblings of one group only: a range across depths, or over a
                 // block with children it would delete, waits for subtree commands.
@@ -331,6 +341,7 @@ final class DocumentEngine {
                 }
                 try requireEditableBlock(index.order[position])
                 endUnits = try structuralTarget(index.order[position]).units
+                guard !isToggle(index.order[position]) else { throw DocumentEngineError.unsupportedNativeInput }
             }
             let lines = NativeRangeCommand.lines(of: range.replacement)
             let ids = range.newBlockIDs
@@ -413,7 +424,9 @@ final class DocumentEngine {
             // "/query" removed in the same transaction (BlockNote clears the
             // query, then `updateBlock`s the now-empty block).
             guard node == "paragraph", Self.slashTypes.contains(type),
-                props.allSatisfy({ $0.key == "level" && type == "heading" && Self.isPropEdit($0, on: type) }),
+                props.allSatisfy({
+                    ["level", "isToggleable"].contains($0.key) && type == "heading" && Self.isPropEdit($0, on: type)
+                }),
                 Self.isBoundary(removing.lowerBound, in: units), Self.isBoundary(removing.upperBound, in: units),
                 let item = builder.index.entries[command.blockID]?.containerItem
             else { throw DocumentEngineError.unsupportedNativeInput }
@@ -459,6 +472,28 @@ final class DocumentEngine {
 
     private static let listItemNodes: Set<String> = ["bulletListItem", "numberedListItem", "checkListItem"]
 
+    /// BlockNote's `resetsTo` (Backspace at the start, Enter in an empty block
+    /// that `emptyEnterResets`): a toggle heading becomes a regular heading
+    /// (one prop), anything else a paragraph. Children stay.
+    private func resetOnBackspaceOrEnter(_ blockID: String, node: String) throws -> Data {
+        guard node == "heading", isToggle(blockID) else {
+            return try writer.setBlockType(block: blockID, to: "paragraph")
+        }
+        guard let item = builder.index.entries[blockID]?.containerItem else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        return try writer.setBlockProps(
+            in: try writer.indexedTarget(item, id: blockID), props: [("isToggleable", .bool(false))])
+    }
+
+    /// A toggle list item or toggle heading (PR06b), by its stored props.
+    private func isToggle(_ blockID: String) -> Bool {
+        guard let element = builder.index.entries[blockID]?.element, case .xmlElement(let node)? = element.typeRef,
+            let props = YBlockProjection.props(of: element)
+        else { return false }
+        return BlockNoteWriter.isToggle(node: node, props: props.map { ($0.key, $0.value) })
+    }
+
     /// `liftListItem` for a nested block, validated: its parent is unlocked,
     /// and it, its children and the siblings after it (which become its
     /// children) are all readable and unlocked, so the clone loses nothing.
@@ -473,14 +508,11 @@ final class DocumentEngine {
     }
 
     /// Return in an empty block: BlockNote outdents a nested one unless its
-    /// parent keeps empty children (an open toggle; native toggles are open).
-    private func outdentsOnEmptyReturn(_ blockID: String) throws -> Bool {
+    /// parent keeps empty children (an open toggle's `emptyChildEnter` is
+    /// "stay", so a new child follows; a closed one's is "outdent").
+    private func outdentsOnEmptyReturn(_ blockID: String, open: Set<String>) throws -> Bool {
         guard let parentID = builder.index.entries[blockID]?.parentID else { return false }
-        guard let element = builder.index.entries[parentID]?.element,
-            element.typeRef == .xmlElement(nodeName: "heading")
-        else { return true }
-        return YBlockProjection.props(of: element)?.contains(ProjectedProp(key: "isToggleable", value: .bool(true)))
-            == false
+        return !isToggle(parentID) || !open.contains(parentID)
     }
 
     /// A split or join copies the block's children into another container:
@@ -520,10 +552,11 @@ final class DocumentEngine {
         return head.offset
     }
 
-    /// What the slash menu converts a paragraph into. Divider, media and
-    /// nested blocks wait for PR06.
+    /// What the slash menu converts a paragraph into (a toggle heading is a
+    /// heading with `isToggleable`). Divider and media wait for later slices.
     static let slashTypes: Set<String> = [
         "paragraph", "heading", "bulletListItem", "numberedListItem", "checkListItem", "quote", "codeBlock",
+        "toggleListItem",
     ]
 
     /// A prop a `.props` command may write on `node`, with BlockNote 0.56's
@@ -536,6 +569,7 @@ final class DocumentEngine {
         case ("numberedListItem", "start", .undefined): return true
         case ("numberedListItem", "start", .int(let start)): return (1...999_999).contains(start)
         case ("heading", "level", .int(let level)): return (1...6).contains(level)
+        case ("heading", "isToggleable", .bool): return true
         case ("codeBlock", "language", .string(let language)):
             return (1...64).contains(language.count)
                 && !language.unicodeScalars.contains { CharacterSet.whitespacesAndNewlines.contains($0) }
@@ -576,12 +610,7 @@ final class DocumentEngine {
             entry.isSimpleContainer, let element = entry.element,
             case .xmlElement(let node)? = element.typeRef,
             writer.schemas[node] != nil, allowCode || node != "codeBlock",
-            entry.isSimpleText || element.length == 0,
-            // `splitBlock` refuses a toggle heading (Enter depends on view state).
-            // It already projects opaque; refuse it here too, by the writer's rule.
-            node != "heading"
-                || YBlockProjection.props(of: element)?.contains(ProjectedProp(key: "isToggleable", value: .bool(true)))
-                    == false
+            entry.isSimpleText || element.length == 0
         else { throw DocumentEngineError.unsupportedNativeInput }
         let units = entry.runs.flatMap { Array($0.text.utf16) }
         guard entry.textType.map({ $0.length == UInt(units.count) }) ?? units.isEmpty else {

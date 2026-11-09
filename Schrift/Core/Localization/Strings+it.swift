@@ -245,6 +245,8 @@ enum Strings_it {
         .editor_slash_checklist: "Lista di controllo",
         .editor_slash_quote: "Citazione",
         .editor_slash_code_block: "Blocco di codice",
+        .editor_slash_toggle_list: "Elenco espandibile",
+        .editor_slash_toggle_heading: "Intestazione espandibile",
         .editor_slash_divider: "Divisore",
         .editor_slash_photo: "Foto",
 
@@ -369,6 +371,9 @@ enum Strings_it {
         .native_editor_color_pink: "Rosa",
         .native_editor_page_break: "Interruzione di pagina",
         .native_editor_code_language: "Linguaggio del codice",
+        .native_editor_toggle: "Espandi o comprimi",
+        .native_editor_toggle_expanded: "Espanso",
+        .native_editor_toggle_collapsed: "Compresso",
         .profile_native_editor: "Editor nativo (sperimentale)",
         .profile_native_editor_footer:
             "Si applica alla prossima apertura di un documento. Supporta Docs 6 con testo, formattazione, link, titoli, elenchi, liste di controllo, citazioni e blocchi di codice; gli altri blocchi vengono conservati ma non sono ancora modificabili.",

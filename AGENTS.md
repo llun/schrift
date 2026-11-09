@@ -1886,7 +1886,9 @@ that are easy to violate and expensive to discover:
   `unsupportedBlockType` means a valid block the writer does not edit (divider,
   image, quote, table, toggle list item, toggle heading split — including on a
   join's way to the previous last descendant, where BlockNote might merge) or one
-  BlockNote refuses (splitting/joining a code block).
+  BlockNote refuses (splitting/joining a code block). The native table
+  (`nativePropSchemas`) also edits quote, callout and toggle list items, and its
+  callers split a toggle by passing `splitBlock(toggleOpen:)` (PR06b).
 - **B6 deviates from yjs only in local-item *construction*, never in the store
   algorithm — verify at the document/projection level, not the store-structure
   level.** It rebuilds a changed text span wholesale from the new runs (not yjs's
@@ -2244,7 +2246,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   (an empty same-type block above is removed instead). The returned caret is the lower
   block's start (the old id at offset 0 of non-empty text, where the writer inserts the
   empty block above) or the join point. Every refusal (opaque, placeholder, code, an
-  unreadable or locked child that would move, inline nodes, toggle headings, the first block, a locked destination) throws
+  unreadable or locked child that would move, inline nodes, the first block, a locked destination) throws
   `.unsupportedNativeInput` before `nativeCommand` is set; a `BlockNoteWriter.Error` thrown
   after arming but before any transaction (no stamped emission, so nothing was written) is
   also a refusal, never the freeze. Return shows the input notice,
@@ -2269,7 +2271,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   the keyboard delete key over a selection, Return over a selection, dictation's final
   result, UITextInput `replace`, paste and cut. Line breaks (CRLF, CR, U+2028/9, NEL)
   normalize to "\n" first. **Validate every block from first to last before arming**:
-  opaque, placeholder, code, inline nodes, a toggle heading or a block outside the first
+  opaque, placeholder, code, inline nodes, a toggle (PR06b: its split depends on view state) or a block outside the first
   block's group (another depth, or a middle block's children) anywhere
   throws `.unsupportedNativeInput` (notice `native_editor_range_unavailable`, no write,
   never the freeze). `BlockNoteWriter.replaceRange(from:at:to:at:lines:newIDs:)` takes
@@ -2375,7 +2377,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   grapheme) before arming, and `BlockNoteWriter.setBlockProps` is `updateBlock`'s same-type
   path, never a type change; an unchanged value sends nothing. The **slash menu** reuses
   `SlashMenuView` (`available: NativeInputCoordinator.slashItems`: paragraph, heading 1–3,
-  bullet, numbered, checklist, quote, code; divider, photo and file wait for PR06): a
+  bullet, numbered, checklist, quote, code, and since PR06b toggle heading and toggle list;
+  divider, photo and file wait for later slices): a
   paragraph that starts with "/" and has the caret after a whitespace-free "/query" shows
   it, and a choice is one `.blockType(node:props:removing:)` that deletes only that token
   (text after the caret stays, as in the classic editor) and
@@ -2426,7 +2429,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   no-ops. A move changes no text, so `NativeInputCoordinator.indent()/outdent()` keep
   the view's selection and re-capture it. Keyboard rules, BlockNote's order: Return in an
   empty list item resets it to a paragraph first, then Return in an empty nested block
-  outdents it (not under a toggle heading, which keeps empty children); Backspace at a
+  outdents it (not under an open toggle, which keeps empty children: PR06b); Backspace at a
   nested start follows the installed 0.56 `KeyboardShortcutsExtension.ts`: reset a
   non-paragraph, then merge into the block above (`joinBlocks` into the previous
   sibling's last descendant, or `BlockNoteWriter.mergeIntoParent` for a first child,
@@ -2447,8 +2450,57 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   nested list stays typeable and savable. Tests: `NativeTreeProjectionTests`,
   `NativeIndentTests`, `BlockNoteTreeOracleTests` (`f-sink-bullet`, `enter-empty-nested`)
   and the host UI test `testTabNestsTheSecondBulletAndSurvivesRelaunch` (`--native-tree`
-  seeds two bullets and host-only caret/depth controls). Toggles, folding and subtree
+  seeds two bullets and host-only caret/depth controls). Subtree
   move/copy/clipboard/drag come in later PR06 slices.
+
+- **PR06b toggles and local folding.** Under the native flag (`nativeMarks`, as PR05b
+  gated callouts) `YBlockProjection` models `toggleListItem` (BlockNote 0.56
+  `defaultProps`, added to `BlockNoteWriter.nativePropSchemas`) and a heading with
+  `isToggleable: true`; the classic projection keeps both opaque, so classic callers,
+  preservation and golden bytes are unchanged. A toggle's title is its text and its
+  children its nested group (PR06a's tree). `AttributedDocumentProjection` stamps
+  `.nativeToggle` and indents the title one `listGutter`; `NativeBlockControls` places a
+  real 44pt disclosure `UIButton` there (`nativeEditor.toggle.<id>`, label "Expand or
+  collapse", value "Expanded"/"Collapsed", `accessibilityExpandedStatus`), enabled in the
+  read-only reader too. **Folding is view state on `NativeTextSurface`**: `expanded`
+  (block ids, in memory per open document; a toggle not in it is collapsed, BlockNote's
+  `defaultToggledState` default) and `hidden` (per position, inside a collapsed toggle),
+  recomputed after every non-text patch and fold change (a text patch moves no block). It
+  never writes Yjs and never edits storage: `NativeBlockControls` is also the
+  `NSTextContentStorageDelegate`, and `textContentManager(_:shouldEnumerate:)` leaves a
+  hidden paragraph out of TextKit 2 layout, so storage, `blocks` and the range index
+  stay the full projection and every patch (a peer's edit inside folded children
+  included) lands as anywhere else; a fold change only invalidates layout
+  (`onFoldChange`). A toggle whose direct child count grows opens (BlockNote's toggle
+  frame `update`: a peer's new child, a Tab into it). VoiceOver never reaches folded
+  content: `NativeTextView.accessibilityValue` is the storage text without
+  `surface.hiddenRanges`, the Headings rotor skips hidden headings, and controls exist
+  only for laid-out fragments. **The folded-content rule:** a `.range` or `.marks`
+  command touching any hidden block is refused before arming
+  (`native_editor_range_unavailable`; expanded, a mark range covers the children), no
+  command targets a hidden block, a caret UIKit places in folded content moves past it in
+  its direction (`revealCaret`), and Backspace whose merge target (the preorder block
+  above) is hidden unfolds that toggle first (`surface.reveal`). **Keyboard**, the
+  installed 0.56 `experimental_keyboard` + `KeyboardShortcutsExtension.ts` order, with
+  the open state passed in `.split(offset:newID:open:)` (the block and its parent if
+  expanded): an empty toggle resets (`emptyEnterResets`: toggle list item → paragraph,
+  toggle heading → `isToggleable: false`, children kept); Enter at the start of
+  non-empty text inserts an empty block above (a toggle list item keeps its type); open,
+  the text after the caret becomes a new first child paragraph (a new group if none);
+  closed, a split keeps the children with the toggle and the new sibling is a toggle list
+  item or (for a heading) a paragraph; an empty child of an open toggle gets a new child
+  after it, of a closed one outdents. Backspace at a toggle's start resets it the same way
+  (`resetsTo`), then merges as before. A range touching a toggle is refused (writer and
+  engine). The slash menu adds native-only "Toggle heading" (level 1, `isToggleable`) and
+  "Toggle list" (`toggleHeadingSlashItem`/`toggleListSlashItem`, `SlashMenuAction.toggle`,
+  never in `allSlashMenuItems`), each one `.blockType` `setBlockType`. A document with a
+  toggle has no Markdown shadow yet (`markdownShadow` reads the classic projection), so the
+  production open route keeps it read-only (`canType`), like a callout; the isolated host
+  and tests type in it. Tests: `NativeToggleTests`, `BlockNoteToggleOracleTests` (every
+  command against `BlockNoteToggleCaptures`, captured from the installed 0.56 through the
+  view's keydown handling: tiptap's `keyboardShortcut` command replays steps with
+  `maybeStep` and drops the toggle commands' later steps) and the host UI test
+  `testFoldedToggleKeepsItsChildrenWhileTypingElsewhere` (`--native-typing --native-toggle`).
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (`@MainActor`), which borrows the replica and resolves

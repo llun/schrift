@@ -39,6 +39,11 @@ final class NativeEditorSession {
         let surface = NativeTextSurface(
             blocks: projected.blocks.map(BlockSnapshot.init), storage: view.textStorage, traits: view.traitCollection,
             reprojectBlock: { resolver.engine?.nativeSnapshot(for: $0) })
+        // Folding is the surface's view state; the view lays out around it.
+        view.blockControls.surface = surface
+        surface.onFoldChange = { [weak view] in view?.blockControls.foldDidChange() }
+        // Toggles open collapsed: lay out without their children from the start.
+        if surface.hidden.contains(true) { view.blockControls.foldDidChange() }
         self.doc = doc
         self.textView = view
         self.surface = surface

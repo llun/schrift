@@ -91,7 +91,8 @@ final class NativeTextSurfaceTests: DocumentEngineTestCase {
         defer { session.close() }
         let recorder = NativeRecordingSurface(session.surface)
         session.engine.surface = recorder
-        XCTAssertTrue(AttributedDocumentProjection.isPlaceholder(session.surface.blocks[0]))
+        // PR06b: the native projection models a toggle heading as text.
+        XCTAssertFalse(AttributedDocumentProjection.isPlaceholder(session.surface.blocks[0]))
         try session.engine.replaceText(block: id, range: 100..<100, with: "😀")
         assertMatches(session.surface, doc)
         XCTAssertTrue(recorder.kinds.contains("text"))
@@ -100,8 +101,8 @@ final class NativeTextSurfaceTests: DocumentEngineTestCase {
             try session.engine.setBlockType(
                 block: id, to: "heading", props: [("level", .int(2)), ("isToggleable", .bool(toggleable))])
             assertMatches(session.surface, doc)
-            XCTAssertEqual(session.surface.blocks[0].isOpaque, toggleable)
-            XCTAssertEqual(AttributedDocumentProjection.isPlaceholder(session.surface.blocks[0]), toggleable)
+            XCTAssertFalse(session.surface.blocks[0].isOpaque)
+            XCTAssertEqual(AttributedDocumentProjection.isToggle(session.surface.blocks[0]), toggleable)
             try session.engine.replaceText(block: id, range: 110..<110, with: "e\u{301}")
             assertMatches(session.surface, doc)
         }
