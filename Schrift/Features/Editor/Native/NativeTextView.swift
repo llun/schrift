@@ -189,9 +189,25 @@ final class NativeTextView: UITextView {
         return super.canPerformAction(action, withSender: sender)
     }
 
+    /// Checkbox and code-language controls, the Headings rotor and the layout
+    /// delegate that draws block chrome (PR05b).
+    private(set) var blockControls: NativeBlockControls!
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        blockControls?.layoutControls()
+    }
+
     init() {
         super.init(frame: .zero, textContainer: nil)
         precondition(textLayoutManager != nil, "The native editor requires TextKit 2")
+        blockControls = NativeBlockControls(textView: self)
+        textLayoutManager?.delegate = blockControls
+        accessibilityCustomRotors = [blockControls.headingRotor]
+        // Chrome colours resolve at draw time: light/dark only redraws.
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: NativeTextView, _) in
+            view.blockControls.invalidateChrome()
+        }
         isEditable = false
         isSelectable = true
         isScrollEnabled = true

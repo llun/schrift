@@ -143,14 +143,44 @@ private struct NativeOpenFixture: View {
         let scope = ReplicaScope(
             serverOrigin: client.serverOrigin, ownerUserID: owner, org: "docs", documentID: documentID)
         if try replicaStore.manifest(for: scope) == nil {
-            let blocks = (0..<30).map { index in
+            let style: [(key: String, value: YAnyValue)] = [
+                ("backgroundColor", .string("default")), ("textColor", .string("default")),
+                ("textAlignment", .string("left")),
+            ]
+            var blocks = (0..<30).map { index in
                 BlockNoteBlock(
-                    node: "paragraph",
-                    props: [
-                        ("backgroundColor", .string("default")), ("textColor", .string("default")),
-                        ("textAlignment", .string("left")),
-                    ],
-                    runs: [InlineRun("Owned paragraph \(index + 1).")], id: "owned-\(index)")
+                    node: "paragraph", props: style, runs: [InlineRun("Owned paragraph \(index + 1).")],
+                    id: "owned-\(index)")
+            }
+            // `--native-blocks`: one of each block type the typeable production
+            // route accepts first (callout and page break would make it read-only).
+            if ProcessInfo.processInfo.arguments.contains("--native-blocks") {
+                blocks.insert(
+                    contentsOf: [
+                        BlockNoteBlock(
+                            node: "heading", props: style + [("level", .int(2)), ("isToggleable", .bool(false))],
+                            runs: [InlineRun("Fixture heading")], id: "owned-heading"),
+                        BlockNoteBlock(
+                            node: "checkListItem", props: style + [("checked", .bool(false))],
+                            runs: [InlineRun("Fixture task")], id: "owned-check"),
+                        BlockNoteBlock(
+                            node: "codeBlock", props: [("language", .string("swift"))],
+                            runs: [InlineRun("let fixture = 1\nlet second = 2")], id: "owned-code"),
+                        BlockNoteBlock(
+                            node: "bulletListItem", props: style, runs: [InlineRun("Fixture bullet")],
+                            id: "owned-bullet"),
+                        BlockNoteBlock(
+                            node: "numberedListItem", props: style + [("start", .int(3))],
+                            runs: [InlineRun("Fixture third")], id: "owned-number-1"),
+                        BlockNoteBlock(
+                            node: "numberedListItem", props: style + [("start", .undefined)],
+                            runs: [InlineRun("Fixture fourth")], id: "owned-number-2"),
+                        BlockNoteBlock(
+                            node: "quote",
+                            props: [("backgroundColor", .string("default")), ("textColor", .string("default"))],
+                            runs: [InlineRun("Fixture quote")], id: "owned-quote"),
+                        BlockNoteBlock(node: "divider", props: [], runs: [], id: "owned-divider"),
+                    ], at: 0)
             }
             _ = try replicaStore.create(for: scope, checkpoint: BlockNoteYjs.encode(blocks, clientID: 1))
         }

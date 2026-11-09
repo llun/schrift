@@ -36,9 +36,10 @@ struct BlockNoteBlock: Equatable {
     var children: [BlockNoteBlock] = []
 
     /// Whether this node wraps an `xmlText` child for its inline content.
-    /// Leaf nodes (`divider`, `image`) have none. Props are emitted for every
-    /// node regardless — a leaf can still carry attributes.
-    var hasTextChild: Bool { node != "divider" && node != "image" && node != "file" }
+    /// Leaf nodes (`divider`, `pageBreak`, `image`: BlockNote 0.56 `content:
+    /// "none"`) have none. Props are emitted for every node regardless — a leaf
+    /// can still carry attributes. The Markdown encoders never emit a page break.
+    var hasTextChild: Bool { node != "divider" && node != "pageBreak" && node != "image" && node != "file" }
 
     static func == (lhs: BlockNoteBlock, rhs: BlockNoteBlock) -> Bool {
         lhs.node == rhs.node && lhs.id == rhs.id && lhs.runs == rhs.runs && lhs.children == rhs.children

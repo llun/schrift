@@ -371,9 +371,11 @@ enum Strings_es {
         .native_editor_color_blue: "Azul",
         .native_editor_color_purple: "Morado",
         .native_editor_color_pink: "Rosa",
+        .native_editor_page_break: "Salto de página",
+        .native_editor_code_language: "Lenguaje del código",
         .profile_native_editor: "Editor nativo (experimental)",
         .profile_native_editor_footer:
-            "Se aplica al abrir el próximo documento. Compatible con Docs 6; por ahora solo se puede escribir texto sin formato.",
+            "Se aplica al abrir el próximo documento. Compatible con Docs 6: texto, formato, enlaces, títulos, listas, listas de tareas, citas y bloques de código; los demás bloques se conservan, pero aún no se pueden editar.",
         .native_editor_preserved_title: "Documento conservado",
         .native_editor_preserved_body:
             "El lector nativo aún no puede mostrar la estructura de este documento. Su contenido original se conserva.",

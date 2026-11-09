@@ -359,8 +359,11 @@ enum Strings_th {
         .native_editor_color_blue: "น้ำเงิน",
         .native_editor_color_purple: "ม่วง",
         .native_editor_color_pink: "ชมพู",
+        .native_editor_page_break: "ตัวแบ่งหน้า",
+        .native_editor_code_language: "ภาษาของโค้ด",
         .profile_native_editor: "ตัวแก้ไขเนทีฟ (ทดลอง)",
-        .profile_native_editor_footer: "มีผลเมื่อเปิดเอกสารครั้งถัดไป รองรับ Docs 6 ขณะนี้พิมพ์ได้เฉพาะข้อความธรรมดาเท่านั้น",
+        .profile_native_editor_footer:
+            "มีผลเมื่อเปิดเอกสารครั้งถัดไป รองรับ Docs 6 สำหรับข้อความ การจัดรูปแบบ ลิงก์ หัวข้อ รายการ รายการตรวจสอบ คำอ้างอิง และบล็อกโค้ด บล็อกอื่นจะถูกเก็บรักษาไว้แต่ยังแก้ไขไม่ได้",
         .native_editor_preserved_title: "เอกสารถูกเก็บรักษาไว้",
         .native_editor_preserved_body: "ตัวอ่านเนทีฟยังไม่สามารถแสดงโครงสร้างของเอกสารนี้ได้ เนื้อหาต้นฉบับยังคงถูกเก็บรักษาไว้",
         .profile_live_collaboration: "การทำงานร่วมกันแบบเรียลไทม์",

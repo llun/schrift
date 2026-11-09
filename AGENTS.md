@@ -1869,7 +1869,8 @@ that are easy to violate and expensive to discover:
   descendant*, the source's children lifted into its place; an empty block above
   with the same type and props is removed instead and the source keeps its id.
   Type change is `updateBlock` — `props` override, other props of the new type
-  keep their existing value or default (`propSchemas`, the one allowlist). **Keeping
+  keep their existing value or default (`propSchemas`, the classic allowlist; the native
+  engine's writer uses `nativePropSchemas`, which adds `quote` and Docs' `callout`). **Keeping
   the type sets only the changed props on the existing element** (a checkbox toggle
   or heading level is one attribute struct, byte-identical to BlockNote) — never
   rebuild the element there, or a collaborator's concurrent typing in it is lost
@@ -2255,7 +2256,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `replace`), not `deleteBackward`: `replace(range:with:)` routes that exact shape to the same
   boundary Backspace. Marked text: Return commits the
   composition (PR03) and does not split. Patches insert/remove slices, never `.reset`, so
-  the scroll offset holds. Quote is not in `BlockNoteWriter.propSchemas` and stays refused.
+  the scroll offset holds. Quote and callout are in the native engine's writer schemas
+  (`nativePropSchemas`, PR05b) and split/join like a paragraph; the classic table is unchanged.
   `NativeStructuralTests` (real view over a restored durable replica: split start/middle/end,
   heading/list/empty list, joins, resets, refusals, peer edit, Return→IME, scroll, relaunch,
   converged XML against the node captures) and the host UI test `testReturnAndBackspaceAreDurableStructureAfterRelaunch`.
@@ -2343,6 +2345,47 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   IME commits ignore a pending caret toggle, hardware ⌘B/⌘I. Tests: `NativeFormattingTests`,
   `NativeMarkOracleTests` (bold on/off byte-identical, typed marks/link/colour to the capture's
   XML), the host UI test `testBoldOnASelectedWordSurvivesRelaunch`.
+
+- **PR05b block presentation and controls.** Chrome is drawn, never stored: no bullet,
+  number, checkbox or emoji character enters storage or Yjs. `NativeBlockControls` is the
+  TextKit 2 layout delegate, so every fragment is a `NativeBlockFragment` that draws the
+  bullet, the number, the quote bar and panel, the callout box (BlockNote background name
+  or `brandFillSubtle`) and emoji, the code panel, the solid divider and the dashed,
+  labelled page break (never drawn as a divider) in the `AppTheme` colours resolved at draw
+  time. `AttributedDocumentProjection` supplies plain-valued attributes the chrome reads
+  (`nativeListNumber`, `nativeChecked`, `nativeCodeLanguage`, `nativeCalloutEmoji`,
+  `nativeCalloutBackground`, `accessibilityTextHeadingLevel`) and indents scaled with
+  Dynamic Type (`NativeBlockMetrics`). Numbers follow BlockNote's indexing plugin: a run
+  starts at its first item's `start` (unset/0 is 1), later starts are ignored;
+  `NativeTextSurface` renumbers after any non-text patch by setting only that attribute. A
+  code block's "\n" is displayed as U+2028 (same UTF-16 length, one TextKit paragraph, one
+  panel); copy uses the model's "\n". No syntax highlighting. Theme/labels/light-dark only
+  invalidate layout; Dynamic Type restyles storage; neither writes Yjs.
+  **Controls** are real `UIButton`s placed over the viewport's fragments in `layoutSubviews`
+  (after `layoutViewport()`, re-placed on every storage edit): the checkbox (44pt, label
+  "Mark as done"/"Mark as not done", value "Done"/"Not done", disabled without an input
+  coordinator) and the code-language menu (the block's own language is always listed). The
+  text view's `accessibilityCustomRotors` holds the system Headings rotor over every
+  heading's text range in storage (not just the viewport). **Prop edits** are one
+  `.props([ProjectedProp])` command each through `applyStructural` (checked, start,
+  language, emoji, heading level): `isPropEdit` validates key, block type and value
+  (start 1…999,999 or undefined, level 1…6, language 1–64 non-space characters, one emoji
+  grapheme) before arming, and `BlockNoteWriter.setBlockProps` is `updateBlock`'s same-type
+  path, never a type change; an unchanged value sends nothing. The **slash menu** reuses
+  `SlashMenuView` (`available: NativeInputCoordinator.slashItems`: paragraph, heading 1–3,
+  bullet, numbered, checklist, quote, code; divider, photo and file wait for PR06): a
+  paragraph that starts with "/" and has the caret after a whitespace-free "/query" shows
+  it, and a choice is one `.blockType(node:props:removing:)` that deletes only that token
+  (text after the caret stays; the classic editor clears the whole block) and
+  `setBlockType`s in one transaction, as BlockNote's suggestion menu does. The engine has no
+  `NSRange`/UIKit (`DocumentEngineBoundaryTests`); the writer has `Range<Int>` overloads. Return in a code block, and pasting
+  lines into one, is one `.replace` that keeps "\n" in the block (the engine accepts "\n"
+  only for `codeBlock`). Under `nativeMarks` the projection also models `callout`,
+  `pageBreak` and any numbered `start` (undefined or ≥ 1), so such documents stay
+  typeable; the classic projection keeps them opaque/lossy. Tests: `NativeBlockPresentationTests`
+  (checkbox, heading-level and type-change bytes/XML against the node captures),
+  `NativeAccessibilityTests`, the host UI test `testCheckboxTapSurvivesRelaunch`
+  (`--native-blocks` seeds a heading, checklist, code, lists, quote and divider).
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (`@MainActor`), which borrows the replica and resolves

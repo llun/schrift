@@ -23,6 +23,14 @@ struct NativeEditCommand: Equatable, Sendable {
         /// One mark change over a range that may span blocks. `blockID` is the
         /// range's first block; the text is untouched.
         case marks(NativeMarkCommand)
+        /// A prop edit on the block's own content element, never a type change:
+        /// a checkbox's `checked`, a numbered item's `start`, a code block's
+        /// `language`, a callout's `emoji` or a heading's `level`.
+        case props([ProjectedProp])
+        /// A slash-menu type change (BlockNote's `updateBlock`): `removing` is
+        /// the "/query" range deleted in the same transaction, `props` the new
+        /// type's overrides (a heading's level).
+        case blockType(node: String, props: [ProjectedProp], removing: Range<Int>)
     }
 
     let id: UUID
@@ -53,7 +61,7 @@ struct NativeEditCommand: Equatable, Sendable {
         switch kind {
         case .replace(_, let replacement, _): return replacement
         case .range(let range): return range.replacement
-        case .split, .join, .marks: return ""
+        case .split, .join, .marks, .props, .blockType: return ""
         }
     }
 }

@@ -367,9 +367,11 @@ enum Strings_nl {
         .native_editor_color_blue: "Blauw",
         .native_editor_color_purple: "Paars",
         .native_editor_color_pink: "Roze",
+        .native_editor_page_break: "Pagina-einde",
+        .native_editor_code_language: "Codetaal",
         .profile_native_editor: "Native editor (experimenteel)",
         .profile_native_editor_footer:
-            "Wordt toegepast wanneer je een document opnieuw opent. Ondersteunt Docs 6; voorlopig kun je alleen platte tekst typen.",
+            "Wordt toegepast wanneer je een document opnieuw opent. Ondersteunt Docs 6 met tekst, opmaak, links, koppen, lijsten, checklists, citaten en codeblokken; andere blokken blijven behouden, maar zijn nog niet bewerkbaar.",
         .native_editor_preserved_title: "Document behouden",
         .native_editor_preserved_body:
             "De native lezer kan de structuur van dit document nog niet weergeven. De oorspronkelijke inhoud blijft behouden.",

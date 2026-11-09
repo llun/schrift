@@ -140,6 +140,30 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(bold.isSelected, "the journal restores the mark")
     }
 
+    /// The checklist checkbox is a real button in the production open route:
+    /// a tap is one durable prop command the journal restores after a relaunch.
+    func testCheckboxTapSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-blocks"]
+        app.launch()
+        let checkbox = app.buttons["nativeEditor.checkbox.owned-check"]
+        XCTAssertTrue(checkbox.waitForExistence(timeout: 10))
+        XCTAssertEqual(checkbox.value as? String, "Not done")
+        XCTAssertTrue(checkbox.isEnabled)
+        checkbox.tap()
+        let checked = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Done"), object: checkbox)
+        XCTAssertEqual(XCTWaiter.wait(for: [checked], timeout: 5), .completed, "the tick is applied")
+        XCTAssertFalse(app.staticTexts["nativeEditor.inputNotice"].exists)
+        XCTAssertTrue(app.buttons["nativeEditor.codeLanguage.owned-code"].exists, "the code block's language menu")
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        app.terminate()
+
+        app.launchArguments = ["--native-open", "--native-blocks"]
+        app.launch()
+        XCTAssertTrue(checkbox.waitForExistence(timeout: 10))
+        XCTAssertEqual(checkbox.value as? String, "Done", "the journal restores the tick")
+    }
+
     /// The production open route (`EditorView` → `NativeEditorOpen`) over an
     /// owned replica, offline: real keyboard input is journaled durably,
     /// reported as saved on this device and restored after a relaunch.
