@@ -2259,7 +2259,9 @@ final class EditorViewModel {
         }
 
         blocks[index].text = text
-        slashQueryText = focusedBlockID == blockID ? slashQuery(text: text, kind: blocks[index].kind) : nil
+        slashQueryText =
+            focusedBlockID == blockID
+            ? slashQuery(text: text, kind: blocks[index].kind, caret: selection?.location) : nil
         if let dismissed = dismissedPageLink, dismissed.blockID == blockID,
             !hasPageLinkOpener(in: text, at: dismissed.anchor)
         {
@@ -2436,6 +2438,11 @@ final class EditorViewModel {
         // the pending target and issue a token no older acknowledgement can clear.
         if cursorRequest?.token == previousToken {
             focusBlock(targetID, cursorAt: range.location + (replacement as NSString).length)
+        }
+        // `updateText` derived the slash menu from the caret before this input; re-derive it now
+        // that the caret is where the input left it.
+        if let index = blockIndex(targetID) {
+            slashQueryText = slashQuery(text: blocks[index].text, kind: blocks[index].kind, caret: selection?.location)
         }
         return true
     }
@@ -3098,8 +3105,19 @@ final class EditorViewModel {
         markDirty()
     }
 
+    /// Re-derives an open slash menu from the caret: moving it past a space, or in front of the
+    /// "/", closes the menu. It never opens one (typing does) and ignores a caret beyond the
+    /// model's text, which is a report that arrives ahead of the edit it belongs to.
+    func refreshSlashQuery() {
+        guard slashQueryText != nil, let focusedBlockID, let index = blockIndex(focusedBlockID),
+            let caret = selection?.location, caret <= (blocks[index].text as NSString).length
+        else { return }
+        slashQueryText = slashQuery(text: blocks[index].text, kind: blocks[index].kind, caret: caret)
+    }
+
     /// Applies a block type chosen from the slash menu to the focused block,
-    /// consuming the "/query" text.
+    /// consuming only the "/query" token: text after the caret stays (with its inline
+    /// markdown), and the caret lands at its start.
     func applySlashSelection(_ item: SlashMenuItem) {
         liveWrite?.prepareForLocalEdit()
         guard let focusedBlockID, let index = blockIndex(focusedBlockID) else { return }
@@ -3109,26 +3127,37 @@ final class EditorViewModel {
         // do nothing.
         if case .insertPhoto = item.action, !canInsertPhoto { return }
         if case .insertAttachment = item.action, !canInsertAttachment { return }
-        blocks[index].text = ""
+        let text = blocks[index].text
+        let tokenEnd =
+            slashTokenLength(text: text, kind: blocks[index].kind, caret: selection?.location)
+            ?? slashTokenLength(text: text, kind: blocks[index].kind) ?? 0
+        let kept = (text as NSString).substring(from: tokenEnd)
+        blocks[index].text = kept
         slashQueryText = nil
         switch item.action {
         case .convert(.divider):
-            blocks[index].kind = .divider
-            let newBlock = EditorBlock(kind: .paragraph)
-            blocks.insert(newBlock, at: index + 1)
-            focusBlock(newBlock.id, cursorAt: 0)
+            if kept.isEmpty {
+                blocks[index].kind = .divider
+                let newBlock = EditorBlock(kind: .paragraph)
+                blocks.insert(newBlock, at: index + 1)
+                focusBlock(newBlock.id, cursorAt: 0)
+            } else {
+                // A divider block holds no text: put it above the paragraph that keeps it.
+                blocks.insert(EditorBlock(kind: .divider), at: index)
+                focusBlock(focusedBlockID, cursorAt: 0)
+            }
         case .convert(let kind):
             blocks[index].kind = kind
             focusBlock(focusedBlockID, cursorAt: 0)
         case .insertPhoto:
-            // The block stays an empty paragraph; `insertImageBlock` replaces it
-            // in place once the upload succeeds (and leaves it alone if it
-            // doesn't, so a failed pick never strands a placeholder).
+            // The block stays a paragraph (empty, unless text followed the token);
+            // `insertImageBlock` replaces an empty one in place once the upload succeeds
+            // (and leaves it alone if it doesn't, so a failed pick never strands a
+            // placeholder), and inserts after one that kept text.
             focusBlock(focusedBlockID, cursorAt: 0)
             requestPhotoInsertion()
         case .insertAttachment:
-            // Same contract as photo: the block stays an empty paragraph and
-            // `insertAttachmentBlock` replaces it in place on success only.
+            // Same contract as photo: `insertAttachmentBlock` acts on success only.
             focusBlock(focusedBlockID, cursorAt: 0)
             requestAttachmentInsertion()
         }

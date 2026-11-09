@@ -131,6 +131,9 @@ final class ChecklistFilterTests: XCTestCase {
         guard enableCompletedFilter(in: app) else { return }
         let reveal = app.buttons["checklist.showCompleted"]
         XCTAssertTrue(reveal.waitForExistence(timeout: 5))
+        // The reveal replaces the whole document when the filter turns on, so it exists before the
+        // swap has finished laying out; hittability and height are only meaningful once it holds still.
+        XCTAssertTrue(reveal.waitForStableFrame(), "The reveal must stop moving before it is measured")
         XCTAssertTrue(reveal.isHittable)
         XCTAssertEqual(reveal.label, "Completed items hidden: 2. Show completed")
         XCTAssertGreaterThanOrEqual(reveal.frame.height, 44)
@@ -140,10 +143,15 @@ final class ChecklistFilterTests: XCTestCase {
         capture(app, arguments.isEmpty ? "all-completed-default" : "all-completed-accessibility")
         setEditing(true, in: app)
         XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.textViews.matching(NSPredicate(format: "value == %@", "Finished one")).firstMatch.exists)
-        XCTAssertTrue(app.textViews.matching(NSPredicate(format: "value == %@", "Finished two")).firstMatch.exists)
+        // The editing rows realize after the Done button, so wait for them rather than read once.
+        for row in ["Finished one", "Finished two"] {
+            let editor = app.textViews.matching(NSPredicate(format: "value == %@", row)).firstMatch
+            XCTAssertTrue(editor.waitForExistence(timeout: 5), "\(row) must be editable in the full editor")
+        }
         setEditing(false, in: app)
         XCTAssertTrue(reveal.waitForExistence(timeout: 5))
+        XCTAssertTrue(reveal.waitForStableFrame(), "The reveal must stop moving before it is pressed")
+        XCTAssertTrue(reveal.isHittable)
         reveal.tap()
         XCTAssertTrue(app.staticTexts["Finished one"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Finished two"].exists)
@@ -179,6 +187,23 @@ final class ChecklistFilterTests: XCTestCase {
         try auditReadingControls(accessibility: true)
     }
 
+    /// A loaded runner can run out of XCTest's audit budget at accessibility sizes (`-56`, "Audit failed to
+    /// complete in time"): that is no verdict on the UI, so the audit gets one more run. Real findings are
+    /// recorded as test failures by `performAccessibilityAudit`, never thrown, so they still fail the test,
+    /// and a second timeout propagates.
+    private func audit(_ app: XCUIApplication) throws {
+        let types: XCUIAccessibilityAuditType = [
+            .elementDetection, .sufficientElementDescription, .dynamicType, .textClipped,
+        ]
+        do {
+            try app.performAccessibilityAudit(for: types)
+        } catch let error as NSError
+            where error.domain == "com.apple.xcode.xctest.accessibilityAudit" && error.code == -56
+        {
+            try app.performAccessibilityAudit(for: types)
+        }
+    }
+
     private func auditReadingControls(accessibility: Bool) throws {
         // Audit the real production controls without excluding any findings. The
         // complete-editor tests separately check discovery/reveal, all-hidden mode
@@ -205,9 +230,8 @@ final class ChecklistFilterTests: XCTestCase {
             } else {
                 XCTAssertFalse(app.buttons["checklist.showCompleted"].exists)
             }
-            try app.performAccessibilityAudit(for: [
-                .elementDetection, .sufficientElementDescription, .dynamicType, .textClipped,
-            ])
+            XCTAssertTrue(toggle.waitForStableFrame(), "The controls must settle before they are audited")
+            try audit(app)
             XCTAssertEqual(toggle.value as? String, filtered ? "1" : "0")
             if filtered {
                 XCTAssertTrue(app.buttons["checklist.showCompleted"].isHittable)

@@ -497,6 +497,99 @@ final class EditorBlockMutationTests: XCTestCase {
         XCTAssertNil(viewModel.slashQueryText)
     }
 
+    func testSlashSelectionKeepsTheTextAfterTheToken() {
+        let block = EditorBlock(kind: .paragraph, text: "Notes from meeting")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+        viewModel.updateText(
+            blockID: block.id, text: "/h1Notes from meeting", inputSelection: NSRange(location: 3, length: 0))
+        XCTAssertEqual(viewModel.slashQueryText, "h1")
+
+        viewModel.applySlashSelection(allSlashMenuItems.first { $0.id == "heading1" }!)
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .heading(level: 1))
+        XCTAssertEqual(viewModel.blocks[0].text, "Notes from meeting")
+        XCTAssertNil(viewModel.slashQueryText)
+        XCTAssertEqual(viewModel.cursorRequest?.offset, 0)
+    }
+
+    func testSlashAloneBecomesAnEmptyHeading() {
+        let block = EditorBlock(kind: .paragraph, text: "")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+        viewModel.updateText(blockID: block.id, text: "/", inputSelection: NSRange(location: 1, length: 0))
+
+        viewModel.applySlashSelection(allSlashMenuItems.first { $0.id == "heading1" }!)
+
+        XCTAssertEqual(viewModel.blocks.map(\.kind), [.heading(level: 1)])
+        XCTAssertEqual(viewModel.blocks[0].text, "")
+    }
+
+    func testSlashSelectionKeepsInlineMarksInTheKeptText() {
+        let text = "/quote**bold** and *italic* [link](https://example.com) `code`"
+        let block = EditorBlock(kind: .paragraph, text: text)
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+        viewModel.selection = NSRange(location: 6, length: 0)
+        viewModel.slashQueryText = "quote"
+
+        viewModel.applySlashSelection(allSlashMenuItems.first { $0.id == "quote" }!)
+
+        XCTAssertEqual(viewModel.blocks[0].kind, .quote)
+        XCTAssertEqual(viewModel.blocks[0].text, "**bold** and *italic* [link](https://example.com) `code`")
+    }
+
+    func testSlashDividerKeepsTheTextBelowIt() {
+        let block = EditorBlock(kind: .paragraph, text: "/divRest")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+        viewModel.selection = NSRange(location: 4, length: 0)
+
+        viewModel.applySlashSelection(allSlashMenuItems.first { $0.id == "divider" }!)
+
+        XCTAssertEqual(viewModel.blocks.map(\.kind), [.divider, .paragraph])
+        XCTAssertEqual(viewModel.blocks[1].text, "Rest")
+        XCTAssertEqual(viewModel.focusedBlockID, block.id)
+    }
+
+    /// Input routed to a pending target (after Return moved the caret to a new block) is
+    /// published before the caret moves, so the menu must use the caret the input produces.
+    func testSlashTypedThroughPendingKeyboardInputOpensWithTheRightQuery() {
+        let first = EditorBlock(kind: .paragraph, text: "lead")
+        let target = EditorBlock(kind: .paragraph, text: "")
+        let viewModel = makeViewModel(blocks: [first, target])
+        viewModel.focusedBlockID = target.id
+        viewModel.selection = NSRange(location: 0, length: 0)
+        viewModel.cursorRequest = EditorViewModel.CursorRequest(blockID: target.id, offset: 0)
+
+        XCTAssertTrue(viewModel.applyPendingKeyboardInput(from: first.id, text: "/", consumedCursorToken: nil))
+        XCTAssertEqual(viewModel.blocks[1].text, "/")
+        XCTAssertEqual(viewModel.slashQueryText, "")
+
+        XCTAssertTrue(viewModel.applyPendingKeyboardInput(from: first.id, text: "h", consumedCursorToken: nil))
+        XCTAssertEqual(viewModel.slashQueryText, "h")
+
+        viewModel.applySlashSelection(allSlashMenuItems.first { $0.id == "heading1" }!)
+        XCTAssertEqual(viewModel.blocks[1].kind, .heading(level: 1))
+        XCTAssertEqual(viewModel.blocks[1].text, "")
+    }
+
+    func testSlashMenuFollowsTheCaretNotTheWholeParagraph() {
+        let block = EditorBlock(kind: .paragraph, text: "")
+        let viewModel = makeViewModel(blocks: [block])
+        viewModel.focusedBlockID = block.id
+
+        // "/" typed in front of existing text: the query ends at the caret.
+        viewModel.updateText(
+            blockID: block.id, text: "/Notes from meeting", inputSelection: NSRange(location: 1, length: 0))
+        XCTAssertEqual(viewModel.slashQueryText, "")
+
+        // Moving the caret past a space closes the menu.
+        viewModel.selection = NSRange(location: 8, length: 0)
+        viewModel.refreshSlashQuery()
+        XCTAssertNil(viewModel.slashQueryText)
+    }
+
     func testSlashQueryClearsWhenSlashRemoved() {
         let block = EditorBlock(kind: .paragraph, text: "")
         let viewModel = makeViewModel(blocks: [block])

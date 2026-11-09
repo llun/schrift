@@ -2378,7 +2378,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   bullet, numbered, checklist, quote, code; divider, photo and file wait for PR06): a
   paragraph that starts with "/" and has the caret after a whitespace-free "/query" shows
   it, and a choice is one `.blockType(node:props:removing:)` that deletes only that token
-  (text after the caret stays; the classic editor clears the whole block) and
+  (text after the caret stays, as in the classic editor) and
   `setBlockType`s in one transaction, as BlockNote's suggestion menu does. The engine has no
   `NSRange`/UIKit (`DocumentEngineBoundaryTests`); the writer has `Range<Int>` overloads. Return in a code block, and pasting
   lines into one, is one `.replace` that keeps "\n" in the block (the engine accepts "\n"
@@ -5070,7 +5070,12 @@ markdown write endpoint**. Understand this before touching the save path:
   silent, because the shared client's `onSessionExpired` hook has already raised
   the re-login sheet.
 - **Typing `[[` links a page; the editor has two typed triggers, not one.** The slash
-  menu opens on a *paragraph whose text starts with* `/` (`slashQuery`); the page
+  menu opens on a *paragraph that starts with* `/` with the caret right after a
+  whitespace-free "/query" (`slashQuery(text:kind:caret:)`, the native editor's rule;
+  `refreshSlashQuery` closes it when the caret moves out, and never opens it); a choice
+  (`applySlashSelection`) removes only that token and keeps the text after it, inline
+  markdown included, with the caret at its start (a Divider goes above kept text, Photo
+  and File insert after it); the page
   picker opens wherever the caret sits right after `[[` plus a query
   (`pageLinkTrigger(in:caret:)`, `Features/Editor/PageLinkPicker.swift` — pure, UTF-16,
   tested) in any block that renders inline markdown, and never while the slash menu is
@@ -5527,6 +5532,13 @@ markdown write endpoint**. Understand this before touching the save path:
   press and `ChecklistHitTests`' offset taps still wait for the target's frame to hold still
   (`waitForStableFrame`); that is a precondition, and the frame was stable in every captured
   failure. Read `docs/ci.md` before changing any of it.
+- Other UI-test waits follow the same rule: wait for the state the next step needs, not for existence.
+  `NativeEditorUITests` focuses through `focusFirstParagraph` (editor frame settled, then a settled
+  keyboard), reads typed text with a waited predicate, and stops at its first failed step
+  (`continueAfterFailure = false`). The all-completed checklist flows wait for the reveal's frame to
+  settle before measuring or pressing it, and for the editing rows to exist. The reading-controls
+  accessibility audit reruns once only when XCTest reports its `-56` "Audit failed to complete in time"
+  budget error; findings are recorded as failures, never thrown, so they still fail the test.
 
 ## Docs convention
 
