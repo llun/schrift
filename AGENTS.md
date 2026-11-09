@@ -2789,7 +2789,19 @@ markdown write endpoint**. Understand this before touching the save path:
   block naming its URL), the shadow is replaced by an exact copy of the server block,
   and the pair is forced into the alignment so `BlockNoteWrite` writes nothing for it.
   Nodes the export never spells (`invisibleNodes`: a PDF preview, page break, math,
-  diagram, columns) are kept where they were when no shadow is found. Anything the
+  diagram, columns) are kept where they were when no shadow is found. The web's columns are a
+  `columnList` **directly in the `blockGroup`** (no `blockContainer`), carrying its own `id`;
+  `YBlockProjection` projects it opaque as `unknownNode:columnList` with that id — projected
+  id-less, it tripped the empty-id refusal below and **every** save of a page with columns
+  failed as `.decoding` with no HTTP failure to show (seen on TestFlight 0.103–0.106). The `.text`
+  words skip inline `math` (the export drops it without a trace) — except that a math block the
+  editor models as one block (a paragraph, heading, quote or childless list item, matched by `.text`)
+  gets no rule when another non-invisible top-level block shares its math-free words, so it is rebuilt
+  from the markdown and loses its formula (main's behaviour before inline math was kept) rather than
+  taking its look-alike's place; `.invisible` blocks keep their rule and are never counted, a
+  `.listTree` is already tied to its base block, and a multi-block shadow (a table) is kept — and `.exact` compares the
+  replica's runs coalesced like the parser's (an underlined word mid-sentence is scrubbed into
+  its own run), or an untouched paragraph holding either was rebuilt and lost it. Anything the
   user edited no longer matches and is written from the markdown as before. A **nested
   list item** gets `Rule.listTree`: kept only when one *untouched* new block has the same
   text (each node's exact runs — punctuation, marks, link targets, but not the trailing blanks the

@@ -117,9 +117,34 @@ enum BlockNotePreservation {
     /// `BlockNoteIncrementalSave.oldBlocks` projects them.
     static func rules(for old: [ProjectedBlock], in doc: YDoc) -> [Rule?] {
         let containers = topLevelContainers(of: doc)
-        return old.enumerated().map { index, block in
+        let rules = old.enumerated().map { index, block -> Rule? in
             guard index < containers.count, let container = containers[index] else { return nil }
             return rule(for: block, container: container)
+        }
+        // Skipping inline math can make blocks that differ only in their formulas (or a formula
+        // and none) read alike, and a single-block shadow could then go to the wrong one. So a
+        // math block the editor models (a paragraph, heading, quote or childless list item, whose
+        // shadow is one block) gets no rule when another top-level block shares its math-free
+        // words: it projects opaque and illegible (math is never inline text), so the plain
+        // alignment cannot anchor it either, and it is rebuilt from the markdown, losing its
+        // formula. Invisible blocks are never a shadow, so they neither collide nor lose their rule;
+        // a list tree is already tied to its base block, and a multi-block shadow (a table) is kept.
+        let walks = containers.indices.map { index -> (tokens: [String], hasMath: Bool)? in
+            guard index < rules.count, let container = containers[index] else { return nil }
+            if case .invisible? = rules[index] { return nil }
+            return walk(of: container)
+        }
+        var counts: [[String]: Int] = [:]
+        for walk in walks { if let walk { counts[walk.tokens, default: 0] += 1 } }
+        return rules.enumerated().map { index, rule in
+            guard case .text? = rule, index < walks.count, let walk = walks[index], walk.hasMath,
+                counts[walk.tokens, default: 0] > 1, let container = containers[index]
+            else { return rule }
+            let children = liveChildren(of: container)
+            guard children.count == 1, case .type(let element)? = children.first?.content,
+                case .xmlElement(let node)? = element.typeRef, modeledNodes.contains(node)
+            else { return rule }
+            return nil
         }
     }
 
@@ -148,7 +173,9 @@ enum BlockNotePreservation {
         // it could not read (a mention, a hard break: opaque with no runs) falls through to
         // its words.
         if modeledNodes.contains(node), !hasNestedChildren, block.node == node, !block.runs.isEmpty {
-            return .exact(node: node, props: props, runs: block.runs)
+            // Coalesced as the markdown parser's runs are: an underlined word mid-sentence is
+            // scrubbed to its own unmarked run, which must still read like its shadow's.
+            return .exact(node: node, props: props, runs: YBlockProjection.inlineRuns(of: element) ?? block.runs)
         }
         guard let tokens = walkedTokens(of: container), !tokens.isEmpty else { return nil }
         return .text(tokens)
@@ -160,6 +187,12 @@ enum BlockNotePreservation {
     /// formula), so a node the export *does* spell as text is still recognised. `nil` when
     /// the walk exceeds `maxItemsPerBlock`.
     private static func walkedTokens(of container: YType) -> [String]? {
+        walk(of: container)?.tokens
+    }
+
+    /// `walkedTokens`, and whether the walk skipped any inline math.
+    private static func walk(of container: YType) -> (tokens: [String], hasMath: Bool)? {
+        var hasMath = false
         var text = ""
         var attributeText = ""
         var visited = 0
@@ -182,6 +215,8 @@ enum BlockNotePreservation {
                 if !current.deleted {
                     switch current.content {
                     case .string(let units): text += String(decoding: units, as: UTF16.self)
+                    // The export drops inline math without a trace, so its words are not the block's.
+                    case .type(let child) where child.typeRef == .xmlElement(nodeName: "math"): hasMath = true
                     case .type(let child): pending.append(child)
                     default: break
                     }
@@ -192,7 +227,7 @@ enum BlockNotePreservation {
             stack.append(contentsOf: pending.reversed())
         }
         let tokens = signatureTokens(text)
-        return tokens.isEmpty ? signatureTokens(attributeText) : tokens
+        return (tokens.isEmpty ? signatureTokens(attributeText) : tokens, hasMath)
     }
 
     /// The nodes of a block's subtree in document order, each with its nesting depth, and each

@@ -188,6 +188,15 @@ extension YBlockProjection {
         guard case .type(let containerType) = containerItem.content,
             containerType.typeRef == .xmlElement(nodeName: "blockContainer")
         else {
+            // BlockNote's multi-column block sits in the blockGroup itself, not in a
+            // blockContainer, and carries its own id: opaque, but identifiable.
+            if case .type(let type) = containerItem.content, type.typeRef == .xmlElement(nodeName: "columnList"),
+                let id = blockID(of: type)
+            {
+                return ProjectedBlock(
+                    id: id, node: "columnList", props: [], runs: [], fidelity: .opaque(reason: "unknownNode:columnList")
+                )
+            }
             return opaqueBlock(id: "", reason: "unexpected root child")
         }
         guard let id = blockID(of: containerType) else {

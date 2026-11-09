@@ -384,6 +384,243 @@ final class BlockNotePreservationTests: XCTestCase {
         XCTAssertEqual(prop("level", of: changed.blocks[1]), .int(3))
     }
 
+    // MARK: - Web shapes the golden encoder cannot write
+
+    /// A node of a served document built item by item (`servedTree`).
+    private indirect enum Node {
+        case element(String, [(key: String, value: YAnyValue)], [Node])
+        case text(String)
+    }
+
+    private func container(_ id: String, _ content: Node) -> Node {
+        .element("blockContainer", [("id", .string(id))], [content])
+    }
+
+    private func textParagraph(_ inline: [Node]) -> Node { .element("paragraph", baseProps, inline) }
+
+    /// `blocks` as the children of the root `blockGroup`, written straight into a replica.
+    private func servedTree(_ blocks: [Node]) throws -> Data {
+        let doc = YDoc(clientID: 1)
+        defer { doc.destroy() }
+        try doc.transact(local: true) { tx in
+            try insert(tx, [.element("blockGroup", [], blocks)], into: doc.get(BlockNoteYjs.fragmentField))
+        }
+        return try YStateEncoder.encodeStateAsUpdate(doc)
+    }
+
+    private func insert(_ tx: YTransaction, _ nodes: [Node], into parent: YType) throws {
+        var left: YItem?
+        for node in nodes {
+            switch node {
+            case .text(let string):
+                let text = YType(typeRef: .xmlText)
+                left = try YWrite.insertAfter(tx, into: parent, after: left, [.type(text)])
+                try YWrite.insertAfter(tx, into: text, after: nil, [.string(Array(string.utf16))])
+            case .element(let name, let attributes, let children):
+                let element = YType(typeRef: .xmlElement(nodeName: name))
+                left = try YWrite.insertAfter(tx, into: parent, after: left, [.type(element)])
+                for attribute in attributes {
+                    try YWrite.mapSet(tx, on: element, key: attribute.key, .any([attribute.value]))
+                }
+                try insert(tx, children, into: element)
+            }
+        }
+    }
+
+    private func fragment(_ state: Data, after update: Data?) throws -> String {
+        let doc = YDoc(clientID: 999)
+        defer { doc.destroy() }
+        try doc.applyUpdate(try YUpdateDecoder.decode(state))
+        if let update { try doc.applyUpdate(try YUpdateDecoder.decode(update)) }
+        return YXMLString.fragment(doc)
+    }
+
+    /// The web's columns are a `columnList` straight in the `blockGroup`, not in a
+    /// `blockContainer`, with their own id. Refusing that shape failed every save of the page
+    /// (`.decoding`, no HTTP failure to show). The export never spells columns, so they stay.
+    func testColumnsBesideAnEditAreKeptAndTheEditLands() throws {
+        let idE = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+        let column = Node.element(
+            "column", [("id", .string(idC)), ("width", .int(1))],
+            [container(idD, textParagraph([.text("Left column")]))])
+        let state = try servedTree([
+            container(idA, textParagraph([.text("One")])),
+            .element("columnList", [("id", .string(idB))], [column]),
+            container(idE, textParagraph([.text("Two")])),
+        ])
+
+        let update = try save(state, "One\n\nTwo, edited", base: "One\n\nTwo")
+        let after = try project(state, after: update)
+
+        XCTAssertEqual(after.blocks.map(\.id), [idA, idB, idE])
+        XCTAssertEqual(after.blocks[1].node, "columnList")
+        XCTAssertEqual(after.blocks[2].runs, [InlineRun("Two, edited")])
+        XCTAssertTrue(try fragment(state, after: update).contains("Left column"))
+    }
+
+    /// The export drops inline math without a trace ("Area:  of it."), so its words must not
+    /// stop the untouched paragraph around it from being recognised and kept.
+    func testAnUntouchedParagraphWithInlineMathKeepsTheMath() throws {
+        let state = try servedTree([
+            container(idA, textParagraph([.text("Intro")])),
+            container(idB, textParagraph([.text("Area: "), .element("math", [], [.text("x^2")]), .text(" of it.")])),
+        ])
+
+        let update = try save(state, "Intro, edited\n\nArea:  of it.", base: "Intro\n\nArea:  of it.")
+
+        XCTAssertEqual(try project(state, after: update).blocks.map(\.id), [idA, idB])
+        XCTAssertTrue(try fragment(state, after: update).contains("<math>x^2</math>"))
+    }
+
+    private func mathParagraph(_ id: String, _ formula: String) -> Node {
+        container(id, textParagraph([.text("Area: "), .element("math", [], [.text(formula)]), .text(" of it.")]))
+    }
+
+    /// The paragraphs read the same once math is skipped, so neither may be kept as a shadow: the
+    /// user edited the second, and keeping it in the first one's place would show its formula
+    /// there. Both are rebuilt from the markdown and lose their formulas (as before inline math
+    /// was kept at all). The edited intro stops the common prefix anchoring the first paragraph.
+    private func assertLookAlikeMathParagraphsAreRebuilt(
+        _ first: String, _ second: String, file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        let state = try servedTree([
+            container(idA, textParagraph([.text("Intro")])), mathParagraph(idB, first), mathParagraph(idC, second),
+        ])
+
+        let update = try save(
+            state, "Intro, edited\n\nArea:  of it.\n\nArea, edited:  of it.",
+            base: "Intro\n\nArea:  of it.\n\nArea:  of it.")
+        let after = try project(state, after: update)
+
+        XCTAssertEqual(after.blocks.count, 3, file: file, line: line)
+        XCTAssertFalse(after.blocks.map(\.id).contains(idC), "the edited paragraph is rebuilt", file: file, line: line)
+        XCTAssertFalse(
+            try fragment(state, after: update).contains("<math>\(second)</math>"), "its formula lands nowhere",
+            file: file, line: line)
+        XCTAssertEqual(
+            after.blocks.map { $0.runs.map(\.text).joined() },
+            ["Intro, edited", "Area:  of it.", "Area, edited:  of it."],
+            file: file, line: line)
+    }
+
+    func testLookAlikeMathParagraphsAreBothRebuiltAndLoseTheirFormulas() throws {
+        try assertLookAlikeMathParagraphsAreRebuilt("x^2", "y^2")
+    }
+
+    /// `+` and `-` have no words, so even the formulas' own tokens cannot tell these apart.
+    func testLookAlikeSymbolOnlyFormulasAreBothRebuiltAndLoseTheirFormulas() throws {
+        try assertLookAlikeMathParagraphsAreRebuilt("a+b", "a-b")
+        try assertLookAlikeMathParagraphsAreRebuilt("+", "-")
+    }
+
+    /// A math paragraph that reads like a plain one once math is skipped is never kept in the
+    /// plain paragraph's place: the user edited it, so the plain one stays and it is rebuilt.
+    func testAnEditedMathParagraphDoesNotTakeALookAlikePlainParagraphsPlace() throws {
+        let state = try servedTree([
+            container(idA, textParagraph([.text("Intro")])), container(idB, textParagraph([.text("Area: of it.")])),
+            mathParagraph(idC, "y^2"),
+        ])
+
+        let update = try save(
+            state, "Intro, edited\n\nArea: of it.\n\nArea, edited:  of it.",
+            base: "Intro\n\nArea: of it.\n\nArea:  of it.")
+        let after = try project(state, after: update)
+
+        XCTAssertEqual(after.blocks.count, 3)
+        XCTAssertEqual(after.blocks[1].id, idB, "the plain paragraph stays")
+        XCTAssertFalse(after.blocks.map(\.id).contains(idC))
+        XCTAssertFalse(try fragment(state, after: update).contains("y^2"))
+    }
+
+    /// A table holding math whose words a paragraph shares is a multi-block shadow, which cannot
+    /// swap with a paragraph's: it is kept, not flattened into pipe-text paragraphs.
+    func testATableWithMathWhoseWordsAParagraphSharesIsKept() throws {
+        func cell(_ inline: [Node]) -> Node { .element("tableCell", [], [.element("tableParagraph", [], inline)]) }
+        let table = Node.element(
+            "table", [],
+            [
+                .element("tableRow", [], [cell([.text("Name")]), cell([.text("Value")])]),
+                .element("tableRow", [], [cell([.text("Area")]), cell([.element("math", [], [.text("x^2")])])]),
+            ])
+        let state = try servedTree([
+            container(idA, textParagraph([.text("Intro")])), container(idB, table),
+            container(idC, textParagraph([.text("Name, Value, Area.")])),
+        ])
+        let rest = "| Name | Value |\n| --- | --- |\n| Area |  |\n\nName, Value, Area."
+
+        let update = try save(state, "Intro, edited\n\n\(rest)", base: "Intro\n\n\(rest)")
+        let after = try project(state, after: update)
+
+        XCTAssertEqual(after.blocks.map(\.id), [idA, idB, idC])
+        XCTAssertEqual(after.blocks[1].node, "table")
+        XCTAssertTrue(try fragment(state, after: update).contains("<math>x^2</math>"))
+    }
+
+    /// A bullet holding math, with a nested child, whose words a paragraph shares: a list tree is
+    /// tied to its base block, so it keeps its child and formula. (Two *identical* such bullets
+    /// are never placed by words alone, and are rebuilt whatever the math.)
+    func testABulletWithMathAndAChildWhoseWordsAParagraphSharesKeepsThem() throws {
+        let bullet = Node.element(
+            "blockContainer", [("id", .string(idB))],
+            [
+                .element(
+                    "bulletListItem", baseProps,
+                    [.text("Area: "), .element("math", [], [.text("x^2")]), .text(" of it.")]),
+                .element("blockGroup", [], [container(idD, .element("bulletListItem", baseProps, [.text("Child")]))]),
+            ])
+        let state = try servedTree([
+            container(idA, textParagraph([.text("Intro")])), bullet,
+            container(idC, textParagraph([.text("Area of it Child")])),
+        ])
+        let rest = "- Area:  of it.\n  - Child\n\nArea of it Child"
+
+        let update = try save(state, "Intro, edited\n\n\(rest)", base: "Intro\n\n\(rest)")
+        let after = try project(state, after: update)
+
+        XCTAssertEqual(after.blocks.map(\.id), [idA, idB, idC])
+        let xml = try fragment(state, after: update)
+        XCTAssertTrue(xml.contains("<math>x^2</math>"))
+        XCTAssertTrue(xml.contains(idD), "the nested child keeps its container")
+    }
+
+    /// Columns the export never spells are no look-alike, so they cannot cost a unique math
+    /// paragraph its formula.
+    func testColumnsWithTheSameWordsDoNotCostAMathParagraphItsFormula() throws {
+        let columns = Node.element(
+            "columnList", [("id", .string(idB))],
+            [
+                .element(
+                    "column", [("id", .string(idD)), ("width", .int(1))],
+                    [container("left", textParagraph([.text("Area: of it.")]))])
+            ])
+        let state = try servedTree([
+            container(idA, textParagraph([.text("Intro")])), columns, mathParagraph(idC, "x^2"),
+        ])
+
+        let update = try save(state, "Intro, edited\n\nArea:  of it.", base: "Intro\n\nArea:  of it.")
+        let after = try project(state, after: update)
+
+        XCTAssertEqual(after.blocks.map(\.id), [idA, idB, idC])
+        XCTAssertTrue(try fragment(state, after: update).contains("<math>x^2</math>"))
+    }
+
+    /// An underlined word mid-sentence is scrubbed into its own unmarked run; the paragraph
+    /// must still read like the markdown's one run, or every save drops the underline.
+    func testAnUntouchedParagraphWithAnUnderlinedWordKeepsIt() throws {
+        let underlined = BlockNoteBlock(
+            node: "paragraph", props: baseProps,
+            runs: [
+                InlineRun("A "), InlineRun("word", marks: [(key: "underline", valueJSON: "{}")]), InlineRun(" here."),
+            ],
+            id: idB)
+        let state = served([paragraph("Intro", id: idA), underlined])
+
+        let update = try save(state, "Intro, edited\n\nA word here.", base: "Intro\n\nA word here.")
+
+        XCTAssertEqual(try project(state, after: update).blocks.map(\.id), [idA, idB])
+        XCTAssertTrue(try fragment(state, after: update).contains("<underline>word</underline>"))
+    }
+
     // MARK: - Pieces
 
     func testWordsIgnoreMarkdownSyntaxLinkTargetsAndHTML() {
