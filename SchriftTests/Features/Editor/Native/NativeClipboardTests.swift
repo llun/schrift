@@ -44,6 +44,64 @@ final class NativeClipboardTests: NativeEditingTestCase {
         try assertConsistent(harness, localCommands: 0)
     }
 
+    /// Nothing copyable (only a placeholder) leaves the pasteboard alone.
+    func testCopyingOnlyAPlaceholderKeepsThePasteboard() throws {
+        let harness = try makeHarness([
+            paragraph("a", "Alpha"), BlockNoteBlock(node: "table", props: [], runs: [], id: "table"),
+        ])
+        defer { harness.close() }
+        harness.pasteboard.string = "kept"
+        let table = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "table"))
+        setSelection(harness, NSRange(location: table.textRange.location + 1, length: 3))
+        harness.view.copy(nil)
+        harness.view.cut(nil)
+        XCTAssertEqual(harness.pasteboard.string, "kept")
+        try assertConsistent(harness, localCommands: 0)
+    }
+
+    /// While text is marked, storage offsets do not match the model: copy,
+    /// like cut and paste, does nothing.
+    func testCopyDuringCompositionDoesNothing() throws {
+        let harness = try makeHarness()
+        defer { harness.close() }
+        harness.pasteboard.string = "kept"
+        setSelection(harness, NSRange(location: 2, length: 0))
+        harness.view.setMarkedText("にほん", selectedRange: NSRange(location: 0, length: 3))
+        XCTAssertEqual(harness.input.composition.isActive, true)
+        XCTAssertEqual(harness.view.selectedRange.length, 3)
+        harness.view.copy(nil)
+        harness.view.cut(nil)
+        harness.view.paste(nil)
+        XCTAssertEqual(harness.pasteboard.string, "kept")
+        harness.view.unmarkText()
+        try assertConsistent(harness, localCommands: 1)
+    }
+
+    /// A paste over either bound is refused whole with a notice; nothing is
+    /// written, not even its first lines.
+    func testAnOversizedPasteIsRefusedWhole() throws {
+        let harness = try makeHarness()
+        defer { harness.close() }
+        let original = harness.view.textStorage.string
+        setSelection(harness, NSRange(location: 2, length: 0))
+        for text in [
+            Array(repeating: "line", count: NativeClipboard.maxPasteLines + 1).joined(separator: "\r\n"),
+            String(repeating: "x", count: NativeClipboard.maxPasteUTF16 + 1),
+        ] {
+            harness.pasteboard.string = text
+            harness.view.paste(nil)
+            XCTAssertEqual(harness.input.noticeKey, .native_editor_paste_too_large)
+            XCTAssertEqual(harness.view.textStorage.string, original)
+        }
+        try assertConsistent(harness, localCommands: 0)
+        // At the line bound it is one command.
+        harness.pasteboard.string = Array(repeating: "l", count: NativeClipboard.maxPasteLines).joined(separator: "\n")
+        harness.view.paste(nil)
+        XCTAssertNil(harness.input.noticeKey)
+        XCTAssertEqual(harness.session.surface.blocks.count, 3 + NativeClipboard.maxPasteLines - 1)
+        try assertConsistent(harness, localCommands: 1)
+    }
+
     func testCutIsCopyPlusOneRangeDelete() throws {
         let harness = try makeHarness()
         defer { harness.close() }

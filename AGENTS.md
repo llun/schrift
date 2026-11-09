@@ -2285,12 +2285,18 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   at its start and -1 at its end so a peer's boundary insertion stays outside. It restores
   the view from `DocumentEngine.currentSelectionEndpoints()` after every patch except the
   editor's own stamped echo (`NativeTextSurface.onPatchApplied`); commands place their caret
-  through `selection.place`. One vanished endpoint collapses to the survivor; both gone
+  through `selection.place`. It sets `selectedRange` only when the restored range differs
+  from the view's (setting it ends a handle drag): an edit after the selection never sets
+  it; UIKit does not shift the range for storage edits before it, so those are corrected
+  (`restoredSelections` counts sets, since a programmatic set sends no delegate callback).
+  One vanished endpoint collapses to the survivor; both gone
   moves the caret to the start of the block after the head's old block, else the end of the
   one before. An endpoint in a placeholder clears the engine selection. `NativeClipboard`
   + the view's `copy:`/`cut:`/`paste:`/`pasteAndMatchStyle:` overrides: copy is one line
-  per block (placeholders omitted), cut is copy plus one range delete (a refused delete
-  leaves the pasteboard), paste reads only `UIPasteboard.string`; the lossless rich
+  per block (placeholders omitted; nothing copyable, or marked text, leaves the pasteboard
+  alone), cut is copy plus one range delete (a refused delete leaves the pasteboard), paste
+  reads only `UIPasteboard.string` and refuses whole, with `native_editor_paste_too_large`,
+  more than 200,000 UTF-16 units or 2,000 lines (`NativeClipboard.maxPaste*`); the lossless rich
   clipboard is PR06. `NativeInputCoordinator.pasteboard` is a seam (tests use
   `UIPasteboard.withUniqueName()`). The simulator's software delete key over a selection
   arrives as `shouldChangeTextInRanges` with the selection; XCUITest `typeKey` delivers

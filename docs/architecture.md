@@ -803,15 +803,19 @@ The end-of-document boundary can end a range (the last block's end) but is never
 patch edits storage or text is marked) as directed engine relative positions: UIKit's
 range is unordered, so direction comes from which end moved, as hardware Shift-arrows
 move it. A non-empty range keeps a peer's insertion at either boundary outside it. After
-every patch that is not the editor's own command echo it restores the view from
+every patch that is not the editor's own command echo, and only when the range moved
+(setting `selectedRange` ends a handle drag; UIKit does not shift it for an edit before
+the selection), it restores the view from
 `currentSelectionEndpoints()`: a vanished endpoint collapses the selection to the one
 that survived, and with both gone the caret moves to the start of the block after the
 head's old block (else the end of the one before it). A peer's split resolves an end in
 the moved text to the split point. An endpoint in a placeholder is not tracked.
 `NativeClipboard` and the view's `copy:`/`cut:`/`paste:`/`pasteAndMatchStyle:` overrides
-give a plain-text clipboard: copy is one line per block (placeholders contribute nothing);
+give a plain-text clipboard: copy is one line per block (placeholders contribute nothing,
+and nothing copyable or marked text leaves the pasteboard alone);
 cut is copy plus one range delete, leaving the pasteboard unchanged when refused; paste
-takes only the pasteboard's plain string, so rich content contributes its text. The
+takes only the pasteboard's plain string, so rich content contributes its text, and
+refuses whole a paste over 200,000 UTF-16 units or 2,000 lines. The
 lossless rich clipboard is PR06. IME over a multi-block selection keeps PR03's refusal.
 
 **Selection.** `setSelection(EditorSelection?)` captures directed anchor/head

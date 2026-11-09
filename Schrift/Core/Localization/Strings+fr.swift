@@ -340,6 +340,8 @@ enum Strings_fr {
         .native_editor_input_unavailable: "Cette saisie n’est pas encore prise en charge dans l’éditeur natif.",
         .native_editor_range_unavailable:
             "Cette sélection contient du contenu que l’éditeur natif ne peut pas encore modifier.",
+        .native_editor_paste_too_large:
+            "Ce collage est trop volumineux pour l’éditeur natif. Collez au plus 2 000 lignes à la fois.",
         .native_editor_marked_unavailable:
             "Cette saisie au clavier n’est pas encore prise en charge. Votre document est préservé en lecture seule.",
         .native_editor_composition_orphaned:

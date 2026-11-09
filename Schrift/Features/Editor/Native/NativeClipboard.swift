@@ -9,6 +9,7 @@ enum NativeClipboard {
     /// The selected text of every block in the range, one line per block. A
     /// range from a block's end to the next block's start is one line break.
     /// Preserved placeholders contribute nothing: their label is not content.
+    /// Nil when nothing copyable is selected, so the pasteboard is left alone.
     @MainActor
     static func plainText(for range: NSRange, surface: NativeTextSurface) -> String? {
         let index = surface.rangeIndex
@@ -24,7 +25,20 @@ enum NativeClipboard {
             let upper = position == end.position ? end.offset : text.length
             lines.append(text.substring(with: NSRange(location: lower, length: max(0, upper - lower))))
         }
-        return lines.joined(separator: "\n")
+        let text = lines.joined(separator: "\n")
+        return text.isEmpty ? nil : text
+    }
+
+    /// A paste larger than this is refused whole, never written in part. Both
+    /// bounds keep one paste under half the 5,000-paragraph document the
+    /// performance tests type into: the range command writes every new block in
+    /// one transaction and the surface inserts them in one patch.
+    static let maxPasteUTF16 = 200_000
+    static let maxPasteLines = 2_000
+
+    static func isTooLarge(_ text: String) -> Bool {
+        text.utf16.count > maxPasteUTF16
+            || text.utf16.lazy.filter { $0 == 0x0A }.count >= maxPasteLines
     }
 
     /// Every line break (CRLF, CR, U+2028, U+2029, NEL, …) becomes "\n", the

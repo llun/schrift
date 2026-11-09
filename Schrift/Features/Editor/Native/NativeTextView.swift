@@ -141,9 +141,11 @@ final class NativeTextView: UITextView {
 
     /// UIKit's own copy would put the attributed slice, placeholder labels
     /// included, on the pasteboard; while typing is enabled copy is plain text,
-    /// one line per block.
+    /// one line per block. Like cut and paste, nothing while text is marked:
+    /// storage offsets do not match the model then.
     override func copy(_ sender: Any?) {
         guard let inputCoordinator else { return super.copy(sender) }
+        guard markedTextRange == nil else { return }
         inputCoordinator.copySelection()
     }
 

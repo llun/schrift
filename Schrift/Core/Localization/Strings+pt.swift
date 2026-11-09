@@ -339,6 +339,8 @@ enum Strings_pt {
         .native_editor_input_unavailable: "Esta entrada ainda não é suportada no editor nativo.",
         .native_editor_range_unavailable:
             "Esta seleção inclui conteúdo que o editor nativo ainda não consegue alterar.",
+        .native_editor_paste_too_large:
+            "Esta colagem é grande demais para o editor nativo. Cole até 2.000 linhas de cada vez.",
         .native_editor_marked_unavailable:
             "Esta entrada de teclado ainda não é suportada. O documento foi preservado em modo somente leitura.",
         .native_editor_composition_orphaned:

@@ -327,7 +327,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// content contributes only that) as one command; newlines split blocks.
     @discardableResult
     func pasteFromPasteboard() -> Bool {
-        guard let view, let text = pasteboard.string, !text.isEmpty else { return false }
+        guard let view, view.isEditable, let text = pasteboard.string, !text.isEmpty else { return false }
+        guard !NativeClipboard.isTooLarge(NativeClipboard.normalizingLineBreaks(text)) else {
+            noticeKey = .native_editor_paste_too_large
+            return false
+        }
         return replace(range: view.selectedRange, with: text)
     }
 

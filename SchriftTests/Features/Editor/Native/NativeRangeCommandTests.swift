@@ -313,6 +313,7 @@ final class NativeRangeCommandTests: NativeEditingTestCase {
         let restored = try XCTUnwrap(NativeEditorSession.restore(store: harness.store, scope: harness.scope))
         defer {
             restored.close()
+            UIPasteboard.remove(withName: harness.pasteboard.name)
             try? FileManager.default.removeItem(at: harness.directory)
         }
         XCTAssertEqual(restored.surface.blocks, expected)

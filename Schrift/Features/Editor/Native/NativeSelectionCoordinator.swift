@@ -25,6 +25,9 @@ final class NativeSelectionCoordinator {
     private var isRestoring = false
     private var previous: NSRange?
     private(set) var isBackward = false
+    /// How many restores set the view's selection. A programmatic set sends no
+    /// delegate callback, so tests read this to prove a set did not happen.
+    private(set) var restoredSelections = 0
     /// The head block's neighbours and position at the last capture; nil when
     /// nothing is tracked.
     private var fallback: (before: String?, after: String?, position: Int)?
@@ -102,7 +105,12 @@ final class NativeSelectionCoordinator {
                 range = NSRange(location: entry.textRange.location, length: 0)
             }
         }
+        // Setting `selectedRange` ends a selection drag in progress, so only a
+        // patch that moved the range's document offsets sets it: an edit after
+        // the selection leaves the view alone. UIKit does not shift the range
+        // for an edit before it, so that one must be corrected.
         if view.selectedRange != range {
+            restoredSelections += 1
             isRestoring = true
             view.selectedRange = range
             isRestoring = false

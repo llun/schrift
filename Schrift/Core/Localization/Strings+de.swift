@@ -343,6 +343,8 @@ enum Strings_de {
         .native_editor_input_unavailable: "Diese Eingabe wird im nativen Editor noch nicht unterstützt.",
         .native_editor_range_unavailable:
             "Diese Auswahl enthält Inhalte, die der native Editor noch nicht ändern kann.",
+        .native_editor_paste_too_large:
+            "Dieser Einfügevorgang ist für den nativen Editor zu groß. Füge höchstens 2.000 Zeilen auf einmal ein.",
         .native_editor_marked_unavailable:
             "Diese Tastatureingabe wird noch nicht unterstützt. Ihr Dokument bleibt im schreibgeschützten Modus erhalten.",
         .native_editor_composition_orphaned:

@@ -84,6 +84,29 @@ final class NativeSelectionTests: NativeEditingTestCase {
         try assertConsistent(harness, localCommands: 1)
     }
 
+    /// A peer typing in a block after the selection never sets the view's
+    /// selection (that would end a handle drag in progress). An edit before it
+    /// moves its document offsets, which UIKit does not follow: the restore
+    /// sets it once to keep it on the same text.
+    func testAPeerEditAfterTheSelectionNeverSetsTheViewSelection() throws {
+        let harness = try makeHarness()
+        defer { harness.close() }
+        let session = harness.session
+        try select(harness, from: (Self.secondID, 2), to: (Self.secondID, 9))
+        let selected = (harness.view.textStorage.string as NSString).substring(with: harness.view.selectedRange)
+        let peer = try makeDoc(clientID: 2)
+        defer { peer.destroy() }
+        let writer = BlockNoteWriter(doc: peer)
+        try session.integrateServerState(try writer.replaceText(block: Self.thirdID, range: 0..<0, with: "after "))
+        XCTAssertEqual(texts(session)[2], "after Third paragraph.")
+        XCTAssertEqual(harness.input.selection.restoredSelections, 0, "an edit after the selection never sets it")
+        try session.integrateServerState(try writer.replaceText(block: Self.firstID, range: 0..<0, with: "before "))
+        XCTAssertEqual(harness.input.selection.restoredSelections, 1)
+        XCTAssertEqual(
+            (harness.view.textStorage.string as NSString).substring(with: harness.view.selectedRange), selected)
+        XCTAssertEqual(harness.view.selectedRange.location, try location(session, Self.secondID, 2))
+    }
+
     /// A peer splits the selected block: the end in the moved text resolves to
     /// the split point, so the selection stays in the kept block.
     func testSelectionAfterARemoteSplit() throws {
