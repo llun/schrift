@@ -208,15 +208,35 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// After a fold or a restored selection: an endpoint in folded content
     /// moves back to the end of the visible block before it (the toggle's
     /// title), and the engine's selection follows.
+    ///
+    /// A selection is trimmed to visible content, never grown over the fold:
+    /// a start in a folded run moves forward to its end, an end backward to
+    /// its start, and both in one run (or a caret) collapse to the title's
+    /// end. A selection with no endpoint in folded content is left alone, so
+    /// this never fights a drag over visible text.
     private func keepSelectionVisible() {
         guard let view, view.markedTextRange == nil, !composition.isActive else { return }
         let range = view.selectedRange
-        let lower = visibleLocation(range.location, forward: false)
-        let upper = visibleLocation(NSMaxRange(range), forward: false)
-        guard lower != range.location || upper != NSMaxRange(range) else { return }
-        let visible = NSRange(location: lower, length: max(0, upper - lower))
+        let start = hiddenRun(at: range.location)
+        let end = range.length > 0 ? hiddenRun(at: NSMaxRange(range)) : start
+        guard start != nil || end != nil else { return }
+        let visible: NSRange
+        if let run = start ?? end, range.length == 0 || start == end {
+            visible = NSRange(location: max(0, run.location - 1), length: 0)
+        } else {
+            let lower = start.map(NSMaxRange) ?? range.location
+            let upper = end?.location ?? NSMaxRange(range)
+            visible = NSRange(location: lower, length: max(0, upper - lower))
+        }
+        guard visible != range else { return }
         lastCaret = visible.location
         selection.place(visible)
+    }
+
+    /// The folded run holding `location`, if it is hidden.
+    private func hiddenRun(at location: Int) -> NSRange? {
+        guard surface.isHidden(atUTF16: location) else { return nil }
+        return surface.hiddenRanges.first { NSLocationInRange(location, $0) }
     }
 
     /// `location` itself when it is shown; otherwise the start of the first
@@ -839,6 +859,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// provisional text become committed content.
     func refuseComposition() {
         directInsertion = nil
+        // Folding is view state and never locks the editor: a composition that
+        // would start in folded content is cancelled (nothing was marked or
+        // written), the keyboard is told, and the caret moves out of the fold.
+        if let view, surface.isHidden(atUTF16: view.selectedRange.location) {
+            view.unmarkText()
+            keepSelectionVisible()
+            noticeKey = .native_editor_range_unavailable
+            return
+        }
         noticeKey = .native_editor_marked_unavailable
         view?.isEditable = false
         view?.resignFirstResponder()

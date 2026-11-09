@@ -514,6 +514,61 @@ final class NativeToggleTests: NativeEditingTestCase {
         try assertConsistent(peered, localCommands: 1)
     }
 
+    /// Folding is view state: a composition that would start in folded
+    /// content is cancelled, never the PR03 read-only refusal. Nothing is
+    /// marked or written, the caret leaves the fold and typing goes on.
+    func testACompositionInFoldedContentNeverLocksTheEditor() throws {
+        let harness = try makeHarness(seed())
+        defer { harness.close() }
+        let session = harness.session
+        let view = harness.view
+        let delegate = view.delegate
+        view.delegate = nil
+        view.selectedRange = NSRange(location: try location(session, "c1", 2), length: 0)
+        view.delegate = delegate
+        view.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+        XCTAssertTrue(view.isEditable, "a fold never locks the editor")
+        XCTAssertFalse(harness.input.composition.isActive)
+        XCTAssertNil(view.markedTextRange)
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_range_unavailable)
+        XCTAssertEqual(view.selectedRange, NSRange(location: try location(session, "t", 5), length: 0))
+        try assertConsistent(harness, localCommands: 0)
+        view.insertText("x")
+        XCTAssertEqual(texts(session), ["Intro", "Titlex", "Hidden one", "Hidden task", "Inner", "After"])
+        try assertConsistent(harness, localCommands: 1)
+    }
+
+    /// A fold trims a selection to visible content and never grows it over the
+    /// hidden run; a selection with both ends visible is left alone.
+    func testFoldingTrimsTheSelectionToVisibleContent() throws {
+        let harness = try makeHarness(seed())
+        defer { harness.close() }
+        let session = harness.session
+        func fold(from anchor: (String, Int), to head: (String, Int)) throws -> NSRange {
+            session.surface.setExpanded("t", true)
+            try select(harness, from: anchor, to: head)
+            session.surface.setExpanded("t", false)
+            return harness.view.selectedRange
+        }
+        let afterStart = try location(session, "after", 0)
+        let hiddenStart = try location(session, "c1", 0)
+        // Start folded: it moves forward past the run.
+        XCTAssertEqual(try fold(from: ("c2", 1), to: ("after", 2)), NSRange(location: afterStart, length: 2))
+        XCTAssertEqual(try session.engine.currentSelection()?.anchor.blockID, "after")
+        // End folded: it moves back to the run's start.
+        let introOne = try location(session, "intro", 1)
+        XCTAssertEqual(
+            try fold(from: ("intro", 1), to: ("c2", 1)),
+            NSRange(location: introOne, length: hiddenStart - introOne))
+        // Both in one run: a caret at the title's end.
+        XCTAssertEqual(
+            try fold(from: ("c1", 1), to: ("c3", 2)), NSRange(location: try location(session, "t", 5), length: 0))
+        // Both ends visible (a drag over the fold): untouched.
+        let spanning = try fold(from: ("intro", 1), to: ("after", 2))
+        XCTAssertEqual(spanning, NSRange(location: introOne, length: afterStart + 2 - introOne))
+        try assertConsistent(harness, localCommands: 0)
+    }
+
     /// Copy is what shows: a folded toggle's children are left out.
     func testCopySkipsFoldedContent() throws {
         let harness = try makeHarness(seed())
