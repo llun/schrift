@@ -380,9 +380,11 @@ enum Strings_sl {
         .native_editor_color_blue: "Modra",
         .native_editor_color_purple: "Vijolična",
         .native_editor_color_pink: "Rožnata",
+        .native_editor_page_break: "Prelom strani",
+        .native_editor_code_language: "Programski jezik kode",
         .profile_native_editor: "Izvorni urejevalnik (poskusno)",
         .profile_native_editor_footer:
-            "Velja ob naslednjem odprtju dokumenta. Podpira Docs 6; zaenkrat je na voljo le tipkanje navadnega besedila.",
+            "Velja ob naslednjem odprtju dokumenta. Podpira Docs 6 z besedilom, oblikovanjem, povezavami, naslovi, seznami, kontrolnimi seznami, citati in bloki kode; drugi bloki so ohranjeni, vendar jih še ni mogoče urejati.",
         .native_editor_preserved_title: "Ohranjen dokument",
         .native_editor_preserved_body:
             "Izvorni bralnik še ne more prikazati strukture tega dokumenta. Izvirna vsebina je ohranjena.",

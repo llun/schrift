@@ -79,7 +79,10 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         isApplyingPatch = true
         storage.beginEditing()
         defer { storage.endEditing() }
+        // Text edits never move a block, so only other changes renumber lists.
+        var renumbers = false
         for change in patch.changes {
+            if case .text = change {} else { renumbers = true }
             switch change {
             case .text(let id, let deltas):
                 guard let position = rangeIndex.position(for: id) else { continue }
@@ -145,13 +148,37 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                     AttributedDocumentProjection.attributedString(blocks: blocks, traits: traits, labels: labels))
             }
         }
+        if renumbers { renumberLists() }
+    }
+
+    /// A numbered item's number depends on the blocks above it, so an insert,
+    /// removal or type/start change elsewhere can change it. Only the number
+    /// attribute is set: no text changes, so UIKit's selection stays put.
+    private func renumberLists() {
+        for (position, number) in AttributedDocumentProjection.listNumbers(in: blocks).enumerated() {
+            guard let number else { continue }
+            let range = rangeIndex.entries[position].range
+            if storage.attribute(.nativeListNumber, at: range.location, effectiveRange: nil) as? Int != number {
+                storage.addAttribute(.nativeListNumber, value: number, range: range)
+            }
+        }
+    }
+
+    /// The block's slice, numbered by the run of numbered items it ends.
+    private func rendered(_ block: BlockSnapshot, at position: Int) -> NSAttributedString {
+        var first = position
+        while first > 0, blocks[first - 1].node == "numberedListItem" { first -= 1 }
+        let run = Array(blocks[first..<position]) + [block]
+        return AttributedDocumentProjection.attributedBlock(
+            block, traits: traits, labels: labels,
+            listNumber: AttributedDocumentProjection.listNumbers(in: run).last ?? nil)
     }
 
     private func applyText(_ deltas: [TextDelta], at position: Int) {
         let entry = rangeIndex.entries[position]
         var block = blocks[position]
         block.runs = TextDelta.apply(deltas, to: block.runs)
-        let rendered = AttributedDocumentProjection.attributedBlock(block, traits: traits, labels: labels)
+        let rendered = rendered(block, at: position)
         var shift = 0
         var replacements: [(old: NSRange, new: NSRange)] = []
         for delta in deltas {
@@ -214,7 +241,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
             let entry = rangeIndex.entries[position]
             storage.replaceCharacters(
                 in: NSRange(location: entry.range.location, length: entry.range.length + delta),
-                with: AttributedDocumentProjection.attributedBlock(blocks[position], traits: traits, labels: labels))
+                with: rendered(blocks[position], at: position))
         } else {
             storage.setAttributedString(
                 AttributedDocumentProjection.attributedString(blocks: blocks, traits: traits, labels: labels))
@@ -254,7 +281,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     private func replace(at position: Int, with block: BlockSnapshot) {
         storage.replaceCharacters(
             in: rangeIndex.entries[position].range,
-            with: AttributedDocumentProjection.attributedBlock(block, traits: traits, labels: labels))
+            with: rendered(block, at: position))
         blocks[position] = block
         rangeIndex.replace(at: position, with: block, labels: labels)
     }

@@ -32,7 +32,12 @@ struct NativeEditorView: View {
                     session: session, contentSize: uiContentSizeCategory(for: dynamicTypeSize),
                     labels: NativeEditorLabels(
                         preservedBlock: loc[.native_editor_preserved_block],
-                        unknownBlock: loc[.native_editor_unknown_block])
+                        unknownBlock: loc[.native_editor_unknown_block],
+                        pageBreak: loc[.native_editor_page_break], codeLanguage: loc[.native_editor_code_language],
+                        markDone: loc[.editor_checklist_done_a11y], markNotDone: loc[.editor_checklist_not_done_a11y],
+                        done: loc[.editor_checklist_state_done_a11y],
+                        notDone: loc[.editor_checklist_state_not_done_a11y]),
+                    theme: theme
                 )
                 .id(ObjectIdentifier(session))
             }
@@ -61,6 +66,15 @@ struct NativeEditorView: View {
                         .accessibilityIdentifier("nativeEditor.inputNotice")
                 }
                 if let input = session.input {
+                    // The classic menu, offering only what this editor can apply;
+                    // each choice is one durable type change.
+                    if let query = input.slashMenuQuery {
+                        SlashMenuView(query: query, available: NativeInputCoordinator.slashItems) { item in
+                            input.applySlashItem(item)
+                        }
+                        .padding(.horizontal, DocsSpacing.gutter)
+                        .padding(.bottom, DocsSpacing.space2xs)
+                    }
                     NativeFormattingBar(input: input) { linkTarget = $0 }
                 }
             }
@@ -227,6 +241,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
     let session: NativeEditorSession
     let contentSize: UIContentSizeCategory
     let labels: NativeEditorLabels
+    let theme: AppTheme
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -240,6 +255,9 @@ private struct NativeTextCanvas: UIViewRepresentable {
     }
 
     private func updatePresentation(_ coordinator: Coordinator) {
+        // Chrome only: neither reaches storage, so neither can write Yjs.
+        session.textView.blockControls.theme = theme
+        session.textView.blockControls.labels = labels
         coordinator.update(
             surface: session.surface, presentation: NativeTextPresentation(contentSize: contentSize, labels: labels))
     }

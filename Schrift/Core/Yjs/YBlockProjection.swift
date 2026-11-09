@@ -256,7 +256,7 @@ extension YBlockProjection {
         // *raw* runs, because whether a node may carry marks at all (codeBlock
         // must not; divider/image must carry no runs) is independent of
         // whether any individual mark key is one the app recognizes.
-        let structural = classifyStructure(node: node, props: props, runs: rawRuns)
+        let structural = classifyStructure(node: node, props: props, runs: rawRuns, nativeMarks: nativeMarks)
         let (scrubbedRuns, markReasons) = nativeMarks ? (rawRuns, []) : scrubUnknownMarks(rawRuns)
         let fidelity = mergingMarkReasons(markReasons, into: structural)
         return ProjectedBlock(id: id, node: node, props: props, runs: scrubbedRuns, fidelity: fidelity)
@@ -530,6 +530,12 @@ extension YBlockProjection {
         "textColor": .string("default"),
     ]
 
+    private static let calloutDefaults: [String: YAnyValue] = [
+        "backgroundColor": .string("default"),
+        "emoji": .string("💡"),
+        "textAlignment": .string("left"),
+    ]
+
     private static let imageDefaults: [String: YAnyValue] = [
         "textAlignment": .string("left"),
         "backgroundColor": .string("default"),
@@ -540,7 +546,7 @@ extension YBlockProjection {
     /// `MarkdownYjs.map`'s node/prop table: every node kind, required prop,
     /// and default value here has a matching entry there.
     private static func classifyStructure(
-        node: String, props: [ProjectedProp], runs: [InlineRun]
+        node: String, props: [ProjectedProp], runs: [InlineRun], nativeMarks: Bool = false
     ) -> ProjectionFidelity {
         switch node {
         case "paragraph", "bulletListItem":
@@ -548,15 +554,20 @@ extension YBlockProjection {
         case "heading":
             return classifyHeading(props)
         case "numberedListItem":
-            return classifyNumberedListItem(props)
+            return classifyNumberedListItem(props, nativeMarks: nativeMarks)
         case "checkListItem":
             return classifyCheckListItem(props)
         case "quote":
             return classifyDefaultsOnly(props, defaults: quoteDefaults)
+        case "callout":
+            return nativeMarks
+                ? classifyDefaultsOnly(props, defaults: calloutDefaults) : .opaque(reason: "unknownNode:callout")
         case "codeBlock":
             return classifyCodeBlock(props, runs: runs)
         case "divider":
             return classifyDivider(props, runs: runs)
+        case "pageBreak":
+            return nativeMarks ? classifyPageBreak(props, runs: runs) : .opaque(reason: "unknownNode:pageBreak")
         case "image":
             return classifyImage(props, runs: runs)
         default:
@@ -622,7 +633,11 @@ extension YBlockProjection {
         return reasons.isEmpty ? .modeled : .lossy(reasons: reasons)
     }
 
-    private static func classifyNumberedListItem(_ props: [ProjectedProp]) -> ProjectionFidelity {
+    /// `nativeMarks`: the native editor writes raw Yjs and renders any start,
+    /// so BlockNote's unset start (`undefined`) and a positive start are modeled.
+    private static func classifyNumberedListItem(_ props: [ProjectedProp], nativeMarks: Bool = false)
+        -> ProjectionFidelity
+    {
         let known: Set<String> = ["backgroundColor", "textColor", "textAlignment", "start"]
         var reasons: [String] = []
         for prop in props {
@@ -634,6 +649,10 @@ extension YBlockProjection {
                 switch prop.value {
                 case .null, .int(1):
                     break  // modeled: no explicit start, or the default first item
+                case .undefined where nativeMarks:
+                    break
+                case .int(let start) where nativeMarks && start >= 1:
+                    break
                 default:
                     reasons.append("prop:start")
                 }
@@ -705,6 +724,14 @@ extension YBlockProjection {
             return .opaque(reason: "unexpected divider content")
         }
         let reasons = props.map { "unknownProp:\($0.key)" }  // divider has no known props at all
+        return reasons.isEmpty ? .modeled : .lossy(reasons: reasons)
+    }
+
+    private static func classifyPageBreak(_ props: [ProjectedProp], runs: [InlineRun]) -> ProjectionFidelity {
+        guard runs.isEmpty else {
+            return .opaque(reason: "unexpected pageBreak content")
+        }
+        let reasons = props.map { "unknownProp:\($0.key)" }  // pageBreak has no known props
         return reasons.isEmpty ? .modeled : .lossy(reasons: reasons)
     }
 

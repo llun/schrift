@@ -54,6 +54,17 @@ struct BlockNoteWriter {
         ]
     }()
 
+    /// The native editor's table (PR05b): the classic six plus BlockNote 0.56's
+    /// `quote` and Docs' `callout`, in their schema order. Only the native engine
+    /// constructs a writer with it; the classic live reconcile keeps
+    /// `propSchemas`, so its quote/callout fallbacks are unchanged.
+    static let nativePropSchemas: [String: [(key: String, value: YAnyValue)]] = propSchemas.merging([
+        "quote": [("backgroundColor", .string("default")), ("textColor", .string("default"))],
+        "callout": [
+            ("textAlignment", .string("left")), ("backgroundColor", .string("default")), ("emoji", .string("💡")),
+        ],
+    ]) { classic, _ in classic }
+
     /// BlockNote `splitKeepsType`: a split list item makes another list item.
     private static let splitKeepsType: Set<String> = ["bulletListItem", "numberedListItem", "checkListItem"]
 
@@ -62,6 +73,9 @@ struct BlockNoteWriter {
     private static let maxCopyDepth = 3 * 64 + 8
 
     let doc: YDoc
+    /// The block types this writer edits: `propSchemas` unless the caller
+    /// (the native engine) passes `nativePropSchemas`.
+    var schemas = BlockNoteWriter.propSchemas
 
     @discardableResult
     func transaction(_ body: (YTransaction) throws -> Void) throws -> Data {
@@ -188,7 +202,7 @@ struct BlockNoteWriter {
         let count = try length(parts)
         let index = snap(parts, min(max(0, offset), count))
         let node = Self.splitKeepsType.contains(target.node) ? target.node : "paragraph"
-        let defaults = Self.propSchemas[node] ?? []
+        let defaults = schemas[node] ?? []
         func insertBlock(_ tx: YTransaction, after left: YItem?, content: [Copy], kids: Copy?) throws {
             let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
             try YWrite.insertAfter(tx, into: target.group, after: left, [.type(container)])
@@ -317,7 +331,7 @@ struct BlockNoteWriter {
         // Copied before any delete: the content that follows the range.
         let suffix = try snapshots(endParts, range: upper..<endLength, block: end.id)
         let node = Self.splitKeepsType.contains(start.node) ? start.node : "paragraph"
-        let defaults = Self.propSchemas[node] ?? []
+        let defaults = schemas[node] ?? []
         return try transaction { tx in
             // One same-block line is a plain replacement; otherwise everything
             // after `lower` leaves `start` and the suffix returns from its copy.
@@ -357,7 +371,7 @@ struct BlockNoteWriter {
     @discardableResult
     func setBlockType(block: String, to node: String, props: [(key: String, value: YAnyValue)] = []) throws -> Data {
         // Validate the target type before the lookup, as before the `in:` split.
-        guard Self.propSchemas[node] != nil else { throw Error.unsupportedBlockType(node) }
+        guard schemas[node] != nil else { throw Error.unsupportedBlockType(node) }
         return try setBlockType(in: try find(block), to: node, props: props)
     }
 
@@ -368,7 +382,7 @@ struct BlockNoteWriter {
         throws -> Data
     {
         let block = target.id
-        guard let schema = Self.propSchemas[node] else { throw Error.unsupportedBlockType(node) }
+        guard let schema = schemas[node] else { throw Error.unsupportedBlockType(node) }
         let existing = try properties(target.element, block: block)
         let merged = schema.map { field in
             (
@@ -396,6 +410,17 @@ struct BlockNoteWriter {
             target.elementItem.delete(tx)
             try buildElement(tx, into: target.container, after: nil, node: node, props: merged, children: copies)
         }
+    }
+
+    /// BlockNote's `updateBlock` with props only: the type never changes, so this
+    /// is `setBlockType`'s same-type path (only the props that differ, on the
+    /// existing element). Every key must be in the block's own schema.
+    @discardableResult
+    func setBlockProps(in target: Target, props: [(key: String, value: YAnyValue)]) throws -> Data {
+        guard let schema = schemas[target.node],
+            props.allSatisfy({ prop in schema.contains { $0.key == prop.key } })
+        else { throw Error.unsupportedBlockType(target.node) }
+        return try setBlockType(in: target, to: target.node, props: props)
     }
 
     // MARK: - Checked replica access
@@ -474,7 +499,7 @@ struct BlockNoteWriter {
             else { throw Error.malformedBlock(id) }
             nested = (contents[1], group)
         }
-        guard Self.propSchemas[node] != nil else { throw Error.unsupportedBlockType(node) }
+        guard schemas[node] != nil else { throw Error.unsupportedBlockType(node) }
         return Target(
             id: id, item: item, container: container, elementItem: first, element: element, node: node,
             nested: nested, group: group)
@@ -600,7 +625,7 @@ struct BlockNoteWriter {
     /// ProseMirror's attrs, which `sameMarkup` compares.
     private func schemaProps(_ target: Target, block: String) throws -> [YAnyValue] {
         let existing = try properties(target.element, block: block)
-        return (Self.propSchemas[target.node] ?? []).map { field in
+        return (schemas[target.node] ?? []).map { field in
             existing.last { $0.key == field.key }?.value ?? field.value
         }
     }

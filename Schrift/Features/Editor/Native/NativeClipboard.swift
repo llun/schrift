@@ -20,7 +20,8 @@ enum NativeClipboard {
         for position in start.position...end.position {
             let block = surface.blocks[position]
             guard !AttributedDocumentProjection.isPlaceholder(block) else { continue }
-            let text = AttributedDocumentProjection.displayText(for: block, labels: surface.labels) as NSString
+            // The model's text, not the display: a code block's line breaks are "\n".
+            let text = block.runs.map(\.text).joined() as NSString
             let lower = position == start.position ? start.offset : 0
             let upper = position == end.position ? end.offset : text.length
             lines.append(text.substring(with: NSRange(location: lower, length: max(0, upper - lower))))

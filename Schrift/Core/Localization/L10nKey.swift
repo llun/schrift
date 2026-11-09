@@ -451,6 +451,8 @@ enum L10nKey: String, CaseIterable, Sendable {
     case native_editor_color_blue = "native.editor.color_blue"
     case native_editor_color_purple = "native.editor.color_purple"
     case native_editor_color_pink = "native.editor.color_pink"
+    case native_editor_page_break = "native.editor.page_break"  // "Page break"
+    case native_editor_code_language = "native.editor.code_language"  // "Code language"
     case profile_live_collaboration = "profile.live_collaboration"  // "Live collaboration"
     case profile_live_collaboration_footer = "profile.live_collaboration_footer"
     case profile_server = "profile.server"  // "Server"

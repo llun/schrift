@@ -330,7 +330,8 @@ elements rather than flattening them, and copied runs go through the existing
 `InlineContent.pieces(for:)` single shape builder. Supported content types are the
 text blocks paragraph, heading, bullet/numbered/check list item and code block
 (`BlockNoteWriter.propSchemas`, which also holds BlockNote 0.56's prop order and
-defaults).
+defaults). The native engine's writer uses `nativePropSchemas`, which adds `quote` and
+Docs' `callout` in their schema order; the classic live reconcile keeps the narrower table.
 
 The block intents reproduce BlockNote 0.56's own commands, captured in node/jsdom
 against real BlockNote + yjs 13.6.33 and inlined in `BlockNoteWriterCaptures`:
@@ -836,6 +837,18 @@ changes what the next typed text carries. Typing uses ProseMirror's marks at the
 when Yjs's own inheritance would differ. Links use the classic editor's sheet and URL
 rules. Colours are dynamic colours keyed by BlockNote's names, so a theme change rewrites
 neither storage nor the replica.
+
+**PR05b Block presentation and controls.** Block chrome (bullets, numbers, quote bar,
+callout box and emoji, code panel, divider and the distinct dashed page break) is drawn by
+a custom TextKit 2 layout fragment from plain attributes of the projection, in theme colours
+resolved at draw time, so neither a theme change nor Dynamic Type writes to the replica and
+no marker character exists in storage or Yjs. Checkboxes and the code-language menu are real
+buttons laid over the visible fragments; headings carry their level for VoiceOver and a
+Headings rotor walks them. Each prop edit (checked, start, language, emoji, level) is its own
+validated `.props` command, BlockNote's same-type `updateBlock`, never a type change; a
+slash-menu choice is one `.blockType` command that removes the "/query" and changes the type
+in one transaction. Code keeps its line breaks as source: Return and multi-line paste stay in
+the block, displayed as U+2028 so the block is one TextKit paragraph.
 
 **Selection.** `setSelection(EditorSelection?)` captures directed anchor/head
 endpoints as `YRelativePosition`s. Each `EditorPosition` holds a block id,

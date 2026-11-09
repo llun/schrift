@@ -25,6 +25,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// What the formatting bar shows: the marks every selected character
     /// carries, or at a caret the marks typing there would carry.
     private(set) var activeMarks: [TextMark] = []
+    /// The slash command at the caret (the text after "/" in a paragraph that
+    /// is only that command), which `NativeEditorView` shows the menu for.
+    private(set) var slashMenuQuery: String?
     /// A toggle at a caret (ProseMirror's stored marks): the marks the next
     /// typed text carries. Nothing is written until text is typed, and a
     /// selection change drops it.
@@ -200,11 +203,12 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
         let text = NativeClipboard.normalizingLineBreaks(text)
         // Within one block's text and without a line break: ordinary typing.
-        // Anything else (a selection across blocks, pasted or dictated lines)
-        // is one range command.
-        guard !text.contains("\n"), let entry = surface.rangeIndex.entry(atUTF16: range.location),
+        // A code block keeps its line breaks as source. Anything else (a
+        // selection across blocks, pasted or dictated lines) is one range command.
+        guard let entry = surface.rangeIndex.entry(atUTF16: range.location),
             range.location <= NSMaxRange(entry.textRange),
-            range.length <= NSMaxRange(entry.textRange) - range.location
+            range.length <= NSMaxRange(entry.textRange) - range.location,
+            !text.contains("\n") || isCode(entry.blockID)
         else { return replaceRange(range, with: text) }
         guard let position = surface.rangeIndex.position(for: entry.blockID),
             !AttributedDocumentProjection.isPlaceholder(surface.blocks[position])
@@ -277,9 +281,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             noticeKey = .native_editor_input_unavailable
             return false
         }
+        // BlockNote's Enter in a code block inserts a line break in the block.
+        if isCode(entry.blockID) { return replace(range: selection, with: "\n") }
         let offset = selection.location - entry.textRange.location
         return applyStructural(
             entry.blockID, .split(offset: offset, newID: UUID().uuidString), refusal: .native_editor_input_unavailable)
+    }
+
+    private func isCode(_ blockID: String) -> Bool {
+        surface.rangeIndex.position(for: blockID).map { surface.blocks[$0].node == "codeBlock" } == true
     }
 
     /// Backspace at a block's start: the engine joins a paragraph into the
@@ -363,6 +373,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 pendingTypingMarks ?? NativeMarkSelection.typing(surface.blocks[caret.position].runs, at: caret.offset)
         }
         if marks != activeMarks { activeMarks = marks }
+        let query = block.flatMap { $0.node == "paragraph" ? slashQuery(text: text(of: $0), kind: .paragraph) : nil }
+        if query != slashMenuQuery { slashMenuQuery = query }
         guard range.length == 0, let block else { return }
         var typing = view.typingAttributes
         for key in [NSAttributedString.Key.underlineStyle, .strikethroughStyle, .backgroundColor] { typing[key] = nil }
@@ -476,6 +488,92 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         guard canFormat, target.range.length > 0 else { return false }
         return applyMarks([TextMark(key: NativeMark.link, valueJSON: "null")], over: target.range)
     }
+
+    // MARK: - Block props and types
+
+    /// Ticks or unticks a checklist item: one durable `checked` prop command
+    /// (BlockNote's `updateBlock`), never a type change. The selection stays.
+    @discardableResult
+    func toggleCheckbox(blockID: String) -> Bool {
+        guard let block = block(blockID), block.node == "checkListItem" else { return false }
+        let checked = block.props.contains(ProjectedProp(key: "checked", value: .bool(true)))
+        return setProps(blockID, [ProjectedProp(key: "checked", value: .bool(!checked))])
+    }
+
+    /// A code block's language, as one prop command.
+    @discardableResult
+    func setCodeLanguage(blockID: String, language: String) -> Bool {
+        guard block(blockID)?.node == "codeBlock" else { return false }
+        return setProps(blockID, [ProjectedProp(key: "language", value: .string(language))])
+    }
+
+    /// The number a numbered list starts at (its first item's `start`); nil
+    /// unsets it, so the list counts from 1.
+    @discardableResult
+    func setNumberStart(blockID: String, start: Int?) -> Bool {
+        guard block(blockID)?.node == "numberedListItem" else { return false }
+        return setProps(blockID, [ProjectedProp(key: "start", value: start.map { .int($0) } ?? .undefined)])
+    }
+
+    /// A callout's emoji, as one prop command.
+    @discardableResult
+    func setCalloutEmoji(blockID: String, emoji: String) -> Bool {
+        guard block(blockID)?.node == "callout" else { return false }
+        return setProps(blockID, [ProjectedProp(key: "emoji", value: .string(emoji))])
+    }
+
+    /// The slash menu's choice: the "/query" paragraph becomes that block
+    /// type, the query removed, as one durable command. Items the native
+    /// editor cannot author yet (divider, photo, file) are not offered.
+    @discardableResult
+    func applySlashItem(_ item: SlashMenuItem) -> Bool {
+        guard let view, canFormat, view.selectedRange.length == 0, slashMenuQuery != nil,
+            let type = Self.slashType(item.action),
+            let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location),
+            let block = block(entry.blockID)
+        else { return false }
+        return applyStructural(
+            entry.blockID,
+            .blockType(node: type.node, props: type.props, removing: 0..<text(of: block).utf16.count),
+            refusal: .native_editor_input_unavailable)
+    }
+
+    /// The slash items this editor can apply, in the classic menu's order.
+    static let slashItems = allSlashMenuItems.filter { slashType($0.action) != nil }
+
+    private static func slashType(_ action: SlashMenuAction) -> (node: String, props: [ProjectedProp])? {
+        guard case .convert(let kind) = action else { return nil }
+        switch kind {
+        case .paragraph: return ("paragraph", [])
+        case .heading(let level): return ("heading", [ProjectedProp(key: "level", value: .int(level))])
+        case .bulletItem: return ("bulletListItem", [])
+        case .numberedItem: return ("numberedListItem", [])
+        case .checklistItem: return ("checkListItem", [])
+        case .quote: return ("quote", [])
+        case .codeBlock: return ("codeBlock", [])
+        default: return nil
+        }
+    }
+
+    /// Unchanged values write nothing; anything else is one validated command.
+    private func setProps(_ blockID: String, _ props: [ProjectedProp]) -> Bool {
+        guard let view, canFormat, let block = block(blockID) else { return false }
+        let defaults = BlockNoteWriter.nativePropSchemas[block.node] ?? []
+        func current(_ key: String) -> YAnyValue? {
+            block.props.last { $0.key == key }?.value ?? defaults.first { $0.key == key }?.value
+        }
+        guard props.contains(where: { current($0.key) != $0.value }) else { return true }
+        return applyStructural(
+            blockID, .props(props), refusal: .native_editor_input_unavailable, keeping: view.selectedRange)
+    }
+
+    private func block(_ blockID: String) -> BlockSnapshot? {
+        surface.rangeIndex.position(for: blockID).map { surface.blocks[$0] }.flatMap {
+            AttributedDocumentProjection.isPlaceholder($0) ? nil : $0
+        }
+    }
+
+    private func text(of block: BlockSnapshot) -> String { block.runs.map(\.text).joined() }
 
     // MARK: - Clipboard
 

@@ -5,20 +5,42 @@ extension NSAttributedString.Key {
     static let nativeBlockType = NSAttributedString.Key("schrift.native.blockType")
     static let nativeSeparator = NSAttributedString.Key("schrift.native.separator")
     static let nativePlaceholder = NSAttributedString.Key("schrift.native.placeholder")
+    /// Block chrome inputs (PR05b), plain values so storage compares equal to a
+    /// fresh projection: a numbered item's displayed number, a checkbox's
+    /// state, a code block's language and a callout's emoji. Display only:
+    /// none of them is ever text, and none reaches Yjs.
+    static let nativeListNumber = NSAttributedString.Key("schrift.native.listNumber")
+    static let nativeChecked = NSAttributedString.Key("schrift.native.checked")
+    static let nativeCodeLanguage = NSAttributedString.Key("schrift.native.codeLanguage")
+    static let nativeCalloutEmoji = NSAttributedString.Key("schrift.native.calloutEmoji")
+    static let nativeCalloutBackground = NSAttributedString.Key("schrift.native.calloutBackground")
 }
 
 struct NativeEditorLabels: Equatable {
     var preservedBlock = Strings_en.table[.native_editor_preserved_block]!
     var unknownBlock = Strings_en.table[.native_editor_unknown_block]!
+    var pageBreak = Strings_en.table[.native_editor_page_break]!
+    var codeLanguage = Strings_en.table[.native_editor_code_language]!
+    var markDone = Strings_en.table[.editor_checklist_done_a11y]!
+    var markNotDone = Strings_en.table[.editor_checklist_not_done_a11y]!
+    var done = Strings_en.table[.editor_checklist_state_done_a11y]!
+    var notDone = Strings_en.table[.editor_checklist_state_not_done_a11y]!
 }
 
 /// Disposable presentation, never a serialization or write-back source.
 /// Unknown/opaque objects survive in the owning replica and occupy a labelled
-/// paragraph here. No list marker is inserted into the authored text.
+/// paragraph here. No list marker is inserted into the authored text: bullets,
+/// numbers, checkboxes, quote bars, panels and rules are fragment chrome
+/// (`NativeBlockFragment`) and controls (`NativeBlockControls`).
 enum AttributedDocumentProjection {
     private static let prose: Set<String> = [
         "paragraph", "heading", "bulletListItem", "numberedListItem", "checkListItem", "codeBlock", "quote",
+        "callout", "divider", "pageBreak",
     ]
+
+    /// A code block's "\n" is displayed as U+2028 (one UTF-16 unit, so offsets
+    /// are unchanged): one TextKit paragraph, one panel. Yjs keeps "\n".
+    static let codeLineSeparator: Character = "\u{2028}"
 
     static func isPlaceholder(_ block: BlockSnapshot) -> Bool {
         block.isOpaque || !prose.contains(block.node)
@@ -29,7 +51,34 @@ enum AttributedDocumentProjection {
             let label = block.node.isEmpty ? labels.unknownBlock : block.node
             return String(format: labels.preservedBlock, label)
         }
-        return block.runs.map(\.text).joined()
+        return block.runs.map { displayed($0.text, in: block) }.joined()
+    }
+
+    private static func displayed(_ text: String, in block: BlockSnapshot) -> String {
+        block.node == "codeBlock" ? text.replacingOccurrences(of: "\n", with: String(codeLineSeparator)) : text
+    }
+
+    /// BlockNote 0.56's numbering (`NumberedListIndexingDecorationPlugin`): a
+    /// numbered item continues the one directly above it; the first of a run
+    /// starts at its `start` prop (unset or 0 is 1). Nil for other blocks.
+    static func listNumbers(in blocks: [BlockSnapshot]) -> [Int?] {
+        var previous: Int?
+        return blocks.map { block in
+            guard block.node == "numberedListItem", !isPlaceholder(block) else {
+                previous = nil
+                return nil
+            }
+            let number: Int
+            if let previous {
+                number = previous &+ 1
+            } else if case .int(let start)? = block.props.first(where: { $0.key == "start" })?.value, start != 0 {
+                number = start
+            } else {
+                number = 1
+            }
+            previous = number
+            return number
+        }
     }
 
     @MainActor
@@ -37,13 +86,18 @@ enum AttributedDocumentProjection {
         blocks: [BlockSnapshot], traits: UITraitCollection = .current, labels: NativeEditorLabels = NativeEditorLabels()
     ) -> NSAttributedString {
         let result = NSMutableAttributedString(string: "")
-        for block in blocks { result.append(attributedBlock(block, traits: traits, labels: labels)) }
+        for (block, number) in zip(blocks, listNumbers(in: blocks)) {
+            result.append(attributedBlock(block, traits: traits, labels: labels, listNumber: number))
+        }
         return result
     }
 
+    /// `listNumber` is the block's place in its numbered run (`listNumbers`);
+    /// the surface keeps it current as blocks above change.
     @MainActor
     static func attributedBlock(
-        _ block: BlockSnapshot, traits: UITraitCollection, labels: NativeEditorLabels = NativeEditorLabels()
+        _ block: BlockSnapshot, traits: UITraitCollection, labels: NativeEditorLabels = NativeEditorLabels(),
+        listNumber: Int? = nil
     ) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.paragraphSpacing = DocsSpacing.spaceSM
@@ -52,10 +106,6 @@ enum AttributedDocumentProjection {
         case .string("right"): paragraph.alignment = .right
         case .string("justify"): paragraph.alignment = .justified
         default: paragraph.alignment = .natural
-        }
-        if ["bulletListItem", "numberedListItem", "checkListItem", "quote"].contains(block.node) {
-            paragraph.headIndent = DocsSpacing.spaceLG
-            paragraph.firstLineHeadIndent = DocsSpacing.spaceLG
         }
         var base: [NSAttributedString.Key: Any] = [
             .nativeBlockID: block.id, .nativeBlockType: block.node,
@@ -68,6 +118,7 @@ enum AttributedDocumentProjection {
             base[.foregroundColor] = UIColor.secondaryLabel
             result.append(NSAttributedString(string: displayText(for: block, labels: labels), attributes: base))
         } else {
+            chrome(block, listNumber: listNumber, traits: traits, paragraph: paragraph, into: &base)
             for run in block.runs {
                 var attributes = base
                 attributes.merge(
@@ -75,12 +126,66 @@ enum AttributedDocumentProjection {
                         block: block, marks: run.marks.map { TextMark(key: $0.key, valueJSON: $0.valueJSON) },
                         traits: traits)
                 ) { _, new in new }
-                result.append(NSAttributedString(string: run.text, attributes: attributes))
+                result.append(NSAttributedString(string: displayed(run.text, in: block), attributes: attributes))
             }
         }
         base[.nativeSeparator] = true
         result.append(NSAttributedString(string: "\n", attributes: base))
         return result
+    }
+
+    /// The room each block's chrome needs, scaled with Dynamic Type from the
+    /// classic editor's tokens, and the values its fragment and controls read.
+    @MainActor
+    private static func chrome(
+        _ block: BlockSnapshot, listNumber: Int?, traits: UITraitCollection, paragraph: NSMutableParagraphStyle,
+        into attributes: inout [NSAttributedString.Key: Any]
+    ) {
+        let metrics = UIFontMetrics(forTextStyle: .body)
+        func scaled(_ value: CGFloat) -> CGFloat { metrics.scaledValue(for: value, compatibleWith: traits) }
+        func prop(_ key: String) -> YAnyValue? { block.props.first { $0.key == key }?.value }
+        func indent(_ leading: CGFloat, trailing: CGFloat = 0) {
+            paragraph.firstLineHeadIndent = leading
+            paragraph.headIndent = leading
+            paragraph.tailIndent = -trailing
+        }
+        let padding = EditorBlockMetrics.decorationPadding
+        switch block.node {
+        case "heading":
+            if case .int(let level)? = prop("level") { attributes[.accessibilityTextHeadingLevel] = level }
+        case "bulletListItem":
+            indent(scaled(NativeBlockMetrics.listGutter))
+        case "numberedListItem":
+            indent(scaled(NativeBlockMetrics.listGutter))
+            if let listNumber { attributes[.nativeListNumber] = listNumber }
+        case "checkListItem":
+            indent(scaled(NativeBlockMetrics.listGutter))
+            attributes[.nativeChecked] = prop("checked") == .bool(true)
+        case "quote":
+            indent(EditorBlockMetrics.quoteBarWidth + padding, trailing: padding)
+            paragraph.paragraphSpacingBefore = EditorBlockMetrics.quoteVerticalPadding
+            paragraph.paragraphSpacing += EditorBlockMetrics.quoteVerticalPadding
+        case "callout":
+            indent(scaled(NativeBlockMetrics.listGutter) + padding, trailing: padding)
+            paragraph.paragraphSpacingBefore = padding
+            paragraph.paragraphSpacing += padding
+            if case .string(let emoji)? = prop("emoji") { attributes[.nativeCalloutEmoji] = emoji }
+            if case .string(let name)? = prop("backgroundColor"), backgroundColors[name] != nil {
+                attributes[.nativeCalloutBackground] = name
+            }
+        case "codeBlock":
+            indent(padding, trailing: padding)
+            // The language control sits in a header row above the first line.
+            paragraph.paragraphSpacingBefore = scaled(NativeBlockMetrics.codeHeaderHeight)
+            paragraph.paragraphSpacing += padding
+            paragraph.lineBreakMode = .byCharWrapping
+            if case .string(let language)? = prop("language") { attributes[.nativeCodeLanguage] = language }
+        case "divider", "pageBreak":
+            // An empty paragraph tall enough for its rule (and the badge).
+            paragraph.minimumLineHeight = scaled(NativeBlockMetrics.ruleHeight)
+        default:
+            break
+        }
     }
 
     /// What one mark set adds to a run: font traits, underline, strike, link
@@ -132,6 +237,9 @@ enum AttributedDocumentProjection {
         "blue": (0xDDEBF1, 0x143A4E), "purple": (0xEAE4F2, 0x3C2D49), "pink": (0xF4DFEB, 0x4E2C3C),
     ])
 
+    /// A BlockNote background colour name as the shared dynamic colour.
+    static func backgroundColor(named name: String) -> UIColor? { backgroundColors[name] }
+
     private static func palette(_ hex: [String: (light: UInt32, dark: UInt32)]) -> [String: UIColor] {
         func color(_ value: UInt32) -> UIColor {
             UIColor(
@@ -165,7 +273,8 @@ enum AttributedDocumentProjection {
             : UIFont.systemFont(ofSize: spec.size, weight: weight)
         var symbolic = font.fontDescriptor.symbolicTraits
         if marks.contains("bold") { symbolic.insert(.traitBold) }
-        if marks.contains("italic") { symbolic.insert(.traitItalic) }
+        // A quote is italic prose, as on the classic surfaces.
+        if marks.contains("italic") || block.node == "quote" { symbolic.insert(.traitItalic) }
         if let descriptor = font.fontDescriptor.withSymbolicTraits(symbolic) {
             font = UIFont(descriptor: descriptor, size: spec.size)
         }

@@ -371,9 +371,11 @@ enum Strings_de {
         .native_editor_color_blue: "Blau",
         .native_editor_color_purple: "Lila",
         .native_editor_color_pink: "Rosa",
+        .native_editor_page_break: "Seitenumbruch",
+        .native_editor_code_language: "Programmiersprache",
         .profile_native_editor: "Nativer Editor (experimentell)",
         .profile_native_editor_footer:
-            "Gilt beim nächsten Öffnen eines Dokuments. Unterstützt Docs 6; bisher ist nur die Eingabe von reinem Text möglich.",
+            "Gilt beim nächsten Öffnen eines Dokuments. Unterstützt Docs 6 mit Text, Formatierung, Links, Überschriften, Listen, Checklisten, Zitaten und Codeblöcken; andere Blöcke bleiben erhalten, sind aber noch nicht bearbeitbar.",
         .native_editor_preserved_title: "Dokument erhalten",
         .native_editor_preserved_body:
             "Der native Leser kann die Struktur dieses Dokuments noch nicht anzeigen. Der ursprüngliche Inhalt bleibt erhalten.",

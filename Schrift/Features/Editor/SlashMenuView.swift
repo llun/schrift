@@ -10,6 +10,8 @@ struct SlashMenuView: View {
     var isOffline: Bool = false
     /// No server id to upload against — see `SlashMenuAction.requiresImmediateUpload`.
     var isLocalDocument: Bool = false
+    /// The items this editor can apply; the native editor offers fewer.
+    var available: [SlashMenuItem] = allSlashMenuItems
     var onSelect: (SlashMenuItem) -> Void
 
     @Environment(LocalizationStore.self) private var loc
@@ -19,7 +21,7 @@ struct SlashMenuView: View {
 
     /// The rows on offer: the query filter plus the File gate. Exposed so the gate is testable without hosting.
     var items: [SlashMenuItem] {
-        filteredSlashItems(query: query, isOffline: isOffline, isLocalDocument: isLocalDocument)
+        filteredSlashItems(query: query, isOffline: isOffline, isLocalDocument: isLocalDocument, items: available)
     }
 
     var body: some View {

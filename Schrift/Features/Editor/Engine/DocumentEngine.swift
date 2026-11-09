@@ -103,7 +103,7 @@ final class DocumentEngine {
         self.doc = doc
         self.revision = revision
         self.surface = surface
-        self.writer = BlockNoteWriter(doc: doc)
+        self.writer = BlockNoteWriter(doc: doc, schemas: BlockNoteWriter.nativePropSchemas)
         self.builder = PatchBuilder(doc: doc)
         assert(
             doc.afterAllTransactions == nil && doc.onDestroy == nil,
@@ -140,12 +140,15 @@ final class DocumentEngine {
         // one on the first insertion. An element with inline nodes is not empty
         // and stays refused.
         guard builder.index.isCanonical, let entry = builder.index.entries[command.blockID],
-            entry.isProjectable, !YBlockProjection.projectBlock(entry.containerItem).fidelity.isOpaque,
+            entry.isProjectable,
+            !YBlockProjection.projectBlock(entry.containerItem, nativeMarks: true).fidelity.isOpaque,
             entry.isSimpleContainer, let element = entry.element,
-            case .xmlElement(let node)? = element.typeRef, BlockNoteWriter.propSchemas[node] != nil,
+            case .xmlElement(let node)? = element.typeRef, writer.schemas[node] != nil,
             entry.isSimpleText || element.length == 0,
+            // A code block keeps "\n" as a source line break (BlockNote's Enter
+            // there); in prose a newline is a block break, a range command.
             !replacement.unicodeScalars.contains(where: {
-                CharacterSet.newlines.contains($0) || $0.value == 0xfffc
+                $0.value == 0xfffc || (CharacterSet.newlines.contains($0) && !(node == "codeBlock" && $0 == "\n"))
             }),
             marks?.allSatisfy({ Self.isMarkValue($0) && $0.valueJSON != "null" }) != false
         else { throw DocumentEngineError.unsupportedNativeInput }
@@ -209,7 +212,9 @@ final class DocumentEngine {
         guard nativeCommand == nil, !holdingDurableRemote, !isFlushing, composition == nil,
             revision == command.baseRevision, revision < UInt64.max
         else { throw DocumentEngineError.staleNativeCommand }
-        let (node, units) = try structuralTarget(command.blockID)
+        // A prop edit (a code block's language) is the one command code accepts.
+        let isPropEdit = if case .props = command.kind { true } else { false }
+        let (node, units) = try structuralTarget(command.blockID, allowCode: isPropEdit)
         let write: () throws -> Data
         // Resolved after the write, against the post-write index.
         let caret: () -> EditorPosition
@@ -327,6 +332,39 @@ final class DocumentEngine {
             }
             // The surface keeps the selection; this is its start.
             caret = { EditorPosition(blockID: command.blockID, offset: marks.startOffset, assoc: -1) }
+        case .props(let props):
+            // Its own intent, never a type change: every key must be one this
+            // block type edits, with a valid value, before arming.
+            guard !props.isEmpty, Set(props.map(\.key)).count == props.count,
+                props.allSatisfy({ Self.isPropEdit($0, on: node) }),
+                let item = builder.index.entries[command.blockID]?.containerItem
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            write = {
+                try self.writer.setBlockProps(
+                    in: try self.writer.indexedTarget(item, id: command.blockID),
+                    props: props.map { ($0.key, $0.value) })
+            }
+            caret = { start(command.blockID) }
+        case .blockType(let type, let props, let removing):
+            // The slash menu: a paragraph becomes one of its block types, the
+            // "/query" removed in the same transaction (BlockNote clears the
+            // query, then `updateBlock`s the now-empty block).
+            guard node == "paragraph", Self.slashTypes.contains(type),
+                props.allSatisfy({ $0.key == "level" && type == "heading" && Self.isPropEdit($0, on: type) }),
+                Self.isBoundary(removing.lowerBound, in: units), Self.isBoundary(removing.upperBound, in: units),
+                let item = builder.index.entries[command.blockID]?.containerItem
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            write = {
+                try self.writer.transaction { _ in
+                    let target = try self.writer.indexedTarget(item, id: command.blockID)
+                    if !removing.isEmpty {
+                        try self.writer.replaceText(
+                            in: target, range: NSRange(location: removing.lowerBound, length: removing.count), with: "")
+                    }
+                    try self.writer.setBlockType(in: target, to: type, props: props.map { ($0.key, $0.value) })
+                }
+            }
+            caret = { EditorPosition(blockID: command.blockID, offset: removing.lowerBound, assoc: -1) }
         }
         nativeCommand = command
         nativeEmission = 0
@@ -358,6 +396,33 @@ final class DocumentEngine {
 
     private static let listItemNodes: Set<String> = ["bulletListItem", "numberedListItem", "checkListItem"]
 
+    /// What the slash menu converts a paragraph into. Divider, media and
+    /// nested blocks wait for PR06.
+    static let slashTypes: Set<String> = [
+        "paragraph", "heading", "bulletListItem", "numberedListItem", "checkListItem", "quote", "codeBlock",
+    ]
+
+    /// A prop a `.props` command may write on `node`, with BlockNote 0.56's
+    /// value type. Anything else (an unknown key, another type's prop, a
+    /// malformed value) would make the block lossy, so it is refused.
+    private static func isPropEdit(_ prop: ProjectedProp, on node: String) -> Bool {
+        switch (node, prop.key, prop.value) {
+        case ("checkListItem", "checked", .bool): return true
+        // `undefined` is BlockNote's unset start: the list counts from 1.
+        case ("numberedListItem", "start", .undefined): return true
+        case ("numberedListItem", "start", .int(let start)): return (1...999_999).contains(start)
+        case ("heading", "level", .int(let level)): return (1...6).contains(level)
+        case ("codeBlock", "language", .string(let language)):
+            return (1...64).contains(language.count)
+                && !language.unicodeScalars.contains { CharacterSet.whitespacesAndNewlines.contains($0) }
+                && !language.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+        case ("callout", "emoji", .string(let emoji)):
+            return emoji.count == 1 && emoji.unicodeScalars.count <= 16
+                && emoji.unicodeScalars.contains { $0.properties.isEmoji && $0.value > 0x7f }
+        default: return false
+        }
+    }
+
     /// A mark a command may write: a key and either "null" (removal) or a JSON
     /// object, with a readable href for a link. Anything else would make the
     /// block unprojectable after the write.
@@ -379,12 +444,14 @@ final class DocumentEngine {
     /// A block a structural command may address: a writable simple text, or an
     /// empty text-capable element the writer gives an XmlText on first insert.
     /// Inline nodes, nested children, opaque/scrubbed content and code stay refused.
-    private func structuralTarget(_ blockID: String) throws -> (node: String, units: [UInt16]) {
+    private func structuralTarget(_ blockID: String, allowCode: Bool = false) throws -> (node: String, units: [UInt16])
+    {
         guard builder.index.isCanonical, let entry = builder.index.entries[blockID],
-            entry.isProjectable, !YBlockProjection.projectBlock(entry.containerItem).fidelity.isOpaque,
+            entry.isProjectable,
+            !YBlockProjection.projectBlock(entry.containerItem, nativeMarks: true).fidelity.isOpaque,
             entry.isSimpleContainer, let element = entry.element,
             case .xmlElement(let node)? = element.typeRef,
-            BlockNoteWriter.propSchemas[node] != nil, node != "codeBlock",
+            writer.schemas[node] != nil, allowCode || node != "codeBlock",
             entry.isSimpleText || element.length == 0,
             // `splitBlock` refuses a toggle heading (Enter depends on view state).
             // It already projects opaque; refuse it here too, by the writer's rule.
@@ -550,7 +617,7 @@ final class DocumentEngine {
         // Selection can address any projectable single text; composing also
         // requires a block the writer supports.
         guard let element = builder.index.entries[blockID]?.element,
-            case .xmlElement(let node)? = element.typeRef, BlockNoteWriter.propSchemas[node] != nil
+            case .xmlElement(let node)? = element.typeRef, writer.schemas[node] != nil
         else { throw DocumentEngineError.invalidPosition }
         composition = CompositionQueue(range: captured)
         compositionGeneration &+= 1
