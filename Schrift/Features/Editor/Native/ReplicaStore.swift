@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Synchronization
 
 enum ReplicaStoreError: Error, Equatable {
     case invalidScope, alreadyExists, missingReplica, staleRevision, reusedCommand
@@ -12,11 +13,16 @@ enum ReplicaStoreError: Error, Equatable {
 /// Draft storage, never a re-downloadable cache. There is deliberately no
 /// eviction or sign-out removal API; `remove(for:)` exists only for an explicit
 /// user discard (keep-server-version, discard pending work, document deletion).
-/// One main-actor writer serializes each read/modify/switch, including
-/// independently constructed store instances. Raw files are immutable; an
-/// incomplete unreferenced file is not an edit.
-@MainActor
-final class ReplicaStore {
+/// One lock (`io`, shared by every instance) serializes each read/modify/switch,
+/// including independently constructed store instances, so the journal entry
+/// points (append, restore, manifest, outbox, acknowledge, compact and the
+/// provisional file) are callable from any isolation domain (PR08a). Operations
+/// that touch the ownership marker (create, remove, repair, set-aside) stay on
+/// the main actor and take the same lock. It is not recursive: only public entry
+/// points lock, and private helpers assume it is held, so a public method never
+/// calls another. Raw files are immutable; an incomplete unreferenced file is
+/// not an edit.
+final class ReplicaStore: Sendable {
     enum Operation: Equatable { case create, append, acknowledge, compact, remove, provisional }
     enum Boundary: Equatable {
         case payloadWritten, payloadFlushed, payloadDirectoryFlushed
@@ -30,19 +36,21 @@ final class ReplicaStore {
         let digest: String
     }
 
+    private static let io = Mutex(())
     private let directory: URL
-    private let fileManager = FileManager.default
+    private var fileManager: FileManager { .default }
     /// The durable "native owns this document" marker. Optional so component
     /// tests can exercise raw storage without UserDefaults; production always
     /// injects one.
     let ownershipStore: ReplicaOwnershipStore?
+    /// Runs while the journal lock is held: a hook must never call back into any store.
     /// Throwing at a boundary models a process interruption. No catch rewinds
     /// an already switched manifest; the next operation reads disk afresh.
-    private let interrupt: ((Operation, Boundary) throws -> Void)?
+    private let interrupt: (@Sendable (Operation, Boundary) throws -> Void)?
 
     init(
         directory: URL? = nil, ownershipStore: ReplicaOwnershipStore? = nil,
-        interrupt: ((Operation, Boundary) throws -> Void)? = nil
+        interrupt: (@Sendable (Operation, Boundary) throws -> Void)? = nil
     ) {
         self.directory =
             directory
@@ -54,6 +62,7 @@ final class ReplicaStore {
 
     /// The durable owner marker's answer, failing closed when the marker data is
     /// gone but replica files exist: then ownership is unknown, not absent.
+    @MainActor
     func ownership(documentID: UUID, serverOrigin: String) -> ReplicaOwnership {
         guard let ownershipStore else { return .none }
         let owner = ownershipStore.owner(documentID: documentID, serverOrigin: serverOrigin)
@@ -65,6 +74,7 @@ final class ReplicaStore {
 
     /// Marker data is missing or does not decode while replica files exist, so
     /// every document is read-only until the marker is rebuilt.
+    @MainActor
     var needsOwnershipRepair: Bool {
         guard let ownershipStore else { return false }
         if ownershipStore.holdsUnreadableData { return true }
@@ -84,8 +94,14 @@ final class ReplicaStore {
     /// Two scopes for one document resolve to the drafted one, else the only one
     /// with unsent edits; anything still ambiguous also writes nothing. Both
     /// refusals keep every document read-only, the fail-closed direction.
+    @MainActor
     @discardableResult
     func repairOwnership(draftScopes: [ReplicaScope] = []) -> Bool {
+        Self.io.withLock { _ in repairOwnershipLocked(draftScopes: draftScopes) }
+    }
+
+    @MainActor
+    private func repairOwnershipLocked(draftScopes: [ReplicaScope]) -> Bool {
         guard let ownershipStore else { return false }
         var candidates = draftScopes.map { (scope: $0, hasOutbox: false) }
         for entry in replicaFolders() {
@@ -116,15 +132,22 @@ final class ReplicaStore {
 
     /// Folders that block `repairOwnership`: quarantined, damaged or in a newer format.
     var hasUnreadableFolders: Bool {
-        replicaFolders().contains { if case .unreadable = read(folder: $0) { true } else { false } }
+        Self.io.withLock { _ in
+            replicaFolders().contains { if case .unreadable = read(folder: $0) { true } else { false } }
+        }
     }
 
     /// The Profile recovery's way out of a folder no repair can read. Each one is
     /// moved, bytes intact, into `ReplicaDraftsSetAside` beside this store, which
     /// nothing reads as a replica; its document then follows its draft (read-only)
     /// or, with none, the server. Returns false if any move failed.
+    @MainActor
     @discardableResult
     func setAsideUnreadableFolders() -> Bool {
+        Self.io.withLock { _ in setAsideUnreadableFoldersLocked() }
+    }
+
+    private func setAsideUnreadableFoldersLocked() -> Bool {
         let unreadable = replicaFolders().filter { if case .unreadable = read(folder: $0) { true } else { false } }
         guard !unreadable.isEmpty else { return true }
         let setAside = directory.deletingLastPathComponent()
@@ -177,17 +200,26 @@ final class ReplicaStore {
     /// Clear this scope's marker when it has no replica: a crash between
     /// marking and the first manifest. Refuses while a manifest or a
     /// quarantine hold exists; the coordinator also requires no draft.
+    @MainActor
     @discardableResult
     func clearOwnership(for scope: ReplicaScope) -> Bool {
-        do {
-            guard try readManifest(for: scope) == nil else { return false }
-        } catch {
-            return false
+        Self.io.withLock { _ in
+            do {
+                guard try readManifest(for: scope) == nil else { return false }
+            } catch {
+                return false
+            }
+            return ownershipStore?.clear(scope) ?? true
         }
-        return ownershipStore?.clear(scope) ?? true
     }
 
+    @MainActor
     func create(for scope: ReplicaScope, checkpoint: Data) throws -> ReplicaManifest {
+        try Self.io.withLock { _ in try createLocked(for: scope, checkpoint: checkpoint) }
+    }
+
+    @MainActor
+    private func createLocked(for scope: ReplicaScope, checkpoint: Data) throws -> ReplicaManifest {
         guard try readManifest(for: scope) == nil else { throw ReplicaStoreError.alreadyExists }
         let folder = try folder(for: scope)
         // Mark ownership before any replica file or directory exists. A crash can
@@ -217,6 +249,15 @@ final class ReplicaStore {
         _ update: Data, for scope: ReplicaScope, commandID: UUID, baseRevision: UInt64,
         origin: ReplicaJournalEntry.Origin
     ) throws -> ReplicaManifest {
+        try Self.io.withLock { _ in
+            try appendLocked(update, for: scope, commandID: commandID, baseRevision: baseRevision, origin: origin)
+        }
+    }
+
+    private func appendLocked(
+        _ update: Data, for scope: ReplicaScope, commandID: UUID, baseRevision: UInt64,
+        origin: ReplicaJournalEntry.Origin
+    ) throws -> ReplicaManifest {
         var manifest = try requireManifest(for: scope)
         if let prior = manifest.journal.first(where: { $0.commandID == commandID }) {
             guard prior.sequence > 0, prior.sequence - 1 == baseRevision, prior.origin == origin,
@@ -240,6 +281,10 @@ final class ReplicaStore {
     /// Verify every referenced file, including old outbox segments covered by
     /// the checkpoint. Corrupt data never becomes a partial successful restore.
     func restore(for scope: ReplicaScope) throws -> ReplicaRestore? {
+        try Self.io.withLock { _ in try restoreLocked(for: scope) }
+    }
+
+    private func restoreLocked(for scope: ReplicaScope) throws -> ReplicaRestore? {
         guard let manifest = try readManifest(for: scope) else { return nil }
         let checkpoint = try readPayload(manifest.checkpoint, for: scope)
         var updates: [Data] = []
@@ -257,13 +302,15 @@ final class ReplicaStore {
     /// file here, and by `compact` before the journal entry can disappear,
     /// so committed text never comes back as a recovery offer.
     func provisionalRecoveries(for scope: ReplicaScope) -> [ProvisionalRecovery] {
-        // shortcut: an unreadable file reads as empty and the next write replaces it; quarantine it if that ever matters.
-        guard let manifest = try? manifest(for: scope) else { return [] }
-        let read = readProvisional(manifest)
-        // A failed rewrite still returns the live entries: they are the only
-        // copy of uncommitted text. The next read or compaction purges again.
-        if read.hadCommitted { try? writeProvisionalRecoveries(read.live, for: scope) }
-        return read.live
+        Self.io.withLock { _ in
+            // shortcut: an unreadable file reads as empty and the next write replaces it; quarantine it if that ever matters.
+            guard let manifest = try? readManifest(for: scope) else { return [] }
+            let read = readProvisional(manifest)
+            // A failed rewrite still returns the live entries: they are the only
+            // copy of uncommitted text. The next read or compaction purges again.
+            if read.hadCommitted { try? writeProvisional(read.live, for: scope) }
+            return read.live
+        }
     }
 
     /// The entries whose command is not journaled, and whether any were.
@@ -281,6 +328,10 @@ final class ReplicaStore {
     /// rename, directory flush); an empty list removes the file. Requires the
     /// replica folder, so a removed replica cannot regain recovery text.
     func writeProvisionalRecoveries(_ entries: [ProvisionalRecovery], for scope: ReplicaScope) throws {
+        try Self.io.withLock { _ in try writeProvisional(entries, for: scope) }
+    }
+
+    private func writeProvisional(_ entries: [ProvisionalRecovery], for scope: ReplicaScope) throws {
         let folder = try folder(for: scope)
         let file = folder.appendingPathComponent("provisional.json")
         if entries.isEmpty {
@@ -297,23 +348,31 @@ final class ReplicaStore {
     }
 
     /// The committed manifest alone, without reading or verifying payloads.
-    func manifest(for scope: ReplicaScope) throws -> ReplicaManifest? { try readManifest(for: scope) }
+    func manifest(for scope: ReplicaScope) throws -> ReplicaManifest? {
+        try Self.io.withLock { _ in try readManifest(for: scope) }
+    }
 
     func outbox(for scope: ReplicaScope) throws -> ReplicaOutboxBatch? {
-        _ = try restore(for: scope)
-        let manifest = try requireManifest(for: scope)
-        guard !manifest.outbox.isEmpty else { return nil }
-        let sequences = Set(manifest.outbox)
-        let updates = try manifest.journal.filter { sequences.contains($0.sequence) }.map {
-            try readPayload($0.file, for: scope)
+        try Self.io.withLock { _ in
+            _ = try restoreLocked(for: scope)
+            let manifest = try requireManifest(for: scope)
+            guard !manifest.outbox.isEmpty else { return nil }
+            let sequences = Set(manifest.outbox)
+            let updates = try manifest.journal.filter { sequences.contains($0.sequence) }.map {
+                try readPayload($0.file, for: scope)
+            }
+            return .capture(manifest: manifest, updates: updates)
         }
-        return .capture(manifest: manifest, updates: updates)
     }
 
     /// Call only after the corresponding HTTP body PATCH confirms. Body/title
     /// half-land must acknowledge the body independently of title retry state.
     /// Deletions are acknowledged by sequence, never by state-vector equality.
     func acknowledge(_ batch: ReplicaOutboxBatch) throws {
+        try Self.io.withLock { _ in try acknowledgeLocked(batch) }
+    }
+
+    private func acknowledgeLocked(_ batch: ReplicaOutboxBatch) throws {
         var manifest = try requireManifest(for: batch.scope)
         guard batch.generation == manifest.generation, !batch.sequences.isEmpty,
             batch.sequences.count == batch.updates.count,
@@ -340,15 +399,19 @@ final class ReplicaStore {
     /// explicit checkpoint operation, never an encoding done per keystroke.
     /// Switch first, then remove only files the new manifest no longer needs.
     func compact(for scope: ReplicaScope, checkpoint: Data, baseRevision: UInt64) throws {
+        try Self.io.withLock { _ in try compactLocked(for: scope, checkpoint: checkpoint, baseRevision: baseRevision) }
+    }
+
+    private func compactLocked(for scope: ReplicaScope, checkpoint: Data, baseRevision: UInt64) throws {
         var manifest = try requireManifest(for: scope)
         guard manifest.revision == baseRevision else { throw ReplicaStoreError.staleRevision }
         // Do not replace corrupt recovery data with a new apparently healthy
         // snapshot. This also verifies every outbox segment before pruning.
-        _ = try restore(for: scope)
+        _ = try restoreLocked(for: scope)
         // The journal entries about to go are the only proof that provisional
         // entries with their command ids were committed.
         let provisional = readProvisional(manifest)
-        if provisional.hadCommitted { try writeProvisionalRecoveries(provisional.live, for: scope) }
+        if provisional.hadCommitted { try writeProvisional(provisional.live, for: scope) }
         let folder = try folder(for: scope)
         let previous = [manifest.checkpoint] + manifest.journal.map(\.file)
         let file = try writePayload(checkpoint, in: folder, journal: false, operation: .compact)
@@ -378,7 +441,13 @@ final class ReplicaStore {
     /// Quarantined replicas are removed too: the user asked to discard this
     /// work, and a sticky corruption hold must not make it undeletable. The
     /// recovery copies go with the folder.
+    @MainActor
     func remove(for scope: ReplicaScope) throws {
+        try Self.io.withLock { _ in try removeLocked(for: scope) }
+    }
+
+    @MainActor
+    private func removeLocked(for scope: ReplicaScope) throws {
         let folder = try folder(for: scope)
         removeTombstones()
         guard fileManager.fileExists(atPath: folder.path) else {

@@ -60,7 +60,7 @@ extension EditorSurface {
 
 /// One transaction's worth of change, in document order: removals first, then
 /// per-block changes, then insertions.
-struct BlockPatch: Equatable {
+struct BlockPatch: Equatable, Sendable {
     var changes: [BlockChange]
     /// Present only for explicitly identified native commands. Untagged local
     /// patches and authoritative `.other` rebuilds must always be applied.
@@ -83,7 +83,7 @@ struct BlockPatch: Equatable {
 
 /// A patch's cause/delivery policy; composition rebuilds use `.other` even when
 /// the commit wrote through a `.localUser` transaction.
-enum BlockPatchOrigin: Equatable {
+enum BlockPatchOrigin: Equatable, Sendable {
     case localUser
     case remote
     /// A transaction with no origin (B4 cleanup, a test), or an authoritative
@@ -100,7 +100,7 @@ enum BlockPatchOrigin: Equatable {
 }
 
 /// One change to one block, or to the block list.
-enum BlockChange: Equatable {
+enum BlockChange: Equatable, Sendable {
     /// A text-only change to a block whose element children did not change.
     /// Ranges are block-relative UTF-16 offsets into the **pre-change** text,
     /// and the deltas are ordered and non-overlapping.
@@ -136,7 +136,7 @@ enum BlockChange: Equatable {
 /// keystroke. The engine's `PatchBuilder` never emits `nil`: it always sends
 /// the complete mark set, including `[]` for "no marks in force", so a surface
 /// applying a patch never inherits by accident. A deletion carries no marks.
-struct TextDelta: Equatable {
+struct TextDelta: Equatable, Sendable {
     var range: Range<Int>
     var replacement: String
     var marks: [TextMark]?
@@ -206,7 +206,7 @@ struct TextMark: Equatable, Sendable {
 /// number per sibling run. The surface never decides whether a block is
 /// writable. `isOpaque` only distinguishes preserved placeholders from
 /// genuinely empty text blocks.
-struct BlockSnapshot: Equatable {
+struct BlockSnapshot: Equatable, Sendable {
     var id: String
     var node: String
     var props: [ProjectedProp]

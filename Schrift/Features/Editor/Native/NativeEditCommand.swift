@@ -53,9 +53,9 @@ struct NativeEditCommand: Equatable, Sendable {
         case insertBlock(newID: String, before: Bool)
         /// A lossless paste: `payload` (`BlockNoteSubtreePayload`, untrusted)
         /// as siblings after `blockID`'s subtree, replacing `blockID` when it
-        /// is an empty paragraph without children; containers take `newIDs`
-        /// in preorder.
-        case insertSubtrees(payload: Data, newIDs: [String])
+        /// is an empty paragraph without children. The engine decodes and
+        /// bounds the payload and mints a fresh id per container (PR08a).
+        case insertSubtrees(payload: Data)
         /// One step of the session's collaborative history (PR07b,
         /// `NativeUndoManager`). `blockID` is unused (empty).
         case undo

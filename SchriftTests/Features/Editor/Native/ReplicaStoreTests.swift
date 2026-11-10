@@ -26,13 +26,13 @@ final class ReplicaStoreTests: XCTestCase {
     }
 
     private func store(
-        interrupt: ((ReplicaStore.Operation, ReplicaStore.Boundary) throws -> Void)? = nil
+        interrupt: (@Sendable (ReplicaStore.Operation, ReplicaStore.Boundary) throws -> Void)? = nil
     ) -> ReplicaStore {
         ReplicaStore(directory: directory, interrupt: interrupt)
     }
 
     private func ownedStore(
-        interrupt: ((ReplicaStore.Operation, ReplicaStore.Boundary) throws -> Void)? = nil
+        interrupt: (@Sendable (ReplicaStore.Operation, ReplicaStore.Boundary) throws -> Void)? = nil
     ) -> (ReplicaStore, ReplicaOwnershipStore) {
         let ownership = ReplicaOwnershipStore(userDefaults: ownershipDefaults)
         return (ReplicaStore(directory: directory, ownershipStore: ownership, interrupt: interrupt), ownership)
@@ -393,6 +393,92 @@ final class ReplicaStoreTests: XCTestCase {
         _ = try store.create(for: scope, checkpoint: baseline)
         try store.remove(for: scope)
         XCTAssertNil(try store.restore(for: scope))
+    }
+
+    // MARK: - PR08a: the journal is serialized by the store, not the main actor
+
+    /// A background actor appends while the main actor acknowledges and
+    /// compacts. Every operation is atomic under the store's lock: the appends
+    /// land once each and in order, the outbox is exactly the unacknowledged
+    /// tail, and the replica restores.
+    func testActorAppendsSerializeWithMainAcknowledgeAndCompact() async throws {
+        let count = 200
+        let store = store()
+        let scope = scope
+        _ = try store.create(for: scope, checkpoint: baseline)
+        let writer = Task { try await JournalWriter().append(count, to: store, scope: scope) }
+        let deadline = Date().addingTimeInterval(60)
+        while try XCTUnwrap(store.manifest(for: scope)).revision < count, Date() < deadline {
+            if let batch = try store.outbox(for: scope) { try store.acknowledge(batch) }
+            let restored = try XCTUnwrap(store.restore(for: scope))
+            do {
+                // The toy checkpoint is every byte through its revision.
+                try store.compact(
+                    for: scope, checkpoint: restored.checkpoint + restored.updates.reduce(Data(), +),
+                    baseRevision: restored.manifest.revision)
+            } catch ReplicaStoreError.staleRevision {
+                // An append landed between the restore and the compaction.
+            }
+            await Task.yield()
+        }
+        let appended = try await writer.value
+        XCTAssertEqual(appended.map(\.revision), (1...UInt64(count)).map { $0 })
+
+        let manifest = try XCTUnwrap(store.manifest(for: scope))
+        XCTAssertEqual(manifest.revision, UInt64(count))
+        XCTAssertEqual(manifest.outbox, (1...UInt64(count)).filter { $0 > manifest.httpAcknowledgedThrough })
+        XCTAssertEqual(manifest.journal.map(\.sequence), manifest.journal.map(\.sequence).sorted())
+        for entry in manifest.journal {
+            XCTAssertEqual(entry.commandID, appended[Int(entry.sequence) - 1].commandID, "\(entry.sequence)")
+        }
+        let restored = try XCTUnwrap(store.restore(for: scope))
+        XCTAssertEqual(
+            restored.checkpoint + restored.updates.reduce(Data(), +),
+            baseline + (0..<count).map(journalBytes).reduce(Data(), +), "every append once, in order")
+        if let batch = try store.outbox(for: scope) { try store.acknowledge(batch) }
+        XCTAssertNil(try store.outbox(for: scope))
+    }
+
+    /// An append interrupted off the main actor leaves only a committed
+    /// revision, as on main, and the next append reads disk afresh.
+    func testInterruptBoundariesHoldOffMain() async throws {
+        let scope = scope
+        for boundary in ReplicaStore.Boundary.commitBoundaries {
+            let root = directory.appendingPathComponent(UUID().uuidString)
+            let healthy = ReplicaStore(directory: root)
+            _ = try healthy.create(for: scope, checkpoint: baseline)
+            let crashing = ReplicaStore(directory: root) { op, point in
+                if op == .append && point == boundary { throw Interrupted.crash }
+            }
+            do {
+                _ = try await JournalWriter().append(1, to: crashing, scope: scope)
+                XCTFail("\(boundary) did not interrupt")
+            } catch Interrupted.crash {}
+            let committed: UInt64 = boundary.manifestIsVisible ? 1 : 0
+            let restored = try XCTUnwrap(healthy.restore(for: scope))
+            XCTAssertEqual(restored.manifest.revision, committed, "\(boundary)")
+            XCTAssertEqual(restored.updates, boundary.manifestIsVisible ? [journalBytes(0)] : [], "\(boundary)")
+            let next = try await JournalWriter().append(1, to: healthy, scope: scope, from: Int(committed))
+            XCTAssertEqual(next.map(\.revision), [committed + 1], "\(boundary)")
+        }
+    }
+}
+
+/// Two bytes per journal update, so every one is distinct.
+private func journalBytes(_ index: Int) -> Data { Data([UInt8(index >> 8), UInt8(index & 0xff)]) }
+
+/// Appends from an actor, off the main actor.
+private actor JournalWriter {
+    func append(
+        _ count: Int, to store: ReplicaStore, scope: ReplicaScope, from start: Int = 0
+    ) throws -> [(revision: UInt64, commandID: UUID)] {
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        return try (start..<start + count).map { index in
+            let id = UUID()
+            let manifest = try store.append(
+                journalBytes(index), for: scope, commandID: id, baseRevision: UInt64(index), origin: .local)
+            return (manifest.revision, id)
+        }
     }
 }
 

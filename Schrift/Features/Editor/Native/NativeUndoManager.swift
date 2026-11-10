@@ -19,8 +19,10 @@ import UIKit
 /// it stored. A position on content a peer deleted resolves like any relative
 /// selection: the selection coordinator falls back to the surviving endpoint or
 /// a neighbouring block.
-@MainActor
-final class NativeUndoManager {
+///
+/// No actor annotation (PR08a): like the engine and the replica, it is confined
+/// to the domain that creates it. The UIKit side is `NativeUndoManager`.
+final class ReplicaHistory {
     /// How many undo steps a session keeps; the oldest beyond it are dropped
     /// (their `keep` marks released). Redo steps come from undos, so they are
     /// bounded by the same number.
@@ -29,8 +31,8 @@ final class NativeUndoManager {
 
     let history: YUndoManager
     private weak var engine: DocumentEngine?
-    /// What UIKit sees as the text view's undo manager.
-    let system = NativeSystemUndoManager()
+    /// Called after every stack change (added, popped, cleared).
+    var onChange: (() -> Void)?
 
     init(doc: YDoc, engine: DocumentEngine) {
         self.engine = engine
@@ -43,10 +45,10 @@ final class NativeUndoManager {
             }
             // shortcut: a failed trim keeps the extra item (its `keep` marks too); the next add retries.
             if event.type == .undo { try? self.history.trimUndoStack(to: Self.maxDepth) }
-            self.didChange()
+            self.onChange?()
         }
-        history.onStackItemPopped = { [weak self] _ in self?.didChange() }
-        history.onStackCleared = { [weak self] _, _ in self?.didChange() }
+        history.onStackItemPopped = { [weak self] _ in self?.onChange?() }
+        history.onStackCleared = { [weak self] _, _ in self?.onChange?() }
     }
 
     var canUndo: Bool { history.canUndo }
@@ -70,6 +72,32 @@ final class NativeUndoManager {
     /// stacks' `keep` marks need no release.
     func destroy() {
         history.destroy()
+    }
+}
+
+/// The main-actor side of the native history: UIKit's `NativeSystemUndoManager`
+/// and its checkpoint notifications over one `ReplicaHistory`.
+@MainActor
+final class NativeUndoManager {
+    static let maxDepth = ReplicaHistory.maxDepth
+
+    let replica: ReplicaHistory
+    var history: YUndoManager { replica.history }
+    /// What UIKit sees as the text view's undo manager.
+    let system = NativeSystemUndoManager()
+
+    init(doc: YDoc, engine: DocumentEngine) {
+        replica = ReplicaHistory(doc: doc, engine: engine)
+        replica.onChange = { [weak self] in self?.didChange() }
+    }
+
+    var canUndo: Bool { replica.canUndo }
+    var canRedo: Bool { replica.canRedo }
+    func stopCapturing() { replica.stopCapturing() }
+    func step(undo: Bool) throws -> Bool { try replica.step(undo: undo) }
+
+    func destroy() {
+        replica.destroy()
         system.input = nil
     }
 

@@ -539,7 +539,7 @@ path; PR01 connects this engine to an opt-in read-only TextKit 2 surface.
 - **`HeadlessSurface`** — an in-memory surface that only ever changes through
   `applyPatch`, so a test can assert it equals the replica's projection after
   every step.
-- **`DocumentEngine`** (`@MainActor`) — borrows the replica from
+- **`DocumentEngine`** (no actor annotation: confined to the domain that creates it, PR08a) — borrows the replica from
   `DocumentCollaborationManager` or a separate `NativeEditorSession` (never owns it), exposes block-relative intents
   (`replaceText`, `formatRange`, `splitBlock`, `joinBlocks`, `setBlockType`)
   that resolve through `BlockNoteWriter` in one `.localUser` transaction and
@@ -971,6 +971,20 @@ redo and enablement route to this history, so the Edit menu, shake, ⌘Z/⇧⌘Z
 keyboard's undo all use it and UIKit's own text history never runs. Undo is refused
 while text is marked, read-only or after a write failure.
 
+**PR08a Sendable boundary, confined engine, serialized journal.** Preparation for moving
+the native replica onto an actor (PR08b), with no behaviour change. The engine's value
+outputs (`BlockPatch` and its parts, `EditorSelection`, `CompositionCommitResult`, the
+projected and native block snapshots) are compiler-checked `Sendable`. `DocumentEngine`
+loses `@MainActor` and is confined to whichever domain creates it with its replica; so is
+`ReplicaHistory`, the Yjs half of the native undo history split out of the main-actor
+`NativeUndoManager` (which keeps UIKit's undo manager and checkpoint notifications).
+Paste-payload decoding moves from the input coordinator into the engine: `.insertSubtrees`
+carries only the payload, and `prepareBlockCommand` bounds and validates it, mints the ids
+and refuses an oversized one with `.payloadTooLarge` (the too-large notice). `ReplicaStore`
+serializes every read/modify/switch with one `Mutex` shared by all instances, so its journal
+entry points are callable off main, while the operations that touch the main-actor ownership
+marker stay on main and take the same lock; callers and their order are unchanged.
+
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom
 actions on the text view) acts on the caret's block and its whole subtree: Move up, Move
@@ -1142,7 +1156,7 @@ pin the counters and what they measure.
 **Teardown.** `YDoc.onDestroy` fires at the start of `destroy()`; the engine
 detaches there — hooks cleared, buffered patches dropped (even mid-delivery),
 later intents throwing `DocumentEngineError.detached` — and releasing the engine
-detaches it too (`isolated deinit`), so a fail-safe or suspend teardown can never leave a hook pointing at a
+detaches it too (a plain `deinit`), so a fail-safe or suspend teardown can never leave a hook pointing at a
 destroyed store.
 
 **No UIKit in the model.** `Engine/` mentions no `NSRange`, `NSText*`, `UIView`,

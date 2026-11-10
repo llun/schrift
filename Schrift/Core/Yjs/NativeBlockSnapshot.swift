@@ -13,7 +13,7 @@ struct NativeBlockHandle: Equatable, Hashable, Sendable {
 
 /// One block of the native tree projection, in preorder: the classic
 /// per-block projection plus its depth and parent.
-struct NativeBlockSnapshot: Equatable {
+struct NativeBlockSnapshot: Equatable, Sendable {
     var handle: NativeBlockHandle
     var block: ProjectedBlock
     var depth: Int

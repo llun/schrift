@@ -5,7 +5,7 @@ import Foundation
 /// A single inline run: a span of text carrying zero or more marks. Each mark
 /// is `(key, valueJSON)` where `valueJSON` is `"{}"` for a boolean mark
 /// (bold/italic/code/strike) or e.g. `#"{"href":"…"}"#` for a link.
-struct InlineRun: Equatable {
+struct InlineRun: Equatable, Sendable {
     var text: String
     var marks: [(key: String, valueJSON: String)]
 

@@ -41,7 +41,7 @@ struct ProjectedProp: Equatable, Sendable {
 /// and decoded properties and inline runs. The id is the container map's "id"
 /// field and serves as C1's identity map key for the live-write projection path.
 /// Props are sorted by key for determinism.
-struct ProjectedBlock: Equatable {
+struct ProjectedBlock: Equatable, Sendable {
     /// The BlockNote block id from the replica's container-map "id" field.
     /// This is the key used to track the block identity across live edits (C1).
     var id: String
