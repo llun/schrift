@@ -1,0 +1,49 @@
+Schrift/Features/Editor/Engine/EditorSurface.swift
+  s_dc239db0cc1c9d::t_31a059a42dbb8c 97
+Schrift/Core/Yjs/YStruct.swift
+  s_dc239db0cc1c9d::t_31a059a42dbb8c 113-114,541-681
+  s_dc239db0cc1c9d::t_46cf0b0cd2433a 682
+SchriftTests/Core/Yjs/YUndoManagerOracleTests.swift
+  s_dc239db0cc1c9d::t_31a059a42dbb8c 1-154
+Schrift/Core/Yjs/YStructStore.swift
+  s_dc239db0cc1c9d::t_31a059a42dbb8c 224-247
+AGENTS.md
+  s_dc239db0cc1c9d::t_31a059a42dbb8c 421-422,1608-1610,1658-1670,1965-1966
+Schrift/Core/Yjs/YRelativePosition.swift
+  s_dc239db0cc1c9d::t_31a059a42dbb8c 137-138,163,199
+Schrift/Core/Yjs/YType.swift
+  s_dc239db0cc1c9d::t_31a059a42dbb8c 169-171,179-199,289-290
+docs/architecture.md
+  s_dc239db0cc1c9d::t_31a059a42dbb8c 195-196,943-955
+  s_dc239db0cc1c9d::t_ee29e3453d1a3b 956
+SchriftTests/Core/Yjs/YUndoManagerOracleCaptures.swift
+  s_dc239db0cc1c9d::t_31a059a42dbb8c 1-23
+Schrift/Core/Yjs/YContent.swift
+  s_dc239db0cc1c9d::t_31a059a42dbb8c 109-116
+SchriftTests/Core/Yjs/YUndoManagerTests.swift
+  s_dc239db0cc1c9d::t_31a059a42dbb8c 1-143
+Schrift/Core/Yjs/YTransaction.swift
+  s_dc239db0cc1c9d::t_31a059a42dbb8c 6,9-11,73-75,331-333,335-337,476-479
+Schrift/Core/Yjs/YUndoManager.swift
+  s_dc239db0cc1c9d::t_31a059a42dbb8c 1-263
+Schrift/Core/Yjs/YDeleteSet.swift
+  s_dc239db0cc1c9d::t_31a059a42dbb8c 140-157
+Schrift/Core/Yjs/YEvent.swift
+  s_dc239db0cc1c9d::t_31a059a42dbb8c 454-458,466
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cee81b00280dfc571ac94744c426e81a43a6fdad",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
