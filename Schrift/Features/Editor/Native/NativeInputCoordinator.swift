@@ -878,14 +878,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         guard let view, let id = blockActionTarget(), let entry = surface.rangeIndex.entry(for: id) else {
             return false
         }
-        switch action {
-        case .indent: return indent()
-        case .outdent: return outdent()
-        case .copy: return copyBlock(id)
-        default: break
-        }
+        if action == .copy { return copyBlock(id) }
         guard let kind = blockKind(action, id) else { return false }
         let range = view.selectedRange
+        // The menu's target, never Tab's caret rules: whatever the menu offered
+        // (a caret at the document end, a selection with its separator) applies.
+        // Indent and outdent leave every block where it was in storage.
+        if action == .indent || action == .outdent { return applyStructural(id, kind, refusal: nil, keeping: range) }
         let keeps = [.moveUp, .moveDown, .duplicate].contains(action)
         return applyStructural(
             id, kind, refusal: nil,

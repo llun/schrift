@@ -920,8 +920,11 @@ beside plain text), so it is lossless by construction. A copy of whole sibling s
 or Copy block, writes it; a paste at a caret prefers it, inserting the subtrees after the
 caret's block (replacing an empty paragraph) with fresh ids in one command, and over a
 selection pastes the plain text. The pasteboard is untrusted: the payload is bounded
-(2 MiB, 2,000 blocks, 16 levels where it lands) and refused whole when it holds anything
-a BlockNote document cannot, before any write. Drag to reorder is not built yet.
+(2 MiB, 2,000 blocks, 100,000 decoded structs counted before integration, 16 levels where
+it lands) and refused whole when it holds anything a BlockNote document cannot, before any
+write; a pasted link with an href the editor would not write, or an unknown mark carrying a
+URL, loses the mark, and a media URL that is not http(s) refuses the paste. Links in the native
+view are tappable only for http(s), mailto and tel, whoever wrote them. Drag to reorder is not built yet.
 
 **Selection.** `setSelection(EditorSelection?)` captures directed anchor/head
 endpoints as `YRelativePosition`s. Each `EditorPosition` holds a block id,

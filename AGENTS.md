@@ -2576,8 +2576,20 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   ≤ 2 MiB (`maxBytes`), ≤ 2,000 containers (`maxBlocks`, `.tooLarge`), container depth
   ≤ 16, no pending structs, one root group of containers each with a non-empty string `id`,
   exactly one content element in `contentNodes` and at most one non-empty group, only
-  `inlineNodes` inside content, only XML types (`.malformed`). The engine decodes again
-  before arming and also checks the ids are fresh and the landing depth. **Clipboard:**
+  `inlineNodes` inside content, only XML types (`.malformed`). Before integrating anything it
+  counts the decoded update's structs and delete ranges (≤ `maxStructs`, 100,000, `.tooLarge`),
+  so 2 MiB of tiny structs cannot stall the main actor. Then `sanitized` strips what any app
+  (or a Universal Clipboard peer) could plant: a link mark whose href `sanitizedLinkURL` would
+  not write unchanged and an unknown mark key (outside `knownMarks`) carrying a URL are dropped
+  (the text stays), embeds go, and a `urlProps` value (`url`, `previewUrl`, `src`, `href`) that is
+  not empty or http(s) with a host refuses the payload. No provenance check (`changeCount`/HMAC):
+  it would break pasting across launches. The engine decodes again
+  before arming and also checks the ids are fresh and the landing depth. Pasted media is a
+  placeholder like any other, so nothing is fetched. **Links render tappable only for
+  `isOpenableLink`** (the classic writer's schemes: http(s) with a host, mailto, tel), so a
+  collaborator's `javascript:` or deep link is plain text in the native view; the mark stays.
+  The menu's Indent/Outdent go through `applyStructural` on the menu's target (keeping the
+  selection), not Tab's caret rules, so they apply wherever the menu offers them. **Clipboard:**
   copy and cut write one pasteboard item (`writePasteboard`): the plain text, plus the
   payload when `NativeClipboard.wholeBlocks` finds whole sibling subtrees (from a block's
   text start to a block's text end, nothing shallower than the first block, later

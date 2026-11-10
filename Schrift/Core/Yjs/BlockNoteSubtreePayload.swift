@@ -12,14 +12,23 @@ import Foundation
 /// refuses anything a BlockNote document cannot hold: a node outside
 /// `contentNodes`/`inlineNodes`, a container without a string id or with
 /// anything but one content element and one optional non-empty group, a
-/// non-XML Yjs type, XmlText attributes or pending structs. It never writes
-/// the destination; the engine re-validates before arming.
+/// non-XML Yjs type, XmlText attributes or pending structs. It counts the
+/// decoded structs before integrating any (`maxStructs`), so 2 MiB of tiny
+/// structs cannot stall the main actor. It then sanitizes what any app could
+/// plant (`sanitized`): a link mark whose href `sanitizedLinkURL` would not
+/// write unchanged, an embed, or an unknown mark carrying a URL is dropped,
+/// and a URL prop (`urlProps`) that is not http(s) refuses the payload. It
+/// never writes the destination; the engine re-validates before arming.
 enum BlockNoteSubtreePayload {
     /// The private pasteboard type. Plain text always rides beside it.
     static let pasteboardType = "dev.llun.schrift.blocknote-subtrees"
     static let maxBytes = 2 << 20
     /// The plain clipboard's line bound (`NativeClipboard.maxPasteLines`).
     static let maxBlocks = 2_000
+    /// Structs and delete ranges counted from the decoded update before it is
+    /// integrated: ample for `maxBlocks` ordinary blocks (a paragraph is about
+    /// eight), far below the million a 2 MiB update of tiny structs can hold.
+    static let maxStructs = 50 * maxBlocks
 
     enum Error: Swift.Error, Equatable {
         case tooLarge
@@ -65,8 +74,17 @@ enum BlockNoteSubtreePayload {
         guard data.count <= maxBytes else { throw Error.tooLarge }
         let doc = YDoc(clientID: 1, gc: false)
         defer { doc.destroy() }
+        let update: YUpdate
         do {
-            try doc.applyUpdate(YUpdateDecoder.decode(data))
+            update = try YUpdateDecoder.decode(data)
+        } catch {
+            throw Error.malformed
+        }
+        let structs =
+            update.blocks.reduce(0) { $0 + $1.structs.count } + update.deleteSet.reduce(0) { $0 + $1.ranges.count }
+        guard structs <= maxStructs else { throw Error.tooLarge }
+        do {
+            try doc.applyUpdate(update)
         } catch {
             throw Error.malformed
         }
@@ -90,7 +108,69 @@ enum BlockNoteSubtreePayload {
             throw Error.malformed
         }
         _ = try validate(copies)
-        return copies
+        return try copies.map(sanitized)
+    }
+
+    /// Mark keys BlockNote 0.56 and Docs write; other keys survive a paste
+    /// only when their value carries no URL.
+    static let knownMarks: Set<String> = [
+        "bold", "italic", "underline", "strike", "code", "link", "textColor", "backgroundColor",
+    ]
+
+    /// Props that name a resource (media and file blocks): a pasted one must
+    /// be empty or http(s) with a host.
+    static let urlProps: Set<String> = ["url", "previewUrl", "src", "href"]
+
+    /// A pasted subtree without what another app could plant in it. Drops a
+    /// link mark whose href `sanitizedLinkURL` would not write unchanged (its
+    /// text stays), an unknown mark carrying a URL, and embeds; refuses a
+    /// non-http(s) URL prop.
+    static func sanitized(_ copy: BlockNoteWriter.Copy) throws -> BlockNoteWriter.Copy {
+        switch copy {
+        case .text(let values):
+            return .text(
+                values.compactMap { value in
+                    guard case .run(var run) = value else { return nil }
+                    run.marks = run.marks.filter(isSafeMark)
+                    return .run(run)
+                })
+        case .element(let node, let props, let children):
+            for prop in props where urlProps.contains(prop.key) {
+                guard case .string(let url) = prop.value, url.isEmpty || isWebURL(url) else { throw Error.malformed }
+            }
+            return .element(node, props, try children.map(sanitized))
+        }
+    }
+
+    private static func isSafeMark(_ mark: (key: String, valueJSON: String)) -> Bool {
+        if mark.key == "link" {
+            guard let href = YBlockProjection.linkHref(from: mark.valueJSON) else { return false }
+            return sanitizedLinkURL(href) == href
+        }
+        return knownMarks.contains(mark.key) || !carriesURL(mark.valueJSON)
+    }
+
+    /// Whether any string in a mark's JSON value parses with a URL scheme (an
+    /// unreadable value counts).
+    private static func carriesURL(_ json: String) -> Bool {
+        guard let data = json.data(using: .utf8),
+            let value = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)
+        else { return true }
+        func walk(_ value: Any) -> Bool {
+            switch value {
+            case let string as String: URL(string: string)?.scheme != nil
+            case let array as [Any]: array.contains(where: walk)
+            case let object as [String: Any]: object.values.contains(where: walk)
+            default: false
+            }
+        }
+        return walk(value)
+    }
+
+    private static func isWebURL(_ string: String) -> Bool {
+        guard let url = URL(string: string), let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme)
+        else { return false }
+        return !(url.host ?? "").isEmpty
     }
 
     /// Checks that `copies` are whole BlockNote containers within the bounds.

@@ -383,4 +383,131 @@ final class NativeClipboardTests: NativeEditingTestCase {
         guard case .range? = harness.log.commands.last?.kind else { return XCTFail("not a plain range paste") }
         try assertConsistent(harness, localCommands: 1)
     }
+
+    // MARK: - Review: untrusted payloads
+
+    /// Records every request URLSession's shared loading would make.
+    private final class RecordingProtocol: URLProtocol {
+        nonisolated(unsafe) static var requests: [URL] = []
+        override class func canInit(with request: URLRequest) -> Bool {
+            if let url = request.url { requests.append(url) }
+            return false
+        }
+    }
+
+    /// A pasted link keeps its text but not an href the editor would never
+    /// write; an unknown mark carrying a URL goes, one without stays.
+    func testPastedLinksAndUnknownURLMarksAreSanitized() throws {
+        let harness = try makeHarness()
+        defer { harness.close() }
+        let session = harness.session
+        var block = paragraph("p", "")
+        block.runs = [
+            InlineRun("evil", marks: [("link", #"{"href":"javascript:alert(1)"}"#)]),
+            InlineRun("deep", marks: [("link", #"{"href":"schrift-evil://open"}"#)]),
+            InlineRun("ok", marks: [("link", #"{"href":"https://example.test/"}"#)]),
+            InlineRun("track", marks: [("x-track", #"{"u":"https://t.example/"}"#)]),
+            InlineRun("kept", marks: [("x-plain", #"{"v":1}"#)]),
+        ]
+        try caret(harness, Self.firstID, 2)
+        harness.pasteboard.setItems([[payloadType: BlockNoteYjs.encode([block], clientID: 7)]])
+        harness.view.paste(nil)
+        guard case .insertSubtrees(_, let ids)? = harness.log.commands.last?.kind else {
+            return XCTFail("not a lossless paste")
+        }
+        let pasted = try self.block(session, try XCTUnwrap(ids.first))
+        XCTAssertEqual(text(of: pasted), "evildeepoktrackkept", "the text stays")
+        XCTAssertEqual(
+            pasted.runs.filter { !$0.marks.isEmpty }.map { [$0.text] + $0.marks.map(\.key) },
+            [["ok", "link"], ["kept", "x-plain"]])
+        try assertConsistent(harness, localCommands: 1)
+    }
+
+    /// A media URL prop must be http(s); a pasted image never loads anything
+    /// (the native editor shows media as a placeholder, tap-to-load intact).
+    func testPastedMediaURLsAreCheckedAndNeverFetched() throws {
+        let harness = try makeHarness()
+        defer { harness.close() }
+        let session = harness.session
+        func image(_ url: String) -> BlockNoteBlock {
+            BlockNoteBlock(
+                node: "image", props: [("url", .string(url)), ("caption", .string("")), ("name", .string("a.png"))],
+                runs: [], id: "img")
+        }
+        try caret(harness, Self.firstID, 2)
+        try pasteRefused(
+            harness, BlockNoteYjs.encode([image("javascript:alert(1)")], clientID: 7),
+            notice: .native_editor_paste_unavailable)
+        try pasteRefused(
+            harness, BlockNoteYjs.encode([image("file:///etc/passwd")], clientID: 7),
+            notice: .native_editor_paste_unavailable)
+        RecordingProtocol.requests = []
+        URLProtocol.registerClass(RecordingProtocol.self)
+        defer { URLProtocol.unregisterClass(RecordingProtocol.self) }
+        harness.pasteboard.setItems([
+            [payloadType: BlockNoteYjs.encode([image("https://images.example/a.png")], clientID: 7)]
+        ])
+        harness.view.paste(nil)
+        guard case .insertSubtrees(_, let ids)? = harness.log.commands.last?.kind else {
+            return XCTFail("not a lossless paste")
+        }
+        XCTAssertEqual(try self.block(session, try XCTUnwrap(ids.first)).node, "image")
+        harness.view.layoutIfNeeded()
+        XCTAssertEqual(RecordingProtocol.requests, [], "no fetch for a pasted image")
+        try assertConsistent(harness, localCommands: 1)
+    }
+
+    /// 2 MiB of tiny structs is refused from the decoded update's struct
+    /// count, before any is integrated.
+    func testAPayloadOfManyTinyStructsIsRefusedBeforeIntegration() throws {
+        func varUInt(_ value: Int) -> [UInt8] {
+            var value = value
+            var bytes: [UInt8] = []
+            repeat {
+                bytes.append(UInt8(value & 0x7f) | (value > 0x7f ? 0x80 : 0))
+                value >>= 7
+            } while value > 0
+            return bytes
+        }
+        let count = BlockNoteSubtreePayload.maxStructs * 2
+        // One client, `count` one-clock GC structs, an empty delete set.
+        var bytes = varUInt(1) + varUInt(count) + varUInt(5) + varUInt(0)
+        bytes.reserveCapacity(bytes.count + count * 2 + 1)
+        for _ in 0..<count { bytes += [0, 1] }
+        bytes += varUInt(0)
+        let payload = Data(bytes)
+        XCTAssertLessThanOrEqual(payload.count, BlockNoteSubtreePayload.maxBytes)
+        XCTAssertNoThrow(try YUpdateDecoder.decode(payload), "a well-formed update")
+        XCTAssertThrowsError(try BlockNoteSubtreePayload.decode(payload)) {
+            XCTAssertEqual($0 as? BlockNoteSubtreePayload.Error, .tooLarge)
+        }
+        let harness = try makeHarness()
+        defer { harness.close() }
+        try caret(harness, Self.firstID, 2)
+        try pasteRefused(harness, payload, notice: .native_editor_paste_too_large)
+        try assertConsistent(harness, localCommands: 0)
+    }
+
+    /// A collaborator's link with a scheme the editor never writes renders as
+    /// plain text: no tappable `.link`, though the mark stays in the replica.
+    func testOnlyAllowedSchemesBecomeTappableLinks() throws {
+        var linked = paragraph("p", "")
+        linked.runs = [
+            InlineRun("evil", marks: [("link", #"{"href":"javascript:alert(1)"}"#)]),
+            InlineRun("deep", marks: [("link", #"{"href":"schrift-evil://open"}"#)]),
+            InlineRun("web", marks: [("link", #"{"href":"https://example.test/"}"#)]),
+            InlineRun("mail", marks: [("link", #"{"href":"mailto:a@example.test"}"#)]),
+        ]
+        let harness = try makeHarness([linked])
+        defer { harness.close() }
+        let storage = harness.view.textStorage
+        func link(at offset: Int) throws -> URL? {
+            storage.attribute(.link, at: try location(harness.session, "p", offset), effectiveRange: nil) as? URL
+        }
+        XCTAssertNil(try link(at: 1))
+        XCTAssertNil(try link(at: 5))
+        XCTAssertEqual(try link(at: 9), URL(string: "https://example.test/"))
+        XCTAssertEqual(try link(at: 12), URL(string: "mailto:a@example.test"))
+        XCTAssertEqual(try block(harness.session, "p").runs.filter { $0.marks.contains { $0.key == "link" } }.count, 4)
+    }
 }

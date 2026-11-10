@@ -234,7 +234,10 @@ enum AttributedDocumentProjection {
             case "strike": attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
             case "underline": attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
             case "link":
-                if let href = YBlockProjection.linkHref(from: mark.valueJSON), let url = URL(string: href) {
+                // Only a scheme the editor writes is tappable; the mark itself stays.
+                if let href = YBlockProjection.linkHref(from: mark.valueJSON), isOpenableLink(href),
+                    let url = URL(string: href)
+                {
                     attributes[.link] = url
                 }
             case NativeMark.textColor:

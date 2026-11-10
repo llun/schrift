@@ -318,6 +318,34 @@ final class NativeBlockCommandsTests: NativeEditingTestCase {
         try assertConsistent(harness, localCommands: 1)
     }
 
+    /// Review: the menu's Indent and Outdent apply wherever the menu offers
+    /// them, through the same target as every other action: a caret at the
+    /// document end, or a whole block selected with its separator (a
+    /// triple-tap). Tab's own caret rules are unchanged.
+    func testMenuIndentAndOutdentApplyWhereverTheMenuOffersThem() throws {
+        let harness = try makeHarness([bullet("a", "Alpha"), bullet("b", "Beta")])
+        defer { harness.close() }
+        let session = harness.session
+        let end = NSRange(location: harness.view.textStorage.length, length: 0)
+        setSelection(harness, end)
+        XCTAssertTrue(harness.input.availableBlockActions().contains(.indent))
+        XCTAssertTrue(harness.input.performBlockAction(.indent))
+        XCTAssertEqual(session.surface.blocks.map(\.depth), [0, 1])
+        XCTAssertEqual(harness.view.selectedRange, end)
+        try assertConsistent(harness, localCommands: 1)
+
+        let line = try XCTUnwrap(session.surface.rangeIndex.entry(for: "b")).range
+        setSelection(harness, line)
+        XCTAssertTrue(harness.input.availableBlockActions().contains(.outdent))
+        XCTAssertTrue(harness.input.performBlockAction(.outdent))
+        XCTAssertEqual(session.surface.blocks.map(\.depth), [0, 0])
+        XCTAssertEqual(harness.view.selectedRange, line)
+        try assertConsistent(harness, localCommands: 2)
+        // Tab over the same selection keeps its quiet refusal.
+        XCTAssertFalse(harness.input.indent())
+        try assertConsistent(harness, localCommands: 2)
+    }
+
     func testRelaunchReplaysBlockCommands() throws {
         let harness = try makeHarness(treeSeed())
         let session = harness.session
