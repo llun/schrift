@@ -1,0 +1,81 @@
+Schrift/Core/Yjs/BlockNoteWriter.swift
+  s_dc239db0cc1c9d::t_35cd143f5049d4 779-780
+Schrift/Core/Yjs/BlockNoteSubtreePayload.swift
+  s_dc239db0cc1c9d::t_62cfa91567f55b 1-151
+  s_dc239db0cc1c9d::t_8e05f541ba9629 152-153
+Schrift/Features/Editor/Native/NativeBlockAction.swift
+  s_dc239db0cc1c9d::t_316b91848fc827 1-22
+SchriftTests/Features/Editor/Native/NativeBlockCommandsTests.swift
+  s_dc239db0cc1c9d::t_9d0214e3940db8 1-322,324
+  s_dc239db0cc1c9d::t_f6cad7c940ba39 323,325-345
+AGENTS.md
+  s_dc239db0cc1c9d::t_121abdf8086ed5 2305,2454,2505-2565
+Schrift/Core/Localization/L10nKey.swift
+  s_dc239db0cc1c9d::t_30e4194091a865 461-469
+Schrift/Core/Localization/Strings+de.swift
+  s_dc239db0cc1c9d::t_2ae8e8d0254be0 381-390
+Schrift/Core/Localization/Strings+en.swift
+  s_dc239db0cc1c9d::t_b0ff771d861146 385-393
+Schrift/Core/Localization/Strings+es.swift
+  s_dc239db0cc1c9d::t_cceaaed0442a00 381-389
+Schrift/Core/Localization/Strings+fr.swift
+  s_dc239db0cc1c9d::t_4069d0c4c683f2 378-386
+Schrift/Core/Localization/Strings+it.swift
+  s_dc239db0cc1c9d::t_67ed7144270cba 377-386
+Schrift/Core/Localization/Strings+nl.swift
+  s_dc239db0cc1c9d::t_2b87dc784efec4 377-386
+Schrift/Core/Localization/Strings+pt.swift
+  s_dc239db0cc1c9d::t_c704483851a787 377-385
+Schrift/Core/Localization/Strings+sl.swift
+  s_dc239db0cc1c9d::t_8f87153556a1ae 390-398
+Schrift/Core/Localization/Strings+th.swift
+  s_dc239db0cc1c9d::t_3b71c660cf973b 369-377
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_dc239db0cc1c9d::t_bae6cdba12e62a 367-375
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_dc239db0cc1c9d::t_12f66f1f103f57 367-375
+Schrift/Core/Yjs/BlockNoteTreeCommands.swift
+  s_dc239db0cc1c9d::t_39c2e2d9ad98ba 100-153
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_dc239db0cc1c9d::t_f118509d71a88c 221-258,264-272,491-492,494,572-714
+Schrift/Features/Editor/Native/AttributedDocumentProjection.swift
+  s_dc239db0cc1c9d::t_101d08e68d1cb0 36-39
+Schrift/Features/Editor/Native/NativeClipboard.swift
+  s_dc239db0cc1c9d::t_d3e85047ba90c4 3-8,10-33
+Schrift/Features/Editor/Native/NativeEditCommand.swift
+  s_dc239db0cc1c9d::t_eca026cfbbba79 42-58,89-91
+Schrift/Features/Editor/Native/NativeEditorView.swift
+  s_dc239db0cc1c9d::t_41c0f161c07328 41-43,162,167-175,260-297
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  s_dc239db0cc1c9d::t_90adf967ac0936 3,441-442,444-445,457-460,759-761,766,773-779,783-786,789-795,803-961
+Schrift/Features/Editor/Native/NativeTextView.swift
+  s_dc239db0cc1c9d::t_5970a9969f6db4 186-187,240-246
+SchriftTests/Core/Yjs/BlockNoteMoveCaptures.swift
+  s_dc239db0cc1c9d::t_f07bc418cde733 1-66
+SchriftTests/Core/Yjs/BlockNoteTreeOracleTests.swift
+  s_dc239db0cc1c9d::t_4d5b39f7edf200 9-11,82-101
+SchriftTests/Features/Editor/Native/NativeClipboardTests.swift
+  s_dc239db0cc1c9d::t_f020bf3f32a5fc 201-385
+SchriftUITests/Native/NativeEditorUITests.swift
+  s_dc239db0cc1c9d::t_f3021cc758d9e4 205-236
+SchriftUITests/Support/NativeEditorTestHostApp.swift
+  s_dc239db0cc1c9d::t_895e1a18b0c328 274-276,279,285-289,291,314-317
+docs/architecture.md
+  s_dc239db0cc1c9d::t_e194ce66569d36 821-823,904-925
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "65efc055a40a34077efd7818089a8e8cd4ab1428",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
