@@ -199,7 +199,8 @@ final class NativeTypingTests: DocumentEngineTestCase {
         XCTAssertFalse(session.textView.isEditable)
         XCTAssertTrue(session.textView.attributedText.isEqual(to: try XCTUnwrap(original)))
         XCTAssertEqual(session.engine.revision, 0)
-        XCTAssertNil(session.textView.undoManager)
+        // PR07b: the history exists, but a refused (read-only) editor offers no step.
+        XCTAssertFalse(try XCTUnwrap(session.textView.undoManager).canUndo)
         XCTAssertFalse(session.textView.canPerformAction(NSSelectorFromString("undo:"), withSender: nil))
     }
 

@@ -651,7 +651,7 @@ Unsupported/opaque/scrubbed blocks, object characters and invalid UTF-16 boundar
 are refused before transactions; ranges across separators and newline input became
 range commands in PR04b (below). Marked text (IME) is
 handled by the PR03 composition session below; a composition this editor cannot
-support keeps the preserved read-only refusal. UIKit undo remains disabled. A failed mutation or
+support keeps the preserved read-only refusal. Undo arrived with PR07b (below). A failed mutation or
 append freezes the unsafe replica and retains any returned unconfirmed update in memory;
 the accepted display and earlier durable journal remain intact.
 The isolated native host's `--native-typing` fixture enables this component against
@@ -950,9 +950,26 @@ unsubscribes. Undo and redo are local transactions whose origin is the manager
 (`YTransactionOrigin.undoManager`), so they reach the store and encoder like any
 other local edit. `YUndoManagerOracleTests` replays node yjs captures (peer edits
 kept, deletes, formats, nested BlockNote blocks, map conflicts, a remotely deleted
-parent) and asserts byte-identical state after every step. Nothing calls it yet:
-PR07b wires a `NativeUndoManager` and system undo, including how undo updates
-reach peers (the collaboration manager broadcasts only nil-origin cleanup today).
+parent) and asserts byte-identical state after every step.
+
+**PR07b Native undo.** Each native typing session owns one `NativeUndoManager`: a
+`YUndoManager` over the `document-store` fragment that tracks only the engine's
+`.localUser` origin, so peers, server fetches and derived format cleanup are never
+undone, and that is destroyed with the session (history is never persisted; at most
+100 steps, the oldest trimmed with their `keep` marks released). Undo and redo are
+commands like any other: `DocumentEngine.applyHistoryStep` arms a `.undo`/`.redo`
+`NativeEditCommand`, runs the step, encodes its single transaction and journals it
+before the surface sees the `.other` patch, so a step is saved through the outbox and
+replayed on reopen like typing. The native editor has no live socket yet, so the
+outbox is the only way an undo reaches peers, once; the collaboration manager's
+replica (which broadcasts only nil-origin cleanup) is not involved. Typing groups by
+the 500 ms capture window while it continues from where typing left the caret;
+structural commands, a composition commit and undo/redo are explicit boundaries.
+Every step stores the relative selection from before it and restores it when popped,
+as y-prosemirror does. `NativeTextView` exposes an `UndoManager` subclass whose undo,
+redo and enablement route to this history, so the Edit menu, shake, ⌘Z/⇧⌘Z and the
+keyboard's undo all use it and UIKit's own text history never runs. Undo is refused
+while text is marked, read-only or after a write failure.
 
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom

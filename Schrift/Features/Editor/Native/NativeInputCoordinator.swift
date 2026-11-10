@@ -47,9 +47,14 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// The last caret UIKit reported, so a caret moving into folded content
     /// keeps its direction past it.
     @ObservationIgnored private var lastCaret: Int?
+    /// The session's collaborative undo history (PR07b), destroyed with it.
+    @ObservationIgnored let history: NativeUndoManager
+    /// Where the last typing command left the caret. Typing anywhere else (a
+    /// tap, an arrow key) starts a new undo step.
+    @ObservationIgnored private var typingCaret: NSRange?
 
     init(
-        engine: DocumentEngine, surface: NativeTextSurface, view: NativeTextView,
+        doc: YDoc, engine: DocumentEngine, surface: NativeTextSurface, view: NativeTextView,
         persist: @escaping (NativeEditCommand, Data) throws -> Void,
         recoveryStore: (store: ReplicaStore, scope: ReplicaScope)? = nil
     ) {
@@ -60,7 +65,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         self.composition = NativeCompositionSession(
             engine: engine, surface: surface, view: view, persist: persist, recoveryStore: recoveryStore)
         self.selection = NativeSelectionCoordinator(engine: engine, surface: surface, view: view)
+        self.history = NativeUndoManager(doc: doc, engine: engine)
         super.init()
+        history.system.input = self
         surface.onPatchApplied = { [weak self] patch in
             self?.asOneKeyboardChange {
                 self?.selection.restore(after: patch)
@@ -297,6 +304,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             return false
         }
         let offset = range.location - entry.textRange.location
+        // Typing continues one undo step only from where typing left the caret.
+        if view.selectedRange != typingCaret { history.stopCapturing() }
         let command = NativeEditCommand(
             id: UUID(), baseRevision: engine.revision, blockID: entry.blockID,
             range: offset..<(offset + range.length), replacement: text,
@@ -306,6 +315,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             try asOneKeyboardChange {
                 try engine.replaceText(command) { try persist(command, $0) }
                 pendingTypingMarks = nil
+                typingCaret = NSRange(location: range.location + text.utf16.count, length: 0)
                 selection.place(NSRange(location: range.location + text.utf16.count, length: 0))
             }
             noticeKey = nil
@@ -473,6 +483,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             return false
         }
         let command = NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: blockID, kind: kind)
+        // A structural command is its own undo step.
+        history.stopCapturing()
+        defer { endUndoStep() }
         do {
             try asOneKeyboardChange {
                 let caret = try engine.applyStructural(command) { try persist(command, $0) }
@@ -1010,6 +1023,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @discardableResult
     func commitComposition(text: String? = nil) -> Bool {
         guard composition.isActive else { return false }
+        // A composition commit is one undo step.
+        history.stopCapturing()
+        defer { endUndoStep() }
         switch composition.commit(text: text) {
         case .committed, .orphaned:
             noticeKey = nil
@@ -1029,6 +1045,64 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         let cancelled = composition.cancel()
         if cancelled { noticeKey = nil }
         return cancelled
+    }
+
+    // MARK: - Undo (PR07b)
+
+    /// Whether Undo applies now: there is a step, and editing is possible (not
+    /// read-only, frozen or composing).
+    var canUndo: Bool { canFormat && history.canUndo }
+    var canRedo: Bool { canFormat && history.canRedo }
+
+    @discardableResult
+    func undo() -> Bool { applyHistory(.undo) }
+
+    @discardableResult
+    func redo() -> Bool { applyHistory(.redo) }
+
+    /// One durable history step through the engine: journaled before the
+    /// surface sees it, saved and placed like any command, then the selection
+    /// the step stored is shown. Undo and redo are boundaries on both sides.
+    private func applyHistory(_ kind: NativeEditCommand.Kind) -> Bool {
+        directInsertion = nil
+        guard canFormat else { return false }
+        history.stopCapturing()
+        defer { endUndoStep() }
+        let command = NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: "", kind: kind)
+        do {
+            let undo = kind == .undo
+            let applied = try asOneKeyboardChange {
+                guard
+                    try engine.applyHistoryStep(
+                        command, step: { try history.step(undo: undo) },
+                        persist: {
+                            try persist(command, $0)
+                        })
+                else { return false }
+                // A step whose patch changed nothing on screen still moves the caret.
+                selection.restore(after: BlockPatch(origin: .other))
+                keepSelectionVisible()
+                return true
+            }
+            guard applied else { return false }
+            pendingTypingMarks = nil
+            refreshSelectionMarks()
+            noticeKey = nil
+            return true
+        } catch {
+            if engine.nativeWriteFailed {
+                stopAfterStorageFailure()
+            } else {
+                noticeKey = .native_editor_input_unavailable
+            }
+            return false
+        }
+    }
+
+    /// The next typing starts a new undo step.
+    private func endUndoStep() {
+        history.stopCapturing()
+        typingCaret = nil
     }
 
     // MARK: - Recovery

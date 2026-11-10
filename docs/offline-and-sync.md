@@ -20,7 +20,8 @@
 > stays within one indexed simple-text block; separators, placeholders, malformed
 > ranges are refused before mutation. Marked (IME) input is now a PR03 composition
 > (see "Provisional IME text" below); only unsupported shapes still switch to a
-> preserved read-only state with an explanation. System undo is disabled.
+> preserved read-only state with an explanation. System undo arrived in PR07b:
+> each undo or redo is one journaled command saved through the outbox like typing.
 > A failed append stops authoring and retains unconfirmed update bytes without
 > publishing the rejected edit. Production opening still does not enable typing:
 > coordinator save/reopen and migration ownership must be integrated first.
