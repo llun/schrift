@@ -647,6 +647,33 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             "a canonically empty server body is not a divergence to ask about")
     }
 
+    /// A server body that differs from the offline one only in how italic is spelled — the
+    /// app writes `_x_`, the server's export `*x*` — is not a divergence either. Compared
+    /// strictly, it recorded a conflict that held the save until the user opened the document.
+    func testAnItalicSpellingOnlyServerBodyIsNotADivergence() async {
+        let log = RequestRecorder()
+        let env = makeEnvironment()
+        let local = env.coordinator.createLocalDocument(
+            title: "Untitled document", parentID: nil, ownerUserID: user)
+        env.coordinator.enqueue(documentID: local.id, title: "Notes", markdown: "Written _offline_")
+        var record = env.creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        env.creates.save(record)
+        let formatted = Data(
+            """
+            {"id": "\(serverID.uuidString.lowercased())", "title": "Notes", "content": "Written *offline*\\n",
+             "created_at": "2026-03-01T12:00:00Z", "updated_at": "2026-03-02T12:00:00Z"}
+            """.utf8)
+        stubUsersMeThen(log: log) { _ in .init(statusCode: 200, headers: [:], body: formatted, error: nil) }
+
+        let relaunched = makeEnvironment(sharing: env.defaults)
+        await relaunched.coordinator.syncPendingDrafts()
+
+        XCTAssertNil(relaunched.creates.create(for: local.id), "the migration completed")
+        XCTAssertNil(
+            relaunched.coordinator.conflict(for: serverID), "the same italic, spelled the server's way")
+    }
+
     /// Adopting the server must also reset the state, as `resolveConflictKeepingServer` does
     /// for the same "the local side is gone" transition. Left at `.failed`, the editing surface
     /// keeps a live retry whose `saveNow` enqueues the *server's own* re-fetched body with no

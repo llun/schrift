@@ -2527,9 +2527,11 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   and is joined to the classic segments by blank lines. Lossy like the export; the raw Yjs
   save still carries the real blocks. Besides those callouts, only a callout without a
   non-empty emoji (the native editor never writes one) has no shadow; tables, media, math, columns and diagrams gate
-  as before. Known gap shared by every shadow: the writer spells italic `_x_`, the export
-  `*x*`. Tests: `NativeShadowExportParityTests` (the `.review/` capture item by item up to
-  its table, the export's spellings, thirteen toggle shapes pinned byte for byte against the
+  as before. The writer spells italic `_x_` where the export writes `*x*`; conflict decisions
+  compare parsed runs (`syncCanonicalMarkdown`), so that is not a conflict, but the port's
+  verbatim chunks are compared as text. Tests: `NativeShadowExportParityTests` (the `.review/`
+  capture item by item up to its table, the export's spellings, thirteen toggle shapes and
+  sixteen links pinned byte for byte against the
   installed exporter, `canType`, a typed save and Return in an open toggle whose shadow
   `draftSyncDecision` reads as our last push).
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
@@ -5075,6 +5077,36 @@ markdown write endpoint**. Understand this before touching the save path:
   any web-authored italic document and letting it save destroyed the italic and
   wrote literal underscores into the server's text —
   `parse("**_word_**")` returned bold(`_word_`).
+- **The app and the server spell italic differently, so `draftSyncDecision` compares
+  parsed runs, not spelling — and nothing else does.** `InlineMarkdownWriter` (the native
+  shadow, `lastPushedMarkdown`) and the formatting bar write `_x_`; the server's
+  formatted-content export writes `*x*` (a real capture: `A paragraph with **bold**,
+  *italic*, underline, ~~strike~~ and `` `inline code` `` marks.` — bold, strike and code
+  agree, underline exports plain on both sides). Spelling-sensitive, every save of an italic
+  document read back as a false `.conflict` (rules 0 and 1 miss, rule 2 sees a newer
+  server), classic and native alike — and a resumed offline create recorded a false
+  conflict in `migrateCreatedDocument`'s own rule-0 test. So the body rules, and that
+  test, use `syncCanonicalMarkdown` (its emptiness is `canonicalMarkdown`'s): each
+  `rendersInlineMarkdown` block's text becomes an encoding of `InlineMarkdown.parse`'s runs —
+  exact text, marks as a sorted set (links by value), same-set neighbours joined. Only
+  delimiter spelling, escapes and mark order drop out. **Never canonicalize by re-writing
+  through `InlineMarkdownWriter`** (the first attempt): `normalized` moves whitespace out of
+  bold/italic/strike, so `** a**` = ` **a**` and `2 * 3 * 4` = `2  _3_  4` — different runs,
+  a missed conflict — and the writer returns nil for intraword/CJK `*x*`, disabling the
+  compare for the whole block. **Everything else stays on strict `canonicalMarkdown`**:
+  `serverChanged`/`reconcileClean` must reinstall a spelling-only server change, or the
+  screen keeps `[bold, italic]` under an `[italic, bold]` baseline and the next Docs 6 save
+  reads those blocks as user-touched (`BlockNotePreservation.sameContent` is
+  order-sensitive) and drops their preserved props; and `projectionDigest` is persisted, so
+  changing its form would strand stored native drafts. No saved byte moves — both save
+  routes encode runs (`MarkdownYjs`). Pinned by `DraftSyncDecisionTests`
+  (`testSyncCanonicalMarkdown…`, `testOurItalicPushReadBack…`),
+  `NativeShadowExportParityTests.testTheRealCapturesMarksParagraphMatchesTheServerExport`
+  (skips without `.review/`) and
+  `EditorViewModelBaselineTests.testReconcileCleanInstallsASpellingOnlyServerChange` and
+  `DocumentSaveCoordinatorReplayMigrationTests.testAnItalicSpellingOnlyServerBodyIsNotADivergence`. The
+  parser still misreads `***x***` (bold `*x` + `*`) and `**a *b***`; if the server spells
+  bold+italic that way, that is a parser bug this does not cover.
 - **Code spans and links bind tighter than emphasis.**
   `matchUnderscoreEmphasis`'s closing search steps over them whole, or `` _`_` ``
   closes on the `_` *inside* the code span and destroys it, and `_[x](a_ b)_`

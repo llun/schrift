@@ -3,29 +3,11 @@ import XCTest
 @testable import Schrift
 
 /// The native save's Markdown shadow becomes `lastPushedMarkdown`, which
-/// `draftSyncDecision` compares (`canonicalMarkdown`) with the server's
+/// `draftSyncDecision` compares (`syncCanonicalMarkdown`) with the server's
 /// Markdown export. For a nested list, a callout, a toggle or a page break the
 /// two must agree, or every save of such a document reads as a conflict.
 @MainActor
 final class NativeShadowExportParityTests: NativeEditingTestCase {
-    private static var review: URL {
-        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent(".review")
-    }
-
-    /// The real capture (`.review/`, git-ignored): its raw Yjs state and the
-    /// server's formatted-content export, or a skip.
-    private func capture() throws -> (doc: YDoc, export: String) {
-        guard let state = try? Data(contentsOf: Self.review.appendingPathComponent("state.bin")),
-            let formatted = try? Data(contentsOf: Self.review.appendingPathComponent("formatted.json")),
-            let export = (try JSONSerialization.jsonObject(with: formatted) as? [String: Any])?["content"] as? String
-        else { throw XCTSkip("no .review capture") }
-        let doc = YDoc(clientID: 7, gc: true)
-        try doc.applyUpdate(YUpdateDecoder.decode(state))
-        return (doc, export)
-    }
-
     private func nested(_ block: BlockNoteBlock, _ children: [BlockNoteBlock]) -> BlockNoteBlock {
         var block = block
         block.children = children
@@ -51,19 +33,32 @@ final class NativeShadowExportParityTests: NativeEditingTestCase {
         BlockNoteBlock(node: "pageBreak", props: [], runs: [], id: id)
     }
 
-    /// Canonical blocks (`canonicalMarkdown`'s parse), compared item by item.
+    /// Canonical blocks (`canonicalMarkdown`'s parse), compared item by item,
+    /// and the conflict comparison `draftSyncDecision` makes
+    /// (`syncCanonicalMarkdown`). `strict` also pins each item's text and the
+    /// whole `canonicalMarkdown` byte for byte; without it an item's text only
+    /// has to read as the same runs (italic `_x_` against the export's `*x*`).
     private func assertCanonicalItems(
-        _ shadow: String, _ export: String, file: StaticString = #filePath, line: UInt = #line
+        _ shadow: String, _ export: String, strict: Bool = true, file: StaticString = #filePath, line: UInt = #line
     ) {
         let lhs = parseEditorBlocks(canonicalMarkdown(shadow))
         let rhs = parseEditorBlocks(canonicalMarkdown(export))
         XCTAssertEqual(lhs.count, rhs.count, "same block count", file: file, line: line)
         for (index, (a, b)) in zip(lhs, rhs).enumerated() {
             XCTAssertEqual(a.kind, b.kind, "item \(index) kind", file: file, line: line)
-            XCTAssertEqual(a.text, b.text, "item \(index) text", file: file, line: line)
             XCTAssertEqual(a.indent, b.indent, "item \(index) indent", file: file, line: line)
+            if strict {
+                XCTAssertEqual(a.text, b.text, "item \(index) text", file: file, line: line)
+            } else {
+                var (a, b) = (a, b)
+                (a.indent, b.indent) = (0, 0)
+                XCTAssertEqual(
+                    syncCanonicalMarkdown(serializeMarkdown([a])), syncCanonicalMarkdown(serializeMarkdown([b])),
+                    "item \(index) runs", file: file, line: line)
+            }
         }
-        XCTAssertEqual(canonicalMarkdown(shadow), canonicalMarkdown(export), file: file, line: line)
+        XCTAssertEqual(syncCanonicalMarkdown(shadow), syncCanonicalMarkdown(export), file: file, line: line)
+        if strict { XCTAssertEqual(canonicalMarkdown(shadow), canonicalMarkdown(export), file: file, line: line) }
     }
 
     /// The real capture of the test document (`.review/`, not committed): its
@@ -71,7 +66,7 @@ final class NativeShadowExportParityTests: NativeEditingTestCase {
     /// are compared: every root list block and its subtree from the state,
     /// against the export's list items. Skipped where the capture is absent.
     func testTheRealCapturesNestedListsMatchTheServerExport() throws {
-        let (doc, export) = try capture()
+        let (doc, export) = try Self.capture()
         defer { doc.destroy() }
         let lists: Set<String> = ["bulletListItem", "numberedListItem", "checkListItem"]
         let tree = NativeBlockProjection.project(doc)
@@ -100,13 +95,11 @@ final class NativeShadowExportParityTests: NativeEditingTestCase {
     /// quote, a toggle with a toggle child, code, a divider, a page break and a
     /// callout. Everything from the table on (math, an interlink, a diagram,
     /// columns, media) still has no shadow, so those root blocks are dropped
-    /// and the export is cut at the same place. The marks paragraph is dropped
-    /// from both too: the shadow spells italic `_x_` and this export `*x*`,
-    /// which `canonicalMarkdown` keeps apart (a gap of every shadow, flat ones
-    /// included, not of these blocks). The rest matches item by item after
-    /// `canonicalMarkdown`.
+    /// and the export is cut at the same place. The rest matches item by item
+    /// as `draftSyncDecision` compares it (`syncCanonicalMarkdown`: the marks
+    /// paragraph's italic is `_x_` in the shadow, `*x*` in the export).
     func testTheRealCapturesRichBlocksMatchTheServerExport() throws {
-        let (doc, export) = try capture()
+        let (doc, export) = try Self.capture()
         defer { doc.destroy() }
         XCTAssertNil(NativeBlockProjection.markdownShadow(doc), "the whole capture still gates (table, media)")
         let root = try XCTUnwrap(doc.share[BlockNoteYjs.fragmentField])
@@ -118,18 +111,11 @@ final class NativeShadowExportParityTests: NativeEditingTestCase {
         for node in ["toggleListItem", "pageBreak", "callout"] {
             XCTAssertTrue(nodes[..<table].contains(node), "the kept section holds a \(node)")
         }
-        let marks = try XCTUnwrap(
-            items.firstIndex {
-                YBlockProjection.projectBlock($0).runs.contains { $0.marks.contains { $0.key == "italic" } }
-            })
-        try doc.transact { tx in for item in [items[marks]] + items[table...] { item.delete(tx) } }
+        try doc.transact { tx in for item in items[table...] { item.delete(tx) } }
         let shadow = try XCTUnwrap(NativeBlockProjection.markdownShadow(doc))
-        let marksLine = "A paragraph with **bold**, *italic*, underline, ~~strike~~ and `inline code` marks.\n\n"
-        XCTAssertTrue(export.contains(marksLine))
-        let section = try XCTUnwrap(
-            export.replacingOccurrences(of: marksLine, with: "").components(separatedBy: "\n| ").first)
+        let section = try XCTUnwrap(export.components(separatedBy: "\n| ").first)
         XCTAssertTrue(section.hasSuffix("👍 A callout with an emoji and a background colour.\n"))
-        assertCanonicalItems(shadow, section)
+        assertCanonicalItems(shadow, section, strict: false)
     }
 
     /// The export's spelling of the native-only blocks, copied from the real
@@ -515,6 +501,47 @@ final class NativeShadowExportParityTests: NativeEditingTestCase {
             callout("c", "Remember this"),
             nested(heading("h", "Toggle heading", toggle: true), [paragraph("hc", "Child under heading")]),
         ]
+    }
+
+    /// The real capture's marks paragraph: the server exports italic `*italic*` where the
+    /// shadow writes `_italic_`, and the two must still compare equal for `draftSyncDecision`
+    /// (`syncCanonicalMarkdown`), or every save of an italic document raises a conflict. Skipped where the capture is absent.
+    func testTheRealCapturesMarksParagraphMatchesTheServerExport() throws {
+        let (doc, export) = try Self.capture()
+        defer { doc.destroy() }
+        let exported = try XCTUnwrap(export.split(separator: "\n").first { $0.hasPrefix("A paragraph with ") })
+        XCTAssertEqual(
+            String(exported), "A paragraph with **bold**, *italic*, underline, ~~strike~~ and `inline code` marks.",
+            "the server's spelling of every mark")
+        let root = try XCTUnwrap(doc.share[BlockNoteYjs.fragmentField])
+        guard case .type(let group)? = YBlockProjection.children(of: root, includeFormats: false).first?.content
+        else { return XCTFail("no root group") }
+        let dropped = YBlockProjection.children(of: group, includeFormats: false).filter {
+            !YBlockProjection.projectBlock($0, nestedChildren: true).runs.map(\.text).joined()
+                .hasPrefix("A paragraph with ")
+        }
+        try doc.transact { tx in for item in dropped { item.delete(tx) } }
+        let shadow = try XCTUnwrap(NativeBlockProjection.markdownShadow(doc))
+        XCTAssertTrue(shadow.contains("_italic_"), "the shadow spells italic with underscores: \(shadow)")
+        XCTAssertEqual(syncCanonicalMarkdown(shadow), syncCanonicalMarkdown(String(exported) + "\n"))
+    }
+
+    /// The real capture of the test document (`.review/`, not committed): its Yjs state,
+    /// applied to a fresh doc, and the server's formatted-content export.
+    private static func capture() throws -> (YDoc, String) {
+        let review = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(".review")
+        guard let state = try? Data(contentsOf: review.appendingPathComponent("state.bin")),
+            let formatted = try? Data(contentsOf: review.appendingPathComponent("formatted.json")),
+            let export = (try JSONSerialization.jsonObject(with: formatted) as? [String: Any])?["content"] as? String
+        else { throw XCTSkip("no .review capture") }
+        let doc = YDoc(clientID: 7, gc: true)
+        do { try doc.applyUpdate(YUpdateDecoder.decode(state)) } catch {
+            doc.destroy()
+            throw error
+        }
+        return (doc, export)
     }
 
     /// The export's own nested-list spelling (copied from that capture's
