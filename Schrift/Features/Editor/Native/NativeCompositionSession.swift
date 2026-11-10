@@ -31,7 +31,8 @@ final class NativeCompositionSession {
     /// The replica session's side (PR08b): begin, commit and cancel are posted
     /// in order, and the recovery file is written there.
     struct Port {
-        let begin: (_ blockID: String, _ range: Range<Int>) -> Void
+        /// False when the begin could not be posted: no composition starts.
+        let begin: (_ blockID: String, _ range: Range<Int>) -> Bool
         let commit: (_ commandID: UUID, _ text: String) -> Void
         let cancel: () -> Void
         let writeRecoveries: ([ProvisionalRecovery]) -> Void
@@ -91,9 +92,9 @@ final class NativeCompositionSession {
         guard let view, view.isEditable, canAuthor(), !isResolving, let target = replacementTarget(in: view) else {
             return false
         }
+        guard port.begin(target.blockID, target.range) else { return false }
         surface.provisionalBlockID = target.blockID
         surface.holdForComposition(true)
-        port.begin(target.blockID, target.range)
         isActive = true
         blockID = target.blockID
         commandID = UUID()
@@ -235,11 +236,4 @@ final class NativeCompositionSession {
         )
     }
 
-    /// The session resolves the caret against the replica, so a peer edit
-    /// during the composition still lands the caret after the committed text.
-    func placeCaret(_ caret: EditorPosition?) {
-        guard let view, let caret, let entry = surface.rangeIndex.entry(for: caret.blockID) else { return }
-        let offset = min(max(0, caret.offset), entry.textRange.length)
-        view.selectedRange = NSRange(location: entry.textRange.location + offset, length: 0)
-    }
 }

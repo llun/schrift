@@ -2809,10 +2809,13 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   failed or refused append rolls the display back to canonical, freezes authoring and
   turns the dropped text (with held keys, even when no prediction was dropped) into an
   `.orphaned` `ProvisionalRecovery` banner entry, and nothing waits to be copied. **The
-  composition rule:** while a composition owns the view (`isActive || isResolving ||
-  markedTextRange != nil`), the surface's whole `ReplicaDelivery`s queue up unapplied,
-  results included, and its own commit or cancel answer resolves it and then applies the
-  queue in order through the normal `apply(_:)` path (no surface freeze, no buffered
+  composition rule:** while a composition owns the view (`compositionOwnsView`:
+  `isActive || isResolving || markedTextRange != nil`, or the drain of what waited for it),
+  the surface's whole `ReplicaDelivery`s queue up unapplied, results included, a local
+  storage failure waits too, and nothing reads the view's offsets; its own commit or cancel
+  answer (a local orphaned one when the post fails) resolves it, releases storage like a
+  patch, and applies every queued delivery in order through `apply(_:)` before stale
+  retries, the failure that waited and held keys run (no surface freeze, no buffered
   echoes, no deferred rollback). An echo spelled as a whole-block rebuild settles from that
   snapshot; a predicted block a concurrent change showed as canonical keeps its
   predictions off screen until the invalidation, so later patches are not shifted by them. **Rebase:** the session keeps, per surface, the changes it had not seen

@@ -321,7 +321,8 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
             return nil
         }.last
         let journaled = settled?[id] ?? rebuilt
-        if predictions.contains(where: { $0.blockID == id }) {
+        // A block whose predictions are off screen shows canonical: it takes the journaled block.
+        if isPredicted(id) {
             if let journaled { canonical[id] = journaled }
             return
         }
@@ -598,6 +599,9 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         guard hold != holdsComposition else { return }
         holdsComposition = hold
         guard !hold else { return }
+        // Applied like a patch: the selection UIKit moves meanwhile is not the user's.
+        isApplyingPatch = true
+        defer { isApplyingPatch = false }
         if let id = provisionalBlockID {
             provisionalBlockID = nil
             restoreStorage(blockID: id)

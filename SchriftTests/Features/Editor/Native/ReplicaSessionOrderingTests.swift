@@ -1151,4 +1151,180 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
             harness.view.selectedRange, NSRange(location: try location(harness.session, Self.secondID, 10), length: 0))
         try await assertConsistent(harness, localCommands: 1)
     }
+
+    // MARK: - Review round 6 (PR #272)
+
+    /// K1: while composing, a queued invalidation answers every prediction of
+    /// its epoch (the session drops the later ones without a delivery).
+    func testAQueuedInvalidationAnswersItsWholeEpoch() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
+        let peer = try peerEdit { try $0.replaceText(block: Self.firstID, range: 0..<6, with: "") }
+        harness.session.replica?.mailbox.post(.integrate(peer, reply: nil))
+        try caret(harness, Self.firstID, 3)
+        harness.view.insertText("x")
+        try caret(harness, Self.secondID, 0)
+        harness.view.insertText("y")
+        try caret(harness, Self.thirdID, 0)
+        harness.view.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        let drained = await harness.session.settle()
+        XCTAssertTrue(drained, "nothing waits on the session, only on the composition")
+        harness.view.unmarkText()
+        await harness.settle()
+        XCTAssertEqual(texts(harness.session).first, "paragraph.")
+        // The begin raced the invalidation (posted at the old epoch's base):
+        // its commit is orphaned and kept, like the dropped keys.
+        XCTAssertEqual(Set(harness.input.composition.pendingRecoveries.map(\.text)), ["か", "xy"])
+        try await assertConsistent(harness, localCommands: 0)
+    }
+
+    /// K2 and K3: while a commit is in flight the composition still owns the
+    /// view: UIKit's storage change is not "input unavailable", and a composing
+    /// keyboard's direct character is held, not written by UIKit.
+    func testInputWhileACommitIsInFlightWaitsForIt() async throws {
+        let disk = Latch()
+        let harness = try await gated(disk)
+        harness.input.inputLanguage = { "ja-JP" }
+        try caret(harness, Self.firstID, 5)
+        harness.view.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0))
+        harness.view.unmarkText()
+        XCTAssertTrue(harness.input.composition.isResolving)
+        // UIKit reports the committed text it wrote.
+        harness.input.textViewDidChange(harness.view)
+        XCTAssertNil(harness.input.noticeKey)
+        XCTAssertFalse(
+            harness.input.textView(harness.view, shouldChangeTextIn: harness.view.selectedRange, replacementText: "1"))
+        disk.open()
+        await harness.settle()
+        XCTAssertEqual(texts(harness.session).first, "Firstにほん1 paragraph.")
+        XCTAssertNil(harness.input.noticeKey)
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
+    /// L1: the composition's release is applied like a patch, and its caret
+    /// is published, so the session's selection is where the view's caret is.
+    func testTheCaretAfterACommitIsTheSessionsSelection() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
+        // A live editing view: UIKit moves a first responder's selection when
+        // its storage slice is replaced.
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
+        harness.view.frame = window.bounds
+        window.addSubview(harness.view)
+        window.makeKeyAndVisible()
+        harness.view.becomeFirstResponder()
+        defer {
+            harness.view.resignFirstResponder()
+            window.isHidden = true
+        }
+        try caret(harness, Self.firstID, 5)
+        harness.view.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0))
+        harness.view.unmarkText()
+        await harness.settle()
+        XCTAssertEqual(
+            harness.view.selectedRange, NSRange(location: try location(harness.session, Self.firstID, 8), length: 0))
+        let head = await harness.engine { engine -> EditorPosition? in (try? engine.currentSelection())?.head }
+        XCTAssertEqual(head?.blockID, Self.firstID)
+        XCTAssertEqual(head?.offset, 8)
+    }
+
+    /// L2: a stale answer queued behind a composition is retried after every
+    /// queued delivery, at the base revision that includes the commit.
+    func testAStaleBarrierQueuedBehindACompositionIsRetriedAfterIt() async throws {
+        let blocks = [
+            paragraph("a", "Alpha"), paragraph("b", "Beta"),
+            BlockNoteBlock(
+                node: "checkListItem", props: Self.paragraphProps + [("checked", .bool(false))],
+                runs: [InlineRun("Task")], id: "c"),
+        ]
+        let harness = try await makeHarness(blocks)
+        addTeardownBlock { await harness.close() }
+        let peer = try makeDoc(blocks, clientID: 9)
+        defer { peer.destroy() }
+        let edit = try BlockNoteWriter(doc: peer).replaceText(block: "b", range: 0..<0, with: "Peer ")
+        harness.session.replica?.mailbox.post(.integrate(edit, reply: nil))
+        try caret(harness, "a", 5)
+        XCTAssertTrue(harness.input.toggleCheckbox(blockID: "c"))
+        harness.view.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        harness.view.unmarkText()
+        await harness.settle()
+        XCTAssertTrue(try block(harness.session, "c").props.contains(ProjectedProp(key: "checked", value: .bool(true))))
+        XCTAssertNil(harness.input.noticeKey)
+        XCTAssertEqual(texts(harness.session).prefix(2), ["Alphaか", "Peer Beta"])
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
+    /// L3: a local storage failure while composing waits for the composition
+    /// instead of rolling storage back under the marked text.
+    func testALocalFailureWhileComposingWaitsForTheComposition() async throws {
+        let disk = Latch()
+        let harness = try await gated(disk)
+        try caret(harness, Self.thirdID, 0)
+        harness.view.insertText("x")
+        try caret(harness, Self.firstID, 5)
+        harness.view.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0))
+        let before = harness.view.textStorage.string
+        harness.session.freezeAuthoring()
+        XCTAssertEqual(harness.view.textStorage.string, before, "storage under marked text is untouched")
+        XCTAssertNil(harness.input.noticeKey)
+        disk.open()
+        harness.view.unmarkText()
+        _ = await harness.session.settle()
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_storage_failed)
+        XCTAssertFalse(harness.view.isEditable)
+        XCTAssertTrue(harness.session.surface.storageMatchesModel)
+        XCTAssertEqual(texts(harness.session).first, "Firstにほん paragraph.")
+        XCTAssertEqual(texts(harness.session).last, "xThird paragraph.")
+    }
+
+    /// L3: a composition whose begin or commit cannot be posted (a full
+    /// mailbox) never starts, or is resolved locally as orphaned.
+    func testACompositionWhosePostFailsResolvesLocally() async throws {
+        let blocked = Latch()
+        let first = try await gated(Latch(open: true), mailbox: blocked)
+        let replica = try XCTUnwrap(first.session.replica)
+        try caret(first, Self.firstID, 5)
+        while replica.mailbox.post(.writeProvisional([])) {}
+        XCTAssertFalse(first.input.beginComposition(markedText: "に"))
+        XCTAssertFalse(first.input.composition.isActive)
+        XCTAssertEqual(first.input.noticeKey, .native_editor_storage_failed)
+        blocked.open()
+
+        let gate = Latch()
+        let second = try await gated(Latch(open: true), mailbox: gate)
+        let mailbox = try XCTUnwrap(second.session.replica).mailbox
+        try caret(second, Self.firstID, 5)
+        second.view.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0))
+        XCTAssertTrue(second.input.composition.isActive)
+        while mailbox.post(.writeProvisional([])) {}
+        second.view.unmarkText()
+        XCTAssertFalse(second.input.composition.isResolving, "no answer will come: resolved here")
+        XCTAssertEqual(second.input.composition.pendingRecoveries.map(\.text), ["にほん"])
+        XCTAssertEqual(second.input.noticeKey, .native_editor_storage_failed)
+        XCTAssertTrue(second.session.surface.storageMatchesModel)
+        gate.open()
+    }
+
+    /// L4: a prediction journaled in a block whose display went canonical (a
+    /// later key there could not be rebased) is shown at once.
+    func testAJournaledKeyInAnOffScreenBlockIsShown() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
+        let peer = try peerEdit { try $0.replaceText(block: Self.firstID, range: 8..<14, with: "") }
+        harness.session.replica?.mailbox.post(.integrate(peer, reply: nil))
+        try caret(harness, Self.firstID, 0)
+        harness.view.insertText("a")
+        try caret(harness, Self.firstID, 12)
+        harness.view.insertText("b")
+        var shown: String?
+        harness.session.onDelivery = { [weak self] delivery in
+            guard case .invalidated? = delivery.result, shown == nil, let self else { return }
+            shown = try? self.text(of: self.block(harness.session, Self.firstID))
+        }
+        await harness.settle()
+        XCTAssertEqual(shown, "aFirst pah.", "the journaled key showed before the invalidation")
+        XCTAssertEqual(text(of: try block(harness.session, Self.firstID)), "aFirst pah.")
+        XCTAssertEqual(harness.input.composition.pendingRecoveries.map(\.text), ["b"])
+        try await assertConsistent(harness, localCommands: 1)
+    }
 }
