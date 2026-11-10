@@ -374,6 +374,16 @@ enum Strings_nl {
         .native_editor_toggle: "Uitklappen of inklappen",
         .native_editor_toggle_expanded: "Uitgeklapt",
         .native_editor_toggle_collapsed: "Ingeklapt",
+        .native_editor_block_actions: "Blokacties",
+        .native_editor_block_move_up: "Omhoog verplaatsen",
+        .native_editor_block_move_down: "Omlaag verplaatsen",
+        .native_editor_block_duplicate: "Dupliceren",
+        .native_editor_block_copy: "Blok kopiëren",
+        .native_editor_block_delete: "Blok verwijderen",
+        .native_editor_block_insert_above: "Blok erboven invoegen",
+        .native_editor_block_insert_below: "Blok eronder invoegen",
+        .native_editor_paste_unavailable:
+            "Deze gekopieerde inhoud kan hier niet worden geplakt. Er is niets gewijzigd.",
         .profile_native_editor: "Native editor (experimenteel)",
         .profile_native_editor_footer:
             "Wordt toegepast wanneer je een document opnieuw opent. Ondersteunt Docs 6 met tekst, opmaak, links, koppen, lijsten, checklists, citaten en codeblokken; andere blokken blijven behouden, maar zijn nog niet bewerkbaar.",

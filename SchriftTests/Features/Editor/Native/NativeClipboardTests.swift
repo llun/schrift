@@ -198,4 +198,189 @@ final class NativeClipboardTests: NativeEditingTestCase {
         XCTAssertEqual(texts(session)[0...1], ["Fia", "brst paragraph."])
         try assertConsistent(harness, localCommands: 1)
     }
+
+    // MARK: - PR06d lossless subtrees
+
+    private var payloadType: String { BlockNoteSubtreePayload.pasteboardType }
+
+    private func nested(_ block: BlockNoteBlock, _ children: [BlockNoteBlock]) -> BlockNoteBlock {
+        var block = block
+        block.children = children
+        return block
+    }
+
+    private func caret(_ harness: Harness, _ id: String, _ offset: Int) throws {
+        setSelection(harness, NSRange(location: try location(harness.session, id, offset), length: 0))
+    }
+
+    /// A bullet with an unknown mark, a link and an unknown prop over two
+    /// nested levels, then an empty paragraph.
+    private func richSeed() -> [BlockNoteBlock] {
+        var rich = bullet("b", "")
+        rich.runs = [
+            InlineRun("Plain "), InlineRun("custom", marks: [("x-custom", #"{"v":1}"#), ("bold", "{}")]),
+            InlineRun(" link", marks: [("link", #"{"href":"https://example.test/"}"#)]),
+        ]
+        rich.props += [("x-extra", .string("kept"))]
+        return [
+            paragraph("a", "Alpha"), nested(rich, [nested(bullet("b1", "Child"), [paragraph("b11", "Deep")])]),
+            paragraph("c", "Gamma"), paragraph("empty", ""),
+        ]
+    }
+
+    /// Copy block puts the lossless payload beside the plain text; a paste at
+    /// a caret is one command inserting the subtree with fresh ids after the
+    /// caret's block, or in place of an empty paragraph. Byte-identical
+    /// payloads (only the ids differ) prove the round trip lossless.
+    func testCopyBlockThenPasteRoundTripsLosslesslyWithFreshIDs() throws {
+        let harness = try makeHarness(richSeed())
+        defer { harness.close() }
+        let session = harness.session
+        try caret(harness, "b", 0)
+        XCTAssertTrue(harness.input.performBlockAction(.copy))
+        let copied = try XCTUnwrap(harness.pasteboard.data(forPasteboardType: payloadType))
+        XCTAssertEqual(copied, session.engine.subtreePayload(["b"]))
+        XCTAssertEqual(harness.pasteboard.string, "Plain custom link\nChild\nDeep")
+        try assertConsistent(harness, localCommands: 0)
+
+        try caret(harness, "c", 2)
+        harness.view.paste(nil)
+        guard case .insertSubtrees(let payload, let newIDs)? = harness.log.commands.last?.kind else {
+            return XCTFail("not a lossless paste")
+        }
+        XCTAssertEqual(payload, copied)
+        XCTAssertEqual(newIDs.count, 3)
+        XCTAssertEqual(session.surface.blocks.map(\.id), ["a", "b", "b1", "b11", "c"] + newIDs + ["empty"])
+        XCTAssertEqual(session.surface.blocks.map(\.depth), [0, 0, 1, 2, 0, 0, 1, 2, 0])
+        var fresh = newIDs[...]
+        let original = try XCTUnwrap(try BlockNoteSubtreePayload.decode(copied).first)
+        let expected = try BlockNoteSubtreePayload.encode([original.replacingIDs(&fresh)])
+        XCTAssertEqual(session.engine.subtreePayload([newIDs[0]]), expected, "every raw value, mark and prop")
+        XCTAssertEqual(harness.view.selectedRange, NSRange(location: try location(session, newIDs[2], 4), length: 0))
+        try assertConsistent(harness, localCommands: 1)
+
+        try caret(harness, "empty", 0)
+        harness.view.paste(nil)
+        guard case .insertSubtrees(_, let second)? = harness.log.commands.last?.kind else {
+            return XCTFail("not a lossless paste")
+        }
+        XCTAssertTrue(Set(second).isDisjoint(with: newIDs), "every paste mints fresh ids")
+        XCTAssertEqual(session.surface.blocks.map(\.id).suffix(4), [newIDs[2]] + second, "the empty block is replaced")
+        try assertConsistent(harness, localCommands: 2)
+    }
+
+    /// A selection of whole sibling subtrees copies them losslessly; part of
+    /// a block, or a block whose visible children are left out, is plain only.
+    func testOnlyWholeSubtreeSelectionsCarryAPayload() throws {
+        let harness = try makeHarness(richSeed())
+        defer { harness.close() }
+        let session = harness.session
+        try select(harness, from: ("b", 0), to: ("b11", 4))
+        harness.view.copy(nil)
+        XCTAssertEqual(harness.pasteboard.data(forPasteboardType: payloadType), session.engine.subtreePayload(["b"]))
+        try select(harness, from: ("c", 5), to: ("a", 0))
+        harness.view.copy(nil)
+        XCTAssertEqual(
+            harness.pasteboard.data(forPasteboardType: payloadType), session.engine.subtreePayload(["a", "b", "c"]))
+        for (anchor, head) in [(("a", 1), ("c", 5)), (("b", 0), ("b", 17)), (("b1", 0), ("c", 5))] {
+            try select(harness, from: anchor, to: head)
+            harness.view.copy(nil)
+            XCTAssertNotNil(harness.pasteboard.string)
+            XCTAssertNil(harness.pasteboard.data(forPasteboardType: payloadType), "\(anchor)–\(head): plain only")
+        }
+        try assertConsistent(harness, localCommands: 0)
+    }
+
+    /// A folded toggle's title copies with its hidden children.
+    func testCopyingAFoldedToggleCarriesItsHiddenChildren() throws {
+        let toggle = BlockNoteBlock(
+            node: "toggleListItem", props: Self.paragraphProps, runs: [InlineRun("Title")], id: "t",
+            children: [paragraph("c1", "Hidden one"), paragraph("c2", "Hidden two")])
+        let harness = try makeHarness([toggle, paragraph("x", "After")])
+        defer { harness.close() }
+        try select(harness, from: ("t", 0), to: ("t", 5))
+        harness.view.copy(nil)
+        XCTAssertEqual(harness.pasteboard.string, "Title")
+        let payload = try XCTUnwrap(harness.pasteboard.data(forPasteboardType: payloadType))
+        XCTAssertEqual(try BlockNoteSubtreePayload.decode(payload).first?.containerCount, 3)
+        try assertConsistent(harness, localCommands: 0)
+    }
+
+    private func pasteRefused(
+        _ harness: Harness, _ payload: Data, notice: L10nKey, file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        let before = texts(harness.session)
+        harness.pasteboard.setItems([[payloadType: payload, UTType.utf8PlainText.identifier: "plain"]])
+        harness.view.paste(nil)
+        XCTAssertEqual(harness.input.noticeKey, notice, file: file, line: line)
+        XCTAssertEqual(
+            texts(harness.session), before, "nothing written, not even the plain text", file: file, line: line)
+    }
+
+    /// The payload is untrusted: garbage, a node BlockNote cannot hold, a
+    /// container without an id and nesting past the bound are refused whole,
+    /// by the coordinator and again by the engine.
+    func testMalformedPayloadsAreRefusedWithoutAWrite() throws {
+        let harness = try makeHarness()
+        defer { harness.close() }
+        let session = harness.session
+        try caret(harness, Self.firstID, 2)
+        var deep = paragraph("d17", "Deep")
+        for level in (0..<17).reversed() { deep = nested(paragraph("d\(level)", "L\(level)"), [deep]) }
+        let malformed = [
+            Data([1, 2, 3]),
+            BlockNoteYjs.encode([BlockNoteBlock(node: "fancyWidget", props: [], runs: [], id: "w")], clientID: 7),
+            BlockNoteYjs.encode([paragraph("", "No id")], clientID: 7),
+            BlockNoteYjs.encode([deep], clientID: 7),
+        ]
+        for payload in malformed {
+            try pasteRefused(harness, payload, notice: .native_editor_paste_unavailable)
+            XCTAssertThrowsError(
+                try session.engine.applyStructural(
+                    NativeEditCommand(
+                        id: UUID(), baseRevision: session.engine.revision, blockID: Self.firstID,
+                        kind: .insertSubtrees(payload: payload, newIDs: (0..<18).map { "n\($0)" }))
+                ) { _ in XCTFail("refused before any write") }
+            ) { XCTAssertEqual($0 as? DocumentEngineError, .unsupportedNativeInput) }
+        }
+        // A well-formed payload with the wrong number of ids is refused too.
+        let one = BlockNoteYjs.encode([paragraph("p", "One")], clientID: 7)
+        XCTAssertThrowsError(
+            try session.engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: session.engine.revision, blockID: Self.firstID,
+                    kind: .insertSubtrees(payload: one, newIDs: ["x", "y"]))
+            ) { _ in XCTFail("refused before any write") })
+        try assertConsistent(harness, localCommands: 0)
+        // A valid foreign payload (BlockNote's own document encoding) pastes.
+        harness.pasteboard.setItems([[payloadType: one]])
+        harness.view.paste(nil)
+        XCTAssertEqual(texts(session)[1], "One")
+        try assertConsistent(harness, localCommands: 1)
+    }
+
+    func testOversizedPayloadsAreRefusedWhole() throws {
+        let harness = try makeHarness()
+        defer { harness.close() }
+        try caret(harness, Self.firstID, 2)
+        try pasteRefused(
+            harness, Data(count: BlockNoteSubtreePayload.maxBytes + 1), notice: .native_editor_paste_too_large)
+        let many = (0...BlockNoteSubtreePayload.maxBlocks).map { paragraph("p\($0)", "P") }
+        try pasteRefused(harness, BlockNoteYjs.encode(many, clientID: 7), notice: .native_editor_paste_too_large)
+        try assertConsistent(harness, localCommands: 0)
+    }
+
+    /// Over a selection the plain text replaces it, as one range command.
+    func testAPayloadOverASelectionPastesThePlainText() throws {
+        let harness = try makeHarness(richSeed())
+        defer { harness.close() }
+        let session = harness.session
+        try caret(harness, "b1", 0)
+        XCTAssertTrue(harness.input.performBlockAction(.copy))
+        try select(harness, from: ("c", 1), to: ("c", 3))
+        harness.view.paste(nil)
+        XCTAssertEqual(text(of: try block(session, "c")), "GChild")
+        guard case .range? = harness.log.commands.last?.kind else { return XCTFail("not a plain range paste") }
+        try assertConsistent(harness, localCommands: 1)
+    }
 }

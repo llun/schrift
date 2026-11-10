@@ -2302,7 +2302,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   alone), cut is copy plus one range delete (a refused delete leaves the pasteboard), paste
   reads only `UIPasteboard.string` and refuses whole, with `native_editor_paste_too_large`,
   more than 200,000 UTF-16 units or 2,000 lines (`NativeClipboard.maxPaste*`); the lossless rich
-  clipboard is PR06. `NativeInputCoordinator.pasteboard` is a seam (tests use
+  clipboard is PR06d (below). `NativeInputCoordinator.pasteboard` is a seam (tests use
   `UIPasteboard.withUniqueName()`). The simulator's software delete key over a selection
   arrives as `shouldChangeTextInRanges` with the selection; XCUITest `typeKey` delivers
   nothing for delete/forward-delete. IME over a multi-block selection keeps PR03's refusal.
@@ -2451,7 +2451,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `NativeIndentTests`, `BlockNoteTreeOracleTests` (`f-sink-bullet`, `enter-empty-nested`)
   and the host UI test `testTabNestsTheSecondBulletAndSurvivesRelaunch` (`--native-tree`
   seeds two bullets and host-only caret/depth controls). Subtree
-  move/copy/clipboard/drag come in later PR06 slices.
+  move/copy/clipboard are PR06d; drag is not built yet.
 
 - **PR06b toggles and local folding.** Under the native flag (`nativeMarks`, as PR05b
   gated callouts) `YBlockProjection` models `toggleListItem` (BlockNote 0.56
@@ -2501,6 +2501,67 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   view's keydown handling: tiptap's `keyboardShortcut` command replays steps with
   `maybeStep` and drops the toggle commands' later steps) and the host UI test
   `testFoldedToggleKeepsItsChildrenWhileTypingElsewhere` (`--native-typing --native-toggle`).
+
+- **PR06d subtree commands and the lossless clipboard.** `NativeBlockAction` (menu order:
+  move up, move down, outdent, indent, insert above, insert below, duplicate, copy, delete)
+  acts on `NativeInputCoordinator.blockActionTarget()`: the caret's block, or the block a
+  selection lies in (nil across blocks, while composing, in folded content). Three surfaces
+  share `availableBlockActions()`/`performBlockAction(_:)`: the formatting bar's first
+  button (`nativeEditor.format.block`, a popover `NativeBlockMenu` with
+  `nativeEditor.block.<action>` buttons, availability worked out only when shown), a Block
+  submenu in the long-press edit menu (`textView(_:editMenuForTextIn:suggestedActions:)`,
+  unavailable actions `.disabled`), and `NativeTextView.accessibilityCustomActions`
+  (available actions only, computed when VoiceOver asks). Labels come through
+  `NativeEditorLabels.blockMenu`/`blockActions`; indent/outdent reuse the classic strings.
+  **Commands** (`NativeEditCommand.Kind`): `.moveUp`, `.moveDown`, `.duplicate(newIDs:)`,
+  `.deleteBlock`, `.insertBlock(newID:before:)`, `.insertSubtrees(payload:newIDs:)`, each
+  one `applyStructural` (`prepareBlockCommand`, validated before arming). Availability is
+  `DocumentEngine.canApplyStructural` (the same preparation, nothing armed) and, for Copy,
+  `hasLosslessCopy`; the menu never offers what the engine would refuse. Moves are
+  BlockNote 0.56's `moveBlocksUp`/`moveBlocksDown` (`getMovePlacement`): past a sibling
+  with children into its nearest child (after its last child going up, before its first
+  going down), past the group's end out beside the parent, nothing at the document's
+  first/last root block; `BlockNoteWriter.moveBlock` (`BlockNoteTreeCommands.swift`)
+  clones and deletes like sink/lift and removes a nested group it empties. They take the
+  container `YItem`, not a `Target`, because a divider or page break (modeled, not a writer
+  schema type) moves too. Every moved or duplicated block must be readable and unlocked
+  (`requireMovable`) and the deepest stays within `maxNestingDepth`; the selection keeps its
+  offsets in the moved block (`remapping`). A peer's concurrent edit inside a moved block
+  lands in the deleted original (pinned in `NativeBlockCommandsTests`). Duplicate inserts
+  the clone after the subtree with every container id replaced in preorder
+  (`Copy.replacingIDs`); delete removes the subtree (an emptied nested group too, never the
+  document's last root block) and puts the caret at the next block's start, else the
+  previous block's end; insert adds an empty paragraph with default props before the block
+  or after its subtree. **Opaque content:** move, duplicate, indent and outdent are refused
+  for any opaque block in the subtree; copy and delete need a proven lossless
+  representation, `BlockNoteSubtreePayload.validate` over the raw `snapshot` (so a table
+  of known nodes can be copied and deleted, an unknown node can be neither); inserting
+  beside either is fine. `snapshot` now refuses an XmlText with attributes rather than drop
+  them. **Payload** (`Core/Yjs/BlockNoteSubtreePayload.swift`, pasteboard type
+  `dev.llun.schrift.blocknote-subtrees`): the copied containers as the Yjs v1 update of a
+  scratch `YDoc` whose `document-store` holds one `blockGroup` of them (the same shape
+  `BlockNoteYjs.encode` writes), lossless by construction. `decode` is a trust boundary:
+  ≤ 2 MiB (`maxBytes`), ≤ 2,000 containers (`maxBlocks`, `.tooLarge`), container depth
+  ≤ 16, no pending structs, one root group of containers each with a non-empty string `id`,
+  exactly one content element in `contentNodes` and at most one non-empty group, only
+  `inlineNodes` inside content, only XML types (`.malformed`). The engine decodes again
+  before arming and also checks the ids are fresh and the landing depth. **Clipboard:**
+  copy and cut write one pasteboard item (`writePasteboard`): the plain text, plus the
+  payload when `NativeClipboard.wholeBlocks` finds whole sibling subtrees (from a block's
+  text start to a block's text end, nothing shallower than the first block, later
+  descendants of the last root only if folded); Copy block writes the subtree's payload and
+  its visible plain text. Paste at a caret prefers the payload (`pasteBlocks`: decode for
+  the notice, `native_editor_paste_too_large` or `native_editor_paste_unavailable`, then
+  one `.insertSubtrees` after the caret's block, replacing it when it is an empty paragraph
+  without children; caret at the end of the last pasted block); over a selection, or with
+  no payload, the plain text as before. Partial-block copies stay plain text (marks are not
+  carried). Drag to reorder is not built. Tests: `NativeBlockCommandsTests`,
+  `NativeClipboardTests` (round trip byte-identical but for ids, malformed/oversized
+  payloads), `BlockNoteTreeOracleTests.testMovesMatchTheBlockNoteCaptures`
+  (`BlockNoteMoveCaptures`, from the installed 0.56 `moveBlocksUp`/`moveBlocksDown` through
+  the S3 harness in node/jsdom) and the host UI test
+  `testDuplicateFromTheBlockMenuSurvivesRelaunch` (`--native-tree`, whose host controls also
+  read the first three blocks' text as `tree.texts`).
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (`@MainActor`), which borrows the replica and resolves
