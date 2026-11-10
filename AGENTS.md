@@ -5052,7 +5052,9 @@ markdown write endpoint**. Understand this before touching the save path:
   *italic*, underline, ~~strike~~ and `` `inline code` `` marks.` — bold, strike and code
   agree, underline exports plain on both sides). Spelling-sensitive, every save of an italic
   document read back as a false `.conflict` (rules 0 and 1 miss, rule 2 sees a newer
-  server), classic and native alike. So the body rules use `syncCanonicalMarkdown`: each
+  server), classic and native alike — and a resumed offline create recorded a false
+  conflict in `migrateCreatedDocument`'s own rule-0 test. So the body rules, and that
+  test, use `syncCanonicalMarkdown` (its emptiness is `canonicalMarkdown`'s): each
   `rendersInlineMarkdown` block's text becomes an encoding of `InlineMarkdown.parse`'s runs —
   exact text, marks as a sorted set (links by value), same-set neighbours joined. Only
   delimiter spelling, escapes and mark order drop out. **Never canonicalize by re-writing
@@ -5069,7 +5071,8 @@ markdown write endpoint**. Understand this before touching the save path:
   (`testSyncCanonicalMarkdown…`, `testOurItalicPushReadBack…`),
   `NativeShadowExportParityTests.testTheRealCapturesMarksParagraphMatchesTheServerExport`
   (skips without `.review/`) and
-  `EditorViewModelBaselineTests.testReconcileCleanInstallsASpellingOnlyServerChange`. The
+  `EditorViewModelBaselineTests.testReconcileCleanInstallsASpellingOnlyServerChange` and
+  `DocumentSaveCoordinatorReplayMigrationTests.testAnItalicSpellingOnlyServerBodyIsNotADivergence`. The
   parser still misreads `***x***` (bold `*x` + `*`) and `**a *b***`; if the server spells
   bold+italic that way, that is a parser bug this does not cover.
 - **Code spans and links bind tighter than emphasis.**
