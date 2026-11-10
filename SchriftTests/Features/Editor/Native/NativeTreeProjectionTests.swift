@@ -48,7 +48,7 @@ final class NativeTreeProjectionTests: NativeEditingTestCase {
 
     // MARK: - Projection and index
 
-    func testATreeProjectsInPreorderWithDepthParentAndHandles() throws {
+    func testATreeProjectsInPreorderWithDepthParentAndHandles() async throws {
         let doc = try makeDoc(treeSeed() + [chain(20)], clientID: 1)
         defer { doc.destroy() }
         let generation = UUID()
@@ -80,7 +80,7 @@ final class NativeTreeProjectionTests: NativeEditingTestCase {
             YBlockProjection.project(flat, nativeMarks: true).blocks.map(BlockSnapshot.init))
     }
 
-    func testNestingPastTheBoundIsOpaqueAndPreserved() throws {
+    func testNestingPastTheBoundIsOpaqueAndPreserved() async throws {
         let levels = NativeBlockProjection.maxDepth + 6
         let doc = try makeDoc([chain(levels)], clientID: 1)
         defer { doc.destroy() }
@@ -97,7 +97,7 @@ final class NativeTreeProjectionTests: NativeEditingTestCase {
     /// A peer's change inside a subtree the index does not descend into (past
     /// the depth bound) is the nearest indexed block's: it is rebuilt, never
     /// dropped (review round 1).
-    func testAChangeBelowTheBoundRebuildsTheNearestIndexedBlock() throws {
+    func testAChangeBelowTheBoundRebuildsTheNearestIndexedBlock() async throws {
         let levels = NativeBlockProjection.maxDepth + 3
         let doc = try makeDoc([chain(levels)], clientID: 1)
         defer { doc.destroy() }
@@ -113,12 +113,12 @@ final class NativeTreeProjectionTests: NativeEditingTestCase {
         _ = engine
     }
 
-    func testDuplicateAndMissingIDsMakeThatSubtreeOpaqueAndReadOnly() throws {
-        let harness = try makeHarness([
+    func testDuplicateAndMissingIDsMakeThatSubtreeOpaqueAndReadOnly() async throws {
+        let harness = try await makeHarness([
             paragraph("first", "First"), nested(paragraph("dup", "One"), [paragraph("kid", "Kid")]),
             nested(paragraph("dup", "Two"), [paragraph("hidden", "Hidden")]), paragraph("last", "Last"),
         ])
-        defer { harness.close() }
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         XCTAssertEqual(session.surface.blocks.map(\.id), ["first", "dup", "kid", "dup", "last"])
         XCTAssertEqual(session.surface.blocks.map(\.isOpaque), [false, false, false, true, false])
@@ -127,7 +127,9 @@ final class NativeTreeProjectionTests: NativeEditingTestCase {
         let original = session.textView.textStorage.string
         setSelection(harness, NSRange(location: try location(session, "last", 0), length: 0))
         session.textView.insertText("x")
-        XCTAssertFalse(harness.input.indent())
+        await harness.settle()
+        let indentRefused = await harness.run { harness.input.indent() }
+        XCTAssertFalse(indentRefused)
         XCTAssertEqual(session.textView.textStorage.string, original)
         XCTAssertTrue(harness.log.commands.isEmpty)
 
@@ -143,14 +145,14 @@ final class NativeTreeProjectionTests: NativeEditingTestCase {
         XCTAssertFalse(BlockIndex(doc: doc).isCanonical)
     }
 
-    func testUnknownChildrenArePlaceholdersAndTheirSiblingsStayEditable() throws {
-        let harness = try makeHarness([
+    func testUnknownChildrenArePlaceholdersAndTheirSiblingsStayEditable() async throws {
+        let harness = try await makeHarness([
             nested(
                 paragraph("parent", "Parent"),
                 [BlockNoteBlock(node: "table", props: [], runs: [], id: "table"), paragraph("sibling", "Sibling")]),
             nested(BlockNoteBlock(node: "mystery", props: [], runs: [], id: "mystery"), [paragraph("under", "Under")]),
         ])
-        defer { harness.close() }
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         XCTAssertEqual(session.surface.blocks.map(\.id), ["parent", "table", "sibling", "mystery", "under"])
         XCTAssertEqual(session.surface.blocks.map(\.isOpaque), [false, true, false, true, false])
@@ -158,38 +160,44 @@ final class NativeTreeProjectionTests: NativeEditingTestCase {
         // Opacity does not spread: the children of an unknown block are blocks.
         setSelection(harness, NSRange(location: try location(session, "under", 5), length: 0))
         session.textView.insertText("!")
+        await harness.settle()
         setSelection(harness, NSRange(location: try location(session, "sibling", 0), length: 0))
         session.textView.insertText("A ")
+        await harness.settle()
         XCTAssertEqual(text(of: try block(session, "under")), "Under!")
         XCTAssertEqual(text(of: try block(session, "sibling")), "A Sibling")
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
         // Nothing nests under or moves an unknown block.
         setSelection(harness, NSRange(location: try location(session, "sibling", 0), length: 0))
-        XCTAssertFalse(harness.input.indent(), "the block above is a table")
-        try assertConsistent(harness, localCommands: 2)
+        let indentRefused = await harness.run { harness.input.indent() }
+        XCTAssertFalse(indentRefused, "the block above is a table")
+        try await assertConsistent(harness, localCommands: 2)
     }
 
     // MARK: - Editing inside nested blocks
 
-    func testTypingInANestedBlockKeepsTheTextFastPath() throws {
-        let harness = try makeHarness(treeSeed())
-        defer { harness.close() }
+    func testTypingInANestedBlockKeepsTheTextFastPath() async throws {
+        let harness = try await makeHarness(treeSeed())
+        addTeardownBlock { await harness.close() }
         let session = harness.session
-        let projected = session.engine.projectedBlockCount
+        let projected = try unwrapped(await harness.engine { $0.projectedBlockCount })
         setSelection(harness, NSRange(location: try location(session, "a2x", 4), length: 0))
         for character in " text" { session.textView.insertText(String(character)) }
+        await harness.settle()
         XCTAssertEqual(text(of: try block(session, "a2x")), "Deep text")
-        XCTAssertEqual(session.engine.projectedBlockCount, projected, "each keystroke is a .text patch")
+        let projectedAfter = try unwrapped(await harness.engine { $0.projectedBlockCount })
+        XCTAssertEqual(projectedAfter, projected, "each keystroke is a .text patch")
         XCTAssertEqual(session.textView.selectedRange.location, try location(session, "a2x", 9))
-        try assertConsistent(harness, localCommands: 5)
+        try await assertConsistent(harness, localCommands: 5)
     }
 
-    func testReturnInANestedItemMakesASiblingAtTheSameDepth() throws {
-        let harness = try makeHarness(treeSeed())
-        defer { harness.close() }
+    func testReturnInANestedItemMakesASiblingAtTheSameDepth() async throws {
+        let harness = try await makeHarness(treeSeed())
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         setSelection(harness, NSRange(location: try location(session, "a1", 5), length: 0))
         session.textView.insertText("\n")
+        await harness.settle()
         guard case .split(_, let newID, _)? = harness.log.commands.last?.kind else { return XCTFail("not a split") }
         let new = try block(session, newID)
         XCTAssertEqual(new.node, "bulletListItem")
@@ -198,72 +206,79 @@ final class NativeTreeProjectionTests: NativeEditingTestCase {
         XCTAssertEqual(session.surface.blocks.map(\.id), ["a", "a1", newID, "a2", "a2x", "b"])
         XCTAssertEqual(Array(texts(session)[1...2]), ["Alpha", " one"])
         XCTAssertEqual(session.textView.selectedRange.location, try location(session, newID, 0))
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
         // Return in a block with children: the new block takes them (BlockNote).
         setSelection(harness, NSRange(location: try location(session, "a2", 5), length: 0))
         session.textView.insertText("\n")
+        await harness.settle()
         guard case .split(_, let second, _)? = harness.log.commands.last?.kind else { return XCTFail("not a split") }
         XCTAssertEqual(try block(session, "a2x").parentID, second)
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
     }
 
     /// BlockNote's Enter: an empty nested list item first becomes a
     /// paragraph; Enter in an empty nested paragraph outdents it.
-    func testReturnOnAnEmptyNestedItemResetsThenOutdents() throws {
-        let harness = try makeHarness([nested(bullet("a", "Alpha"), [bullet("e", ""), bullet("f", "After")])])
-        defer { harness.close() }
+    func testReturnOnAnEmptyNestedItemResetsThenOutdents() async throws {
+        let harness = try await makeHarness([nested(bullet("a", "Alpha"), [bullet("e", ""), bullet("f", "After")])])
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         setSelection(harness, NSRange(location: try location(session, "e", 0), length: 0))
         session.textView.insertText("\n")
+        await harness.settle()
         XCTAssertEqual(try block(session, "e").node, "paragraph")
         XCTAssertEqual(try block(session, "e").depth, 1)
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
         session.textView.insertText("\n")
+        await harness.settle()
         XCTAssertEqual(try block(session, "e").depth, 0)
         XCTAssertEqual(try block(session, "f").parentID, "e", "the sibling after it becomes its child")
         XCTAssertEqual(session.textView.selectedRange.location, try location(session, "e", 0))
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
     }
 
-    func testRangesMarksAndPropsWorkInsideNestedBlocks() throws {
-        let harness = try makeHarness([
+    func testRangesMarksAndPropsWorkInsideNestedBlocks() async throws {
+        let harness = try await makeHarness([
             nested(
                 bullet("a", "Alpha"), [bullet("x", "First child"), bullet("y", "Second child"), check("c", "Task")]),
             paragraph("b", "Beta"),
         ])
-        defer { harness.close() }
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         // Bold across two nested siblings: one marks command.
         try select(harness, from: ("x", 6), to: ("y", 6))
-        XCTAssertTrue(harness.input.toggleMark("bold"))
+        let boldApplied = await harness.run { harness.input.toggleMark("bold") }
+        XCTAssertTrue(boldApplied)
         XCTAssertEqual(try block(session, "y").runs.first?.marks.map(\.0), ["bold"])
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
         // A range replacement inside one nested group joins them.
         try select(harness, from: ("x", 5), to: ("y", 6))
         session.textView.insertText(" and")
+        await harness.settle()
         XCTAssertEqual(texts(session)[1], "First and child")
         XCTAssertEqual(try block(session, "x").depth, 1)
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
         // A range across depths waits for subtree commands: refused, no write.
         try select(harness, from: ("x", 2), to: ("b", 2))
         session.textView.insertText("z")
+        await harness.settle()
         XCTAssertEqual(harness.input.noticeKey, .native_editor_range_unavailable)
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
         // A nested checkbox is one prop command.
-        XCTAssertTrue(harness.input.toggleCheckbox(blockID: "c"))
+        let checkToggled = await harness.run { harness.input.toggleCheckbox(blockID: "c") }
+        XCTAssertTrue(checkToggled)
         XCTAssertTrue(try block(session, "c").props.contains(ProjectedProp(key: "checked", value: .bool(true))))
-        try assertConsistent(harness, localCommands: 3)
+        try await assertConsistent(harness, localCommands: 3)
     }
 
     // MARK: - Rendering
 
-    func testNestedBlocksIndentByDepthAndNumberPerSiblingRun() throws {
-        let harness = try makeHarness([
+    func testNestedBlocksIndentByDepthAndNumberPerSiblingRun() async throws {
+        let harness = try await makeHarness([
             nested(numbered("n1", "One"), [numbered("n1a", "One A"), numbered("n1b", "One B")]),
             numbered("n2", "Two"),
             nested(paragraph("p", "Para"), [numbered("pa", "Under para")]),
         ])
-        defer { harness.close() }
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         XCTAssertEqual(
             AttributedDocumentProjection.listNumbers(in: session.surface.blocks), [1, 1, 2, 2, nil, 1],
@@ -284,14 +299,15 @@ final class NativeTreeProjectionTests: NativeEditingTestCase {
         // Typing renumbers nothing and keeps the slice equal to a fresh projection.
         setSelection(harness, NSRange(location: try location(session, "n1b", 5), length: 0))
         session.textView.insertText("!")
+        await harness.settle()
         XCTAssertEqual(
             storage.attribute(.nativeListNumber, at: try location(session, "n1b", 0), effectiveRange: nil) as? Int, 2)
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
     }
 
     /// The native save's Markdown shadow nests list items, so a nested
     /// document stays typeable and savable.
-    func testTheShadowNestsListItems() throws {
+    func testTheShadowNestsListItems() async throws {
         let doc = try makeDoc(
             [nested(bullet("a", "Alpha"), [bullet("b", "Beta")]), paragraph("p", "Para")], clientID: 1)
         defer { doc.destroy() }

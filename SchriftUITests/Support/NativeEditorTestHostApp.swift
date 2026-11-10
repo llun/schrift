@@ -76,22 +76,18 @@ struct NativeEditorTestHostApp: App {
             // Do it from the mounted view lifecycle, not from App.init.
             guard session == nil || session?.isClosed == true else { return }
             do {
-                let created = try NativeEditorSession(state: fixture)
                 if ProcessInfo.processInfo.arguments.contains("--native-typing") {
                     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
                     replicaDirectory = directory
-                    let store = ReplicaStore(directory: directory)
+                    let store = ReplicaStore(directory: directory, interrupt: slowDisk)
                     let scope = ReplicaScope(
                         serverOrigin: "https://native-fixture.invalid", ownerUserID: UUID(), org: "docs",
                         documentID: UUID())
                     _ = try store.create(for: scope, checkpoint: fixture)
-                    created.enableTyping { command, update in
-                        try store.append(
-                            update, for: scope, commandID: command.id,
-                            baseRevision: command.baseRevision, origin: .local)
-                    }
+                    session = try await NativeEditorSession.restore(store: store, scope: scope, editable: true)
+                } else {
+                    session = try await NativeEditorSession.inspect(state: fixture)
                 }
-                session = created
             } catch {
                 failedToLoad = true
             }
@@ -132,6 +128,7 @@ private struct NativeOpenFixture: View {
         .overlay {
             if ProcessInfo.processInfo.arguments.contains("--native-ime") { SyntheticIMEControls() }
             if ProcessInfo.processInfo.arguments.contains("--native-tree") { TreeControls() }
+            if ProcessInfo.processInfo.arguments.contains("--native-slow-disk") { InFlightReadout() }
         }
         .task {
             guard model == nil else { return }
@@ -166,7 +163,7 @@ private struct NativeOpenFixture: View {
             session: URLSession(configuration: configuration), cookieProvider: { [] })
         let replicaStore = ReplicaStore(
             directory: directory.appendingPathComponent("ReplicaDrafts"),
-            ownershipStore: ReplicaOwnershipStore(userDefaults: defaults))
+            ownershipStore: ReplicaOwnershipStore(userDefaults: defaults), interrupt: slowDisk)
         let scope = ReplicaScope(
             serverOrigin: client.serverOrigin, ownerUserID: owner, org: "docs", documentID: documentID)
         if try replicaStore.manifest(for: scope) == nil {
@@ -335,6 +332,15 @@ private enum MediaFixture {
     }
 }
 
+/// `--native-slow-disk` (PR08b): every journal append takes 60 ms longer, so
+/// typed keys run ahead of their appends (option A's predictions) and Return
+/// waits for its barrier with keys held behind it. Test host only.
+private let slowDisk: (@Sendable (ReplicaStore.Operation, ReplicaStore.Boundary) throws -> Void)? =
+    ProcessInfo.processInfo.arguments.contains("--native-slow-disk")
+    ? { @Sendable operation, boundary in
+        if operation == .append, boundary == .payloadFlushed { Thread.sleep(forTimeInterval: 0.06) }
+    } : nil
+
 /// Fails every request as offline, so the fixture never reaches a network.
 private final class OfflineURLProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -388,6 +394,19 @@ private struct ContentHeightReadout: View {
             Text(verbatim: mountedTextView().map { "\(Int($0.contentSize.height))" } ?? "")
                 .font(.caption2)
                 .accessibilityIdentifier("media.contentHeight")
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// `--native-slow-disk`: "idle" once every typed key reached the journal, so
+/// the relaunch test terminates only after the slow appends (polled).
+private struct InFlightReadout: View {
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.2)) { _ in
+            Text(verbatim: mountedTextView()?.inputCoordinator?.hasInFlightWork == true ? "busy" : "idle")
+                .font(.caption2)
+                .accessibilityIdentifier("replica.inFlight")
         }
         .allowsHitTesting(false)
     }

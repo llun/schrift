@@ -299,6 +299,40 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(waitForText(of: editor, containing: "durableproof"), text(of: editor))
     }
 
+    /// PR08b option A under `--native-slow-disk` (every journal append 60 ms
+    /// slower): keys typed faster than the disk are shown at once and
+    /// journaled in order behind it, Return is a barrier the keys after it wait
+    /// for, and a relaunch restores every key in order.
+    func testRapidTypingUnderSlowDiskSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-slow-disk"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        focusFirstParagraph(of: editor, in: app)
+        let before = text(of: editor).components(separatedBy: "\n")
+        editor.typeText("rapidkeys")
+        editor.typeText("\n")
+        editor.typeText("afterbarrier")
+        XCTAssertTrue(waitForText(of: editor, containing: "afterbarrier"), text(of: editor))
+        XCTAssertFalse(app.staticTexts["nativeEditor.inputNotice"].exists, "no key was refused or dropped")
+        let after = text(of: editor).components(separatedBy: "\n")
+        XCTAssertEqual(after.count, before.count + 1, after.prefix(3).joined(separator: "|"))
+        let split = after.firstIndex { $0.hasSuffix("rapidkeys") }
+        XCTAssertNotNil(split, after.prefix(3).joined(separator: "|"))
+        if let split { XCTAssertTrue(after[split + 1].hasPrefix("afterbarrier"), after[split + 1]) }
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 10))
+        // Shown is not yet journaled: terminate only once the slow appends drained.
+        let idle = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "idle"), object: app.staticTexts["replica.inFlight"])
+        XCTAssertEqual(XCTWaiter.wait(for: [idle], timeout: 15), .completed)
+        app.terminate()
+
+        app.launchArguments = ["--native-open"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertEqual(text(of: editor).components(separatedBy: "\n"), after, "the journal holds every key in order")
+    }
+
     /// Synthetic marked text (the host's `--native-ime` buttons) in the real
     /// running route with the keyboard up: one durable commit, then a process
     /// kill mid-composition. The relaunch shows the recovery banner, never

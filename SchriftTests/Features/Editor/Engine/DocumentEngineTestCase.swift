@@ -12,9 +12,9 @@ class DocumentEngineTestCase: XCTestCase {
         ("textAlignment", .string("left")),
     ]
 
-    static let firstID = "b0000000-0000-4000-8000-000000000001"
-    static let secondID = "b0000000-0000-4000-8000-000000000002"
-    static let thirdID = "b0000000-0000-4000-8000-000000000003"
+    nonisolated static let firstID = "b0000000-0000-4000-8000-000000000001"
+    nonisolated static let secondID = "b0000000-0000-4000-8000-000000000002"
+    nonisolated static let thirdID = "b0000000-0000-4000-8000-000000000003"
 
     /// Three paragraphs, the second carrying a bold run — the C2 seed shape.
     static func seedBlocks() -> [BlockNoteBlock] {
@@ -35,7 +35,7 @@ class DocumentEngineTestCase: XCTestCase {
 
     /// One seed, one client id: every replica in a test must start from the
     /// *same* bytes, or the two sides are different documents.
-    static let seedClientID: UInt32 = 1
+    nonisolated static let seedClientID: UInt32 = 1
 
     func makeDoc(_ blocks: [BlockNoteBlock] = seedBlocks(), clientID: UInt32) throws -> YDoc {
         let doc = YDoc(clientID: UInt(clientID), gc: true)

@@ -1,0 +1,172 @@
+import Foundation
+
+/// One command a surface sends its replica session (PR08b).
+///
+/// `predicted` is option A's optimistic typing: the surface already shows it
+/// (same-block typing only). The session rebases it through changes the
+/// surface had not seen when it predicted (`TextDelta.rebase`, the same
+/// function the surface uses) or, when that is impossible, invalidates the
+/// surface's epoch. Everything else is a barrier: the surface shows it when
+/// the result arrives, and a barrier that meets an unseen change is `.stale`
+/// (the surface retries it once).
+struct ReplicaCommand: Sendable {
+    let surfaceID: UUID
+    let epoch: UInt64
+    let predicted: Bool
+    /// `baseRevision` is the revision the surface's canonical display showed
+    /// when it sent this; the session re-stamps it with its own revision.
+    let command: NativeEditCommand
+    /// The undo grouping the surface decided: a step boundary before and/or
+    /// after the command (`ReplicaHistory.stopCapturing`).
+    let undoBefore: Bool
+    let undoAfter: Bool
+}
+
+/// A block-menu action the surface would apply, and the command it would
+/// send for it (nil for Copy, which needs a lossless payload instead).
+struct ReplicaAvailabilityCandidate: Sendable {
+    let action: NativeBlockAction
+    let kind: NativeEditCommand.Kind?
+}
+
+/// Main → session, in order. Every message is handled synchronously on the
+/// session: no await between the engine call, the journal append and the
+/// delivery yield.
+enum ReplicaMessage: Sendable {
+    case command(ReplicaCommand)
+    /// The surface's selection, `seq` increasing per surface, in display
+    /// coordinates at `baseRevision`.
+    case select(surfaceID: UUID, seq: UInt64, baseRevision: UInt64, EditorSelection?)
+    case compositionBegin(surfaceID: UUID, baseRevision: UInt64, blockID: String, range: Range<Int>)
+    case compositionCommit(surfaceID: UUID, commandID: UUID, text: String)
+    case compositionCancel(surfaceID: UUID)
+    /// The surface's IME recovery entries, written to `provisional.json`.
+    case writeProvisional([ProvisionalRecovery])
+    /// Server state merged into the replica: journaled before its patches
+    /// are delivered.
+    case integrate(Data, reply: (@Sendable (Result<Void, any Error>) -> Void)?)
+    case requestAvailability(surfaceID: UUID, blockID: String, candidates: [ReplicaAvailabilityCandidate])
+    case copyPayload(surfaceID: UUID, requestID: UUID, blockIDs: [String])
+    /// Installs the journal (nil makes the session read-only) and the shared
+    /// history.
+    case setWritable(DocumentReplicaSession.Journal?)
+    /// A marker delivered back to the surface once everything before it was
+    /// handled (tests' `settle`, a close's flush).
+    case drain(surfaceID: UUID, token: UUID)
+    case detach(surfaceID: UUID)
+    case close
+    /// Tests only: runs on the session in mailbox order, with the live graph
+    /// (nil once the session closed).
+    case inspect(@Sendable (DocumentEngine?, YDoc?, ReplicaHistory?) -> Void)
+
+    /// A message that carries a reply, answered when it cannot be handled so
+    /// no awaiting caller hangs.
+    func cancel() {
+        switch self {
+        case .integrate(_, let reply): reply?(.failure(DocumentEngineError.detached))
+        case .inspect(let body): body(nil, nil, nil)
+        default: break
+        }
+    }
+}
+
+/// The session's answer for one command.
+enum ReplicaResult: Sendable, Equatable {
+    /// Journaled (or, for a history step, `journaled` false when nothing
+    /// changed). `caret` is where a structural command puts the caret.
+    case applied(commandID: UUID, caret: EditorPosition?, journaled: Bool)
+    /// The engine refused it before writing anything.
+    case refused(commandID: UUID, DocumentEngineError?)
+    /// A barrier met a change its surface had not seen: retry it once.
+    case stale(commandID: UUID)
+    /// A predicted command could not be rebased (or was refused): every
+    /// command of the surface's old epoch is dropped and `epoch` is current.
+    case invalidated(epoch: UInt64, commandID: UUID)
+    /// The append failed; the engine is frozen.
+    case failed(commandID: UUID)
+    case composition(commandID: UUID?, CompositionResult)
+
+    enum CompositionResult: Sendable, Equatable {
+        case committed, orphaned, cancelled, failed
+    }
+}
+
+/// The selection resolved on the session after a delivery's changes, for the
+/// surface's selection `seq`.
+struct ReplicaSelection: Sendable, Equatable {
+    let seq: UInt64
+    let anchor: EditorPosition?
+    let head: EditorPosition?
+    /// False when the session holds no selection.
+    let tracked: Bool
+}
+
+/// What the surface mirrors: the shared history's stacks and whether
+/// authoring is possible.
+struct ReplicaState: Sendable, Equatable {
+    var canUndo = false
+    var canRedo = false
+    var writable = false
+    /// A failed append or an unjournaled transaction: authoring stopped.
+    var frozen = false
+    var detached = false
+}
+
+struct ReplicaTimings: Sendable, Equatable {
+    /// The engine call, including the journal append.
+    let engine: Duration
+    /// The journal append alone.
+    let journal: Duration
+}
+
+/// Session → one surface, in order.
+struct ReplicaDelivery: Sendable {
+    enum Event: Sendable {
+        /// `settled` holds each `.text`/`.props` block's projection right after
+        /// the patch (the surface's former `reprojectBlock`).
+        case patch(BlockPatch, settled: [String: BlockSnapshot])
+        case compositionDeferred(Bool)
+    }
+
+    var revision: UInt64
+    var events: [Event] = []
+    var result: ReplicaResult?
+    var selection: ReplicaSelection?
+    var state: ReplicaState
+    var availability: (blockID: String, revision: UInt64, actions: [NativeBlockAction])?
+    var clipboard: (requestID: UUID, payload: Data?)?
+    var drained: UUID?
+    var timings: ReplicaTimings?
+}
+
+/// The main → session channel: one ordered, bounded stream. A full mailbox
+/// drops the message; the poster freezes authoring rather than lose input
+/// silently (`post` returns false).
+final class ReplicaCommandMailbox: Sendable {
+    static let capacity = 256
+
+    let stream: AsyncStream<ReplicaMessage>
+    private let continuation: AsyncStream<ReplicaMessage>.Continuation
+
+    init() {
+        (stream, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingOldest(Self.capacity))
+    }
+
+    @discardableResult
+    func post(_ message: ReplicaMessage) -> Bool {
+        switch continuation.yield(message) {
+        case .enqueued: return true
+        case .dropped(let dropped):
+            dropped.cancel()
+            return false
+        case .terminated:
+            message.cancel()
+            return false
+        @unknown default:
+            message.cancel()
+            return false
+        }
+    }
+
+    func finish() { continuation.finish() }
+}

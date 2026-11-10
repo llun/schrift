@@ -28,13 +28,26 @@ final class NativeCompositionSession {
         case failed
     }
 
-    private let engine: DocumentEngine
+    /// The replica session's side (PR08b): begin, commit and cancel are posted
+    /// in order, and the recovery file is written there.
+    struct Port {
+        let begin: (_ blockID: String, _ range: Range<Int>) -> Void
+        let commit: (_ commandID: UUID, _ text: String) -> Void
+        let cancel: () -> Void
+        let writeRecoveries: ([ProvisionalRecovery]) -> Void
+    }
+
     private let surface: NativeTextSurface
     private weak var view: NativeTextView?
-    private let persist: (NativeEditCommand, Data) throws -> Void
-    private let recoveryStore: (store: ReplicaStore, scope: ReplicaScope)?
+    private let port: Port
+    private let hasRecoveryStore: Bool
+    /// Whether authoring is possible (not frozen or closed).
+    private let canAuthor: () -> Bool
 
     private(set) var isActive = false
+    /// A commit or cancel was posted and its result has not arrived: the
+    /// surface stays frozen and input waits.
+    private(set) var isResolving = false
     /// The last marked string UIKit reported, used when `unmarkText` commits
     /// without naming the text.
     private(set) var provisionalText = ""
@@ -43,44 +56,44 @@ final class NativeCompositionSession {
     private var recoveries: [ProvisionalRecovery]
     private var commandID = UUID()
     private var blockID: String?
+    /// The text of the commit in flight, kept for an orphaned result.
+    private var committing: (id: UUID, text: String)?
+    private var keepsRecoveryOnCancel = false
 
     /// Recovery the user still has to resolve, oldest first.
     var pendingRecoveries: [ProvisionalRecovery] {
-        recoveries.filter { !(isActive && $0.commandID == commandID) }
+        recoveries.filter { !((isActive || isResolving) && $0.commandID == commandID) }
     }
 
     init(
-        engine: DocumentEngine, surface: NativeTextSurface, view: NativeTextView,
-        persist: @escaping (NativeEditCommand, Data) throws -> Void,
-        recoveryStore: (store: ReplicaStore, scope: ReplicaScope)? = nil
+        surface: NativeTextSurface, view: NativeTextView, port: Port, recoveries: [ProvisionalRecovery],
+        hasRecoveryStore: Bool, canAuthor: @escaping () -> Bool
     ) {
-        self.engine = engine
         self.surface = surface
         self.view = view
-        self.persist = persist
-        self.recoveryStore = recoveryStore
-        recoveries = recoveryStore.map { $0.store.provisionalRecoveries(for: $0.scope) } ?? []
+        self.port = port
+        self.recoveries = recoveries
+        self.hasRecoveryStore = hasRecoveryStore
+        self.canAuthor = canAuthor
     }
 
     /// Called before UIKit applies a marked range. Returns false when the
     /// composition cannot be supported (a multi-block selection, an opaque or
     /// placeholder target, or an invalid range); the caller then keeps the
-    /// preserved read-only refusal and never lets provisional text in.
+    /// preserved read-only refusal and never lets provisional text in. The
+    /// begin is posted; a target the session cannot capture comes back as an
+    /// orphaned commit.
     func begin(markedText: String) -> Bool {
         guard !isActive else {
             record(markedText, state: .composing)
             return true
         }
-        guard let view, view.isEditable, !engine.nativeWriteFailed, !engine.isDetached,
-            let target = replacementTarget(in: view)
-        else { return false }
-        surface.provisionalBlockID = target.blockID
-        do {
-            try engine.compositionBegan(blockID: target.blockID, replacing: target.range)
-        } catch {
-            surface.provisionalBlockID = nil
+        guard let view, view.isEditable, canAuthor(), !isResolving, let target = replacementTarget(in: view) else {
             return false
         }
+        surface.provisionalBlockID = target.blockID
+        surface.holdForComposition(true)
+        port.begin(target.blockID, target.range)
         isActive = true
         blockID = target.blockID
         commandID = UUID()
@@ -88,43 +101,24 @@ final class NativeCompositionSession {
         return true
     }
 
-    /// Commits `text` (default: the last marked string) as one durable command.
-    /// UIKit must already have cleared its marked state; the engine's rebuild
-    /// reconciles storage to the projection.
+    /// Commits `text` (default: the last marked string) as one durable command,
+    /// a barrier: the session's rebuild reconciles storage to the projection
+    /// when the result arrives. UIKit must already have cleared its marked state.
     @discardableResult
-    func commit(text: String? = nil) -> Outcome {
-        guard isActive else { return .failed }
+    func commit(text: String? = nil) -> Bool {
+        guard isActive else { return false }
         let replacement = text ?? provisionalText
-        guard !replacement.isEmpty else { return cancel() ? .committed : .failed }
-        let id = commandID
+        guard !replacement.isEmpty else { return cancel() }
         isActive = false
+        isResolving = true
         provisionalText = ""
         blockID = nil
-        do {
-            switch try engine.compositionCommitted(text: replacement, commandID: id, persist: persist) {
-            case .committed:
-                remove(id)
-                restoreSelection()
-                return .committed
-            case .orphaned:
-                if let index = recoveries.firstIndex(where: { $0.commandID == id }) {
-                    recoveries[index].text = replacement
-                    recoveries[index].state = .orphaned
-                    save()
-                }
-                return .orphaned(replacement)
-            }
-        } catch {
-            // A boundary refusal leaves the engine composing; end it so the
-            // surface unfreezes. A failed append keeps the entry on disk: the
-            // text was not durably written, so the next open offers recovery.
-            if engine.isComposing { try? engine.compositionCancelled() }
-            restoreSelection()
-            return .failed
-        }
+        committing = (commandID, replacement)
+        port.commit(commandID, replacement)
+        return true
     }
 
-    /// No write. The engine rebuilds and the caret returns to where the
+    /// No write. The session rebuilds and the caret returns to where the
     /// composition began; the provisional entry is dropped.
     @discardableResult
     func cancel() -> Bool {
@@ -140,17 +134,53 @@ final class NativeCompositionSession {
 
     private func end(keepingRecovery: Bool) -> Bool {
         guard isActive else { return false }
-        do {
-            try engine.compositionCancelled()
-        } catch {
-            return false
-        }
         isActive = false
+        isResolving = true
         provisionalText = ""
         blockID = nil
-        if !keepingRecovery { remove(commandID) }
-        restoreSelection()
+        keepsRecoveryOnCancel = keepingRecovery
+        port.cancel()
         return true
+    }
+
+    /// The session's answer for the commit or cancel in flight. Returns the
+    /// commit's outcome (nil for a cancel).
+    func resolve(_ result: ReplicaResult.CompositionResult, caret: EditorPosition?) -> Outcome? {
+        guard isResolving else { return nil }
+        isResolving = false
+        let commit = committing
+        committing = nil
+        surface.holdForComposition(false)
+        defer { restoreSelection(caret) }
+        switch result {
+        case .cancelled:
+            if !keepsRecoveryOnCancel { remove(commandID) }
+            keepsRecoveryOnCancel = false
+            return nil
+        case .committed:
+            if let commit { remove(commit.id) }
+            return .committed
+        case .orphaned:
+            guard let commit else { return nil }
+            if let index = recoveries.firstIndex(where: { $0.commandID == commit.id }) {
+                recoveries[index].text = commit.text
+                recoveries[index].state = .orphaned
+                save()
+            }
+            return .orphaned(commit.text)
+        case .failed:
+            // A failed append keeps the entry on disk: the text was not durably
+            // written, so the next open offers recovery.
+            return .failed
+        }
+    }
+
+    /// Text the editor dropped (a rolled-back prediction, held keys) becomes
+    /// an orphaned entry, like a commit whose target vanished.
+    func recover(_ text: String, blockID: String) {
+        guard !text.isEmpty else { return }
+        recoveries.append(ProvisionalRecovery(commandID: UUID(), blockID: blockID, text: text, state: .orphaned))
+        save()
     }
 
     /// The user resolved a recovery entry (inserted, copied or discarded it).
@@ -179,13 +209,14 @@ final class NativeCompositionSession {
     /// Recovery text is a convenience copy, never committed content: a failed
     /// write must not block typing, and the journal path reports disk failures.
     private func save() {
-        guard let recoveryStore else { return }
-        try? recoveryStore.store.writeProvisionalRecoveries(recoveries, for: recoveryStore.scope)
+        guard hasRecoveryStore else { return }
+        port.writeRecoveries(recoveries)
     }
 
     /// The block-relative replacement range of the current selection. Both
     /// endpoints must sit inside one block's text: a cross-block selection is
-    /// not a supported composition.
+    /// not a supported composition. An opaque block or one the writer has no
+    /// schema for cannot compose either.
     private func replacementTarget(in view: NativeTextView) -> (blockID: String, range: Range<Int>)? {
         let selection = view.selectedRange
         guard selection.location >= 0, selection.length >= 0,
@@ -196,6 +227,7 @@ final class NativeCompositionSession {
             selection.location >= entry.textRange.location,
             NSMaxRange(selection) <= NSMaxRange(entry.textRange),
             !AttributedDocumentProjection.isPlaceholder(surface.blocks[position]),
+            BlockNoteWriter.nativePropSchemas[surface.blocks[position].node] != nil,
             // Folded content is never edited (PR06b): the engine knows nothing of folding.
             !surface.isHidden(position: position)
         else { return nil }
@@ -205,12 +237,10 @@ final class NativeCompositionSession {
         )
     }
 
-    /// The engine resolves the caret against the replica, so a peer edit during
-    /// the composition still lands the caret after the committed text.
-    private func restoreSelection() {
-        guard let view, let caret = (try? engine.currentSelection())?.head,
-            let entry = surface.rangeIndex.entry(for: caret.blockID)
-        else { return }
+    /// The session resolves the caret against the replica, so a peer edit
+    /// during the composition still lands the caret after the committed text.
+    private func restoreSelection(_ caret: EditorPosition?) {
+        guard let view, let caret, let entry = surface.rangeIndex.entry(for: caret.blockID) else { return }
         let offset = min(max(0, caret.offset), entry.textRange.length)
         view.selectedRange = NSRange(location: entry.textRange.location + offset, length: 0)
     }

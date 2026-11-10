@@ -90,9 +90,9 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
 
     // MARK: - Every type renders
 
-    func testEveryBlockTypeRendersFromTheReplicaWithoutMarkers() throws {
-        let harness = try makeHarness(everyType)
-        defer { harness.close() }
+    func testEveryBlockTypeRendersFromTheReplicaWithoutMarkers() async throws {
+        let harness = try await makeHarness(everyType)
+        addTeardownBlock { await harness.close() }
         let window = host(harness)
         defer { window.isHidden = true }
         let session = harness.session
@@ -134,7 +134,7 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
         }
         XCTAssertEqual(Set(session.surface.blocks.map(\.node)).isSuperset(of: types), true)
         assertNoMarkers(try replayedXML(harness))
-        try assertConsistent(harness, localCommands: 0)
+        try await assertConsistent(harness, localCommands: 0)
     }
 
     /// The widening is the native reading only: the classic projection (live
@@ -158,9 +158,9 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
 
     /// A divider and a page break are different blocks with different chrome,
     /// and neither has text to type into.
-    func testDividerAndPageBreakStayDistinct() throws {
-        let harness = try makeHarness([paragraph("a", "Above"), node("divider", "d"), node("pageBreak", "pb")])
-        defer { harness.close() }
+    func testDividerAndPageBreakStayDistinct() async throws {
+        let harness = try await makeHarness([paragraph("a", "Above"), node("divider", "d"), node("pageBreak", "pb")])
+        addTeardownBlock { await harness.close() }
         let window = host(harness)
         defer { window.isHidden = true }
         XCTAssertEqual(harness.session.surface.blocks.map(\.node), ["paragraph", "divider", "pageBreak"])
@@ -173,12 +173,13 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
         for id in ["d", "pb"] {
             setSelection(harness, NSRange(location: try location(harness.session, id, 0), length: 0))
             harness.view.insertText("x")
+            await harness.settle()
             XCTAssertEqual(harness.input.noticeKey, .native_editor_input_unavailable, id)
         }
         let xml = try replayedXML(harness)
         XCTAssertTrue(xml.contains(#"<divider></divider>"#), xml)
         XCTAssertTrue(xml.contains(#"<pagebreak></pagebreak>"#), xml)
-        try assertConsistent(harness, localCommands: 0)
+        try await assertConsistent(harness, localCommands: 0)
     }
 
     /// The fragment's chrome alone (no text), as RGBA bytes.
@@ -203,62 +204,74 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
 
     // MARK: - Checkbox
 
-    func testCheckboxTapIsOnePropOnlyCommand() throws {
-        let harness = try makeHarness([paragraph("p", "Intro"), check("task", "Buy milk")])
-        defer { harness.close() }
+    func testCheckboxTapIsOnePropOnlyCommand() async throws {
+        let harness = try await makeHarness([paragraph("p", "Intro"), check("task", "Buy milk")])
+        addTeardownBlock { await harness.close() }
         let window = host(harness)
         defer { window.isHidden = true }
         let session = harness.session
-        let recorder = PresentationPatchRecorder(session.surface)
-        session.engine.surface = recorder
+        let recorder = PatchLog(session)
         setSelection(harness, NSRange(location: 2, length: 0))
         let button = try XCTUnwrap(harness.view.blockControls.checkboxes["task"])
 
         button.sendActions(for: .primaryActionTriggered)
+        await harness.settle()
         XCTAssertEqual(
             harness.log.commands.last?.kind, .props([ProjectedProp(key: "checked", value: .bool(true))]))
         XCTAssertTrue(try block(session, "task").props.contains(ProjectedProp(key: "checked", value: .bool(true))))
         XCTAssertEqual(try block(session, "task").node, "checkListItem", "never a type change")
         XCTAssertEqual(text(of: try block(session, "task")), "Buy milk")
         XCTAssertEqual(harness.view.selectedRange, NSRange(location: 2, length: 0), "the caret stays")
-        XCTAssertTrue(recorder.isPropsOnly, "\(recorder.patches)")
+        XCTAssertEqual(recorder.kinds, ["props"])
         XCTAssertEqual(try attribute(harness, .nativeChecked, "task") as? Bool, true)
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
 
         harness.view.layoutIfNeeded()
         harness.view.blockControls.checkboxes["task"]?.sendActions(for: .primaryActionTriggered)
+        await harness.settle()
         XCTAssertEqual(
             harness.log.commands.last?.kind, .props([ProjectedProp(key: "checked", value: .bool(false))]))
         XCTAssertEqual(try attribute(harness, .nativeChecked, "task") as? Bool, false)
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
     }
 
     /// The same attribute struct BlockNote's `updateBlock` writes for a tick.
-    func testCheckboxToggleMatchesTheNodeCapture() throws {
+    func testCheckboxToggleMatchesTheNodeCapture() async throws {
         let capture = try XCTUnwrap(BlockNoteWriterCaptures.captures["check-toggle"])
         let seed = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(BlockNoteWriterCaptures.seeds[capture.seed])))
-        let session = try NativeEditorSession(state: seed) { YDoc(clientID: 2, gc: false) }
-        defer { session.close() }
-        var updates: [Data] = []
-        session.enableTyping { _, update in updates.append(update) }
-        XCTAssertTrue(try XCTUnwrap(session.input).toggleCheckbox(blockID: "k-3"))
-        XCTAssertEqual(updates.map { $0.base64EncodedString() }, ["AQECAKgBCwF4AQEBCwE="], "BlockNote's bytes")
-        try assertConverges(seed: seed, updates, xml: capture.xml)
+        let session = try await NativeEditorSession.seed(state: seed, clientID: 2, gc: false)
+        addTeardownBlock { await session.close().value }
+        let updates = Locked<[Data]>([])
+        session.enableTyping(persist: { _, update in updates.update { $0.append(update) } })
+        let input = try XCTUnwrap(session.input)
+        let toggled = await session.run { input.toggleCheckbox(blockID: "k-3") }
+        XCTAssertTrue(toggled)
+        XCTAssertEqual(updates.value.map { $0.base64EncodedString() }, ["AQECAKgBCwF4AQEBCwE="], "BlockNote's bytes")
+        try assertConverges(seed: seed, updates.value, xml: capture.xml)
     }
 
-    func testHeadingLevelPropMatchesTheNodeCapture() throws {
+    func testHeadingLevelPropMatchesTheNodeCapture() async throws {
         let capture = try XCTUnwrap(BlockNoteWriterCaptures.captures["heading-level"])
         let seed = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(BlockNoteWriterCaptures.seeds[capture.seed])))
-        let session = try NativeEditorSession(state: seed) { YDoc(clientID: 2, gc: false) }
-        defer { session.close() }
-        var updates: [Data] = []
-        try session.engine.applyStructural(
-            NativeEditCommand(
-                id: UUID(), baseRevision: 0, blockID: "h-3", kind: .props([ProjectedProp(key: "level", value: .int(2))])
-            )
-        ) { updates.append($0) }
-        XCTAssertEqual(updates.map { $0.base64EncodedString() }, ["AQECAKgBCwF9AgEBAQsB"])
-        try assertConverges(seed: seed, updates, xml: capture.xml)
+        let session = try await NativeEditorSession.seed(state: seed, clientID: 2, gc: false)
+        addTeardownBlock { await session.close().value }
+        let updates = Locked<[Data]>([])
+        let command = NativeEditCommand(
+            id: UUID(), baseRevision: 0, blockID: "h-3", kind: .props([ProjectedProp(key: "level", value: .int(2))])
+        )
+        let error = await session.engine { engine -> DocumentEngineError? in
+            do {
+                try engine.applyStructural(command) { update in
+                    updates.update { $0.append(update) }
+                }
+                return nil
+            } catch {
+                return error as? DocumentEngineError
+            }
+        }
+        XCTAssertNil(error)
+        XCTAssertEqual(updates.value.map { $0.base64EncodedString() }, ["AQECAKgBCwF9AgEBAQsB"])
+        try assertConverges(seed: seed, updates.value, xml: capture.xml)
     }
 
     private func assertConverges(
@@ -274,15 +287,14 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
 
     // MARK: - Props are validated intents
 
-    func testPropEditsAreValidatedBeforeArming() throws {
-        let harness = try makeHarness([
+    func testPropEditsAreValidatedBeforeArming() async throws {
+        let harness = try await makeHarness([
             check("task", "Task"), numbered("n", "One"), code("code", "x"), paragraph("p", "Plain"),
             node(
                 "callout", "co", "Note",
                 [("textAlignment", .string("left")), ("backgroundColor", .string("default")), ("emoji", .string("💡"))]),
         ])
-        defer { harness.close() }
-        let engine = harness.session.engine
+        addTeardownBlock { await harness.close() }
         let refused: [(String, [ProjectedProp])] = [
             ("task", [ProjectedProp(key: "checked", value: .string("yes"))]),
             ("task", [ProjectedProp(key: "start", value: .int(2))]),
@@ -296,16 +308,26 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
             ("p", []),
         ]
         for (id, props) in refused {
-            XCTAssertThrowsError(
-                try engine.applyStructural(
-                    NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: id, kind: .props(props))
-                ) { _ in XCTFail("refused before any write") }, "\(id) \(props)"
-            ) { XCTAssertEqual($0 as? DocumentEngineError, .unsupportedNativeInput) }
+            let error = await harness.engine { engine -> DocumentEngineError? in
+                do {
+                    try engine.applyStructural(
+                        NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: id, kind: .props(props))
+                    ) { _ in }
+                    return nil
+                } catch {
+                    return error as? DocumentEngineError
+                }
+            }
+            XCTAssertEqual(error, .unsupportedNativeInput, "\(id) \(props)")
         }
-        XCTAssertTrue(harness.input.setCodeLanguage(blockID: "code", language: "swift"))
-        XCTAssertTrue(harness.input.setCalloutEmoji(blockID: "co", emoji: "🔥"))
-        XCTAssertTrue(harness.input.setCodeLanguage(blockID: "code", language: "swift"), "unchanged writes nothing")
-        XCTAssertFalse(harness.input.setCodeLanguage(blockID: "p", language: "swift"))
+        let lang1 = await harness.run { harness.input.setCodeLanguage(blockID: "code", language: "swift") }
+        XCTAssertTrue(lang1)
+        let emoji = await harness.run { harness.input.setCalloutEmoji(blockID: "co", emoji: "🔥") }
+        XCTAssertTrue(emoji)
+        let lang2 = await harness.run { harness.input.setCodeLanguage(blockID: "code", language: "swift") }
+        XCTAssertTrue(lang2, "unchanged writes nothing")
+        let lang3 = await harness.run { harness.input.setCodeLanguage(blockID: "p", language: "swift") }
+        XCTAssertFalse(lang3)
         XCTAssertEqual(
             harness.log.commands.map(\.kind),
             [
@@ -314,62 +336,69 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
             ])
         XCTAssertEqual(try attribute(harness, .nativeCodeLanguage, "code") as? String, "swift")
         XCTAssertEqual(try attribute(harness, .nativeCalloutEmoji, "co") as? String, "🔥")
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
     }
 
     // MARK: - Numbering
 
     /// BlockNote's numbering: a run starts at its first item's `start`; a
     /// later item's start is ignored; anything else breaks the run.
-    func testNumberStartsFollowBlockNote() throws {
-        let harness = try makeHarness([
+    func testNumberStartsFollowBlockNote() async throws {
+        let harness = try await makeHarness([
             numbered("a", "A", start: 3), numbered("b", "B"), numbered("c", "C", start: 9), paragraph("p", "Break"),
             numbered("d", "D"), numbered("e", "E"),
         ])
-        defer { harness.close() }
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         func numbers() throws -> [Int?] {
             try ["a", "b", "c", "d", "e"].map { try attribute(harness, .nativeListNumber, $0) as? Int }
         }
         XCTAssertEqual(try numbers(), [3, 4, 5, 1, 2])
 
-        XCTAssertTrue(harness.input.setNumberStart(blockID: "a", start: 10))
+        let started = await harness.run { harness.input.setNumberStart(blockID: "a", start: 10) }
+        XCTAssertTrue(started)
         XCTAssertEqual(harness.log.commands.last?.kind, .props([ProjectedProp(key: "start", value: .int(10))]))
         XCTAssertEqual(try numbers(), [10, 11, 12, 1, 2])
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
 
         // A split inserts an item mid-run: everything after renumbers.
         setSelection(harness, NSRange(location: try location(session, "b", 1), length: 0))
         harness.view.insertText("\n")
+        await harness.settle()
         XCTAssertEqual(session.surface.blocks.map(\.node).filter { $0 == "numberedListItem" }.count, 6)
         XCTAssertEqual(try numbers(), [10, 11, 13, 1, 2])
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
 
         // Turning the paragraph into a list item joins the two runs.
         setSelection(harness, NSRange(location: try location(session, "p", 0), length: 0))
         harness.view.insertText("/")
+        await harness.settle()
         let numberedItem = try XCTUnwrap(NativeInputCoordinator.slashItems.first { $0.id == "numbered" })
-        XCTAssertTrue(harness.input.applySlashItem(numberedItem))
+        let applied = await harness.run { harness.input.applySlashItem(numberedItem) }
+        XCTAssertTrue(applied)
         XCTAssertEqual(try numbers(), [10, 11, 13, 15, 16])
-        try assertConsistent(harness, localCommands: 4)
+        try await assertConsistent(harness, localCommands: 4)
 
-        XCTAssertTrue(harness.input.setNumberStart(blockID: "a", start: nil))
+        let unset = await harness.run { harness.input.setNumberStart(blockID: "a", start: nil) }
+        XCTAssertTrue(unset)
         XCTAssertEqual(harness.log.commands.last?.kind, .props([ProjectedProp(key: "start", value: .undefined)]))
         XCTAssertEqual(try numbers(), [1, 2, 4, 6, 7])
-        try assertConsistent(harness, localCommands: 5)
+        try await assertConsistent(harness, localCommands: 5)
     }
 
     // MARK: - Code
 
-    func testReturnInCodeInsertsALineBreakInTheSameBlock() throws {
-        let harness = try makeHarness([code("code", "let a = 1"), paragraph("p", "After")])
-        defer { harness.close() }
+    func testReturnInCodeInsertsALineBreakInTheSameBlock() async throws {
+        let harness = try await makeHarness([code("code", "let a = 1"), paragraph("p", "After")])
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         setSelection(harness, NSRange(location: try location(session, "code", 9), length: 0))
         harness.view.insertText("\n")
+        await harness.settle()
         XCTAssertEqual(
             harness.log.commands.last?.kind, .replace(range: 9..<9, replacement: "\n", marks: nil))
         harness.view.insertText("let b = 2")
+        await harness.settle()
         XCTAssertEqual(session.surface.blocks.map(\.id), ["code", "p"], "no block was created")
         XCTAssertEqual(text(of: try block(session, "code")), "let a = 1\nlet b = 2")
         XCTAssertEqual(
@@ -377,18 +406,20 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
         // Backspace after the line break deletes it, still inside the block.
         setSelection(harness, NSRange(location: try location(session, "code", 10), length: 0))
         harness.view.deleteBackward()
+        await harness.settle()
         XCTAssertEqual(text(of: try block(session, "code")), "let a = 1let b = 2")
-        try assertConsistent(harness, localCommands: 3)
+        try await assertConsistent(harness, localCommands: 3)
         XCTAssertTrue(try replayedXML(harness).contains(#"<codeblock language="text">let a = 1let b = 2</codeblock>"#))
     }
 
-    func testMultiLinePasteInCodeStaysInTheBlockAndCopiesBack() throws {
-        let harness = try makeHarness([code("code", "start"), paragraph("p", "After")])
-        defer { harness.close() }
+    func testMultiLinePasteInCodeStaysInTheBlockAndCopiesBack() async throws {
+        let harness = try await makeHarness([code("code", "start"), paragraph("p", "After")])
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         setSelection(harness, NSRange(location: try location(session, "code", 5), length: 0))
         harness.pasteboard.string = "\r\nfunc a() {\r\n    1\r\n}"
-        XCTAssertTrue(harness.input.pasteFromPasteboard())
+        let pasted = await harness.run { harness.input.pasteFromPasteboard() }
+        XCTAssertTrue(pasted)
         XCTAssertEqual(harness.log.commands.count, 1)
         XCTAssertEqual(session.surface.blocks.map(\.id), ["code", "p"])
         XCTAssertEqual(text(of: try block(session, "code")), "start\nfunc a() {\n    1\n}")
@@ -400,13 +431,14 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
         let entry = try XCTUnwrap(session.surface.rangeIndex.entry(for: "code"))
         setSelection(harness, entry.textRange)
         harness.input.copySelection()
+        await harness.settle()
         XCTAssertEqual(harness.pasteboard.string, "start\nfunc a() {\n    1\n}")
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
     }
 
     // MARK: - Slash menu
 
-    func testSlashMenuChangesTheBlockTypeInOneCommandEach() throws {
+    func testSlashMenuChangesTheBlockTypeInOneCommandEach() async throws {
         let expected: [(String, String, Int?)] = [
             ("heading1", "heading", 1), ("heading2", "heading", 2), ("heading3", "heading", 3),
             ("bullet", "bulletListItem", nil), ("numbered", "numberedListItem", nil),
@@ -421,15 +453,17 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
             ],
             "divider, photo and file wait for later slices; the toggles are NativeToggleTests'")
         for (itemID, node, level) in expected {
-            let harness = try makeHarness([paragraph("p", "Above"), paragraph("s", "")])
-            defer { harness.close() }
+            let harness = try await makeHarness([paragraph("p", "Above"), paragraph("s", "")])
+            addTeardownBlock { await harness.close() }
             let session = harness.session
             setSelection(harness, NSRange(location: try location(session, "s", 0), length: 0))
             harness.view.insertText("/")
             harness.view.insertText("h")
+            await harness.settle()
             XCTAssertEqual(harness.input.slashMenuQuery, "h", itemID)
             let item = try XCTUnwrap(NativeInputCoordinator.slashItems.first { $0.id == itemID })
-            XCTAssertTrue(harness.input.applySlashItem(item), itemID)
+            let applied = await harness.run { harness.input.applySlashItem(item) }
+            XCTAssertTrue(applied, itemID)
             let props = level.map { [ProjectedProp(key: "level", value: .int($0))] } ?? []
             XCTAssertEqual(
                 harness.log.commands.last?.kind, .blockType(node: node, props: props, removing: 0..<2), itemID)
@@ -441,104 +475,121 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
             }
             XCTAssertNil(harness.input.slashMenuQuery, itemID)
             XCTAssertEqual(harness.view.selectedRange.location, try location(session, "s", 0), itemID)
-            try assertConsistent(harness, localCommands: 3)
+            try await assertConsistent(harness, localCommands: 3)
+            await harness.close()
         }
     }
 
-    func testSlashMenuIsOnlyForAParagraphThatIsTheCommand() throws {
-        let harness = try makeHarness([
+    func testSlashMenuIsOnlyForAParagraphThatIsTheCommand() async throws {
+        let harness = try await makeHarness([
             headingBlock("h", "/head", level: 2), paragraph("p", "Text /h"), paragraph("s", "/"),
         ])
-        defer { harness.close() }
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         let heading = try XCTUnwrap(NativeInputCoordinator.slashItems.first { $0.id == "heading1" })
         for (id, offset) in [("h", 5), ("p", 7)] {
             setSelection(harness, NSRange(location: try location(session, id, offset), length: 0))
             XCTAssertNil(harness.input.slashMenuQuery, id)
-            XCTAssertFalse(harness.input.applySlashItem(heading), id)
+            let applied = await harness.run { harness.input.applySlashItem(heading) }
+            XCTAssertFalse(applied, id)
         }
         setSelection(harness, NSRange(location: try location(session, "s", 1), length: 0))
         XCTAssertEqual(harness.input.slashMenuQuery, "")
         // An item the native editor cannot apply yet is refused, not approximated.
         let divider = try XCTUnwrap(allSlashMenuItems.first { $0.id == "divider" })
-        XCTAssertFalse(harness.input.applySlashItem(divider))
-        try assertConsistent(harness, localCommands: 0)
+        let appliedDivider = await harness.run { harness.input.applySlashItem(divider) }
+        XCTAssertFalse(appliedDivider)
+        try await assertConsistent(harness, localCommands: 0)
     }
 
     /// "/" typed in front of existing text: the choice consumes only the
     /// "/query" token before the caret, never the user's text after it.
-    func testSlashChoiceKeepsTheTextAfterTheQuery() throws {
-        let harness = try makeHarness([paragraph("p", "Notes from meeting")])
-        defer { harness.close() }
+    func testSlashChoiceKeepsTheTextAfterTheQuery() async throws {
+        let harness = try await makeHarness([paragraph("p", "Notes from meeting")])
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         setSelection(harness, NSRange(location: try location(session, "p", 0), length: 0))
         for character in ["/", "h", "1"] { harness.view.insertText(character) }
+        await harness.settle()
         XCTAssertEqual(text(of: try block(session, "p")), "/h1Notes from meeting")
         XCTAssertEqual(harness.input.slashMenuQuery, "h1")
         let heading = try XCTUnwrap(NativeInputCoordinator.slashItems.first { $0.id == "heading1" })
-        XCTAssertTrue(harness.input.applySlashItem(heading))
+        let applied = await harness.run { harness.input.applySlashItem(heading) }
+        XCTAssertTrue(applied)
         XCTAssertEqual(
             harness.log.commands.last?.kind,
             .blockType(node: "heading", props: [ProjectedProp(key: "level", value: .int(1))], removing: 0..<3))
         XCTAssertEqual(try block(session, "p").node, "heading")
         XCTAssertEqual(text(of: try block(session, "p")), "Notes from meeting", "the user's text stays")
-        try assertConsistent(harness, localCommands: 4)
+        try await assertConsistent(harness, localCommands: 4)
 
         // A query with a space in it is prose, not a command.
-        let second = try makeHarness([paragraph("q", "/h1 x")])
-        defer { second.close() }
+        let second = try await makeHarness([paragraph("q", "/h1 x")])
+        addTeardownBlock { await second.close() }
         setSelection(second, NSRange(location: try location(second.session, "q", 5), length: 0))
         XCTAssertNil(second.input.slashMenuQuery)
-        XCTAssertFalse(second.input.applySlashItem(heading))
-        try assertConsistent(second, localCommands: 0)
+        let appliedSecond = await second.run { second.input.applySlashItem(heading) }
+        XCTAssertFalse(appliedSecond)
+        try await assertConsistent(second, localCommands: 0)
     }
 
     /// "/code" in BlockNote's own empty paragraph, then the menu: the XML
     /// BlockNote's query clear and `updateBlock` leave.
-    func testSlashToCodeConvergesToTheNodeCapture() throws {
+    func testSlashToCodeConvergesToTheNodeCapture() async throws {
         let capture = try XCTUnwrap(BlockNoteWriterCaptures.captures["p-empty-to-code"])
         let seed = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(BlockNoteWriterCaptures.seeds[capture.seed])))
-        let session = try NativeEditorSession(state: seed) { YDoc(clientID: 2, gc: false) }
-        defer { session.close() }
-        var updates: [Data] = []
-        session.enableTyping { _, update in updates.append(update) }
+        let session = try await NativeEditorSession.seed(state: seed, clientID: 2, gc: false)
+        addTeardownBlock { await session.close().value }
+        let updates = Locked<[Data]>([])
+        session.enableTyping(persist: { _, update in updates.update { $0.append(update) } })
         let input = try XCTUnwrap(session.input)
         session.textView.selectedRange = NSRange(location: 0, length: 0)
         input.textViewDidChangeSelection(session.textView)
         session.textView.insertText("/code")
+        await session.settle()
         XCTAssertEqual(input.slashMenuQuery, "code")
-        XCTAssertTrue(input.applySlashItem(try XCTUnwrap(NativeInputCoordinator.slashItems.first { $0.id == "code" })))
-        XCTAssertEqual(updates.count, 2)
-        try assertConverges(seed: seed, updates, xml: capture.xml)
+        let item = try XCTUnwrap(NativeInputCoordinator.slashItems.first { $0.id == "code" })
+        let applied = await session.run { input.applySlashItem(item) }
+        XCTAssertTrue(applied)
+        XCTAssertEqual(updates.value.count, 2)
+        try assertConverges(seed: seed, updates.value, xml: capture.xml)
     }
 
     /// BlockNote's `updateBlock` to a heading keeps the paragraph's styled props.
-    func testTypeChangeKeepsPropsLikeTheNodeCapture() throws {
+    func testTypeChangeKeepsPropsLikeTheNodeCapture() async throws {
         let capture = try XCTUnwrap(BlockNoteWriterCaptures.captures["styled-to-heading"])
         let seed = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(BlockNoteWriterCaptures.seeds[capture.seed])))
-        let session = try NativeEditorSession(state: seed) { YDoc(clientID: 2, gc: false) }
-        defer { session.close() }
-        var updates: [Data] = []
-        try session.engine.applyStructural(
-            NativeEditCommand(
-                id: UUID(), baseRevision: 0, blockID: "p-p",
-                kind: .blockType(node: "heading", props: [ProjectedProp(key: "level", value: .int(2))], removing: 0..<0)
-            )
-        ) { updates.append($0) }
-        try assertConverges(seed: seed, updates, xml: capture.xml)
+        let session = try await NativeEditorSession.seed(state: seed, clientID: 2, gc: false)
+        addTeardownBlock { await session.close().value }
+        let updates = Locked<[Data]>([])
+        let command = NativeEditCommand(
+            id: UUID(), baseRevision: 0, blockID: "p-p",
+            kind: .blockType(node: "heading", props: [ProjectedProp(key: "level", value: .int(2))], removing: 0..<0)
+        )
+        let error = await session.engine { engine -> DocumentEngineError? in
+            do {
+                try engine.applyStructural(command) { update in
+                    updates.update { $0.append(update) }
+                }
+                return nil
+            } catch {
+                return error as? DocumentEngineError
+            }
+        }
+        XCTAssertNil(error)
+        try assertConverges(seed: seed, updates.value, xml: capture.xml)
     }
 
     // MARK: - Presentation writes nothing
 
-    func testThemeAndDynamicTypeChangesProduceNoTransactions() throws {
-        let harness = try makeHarness(everyType)
-        defer { harness.close() }
+    func testThemeAndDynamicTypeChangesProduceNoTransactions() async throws {
+        let harness = try await makeHarness(everyType)
+        addTeardownBlock { await harness.close() }
         let window = host(harness)
         defer { window.isHidden = true }
         let session = harness.session
-        let recorder = PresentationPatchRecorder(session.surface)
-        session.engine.surface = recorder
-        let revision = session.engine.revision
+        let recorder = PatchLog(session)
+        let revision = await session.engine { $0.revision }
         let text = harness.view.textStorage.string
         let bodyFont = try XCTUnwrap(try attribute(harness, .font, "p") as? UIFont)
         let gutter = try XCTUnwrap(try attribute(harness, .paragraphStyle, "b") as? NSParagraphStyle).headIndent
@@ -552,72 +603,60 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
             traits: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge),
             labels: session.surface.labels)
         harness.view.layoutIfNeeded()
+        await harness.settle()
 
         XCTAssertGreaterThan(try XCTUnwrap(try attribute(harness, .font, "p") as? UIFont).pointSize, bodyFont.pointSize)
         XCTAssertGreaterThan(
             try XCTUnwrap(try attribute(harness, .paragraphStyle, "b") as? NSParagraphStyle).headIndent, gutter,
             "the gutter scales with Dynamic Type")
         XCTAssertEqual(harness.view.textStorage.string, text)
-        XCTAssertEqual(session.engine.revision, revision)
+        let finalRevision = await session.engine { $0.revision }
+        XCTAssertEqual(finalRevision, revision)
         XCTAssertTrue(recorder.patches.isEmpty, "no Yjs transaction reached the engine")
-        try assertConsistent(harness, localCommands: 0)
+        try await assertConsistent(harness, localCommands: 0)
     }
 
     // MARK: - Relaunch
 
-    func testReplayAfterRelaunchRestoresEveryPropAndType() throws {
-        let harness = try makeHarness([
+    func testReplayAfterRelaunchRestoresEveryPropAndType() async throws {
+        let harness = try await makeHarness([
             check("task", "Task"), numbered("n", "One"), code("code", "x"), paragraph("s", ""),
         ])
+        addTeardownBlock { await harness.close() }
         let session = harness.session
-        XCTAssertTrue(harness.input.toggleCheckbox(blockID: "task"))
-        XCTAssertTrue(harness.input.setNumberStart(blockID: "n", start: 4))
-        XCTAssertTrue(harness.input.setCodeLanguage(blockID: "code", language: "python"))
+        let checked = await harness.run { harness.input.toggleCheckbox(blockID: "task") }
+        XCTAssertTrue(checked)
+        let started = await harness.run { harness.input.setNumberStart(blockID: "n", start: 4) }
+        XCTAssertTrue(started)
+        let lang = await harness.run { harness.input.setCodeLanguage(blockID: "code", language: "python") }
+        XCTAssertTrue(lang)
         setSelection(harness, NSRange(location: try location(session, "code", 1), length: 0))
         harness.view.insertText("\n")
+        await harness.settle()
         setSelection(harness, NSRange(location: try location(session, "s", 0), length: 0))
         harness.view.insertText("/")
-        XCTAssertTrue(
-            harness.input.applySlashItem(try XCTUnwrap(NativeInputCoordinator.slashItems.first { $0.id == "quote" })))
-        try assertConsistent(harness, localCommands: 6)
+        await harness.settle()
+        let item = try XCTUnwrap(NativeInputCoordinator.slashItems.first { $0.id == "quote" })
+        let applied = await harness.run { harness.input.applySlashItem(item) }
+        XCTAssertTrue(applied)
+        try await assertConsistent(harness, localCommands: 6)
         let expected = session.surface.blocks
         let expectedText = harness.view.textStorage.string
-        session.close()
+        await session.close().value
 
-        let restored = try XCTUnwrap(NativeEditorSession.restore(store: harness.store, scope: harness.scope))
-        defer {
-            restored.close()
+        let restored = try unwrapped(try await NativeEditorSession.restore(store: harness.store, scope: harness.scope))
+        addTeardownBlock {
+            await restored.close().value
             try? FileManager.default.removeItem(at: harness.directory)
         }
         XCTAssertEqual(restored.surface.blocks, expected)
         XCTAssertEqual(restored.textView.textStorage.string, expectedText)
         XCTAssertEqual(
             restored.surface.blocks.map(\.node), ["checkListItem", "numberedListItem", "codeBlock", "quote"])
-        XCTAssertEqual(restored.engine.revision, 6)
+        let restoredRevision = await restored.engine { $0.revision }
+        XCTAssertEqual(restoredRevision, 6)
         let fresh = AttributedDocumentProjection.attributedString(
             blocks: restored.surface.blocks, traits: restored.surface.traits, labels: restored.surface.labels)
         XCTAssertTrue(restored.textView.textStorage.isEqual(to: fresh))
-    }
-}
-
-@MainActor
-private final class PresentationPatchRecorder: @preconcurrency EditorSurface {
-    let surface: NativeTextSurface
-    var patches: [BlockPatch] = []
-    init(_ surface: NativeTextSurface) { self.surface = surface }
-
-    /// Every change was a props change: no text, insert, remove or rebuild.
-    var isPropsOnly: Bool {
-        !patches.isEmpty
-            && patches.allSatisfy { $0.changes.allSatisfy { if case .props = $0 { true } else { false } } }
-    }
-
-    func applyPatch(_ patch: BlockPatch) {
-        patches.append(patch)
-        surface.applyPatch(patch)
-    }
-
-    func setCompositionDeferred(_ deferred: Bool) {
-        surface.setCompositionDeferred(deferred)
     }
 }

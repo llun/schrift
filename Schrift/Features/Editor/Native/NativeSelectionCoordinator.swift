@@ -17,9 +17,14 @@ import UIKit
 /// When both do, the caret moves visibly to the nearest surviving block: the
 /// start of the block after the head's old block, else the end of the one
 /// before it, else the block now at its old position.
+///
+/// The relative positions live in the replica session (PR08b): each capture
+/// is posted with an increasing `seq`, and a delivery's resolved endpoints are
+/// used only when they answer the latest capture (a newer one is in flight
+/// otherwise, and the view's own range stands).
 @MainActor
 final class NativeSelectionCoordinator {
-    private let engine: DocumentEngine
+    private let post: (UInt64, EditorSelection?) -> Void
     private let surface: NativeTextSurface
     private weak var view: NativeTextView?
     private var isRestoring = false
@@ -31,9 +36,12 @@ final class NativeSelectionCoordinator {
     /// The head block's neighbours and position at the last capture; nil when
     /// nothing is tracked.
     private var fallback: (before: String?, after: String?, position: Int)?
+    /// The latest capture posted to the session.
+    private(set) var seq: UInt64 = 0
 
-    init(engine: DocumentEngine, surface: NativeTextSurface, view: NativeTextView) {
-        self.engine = engine
+    /// `post` sends one capture (seq, selection) to the replica session.
+    init(surface: NativeTextSurface, view: NativeTextView, post: @escaping (UInt64, EditorSelection?) -> Void) {
+        self.post = post
         self.surface = surface
         self.view = view
     }
@@ -65,12 +73,14 @@ final class NativeSelectionCoordinator {
         let lower = EditorPosition(
             blockID: index.entries[start.position].blockID, offset: start.offset, assoc: range.length > 0 ? 0 : -1)
         let upper = EditorPosition(blockID: index.entries[end.position].blockID, offset: end.offset, assoc: -1)
-        do {
-            try engine.setSelection(
-                isBackward ? EditorSelection(anchor: upper, head: lower) : EditorSelection(anchor: lower, head: upper))
-        } catch {
-            return clear()
-        }
+        // The engine captures only projectable text: a placeholder endpoint is
+        // not tracked.
+        guard !AttributedDocumentProjection.isPlaceholder(surface.blocks[start.position]),
+            !AttributedDocumentProjection.isPlaceholder(surface.blocks[end.position])
+        else { return clear() }
+        seq += 1
+        post(
+            seq, isBackward ? EditorSelection(anchor: upper, head: lower) : EditorSelection(anchor: lower, head: upper))
         let head = isBackward ? start.position : end.position
         fallback = (
             head > 0 ? index.entries[head - 1].blockID : nil,
@@ -78,15 +88,16 @@ final class NativeSelectionCoordinator {
         )
     }
 
-    /// Re-applies the relative selection after a patch from a peer or a
-    /// rebuild. The editor's own commands place their caret themselves.
-    func restore(after patch: BlockPatch) {
-        guard patch.origin != .localUser || patch.nativeCommand == nil, let view, !isRestoring,
-            view.markedTextRange == nil, let fallback,
-            let endpoints = try? engine.currentSelectionEndpoints()
+    /// Re-applies the relative selection after a peer patch, a rebuild or a
+    /// history step, from the endpoints the session resolved. The editor's own
+    /// commands place their caret themselves. Endpoints for an older capture
+    /// are ignored: a newer one is in flight.
+    func restore(from resolved: ReplicaSelection?) {
+        guard let resolved, resolved.seq == seq, resolved.tracked, let view, !isRestoring,
+            view.markedTextRange == nil, let fallback
         else { return }
-        let anchor = endpoints.anchor.flatMap(documentOffset)
-        let head = endpoints.head.flatMap(documentOffset)
+        let anchor = resolved.anchor.flatMap(documentOffset)
+        let head = resolved.head.flatMap(documentOffset)
         let range: NSRange
         if let anchor, let head {
             range = NSRange(location: min(anchor, head), length: abs(head - anchor))
@@ -122,7 +133,8 @@ final class NativeSelectionCoordinator {
 
     private func clear() {
         fallback = nil
-        try? engine.setSelection(nil)
+        seq += 1
+        post(seq, nil)
     }
 
     private func direction(of range: NSRange) -> Bool {

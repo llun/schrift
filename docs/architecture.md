@@ -540,7 +540,7 @@ path; PR01 connects this engine to an opt-in read-only TextKit 2 surface.
   `applyPatch`, so a test can assert it equals the replica's projection after
   every step.
 - **`DocumentEngine`** (no actor annotation: confined to the domain that creates it, PR08a) — borrows the replica from
-  `DocumentCollaborationManager` or a separate `NativeEditorSession` (never owns it), exposes block-relative intents
+  `DocumentCollaborationManager` or the native route's `DocumentReplicaSession` actor (PR08b; never owns it), exposes block-relative intents
   (`replaceText`, `formatRange`, `splitBlock`, `joinBlocks`, `setBlockType`)
   that resolve through `BlockNoteWriter` in one `.localUser` transaction and
   return the update bytes for broadcast, and turns the change signal into
@@ -575,10 +575,11 @@ prefetch deadline, cancellation/availability checks and save-marker freshness
 guard. The classic load route remains unchanged.
 This refresh covers content only, not the children cache.
 
-`NativeEditorSession` is the sole main-actor owner of a private local `YDoc`,
-separate from `DocumentCollaborationManager`. It integrates the raw baseline,
-seeds `NativeTextSurface` from `YBlockProjection`, then attaches one engine. Close
-and deinitialization destroy the replica; failed seeding also destroys it.
+The native replica is separate from `DocumentCollaborationManager`. Since PR08b the
+read-only reader is a one-shot projection (`NativeEditorSession.inspect`), and an
+editable session's replica belongs to `actor DocumentReplicaSession`, which integrates
+the raw baseline, attaches one engine and hands `NativeTextSurface` its first projection.
+Close and deinitialization destroy the replica; failed seeding also destroys it.
 `NativeTextView` uses standard TextKit 2 storage, asserts a text layout manager,
 allows selection/copy, and owns scrolling. There is no legacy layout-manager read,
 document-height measurement or full-document layout request.
@@ -984,6 +985,29 @@ and refuses an oversized one with `.payloadTooLarge` (the too-large notice). `Re
 serializes every read/modify/switch with one `Mutex` shared by all instances, so its journal
 entry points are callable off main, while the operations that touch the main-actor ownership
 marker stay on main and take the same lock; callers and their order are unchanged.
+
+**PR08b The replica off the main actor: one ordered mailbox, optimistic typing, barriers.**
+`actor DocumentReplicaSession` owns the native replica, its engine, the shared undo history
+and the journal writes for its scope; the main-actor `NativeEditorSession` keeps only the
+view (no graph: a grep test enforces it) and talks to it through one bounded, ordered
+mailbox. Each message is handled in one synchronous session turn, engine call, journal
+append and delivery yield with no await between them, and each surface reads its
+deliveries in order. The owner chose option A for input: same-block typing is shown at
+once and journaled a few milliseconds later, in order; every other command is a barrier
+shown when its result arrives, with keys typed meanwhile held and replayed. This
+redefines journal before publication: publication is the canonical advance, save
+scheduling or a network send, all of which still follow the append; a predicted
+keystroke on screen is provisional UI, like marked text. A failed or refused append
+rolls the display back to canonical, stops authoring and keeps the dropped text as a
+recovery entry. A change the surface had not seen when it predicted (a server
+integration) is rebased with the same `TextDelta.rebase` on both sides, so the display
+and the journal agree; when it cannot be rebased the surface's epoch is invalidated and
+its pending keys become a recovery entry, and a barrier that met such a change is
+retried once. IME begin is posted and commit is a barrier; the history is one per replica
+session with grouping decided on the main actor; block-menu availability and copy payloads
+are asked of the session asynchronously. Multi-window stays off and the session has one
+surface; the per-scope registry and fan-out are PR08c, the collaboration-manager facade
+PR09. AGENTS.md has the operational detail and the bounds.
 
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom
@@ -1736,8 +1760,8 @@ The item graph is a mesh of strong cycles — `item.left ⇄ item.right`, and
 ARC collects none of it, so **releasing a `YDoc` frees nothing**; a live session
 opens one replica per document. `YDoc.destroy()` breaks the cycles and must be
 called by the replica's owner — the main actor, through
-`DocumentCollaborationManager` (C1), or the separate `NativeEditorSession` for the
-opt-in reader — whenever it drops a replica (entry teardown or a
+`DocumentCollaborationManager` (C1), or `DocumentReplicaSession` for the
+opt-in native route (PR08b) — whenever it drops a replica (entry teardown or a
 fail-safe). No edge can be
 `unowned` instead: the algorithm reads all of them in both directions, and none has
 a target that provably outlives its source.
