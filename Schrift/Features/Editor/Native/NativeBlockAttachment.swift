@@ -205,7 +205,8 @@ final class NativeAttachmentView: UIView {
             backgroundColor = .secondarySystemBackground
             return
         }
-        backgroundColor = controls.color(\.surfaceSunken)
+        // A loaded image shows on a clear card; a theme change keeps it so.
+        backgroundColor = imageView?.image == nil ? controls.color(\.surfaceSunken) : .clear
         layer.borderColor = controls.color(\.borderStrong).cgColor
         layer.borderWidth = content.preview.isTable ? 1 / max(1, traitCollection.displayScale) : 0
         for case let label as UILabel in allSubviews {
@@ -375,13 +376,21 @@ final class NativeAttachmentView: UIView {
     func loadImageIfNeeded() {
         guard case .image = content.preview, imageView?.image == nil, loadTask == nil else { return }
         guard let url = imageURL, isFetchableImageURL(url) else { return showStatus(labels.imageFailed) }
-        guard let loader = controls?.images else { return }
+        guard let controls, controls.images != nil else { return }
+        // `MarkdownImageView.matchesSession`: a loader of another server's
+        // session shows nothing and requests nothing, as if offline.
+        guard let loader = controls.sessionImages else { return showStatus(labels.imageOffline) }
         if let image = loader.image(for: url) { return show(image) }
-        let offline = controls?.isOffline ?? false
+        let scope = loader.scope
         loadTask = Task { [weak self, loader] in
-            let image = await loader.loadIfNeeded(url, allowsNetwork: !offline)
+            let image = await loader.loadIfNeeded(url, allowsNetwork: !controls.isOffline)
             guard let self else { return }
             self.loadTask = nil
+            // The session may have changed while the load ran (the classic
+            // view's `requestedScope == loader.scope` check).
+            guard controls.sessionImages === loader, loader.scope == scope else {
+                return self.showStatus(self.labels.imageOffline)
+            }
             if let image { return self.show(image) }
             switch loader.state(for: url) {
             case .requiresConsent: self.showConsent(host: url.host ?? url.absoluteString)
@@ -431,7 +440,7 @@ final class NativeAttachmentView: UIView {
 
     /// The tap: consent for this exact URL in this session, then the load.
     func approveAndLoad() {
-        guard let url = imageURL, let loader = controls?.images else { return }
+        guard let url = imageURL, let loader = controls?.sessionImages else { return }
         loader.approve(url)
         loadButton?.removeFromSuperview()
         loadButton = nil

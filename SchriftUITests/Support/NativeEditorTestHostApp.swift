@@ -63,7 +63,8 @@ struct NativeEditorTestHostApp: App {
             if let session {
                 NativeEditorView(
                     session: session,
-                    title: session.input == nil ? "Native reader fixture" : "Native typing fixture")
+                    title: session.input == nil ? "Native reader fixture" : "Native typing fixture",
+                    serverOrigin: MediaFixture.origin)
             } else if failedToLoad {
                 Text("Fixture failed to load")
             } else {

@@ -2568,8 +2568,12 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `geometry: surface.attachmentGeometry` (`NativeEditingTestCase.assertConsistent` does).
   Images use the environment's `ImageLoader` (optional; `NativeEditorView` passes it and
   `isOffline` to `NativeBlockControls`): the loader's own origin check, consent
-  ("External image · tap to load", `approveAndLoad`), disk cache and offline state apply, so
-  this render path needs no `serverOrigin` of its own. No loader issues no request. Views
+  ("External image · tap to load", `approveAndLoad`), disk cache and offline state apply.
+  `NativeEditorView` takes the document's `serverOrigin` (required, like the classic image
+  sites) for `NativeBlockControls.sessionImages`, which mirrors `MarkdownImageView.matchesSession`:
+  a loader whose scope is another server's shows no cached image, issues no request (load,
+  tap or ratio) and reads as offline, and a load that finishes under a changed session is
+  dropped. No loader issues no request. A loaded image's card stays clear on a theme change. Views
   exist only for laid-out fragments (`attachmentViewLoads`, `visibleAttachmentViews`); a
   theme change re-colours the realised ones. VoiceOver: each card is one element labelled
   `attachmentLabel` ("Image: alt", "Video: clip.mp4", "Table, 3 by 4", "Columns, 2", "Math",
@@ -3388,9 +3392,10 @@ markdown write endpoint**. Understand this before touching the save path:
   the namespace: it can be unknown while a new login's cookies are already live.
   Inject `ImageLoader.inert()` into previews/tests that embed either image
   surface; inert loaders issue no requests. The native editor's image previews (PR06e)
-  call `ImageLoader` directly, without `MarkdownImageView`: the loader itself applies
-  `imageLoadPolicy` against its scope's origin and the consent set, so that path keeps the
-  same rule; keep any new native image path on the loader. Keep pending-photo branches ahead
+  call `ImageLoader` directly, without `MarkdownImageView`: the loader applies
+  `imageLoadPolicy` and consent, and `NativeBlockControls.sessionImages` repeats
+  `matchesSession` against the document's required `serverOrigin`; keep any new native image
+  path behind both. Keep pending-photo branches ahead
   of remote loading and never clear their store with this re-downloadable cache.
 - **A generic file attachment (PDF, docx, …) is a first-class leaf block, and
   classification is enabled by an origin.** The web's BlockNote `file` block and

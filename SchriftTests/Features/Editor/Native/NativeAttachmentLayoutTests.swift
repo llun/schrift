@@ -358,6 +358,7 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         let session = harness.session
         let log = FetchLog()
         harness.view.blockControls.images = loader(log)
+        harness.view.blockControls.serverOrigin = Self.origin
         let window = host(harness.view, height: 900)
         defer { window.isHidden = true }
 
@@ -441,6 +442,7 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         defer { harness.close() }
         let log = FetchLog()
         harness.view.blockControls.images = loader(log)
+        harness.view.blockControls.serverOrigin = Self.origin
         let window = host(harness.view)
         defer { window.isHidden = true }
         let view = try XCTUnwrap(realized(harness.session, "ext"))
@@ -463,12 +465,57 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         XCTAssertEqual(try journalCount(harness), 0)
     }
 
+    /// `MarkdownImageView.matchesSession`: a loader of another server's
+    /// session (a stale one after a server or account switch) neither shows
+    /// its cached image nor requests one, and a tap-to-load does nothing.
+    func testALoaderOfAnotherSessionShowsAndRequestsNothing() async throws {
+        let url = "\(Self.origin)/media/photo.png"
+        let harness = try makeHarness([image("img", url: url), image("ext", url: "https://elsewhere.example/a.png")])
+        defer { harness.close() }
+        let log = FetchLog()
+        let images = loader(log)
+        // The image is already decoded and cached in that loader's session.
+        _ = await images.loadIfNeeded(URL(string: url)!)
+        XCTAssertEqual(log.urls.count, 1)
+        harness.view.blockControls.images = images
+        harness.view.blockControls.serverOrigin = "https://other.example"
+        let window = host(harness.view)
+        defer { window.isHidden = true }
+        for id in ["img", "ext"] {
+            let view = try XCTUnwrap(realized(harness.session, id))
+            XCTAssertNil(view.loadTask, "\(id): no load is started")
+            view.approveAndLoad()
+            await view.loadTask?.value
+            XCTAssertNil(view.imageView?.image, "\(id): no cached image is shown")
+            XCTAssertNil(view.loadButton)
+            XCTAssertEqual(view.imageStatus?.text, "Image available when online")
+        }
+        XCTAssertEqual(log.urls.count, 1, "no request under another session")
+        XCTAssertNil(harness.session.surface.aspectRatio?(url), "nor its remembered ratio")
+    }
+
+    /// A theme change keeps a loaded image's card clear.
+    func testThemeChangeKeepsALoadedImageClear() async throws {
+        let harness = try makeHarness([image("img", url: "\(Self.origin)/media/photo.png")])
+        defer { harness.close() }
+        harness.view.blockControls.images = loader(FetchLog())
+        harness.view.blockControls.serverOrigin = Self.origin
+        let window = host(harness.view)
+        defer { window.isHidden = true }
+        let view = try XCTUnwrap(realized(harness.session, "img"))
+        await view.loadTask?.value
+        XCTAssertNotNil(view.imageView?.image)
+        harness.view.blockControls.invalidateChrome()
+        XCTAssertEqual(view.backgroundColor, .clear)
+    }
+
     /// Offline, an uncached image issues no request and says so.
     func testOfflineImageIssuesNoRequest() async throws {
         let harness = try makeHarness([image("img", url: "\(Self.origin)/media/photo.png")])
         defer { harness.close() }
         let log = FetchLog()
         harness.view.blockControls.images = loader(log)
+        harness.view.blockControls.serverOrigin = Self.origin
         harness.view.blockControls.isOffline = true
         let window = host(harness.view)
         defer { window.isHidden = true }
@@ -516,6 +563,7 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         XCTAssertEqual(session.surface.blocks.filter(AttributedDocumentProjection.isPlaceholder).count, 200)
         let log = FetchLog()
         harness.view.blockControls.images = loader(log)
+        harness.view.blockControls.serverOrigin = Self.origin
         let window = host(harness.view, height: 844)
         defer { window.isHidden = true }
         let controls = harness.view.blockControls!

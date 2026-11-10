@@ -309,7 +309,7 @@ struct EditorView: View {
                 ProgressView()
             case .native(let session):
                 NativeEditorView(
-                    session: session, title: viewModel.title,
+                    session: session, title: viewModel.title, serverOrigin: serverOrigin,
                     preservedNotice: nativeOpen.isPreservedReadOnly
                         ? .native_editor_owned_read_only_body : nil,
                     saveStatus: session.input == nil ? nil : nativeSaveStatus(session),

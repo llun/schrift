@@ -928,7 +928,8 @@ download changes nothing in layout:** the image fills the reserved box (aspect f
 its ratio applies at the next restyle: a width change (rotation, split view; only the
 attachment slices are replaced, in place), a Dynamic Type change or the next open. Images
 go through the app's `ImageLoader` (`NativeEditorView` reads it from the environment and
-passes the offline flag): the same-origin rule, "External image · tap to load", consent,
+passes the offline flag and the document's server origin; a loader of another server's
+session shows and requests nothing, as the classic `matchesSession`): the same-origin rule, "External image · tap to load", consent,
 the disk cache and the offline state are the loader's, unchanged. VoiceOver reads each
 card as one element ("Image: alt", "Video: clip.mp4", "Table, 3 by 4", "Columns, 2",
 "Math"), and the text view's value reads the label in place of the attachment character.

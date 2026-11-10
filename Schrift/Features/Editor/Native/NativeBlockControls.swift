@@ -44,12 +44,28 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         didSet { if images !== oldValue { connectAspectRatios() } }
     }
 
+    /// The document's server origin (`siteOrigin(for: serverURL)`). Images
+    /// load only through a loader whose session is this server's, as the
+    /// classic `MarkdownImageView.matchesSession` requires.
+    var serverOrigin = "" {
+        didSet { if serverOrigin != oldValue { connectAspectRatios() } }
+    }
+
+    /// `images`, only while its session belongs to this document's server.
+    var sessionImages: ImageLoader? {
+        guard let images, images.scope?.serverOrigin == serverOrigin else { return nil }
+        return images
+    }
+
     private func connectAspectRatios() {
-        guard let loader = images else {
+        guard images != nil else {
             surface?.aspectRatio = nil
             return
         }
-        surface?.aspectRatio = { url in URL(string: url).flatMap { loader.aspectRatio(for: $0) } }
+        surface?.aspectRatio = { [weak self] url in
+            guard let loader = self?.sessionImages else { return nil }
+            return URL(string: url).flatMap { loader.aspectRatio(for: $0) }
+        }
     }
     /// Offline, the loader shows cached bytes and issues no request.
     var isOffline = false

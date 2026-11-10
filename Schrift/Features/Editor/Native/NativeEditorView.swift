@@ -3,6 +3,10 @@ import SwiftUI
 struct NativeEditorView: View {
     let session: NativeEditorSession
     let title: String
+    /// The document's server origin: image previews load only through a
+    /// loader of this server's session (`MarkdownImageView.matchesSession`).
+    /// Required, like the classic image sites.
+    let serverOrigin: String
     /// Shown when the document is native-owned but editing is not enabled.
     /// The replica is preserved and read-only; the classic writer must not
     /// open over it.
@@ -50,7 +54,7 @@ struct NativeEditorView: View {
                         diagram: loc[.native_editor_diagram], imageExternal: loc[.editor_image_external],
                         imageExternalA11y: loc[.editor_image_external_a11y], imageOffline: loc[.editor_image_offline],
                         imageFailed: loc[.editor_image_failed]),
-                    theme: theme, images: images, isOffline: isOffline
+                    theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline
                 )
                 .id(ObjectIdentifier(session))
             }
@@ -262,6 +266,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
     let labels: NativeEditorLabels
     let theme: AppTheme
     let images: ImageLoader?
+    let serverOrigin: String
     let isOffline: Bool
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -280,6 +285,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
         session.textView.blockControls.theme = theme
         session.textView.blockControls.labels = labels
         session.textView.blockControls.images = images
+        session.textView.blockControls.serverOrigin = serverOrigin
         session.textView.blockControls.isOffline = isOffline
         coordinator.update(
             surface: session.surface, presentation: NativeTextPresentation(contentSize: contentSize, labels: labels))
