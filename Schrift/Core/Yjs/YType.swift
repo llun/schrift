@@ -166,15 +166,36 @@ final class YDoc {
     ///
     /// The transaction's `changedParentTypes` is complete when the hook runs, and
     /// each text event's `delta` is valid **only** during the call (see
-    /// `YEvent.delta`). A nil hook runs nothing, and then no events are built at
-    /// all: `changedParentTypes` is populated only while a hook is set, because
-    /// this hook is its only consumer. The B4 formatting-cleanup arming does not
+    /// `YEvent.delta`). A nil hook runs nothing, and with no hook and no
+    /// `afterTransactionObservers` no events are built at all: `changedParentTypes`
+    /// is populated only for them. The B4 formatting-cleanup arming does not
     /// depend on it and still runs.
     ///
     /// A `transact` opened from inside the hook behaves as in yjs: the current
     /// transaction is already off `doc.transaction`, so the new one is queued and
     /// drained after the current one's gc/merge, never mid-cleanup.
     var afterTransaction: ((YTransaction) -> Void)?
+
+    /// Further `'afterTransaction'` listeners (yjs `doc.on`), run right after
+    /// `afterTransaction` in registration order. `afterTransaction` stays the
+    /// engine's one slot; this list is for `YUndoManager`, which yjs also
+    /// subscribes with `doc.on('afterTransaction')` (@3723). `destroy()` drops them.
+    private(set) var afterTransactionObservers: [(UUID, (YTransaction) throws -> Void)] = []
+
+    /// Whether anything consumes `changedParentTypes` (see `YType.callObserver`).
+    var hasAfterTransactionObservers: Bool {
+        afterTransaction != nil || !afterTransactionObservers.isEmpty
+    }
+
+    func addAfterTransactionObserver(_ observer: @escaping (YTransaction) throws -> Void) -> UUID {
+        let id = UUID()
+        afterTransactionObservers.append((id, observer))
+        return id
+    }
+
+    func removeAfterTransactionObserver(_ id: UUID) {
+        afterTransactionObservers.removeAll { $0.0 == id }
+    }
 
     /// yjs `Doc`'s `'afterAllTransactions'` event — fired once the outermost
     /// transaction's cleanup has finished and `transactionCleanups` is empty.
@@ -265,6 +286,8 @@ final class YDoc {
     func destroy() {
         onDestroy?()
         onDestroy = nil
+        // yjs's undo manager unsubscribes on `'destroy'` (@3724); dropping the list does that.
+        afterTransactionObservers = []
         for (_, list) in store.clients {
             for s in list.structs {
                 guard let item = s as? YItem else { continue }

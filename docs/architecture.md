@@ -192,8 +192,8 @@ binary form is lossy in one direction — an item-id encoding carries no type, s
 the item's parent implies it. `assoc` is load-bearing at `index == length`: `assoc 0`
 is the end-of-type position and follows text a peer appends, `assoc -1` is pinned to
 the last character and stays before it (the C2 end-of-paragraph IME fix).
-`followUndoneDeletions` is kept for parity, but `YItem.redone` is never set (no undo
-manager), so it currently reduces to `getItemWithOffset`.
+`followUndoneDeletions` follows `YItem.redone`, which `YUndoManager` (PR07a) sets when
+an undo or redo re-creates content, so a position on undone text lands on its copy.
 
 `resolve` reads and mutates the live doc, so it belongs on the replica's owner (main
 actor) like every other doc access, and a future cursor path must treat it carefully:
@@ -900,6 +900,20 @@ installed 0.56 keyboard rules, with the open state carried in the split command 
 open toggle's Enter starts its children, a closed one splits and keeps them, an empty
 toggle resets); the slash menu offers Toggle heading and Toggle list. A toggle has no
 Markdown shadow yet, so production keeps such a document read-only, like a callout.
+
+**PR07a Undo core.** `Core/Yjs/YUndoManager` transliterates yjs 13.6.33's `UndoManager`
+with `redoItem`, `followRedone`, `keepItem` and `isParentOf`. It listens through
+`YDoc`'s afterTransaction observer list (the engine keeps the single
+`afterTransaction` slot), captures tracked origins over a scope of types, merges
+captures inside `captureTimeout`, and marks deletions it can restore `keep`, which
+gc already skips; `clear()` releases them and `destroy()`, as in yjs, only
+unsubscribes. Undo and redo are local transactions whose origin is the manager
+(`YTransactionOrigin.undoManager`), so they reach the store and encoder like any
+other local edit. `YUndoManagerOracleTests` replays node yjs captures (peer edits
+kept, deletes, formats, nested BlockNote blocks, map conflicts, a remotely deleted
+parent) and asserts byte-identical state after every step. Nothing calls it yet:
+PR07b wires a `NativeUndoManager` and system undo, including how undo updates
+reach peers (the collaboration manager broadcasts only nil-origin cleanup today).
 
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom

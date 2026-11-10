@@ -451,10 +451,11 @@ extension YType {
         // remote change. Schrift keeps no markers (see `_searchMarker`), so that
         // is a no-op.
         //
-        // The event exists for `YDoc.afterTransaction` alone, so it is built only
-        // when a hook is set: `changedParentTypes` is populated for that hook and
-        // nothing else reads it, and building one event per changed type per
-        // ancestor is work a replica with no hook never consumes. yjs always
+        // The event exists for `YDoc.afterTransaction` and its observers (the
+        // undo manager's scope check) alone, so it is built only when one is
+        // set: `changedParentTypes` is populated for them and nothing else reads
+        // it, and building one event per changed type per ancestor is work a
+        // replica with neither never consumes. yjs always
         // builds them because its `observe`/`observeDeep` listeners are the
         // consumers; Schrift has none.
         //
@@ -462,7 +463,7 @@ extension YType {
         // bare (`YDoc.get`), and yjs's bare `AbstractType._callObserver` builds none;
         // but a yjs peer declares the root (BlockNote's `getXmlFragment`), and a
         // declared `YXmlFragment` (@7777) does. Schrift follows the declared shape.
-        if transaction.doc.afterTransaction != nil {
+        if transaction.doc.hasAfterTransactionObservers {
             let event = YEvent(target: self, transaction: transaction)
             YEvent.callTypeObservers(self, transaction, event)
         }
