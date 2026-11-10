@@ -2517,11 +2517,16 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   0.56's `serializeBlocksExternalHTML` + `htmlToMarkdown`: a toggle's children go into its
   `<details>` as indented continuation paragraphs, except its leading list children, which
   move after them (`* T\n\n  c1\n  * sub` for either order); a plain block's children
-  flatten after it; inline text is not escaped. The classic parser reads those indented
+  flatten after it; inline text is not escaped, each text node is wrapped in its own
+  marks with its link innermost (a link a mark splits is two links), and `formatLink` writes
+  the bare URL only when the label is the URL and that URL is not `http(s)://`/`www.` or
+  reads back whole through `parseAutolinkLiteral`, else `[label](url)` escaped. A callout
+  in such a subtree (with children, or inside a toggle) has no shadow: it is Schrift's
+  own block and its export there is unconfirmed. The classic parser reads those indented
   lines as verbatim text, so the chunk skips the classic self-check (nothing to compare)
   and is joined to the classic segments by blank lines. Lossy like the export; the raw Yjs
-  save still carries the real blocks. Only a callout without a non-empty emoji (the native
-  editor never writes one) has no shadow; tables, media, math, columns and diagrams gate
+  save still carries the real blocks. Besides those callouts, only a callout without a
+  non-empty emoji (the native editor never writes one) has no shadow; tables, media, math, columns and diagrams gate
   as before. Known gap shared by every shadow: the writer spells italic `_x_`, the export
   `*x*`. Tests: `NativeShadowExportParityTests` (the `.review/` capture item by item up to
   its table, the export's spellings, thirteen toggle shapes pinned byte for byte against the

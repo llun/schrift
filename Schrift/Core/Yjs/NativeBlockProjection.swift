@@ -138,7 +138,9 @@ enum NativeBlockProjection {
     /// Whether the export spells this subtree in a way the classic rendering
     /// cannot: a toggle list item with a non-list descendant (the export
     /// indents it as a continuation paragraph and moves it ahead of the list
-    /// children), or a callout or page break with children.
+    /// children), or a callout or page break with children. A callout in
+    /// such a subtree has no shadow (`NativeExportMarkdown`): it is Schrift's
+    /// own block, and the server's export of it there is unknown.
     private static func needsExport(_ subtree: ArraySlice<NativeBlockSnapshot>) -> Bool {
         let lists: Set<String> = ["bulletListItem", "numberedListItem", "checkListItem", "toggleListItem"]
         return subtree.indices.contains { index in

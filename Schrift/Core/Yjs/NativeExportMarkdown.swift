@@ -11,9 +11,9 @@ import Foundation
 ///
 /// The classic parser reads the indented lines as verbatim text, so the
 /// classic self-check has nothing to compare; `NativeShadowExportParityTests`
-/// pins this output against the installed exporter's. `nil` only for a block
-/// kind the export would need HTML for that this port does not model (a
-/// table, media), which has no shadow anyway.
+/// pins this output against the installed exporter's. `nil` for a block kind
+/// this port does not model (a table, media), which has no shadow anyway, and
+/// for a callout: Schrift's own block, whose export here is unconfirmed.
 enum NativeExportMarkdown {
     /// One block of the projected tree with its children.
     struct Node {
@@ -82,9 +82,8 @@ enum NativeExportMarkdown {
             switch block.node {
             case "paragraph": fragment.append(.paragraph(content))
             case "callout":
-                // The export writes a callout as its emoji paragraph (the capture).
-                guard case .string(let emoji)? = prop("emoji", block), !emoji.isEmpty else { return nil }
-                fragment.append(.paragraph(content.isEmpty ? emoji : emoji + " " + content))
+                // Schrift's own block: its export with children or nested is unknown.
+                return nil
             case "heading":
                 guard case .int(let level)? = prop("level", block) else { return nil }
                 if case .bool(true)? = prop("isToggleable", block) {
@@ -204,47 +203,80 @@ enum NativeExportMarkdown {
     }
 
     /// `serializeInlineContent` over the external HTML of `runs`: each run is
-    /// wrapped in its marks (bold outermost, then italic, strike, code), and a
-    /// run of the same link is one `<a>` around them. Nothing is escaped.
+    /// one ProseMirror text node wrapped in its own marks, bold outermost, then
+    /// italic, strike, code, and its link innermost (`<a>` per text node, so a
+    /// link a mark splits is two links). Nothing is escaped.
     private static func inline(_ runs: [InlineRun]) -> String {
-        var result = ""
-        var index = runs.startIndex
-        while index < runs.endIndex {
-            let href = link(of: runs[index])
-            var end = index + 1
-            while end < runs.endIndex, link(of: runs[end]) == href { end += 1 }
-            let text = runs[index..<end].map(styled).joined()
-            if let href {
-                // `formatLink`: a bare URL when the label is empty or the URL itself.
-                result +=
-                    text.isEmpty || text == href
-                    ? href
-                    : "[\(text)](\(href.replacingOccurrences(of: #"([\\()])"#, with: #"\\$1"#, options: .regularExpression)))"
-            } else {
-                result += text
-            }
-            index = end
-        }
-        return result
-    }
-
-    private static func link(of run: InlineRun) -> String? {
-        run.marks.first { $0.key == "link" }.flatMap { YBlockProjection.linkHref(from: $0.valueJSON) }
+        runs.map(styled).joined()
     }
 
     private static func styled(_ run: InlineRun) -> String {
         let keys = Set(run.marks.map(\.key))
         var text: String
         if keys.contains("code") {
+            // `<code>` prints its text content: the link inside it is dropped.
             let fence = String(repeating: "`", count: longestRun(of: "`", in: run.text) + 1)
             text = fence + (run.text.hasPrefix("`") || run.text.hasSuffix("`") ? " \(run.text) " : run.text) + fence
         } else {
             text = run.text.replacingOccurrences(of: "\n", with: "\\\n")  // a hard break
+            if let href = run.marks.first(where: { $0.key == "link" }).flatMap({
+                YBlockProjection.linkHref(from: $0.valueJSON)
+            }) {
+                text = formatLink(text, href)
+            }
         }
         if keys.contains("strike") { text = "~~\(text)~~" }
         if keys.contains("italic") { text = emphasis(text, "*") }
         if keys.contains("bold") { text = emphasis(text, "**") }
         return text
+    }
+
+    /// `formatLink`: the bare URL when the label is empty, or is the URL and
+    /// either not `http(s)://`/`www.` or one `parseAutolinkLiteral` reads back
+    /// whole; else `[label](url)` with `\`, `(` and `)` escaped.
+    private static func formatLink(_ text: String, _ href: String) -> String {
+        if text.isEmpty { return href }
+        if text == href {
+            let web = href.range(of: #"^(https?://|www\.)"#, options: [.regularExpression, .caseInsensitive]) != nil
+            if !web || readsBackAsAutolink(href) { return href }
+        }
+        let escaped = href.replacingOccurrences(of: #"([\\()])"#, with: #"\\$1"#, options: .regularExpression)
+        return "[\(text)](\(escaped))"
+    }
+
+    /// Whether `parseAutolinkLiteral(href)` is `{value: href, href: href}`. Its
+    /// first match must start at 0: for a `www.` URL that is a schemeless match
+    /// whose href gains `http://`, so never; for `http(s)://` it is the
+    /// case-sensitive protocol match (`[^\s]+`) after an entity suffix is cut
+    /// and `trimTrailing` drops trailing punctuation and unbalanced closers.
+    private static func readsBackAsAutolink(_ href: String) -> Bool {
+        guard href.hasPrefix("http://") || href.hasPrefix("https://"),
+            !href.contains(where: \.isWhitespace)
+        else { return false }
+        let value = href.replacingOccurrences(of: #"&[a-zA-Z0-9]+;$"#, with: "", options: .regularExpression)
+        guard value.count > (href.hasPrefix("https") ? 8 : 7) else { return false }
+        return trimTrailing(value) == href
+    }
+
+    /// The link detector's `trimTrailing`.
+    private static func trimTrailing(_ value: String) -> String {
+        var value = value
+        var changed = true
+        while changed {
+            changed = false
+            let trimmed = value.replacingOccurrences(of: #"[.,;:!?"']+$"#, with: "", options: .regularExpression)
+            if trimmed != value {
+                value = trimmed
+                changed = true
+            }
+            for (open, close) in [("(", ")"), ("[", "]")] as [(Character, Character)] {
+                while value.last == close, value.filter({ $0 == close }).count > value.filter({ $0 == open }).count {
+                    value.removeLast()
+                    changed = true
+                }
+            }
+        }
+        return value
     }
 
     /// Emphasis moves trailing whitespace outside its delimiters, and wraps

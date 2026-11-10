@@ -189,6 +189,107 @@ final class NativeShadowExportParityTests: NativeEditingTestCase {
         XCTAssertNil(NativeBlockProjection.markdownShadow(doc))
     }
 
+    /// A callout is Schrift's own block, not core BlockNote's, so how the
+    /// server exports one with children or inside a toggle is unknown: those
+    /// shapes have no shadow, as before PR06c.
+    func testACalloutWithChildrenOrInsideAToggleHasNoShadow() throws {
+        let shapes: [[BlockNoteBlock]] = [
+            [nested(callout("c", "Note"), [paragraph("k", "Kid")])],
+            [toggle("t", "Title", [callout("c", "Note")])],
+            [toggle("t", "Title", [paragraph("p", "Child"), callout("c", "Note")])],
+        ]
+        for blocks in shapes {
+            let doc = try makeDoc(blocks, clientID: 1)
+            defer { doc.destroy() }
+            XCTAssertNil(NativeBlockProjection.markdownShadow(doc), "\(blocks.map(\.id))")
+        }
+    }
+
+    /// Links in a toggle's continuation paragraph, each with the installed
+    /// BlockNote 0.56 `blocksToMarkdownLossy` output (labs/schrift-spikes/s3,
+    /// `toggleListItem "T"` holding a paragraph `"x "` + the link). Every text
+    /// node is its own innermost `<a>` inside its marks, so a link split by a
+    /// mark is two links; `formatLink` writes the bare URL only for a label
+    /// equal to a URL that is not `http(s)://`/`www.` or that
+    /// `parseAutolinkLiteral` reads back whole, else `[label](escaped)`.
+    func testLinksTakeTheExportersSpelling() throws {
+        func link(_ text: String, _ href: String, _ marks: [String] = []) -> InlineRun {
+            let value = String(data: try! JSONSerialization.data(withJSONObject: ["href": href]), encoding: .utf8)!
+            return InlineRun(text, marks: marks.map { ($0, "{}") } + [("link", value)])
+        }
+        let shapes: [(name: String, runs: [InlineRun], export: String)] = [
+            (
+                "a link split by bold",
+                [link("a", "https://example.com/x"), link("b", "https://example.com/x", ["bold"])],
+                "* T\n\n  x [a](https://example.com/x)**[b](https://example.com/x)**\n"
+            ),
+            (
+                "the same link, two styles",
+                [
+                    link("a", "https://example.com/s", ["bold"]),
+                    link("b", "https://example.com/s", ["bold", "italic"]),
+                ],
+                "* T\n\n  x **[a](https://example.com/s)*****[b](https://example.com/s)***\n"
+            ),
+            (
+                "marks outside the link", [link("i", "https://example.com/i", ["italic", "strike"])],
+                "* T\n\n  x *~~[i](https://example.com/i)~~*\n"
+            ),
+            (
+                "trailing space inside a bold link", [link("t ", "https://example.com/t", ["bold"])],
+                "* T\n\n  x **[t ](https://example.com/t)**\n"
+            ),
+            ("code drops the link", [link("c", "https://example.com/c", ["code"])], "* T\n\n  x `c`\n"),
+            ("a relative path", [link("/docs/page", "/docs/page")], "* T\n\n  x /docs/page\n"),
+            ("a bare domain", [link("example.com", "example.com")], "* T\n\n  x example.com\n"),
+            ("mailto", [link("mailto:a@example.com", "mailto:a@example.com")], "* T\n\n  x mailto:a@example.com\n"),
+            (
+                "an https URL that reads back whole",
+                [link("https://example.com/path", "https://example.com/path")], "* T\n\n  x https://example.com/path\n"
+            ),
+            (
+                "an unbalanced paren reads back whole",
+                [link("https://example.com/(a)", "https://example.com/(a)")], "* T\n\n  x https://example.com/(a)\n"
+            ),
+            (
+                "an https URL whose trailing dot the autolink drops",
+                [link("https://example.com/a.", "https://example.com/a.")],
+                "* T\n\n  x [https://example.com/a.](https://example.com/a.)\n"
+            ),
+            (
+                "an https URL whose closing paren the autolink drops, escaped",
+                [link("https://example.com/a)", "https://example.com/a)")],
+                "* T\n\n  x [https://example.com/a)](https://example.com/a\\))\n"
+            ),
+            (
+                "an entity suffix", [link("https://example.com/a&amp;", "https://example.com/a&amp;")],
+                "* T\n\n  x [https://example.com/a&amp;](https://example.com/a&amp;)\n"
+            ),
+            (
+                "an upper-case scheme", [link("HTTPS://example.com/u", "HTTPS://example.com/u")],
+                "* T\n\n  x [HTTPS://example.com/u](HTTPS://example.com/u)\n"
+            ),
+            (
+                "www", [link("www.example.com", "www.example.com")],
+                "* T\n\n  x [www.example.com](www.example.com)\n"
+            ),
+            (
+                "a label, escaped", [link("label", "https://example.com/(x)")],
+                "* T\n\n  x [label](https://example.com/\\(x\\))\n"
+            ),
+        ]
+        for shape in shapes {
+            let child = BlockNoteBlock(
+                node: "paragraph", props: Self.paragraphProps, runs: [InlineRun("x ")] + shape.runs, id: "p")
+            let doc = try makeDoc([toggle("t", "T", [child])], clientID: 1)
+            defer { doc.destroy() }
+            let tree = NativeBlockProjection.project(doc, nativeMarks: false).blocks
+            XCTAssertEqual(
+                NativeExportMarkdown.markdown(NativeExportMarkdown.nodes(tree[...])), shape.export, shape.name)
+            assertCanonicalItems(try XCTUnwrap(NativeBlockProjection.markdownShadow(doc), shape.name), shape.export)
+        }
+    }
+
     /// Toggle subtrees the classic rendering cannot spell, each with the
     /// installed BlockNote 0.56 `blocksToMarkdownLossy` output for the same
     /// blocks (generated in labs/schrift-spikes/s3 with `withPageBreak`): a
