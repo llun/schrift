@@ -68,6 +68,8 @@ final class NativeEditorSession {
         textView.isEditable = false
         textView.delegate = nil
         textView.inputCoordinator = nil
+        // Undo history is session-local: it goes with the session.
+        input?.history.destroy()
         input = nil
         self.doc = nil
         doc.destroy()
@@ -81,12 +83,12 @@ final class NativeEditorSession {
         persist: @escaping (NativeEditCommand, Data) throws -> Void,
         scheduler: NativeReplicaSaveScheduler? = nil
     ) {
-        guard !isClosed, !hasUnsupportedRoot, input == nil else { return }
+        guard let doc, !hasUnsupportedRoot, input == nil else { return }
         saveScheduler = scheduler
         // A restored replica keeps IME provisional text beside its journal.
         let recoveryStore = replicaStore.flatMap { store in replicaScope.map { (store: store, scope: $0) } }
         input = NativeInputCoordinator(
-            engine: engine, surface: surface, view: textView, persist: persist, recoveryStore: recoveryStore)
+            doc: doc, engine: engine, surface: surface, view: textView, persist: persist, recoveryStore: recoveryStore)
     }
 
     /// Journal bytes not yet handed to the coordinator. They are durable on

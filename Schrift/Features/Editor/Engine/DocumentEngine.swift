@@ -73,6 +73,11 @@ final class DocumentEngine {
     /// entry, so an unjournaled transaction freezes the engine (instead of
     /// drifting `revision` from `manifest.revision`) and then calls this.
     var onUnjournaledTransaction: (() -> Void)?
+    /// The relative selection when the command now armed began (nil outside
+    /// one): the native history stores it with the step it captures (PR07b).
+    private(set) var selectionBeforeCommand: RelativeEditorSelection?
+    /// Every transaction recorded while a history step runs; nil otherwise.
+    private var stepTransactions: [YTransaction]?
 
     /// The surface patches are delivered to. Weak: the surface owns the engine,
     /// not the other way round. A patch delivered while it is `nil` is lost and
@@ -171,6 +176,8 @@ final class DocumentEngine {
         else { throw DocumentEngineError.unsupportedNativeInput }
         nativeCommand = command
         nativeEmission = 0
+        selectionBeforeCommand = selection
+        defer { selectionBeforeCommand = nil }
         do {
             let update = try writer.replaceText(
                 in: target, range: range,
@@ -221,6 +228,8 @@ final class DocumentEngine {
         let (write, caret) = try prepareStructural(command)
         nativeCommand = command
         nativeEmission = 0
+        selectionBeforeCommand = selection
+        defer { selectionBeforeCommand = nil }
         do {
             let update = try write()
             let position = caret()
@@ -245,6 +254,71 @@ final class DocumentEngine {
             buffered = []
             throw error
         }
+    }
+
+    /// One durable step of the native history (PR07b: `.undo`/`.redo`). `step`
+    /// runs the step's own transaction, whose origin is neither `.localUser` nor
+    /// `.remote` (so its patch is `.other`, which every surface applies), and
+    /// returns whether anything changed. The same journal-before-publication
+    /// barrier as `applyStructural`: the step's incremental bytes are persisted
+    /// before the surface sees its patch, and the armed command keeps the durable
+    /// owner's unjournaled-transaction guard quiet. Refused before `step` runs
+    /// while composing or until a composition's rebuild is delivered, after a
+    /// failed write, or with a stale revision. Returns false when nothing changed
+    /// (nothing is journaled then).
+    @discardableResult
+    func applyHistoryStep(
+        _ command: NativeEditCommand, step: () throws -> Bool, persist: (Data) throws -> Void
+    ) throws -> Bool {
+        try requireCompositionBoundary()
+        guard composition == nil, !isDeferringComposition, deferredBlockIDs.isEmpty, !isWholeListDeferred else {
+            throw DocumentEngineError.composingBlock
+        }
+        guard !isFlushing, revision == command.baseRevision, revision < UInt64.max else {
+            throw DocumentEngineError.staleNativeCommand
+        }
+        guard command.kind == .undo || command.kind == .redo else { throw DocumentEngineError.unsupportedNativeInput }
+        nativeCommand = command
+        nativeEmission = 0
+        selectionBeforeCommand = selection
+        stepTransactions = []
+        defer {
+            selectionBeforeCommand = nil
+            stepTransactions = nil
+        }
+        do {
+            let changed = try step()
+            let updates = try (stepTransactions ?? []).compactMap { try YTransactionEncoder.encodeUpdate($0) }
+            // One step is one transaction, and a change always has bytes:
+            // anything else cannot be journaled as one entry.
+            guard updates.count <= 1, changed == !updates.isEmpty else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            if let update = updates.first {
+                unconfirmedNativeUpdate = update
+                try persist(update)
+                revision += 1
+                unconfirmedNativeUpdate = nil
+            }
+            nativeCommand = nil
+            flush()
+            return changed
+        } catch {
+            // The step's transaction may have run: no rollback, so freeze as a
+            // failed append does rather than retry against an unconfirmed graph.
+            nativeCommand = nil
+            nativeWriteFailed = true
+            buffered = []
+            throw error
+        }
+    }
+
+    /// Replaces the relative selection with one captured earlier on this
+    /// replica (a history step restoring the selection its step stored), with
+    /// no validation: it resolves, or not, like any relative selection.
+    func restoreSelection(_ selection: RelativeEditorSelection?) {
+        guard !isDetached else { return }
+        self.selection = selection
     }
 
     /// Whether `applyStructural` would accept `command` now: the same
@@ -490,6 +564,8 @@ final class DocumentEngine {
             caret = { EditorPosition(blockID: command.blockID, offset: removing.lowerBound, assoc: -1) }
         case .moveUp, .moveDown, .duplicate, .deleteBlock, .insertBlock, .insertSubtrees:
             throw DocumentEngineError.unsupportedNativeInput  // prepared above
+        case .undo, .redo:
+            throw DocumentEngineError.unsupportedNativeInput  // `applyHistoryStep`
         }
         return (write, caret)
     }
@@ -990,6 +1066,8 @@ final class DocumentEngine {
             id: commandID, baseRevision: revision, blockID: blockID, range: range, replacement: text)
         nativeCommand = command
         nativeEmission = 0
+        selectionBeforeCommand = selection
+        defer { selectionBeforeCommand = nil }
         let update: Data
         do {
             update = try writer.transaction { _ in
@@ -1105,6 +1183,7 @@ final class DocumentEngine {
 
     private func record(_ transaction: YTransaction) {
         guard !isDetached else { return }
+        stepTransactions?.append(transaction)
         var patch = builder.build(transaction)
         if let command = nativeCommand, patch.origin == .localUser {
             patch.nativeCommand = NativePatchStamp(

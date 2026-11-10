@@ -8,8 +8,19 @@ final class NativeTextView: UITextView {
     /// command path would refuse it as a second writer.
     private(set) var isApplyingMarkedText = false
 
-    /// PR07 owns collaborative undo. UIKit-only history would diverge from Yjs.
-    override var undoManager: UndoManager? { nil }
+    /// The collaborative history's UIKit face (PR07b): Edit ▸ Undo/Redo, the
+    /// shake gesture, ⌘Z/⇧⌘Z and the keyboard's undo route to
+    /// `NativeUndoManager`. Without typing there is none; UIKit-only history
+    /// would diverge from Yjs.
+    override var undoManager: UndoManager? { inputCoordinator?.history.system }
+
+    @objc(undo:) func nativeUndo(_ sender: Any?) {
+        inputCoordinator?.undo()
+    }
+
+    @objc(redo:) func nativeRedo(_ sender: Any?) {
+        inputCoordinator?.redo()
+    }
 
     /// Marked text is provisional: UIKit owns the range in storage and the
     /// composition session captures the replacement anchors before it exists.
@@ -208,10 +219,11 @@ final class NativeTextView: UITextView {
     }
 
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
-        if ["undo:", "redo:", "toggleBoldface:", "toggleItalics:", "toggleUnderline:"].contains(
-            NSStringFromSelector(action))
-        {
-            return false
+        switch NSStringFromSelector(action) {
+        case "undo:": return inputCoordinator?.canUndo ?? false
+        case "redo:": return inputCoordinator?.canRedo ?? false
+        case "toggleBoldface:", "toggleItalics:", "toggleUnderline:": return false
+        default: break
         }
         return super.canPerformAction(action, withSender: sender)
     }

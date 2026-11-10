@@ -111,6 +111,32 @@ final class YUndoManagerTests: XCTestCase {
         guard case .deleted = deleted.content else { return XCTFail("released item should gc") }
     }
 
+    /// Schrift's bounded-history addition: only the oldest items go, and their
+    /// `keep` marks are released like `clear()`'s.
+    func testTrimDropsTheOldestItemsAndReleasesTheirKeep() throws {
+        let doc = YDoc(clientID: 1)
+        defer { doc.destroy() }
+        let t = doc.getText("t")
+        try t.insert(0, "abc")
+        let um = YUndoManager(doc: doc, scope: [t], captureTimeout: 0)
+        try t.delete(0, 3)
+        let deleted = try XCTUnwrap(doc.store.clients[1]?.structs.first as? YItem)
+        try t.insert(0, "x")
+        try t.insert(1, "y")
+        XCTAssertEqual(um.undoStack.count, 3)
+        XCTAssertTrue(deleted.keep)
+
+        try um.trimUndoStack(to: 2)
+        XCTAssertEqual(um.undoStack.count, 2)
+        XCTAssertFalse(deleted.keep, "the dropped deletion may be gc'd")
+        try um.undo()
+        try um.undo()
+        XCTAssertFalse(um.canUndo)
+        XCTAssertEqual(text(t), "", "the dropped step is never undone")
+        try um.trimUndoStack(to: 5)
+        XCTAssertTrue(um.canRedo, "trim never touches the redo stack")
+    }
+
     func testUndoIsALocalTransactionAPeerCanApply() throws {
         let doc1 = YDoc(clientID: 1)
         let doc2 = YDoc(clientID: 2)

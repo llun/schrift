@@ -10,6 +10,8 @@ import XCTest
 class NativeEditingTestCase: DocumentEngineTestCase {
     final class WriteLog {
         var commands: [NativeEditCommand] = []
+        /// The surface's blocks when each command was journaled.
+        var blocksAtPersist: [[BlockSnapshot]] = []
     }
 
     @MainActor
@@ -39,8 +41,9 @@ class NativeEditingTestCase: DocumentEngineTestCase {
         _ = try store.create(for: scope, checkpoint: BlockNoteYjs.encode(blocks, clientID: Self.seedClientID))
         let session = try XCTUnwrap(NativeEditorSession.restore(store: store, scope: scope))
         let log = WriteLog()
-        session.enableTyping { command, update in
+        session.enableTyping { [weak session] command, update in
             log.commands.append(command)
+            log.blocksAtPersist.append(session?.surface.blocks ?? [])
             try store.append(
                 update, for: scope, commandID: command.id, baseRevision: command.baseRevision, origin: .local)
         }

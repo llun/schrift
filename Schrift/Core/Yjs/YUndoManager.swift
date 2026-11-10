@@ -136,6 +136,18 @@ final class YUndoManager {
         }
     }
 
+    /// Schrift addition (not in yjs): drop the oldest undo items beyond `count`,
+    /// releasing their `keep` marks as `clear()` does, so a bounded history never
+    /// pins old deletions. Runs in a transaction with the default (nil) origin.
+    func trimUndoStack(to count: Int) throws {
+        let excess = undoStack.count - max(0, count)
+        guard excess > 0 else { return }
+        try doc.transact { transaction in
+            for item in undoStack.prefix(excess) { try clearStackItem(transaction, item) }
+            undoStack.removeFirst(excess)
+        }
+    }
+
     /// yjs `destroy` (@3848): stop capturing. The stacks and their `keep` marks
     /// stay; call `clear()` first to release them.
     func destroy() {

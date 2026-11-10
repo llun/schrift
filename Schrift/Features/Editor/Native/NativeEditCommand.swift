@@ -56,6 +56,10 @@ struct NativeEditCommand: Equatable, Sendable {
         /// is an empty paragraph without children; containers take `newIDs`
         /// in preorder.
         case insertSubtrees(payload: Data, newIDs: [String])
+        /// One step of the session's collaborative history (PR07b,
+        /// `NativeUndoManager`). `blockID` is unused (empty).
+        case undo
+        case redo
     }
 
     let id: UUID
@@ -87,7 +91,7 @@ struct NativeEditCommand: Equatable, Sendable {
         case .replace(_, let replacement, _): return replacement
         case .range(let range): return range.replacement
         case .split, .join, .marks, .props, .blockType, .indent, .outdent, .moveUp, .moveDown, .duplicate,
-            .deleteBlock, .insertBlock, .insertSubtrees:
+            .deleteBlock, .insertBlock, .insertSubtrees, .undo, .redo:
             return ""
         }
     }

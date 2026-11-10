@@ -430,6 +430,46 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertEqual(text(of: editor), after, "journaled, so it survives a relaunch")
     }
 
+    /// Hardware ⌘Z and ⇧⌘Z drive the collaborative history (PR07b): undo
+    /// takes the typed word back out step by step (typing may span more than
+    /// one 500 ms step), redo puts it back, and the undone state is journaled,
+    /// so a relaunch restores it.
+    func testHardwareUndoAndRedoAreDurableAfterRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        focusFirstParagraph(of: editor, in: app)
+        let before = text(of: editor)
+        editor.typeText("undoproof")
+        XCTAssertTrue(waitForText(of: editor, containing: "undoproof"), text(of: editor))
+        var presses = 0
+        while text(of: editor) != before, presses < 9 {
+            editor.typeKey("z", modifierFlags: .command)
+            presses += 1
+        }
+        XCTAssertEqual(text(of: editor), before, "⌘Z undoes the typing and nothing older")
+        presses = 0
+        while !text(of: editor).contains("undoproof"), presses < 9 {
+            editor.typeKey("z", modifierFlags: [.command, .shift])
+            presses += 1
+        }
+        XCTAssertTrue(text(of: editor).contains("undoproof"), "⇧⌘Z redoes it: \(text(of: editor))")
+        while text(of: editor) != before, presses > 0 {
+            editor.typeKey("z", modifierFlags: .command)
+            presses -= 1
+        }
+        XCTAssertEqual(text(of: editor), before)
+        XCTAssertFalse(app.staticTexts["nativeEditor.inputNotice"].exists)
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 10))
+        app.terminate()
+
+        app.launchArguments = ["--native-open"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertEqual(text(of: editor), before, "the undo is journaled like any edit")
+    }
+
     private func text(of element: XCUIElement) -> String { element.value as? String ?? "" }
 
     /// Taps into the first paragraph only once the editor holds still, then waits for the keyboard to
