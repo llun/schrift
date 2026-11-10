@@ -137,6 +137,24 @@ struct YDeleteSet {
         }
         return ds
     }
+
+    /// yjs `mergeDeleteSets` (@207) — one sorted, merged set holding every range of
+    /// `dss`, clients in first-seen order.
+    static func merge(_ dss: [YDeleteSet]) -> YDeleteSet {
+        var merged = YDeleteSet()
+        for (dssI, ds) in dss.enumerated() {
+            for client in ds.orderedClients where merged.clients[client] == nil {
+                var dels = ds.clients[client]!
+                for following in dss[(dssI + 1)...] {
+                    dels += following.clients[client] ?? []
+                }
+                merged.clients[client] = dels
+                merged.clientInsertionOrder.append(client)
+            }
+        }
+        merged.sortAndMerge()
+        return merged
+    }
 }
 
 // MARK: - Applying a delete set from an update

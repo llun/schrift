@@ -106,6 +106,14 @@ enum YContent {
         }
     }
 
+    /// yjs `AbstractContent.copy()` (ContentType @9461) — the content a redone item
+    /// carries. Every case but `.type` is a value; a type copies to a fresh empty
+    /// type of the same kind (yjs `_copy()`), whose children are redone separately.
+    func copy() -> YContent {
+        if case .type(let type) = self { return .type(YType(typeRef: type.typeRef)) }
+        return self
+    }
+
     // MARK: Splitting
 
     /// yjs `splice(offset)`: truncate `self` to its first `offset` units and

@@ -110,9 +110,8 @@ final class YItem: YStruct {
     var parent: YItemParent?
     /// The map key this item is a value for, or nil when it is a list child.
     var parentSub: String?
-    /// Set by the undo manager, which this milestone does not model — always nil.
-    /// `mergeWith` and `splitItem` both read it, so it is carried rather than
-    /// dropped.
+    /// The id of the item `YUndoManager`'s `redoItem` re-created this one as (yjs
+    /// `redone`); nil until then. `mergeWith` and `splitItem` carry it.
     var redone: YID?
     var content: YContent
 
@@ -537,5 +536,147 @@ final class YItem: YStruct {
         } else {
             content = .deleted(len: length)
         }
+    }
+}
+
+// MARK: - Undo support
+
+extension YItem {
+    /// yjs `isParentOf` (@2120) — whether `parent` is an ancestor of `child`.
+    static func isParentOf(_ parent: YType, _ child: YItem?) -> Bool {
+        var child = child
+        while let current = child {
+            if current.parentType === parent { return true }
+            child = current.parentType?.item
+        }
+        return false
+    }
+
+    /// yjs `keepItem` (@9596) — set (or release) `keep` on `item` and its
+    /// ancestors, so `tryGcDeleteSet` leaves content an undo can still restore.
+    /// Runtime state only: it is never encoded.
+    static func keepItem(_ item: YItem?, _ keep: Bool) {
+        var item = item
+        while let current = item, current.keep != keep {
+            current.keep = keep
+            item = current.parentType?.item
+        }
+    }
+
+    /// yjs `redoItem` (@9671) — re-create a deleted `item` at its old position as a
+    /// new local item, redoing its deleted parent first when that is undone in the
+    /// same step. Returns nil when it cannot be redone: the parent stays deleted,
+    /// or (map entries) a remote change replaced the value since.
+    ///
+    /// `redoitems` holds `ObjectIdentifier`s where yjs holds a `Set<Item>`. A
+    /// list neighbour whose `redone` target was gc'd (possible only after `clear()`)
+    /// is skipped as untraceable, where yjs would read `.parent` off a `GC` and throw.
+    static func redoItem(
+        _ transaction: YTransaction, _ item: YItem, _ redoitems: Set<ObjectIdentifier>,
+        _ itemsToDelete: YDeleteSet, _ ignoreRemoteMapChanges: Bool, _ um: YUndoManager
+    ) throws -> YStruct? {
+        let doc = transaction.doc
+        let store = doc.store
+        let ownClientID = doc.clientID
+        if let redone = item.redone {
+            return try YStructStore.getItemCleanStart(transaction, redone)
+        }
+        guard let itemParent = item.parentType else { throw YIntegrationError.unexpectedCase }
+        var parentItem = itemParent.item
+        var left: YItem?
+        var right: YItem?
+        // Make sure that the parent is redone.
+        if var parent = parentItem, parent.deleted {
+            // Try to undo the parent if it will be undone anyway.
+            if parent.redone == nil {
+                if !redoitems.contains(ObjectIdentifier(parent)) { return nil }
+                if try redoItem(transaction, parent, redoitems, itemsToDelete, ignoreRemoteMapChanges, um) == nil {
+                    return nil
+                }
+            }
+            while let redone = parent.redone {
+                guard let next = try YStructStore.getItemCleanStart(transaction, redone) as? YItem else {
+                    throw YIntegrationError.unexpectedCase
+                }
+                parent = next
+            }
+            parentItem = parent
+        }
+        let parentType: YType
+        if let parentItem {
+            guard case .type(let type) = parentItem.content else { throw YIntegrationError.unexpectedCase }
+            parentType = type
+        } else {
+            parentType = itemParent
+        }
+        // The next item whose parent is `parentItem`, following `redone` from `start`.
+        func trace(_ start: YItem) throws -> YItem? {
+            var trace: YItem? = start
+            while let current = trace, current.parentType?.item !== parentItem {
+                trace = try current.redone.flatMap { try YStructStore.getItemCleanStart(transaction, $0) as? YItem }
+            }
+            return trace
+        }
+
+        if let parentSub = item.parentSub {
+            right = nil
+            if item.right != nil, !ignoreRemoteMapChanges {
+                left = item
+                // Iterate right while right is in itemsToDelete. If it is intended to
+                // delete right while item is redone, item should replace right.
+                while let current = left, let next = current.right,
+                    next.redone != nil || itemsToDelete.isDeleted(next.id)
+                        || um.undoStack.contains(where: { $0.deletions.isDeleted(next.id) })
+                        || um.redoStack.contains(where: { $0.deletions.isDeleted(next.id) })
+                {
+                    left = next
+                    // Follow redone.
+                    while let current = left, let redone = current.redone {
+                        // A gc'd target: yjs reads `GC.right` as undefined and refuses below.
+                        guard let next = try YStructStore.getItemCleanStart(transaction, redone) as? YItem else {
+                            return nil
+                        }
+                        left = next
+                    }
+                }
+                // Not redoable: it conflicts with a change from another client.
+                if left?.right != nil { return nil }
+            } else {
+                left = parentType.map[parentSub]
+            }
+            // Drop a cross-parent left so its origin doesn't mislead the remote (yjs#757).
+            if let current = left, current.parentType?.item !== parentItem {
+                left = parentType.map[parentSub]
+            }
+        } else {
+            // An array item: insert at the old position.
+            left = item.left
+            right = item
+            // Find the next cloned redo items.
+            while let current = left {
+                if let traced = try trace(current) {
+                    left = traced
+                    break
+                }
+                left = current.left
+            }
+            while let current = right {
+                if let traced = try trace(current) {
+                    right = traced
+                    break
+                }
+                right = current.right
+            }
+        }
+        let redoneItem = YItem(
+            id: YID(client: ownClientID, clock: store.getState(ownClientID)),
+            left: left, origin: left?.lastId, right: right, rightOrigin: right?.id,
+            parent: .type(parentType), parentSub: item.parentSub, content: item.content.copy())
+        // yjs's `ContentFormat.copy` shares the value object, so the copy stays `===`.
+        if case .format = item.content { redoneItem.formatIdentity = item.resolvedFormatIdentity() }
+        item.redone = redoneItem.id
+        keepItem(redoneItem, true)
+        try redoneItem.integrate(transaction, offset: 0)
+        return redoneItem
     }
 }
