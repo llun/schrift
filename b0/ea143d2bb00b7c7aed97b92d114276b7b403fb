@@ -1,0 +1,59 @@
+Schrift/Core/Yjs/YBlockProjection.swift
+  s_dc239db0cc1c9d::t_14ee4a95f2e2de 44
+Schrift/Features/Editor/Engine/EditorSurface.swift
+  s_dc239db0cc1c9d::t_14ee4a95f2e2de 63,86,103,139,209
+Schrift/Core/Yjs/NativeBlockSnapshot.swift
+  s_dc239db0cc1c9d::t_14ee4a95f2e2de 16
+Schrift/Features/Editor/Native/NativeUndoManager.swift
+  s_dc239db0cc1c9d::t_fb7e6c0c5ebaba 22-25,34-35,48,50-51,75-100
+SchriftTests/Features/Editor/Native/ReplicaStoreTests.swift
+  s_dc239db0cc1c9d::t_a0e1db4af570b9 29,35
+  s_dc239db0cc1c9d::t_8e78cdf3bb07f6 397-482
+Schrift/Features/Editor/Native/NativeEditCommand.swift
+  s_dc239db0cc1c9d::t_8ce956067a8ea7 56-58
+SchriftTests/Features/Editor/Native/NativeReplicaRestoreTests.swift
+  s_dc239db0cc1c9d::t_6a2674ddf3da33 1,9-16,85,87,98
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_dc239db0cc1c9d::t_8ce956067a8ea7 346-347,748-750,753-754,1307-1309
+  s_dc239db0cc1c9d::t_70b5a9a4095e84 36-40,1266
+  s_dc239db0cc1c9d::t_14ee4a95f2e2de 1290
+Schrift/Features/Editor/Engine/EngineSelection.swift
+  s_dc239db0cc1c9d::t_14ee4a95f2e2de 5,13
+Schrift/Core/Yjs/BlockNoteDocument.swift
+  s_dc239db0cc1c9d::t_14ee4a95f2e2de 8
+Schrift/Features/Editor/Native/ReplicaStore.swift
+  s_dc239db0cc1c9d::t_0f5c8097f58bd9 3,16-25,39,48,52,64,76,96,99-103,134-136,143,146-149,202,205-211,215,217-221,250-258,283-286,304-312,330-333,350-352,355-363,371-374,401-404,409,413,443,445-449
+  s_dc239db0cc1c9d::t_9d9f2478ed2c0d 41
+AGENTS.md
+  s_dc239db0cc1c9d::t_fcf93d9f5c7c02 562-577,2099,2645,2682-2684,2694,2708-2709,2749,2838
+  s_dc239db0cc1c9d::t_4ed8c4897420fe 2695-2697
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  s_dc239db0cc1c9d::t_8ce956067a8ea7 510-511,845-847,856
+SchriftTests/Features/Editor/Native/NativeClipboardTests.swift
+  s_dc239db0cc1c9d::t_f08a684a4bdbb3 212-222,258-259,274,350,354,359-362,423,456
+  s_dc239db0cc1c9d::t_f67f6d8c66b98a 329-330
+Schrift/Features/Editor/Native/ReplicaSaveAdapter.swift
+  s_dc239db0cc1c9d::t_a0e1db4af570b9 51-52
+docs/architecture.md
+  s_dc239db0cc1c9d::t_4ed8c4897420fe 542,974-987,1159
+Schrift/Features/Editor/Native/ReplicaManifest.swift
+  s_dc239db0cc1c9d::t_a0e1db4af570b9 7
+SchriftTests/Features/Editor/Engine/DocumentEngineBoundaryTests.swift
+  s_dc239db0cc1c9d::t_9b4c027734c71a 3-4,9,17-21,23,27-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b0ea143d2bb00b7c7aed97b92d114276b7b403fb",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
