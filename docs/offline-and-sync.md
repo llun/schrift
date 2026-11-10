@@ -225,7 +225,13 @@ writes the content cache.
 
 Still open: a total shadow for opaque/rich documents (re-stamping refuses an
 unprojectable revision), clean-replica removal on sign-out, old Markdown-draft
-migration and local-create key migration. Existing Markdown drafts retain their
+migration and local-create key migration. Since PR06c the shadow spells callouts,
+toggles and page breaks as the server's Markdown export does (a callout as an emoji
+paragraph, a toggle list item as a bullet, a toggle heading as a plain heading, a page
+break not at all, and a toggle's paragraph children as the export's indented
+continuation paragraphs), so documents holding them type and save without a spurious
+conflict; tables, media, math, columns and diagrams still have no shadow and open
+read-only. Existing Markdown drafts retain their
 classic owner.
 
 > **Amendment (2026-07-03):** the document **lists** (Home, the editor's
