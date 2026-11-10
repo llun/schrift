@@ -444,18 +444,18 @@ final class NativeEditorUITests: XCTestCase {
         editor.typeText("undoproof")
         XCTAssertTrue(waitForText(of: editor, containing: "undoproof"), text(of: editor))
         var presses = 0
-        while text(of: editor) != before, presses < 9 {
+        while !waitForValue(of: editor, equalTo: before, timeout: 2), presses < 9 {
             editor.typeKey("z", modifierFlags: .command)
             presses += 1
         }
         XCTAssertEqual(text(of: editor), before, "⌘Z undoes the typing and nothing older")
         presses = 0
-        while !text(of: editor).contains("undoproof"), presses < 9 {
+        while !waitForText(of: editor, containing: "undoproof", timeout: 2), presses < 9 {
             editor.typeKey("z", modifierFlags: [.command, .shift])
             presses += 1
         }
         XCTAssertTrue(text(of: editor).contains("undoproof"), "⇧⌘Z redoes it: \(text(of: editor))")
-        while text(of: editor) != before, presses > 0 {
+        while !waitForValue(of: editor, equalTo: before, timeout: 2), presses > 0 {
             editor.typeKey("z", modifierFlags: .command)
             presses -= 1
         }
@@ -494,9 +494,15 @@ final class NativeEditorUITests: XCTestCase {
 
     /// Typed text is read back through the accessibility tree, which can trail the keystrokes; wait for the
     /// value instead of reading it once.
-    private func waitForText(of element: XCUIElement, containing needle: String) -> Bool {
+    private func waitForText(of element: XCUIElement, containing needle: String, timeout: TimeInterval = 10) -> Bool {
         let present = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value CONTAINS[c] %@", needle), object: element)
-        return XCTWaiter.wait(for: [present], timeout: 10) == .completed
+        return XCTWaiter.wait(for: [present], timeout: timeout) == .completed
+    }
+
+    private func waitForValue(of element: XCUIElement, equalTo expected: String, timeout: TimeInterval) -> Bool {
+        let equal = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", expected), object: element)
+        return XCTWaiter.wait(for: [equal], timeout: timeout) == .completed
     }
 }

@@ -97,6 +97,8 @@ final class NativeSystemUndoManager: UndoManager {
     override var canRedo: Bool { MainActor.assumeIsolated { input?.canRedo ?? false } }
     override func undo() { MainActor.assumeIsolated { _ = input?.undo() } }
     override func redo() { MainActor.assumeIsolated { _ = input?.redo() } }
-    /// UIKit's selector-based registrations are dropped outright.
+    /// UIKit's selector-based registrations are dropped outright. Anything it registers
+    /// with a closure stays in `super` (at most one, `levelsOfUndo` 1) and never runs:
+    /// `undo()`/`redo()` above never call `super`.
     override func registerUndo(withTarget target: Any, selector: Selector, object anObject: Any?) {}
 }

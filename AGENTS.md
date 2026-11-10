@@ -2652,8 +2652,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   restored block's caret lands in its copy; one a peer deleted falls back like any restore.
   **System undo:** `NativeTextView.undoManager` is `NativeSystemUndoManager` (an
   `UndoManager` subclass whose `canUndo`/`canRedo`/`undo()`/`redo()` route to the
-  coordinator; `levelsOfUndo` 1 and dropped selector registrations, so UIKit's own text
-  history never runs), plus `undo:`/`redo:` responder actions enabled from
+  coordinator; selector registrations dropped; a closure registration stays in `super`, at most one
+  with `levelsOfUndo` 1, and never runs because `undo()`/`redo()` never call `super`), plus `undo:`/`redo:` responder actions enabled from
   `canUndo`/`canRedo`: Edit ▸ Undo/Redo, shake, ⌘Z/⇧⌘Z and the keyboard's undo all land
   here. A read-only view has none. Stack changes post `NSUndoManagerCheckpoint` for the
   keyboard's buttons. Tests: `NativeUndoTests` (typing/format/split/join/tree/block steps, a

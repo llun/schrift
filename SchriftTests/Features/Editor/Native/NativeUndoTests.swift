@@ -20,6 +20,13 @@ final class NativeUndoTests: NativeEditingTestCase {
         XCTAssertTrue(harness.input.replace(range: harness.view.selectedRange, with: text))
     }
 
+    /// Grouping must not depend on CI speed: steps here split only at explicit boundaries.
+    override func makeHarness(_ blocks: [BlockNoteBlock] = seedBlocks()) throws -> Harness {
+        let harness = try super.makeHarness(blocks)
+        harness.input.history.history.captureTimeout = 60_000
+        return harness
+    }
+
     private func steps(_ harness: Harness) -> Int { harness.input.history.history.undoStack.count }
 
     private var seedTexts: [String] { Self.seedBlocks().map { $0.runs.map(\.text).joined() } }
