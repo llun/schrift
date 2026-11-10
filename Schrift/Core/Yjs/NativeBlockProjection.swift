@@ -88,17 +88,121 @@ enum NativeBlockProjection {
     /// flat document's classic shadow; for a tree, the classic rendering of
     /// its blocks, each indented to its depth (Markdown keeps only list
     /// nesting; other nesting reads flat), else flat. Marks are scrubbed as the
-    /// classic shadow scrubs them. `nil` when the document has no total shadow.
+    /// classic shadow scrubs them. Blocks only the native editor models take
+    /// the server export's spelling (`exportSpelling`), and a root subtree the
+    /// classic rendering cannot spell like the export (`needsExport`) is the
+    /// export's own Markdown (`NativeExportMarkdown`). `nil` when the document
+    /// has no total shadow.
     static func markdownShadow(_ doc: YDoc) -> String? {
         let tree = project(doc, nativeMarks: false)
-        // A flat document keeps exactly the classic shadow.
-        guard tree.blocks.contains(where: { $0.depth > 0 }) else {
+        // A flat document with no native-only block keeps exactly the classic shadow.
+        guard tree.blocks.contains(where: { $0.depth > 0 || nativeOnlyReasons.contains(opaqueReason($0.block)) })
+        else {
             return YBlockProjection.projectedMarkdown(YBlockProjection.project(doc))
         }
+        let blocks = tree.blocks
+        var parts: [String] = []
+        var plain = blocks.startIndex  // the first block not yet spelled
+        var root = blocks.startIndex
+        while root < blocks.endIndex {
+            var end = root + 1
+            while end < blocks.endIndex, blocks[end].depth > 0 { end += 1 }
+            if needsExport(blocks[root..<end]) {
+                guard let before = classicSpelling(blocks[plain..<root]),
+                    let chunk = NativeExportMarkdown.markdown(NativeExportMarkdown.nodes(blocks[root..<end]))
+                else { return nil }
+                parts += [before, chunk]
+                plain = end
+            }
+            root = end
+        }
+        guard let rest = classicSpelling(blocks[plain...]) else { return nil }
+        guard !parts.isEmpty else { return rest }
+        // The export separates root blocks by a blank line; a list split here
+        // only turns loose, which `canonicalMarkdown` does not see.
+        let spelled = (parts + [rest]).map { $0.trimmingCharacters(in: .newlines) }.filter { !$0.isEmpty }
+        return spelled.joined(separator: "\n\n") + "\n"
+    }
+
+    /// The classic rendering of a run of root subtrees, native-only blocks
+    /// rewritten (`exportSpelling`).
+    private static func classicSpelling(_ snapshots: ArraySlice<NativeBlockSnapshot>) -> String? {
+        guard let (blocks, indents) = exportSpelling(snapshots) else { return nil }
         let document = ProjectedDocument(
-            blocks: tree.blocks.map(\.block), isFullyRenderable: tree.isFullyRenderable,
-            isFullyModeled: tree.isFullyModeled)
-        return YBlockProjection.projectedMarkdown(document, indents: tree.blocks.map(\.depth))
+            blocks: blocks, isFullyRenderable: blocks.allSatisfy { !$0.fidelity.isOpaque }, isFullyModeled: false)
+        guard indents.contains(where: { $0 > 0 }) else { return YBlockProjection.projectedMarkdown(document) }
+        return YBlockProjection.projectedMarkdown(document, indents: indents)
             ?? YBlockProjection.projectedMarkdown(document)
+    }
+
+    /// Whether the export spells this subtree in a way the classic rendering
+    /// cannot: a toggle list item with a non-list descendant (the export
+    /// indents it as a continuation paragraph and moves it ahead of the list
+    /// children), or a callout or page break with children. A callout in
+    /// such a subtree has no shadow (`NativeExportMarkdown`): it is Schrift's
+    /// own block, and the server's export of it there is unknown.
+    private static func needsExport(_ subtree: ArraySlice<NativeBlockSnapshot>) -> Bool {
+        let lists: Set<String> = ["bulletListItem", "numberedListItem", "checkListItem", "toggleListItem"]
+        return subtree.indices.contains { index in
+            let snapshot = subtree[index]
+            let descendants = subtree[(index + 1)...].prefix { $0.depth > snapshot.depth }
+            switch opaqueReason(snapshot.block) {
+            case "unknownNode:toggleListItem": return descendants.contains { !lists.contains($0.block.node) }
+            case "unknownNode:callout", "unknownNode:pageBreak": return !descendants.isEmpty
+            default: return false
+            }
+        }
+    }
+
+    /// The classic projection's opaque reasons for the blocks the native
+    /// projection models (PR05b, PR06b).
+    private static let nativeOnlyReasons: Set<String?> = [
+        "unknownNode:callout", "unknownNode:toggleListItem", "unknownNode:pageBreak", "toggleable heading",
+    ]
+
+    private static func opaqueReason(_ block: ProjectedBlock) -> String? {
+        if case .opaque(let reason) = block.fidelity { return reason }
+        return nil
+    }
+
+    /// The classic tree rewritten the way the server's Markdown export
+    /// (BlockNote's `blocksToMarkdownLossy`) spells the native-only blocks, as
+    /// the real capture shows (`NativeShadowExportParityTests`): a callout is a
+    /// paragraph with its emoji in front, a toggle list item a bullet, a
+    /// toggle heading a plain heading, and a page break is dropped. Lossy like
+    /// the export; the raw Yjs save still carries the real block. Shapes this
+    /// cannot spell go to `NativeExportMarkdown` (`needsExport`). `nil` for a
+    /// callout without a non-empty string emoji.
+    private static func exportSpelling(_ tree: ArraySlice<NativeBlockSnapshot>) -> (
+        blocks: [ProjectedBlock], indents: [Int]
+    )? {
+        var blocks: [ProjectedBlock] = []
+        var indents: [Int] = []
+        for snapshot in tree {
+            var block = snapshot.block
+            switch opaqueReason(block) {
+            case "unknownNode:pageBreak":
+                guard block.runs.isEmpty else { return nil }
+                continue
+            case "unknownNode:toggleListItem":
+                block.node = "bulletListItem"
+                block.fidelity = .lossy(reasons: ["toggleListItem"])
+            case "toggleable heading":
+                block.fidelity = .lossy(reasons: ["prop:isToggleable"])
+            case "unknownNode:callout":
+                guard case .string(let emoji)? = block.props.first(where: { $0.key == "emoji" })?.value,
+                    !emoji.isEmpty
+                else { return nil }
+                let empty = block.runs.allSatisfy(\.text.isEmpty)
+                block.node = "paragraph"
+                block.runs = empty ? [InlineRun(emoji)] : [InlineRun(emoji + " ")] + block.runs
+                block.fidelity = .lossy(reasons: ["callout"])
+            default:
+                break
+            }
+            blocks.append(block)
+            indents.append(snapshot.depth)
+        }
+        return (blocks, indents)
     }
 }

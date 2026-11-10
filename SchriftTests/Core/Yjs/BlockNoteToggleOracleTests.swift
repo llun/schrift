@@ -99,7 +99,7 @@ final class BlockNoteToggleOracleTests: XCTestCase {
         try doc.applyUpdate(YUpdateDecoder.decode(try XCTUnwrap(Data(base64Encoded: capture.seed))))
         let classic = YBlockProjection.project(doc)
         XCTAssertEqual(classic.blocks.first?.fidelity, .opaque(reason: "nested children"))
-        XCTAssertNil(NativeBlockProjection.markdownShadow(doc), "no Markdown shadow for a toggle yet")
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc), "the native shadow spells it as the export does")
         XCTAssertThrowsError(try BlockNoteWriter(doc: doc).splitBlock(block: "t", at: 1, newID: "x")) {
             XCTAssertEqual($0 as? BlockNoteWriter.Error, .unsupportedBlockType("toggleListItem"))
         }
