@@ -39,11 +39,15 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     /// canonical blocks it shows include every patch delivered before it).
     private enum Frozen {
         case patch(BlockPatch, settled: [String: BlockSnapshot]?)
-        case rollback(blocks: Set<String>)
+        case rollback(commands: Set<UUID>)
     }
     /// Predictions whose echo arrived while frozen: journaled, confirmed when
     /// the echo is replayed in order.
     private var bufferedEchoes: Set<UUID> = []
+    /// Predictions a rollback while frozen dropped. They stay in `predictions`
+    /// (their text is still in `blocks`, so buffered patches rebase through
+    /// them) until the rollback is replayed, in order, at reconciliation.
+    private var doomed: Set<UUID> = []
     /// The surface's own hold from a composition's begin until its result
     /// (PR08b): the session's deferral signal arrives later.
     private var holdsComposition = false
@@ -88,7 +92,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     private(set) var predictions: [Prediction] = []
     /// Predictions still waiting for their append (not just for a composition
     /// to replay their echo).
-    var unjournaledCount: Int { predictions.count - bufferedEchoes.count }
+    var unjournaledCount: Int { predictions.count - bufferedEchoes.count - doomed.count }
     /// Each predicted block's canonical snapshot (journaled state, without
     /// its pending predictions).
     private var canonical: [String: BlockSnapshot] = [:]
@@ -408,16 +412,18 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     /// the dropped predictions, oldest first.
     @discardableResult
     func rollback() -> [Prediction] {
-        expectsInvalidation = false
         guard !isFrozen else {
-            // Marked text owns storage: the canonical blocks are shown when the
-            // composition reconciles, in order with what was buffered before
-            // the rollback. Keys whose echo is buffered were journaled.
-            let dropped = predictions.filter { !bufferedEchoes.contains($0.commandID) }
-            predictions.removeAll { !bufferedEchoes.contains($0.commandID) }
-            frozenPatches.append(.rollback(blocks: Set(dropped.map(\.blockID))))
+            // Marked text owns storage, so the whole rollback (predictions,
+            // canonical blocks, the invalidation wait) is deferred and replayed
+            // in order at reconciliation. Keys whose echo is buffered were journaled.
+            let dropped = predictions.filter {
+                !bufferedEchoes.contains($0.commandID) && !doomed.contains($0.commandID)
+            }
+            doomed.formUnion(dropped.map(\.commandID))
+            frozenPatches.append(.rollback(commands: Set(dropped.map(\.commandID))))
             return dropped
         }
+        expectsInvalidation = false
         let dropped = predictions
         predictions = []
         let restore = canonical
@@ -657,9 +663,13 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
             switch frozen {
             case .patch(let patch, let settled?): applyPatch(patch, settled: settled)
             case .patch(let patch, nil): applyPatch(patch)
-            case .rollback(let ids):
-                // What a patch replayed before it did not already show from the replica.
-                let restore = ids.compactMap { id in
+            case .rollback(let commands):
+                // The deferred rollback, applied where it happened.
+                let blocks = Set(predictions.filter { commands.contains($0.commandID) }.map(\.blockID))
+                predictions.removeAll { commands.contains($0.commandID) }
+                doomed.subtract(commands)
+                expectsInvalidation = false
+                let restore = blocks.compactMap { id in
                     canonical[id].flatMap { predictions.contains { $0.blockID == id } ? nil : (id, $0) }
                 }
                 guard !restore.isEmpty else { continue }

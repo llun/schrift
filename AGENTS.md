@@ -2787,13 +2787,19 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `NativeTextView`'s `typeKey`/`deleteKey` hooks, the delegate, UITextInput `replace`
   and a composing keyboard's direct character, also over a selection) and replayed; a
   selection the user makes meanwhile is settled by one rule at every barrier end (applied,
-  refused, stale, failed): moved through what was shown since, it wins over wherever the
+  refused, stale, failed): moved through what was shown since (a rollback a result caused
+  included), it wins over wherever the
   barrier would put the selection (its caret, a kept or remapped range, a history step's),
-  except in a block the barrier's own echo rewrote, and is then cleared; held keys wait
+  except in a block the barrier's own echo rewrote, is captured again even when the view's
+  range did not move (the session's copy may not survive the barrier's rebuild), and is then
+  cleared; held keys wait
   while text is marked and replay after it resolves; other actions return false. A barrier
   that meets a change its surface had not seen comes back `.stale` and is retried once
-  from the current display, from the selection it was taken at (moved through what was
-  shown since; when that cannot be found, nothing is retried and the input notice shows)
+  from the current display (never while text is marked: a retried Return would commit it),
+  an action that reads the selection (split, join, indent, a slash item, paste, block
+  actions) from the selection it was taken at (moved through what was shown since; when
+  that cannot be found, nothing is retried and the input notice shows; a history step or a
+  block's props ignore the caret)
   while the view shows, and the retry keeps, a selection the user made meanwhile: an
   action on a range (marks, a range replacement, unpredicted typing) is
   retried on that range moved through what was shown since (a non-empty range keeps an
@@ -2808,7 +2814,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   text is marked the canonical blocks wait for the composition to reconcile and the
   storage notice stays. While a composition
   freezes the surface, prediction echoes and rollbacks wait with the patches in delivery
-  order (an echo's result does not confirm it early), so the canonical blocks keep
+  order (an echo's result does not confirm it early; a rollback is deferred whole, its
+  dropped predictions staying so buffered patches rebase through their text, and its
+  replay also ends the invalidation wait), so the canonical blocks keep
   revision order; an echo spelled as a whole-block rebuild settles from that snapshot. **Rebase:** the session keeps, per surface, the changes it had not seen
   (`unseen`, every patch but its own predicted echoes, `ringCapacity` 256); a predicted
   command is rebased through them with `TextDelta.rebase(range:assoc:through:blockID:)`

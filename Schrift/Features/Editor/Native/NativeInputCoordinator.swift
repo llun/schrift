@@ -63,8 +63,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         let placement: Placement
         /// Re-derives the action from the current display once, for `.stale`.
         let retry: (() -> Bool)?
-        /// The selection the action was taken from: a retry runs against it
-        /// (moved through what was shown since), not one made meanwhile.
+        /// The selection the action was taken from, for an action whose retry
+        /// reads the selection: the retry runs against it (moved through what
+        /// was shown since), not one made meanwhile. Nil for an action on its
+        /// own target (a history step, a block's props, a mapped range).
         let origin: BlockRange?
     }
     @ObservationIgnored private var barrier: Barrier?
@@ -250,7 +252,17 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             canonicalRevision = delivery.revision
             history.mirror(canUndo: delivery.state.canUndo, canRedo: delivery.state.canRedo)
             if let result = delivery.result {
+                let shownBefore = (surface.shownDeltas.count, surface.shownReplaced, surface.shownRetexted)
                 handle(result, selection: delivery.selection)
+                // A rollback or a reconciliation the result caused is shown
+                // too: a barrier still in flight maps through it.
+                if barrier != nil, surface.shownDeltas.count > shownBefore.0 || surface.shownReplaced != shownBefore.1 {
+                    barrierShown.append(
+                        Shown(
+                            deltas: Array(surface.shownDeltas[shownBefore.0...]),
+                            replaced: surface.shownReplaced.subtracting(shownBefore.1),
+                            retexted: surface.shownRetexted.subtracting(shownBefore.2), reset: false))
+                }
             } else if needsRestore {
                 if delivery.selection?.seq == selection.seq {
                     selection.restore(from: delivery.selection)
@@ -366,8 +378,14 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             since[last].replaced = since[last].replaced.intersection(since[last].retexted)
         }
         guard let range = map(user.anchors, through: since) else { return false }
-        if range != view.selectedRange { selection.place(range) }
+        show(range)
         return true
+    }
+
+    /// Shows a selection and captures it again even when the view's range did
+    /// not move: the session's capture may not have survived what was shown.
+    private func show(_ range: NSRange) {
+        if range != view?.selectedRange { selection.place(range) } else { selection.publish(range) }
     }
 
     /// `range`, posted with the barrier in flight, in the current display.
@@ -448,14 +466,16 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             // cannot be found any more, nothing is retried.
             let origin = barrier.origin.map { mapThroughBarrier($0) }
             var retried = false
-            if origin != .some(nil) {
+            // Marked text owns the view: a retry would move its selection (and
+            // a Return would commit it), so none runs while composing.
+            if origin != .some(nil), !composition.isActive, view?.markedTextRange == nil {
                 if let origin = origin ?? nil, origin != view?.selectedRange { selection.place(origin) }
                 retried = barrier.retry?() == true
             }
             if let carried {
                 // The view shows the user's selection; the retry keeps it as theirs.
                 if self.barrier != nil { userSelection = blockRange(carried).map { ($0, 0) } }
-                if carried != view?.selectedRange { selection.place(carried) }
+                show(carried)
             }
             if retried, let next = lastCommandID, next != id {
                 // A cut's copy follows its retried delete.
@@ -960,7 +980,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         let open = Set([entry.blockID, surface.blocks[position].parentID].compactMap { $0 }.filter(surface.isExpanded))
         return applyStructural(
             entry.blockID, .split(offset: offset, newID: UUID().uuidString, open: open),
-            refusal: .native_editor_input_unavailable, retry: again { [weak self] in self?.insertNewline() ?? false })
+            refusal: .native_editor_input_unavailable, retry: again { [weak self] in self?.insertNewline() ?? false },
+            readsSelection: true)
     }
 
     /// The folded-content rule (PR06b): a range or mark command that touches
@@ -995,7 +1016,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
         return applyStructural(
             entry.blockID, .join, refusal: nil,
-            retry: again { [weak self] in self?.deleteBackwardAtBlockStart() ?? false })
+            retry: again { [weak self] in self?.deleteBackwardAtBlockStart() ?? false }, readsSelection: true)
     }
 
     /// Tab and Shift-Tab, and the bar's Indent/Outdent (BlockNote's
@@ -1029,7 +1050,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         else { return false }
         return applyStructural(
             entry.blockID, kind, refusal: nil, keeping: selection,
-            retry: again { [weak self] in self?.moveBlock(kind) ?? false })
+            retry: again { [weak self] in self?.moveBlock(kind) ?? false }, readsSelection: true)
     }
 
     /// The keyboard (`inputDelegate`) holds an autocorrection or inline
@@ -1057,7 +1078,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// A barrier: shown when the session's result arrives.
     private func applyStructural(
         _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, keeping: NSRange? = nil,
-        remapping: (blockID: String, offset: Int, length: Int)? = nil, retry: (() -> Bool)? = nil
+        remapping: (blockID: String, offset: Int, length: Int)? = nil, retry: (() -> Bool)? = nil,
+        readsSelection: Bool = false
     ) -> Bool {
         // Folded content is never the target of a command.
         guard !surface.isHidden(blockID: blockID) else {
@@ -1070,12 +1092,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             } else { .caret }
         // A structural command is its own undo step.
         return postBarrier(
-            blockID, kind, refusal: refusal, placement: placement, undoBefore: true, undoAfter: true, retry: retry)
+            blockID, kind, refusal: refusal, placement: placement, undoBefore: true, undoAfter: true, retry: retry,
+            readsSelection: readsSelection)
     }
 
     private func postBarrier(
         _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, placement: Barrier.Placement,
-        undoBefore: Bool, undoAfter: Bool, retry: (() -> Bool)?
+        undoBefore: Bool, undoAfter: Bool, retry: (() -> Bool)?, readsSelection: Bool = false
     ) -> Bool {
         guard barrier == nil, !composition.isResolving else { return false }
         let command = NativeEditCommand(id: UUID(), baseRevision: canonicalRevision, blockID: blockID, kind: kind)
@@ -1087,7 +1110,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                         undoAfter: undoAfter)))
         else { return false }
         barrier = Barrier(
-            id: command.id, refusal: refusal, placement: placement, retry: retry, origin: blockSelection())
+            id: command.id, refusal: refusal, placement: placement, retry: retry,
+            origin: readsSelection ? blockSelection() : nil)
         barrierShown = []
         userSelection = nil
         lastCommandID = command.id
@@ -1305,7 +1329,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return applyStructural(
             entry.blockID, .blockType(node: type.node, props: type.props, removing: token),
             refusal: .native_editor_input_unavailable,
-            retry: again { [weak self] in self?.applySlashItem(item) ?? false })
+            retry: again { [weak self] in self?.applySlashItem(item) ?? false }, readsSelection: true)
     }
 
     /// A paragraph starting with "/" and the caret after it, with no
@@ -1441,7 +1465,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         guard let entry = index.entry(atUTF16: view.selectedRange.location) ?? index.entries.last else { return false }
         return applyStructural(
             entry.blockID, .insertSubtrees(payload: payload), refusal: .native_editor_paste_unavailable,
-            retry: again { [weak self] in self?.pasteBlocks(payload) ?? false })
+            retry: again { [weak self] in self?.pasteBlocks(payload) ?? false }, readsSelection: true)
     }
 
     /// Writes `text` (and, for whole blocks, their lossless payload, which the
@@ -1556,12 +1580,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // Indent and outdent leave every block where it was in storage.
         let retry = again { [weak self] in self?.performBlockAction(action) ?? false }
         if action == .indent || action == .outdent {
-            return applyStructural(id, kind, refusal: nil, keeping: range, retry: retry)
+            return applyStructural(id, kind, refusal: nil, keeping: range, retry: retry, readsSelection: true)
         }
         let keeps = [.moveUp, .moveDown, .duplicate].contains(action)
         return applyStructural(
             id, kind, refusal: nil,
-            remapping: keeps ? (id, range.location - entry.textRange.location, range.length) : nil, retry: retry)
+            remapping: keeps ? (id, range.location - entry.textRange.location, range.length) : nil, retry: retry,
+            readsSelection: true)
     }
 
     private func blockKind(_ action: NativeBlockAction, _ id: String) -> NativeEditCommand.Kind? {

@@ -900,4 +900,160 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
         XCTAssertEqual(texts(harness.session).prefix(2), ["Firstかa", " paragraph."])
         try await assertConsistent(harness, localCommands: 3)
     }
+
+    // MARK: - Review round 4 (PR #272)
+
+    /// I1: a rollback while composing is deferred whole, so a peer patch
+    /// buffered before it still rebases through the dropped keystroke (a
+    /// deletion here) instead of landing past the block's shown text.
+    func testABufferedPeerPatchRebasesThroughAKeyARollbackDropsLater() async throws {
+        let appends = Locked(0)
+        let session = try await seeded(persist: { _, _ in
+            appends.update { $0 += 1 }
+            if appends.value > 1 { throw DiskError.full }
+        })
+        let peer = try peerEdit { try $0.replaceText(block: Self.firstID, range: 16..<16, with: "Peer") }
+        session.replica?.mailbox.post(.integrate(peer, reply: nil))
+        try caret(session, Self.firstID, 0)
+        session.textView.insertText("a")
+        try caret(session, Self.firstID, 17)
+        session.textView.deleteBackward()
+        session.textView.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        await session.settle()
+        // Storage equals the model after every patch replayed at reconciliation.
+        var torn: [String] = []
+        let applied = session.surface.onPatchApplied
+        session.surface.onPatchApplied = { [weak session] patch in
+            applied?(patch)
+            guard let session else { return }
+            let model = AttributedDocumentProjection.attributedString(
+                blocks: session.surface.blocks, traits: session.surface.traits, labels: session.surface.labels,
+                geometry: session.surface.attachmentGeometry)
+            if session.textView.textStorage.string != model.string { torn.append(session.textView.textStorage.string) }
+        }
+        session.input?.textViewDidEndEditing(session.textView)
+        await session.settle()
+        XCTAssertEqual(torn, [], "the peer's text landed in its block")
+        XCTAssertEqual(text(of: session.surface.blocks[0]), "aFirst paragraph.Peer")
+        let fresh = AttributedDocumentProjection.attributedString(
+            blocks: session.surface.blocks, traits: session.surface.traits, labels: session.surface.labels,
+            geometry: session.surface.attachmentGeometry)
+        XCTAssertEqual(session.textView.textStorage.string, fresh.string, "storage equals the model")
+    }
+
+    /// I2: a buffered removal of a predicted block, replayed before the deferred
+    /// rollback, does not leave input waiting for an invalidation forever.
+    func testABufferedRemovalBeforeARollbackDoesNotWedgeInput() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
+        try caret(harness, Self.secondID, 3)
+        let peer = try peerEdit { try $0.joinBlocks(block: Self.secondID) }
+        harness.session.replica?.mailbox.post(.integrate(peer, reply: nil))
+        harness.view.insertText("x")
+        harness.view.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        _ = await harness.session.settle()
+        harness.input.textViewDidEndEditing(harness.view)
+        await harness.settle()
+        XCTAssertFalse(harness.session.surface.expectsInvalidation)
+        try caret(harness, Self.thirdID, 0)
+        harness.view.insertText("z")
+        await harness.settle()
+        XCTAssertEqual(text(of: try block(harness.session, Self.thirdID)), "zThird paragraph.")
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    /// I3: a barrier that comes back stale while text is marked is not retried
+    /// (a retried Return would commit the marked text).
+    func testAStaleBarrierIsNotRetriedWhileComposing() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
+        try caret(harness, Self.firstID, 5)
+        let peer = try peerEdit { try $0.replaceText(block: Self.thirdID, range: 0..<0, with: "Peer ") }
+        harness.session.replica?.mailbox.post(.integrate(peer, reply: nil))
+        harness.input.insertNewline()
+        harness.view.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        _ = await harness.session.settle()
+        XCTAssertNotNil(harness.view.markedTextRange, "the marked text is still the keyboard's")
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_input_unavailable)
+        harness.view.unmarkText()
+        await harness.settle()
+        XCTAssertEqual(
+            texts(harness.session).prefix(2), ["Firstか paragraph.", "Second paragraph has bold words inside it."])
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    /// I4: a selection the user made during a barrier that rebuilt its block
+    /// (an indent) is captured again when the barrier ends, though the view's
+    /// range did not move: the session's capture did not survive the rebuild.
+    func testAUserSelectionInABlockTheBarrierRebuiltIsCapturedAgain() async throws {
+        let disk = Latch()
+        let harness = try await gated(disk)
+        try caret(harness, Self.secondID, 0)
+        XCTAssertTrue(harness.input.indent())
+        try caret(harness, Self.secondID, 4)
+        disk.open()
+        await harness.settle()
+        XCTAssertEqual(
+            harness.view.selectedRange, NSRange(location: try location(harness.session, Self.secondID, 4), length: 0))
+        let head = await harness.engine { engine -> EditorPosition? in (try? engine.currentSelection())?.head }
+        XCTAssertEqual(head?.blockID, Self.secondID)
+        XCTAssertEqual(head?.offset, 4)
+    }
+
+    /// I5: a rollback a result causes while a barrier is in flight is mapped
+    /// like any shown change: a selection in the block it rewrote is dropped,
+    /// and the barrier's own caret stands.
+    func testARollbackDuringABarrierIsMappedLikeAnyShownChange() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
+        // The peer deletes the characters around the first key: its epoch ends.
+        let peer = try peerEdit { try $0.replaceText(block: Self.firstID, range: 0..<6, with: "") }
+        harness.session.replica?.mailbox.post(.integrate(peer, reply: nil))
+        try caret(harness, Self.firstID, 3)
+        harness.view.insertText("x")
+        try caret(harness, Self.secondID, 0)
+        harness.view.insertText("y")
+        try caret(harness, Self.thirdID, 5)
+        XCTAssertTrue(harness.input.insertNewline())
+        var selected = false
+        harness.session.onDelivery = { [weak self] delivery in
+            // Before the rollback rewrites the second block.
+            guard case .invalidated? = delivery.result, !selected, let self,
+                let location = try? self.location(harness.session, Self.secondID, 10)
+            else { return }
+            selected = true
+            self.setSelection(harness, NSRange(location: location, length: 0))
+        }
+        await harness.settle()
+        XCTAssertTrue(selected)
+        XCTAssertEqual(
+            texts(harness.session),
+            ["paragraph.", "Second paragraph has bold words inside it.", "Third", " paragraph."])
+        let split = harness.session.surface.blocks[3].id
+        XCTAssertEqual(
+            harness.view.selectedRange, NSRange(location: try location(harness.session, split, 0), length: 0))
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    /// I6: a barrier on its own target (a checkbox) is retried even when the
+    /// caret's block is gone.
+    func testABarrierOnItsOwnTargetIsRetriedWhenTheCaretsBlockIsGone() async throws {
+        let blocks = [
+            paragraph("a", "Alpha"), paragraph("b", "Beta"),
+            BlockNoteBlock(
+                node: "checkListItem", props: Self.paragraphProps + [("checked", .bool(false))],
+                runs: [InlineRun("Task")], id: "c"),
+        ]
+        let harness = try await makeHarness(blocks)
+        addTeardownBlock { await harness.close() }
+        try caret(harness, "b", 2)
+        let peer = try makeDoc(blocks, clientID: 9)
+        defer { peer.destroy() }
+        let join = try BlockNoteWriter(doc: peer).joinBlocks(block: "b")
+        harness.session.replica?.mailbox.post(.integrate(join, reply: nil))
+        let ticked = await harness.run { harness.input.toggleCheckbox(blockID: "c") }
+        XCTAssertTrue(ticked)
+        XCTAssertTrue(try block(harness.session, "c").props.contains(ProjectedProp(key: "checked", value: .bool(true))))
+        try await assertConsistent(harness, localCommands: 1)
+    }
 }
