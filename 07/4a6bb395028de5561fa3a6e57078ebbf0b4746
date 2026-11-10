@@ -1,0 +1,50 @@
+SchriftTests/Core/Yjs/YUndoManagerOracleTests.swift
+  s_dc239db0cc1c9d::t_f1d83880da52d4 1-143
+Schrift/Core/Yjs/YUndoManager.swift
+  s_dc239db0cc1c9d::t_071e6f0558f36d 221-224,226
+  s_dc239db0cc1c9d::t_2704604722cac9 3-15,19-69,72-220,225,228-262
+  s_dc239db0cc1c9d::t_d51ea773870ef8 1-2,16-18,70-71,227,263
+SchriftTests/Core/Yjs/YUndoManagerTests.swift
+  s_dc239db0cc1c9d::t_855f7da19bd6c1 5-50,52-58,60-61,63-85,87-142
+  s_dc239db0cc1c9d::t_87a391afec24f8 1-4,51,59,62,86,143
+AGENTS.md
+  s_dc239db0cc1c9d::t_91b0445418e5f8 421-422,1608-1610,1658-1670,1965-1966
+Schrift/Core/Yjs/YContent.swift
+  s_dc239db0cc1c9d::t_af0d833cbd4912 109-116
+Schrift/Core/Yjs/YDeleteSet.swift
+  s_dc239db0cc1c9d::t_98882d57cb344d 140-157
+Schrift/Core/Yjs/YEvent.swift
+  s_dc239db0cc1c9d::t_f376c591d6e096 454-458,466
+Schrift/Core/Yjs/YRelativePosition.swift
+  s_dc239db0cc1c9d::t_fd536e2931b58c 137-138,163,199
+Schrift/Core/Yjs/YStruct.swift
+  s_dc239db0cc1c9d::t_016c6ef7e03022 113-114,541-682
+Schrift/Core/Yjs/YStructStore.swift
+  s_dc239db0cc1c9d::t_959a9508f70bd7 224-247
+Schrift/Core/Yjs/YTransaction.swift
+  s_dc239db0cc1c9d::t_3a614d4b468616 6,9-11,73-75,331-333,335-337,476-479
+Schrift/Core/Yjs/YType.swift
+  s_dc239db0cc1c9d::t_13c7fff49865ff 169-171,179-199,289-290
+SchriftTests/Core/Yjs/YUndoManagerOracleCaptures.swift
+  s_dc239db0cc1c9d::t_b474c52494a2ed 1-20
+docs/architecture.md
+  s_dc239db0cc1c9d::t_f58e44aba86aec 195-196,904-917
+Schrift/Features/Editor/Engine/EditorSurface.swift
+  s_dc239db0cc1c9d::t_2e37f0df9c3a73 97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "074a6bb395028de5561fa3a6e57078ebbf0b4746",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
