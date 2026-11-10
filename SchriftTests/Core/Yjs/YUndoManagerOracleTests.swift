@@ -13,9 +13,10 @@ import XCTest
 /// Op vocabulary (each top-level op is one transaction, in both replays): `ins`/
 /// `tdel`/`fmt` are `YText.insert`/`delete`/`format`, `ldel` is a list delete,
 /// `el` inserts an element subtree (element, then its attributes, then its
-/// children), `attr` is `setAttribute`, `tx` groups ops; `remote` applies the
-/// peer's update with origin `.remote`; `undo`, `redo`, `stop` and `clear` drive
-/// the manager.
+/// children), `pel` inserts one the way y-prosemirror's prelim types integrate
+/// (children before attributes; BlockNote's Enter), `attr` is `setAttribute`,
+/// `tx` groups ops; `remote` applies the peer's update with origin `.remote`;
+/// `undo`, `redo`, `stop` and `clear` drive the manager.
 final class YUndoManagerOracleTests: XCTestCase {
 
     func testReplaysYjsUndoManagerCaptures() throws {
@@ -84,7 +85,8 @@ final class YUndoManagerOracleTests: XCTestCase {
             case "tdel": try type(op).delete(index, length)
             case "fmt": try type(op).format(index, length, attributes(op["a"]!))
             case "ldel": try YWrite.delete(tx, from: type(op), at: index, length: length)
-            case "el": try insert(tx, op["spec"] as! [String: Any], into: type(op), at: index)
+            case "el": try insert(tx, op["spec"] as! [String: Any], into: type(op), at: index, prelim: false)
+            case "pel": try insert(tx, op["spec"] as! [String: Any], into: type(op), at: index, prelim: true)
             case "attr":
                 try YWrite.mapSet(tx, on: type(op), key: op["k"] as! String, .any([.string(op["v"] as! String)]))
             case "tx": for inner in op["ops"] as! [[String: Any]] { try apply(tx, inner) }
@@ -92,22 +94,31 @@ final class YUndoManagerOracleTests: XCTestCase {
             }
         }
 
-        /// yjs `setAttribute` per attribute, then the children (`gen-undo.js` `insertSpec`).
-        private func insert(_ tx: YTransaction, _ spec: [String: Any], into parent: YType, at index: UInt) throws {
+        /// `el` (`gen-undo.js` `insertSpec`): the element, its attributes, then its
+        /// children. `pel` (`prelim`, y-prosemirror's prelim element as yjs integrates
+        /// it): the element, its children, then its attributes, with text written
+        /// through `applyDelta`'s explicit empty attributes.
+        private func insert(
+            _ tx: YTransaction, _ spec: [String: Any], into parent: YType, at index: UInt, prelim: Bool
+        ) throws {
             if let text = spec["text"] as? String {
                 let child = YType(typeRef: .xmlText)
                 try YWrite.insert(tx, into: parent, at: index, [.type(child)])
-                try child.insert(0, text)
+                try child.insert(0, text, prelim ? YTextAttributes() : nil)
                 return
             }
             let element = YType(typeRef: .xmlElement(nodeName: spec["name"] as! String))
             try YWrite.insert(tx, into: parent, at: index, [.type(element)])
-            for case let pair as [String] in spec["attrs"] as? [Any] ?? [] {
-                try YWrite.mapSet(tx, on: element, key: pair[0], .any([.string(pair[1])]))
+            func setAttributes() throws {
+                for case let pair as [String] in spec["attrs"] as? [Any] ?? [] {
+                    try YWrite.mapSet(tx, on: element, key: pair[0], .any([.string(pair[1])]))
+                }
             }
+            if !prelim { try setAttributes() }
             for (i, child) in (spec["children"] as? [[String: Any]] ?? []).enumerated() {
-                try insert(tx, child, into: element, at: UInt(i))
+                try insert(tx, child, into: element, at: UInt(i), prelim: prelim)
             }
+            if prelim { try setAttributes() }
         }
 
         /// The type at `op["p"]`: a root name, then visible child indices.
