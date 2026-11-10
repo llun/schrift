@@ -8,9 +8,15 @@ struct NativeEditorTestHostApp: App {
     @State private var localization = LocalizationStore()
     @State private var failedToLoad = false
     @State private var replicaDirectory: URL?
+    /// `--native-media`: images (served by `MediaFixture`, never a network) and tables.
+    @State private var images = MediaFixture.loader()
     private let fixture: Data
 
     init() {
+        if ProcessInfo.processInfo.arguments.contains("--native-media") {
+            fixture = MediaFixture.state()
+            return
+        }
         let count = ProcessInfo.processInfo.arguments.contains("--native-large") ? 5_000 : 30
         var blocks = (0..<count).map { index in
             BlockNoteBlock(
@@ -90,6 +96,7 @@ struct NativeEditorTestHostApp: App {
             }
         }
         .environment(localization)
+        .environment(images)
         .onDisappear {
             session?.close()
             // Test-only fixture bytes, never a shipping document's store.
@@ -224,6 +231,103 @@ private struct NativeOpenFixture: View {
             signedInUser: SignedInUserStore(userDefaults: defaults), contentCache: content, childrenCache: children,
             listCache: DocumentCacheStore(userDefaults: defaults),
             availability: OnlineAvailability(userDefaults: defaults))
+    }
+}
+
+/// `--native-media` (PR06e): paragraphs, same-origin images, tables and math
+/// in turn. The image loader's transport is a local closure that answers
+/// after a delay with a generated 3:1 PNG, so a download lands while the
+/// reader is looking and the UI test can check that nothing moves.
+private enum MediaFixture {
+    static let origin = "https://native-fixture.invalid"
+
+    @MainActor static func loader() -> ImageLoader {
+        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("NativeMediaFixture", isDirectory: true)
+        let png = UIGraphicsImageRenderer(size: CGSize(width: 600, height: 200)).pngData { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 600, height: 200))
+        }
+        return ImageLoader(
+            scopeProvider: { ImageCacheScope(serverOrigin: origin, sessionID: "native-media-fixture") },
+            cache: ImageCacheStore(directory: directory),
+            fetch: { _, _ in
+                try await Task.sleep(for: .milliseconds(1_200))
+                return png
+            }, cookieProvider: { _ in [] })
+    }
+
+    static func state() -> Data {
+        let style: [(key: String, value: YAnyValue)] = [
+            ("backgroundColor", .string("default")), ("textColor", .string("default")),
+            ("textAlignment", .string("left")),
+        ]
+        var blocks: [BlockNoteBlock] = []
+        var tables: [String] = []
+        for index in 0..<12 {
+            blocks.append(
+                BlockNoteBlock(
+                    node: "paragraph", props: style,
+                    runs: [InlineRun("Media paragraph \(index + 1) with enough words to wrap onto a second line.")],
+                    id: "media-p\(index)"))
+            switch index % 3 {
+            case 0:
+                blocks.append(
+                    BlockNoteBlock(
+                        node: "image",
+                        props: [
+                            ("caption", .string("Fixture image \(index)")), ("name", .string("\(index).png")),
+                            ("previewWidth", .undefined), ("showPreview", .bool(true)),
+                            ("url", .string("\(origin)/media/\(index).png")),
+                        ], runs: [], id: "media-img-\(index)"))
+            case 1: tables.append("media-p\(index)")
+            default:
+                blocks.append(
+                    BlockNoteBlock(
+                        node: "mathBlock", props: [], runs: [InlineRun("e^{i\\pi} + 1 = 0")], id: "media-math-\(index)")
+                )
+            }
+        }
+        let doc = YDoc(clientID: 2, gc: true)
+        defer { doc.destroy() }
+        do {
+            try doc.applyUpdate(YUpdateDecoder.decode(BlockNoteYjs.encode(blocks, clientID: 1)))
+            guard let root = doc.share[BlockNoteYjs.fragmentField],
+                case .type(let group)? = YBlockProjection.children(of: root, includeFormats: false).first?.content
+            else { return BlockNoteYjs.encode(blocks, clientID: 1) }
+            try doc.transact { tx in
+                for after in tables {
+                    let left = YBlockProjection.children(of: group, includeFormats: false).first { item in
+                        guard case .type(let type) = item.content, case .any(let values)? = type.map["id"]?.content
+                        else { return false }
+                        return values.first == .string(after)
+                    }
+                    let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+                    try YWrite.insertAfter(tx, into: group, after: left, [.type(container)])
+                    let table = YType(typeRef: .xmlElement(nodeName: "table"))
+                    try YWrite.insertAfter(tx, into: container, after: nil, [.type(table)])
+                    var lastRow: YItem?
+                    for row in 0..<5 {
+                        let rowType = YType(typeRef: .xmlElement(nodeName: "tableRow"))
+                        lastRow = try YWrite.insertAfter(tx, into: table, after: lastRow, [.type(rowType)])
+                        var lastCell: YItem?
+                        for column in 0..<3 {
+                            let cell = YType(typeRef: .xmlElement(nodeName: row == 0 ? "tableHeader" : "tableCell"))
+                            lastCell = try YWrite.insertAfter(tx, into: rowType, after: lastCell, [.type(cell)])
+                            let paragraph = YType(typeRef: .xmlElement(nodeName: "tableParagraph"))
+                            try YWrite.insertAfter(tx, into: cell, after: nil, [.type(paragraph)])
+                            let text = YType(typeRef: .xmlText)
+                            try YWrite.insertAfter(tx, into: paragraph, after: nil, [.type(text)])
+                            try text.insert(0, row == 0 ? "Head \(column)" : "R\(row) C\(column)", nil)
+                        }
+                    }
+                    try YWrite.mapSet(tx, on: container, key: "id", .any([.string("media-tbl-\(after)")]))
+                }
+            }
+            return try YStateEncoder.encodeStateAsUpdate(doc)
+        } catch {
+            return BlockNoteYjs.encode(blocks, clientID: 1)
+        }
     }
 }
 

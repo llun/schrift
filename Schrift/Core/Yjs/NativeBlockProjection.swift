@@ -42,6 +42,7 @@ enum NativeBlockProjection {
                     snapshot.block = ProjectedBlock(
                         id: snapshot.id, node: "", props: [], runs: [],
                         fidelity: .opaque(reason: snapshot.id.isEmpty ? "missing block id" : "duplicate block id"))
+                    snapshot.preview = .preserved(node: "", summary: "")
                 }
                 blocks.append(snapshot)
                 guard unique, depth < maxDepth, case .type(let container) = item.content,
@@ -69,7 +70,7 @@ enum NativeBlockProjection {
         }
         return NativeBlockSnapshot(
             handle: NativeBlockHandle(generation: generation, itemID: item.id, stringID: block.id), block: block,
-            depth: depth, parentHandle: parent)
+            depth: depth, parentHandle: parent, preview: NativeBlockPreview.read(item, block: block))
     }
 
     /// The nested `blockGroup` the tree descends into: only a container whose

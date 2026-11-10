@@ -423,7 +423,9 @@ final class NativeTextSurfaceTests: DocumentEngineTestCase {
             let entry = try XCTUnwrap(index.entry(for: id))
             XCTAssertEqual(
                 storage.attribute(.nativePlaceholder, at: entry.range.location, effectiveRange: nil) as? Bool, true)
-            XCTAssertTrue(storage.attributedSubstring(from: entry.textRange).string.contains("preserved"))
+            // A preview attachment (PR06e), labelled for VoiceOver.
+            let attachment = storage.attribute(.attachment, at: entry.range.location, effectiveRange: nil)
+            XCTAssertTrue(try XCTUnwrap(attachment as? NativeBlockAttachment).content.label.contains("preserved"))
         }
     }
 }

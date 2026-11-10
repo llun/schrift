@@ -2060,7 +2060,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   reset replaces all storage. Presentation changes may restyle without a Yjs write.
   PR01 has no native editing, persistence, sockets, rich block controls or legacy
   local-replica adapter. The isolated `SchriftNativeTestHost` hosts the production
-  reader; `--native-large` chooses 5,000 paragraphs. No shipping launch arguments.
+  reader; `--native-large` chooses 5,000 paragraphs, `--native-media` (PR06e) images, tables
+  and math with a local delayed image loader. No shipping launch arguments.
 
 - **PR02a persistence checkpoint.**
   `Native/ReplicaStore` is a main-actor, throwing draft store under Application
@@ -2534,6 +2535,56 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   sixteen links pinned byte for byte against the
   installed exporter, `canType`, a typed save and Return in an open toggle whose shadow
   `draftSyncDecision` reads as our last push).
+- **PR06e bounded previews and attachment sizing.** A block `AttributedDocumentProjection.isPlaceholder`
+  (non-prose node or opaque) is **one U+FFFC attachment character** plus its separator:
+  `displayText` is `attachmentCharacter`, so the range index, refusals and clipboard rules
+  are unchanged and these blocks stay preserved and read-only (PR11–PR14 author them).
+  The preview data is `Core/Yjs/NativeBlockPreview`, read by `NativeBlockProjection.projectBlock`
+  into `NativeBlockSnapshot.preview` / `BlockSnapshot.preview` (a duplicate-id rewrite gets a
+  `.preserved` one), so it travels in every snapshot, reset and `.replaceBlock` and a peer's
+  table edit reaches the card. It is bounded (`Limits`: 6 × 4 cells, 4 columns × 3 lines, 4
+  source lines, 80 UTF-16 units per string) and never a write-back source. Families: `.image`
+  (showPreview not false: url, caption or name as alt, `previewWidth`), `.file` (video, audio,
+  file, pdf, hidden-preview image), `.table`, `.columns`, `.source` (mathBlock, diagram; no
+  renderer, owner decision) and `.preserved` (anything else, with a line of text).
+  `Features/Editor/Native/NativeBlockAttachment.swift`: `NativeBlockAttachment` is equal by
+  value (`NativeAttachmentContent`), so storage still equals a fresh projection; Foundation
+  uniques equal attribute values, so two storages may share one immutable attachment.
+  **Never set its `bounds`**: TextKit 2 then draws a file icon and never asks for a view
+  provider (S1 finding 3, reconfirmed). The provider tracks view bounds and the
+  `NativeAttachmentView` reports `content.size` as its intrinsic size. **The S2 fix, attachment
+  paragraphs only:** `NativeAttachmentLayout.size` computes the card from the usable width,
+  Dynamic Type and, for an image, `previewWidth` (capped at the width) over the remembered
+  aspect ratio (else the 160 pt placeholder; 44–640 pt), and the paragraph's
+  minimum = maximum line height is `content.lineHeight` (the card plus the separator font's
+  descent, since the attachment sits on the baseline). Text line heights are never pinned.
+  `NativeAttachmentGeometry` (usable width + known ratios) is part of the surface's
+  presentation: `NativeTextView.layoutSubviews` calls `blockControls.updateAttachmentWidth()`
+  before `super`, and `NativeTextSurface.updateAttachmentWidth` replaces only attachment slices
+  in place (same length, no Yjs, deferred while text is marked); Dynamic Type rebuilds as
+  before. **A download never restyles storage**: the image is fitted into the reserved box and
+  its ratio (`ImageLoader.aspectRatio`, via `surface.aspectRatio`) applies at the next width
+  or Dynamic Type change or open. Fresh projections in tests pass
+  `geometry: surface.attachmentGeometry` (`NativeEditingTestCase.assertConsistent` does).
+  Images use the environment's `ImageLoader` (optional; `NativeEditorView` passes it and
+  `isOffline` to `NativeBlockControls`): the loader's own origin check, consent
+  ("External image · tap to load", `approveAndLoad`), disk cache and offline state apply, so
+  this render path needs no `serverOrigin` of its own. No loader issues no request. Views
+  exist only for laid-out fragments (`attachmentViewLoads`, `visibleAttachmentViews`); a
+  theme change re-colours the realised ones. VoiceOver: each card is one element labelled
+  `attachmentLabel` ("Image: alt", "Video: clip.mp4", "Table, 3 by 4", "Columns, 2", "Math",
+  "node (preserved, not editable yet)"), a tap-to-load card is a button, and
+  `NativeTextView.accessibilityValue` reads the label in place of U+FFFC. Strings:
+  `native_editor_attachment_named`/`video`/`audio`/`file`/`pdf`/`table`/`table_more`/
+  `columns`/`math`/`diagram`, the classic `editor_image_*` reused. Not yet: poster frames,
+  file sizes (BlockNote stores none), opening media, a refreshed height when a ratio arrives
+  for an image already on screen. Tests: `NativeAttachmentLayoutTests` (each family, the S2
+  line/view agreement, load and width change, Dynamic Type, external and offline images,
+  5,000 blocks / 200 previews realisation, a peer table edit, VoiceOver, the `.review/`
+  capture when present) and the host UI test `testImagesAndTablesScrollWithoutJumping`
+  (`--native-media`: same-origin images served by a delayed local closure, tables, math;
+  every drag moves the cards together by the same distance and a download moves nothing;
+  without the line heights a drag moved ~25 pt short on the simulator).
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (`@MainActor`), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below
@@ -3336,7 +3387,10 @@ markdown write endpoint**. Understand this before touching the save path:
   retains its current URL/scope presentation. RootView clears bytes on sign-out. Never reuse SignedInUserStore as
   the namespace: it can be unknown while a new login's cookies are already live.
   Inject `ImageLoader.inert()` into previews/tests that embed either image
-  surface; inert loaders issue no requests. Keep pending-photo branches ahead
+  surface; inert loaders issue no requests. The native editor's image previews (PR06e)
+  call `ImageLoader` directly, without `MarkdownImageView`: the loader itself applies
+  `imageLoadPolicy` against its scope's origin and the consent set, so that path keeps the
+  same rule; keep any new native image path on the loader. Keep pending-photo branches ahead
   of remote loading and never clear their store with this re-downloadable cache.
 - **A generic file attachment (PDF, docx, …) is a first-class leaf block, and
   classification is enabled by an origin.** The web's BlockNote `file` block and

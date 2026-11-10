@@ -222,22 +222,35 @@ final class NativeTextView: UITextView {
 
     /// VoiceOver reads the text without a folded toggle's children, which
     /// layout also leaves out (PR06b). With nothing folded, the whole text.
+    /// A preview block reads as its label ("Image: alt", "Table, 3 by 4"),
+    /// not as an object replacement character (PR06e).
     override var accessibilityValue: String? {
         get {
-            let ranges = blockControls?.surface?.hiddenRanges ?? []
-            let text = textStorage.string as NSString
             var visible = ""
+            func append(_ range: NSRange) {
+                guard range.length > 0 else { return }
+                textStorage.enumerateAttribute(.attachment, in: range) { value, run, _ in
+                    if let attachment = value as? NativeBlockAttachment {
+                        visible += attachment.content.label
+                    } else {
+                        visible += (textStorage.string as NSString).substring(with: run)
+                    }
+                }
+            }
             var location = 0
-            for range in ranges {
-                visible += text.substring(with: NSRange(location: location, length: range.location - location))
+            for range in blockControls?.surface?.hiddenRanges ?? [] {
+                append(NSRange(location: location, length: range.location - location))
                 location = NSMaxRange(range)
             }
-            return visible + text.substring(from: location)
+            append(NSRange(location: location, length: textStorage.length - location))
+            return visible
         }
         set { super.accessibilityValue = newValue }
     }
 
     override func layoutSubviews() {
+        // Attachment paragraphs are sized for this width before TextKit lays out.
+        blockControls?.updateAttachmentWidth()
         super.layoutSubviews()
         blockControls?.layoutControls()
     }

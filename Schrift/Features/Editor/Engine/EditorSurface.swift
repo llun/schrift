@@ -214,10 +214,12 @@ struct BlockSnapshot: Equatable {
     var isOpaque: Bool
     var depth = 0
     var parentID: String?
+    /// A non-prose block's bounded preview (PR06e). Display only.
+    var preview: NativeBlockPreview?
 
     init(
         id: String, node: String, props: [ProjectedProp], runs: [InlineRun], isOpaque: Bool = false, depth: Int = 0,
-        parentID: String? = nil
+        parentID: String? = nil, preview: NativeBlockPreview? = nil
     ) {
         self.id = id
         self.node = node
@@ -226,6 +228,7 @@ struct BlockSnapshot: Equatable {
         self.isOpaque = isOpaque
         self.depth = depth
         self.parentID = parentID
+        self.preview = preview
     }
 
     init(_ block: ProjectedBlock) {
@@ -237,5 +240,6 @@ struct BlockSnapshot: Equatable {
         self.init(native.block)
         depth = native.depth
         parentID = native.parentID
+        preview = native.preview
     }
 }

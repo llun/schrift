@@ -398,6 +398,76 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertEqual(text(of: editor), after, "journaled, so it survives a relaunch")
     }
 
+    /// PR06e: images and tables scroll without jumping. Each drag must move
+    /// every preview on screen by the same amount, about the drag's length,
+    /// and an image download (the fixture answers after 1.2 s) must move
+    /// nothing. Visible positions are compared, not `contentOffset`, which
+    /// TextKit's own re-anchoring changes invisibly.
+    func testImagesAndTablesScrollWithoutJumping() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-media"]
+        app.launch()
+        let reader = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(reader.waitForExistence(timeout: 10))
+        let previews = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "nativeEditor.attachment."))
+        XCTAssertTrue(previews.firstMatch.waitForExistence(timeout: 10))
+        let viewport = reader.frame
+        func positions() -> [String: CGFloat] {
+            var result: [String: CGFloat] = [:]
+            for element in previews.allElementsBoundByIndex where element.exists {
+                let frame = element.frame
+                guard frame.height > 0, frame.intersects(viewport) else { continue }
+                result[element.identifier] = frame.minY
+            }
+            return result
+        }
+        func assertStill(_ before: [String: CGFloat], _ step: String) {
+            let after = positions()
+            for (id, y) in before {
+                guard let now = after[id] else { continue }
+                XCTAssertEqual(now, y, accuracy: 0.5, "\(id) moved while idle (\(step))")
+            }
+        }
+        // The first images download while we watch.
+        let start = positions()
+        XCTAssertFalse(start.isEmpty)
+        sleep(2)
+        assertStill(start, "first download")
+        var images = Set(start.keys.filter { $0.contains("media-img") })
+        var tables = Set(start.keys.filter { $0.contains("media-tbl") })
+        var reference: CGFloat?
+        for drag in 1...6 {
+            let before = positions()
+            let from = reader.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
+            from.press(
+                forDuration: 0.05, thenDragTo: from.withOffset(CGVector(dx: 0, dy: -300)),
+                withVelocity: XCUIGestureVelocity(400), thenHoldForDuration: 0.4)
+            let after = positions()
+            let deltas = before.compactMap { id, y in after[id].map { $0 - y } }
+            XCTAssertFalse(deltas.isEmpty, "some preview stays on screen across drag \(drag)")
+            if let first = deltas.first {
+                for delta in deltas {
+                    XCTAssertEqual(delta, first, accuracy: 1, "previews moved apart in drag \(drag): \(deltas)")
+                }
+                // The same drag moves the content the same distance every time (the
+                // pan's touch slop aside). Without the S2 line heights a drag that
+                // reveals unlaid attachments moved ~25 pt less on the simulator.
+                let expected = reference ?? first
+                reference = expected
+                XCTAssertEqual(first, -300, accuracy: 30, "drag \(drag) moved the content by the drag")
+                XCTAssertEqual(first, expected, accuracy: 2, "drag \(drag) jumped: \(first) vs \(expected)")
+            }
+            images.formUnion(after.keys.filter { $0.contains("media-img") })
+            tables.formUnion(after.keys.filter { $0.contains("media-tbl") })
+            // Newly revealed images download now; nothing may move.
+            sleep(2)
+            assertStill(after, "after drag \(drag)")
+        }
+        XCTAssertGreaterThanOrEqual(images.count, 2, "the drags passed several images")
+        XCTAssertGreaterThanOrEqual(tables.count, 2, "and several tables")
+    }
+
     private func text(of element: XCUIElement) -> String { element.value as? String ?? "" }
 
     /// Taps into the first paragraph only once the editor holds still, then waits for the keyboard to

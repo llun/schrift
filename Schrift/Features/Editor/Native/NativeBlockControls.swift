@@ -18,7 +18,9 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
 {
     private weak var textView: NativeTextView?
     /// The surface whose fold state decides which paragraphs are laid out.
-    weak var surface: NativeTextSurface?
+    weak var surface: NativeTextSurface? {
+        didSet { connectAspectRatios() }
+    }
     private(set) var checkboxes: [String: UIButton] = [:]
     private(set) var languageButtons: [String: UIButton] = [:]
     private(set) var toggleButtons: [String: UIButton] = [:]
@@ -32,6 +34,50 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         didSet { if labels != oldValue { invalidateChrome() } }
     }
     var traits: UITraitCollection { textView?.traitCollection ?? .current }
+
+    // MARK: Attachment previews (PR06e)
+
+    /// The app's image loader (`ImageLoader`, the classic surfaces' owner of
+    /// requests, consent and the offline cache). Nil issues no request: image
+    /// previews stay placeholders.
+    var images: ImageLoader? {
+        didSet { if images !== oldValue { connectAspectRatios() } }
+    }
+
+    private func connectAspectRatios() {
+        guard let loader = images else {
+            surface?.aspectRatio = nil
+            return
+        }
+        surface?.aspectRatio = { url in URL(string: url).flatMap { loader.aspectRatio(for: $0) } }
+    }
+    /// Offline, the loader shows cached bytes and issues no request.
+    var isOffline = false
+    /// Every preview view TextKit realised: the bounded-realisation seam.
+    private(set) var attachmentViewLoads = 0
+    let attachmentViews = NSHashTable<NativeAttachmentView>.weakObjects()
+
+    func attachmentViewDidLoad(_ view: NativeAttachmentView) {
+        attachmentViewLoads += 1
+        attachmentViews.add(view)
+    }
+
+    /// The realised previews currently in the view hierarchy.
+    var visibleAttachmentViews: [NativeAttachmentView] {
+        attachmentViews.allObjects.filter { $0.window != nil && $0.superview != nil }
+    }
+
+    /// Tells the surface the usable width, before UIKit lays out text, so
+    /// attachment paragraphs are sized for this width. A storage edit only
+    /// when the width (or a known image ratio) changed.
+    func updateAttachmentWidth() {
+        guard let textView, let surface else { return }
+        let width =
+            textView.bounds.width - textView.textContainerInset.left - textView.textContainerInset.right - 2
+            * textView.textContainer.lineFragmentPadding
+        guard width > 0, width.rounded(.down) != surface.attachmentGeometry.width else { return }
+        surface.updateAttachmentWidth(width)
+    }
 
     /// Offered in the code block's menu; a block's own language is always
     /// listed too, so no stored value is hidden or rewritten.
@@ -92,6 +138,7 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     /// Redraws the laid-out fragments (theme, labels, light/dark). Storage and
     /// the replica are untouched; TextKit re-lays out only the viewport.
     func invalidateChrome() {
+        for view in attachmentViews.allObjects { view.applyTheme() }
         guard let textView, let layout = textView.textLayoutManager else { return }
         layout.invalidateLayout(for: layout.documentRange)
         textView.setNeedsLayout()
