@@ -134,10 +134,8 @@ extension YRelativePosition {
     /// resolves to index 0 of a fresh type. Mirrored deliberately.
     ///
     /// `followUndoneDeletions` is yjs's parameter of the same name
-    /// (yjs/yjs#638). Schrift has no undo manager, so `YItem.redone` is never
-    /// set and `followRedone` currently reduces to `getItemWithOffset`; the
-    /// parameter and the loop are kept so the day undo lands this is already
-    /// right, and so the two paths stay line-comparable with yjs.
+    /// (yjs/yjs#638): `YUndoManager`'s `redoItem` sets `YItem.redone`, and
+    /// `YStructStore.followRedone` follows it to the content an undo re-created.
     ///
     /// Three things a caller must know:
     ///
@@ -162,7 +160,7 @@ extension YRelativePosition {
             }
             let res =
                 followUndoneDeletions
-                ? try Self.followRedone(store, rightID)
+                ? try YStructStore.followRedone(store, rightID)
                 : try Self.getItemWithOffset(store, rightID)
             guard let right = res.item as? YItem else {
                 // Struct is garbage collected.
@@ -198,7 +196,7 @@ extension YRelativePosition {
             }
             let res =
                 followUndoneDeletions
-                ? try Self.followRedone(store, typeID)
+                ? try YStructStore.followRedone(store, typeID)
                 : try Self.getItemWithOffset(store, typeID)
             guard let item = res.item as? YItem, case .type(let type) = item.content else {
                 // Struct is garbage collected.
@@ -207,35 +205,6 @@ extension YRelativePosition {
             return YAbsolutePosition(type: type, index: assoc >= 0 ? type.length : 0, assoc: assoc)
         }
         throw YIntegrationError.unexpectedCase
-    }
-
-    /// yjs `followRedone` (@9567) — follow an item's `redone` chain so a position
-    /// on content an undo re-created lands on the re-created item.
-    ///
-    /// `redone` is only ever set by yjs's undo manager, which this core does not
-    /// model, so the loop runs once today. Transliterated rather than reduced so
-    /// the day undo lands the behaviour is already yjs's.
-    private static func followRedone(
-        _ store: YStructStore, _ id: YID
-    ) throws -> (item: YStruct, diff: UInt) {
-        var nextID = id
-        var diff: UInt = 0
-        var item: YStruct
-        while true {
-            if diff > 0 {
-                let (clock, overflow) = nextID.clock.addingReportingOverflow(diff)
-                // A redone chain is never set today; a clock near `UInt.max` would
-                // trap here, so refuse it like any other impossible state.
-                guard !overflow else { throw YIntegrationError.unexpectedCase }
-                nextID = YID(client: nextID.client, clock: clock)
-            }
-            item = try store.getItem(nextID)
-            diff = nextID.clock - item.id.clock
-            // yjs's loop condition is `nextID !== null && item instanceof Item`.
-            guard let redone = (item as? YItem)?.redone else { break }
-            nextID = redone
-        }
-        return (item, diff)
     }
 
     /// yjs `getItemWithOffset` (@2521) — the struct containing `id`, plus how far

@@ -94,7 +94,7 @@ enum BlockPatchOrigin: Equatable {
         switch origin {
         case .localUser: self = .localUser
         case .remote: self = .remote
-        case nil: self = .other
+        case .undoManager, nil: self = .other
         }
     }
 }

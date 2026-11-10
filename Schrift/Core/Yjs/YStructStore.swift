@@ -221,6 +221,30 @@ final class YStructStore {
         return list.structs[try findIndexCleanStart(transaction, list, id.clock)]
     }
 
+    /// yjs `followRedone` (@9567) — follow an item's `redone` chain to the item an
+    /// undo/redo re-created (`YUndoManager`, `YRelativePosition.resolve`).
+    static func followRedone(
+        _ store: YStructStore, _ id: YID
+    ) throws -> (item: YStruct, diff: UInt) {
+        var nextID = id
+        var diff: UInt = 0
+        var item: YStruct
+        while true {
+            if diff > 0 {
+                let (clock, overflow) = nextID.clock.addingReportingOverflow(diff)
+                // A clock near `UInt.max` would trap; refuse it like any impossible state.
+                guard !overflow else { throw YIntegrationError.unexpectedCase }
+                nextID = YID(client: nextID.client, clock: clock)
+            }
+            item = try store.getItem(nextID)
+            diff = nextID.clock - item.id.clock
+            // yjs's loop condition is `nextID !== null && item instanceof Item`.
+            guard let redone = (item as? YItem)?.redone else { break }
+            nextID = redone
+        }
+        return (item, diff)
+    }
+
     /// yjs `getItemCleanEnd` (@3001) — the struct *ending* at `id.clock`,
     /// splitting one open if the clock lands before its end.
     ///

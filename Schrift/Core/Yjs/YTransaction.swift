@@ -3,9 +3,12 @@ import Foundation
 // MARK: - Transaction
 
 /// The origin bookkeeping values Schrift currently needs from yjs transactions.
-enum YTransactionOrigin: Equatable {
+enum YTransactionOrigin: Hashable {
     case localUser
     case remote
+    /// A `YUndoManager`'s own undo/redo transactions — yjs passes the manager itself
+    /// as the origin (@3574). Identity only; see `YUndoManager.origin`.
+    case undoManager(ObjectIdentifier)
 }
 
 /// One `changedParentTypes` entry — yjs's `Map<AbstractType, Array<YEvent>>` pair,
@@ -67,9 +70,9 @@ final class YTransaction {
     /// through `changedParentTypeIndex` — a linear scan per event per ancestor would
     /// make a remote update touching N types O(N²).
     ///
-    /// **Only populated while `doc.afterTransaction` is set.** It exists for that
-    /// hook alone, so a replica with no hook builds no events and leaves this empty
-    /// (see `YType.callObserver`); the B4 formatting-cleanup arming is independent
+    /// **Only populated while `doc.afterTransaction` or an observer is set.** It
+    /// exists for those alone, so a replica with neither builds no events and
+    /// leaves this empty (see `YType.callObserver`); the B4 formatting-cleanup arming is independent
     /// of it and still runs.
     private(set) var changedParentTypes: [YChangedParentType] = []
     /// `changedParentTypes` index per type — the O(1) half of the pair above.
@@ -325,8 +328,13 @@ extension YDoc {
             // `_callObserver` and before the formatting cleanup. This is the
             // change signal: `changedParentTypes` is complete and the store is
             // still pre-gc/pre-merge, so a coalesced run of typing still reads as
-            // inserts. A nil hook runs nothing.
+            // inserts. A nil hook runs nothing. Then the registered observers
+            // (`YUndoManager`), in registration order, as yjs's `emit` runs every
+            // `'afterTransaction'` listener; a throw is an observer-phase error.
             transaction.doc.afterTransaction?(transaction)
+            for (_, observer) in transaction.doc.afterTransactionObservers {
+                try observer(transaction)
+            }
 
             // Drop the events now that the hook has run. yjs keeps
             // `changedParentTypes` on the transaction and lets the tracing GC
@@ -465,10 +473,10 @@ extension YDoc {
     /// yjs `tryGcDeleteSet` (yjs.cjs @3221) — gc every deleted, non-kept `Item`
     /// inside each delete range, right to left.
     ///
-    /// yjs's `gcFilter` defaults to `() => true` (gc everything); the replica has
-    /// no undo manager, so there is nothing to keep alive and the filter is that
-    /// default — the only gate is `deleted && !keep`. `gc(store, parentGCd: false)`
-    /// replaces content in place (no `replaceStruct`), so the iterated array's
+    /// yjs's `gcFilter` defaults to `() => true` (gc everything) and Schrift has no
+    /// other filter, so the only gate is `deleted && !keep`: `keep` is what
+    /// `YUndoManager` sets on deletions its stacks can still restore.
+    /// `gc(store, parentGCd: false)` replaces content in place (no `replaceStruct`), so the iterated array's
     /// indices do not shift for top-level items; a same-client child that is
     /// replaced by a `GC` (same id + length) is simply skipped when the loop reaches
     /// it (`as? YItem` fails), exactly as in yjs.
