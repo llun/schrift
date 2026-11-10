@@ -96,6 +96,9 @@ struct NativeEditorTestHostApp: App {
                 failedToLoad = true
             }
         }
+        .overlay(alignment: .bottomLeading) {
+            if ProcessInfo.processInfo.arguments.contains("--native-media") { ContentHeightReadout() }
+        }
         .environment(localization)
         .environment(images)
         .onDisappear {
@@ -373,6 +376,21 @@ private struct SyntheticIMEControls: View {
     }
     return UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
         .lazy.compactMap(find).first
+}
+
+/// `--native-media`: the reader's content height, polled. TextKit 2 sizes
+/// paragraphs it has not laid out from estimates, so this is how the UI test
+/// sees whether an attachment paragraph's estimate was already its final
+/// height (the S2 line heights). Touches pass through to the reader.
+private struct ContentHeightReadout: View {
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.2)) { _ in
+            Text(verbatim: mountedTextView().map { "\(Int($0.contentSize.height))" } ?? "")
+                .font(.caption2)
+                .accessibilityIdentifier("media.contentHeight")
+        }
+        .allowsHitTesting(false)
+    }
 }
 
 /// `--native-tree`: puts the caret at the second bullet's start, as a tap

@@ -2291,8 +2291,13 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   at its start and -1 at its end so a peer's boundary insertion stays outside. It restores
   the view from `DocumentEngine.currentSelectionEndpoints()` after every patch except the
   editor's own stamped echo (`NativeTextSurface.onPatchApplied`); commands place their caret
-  through `selection.place`. It sets `selectedRange` only when the restored range differs
-  from the view's (setting it ends a handle drag): an edit after the selection never sets
+  through `selection.place`. A command's storage edit and caret (`replace`, `applyStructural`)
+  and a patch's restore reach the keyboard as one `inputDelegate` text change
+  (`asOneKeyboardChange`): a caret set outside one makes UIKit accept a pending autocorrection
+  or inline prediction at the range it last saw (`prepareForSelectionChange`), which turned
+  "elsewhere" typed at a paragraph end into "elseeleresewhereh" (`NativeSelectionTests`).
+  It sets `selectedRange` only when the restored range differs from the view's (setting
+  it ends a handle drag): an edit after the selection never sets
   it; UIKit does not shift the range for storage edits before it, so those are corrected
   (`restoredSelections` counts sets, since a programmatic set sends no delegate callback).
   One vanished endpoint collapses to the survivor; both gone
@@ -2587,8 +2592,12 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   5,000 blocks / 200 previews realisation, a peer table edit, VoiceOver, the `.review/`
   capture when present) and the host UI test `testImagesAndTablesScrollWithoutJumping`
   (`--native-media`: same-origin images served by a delayed local closure, tables, math;
-  every drag moves the cards together by the same distance and a download moves nothing;
-  without the line heights a drag moved ~25 pt short on the simulator).
+  drags to the end: every drag moves the cards together, by about its length until the
+  document ends, a download moves nothing, and the host's `media.contentHeight` readout grows
+  under 15% while the drags reveal the cards: pinned, an unlaid attachment paragraph's
+  estimate is final (2,319 to 2,463 pt on the iOS 27 simulator, the text paragraphs'
+  estimates), unpinned it grew 1,602 to 2,405 pt with no visible jump. Distances are not
+  compared between drags: a loaded simulator's touch sampling moves the pan start by ~12 pt).
 - **PR06d subtree commands and the lossless clipboard.** `NativeBlockAction` (menu order:
   move up, move down, outdent, indent, insert above, insert below, duplicate, copy, delete)
   acts on `NativeInputCoordinator.blockActionTarget()`: the caret's block, or the block a

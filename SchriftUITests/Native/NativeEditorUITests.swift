@@ -431,10 +431,17 @@ final class NativeEditorUITests: XCTestCase {
     }
 
     /// PR06e: images and tables scroll without jumping. Each drag must move
-    /// every preview on screen by the same amount, about the drag's length,
-    /// and an image download (the fixture answers after 1.2 s) must move
-    /// nothing. Visible positions are compared, not `contentOffset`, which
-    /// TextKit's own re-anchoring changes invisibly.
+    /// every preview on screen together, by about the drag's length until the
+    /// document ends, and an image download (the fixture answers after 1.2 s)
+    /// must move nothing. Visible positions are compared, not `contentOffset`,
+    /// which TextKit's own re-anchoring changes invisibly. The S2 line heights
+    /// show in the document's height: TextKit 2 sizes a paragraph it has not
+    /// laid out from an estimate, and pinned, an attachment paragraph's
+    /// estimate is its final height, so revealing the cards grows the document
+    /// only by the text paragraphs' estimates (2,319 to 2,463 pt on the iOS 27
+    /// simulator; without the pin 1,602 to 2,405 pt). The drags' own distance
+    /// is not compared between drags: a loaded simulator's touch sampling
+    /// shifts where the pan starts by ~12 pt (CI).
     func testImagesAndTablesScrollWithoutJumping() {
         let app = XCUIApplication()
         app.launchArguments = ["--native-media"]
@@ -444,6 +451,8 @@ final class NativeEditorUITests: XCTestCase {
         let previews = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "nativeEditor.attachment."))
         XCTAssertTrue(previews.firstMatch.waitForExistence(timeout: 10))
+        let readout = app.staticTexts["media.contentHeight"]
+        XCTAssertTrue(readout.waitForExistence(timeout: 5))
         let viewport = reader.frame
         func positions() -> [String: CGFloat] {
             var result: [String: CGFloat] = [:]
@@ -466,10 +475,14 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertFalse(start.isEmpty)
         sleep(2)
         assertStill(start, "first download")
+        let startHeight = Double(readout.label) ?? 0
+        XCTAssertGreaterThan(startHeight, 0)
         var images = Set(start.keys.filter { $0.contains("media-img") })
         var tables = Set(start.keys.filter { $0.contains("media-tbl") })
-        var reference: CGFloat?
-        for drag in 1...6 {
+        // The fixture's last block: once its card shows, a drag may stop at the end.
+        let last = "nativeEditor.attachment.media-math-11"
+        var reachedEnd = false
+        for drag in 1...12 where !reachedEnd {
             let before = positions()
             let from = reader.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
             from.press(
@@ -482,13 +495,10 @@ final class NativeEditorUITests: XCTestCase {
                 for delta in deltas {
                     XCTAssertEqual(delta, first, accuracy: 1, "previews moved apart in drag \(drag): \(deltas)")
                 }
-                // The same drag moves the content the same distance every time (the
-                // pan's touch slop aside). Without the S2 line heights a drag that
-                // reveals unlaid attachments moved ~25 pt less on the simulator.
-                let expected = reference ?? first
-                reference = expected
-                XCTAssertEqual(first, -300, accuracy: 30, "drag \(drag) moved the content by the drag")
-                XCTAssertEqual(first, expected, accuracy: 2, "drag \(drag) jumped: \(first) vs \(expected)")
+                if before[last] == nil, after[last] == nil {
+                    XCTAssertEqual(first, -300, accuracy: 45, "drag \(drag) moved the content by the drag")
+                }
+                reachedEnd = abs(first) < 0.5
             }
             images.formUnion(after.keys.filter { $0.contains("media-img") })
             tables.formUnion(after.keys.filter { $0.contains("media-tbl") })
@@ -496,8 +506,13 @@ final class NativeEditorUITests: XCTestCase {
             sleep(2)
             assertStill(after, "after drag \(drag)")
         }
+        XCTAssertTrue(reachedEnd, "the drags reached the end of the document")
         XCTAssertGreaterThanOrEqual(images.count, 2, "the drags passed several images")
         XCTAssertGreaterThanOrEqual(tables.count, 2, "and several tables")
+        let endHeight = Double(readout.label) ?? 0
+        XCTAssertLessThan(
+            endHeight - startHeight, 0.15 * endHeight,
+            "revealed cards were estimated at their final height: \(startHeight) -> \(endHeight)")
     }
 
     private func text(of element: XCUIElement) -> String { element.value as? String ?? "" }

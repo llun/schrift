@@ -812,7 +812,11 @@ the selection), it restores the view from
 `currentSelectionEndpoints()`: a vanished endpoint collapses the selection to the one
 that survived, and with both gone the caret moves to the start of the block after the
 head's old block (else the end of the one before it). A peer's split resolves an end in
-the moved text to the split point. An endpoint in a placeholder is not tracked.
+the moved text to the split point. An endpoint in a placeholder is not tracked. A
+command's storage edit and caret, and a patch's restored selection, reach the keyboard
+as one text change (`inputDelegate` `textWillChange`/`textDidChange`): UIKit accepts a
+pending autocorrection or inline prediction, at the range it last saw, when the caret is
+set outside one.
 `NativeClipboard` and the view's `copy:`/`cut:`/`paste:`/`pasteAndMatchStyle:` overrides
 give a plain-text clipboard: copy is one line per block (placeholders contribute nothing,
 and nothing copyable or marked text leaves the pasteboard alone);
