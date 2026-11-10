@@ -18,6 +18,9 @@ struct NativeBlockSnapshot: Equatable {
     var block: ProjectedBlock
     var depth: Int
     var parentHandle: NativeBlockHandle?
+    /// The bounded preview of a block the surface does not render as text
+    /// (PR06e), read with the block; nil for prose.
+    var preview: NativeBlockPreview? = nil
 
     var id: String { block.id }
     var parentID: String? { parentHandle?.stringID }

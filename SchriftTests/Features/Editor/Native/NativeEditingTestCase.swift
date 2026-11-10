@@ -34,11 +34,17 @@ class NativeEditingTestCase: DocumentEngineTestCase {
     }
 
     func makeHarness(_ blocks: [BlockNoteBlock] = seedBlocks()) throws -> Harness {
+        try makeHarness(state: BlockNoteYjs.encode(blocks, clientID: Self.seedClientID))
+    }
+
+    /// The same harness over any checkpoint, for shapes the block encoder
+    /// cannot spell (tables, column lists).
+    func makeHarness(state: Data) throws -> Harness {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let scope = ReplicaScope(
             serverOrigin: "https://example.test", ownerUserID: UUID(), org: "docs", documentID: UUID())
         let store = ReplicaStore(directory: directory)
-        _ = try store.create(for: scope, checkpoint: BlockNoteYjs.encode(blocks, clientID: Self.seedClientID))
+        _ = try store.create(for: scope, checkpoint: state)
         let session = try XCTUnwrap(NativeEditorSession.restore(store: store, scope: scope))
         let log = WriteLog()
         session.enableTyping { [weak session] command, update in
@@ -61,7 +67,8 @@ class NativeEditingTestCase: DocumentEngineTestCase {
     ) throws {
         let session = harness.session
         let fresh = AttributedDocumentProjection.attributedString(
-            blocks: session.surface.blocks, traits: session.surface.traits, labels: session.surface.labels)
+            blocks: session.surface.blocks, traits: session.surface.traits, labels: session.surface.labels,
+            geometry: session.surface.attachmentGeometry)
         XCTAssertTrue(
             session.textView.textStorage.isEqual(to: fresh), "storage equals the projection", file: file, line: line)
         XCTAssertEqual(

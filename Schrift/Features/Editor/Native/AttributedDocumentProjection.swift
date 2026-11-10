@@ -33,6 +33,22 @@ struct NativeEditorLabels: Equatable {
     var toggle = Strings_en.table[.native_editor_toggle]!
     var expanded = Strings_en.table[.native_editor_toggle_expanded]!
     var collapsed = Strings_en.table[.native_editor_toggle_collapsed]!
+    // Preview names and states (PR06e).
+    var named = Strings_en.table[.native_editor_attachment_named]!
+    var image = Strings_en.table[.editor_image_a11y]!
+    var video = Strings_en.table[.native_editor_video]!
+    var audio = Strings_en.table[.native_editor_audio]!
+    var file = Strings_en.table[.native_editor_file]!
+    var pdf = Strings_en.table[.native_editor_pdf]!
+    var table = Strings_en.table[.native_editor_table]!
+    var tableMore = Strings_en.table[.native_editor_table_more]!
+    var columns = Strings_en.table[.native_editor_columns]!
+    var math = Strings_en.table[.native_editor_math]!
+    var diagram = Strings_en.table[.native_editor_diagram]!
+    var imageExternal = Strings_en.table[.editor_image_external]!
+    var imageExternalA11y = Strings_en.table[.editor_image_external_a11y]!
+    var imageOffline = Strings_en.table[.editor_image_offline]!
+    var imageFailed = Strings_en.table[.editor_image_failed]!
     /// The block menu's title and actions (PR06d): the edit menu and VoiceOver.
     var blockMenu = Strings_en.table[.native_editor_block_actions]!
     var blockActions = Dictionary(
@@ -40,15 +56,16 @@ struct NativeEditorLabels: Equatable {
 }
 
 /// Disposable presentation, never a serialization or write-back source.
-/// Unknown/opaque objects survive in the owning replica and occupy a labelled
-/// paragraph here. No list marker is inserted into the authored text: bullets,
+/// Unknown/opaque objects survive in the owning replica and occupy one
+/// attachment character here: a bounded, read-only preview (PR06e,
+/// `NativeBlockAttachment`). No list marker is inserted into the authored text: bullets,
 /// numbers, checkboxes, quote bars, panels and rules are fragment chrome
 /// (`NativeBlockFragment`) and controls (`NativeBlockControls`).
 enum AttributedDocumentProjection {
-    private static let prose: Set<String> = [
-        "paragraph", "heading", "bulletListItem", "numberedListItem", "checkListItem", "codeBlock", "quote",
-        "callout", "divider", "pageBreak", "toggleListItem",
-    ]
+    private static let prose = NativeBlockPreview.proseNodes
+
+    /// A preview block's one character in storage (one UTF-16 unit).
+    static let attachmentCharacter = "\u{FFFC}"
 
     /// A toggle list item or toggle heading that renders as text (PR06b).
     static func isToggle(_ block: BlockSnapshot) -> Bool {
@@ -65,11 +82,32 @@ enum AttributedDocumentProjection {
     }
 
     static func displayText(for block: BlockSnapshot, labels: NativeEditorLabels = NativeEditorLabels()) -> String {
-        guard !isPlaceholder(block) else {
-            let label = block.node.isEmpty ? labels.unknownBlock : block.node
-            return String(format: labels.preservedBlock, label)
-        }
+        guard !isPlaceholder(block) else { return attachmentCharacter }
         return block.runs.map { displayed($0.text, in: block) }.joined()
+    }
+
+    /// A preview block's preview: the replica's, or a labelled preserved
+    /// card for a value-only snapshot that has none.
+    static func preview(for block: BlockSnapshot) -> NativeBlockPreview {
+        block.preview ?? .preserved(node: block.node, summary: "")
+    }
+
+    /// VoiceOver's name for a preview block: "Image: alt", "Video: name",
+    /// "Table, 3 by 4", "Columns, 2", "Math", "paragraph (preserved, not
+    /// editable yet)".
+    static func attachmentLabel(for block: BlockSnapshot, labels: NativeEditorLabels = NativeEditorLabels()) -> String {
+        func named(_ kind: String, _ name: String) -> String {
+            name.isEmpty ? kind : String(format: labels.named, kind, name)
+        }
+        switch preview(for: block) {
+        case .image(_, let alt, _): return named(labels.image, alt)
+        case .file(let node, let name, _): return named(labels.kind(node), name)
+        case .table(_, let rows, let columns): return String(format: labels.table, rows, columns)
+        case .columns(_, let count): return String(format: labels.columns, count)
+        case .source(let node, _, _): return labels.kind(node)
+        case .preserved(let node, _):
+            return String(format: labels.preservedBlock, node.isEmpty ? labels.unknownBlock : node)
+        }
     }
 
     private static func displayed(_ text: String, in block: BlockSnapshot) -> String {
@@ -102,11 +140,14 @@ enum AttributedDocumentProjection {
 
     @MainActor
     static func attributedString(
-        blocks: [BlockSnapshot], traits: UITraitCollection = .current, labels: NativeEditorLabels = NativeEditorLabels()
+        blocks: [BlockSnapshot], traits: UITraitCollection = .current,
+        labels: NativeEditorLabels = NativeEditorLabels(),
+        geometry: NativeAttachmentGeometry = NativeAttachmentGeometry()
     ) -> NSAttributedString {
         let result = NSMutableAttributedString(string: "")
         for (block, number) in zip(blocks, listNumbers(in: blocks)) {
-            result.append(attributedBlock(block, traits: traits, labels: labels, listNumber: number))
+            result.append(
+                attributedBlock(block, traits: traits, labels: labels, listNumber: number, geometry: geometry))
         }
         return result
     }
@@ -116,7 +157,7 @@ enum AttributedDocumentProjection {
     @MainActor
     static func attributedBlock(
         _ block: BlockSnapshot, traits: UITraitCollection, labels: NativeEditorLabels = NativeEditorLabels(),
-        listNumber: Int? = nil
+        listNumber: Int? = nil, geometry: NativeAttachmentGeometry = NativeAttachmentGeometry()
     ) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.paragraphSpacing = DocsSpacing.spaceSM
@@ -135,7 +176,19 @@ enum AttributedDocumentProjection {
         if isPlaceholder(block) {
             base[.nativePlaceholder] = true
             base[.foregroundColor] = UIColor.secondaryLabel
-            result.append(NSAttributedString(string: displayText(for: block, labels: labels), attributes: base))
+            let attachment = self.attachment(for: block, traits: traits, labels: labels, geometry: geometry)
+            // The S2 fix, for attachment paragraphs only: the line is exactly
+            // the attachment plus the separator's descent, so TextKit 2's
+            // estimate of a paragraph it has not laid out is already final.
+            let indent = scaledGutter(traits) * CGFloat(block.depth)
+            paragraph.firstLineHeadIndent = indent
+            paragraph.headIndent = indent
+            paragraph.minimumLineHeight = attachment.content.lineHeight
+            paragraph.maximumLineHeight = attachment.content.lineHeight
+            if block.depth > 0 { base[.nativeDepth] = block.depth }
+            var attributes = base
+            attributes[.attachment] = attachment
+            result.append(NSAttributedString(string: attachmentCharacter, attributes: attributes))
         } else {
             chrome(block, listNumber: listNumber, traits: traits, paragraph: paragraph, into: &base)
             for run in block.runs {
@@ -151,6 +204,34 @@ enum AttributedDocumentProjection {
         base[.nativeSeparator] = true
         result.append(NSAttributedString(string: "\n", attributes: base))
         return result
+    }
+
+    @MainActor
+    private static func scaledGutter(_ traits: UITraitCollection) -> CGFloat {
+        UIFontMetrics(forTextStyle: .body).scaledValue(for: NativeBlockMetrics.listGutter, compatibleWith: traits)
+    }
+
+    /// A preview block's attachment, sized for `geometry` (S2: `previewWidth`
+    /// and a cached aspect ratio, else a placeholder height).
+    @MainActor
+    static func attachment(
+        for block: BlockSnapshot, traits: UITraitCollection, labels: NativeEditorLabels,
+        geometry: NativeAttachmentGeometry
+    ) -> NativeBlockAttachment {
+        let preview = preview(for: block)
+        let separator = font(block: block, marks: [], traits: traits)
+        let width =
+            geometry.usableWidth - scaledGutter(traits) * CGFloat(block.depth)
+        var ratio: CGFloat?
+        if case .image(let url, _, _) = preview { ratio = geometry.aspectRatios[url] }
+        let descent = ceil(-separator.descender)
+        let size = NativeAttachmentLayout.size(
+            for: preview, width: width, traits: traits, aspectRatio: ratio,
+            minimumHeight: ceil(separator.lineHeight) - descent)
+        return NativeBlockAttachment(
+            content: NativeAttachmentContent(
+                blockID: block.id, preview: preview, label: attachmentLabel(for: block, labels: labels), size: size,
+                descent: descent))
     }
 
     /// The room each block's chrome needs, scaled with Dynamic Type from the

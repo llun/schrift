@@ -586,7 +586,7 @@ document-height measurement or full-document layout request.
 `AttributedDocumentProjection` renders semantic marks, token-based typography,
 block identity/type and structural separators. `BlockSnapshot.isOpaque` preserves
 the difference between an opaque paragraph and an empty one. Unsupported blocks
-get labelled preserved placeholders; an unsupported root has an explicit state.
+get bounded read-only previews (one attachment each, PR06e below); an unsupported root has an explicit state.
 `ProjectionRangeIndex` maps UTF-16 ranges without treating separators as replica
 characters; duplicate/missing IDs are not addressable. `NativeTextSurface` applies
 all six patch kinds and every origin, replacing exact text-delta ranges or affected block storage
@@ -812,7 +812,11 @@ the selection), it restores the view from
 `currentSelectionEndpoints()`: a vanished endpoint collapses the selection to the one
 that survived, and with both gone the caret moves to the start of the block after the
 head's old block (else the end of the one before it). A peer's split resolves an end in
-the moved text to the split point. An endpoint in a placeholder is not tracked.
+the moved text to the split point. An endpoint in a placeholder is not tracked. A
+command's storage edit and caret, and a patch's restored selection, reach the keyboard
+as one text change (`inputDelegate` `textWillChange`/`textDidChange`): UIKit accepts a
+pending autocorrection or inline prediction, at the range it last saw, when the caret is
+set outside one.
 `NativeClipboard` and the view's `copy:`/`cut:`/`paste:`/`pasteAndMatchStyle:` overrides
 give a plain-text clipboard: copy is one line per block (placeholders contribute nothing,
 and nothing copyable or marked text leaves the pasteboard alone);
@@ -900,6 +904,41 @@ installed 0.56 keyboard rules, with the open state carried in the split command 
 open toggle's Enter starts its children, a closed one splits and keeps them, an empty
 toggle resets); the slash menu offers Toggle heading and Toggle list. A toggle has no
 Markdown shadow yet, so production keeps such a document read-only, like a callout.
+
+**PR06e Bounded previews and the S2 attachment sizing.** Every block the native editor
+does not author yet (image, video, audio, file, PDF, table, column list, math, diagram,
+any unknown node and any opaque prose) is **one attachment character** in storage, a
+`NativeBlockAttachment` whose view is a read-only preview card. Authoring them is
+PR11–PR14; until then they stay preserved and read-only (range commands touching one are
+refused, as before). The preview data is a bounded value read from the replica with the
+block (`NativeBlockPreview`, in `NativeBlockProjection.projectBlock`, so a peer's edit
+inside a table arrives as the block's existing `.replaceBlock`): the first 6 × 4 table
+cells and the full size, the first three lines of up to four columns, the first four
+source lines of math or a diagram (no renderer, an owner decision), media name, kind and
+URL, or a labelled preserved card with a line of text. Every string is capped, so a
+10,000-row table costs a walk of its row list, never its text. **Bounded realisation:**
+TextKit 2 asks for an attachment's view provider only for laid-out fragments, so with
+5,000 blocks and 200 previews only the dozen around the viewport exist; a preview view is
+built with plain UIKit, never SwiftUI. **Sizing (the S2 fix, attachment paragraphs
+only):** the projection computes each card's size from the usable text width and Dynamic
+Type (an image: BlockNote `previewWidth`, capped at the width, over the image loader's
+remembered aspect ratio, else the classic 160 pt placeholder; bounded 44–640 pt), the
+view reports exactly that as its intrinsic size (the provider tracks view bounds), and the
+paragraph's minimum and maximum line height are that height plus the separator font's
+descent, so TextKit 2's estimate for an unlaid-out attachment paragraph is already its
+final height. Text lines are not pinned. The attachment's own `bounds` stay zero: setting
+them makes TextKit 2 draw a file icon and never ask for a provider (S1 finding 3, checked
+again here; the S2 spike's bounds were part of what it measured, not what ships). **A
+download changes nothing in layout:** the image fills the reserved box (aspect fit), and
+its ratio applies at the next restyle: a width change (rotation, split view; only the
+attachment slices are replaced, in place), a Dynamic Type change or the next open. Images
+go through the app's `ImageLoader` (`NativeEditorView` reads it from the environment and
+passes the offline flag and the document's server origin; a loader of another server's
+session shows and requests nothing, as the classic `matchesSession`): the same-origin rule, "External image · tap to load", consent,
+the disk cache and the offline state are the loader's, unchanged. VoiceOver reads each
+card as one element ("Image: alt", "Video: clip.mp4", "Table, 3 by 4", "Columns, 2",
+"Math"), and the text view's value reads the label in place of the attachment character.
+Opening, scrolling, a download and a restyle write no Yjs.
 
 **PR07a Undo core.** `Core/Yjs/YUndoManager` transliterates yjs 13.6.33's `UndoManager`
 with `redoItem`, `followRedone`, `keepItem` and `isParentOf`. It listens through

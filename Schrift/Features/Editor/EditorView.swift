@@ -309,13 +309,13 @@ struct EditorView: View {
                 ProgressView()
             case .native(let session):
                 NativeEditorView(
-                    session: session, title: viewModel.title,
+                    session: session, title: viewModel.title, serverOrigin: serverOrigin,
                     preservedNotice: nativeOpen.isPreservedReadOnly
                         ? .native_editor_owned_read_only_body : nil,
                     saveStatus: session.input == nil ? nil : nativeSaveStatus(session),
                     saveFailureDetail: viewModel.saveFailureDetail,
                     saveFailureOffersRetry: viewModel.saveFailureOffersRetry,
-                    onSave: { nativeOpen.saveNow(viewModel: viewModel) })
+                    onSave: { nativeOpen.saveNow(viewModel: viewModel) }, isOffline: showsOffline)
             case .preservedUnavailable:
                 ContentUnavailableView(
                     loc[.native_editor_owned_unavailable_title], systemImage: "doc.richtext",
