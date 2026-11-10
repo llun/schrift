@@ -146,16 +146,19 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     }
 
     func applyPatch(_ patch: BlockPatch) {
-        guard !isFrozen else {
-            frozenPatches.append((patch, settled))
-            return
-        }
+        // Confirmed even while frozen for a composition: its result removes the
+        // prediction, so a buffered echo would leave the canonical block behind
+        // (a later rollback would drop the journaled key) or replay the key.
         if let stamp = patch.nativeCommand, stamp.surfaceID != nil, stamp.surfaceID == surfaceID,
             predictions.contains(where: { $0.commandID == stamp.commandID })
         {
             // This surface's own predicted keystroke, now journaled.
             lastNativeStamp = stamp
             confirm(stamp.commandID, patch: patch)
+            return
+        }
+        guard !isFrozen else {
+            frozenPatches.append((patch, settled))
             return
         }
         if patch.origin == .localUser, let stamp = patch.nativeCommand {
@@ -313,6 +316,11 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         }
         canonical[id] = nil
         guard let journaled, let position = rangeIndex.position(for: id), blocks[position] != journaled else { return }
+        guard !isFrozen else {
+            // Marked text owns storage: the repair waits for reconciliation.
+            frozenPatches.append((BlockPatch([.replaceBlock(blockID: id, block: journaled)], origin: .other), nil))
+            return
+        }
         isApplyingPatch = true
         defer {
             isApplyingPatch = false
@@ -383,9 +391,15 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         guard !isFrozen else {
             // Marked text owns storage: the canonical blocks are shown when the
             // composition reconciles, never written under it.
-            for (id, block) in restore {
-                frozenPatches.append((BlockPatch([.replaceBlock(blockID: id, block: block)], origin: .other), nil))
+            // First: patches buffered meanwhile are in canonical coordinates and
+            // apply on top of the canonical blocks, never under them.
+            let restores = restore.map { (id, block) in
+                (
+                    patch: BlockPatch([.replaceBlock(blockID: id, block: block)], origin: .other),
+                    settled: [String: BlockSnapshot]?.none
+                )
             }
+            frozenPatches.insert(contentsOf: restores, at: 0)
             return dropped
         }
         isApplyingPatch = true

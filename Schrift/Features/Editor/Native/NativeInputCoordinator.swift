@@ -57,30 +57,31 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             case at(Int)
             /// The selection the history step restored.
             case history
-
-            /// A caret the command chose, which a newer user selection replaces.
-            var isCaret: Bool {
-                switch self {
-                case .caret, .at: true
-                case .keeping, .remapping, .history: false
-                }
-            }
         }
         let id: UUID
         let refusal: L10nKey?
         let placement: Placement
         /// Re-derives the action from the current display once, for `.stale`.
         let retry: (() -> Bool)?
+        /// The selection the action was taken from: a retry runs against it
+        /// (moved through what was shown since), not one made meanwhile.
+        let origin: BlockRange?
     }
     @ObservationIgnored private var barrier: Barrier?
     /// What the deliveries since the barrier was posted showed: a retry and a
     /// selection the user made meanwhile are mapped through it.
-    @ObservationIgnored private var barrierShown: [(blockID: String, deltas: [TextDelta])] = []
-    @ObservationIgnored private var barrierReplaced: Set<String> = []
-    @ObservationIgnored private var barrierReset = false
-    /// A selection the user made while the barrier was in flight, and how much
-    /// of `barrierShown` it had already seen: it wins over the barrier's caret.
+    @ObservationIgnored private var barrierShown: [Shown] = []
+    /// A selection the user made while the barrier was in flight, and how many
+    /// of `barrierShown`'s deliveries it had already seen: it wins over wherever
+    /// the barrier would put the selection.
     @ObservationIgnored private var userSelection: (anchors: BlockRange, seen: Int)?
+    /// What one delivery showed: text deltas per block, and the blocks it
+    /// rebuilt or removed (offsets there cannot be mapped), or a reset.
+    private struct Shown {
+        var deltas: [(blockID: String, deltas: [TextDelta])]
+        var replaced: Set<String>
+        var reset: Bool
+    }
     private typealias BlockRange = (start: (String, Int), end: (String, Int))
     private enum Intent {
         case insert(String)
@@ -239,9 +240,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 }
             }
             if barrier != nil {
-                barrierShown += surface.shownDeltas
-                barrierReplaced.formUnion(surface.shownReplaced)
-                barrierReset = barrierReset || surface.shownReset
+                barrierShown.append(
+                    Shown(deltas: surface.shownDeltas, replaced: surface.shownReplaced, reset: surface.shownReset))
             }
             canonicalRevision = delivery.revision
             history.mirror(canUndo: delivery.state.canUndo, canRedo: delivery.state.canRedo)
@@ -257,15 +257,6 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 }
                 // A restore may land in content this patch folded away.
                 keepSelectionVisible()
-            } else if let shownSelection, !surface.shownReplaced.isEmpty, !isBarrierResult(delivery.result) {
-                // This surface's own block was rebuilt (a prediction repaired to
-                // its journaled form), which UIKit does not shift the selection
-                // for: keep it at its block offsets.
-                if let start = resolve(shownSelection.start), let end = resolve(shownSelection.end), end >= start,
-                    NSRange(location: start, length: end - start) != view?.selectedRange
-                {
-                    selection.place(NSRange(location: start, length: end - start))
-                }
             }
             needsRestore = false
             if delivery.state.detached { isDetached = true }
@@ -281,12 +272,6 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
         refreshSelectionMarks()
         replayIntents()
-    }
-
-    private func isBarrierResult(_ result: ReplicaResult?) -> Bool {
-        guard let result else { return false }
-        if case .applied(let id, _, _) = result { return barrier?.id == id }
-        return true
     }
 
     /// A block-relative point as a document offset, clamped to its block's text.
@@ -314,36 +299,56 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     /// Moves the view's selection through the text this delivery showed.
     private func follow(_ shown: BlockRange) {
-        guard let view, let range = map(shown, through: surface.shownDeltas[...]) else { return }
+        let delivery = Shown(deltas: surface.shownDeltas, replaced: [], reset: false)
+        guard let view, let range = map(shown, through: [delivery][...]) else { return }
         if range != view.selectedRange { selection.place(range) }
     }
 
-    /// Block-relative endpoints moved through shown text deltas, as a document
-    /// range; nil when an endpoint's block was rebuilt, removed or reset.
-    private func map(
-        _ range: BlockRange, through shown: ArraySlice<(blockID: String, deltas: [TextDelta])>,
-        replaced: Set<String> = [], reset: Bool = false
-    ) -> NSRange? {
-        func point(_ point: (String, Int)) -> Int? {
-            guard !reset, !replaced.contains(point.0) else { return nil }
-            var offset = point.1
-            for applied in shown where applied.blockID == point.0 {
-                guard let moved = TextDelta.rebase(range: offset..<offset, assoc: -1, through: applied.deltas) else {
-                    return nil
-                }
-                offset = moved.lowerBound
+    /// Block-relative endpoints moved through what deliveries showed, as a
+    /// document range; nil when an endpoint's block was rebuilt, removed or
+    /// reset, or a change overlapped the inside of a range in one block. A
+    /// non-empty range keeps a concurrent insertion at either end outside it
+    /// (as `NativeSelectionCoordinator.publish` captures it); a caret stays
+    /// before one.
+    private func map(_ range: BlockRange, through shown: ArraySlice<Shown>) -> NSRange? {
+        var start = range.start
+        var end = range.end
+        let empty = start == end
+        for delivery in shown {
+            guard !delivery.reset, !delivery.replaced.contains(start.0), !delivery.replaced.contains(end.0) else {
+                return nil
             }
-            return resolve((point.0, offset))
+            for applied in delivery.deltas {
+                if !empty, start.0 == end.0, applied.blockID == start.0 {
+                    guard let moved = TextDelta.rebase(range: start.1..<end.1, assoc: -1, through: applied.deltas)
+                    else { return nil }
+                    start.1 = moved.lowerBound
+                    end.1 = moved.upperBound
+                    continue
+                }
+                if applied.blockID == start.0 {
+                    guard
+                        let moved = TextDelta.rebase(
+                            range: start.1..<start.1, assoc: empty ? -1 : 1, through: applied.deltas)
+                    else { return nil }
+                    start.1 = moved.lowerBound
+                }
+                if empty {
+                    end = start
+                } else if applied.blockID == end.0 {
+                    guard let moved = TextDelta.rebase(range: end.1..<end.1, assoc: -1, through: applied.deltas)
+                    else { return nil }
+                    end.1 = moved.lowerBound
+                }
+            }
         }
-        guard let start = point(range.start), let end = point(range.end), end >= start else { return nil }
-        return NSRange(location: start, length: end - start)
+        guard let lower = resolve(start), let upper = resolve(end), upper >= lower else { return nil }
+        return NSRange(location: lower, length: upper - lower)
     }
 
     /// `range`, posted with the barrier in flight, in the current display.
     private func mapThroughBarrier(_ range: BlockRange, from seen: Int = 0) -> NSRange? {
-        map(
-            range, through: barrierShown[min(seen, barrierShown.count)...], replaced: barrierReplaced,
-            reset: barrierReset)
+        map(range, through: barrierShown[min(seen, barrierShown.count)...])
     }
 
     private func handle(_ result: ReplicaResult, selection resolved: ReplicaSelection?) {
@@ -358,12 +363,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             noticeKey = nil
             // Marked text owns the view's offsets until it reconciles.
             guard !composition.isActive else { return }
-            // A selection the user made meanwhile is where held keys go.
-            if let user = userSelection, barrier.placement.isCaret,
-                let range = map(
-                    user.anchors, through: barrierShown[min(user.seen, barrierShown.count)...],
-                    replaced: barrierReplaced.subtracting(surface.shownReplaced), reset: barrierReset)
-            {
+            // A selection the user made meanwhile wins over every placement:
+            // held keys go there. The barrier's own echo (this delivery) may
+            // rebuild a block; offsets there keep their place.
+            var since = barrierShown[min(userSelection?.seen ?? 0, barrierShown.count)...]
+            if !since.isEmpty, let last = since.indices.last {
+                since[last].replaced = []
+                since[last].reset = false
+            }
+            if let user = userSelection, let range = map(user.anchors, through: since) {
                 userSelection = nil
                 selection.place(range)
                 return
@@ -417,8 +425,22 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 return
             }
             self.barrier = nil
-            // Once, against the display that now includes what it missed.
-            if barrier.retry?() == true, let next = lastCommandID, next != id {
+            // A selection the user made meanwhile carries over to the retry.
+            let carried = userSelection.flatMap { mapThroughBarrier($0.anchors, from: $0.seen) }
+            // Once, against the display that now includes what it missed, and
+            // from the selection the action was taken at.
+            if let origin = barrier.origin.flatMap({ mapThroughBarrier($0) }), origin != view?.selectedRange {
+                selection.place(origin)
+            }
+            let retried = barrier.retry?() == true
+            if let carried {
+                if self.barrier != nil {
+                    userSelection = blockRange(carried).map { ($0, 0) }
+                } else {
+                    selection.place(carried)
+                }
+            }
+            if retried, let next = lastCommandID, next != id {
                 // A cut's copy follows its retried delete.
                 for (copy, pending) in pendingCopies where pending.after == id { pendingCopies[copy]?.after = next }
             } else {
@@ -445,7 +467,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 lastOutcome = false
                 if isFrozen { stopAfterStorageFailure() } else { noticeKey = .native_editor_input_unavailable }
             case .committed?, .orphaned?, nil:
-                noticeKey = nil
+                // A storage failure meanwhile keeps its notice.
+                if !isFrozen { noticeKey = nil }
             }
             endUndoStep()
         }
@@ -463,7 +486,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         if let block = dropped.first?.blockID ?? blockSelection()?.start.0 ?? surface.blocks.first?.id {
             composition.recover(text, blockID: block)
         }
-        if let view {
+        // Under marked text the offsets are UIKit's until the composition ends.
+        if let view, view.markedTextRange == nil, !composition.isActive {
             selection.place(NSRange(location: min(view.selectedRange.location, surface.storage.length), length: 0))
         }
     }
@@ -1043,10 +1067,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                         surfaceID: surfaceID, epoch: epoch, predicted: false, command: command, undoBefore: undoBefore,
                         undoAfter: undoAfter)))
         else { return false }
-        barrier = Barrier(id: command.id, refusal: refusal, placement: placement, retry: retry)
+        barrier = Barrier(
+            id: command.id, refusal: refusal, placement: placement, retry: retry, origin: blockSelection())
         barrierShown = []
-        barrierReplaced = []
-        barrierReset = false
         userSelection = nil
         lastCommandID = command.id
         if undoAfter { typingCaret = nil }
@@ -1410,7 +1433,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         let id = UUID()
         pendingCopies[id] = PendingCopy(
             text: text, requiresPayload: requiresPayload, payload: blocks == nil ? .some(nil) : nil, after: nil)
-        if let blocks { _ = post(.copyPayload(surfaceID: surfaceID, requestID: id, blockIDs: blocks)) }
+        if let blocks, !post(.copyPayload(surfaceID: surfaceID, requestID: id, blockIDs: blocks)) {
+            pendingCopies[id] = nil
+        }
         return id
     }
 
@@ -1714,6 +1739,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         isFrozen = true
         barrier = nil
         if !surface.predictions.isEmpty || !intents.isEmpty { rollBack() }
+        // No delete will be applied and no payload may come: nothing is copied.
+        pendingCopies = [:]
         view?.isEditable = false
         view?.resignFirstResponder()
         noticeKey = .native_editor_storage_failed

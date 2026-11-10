@@ -498,32 +498,6 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
         try await assertConsistent(harness, localCommands: 2)
     }
 
-    /// F6: a prediction repaired to its journaled form (here one unit longer)
-    /// keeps the caret, also in a later block UIKit would not shift.
-    func testARepairedPredictionKeepsTheCaret() async throws {
-        let disk = Latch()
-        let harness = try await gated(disk)
-        try caret(harness, Self.firstID, 0)
-        harness.view.insertText("x")
-        try caret(harness, Self.secondID, 3)
-        let prediction = try XCTUnwrap(harness.session.surface.predictions.first)
-        var journaled = try block(harness.session, Self.firstID)
-        journaled.runs = [InlineRun("xyFirst paragraph.")]
-        let echo = BlockPatch(
-            [.text(blockID: Self.firstID, deltas: [TextDelta(range: 0..<0, replacement: "x", marks: [])])],
-            origin: .localUser,
-            nativeCommand: NativePatchStamp(
-                commandID: prediction.commandID, baseRevision: 0, emission: 0, surfaceID: harness.input.surfaceID))
-        harness.input.apply(
-            ReplicaDelivery(
-                revision: 1, events: [.patch(echo, settled: [Self.firstID: journaled])],
-                state: ReplicaState(writable: true)))
-        XCTAssertEqual(text(of: try block(harness.session, Self.firstID)), "xyFirst paragraph.", "repaired")
-        XCTAssertEqual(
-            harness.view.selectedRange, NSRange(location: try location(harness.session, Self.secondID, 3), length: 0),
-            "the caret keeps its place in its block")
-    }
-
     /// F7: a rollback while text is marked waits for the composition to end
     /// instead of rewriting storage under it.
     func testARollbackDuringACompositionWaitsForIt() async throws {
@@ -630,5 +604,160 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
         let fully = await harness.session.settle()
         XCTAssertTrue(fully)
         try await assertConsistent(harness, localCommands: NativeInputCoordinator.maxPendingTyping + 4)
+    }
+
+    // MARK: - Review round 2 (PR #272)
+
+    /// G2 and G5b: a key journaled while a composition holds the surface stays
+    /// canonical when a later key's append fails, and the composition's end
+    /// keeps the storage notice.
+    func testAKeyJournaledWhileComposingSurvivesALaterFailure() async throws {
+        let gate = Latch()
+        let appends = Locked(0)
+        let session = try await seeded(persist: { _, _ in
+            appends.update { $0 += 1 }
+            if appends.value == 1 { gate.pass() } else { throw DiskError.full }
+        })
+        try caret(session, Self.firstID, 0)
+        session.textView.insertText("a")
+        session.textView.insertText("b")
+        session.textView.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        await waitUntil { gate.waiting == 1 }
+        gate.open()
+        await session.settle()
+        XCTAssertEqual(session.input?.noticeKey, .native_editor_storage_failed)
+        session.input?.textViewDidEndEditing(session.textView)
+        await session.settle()
+        XCTAssertEqual(text(of: session.surface.blocks[0]), "aFirst paragraph.", "the journaled key stays")
+        XCTAssertEqual(session.input?.noticeKey, .native_editor_storage_failed, "the composition's end keeps it")
+        XCTAssertTrue(session.input?.composition.pendingRecoveries.map(\.text).contains("b") == true)
+        let fresh = AttributedDocumentProjection.attributedString(
+            blocks: session.surface.blocks, traits: session.surface.traits, labels: session.surface.labels,
+            geometry: session.surface.attachmentGeometry)
+        XCTAssertEqual(session.textView.textStorage.string, fresh.string, "storage equals the model")
+    }
+
+    /// G3: a selection the user makes while a barrier that keeps its range is in
+    /// flight (bold) is where held keys go, not the kept range.
+    func testAUserSelectionWinsOverABarrierThatKeepsItsRange() async throws {
+        let disk = Latch()
+        let harness = try await gated(disk)
+        setSelection(harness, NSRange(location: try location(harness.session, Self.firstID, 0), length: 5))
+        XCTAssertTrue(harness.input.toggleMark("bold"))
+        setSelection(harness, NSRange(location: try location(harness.session, Self.firstID, 16), length: 0))
+        harness.view.insertText("!")
+        disk.open()
+        await harness.settle()
+        let first = try block(harness.session, Self.firstID)
+        XCTAssertEqual(text(of: first), "First paragraph.!")
+        XCTAssertEqual(first.runs.filter { $0.marks.contains { $0.key == "bold" } }.map(\.text), ["First"])
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
+    /// G4: a retried range keeps a peer's insertion at its start outside it,
+    /// and a peer edit inside it cancels the retry.
+    func testARetriedRangeKeepsAnInsertAtItsStartOutsideAndRefusesAnOverlap() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
+        setSelection(harness, NSRange(location: try location(harness.session, Self.firstID, 0), length: 5))
+        let start = try peerEdit { try $0.replaceText(block: Self.firstID, range: 0..<0, with: "Peer ") }
+        harness.session.replica?.mailbox.post(.integrate(start, reply: nil))
+        let bolded = await harness.run { harness.input.toggleMark("bold") }
+        XCTAssertTrue(bolded)
+        let first = try block(harness.session, Self.firstID)
+        XCTAssertEqual(first.runs.filter { $0.marks.contains { $0.key == "bold" } }.map(\.text), ["First"])
+
+        setSelection(harness, NSRange(location: try location(harness.session, Self.thirdID, 0), length: 5))
+        let inside = try peerEdit { try $0.replaceText(block: Self.thirdID, range: 2..<4, with: "") }
+        harness.session.replica?.mailbox.post(.integrate(inside, reply: nil))
+        let refused = await harness.run { harness.input.toggleMark("bold") }
+        XCTAssertFalse(refused, "the range it was aimed at is gone")
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_input_unavailable)
+        let third = try block(harness.session, Self.thirdID)
+        XCTAssertTrue(third.runs.allSatisfy { $0.marks.isEmpty })
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    /// G5a: a rollback while text is marked shows the canonical block before the
+    /// peer edit buffered meanwhile, so the display ends equal to the replica.
+    func testARollbackUnderACompositionKeepsAPeerEditBufferedBeforeIt() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
+        try caret(harness, Self.firstID, 3)
+        let peer = try peerEdit { try $0.replaceText(block: Self.firstID, range: 0..<6, with: "") }
+        harness.session.replica?.mailbox.post(.integrate(peer, reply: nil))
+        harness.view.insertText("x")
+        harness.view.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        await harness.settle()
+        harness.input.textViewDidEndEditing(harness.view)
+        await harness.settle()
+        let replica = await harness.session.replicaDoc {
+            NativeBlockProjection.project($0).blocks.map(BlockSnapshot.init)
+        }
+        XCTAssertEqual(harness.session.surface.blocks, replica)
+        XCTAssertEqual(text(of: try block(harness.session, Self.firstID)), "paragraph.")
+        XCTAssertTrue(harness.input.composition.pendingRecoveries.map(\.text).contains("x"))
+    }
+
+    /// G6a and G6b: a stale barrier retries from the selection it was taken at,
+    /// and a selection the user made meanwhile carries over to the retry.
+    func testARetriedBarrierRunsFromItsOwnSelectionAndTheUsersCarries() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
+        try caret(harness, Self.firstID, 5)
+        let peer = try peerEdit { try $0.replaceText(block: Self.firstID, range: 0..<0, with: "Peer ") }
+        harness.session.replica?.mailbox.post(.integrate(peer, reply: nil))
+        harness.input.insertNewline()
+        setSelection(harness, NSRange(location: try location(harness.session, Self.thirdID, 0), length: 5))
+        XCTAssertFalse(
+            harness.input.textView(harness.view, shouldChangeTextIn: harness.view.selectedRange, replacementText: "Z"))
+        await harness.settle()
+        XCTAssertEqual(
+            texts(harness.session),
+            ["Peer First", " paragraph.", "Second paragraph has bold words inside it.", "Z paragraph."])
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
+    /// G6c: a block rebuilt before the user selected in it does not void that
+    /// selection.
+    func testAUserSelectionInABlockRebuiltBeforeItWasMadeSurvives() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
+        try caret(harness, Self.firstID, 5)
+        let peer = try peerEdit {
+            try $0.setBlockType(block: Self.thirdID, to: "paragraph", props: [("textAlignment", .string("center"))])
+        }
+        harness.session.replica?.mailbox.post(.integrate(peer, reply: nil))
+        let third = try location(harness.session, Self.thirdID, 0)
+        harness.session.onDelivery = { [weak self] delivery in
+            // After the peer's rebuild was shown, before the stale answer.
+            guard case .stale? = delivery.result, let self else { return }
+            self.setSelection(harness, NSRange(location: third, length: 5))
+            _ = harness.input.textView(
+                harness.view, shouldChangeTextIn: harness.view.selectedRange, replacementText: "Z")
+        }
+        harness.input.insertNewline()
+        await harness.settle()
+        XCTAssertEqual(
+            texts(harness.session),
+            ["First", " paragraph.", "Second paragraph has bold words inside it.", "Z paragraph."])
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
+    /// G7: a cut whose delete fails leaves nothing in flight and copies nothing.
+    func testAFailedCutLeavesNothingInFlight() async throws {
+        let session = try await seeded(persist: { _, _ in throw DiskError.full })
+        let pasteboard = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: pasteboard.name) }
+        session.input?.pasteboard = pasteboard
+        let start = try XCTUnwrap(session.surface.rangeIndex.entry(for: Self.firstID)).textRange.location + 6
+        let end = try XCTUnwrap(session.surface.rangeIndex.entry(for: Self.secondID)).textRange.location + 7
+        session.textView.selectedRange = NSRange(location: start, length: end - start)
+        session.input?.textViewDidChangeSelection(session.textView)
+        XCTAssertEqual(session.input?.cutSelection(), true)
+        let drained = await session.settle()
+        XCTAssertTrue(drained, "nothing stays in flight")
+        XCTAssertNil(pasteboard.string, "a refused cut copies nothing")
+        XCTAssertEqual(session.input?.noticeKey, .native_editor_storage_failed)
     }
 }

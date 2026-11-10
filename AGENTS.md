@@ -2786,19 +2786,25 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   keys typed meanwhile are held as intents (`.insert`/`.deleteBackward`, from
   `NativeTextView`'s `typeKey`/`deleteKey` hooks, the delegate, UITextInput `replace`
   and a composing keyboard's direct character, also over a selection) and replayed; a
-  selection the user makes meanwhile wins over the barrier's caret; other actions return
-  false. A barrier that meets a change its surface had not seen comes back `.stale`
-  and is retried once from the current display: an action on a range (marks, a range
-  replacement, unpredicted typing) is retried on that range moved through what was shown
-  since, and a cut's pending copy follows the retried delete. **Journal before publication,
+  selection the user makes meanwhile wins over wherever the barrier would put the
+  selection (its caret, a kept or remapped range, a history step's); other actions
+  return false. A barrier that meets a change its surface had not seen comes back
+  `.stale` and is retried once from the current display, from the selection it was taken
+  at (moved through what was shown since) while a selection the user made meanwhile
+  carries over: an action on a range (marks, a range replacement, unpredicted typing) is
+  retried on that range moved through what was shown since (a non-empty range keeps an
+  insertion at either end outside; a change inside it, or a rebuilt block, cancels the
+  retry), and a cut's pending copy follows the retried delete. **Journal before publication,
   redefined:** publication is the canonical advance, save scheduling
   (`NativeReplicaSaveScheduler.schedule` only on a journaled `.applied` or commit) or a
   network send; a predicted keystroke on screen is provisional UI, like marked text. A
   failed or refused append rolls the display back to canonical, freezes authoring and
   turns the dropped text (with held keys, even when no prediction was dropped) into an
-  `.orphaned` `ProvisionalRecovery` banner entry; while text is marked the canonical
-  blocks wait for the composition to reconcile. A prediction echoed as a whole-block
-  rebuild settles from that snapshot, and a repair keeps the caret at its block offsets. **Rebase:** the session keeps, per surface, the changes it had not seen
+  `.orphaned` `ProvisionalRecovery` banner entry, and nothing waits to be copied; while
+  text is marked the canonical blocks wait for the composition to reconcile (shown before
+  any patch buffered meanwhile) and the storage notice stays. A prediction's echo is
+  confirmed even while a composition freezes the surface, and one echoed as a whole-block
+  rebuild settles from that snapshot. **Rebase:** the session keeps, per surface, the changes it had not seen
   (`unseen`, every patch but its own predicted echoes, `ringCapacity` 256); a predicted
   command is rebased through them with `TextDelta.rebase(range:assoc:through:blockID:)`
   and they through it (`rebase(_:throughReplacing:length:)`), exactly as the surface
