@@ -14,16 +14,8 @@ final class NativeShadowExportParityTests: DocumentEngineTestCase {
     /// blocks are compared: every root list block and its subtree from the
     /// state, against the export's list items. Skipped where the capture is absent.
     func testTheRealCapturesNestedListsMatchTheServerExport() throws {
-        let review = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent(".review")
-        guard let state = try? Data(contentsOf: review.appendingPathComponent("state.bin")),
-            let formatted = try? Data(contentsOf: review.appendingPathComponent("formatted.json")),
-            let export = (try JSONSerialization.jsonObject(with: formatted) as? [String: Any])?["content"] as? String
-        else { throw XCTSkip("no .review capture") }
-        let doc = YDoc(clientID: 7, gc: true)
+        let (doc, export) = try Self.capture()
         defer { doc.destroy() }
-        try doc.applyUpdate(YUpdateDecoder.decode(state))
         let lists: Set<String> = ["bulletListItem", "numberedListItem", "checkListItem"]
         let tree = NativeBlockProjection.project(doc)
         XCTAssertTrue(tree.blocks.contains { $0.depth > 1 }, "the capture holds third-level lists")
@@ -45,6 +37,47 @@ final class NativeShadowExportParityTests: DocumentEngineTestCase {
         XCTAssertEqual(exported.count, kept.count, "every list item is in the export")
         XCTAssertEqual(parseEditorBlocks(shadow).map(\.indent), exported.map(\.indent), "the same nesting")
         XCTAssertEqual(canonicalMarkdown(shadow), canonicalMarkdown(serializeMarkdown(exported)))
+    }
+
+    /// The real capture's marks paragraph: the server exports italic `*italic*` where the
+    /// shadow writes `_italic_`, and the two must still compare equal for `draftSyncDecision`
+    /// (`syncCanonicalMarkdown`), or every save of an italic document raises a conflict. Skipped where the capture is absent.
+    func testTheRealCapturesMarksParagraphMatchesTheServerExport() throws {
+        let (doc, export) = try Self.capture()
+        defer { doc.destroy() }
+        let exported = try XCTUnwrap(export.split(separator: "\n").first { $0.hasPrefix("A paragraph with ") })
+        XCTAssertEqual(
+            String(exported), "A paragraph with **bold**, *italic*, underline, ~~strike~~ and `inline code` marks.",
+            "the server's spelling of every mark")
+        let root = try XCTUnwrap(doc.share[BlockNoteYjs.fragmentField])
+        guard case .type(let group)? = YBlockProjection.children(of: root, includeFormats: false).first?.content
+        else { return XCTFail("no root group") }
+        let dropped = YBlockProjection.children(of: group, includeFormats: false).filter {
+            !YBlockProjection.projectBlock($0, nestedChildren: true).runs.map(\.text).joined()
+                .hasPrefix("A paragraph with ")
+        }
+        try doc.transact { tx in for item in dropped { item.delete(tx) } }
+        let shadow = try XCTUnwrap(NativeBlockProjection.markdownShadow(doc))
+        XCTAssertTrue(shadow.contains("_italic_"), "the shadow spells italic with underscores: \(shadow)")
+        XCTAssertEqual(syncCanonicalMarkdown(shadow), syncCanonicalMarkdown(String(exported) + "\n"))
+    }
+
+    /// The real capture of the test document (`.review/`, not committed): its Yjs state,
+    /// applied to a fresh doc, and the server's formatted-content export.
+    private static func capture() throws -> (YDoc, String) {
+        let review = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(".review")
+        guard let state = try? Data(contentsOf: review.appendingPathComponent("state.bin")),
+            let formatted = try? Data(contentsOf: review.appendingPathComponent("formatted.json")),
+            let export = (try JSONSerialization.jsonObject(with: formatted) as? [String: Any])?["content"] as? String
+        else { throw XCTSkip("no .review capture") }
+        let doc = YDoc(clientID: 7, gc: true)
+        do { try doc.applyUpdate(YUpdateDecoder.decode(state)) } catch {
+            doc.destroy()
+            throw error
+        }
+        return (doc, export)
     }
 
     /// The export's own nested-list spelling (copied from that capture's

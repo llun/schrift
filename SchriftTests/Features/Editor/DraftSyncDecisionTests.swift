@@ -118,6 +118,96 @@ final class DraftSyncDecisionTests: XCTestCase {
         XCTAssertEqual(sameBody, .push(title: "Doc", evidence: .serverHoldsOurBody))
     }
 
+    // MARK: - Inline spelling: the app writes `_x_`, the server exports `*x*`
+
+    /// The server's formatted-content export of a paragraph carrying every inline mark
+    /// (from a real capture's marks paragraph; underline has no markdown, so it exports plain).
+    private let serverMarksParagraph =
+        "A paragraph with **bold**, *italic*, underline, ~~strike~~ and `inline code` marks.\n"
+    /// The same runs as the app's writer spells them (the native shadow, `lastPushedMarkdown`).
+    private let shadowMarksParagraph =
+        "A paragraph with **bold**, _italic_, underline, ~~strike~~ and `inline code` marks.\n"
+
+    func testTheWriterSpellsItalicDifferentlyFromTheServer() throws {
+        let line = String(serverMarksParagraph.dropLast())
+        let written = try XCTUnwrap(InlineMarkdownWriter.write(InlineMarkdown.parse(line), escapeAll: false))
+        XCTAssertEqual(written + "\n", shadowMarksParagraph, "only italic is spelled differently")
+    }
+
+    func testSyncCanonicalMarkdownIgnoresInlineSpellingButNotMarks() {
+        func same(_ a: String, _ b: String, _ why: String, line: UInt = #line) {
+            XCTAssertEqual(syncCanonicalMarkdown(a), syncCanonicalMarkdown(b), why, line: line)
+        }
+        func differ(_ a: String, _ b: String, _ why: String, line: UInt = #line) {
+            XCTAssertNotEqual(syncCanonicalMarkdown(a), syncCanonicalMarkdown(b), why, line: line)
+        }
+        same(shadowMarksParagraph, serverMarksParagraph, "`_italic_` and `*italic*`")
+        same("# _a_ b\n- **_c_**\n> d\\*\n", "# *a* b\n* _**c**_\n> d\\*\n", "spelling and mark order")
+        same("a\\_b\n", "a_b\n", "an escape that changes nothing")
+        // The writer cannot spell these italics (`_` flanking), which must not switch the
+        // rest of the block back to a spelling-sensitive compare.
+        same("_a_ 中*文*字\n", "*a* 中*文*字\n", "CJK `*` emphasis in the same block")
+        same("_a_ *x*s\n", "*a* *x*s\n", "intraword `*` emphasis in the same block")
+        differ("*x*s\n", "_x_s\n", "intraword `_` is literal (CommonMark), so these say different things")
+        // A mark gained, lost or moved is still a change.
+        differ("_italic_\n", "italic\n", "a mark removed")
+        differ("_italic_\n", "**italic**\n", "a mark changed")
+        differ("_ital_ic\n", "*italic*\n", "a literal underscore")
+        differ("\\*italic\\*\n", "*italic*\n", "escaped asterisks are text")
+        // Whitespace inside a mark is content: it encodes to different runs.
+        differ("** a**\n", " **a**\n", "a space inside bold vs before it")
+        differ("x ** a**\n", "x  **a**\n", "a space inside bold vs before it, mid-line")
+        differ("2 * 3 * 4\n", "2  _3_  4\n", "spaces inside italic vs around it")
+        differ("x *\ta*\n", "x \t*a*\n", "a tab inside italic vs before it")
+        differ("x *\u{00A0}a*\n", "x \u{00A0}*a*\n", "an NBSP inside italic vs before it")
+        // Code blocks are verbatim: their spelling is their content.
+        differ("```\n_x_\n```\n", "```\n*x*\n```\n", "code block text")
+        // Every other comparison stays strict.
+        XCTAssertNotEqual(canonicalMarkdown("_x_\n"), canonicalMarkdown("*x*\n"))
+    }
+
+    /// The false conflict: our save pushed the shadow (`_italic_`), the server's export of it
+    /// reads `*italic*`, and the server is newer than the baseline — so a spelling-sensitive
+    /// compare fell through rules 0 and 1 to rule 2 and raised a conflict against our own push.
+    func testOurItalicPushReadBackWithTheServersSpellingIsNotAConflict() {
+        let pushedThenEdited = draftSyncDecision(
+            baseline: DraftBaseline(serverUpdatedAt: base, markdown: "Old\n"),
+            lastPushedMarkdown: shadowMarksParagraph,
+            localMarkdown: shadowMarksParagraph + "\nMore\n",
+            draftTitle: "Doc",
+            draftUpdatedAt: base,
+            serverTitle: "Doc",
+            serverUpdatedAt: base.addingTimeInterval(3600),
+            serverMarkdown: serverMarksParagraph
+        )
+        XCTAssertEqual(pushedThenEdited, .push(title: "Doc", evidence: .serverHoldsOurLastPush))
+
+        let sameBody = draftSyncDecision(
+            baseline: DraftBaseline(serverUpdatedAt: base, markdown: "Old\n"),
+            lastPushedMarkdown: nil,
+            localMarkdown: shadowMarksParagraph,
+            draftTitle: "Doc",
+            draftUpdatedAt: base,
+            serverTitle: "Doc",
+            serverUpdatedAt: base.addingTimeInterval(3600),
+            serverMarkdown: serverMarksParagraph
+        )
+        XCTAssertEqual(sameBody, .push(title: "Doc", evidence: .serverHoldsOurBody))
+
+        // A co-author who really removed the italic still conflicts.
+        let coAuthorEdit = draftSyncDecision(
+            baseline: DraftBaseline(serverUpdatedAt: base, markdown: "Old\n"),
+            lastPushedMarkdown: shadowMarksParagraph,
+            localMarkdown: shadowMarksParagraph + "\nMore\n",
+            draftTitle: "Doc",
+            draftUpdatedAt: base,
+            serverTitle: "Doc",
+            serverUpdatedAt: base.addingTimeInterval(3600),
+            serverMarkdown: serverMarksParagraph.replacingOccurrences(of: "*italic*", with: "italic")
+        )
+        XCTAssertEqual(coAuthorEdit, .conflict)
+    }
+
     func testLastPushedMatchesServerOnlyCosmetically() {
         // Canonical-form comparison: our stored push and the server's export differ
         // only by list-marker normalization.

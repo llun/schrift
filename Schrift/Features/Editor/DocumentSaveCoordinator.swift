@@ -1997,8 +1997,11 @@ final class DocumentSaveCoordinator {
         // and a *local* body of `" "` skips the adopt branch below and arms a "Keep my
         // version" that PATCHes whitespace over the co-author — the exact wipe that branch
         // exists to prevent.
-        let canonicalBody = canonicalMarkdown(body)
-        let canonicalServer = canonicalMarkdown(serverMarkdown)
+        // `syncCanonicalMarkdown`, as `draftSyncBodyDecision` compares: a body spelling italic
+        // `_x_` against the server's `*x*` is not a divergence. Its emptiness is
+        // `canonicalMarkdown`'s (same blocks kept, every non-empty text encodes non-empty).
+        let canonicalBody = syncCanonicalMarkdown(body)
+        let canonicalServer = syncCanonicalMarkdown(serverMarkdown)
         // The `!canonicalServer.isEmpty` conjunct has an arm worth naming, since its mirror
         // image is spelled out above: a co-author who *empties* the document does not count as
         // diverged, so the offline body is pushed over their deletion without asking. That is
