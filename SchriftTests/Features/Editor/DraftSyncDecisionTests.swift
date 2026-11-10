@@ -118,6 +118,78 @@ final class DraftSyncDecisionTests: XCTestCase {
         XCTAssertEqual(sameBody, .push(title: "Doc", evidence: .serverHoldsOurBody))
     }
 
+    // MARK: - Inline spelling: the app writes `_x_`, the server exports `*x*`
+
+    /// The server's formatted-content export of a paragraph carrying every inline mark
+    /// (from a real capture's marks paragraph; underline has no markdown, so it exports plain).
+    private let serverMarksParagraph =
+        "A paragraph with **bold**, *italic*, underline, ~~strike~~ and `inline code` marks.\n"
+    /// The same runs as the app's writer spells them (the native shadow, `lastPushedMarkdown`).
+    private let shadowMarksParagraph =
+        "A paragraph with **bold**, _italic_, underline, ~~strike~~ and `inline code` marks.\n"
+
+    func testTheWriterSpellsItalicDifferentlyFromTheServer() throws {
+        let line = String(serverMarksParagraph.dropLast())
+        let written = try XCTUnwrap(InlineMarkdownWriter.write(InlineMarkdown.parse(line), escapeAll: false))
+        XCTAssertEqual(written + "\n", shadowMarksParagraph, "only italic is spelled differently")
+    }
+
+    func testCanonicalMarkdownIgnoresInlineSpellingButNotMarks() {
+        XCTAssertEqual(canonicalMarkdown(shadowMarksParagraph), canonicalMarkdown(serverMarksParagraph))
+        XCTAssertEqual(
+            canonicalMarkdown("# _a_ b\n- **_c_**\n> d\\*\n"), canonicalMarkdown("# *a* b\n* _**c**_\n> d\\*\n"))
+        XCTAssertEqual(canonicalMarkdown("a\\_b\n"), canonicalMarkdown("a_b\n"), "an escape that changes nothing")
+        // A mark gained, lost or moved is still a change.
+        XCTAssertNotEqual(canonicalMarkdown("_italic_\n"), canonicalMarkdown("italic\n"))
+        XCTAssertNotEqual(canonicalMarkdown("_italic_\n"), canonicalMarkdown("**italic**\n"))
+        XCTAssertNotEqual(canonicalMarkdown("_ital_ic\n"), canonicalMarkdown("*italic*\n"))
+        XCTAssertNotEqual(canonicalMarkdown("\\*italic\\*\n"), canonicalMarkdown("*italic*\n"))
+        // Code blocks are verbatim: their spelling is their content.
+        XCTAssertNotEqual(canonicalMarkdown("```\n_x_\n```\n"), canonicalMarkdown("```\n*x*\n```\n"))
+    }
+
+    /// The false conflict: our save pushed the shadow (`_italic_`), the server's export of it
+    /// reads `*italic*`, and the server is newer than the baseline — so a spelling-sensitive
+    /// compare fell through rules 0 and 1 to rule 2 and raised a conflict against our own push.
+    func testOurItalicPushReadBackWithTheServersSpellingIsNotAConflict() {
+        let pushedThenEdited = draftSyncDecision(
+            baseline: DraftBaseline(serverUpdatedAt: base, markdown: "Old\n"),
+            lastPushedMarkdown: shadowMarksParagraph,
+            localMarkdown: shadowMarksParagraph + "\nMore\n",
+            draftTitle: "Doc",
+            draftUpdatedAt: base,
+            serverTitle: "Doc",
+            serverUpdatedAt: base.addingTimeInterval(3600),
+            serverMarkdown: serverMarksParagraph
+        )
+        XCTAssertEqual(pushedThenEdited, .push(title: "Doc", evidence: .serverHoldsOurLastPush))
+
+        let sameBody = draftSyncDecision(
+            baseline: DraftBaseline(serverUpdatedAt: base, markdown: "Old\n"),
+            lastPushedMarkdown: nil,
+            localMarkdown: shadowMarksParagraph,
+            draftTitle: "Doc",
+            draftUpdatedAt: base,
+            serverTitle: "Doc",
+            serverUpdatedAt: base.addingTimeInterval(3600),
+            serverMarkdown: serverMarksParagraph
+        )
+        XCTAssertEqual(sameBody, .push(title: "Doc", evidence: .serverHoldsOurBody))
+
+        // A co-author who really removed the italic still conflicts.
+        let coAuthorEdit = draftSyncDecision(
+            baseline: DraftBaseline(serverUpdatedAt: base, markdown: "Old\n"),
+            lastPushedMarkdown: shadowMarksParagraph,
+            localMarkdown: shadowMarksParagraph + "\nMore\n",
+            draftTitle: "Doc",
+            draftUpdatedAt: base,
+            serverTitle: "Doc",
+            serverUpdatedAt: base.addingTimeInterval(3600),
+            serverMarkdown: serverMarksParagraph.replacingOccurrences(of: "*italic*", with: "italic")
+        )
+        XCTAssertEqual(coAuthorEdit, .conflict)
+    }
+
     func testLastPushedMatchesServerOnlyCosmetically() {
         // Canonical-form comparison: our stored push and the server's export differ
         // only by list-marker normalization.

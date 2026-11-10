@@ -99,11 +99,11 @@ struct ReplicaDraftReference: Codable, Equatable, Sendable {
         formatVersion = manifest.formatVersion
         generation = manifest.generation
         revision = manifest.revision
-        projectionDigest = replicaDigest(Data(canonicalMarkdown(markdown).utf8))
+        projectionDigest = replicaDigest(Data(canonicalMarkdownStructure(markdown).utf8))
     }
 
     func matches(markdown: String) -> Bool {
-        projectionDigest == replicaDigest(Data(canonicalMarkdown(markdown).utf8))
+        projectionDigest == replicaDigest(Data(canonicalMarkdownStructure(markdown).utf8))
     }
 }
 

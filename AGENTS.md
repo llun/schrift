@@ -5045,6 +5045,28 @@ markdown write endpoint**. Understand this before touching the save path:
   any web-authored italic document and letting it save destroyed the italic and
   wrote literal underscores into the server's text —
   `parse("**_word_**")` returned bold(`_word_`).
+- **The app and the server spell italic differently, so `canonicalMarkdown` compares
+  runs, not spelling.** `InlineMarkdownWriter` (the native shadow, `lastPushedMarkdown`)
+  and the formatting bar write `_x_`; the server's formatted-content export writes `*x*`
+  (a real capture: `A paragraph with **bold**, *italic*, underline, ~~strike~~ and
+  `` `inline code` `` marks.` — bold, strike and code agree, underline exports plain on
+  both sides). Spelling-sensitive, every save of an italic document read back as a server
+  change: a false `.conflict` from `draftSyncDecision` (rules 0 and 1 miss, rule 2 sees a
+  newer server), a spurious "Updated" from `serverChanged`. Classic and native saves alike,
+  since both store the text they wrote. So `canonicalMarkdown` respells each
+  `rendersInlineMarkdown` block from `InlineMarkdown.parse` through the writer at
+  `escapeAll: true` (which round-trips, so equal output ⇒ equal runs): escape differences
+  vanish too, a mark gained, lost or moved still differs, and code blocks and `.unknown`
+  stay verbatim. **No saved byte moves** — both save routes encode runs (`MarkdownYjs`),
+  never markdown spelling — which is why this, not making the writer emit `*`, is the fix.
+  `ReplicaDraftReference.projectionDigest` is persisted, so it keeps the pre-respelling form
+  (`canonicalMarkdownStructure`); changing it would strand every stored native draft
+  (`matches` fails, the sync pass skips it). Pinned by
+  `DraftSyncDecisionTests.testOurItalicPushReadBackWithTheServersSpellingIsNotAConflict` and
+  `NativeShadowExportParityTests.testTheRealCapturesMarksParagraphMatchesTheServerExport`
+  (skips without `.review/`). The parser still misreads `***x***` (bold `*x` + `*`) and
+  `**a *b***`; if the server spells bold+italic that way, those are a parser bug, not a
+  spelling one, and this does not cover them.
 - **Code spans and links bind tighter than emphasis.**
   `matchUnderscoreEmphasis`'s closing search steps over them whole, or `` _`_` ``
   closes on the `_` *inside* the code span and destroys it, and `_[x](a_ b)_`

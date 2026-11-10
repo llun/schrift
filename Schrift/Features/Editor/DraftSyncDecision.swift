@@ -129,7 +129,29 @@ func adoptedBaseline(_ baseline: DraftBaseline?, draftTitle: String, pushingTitl
 /// export does (zeroing leaf indents alone re-attaches a second sibling after the
 /// leaf, which the export does not). Nesting a leaf therefore never counts as a
 /// body change on its own — the content and its order still do.
+///
+/// **Insensitive to inline spelling.** The app writes italic `_x_` (`InlineMarkdownWriter`,
+/// the formatting bar) where the server's export writes `*x*`, and the two escape literal
+/// characters differently. Every block whose text is inline markdown (`rendersInlineMarkdown`)
+/// is respelled from its parsed runs (`InlineMarkdown.parse`, the reading the save encodes)
+/// by the writer at `escapeAll: true`, which round-trips — so two texts compare equal only
+/// when they encode the same runs, and the bytes a save sends never move.
 func canonicalMarkdown(_ markdown: String) -> String {
+    serializeMarkdown(
+        flattenedLikeServerExport(parseEditorBlocks(markdown)).map { block in
+            guard rendersInlineMarkdown(block.kind),
+                let text = InlineMarkdownWriter.write(InlineMarkdown.parse(block.text), escapeAll: true)
+            else { return block }
+            var block = block
+            block.text = text
+            return block
+        })
+}
+
+/// `canonicalMarkdown` before it respelled inline markdown, kept for the persisted
+/// `ReplicaDraftReference.projectionDigest`: a digest written by an earlier build must still
+/// match the same shadow, or its draft would never sync. Not for comparisons with the server.
+func canonicalMarkdownStructure(_ markdown: String) -> String {
     serializeMarkdown(flattenedLikeServerExport(parseEditorBlocks(markdown)))
 }
 
