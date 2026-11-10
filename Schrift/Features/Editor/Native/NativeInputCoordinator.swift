@@ -80,6 +80,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     private struct Shown {
         var deltas: [(blockID: String, deltas: [TextDelta])]
         var replaced: Set<String>
+        /// The rebuilt blocks whose text changed.
+        var retexted: Set<String> = []
         var reset: Bool
     }
     private typealias BlockRange = (start: (String, Int), end: (String, Int))
@@ -241,7 +243,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             }
             if barrier != nil {
                 barrierShown.append(
-                    Shown(deltas: surface.shownDeltas, replaced: surface.shownReplaced, reset: surface.shownReset))
+                    Shown(
+                        deltas: surface.shownDeltas, replaced: surface.shownReplaced,
+                        retexted: surface.shownRetexted, reset: surface.shownReset))
             }
             canonicalRevision = delivery.revision
             history.mirror(canUndo: delivery.state.canUndo, canRedo: delivery.state.canRedo)
@@ -346,6 +350,26 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return NSRange(location: lower, length: upper - lower)
     }
 
+    /// The one rule at every barrier end: a selection the user made while it
+    /// was in flight, moved through what was shown since, wins over wherever
+    /// the barrier would put the selection, and held keys replay there. A
+    /// block the barrier's own echo rebuilt keeps the user's offsets only when
+    /// its text is unchanged. Clears the user's selection; true when placed.
+    @discardableResult
+    private func endBarrierSelection(ownEcho: Bool) -> Bool {
+        defer { userSelection = nil }
+        guard let user = userSelection, let view, view.markedTextRange == nil, !composition.isActive else {
+            return false
+        }
+        var since = barrierShown[min(user.seen, barrierShown.count)...]
+        if ownEcho, let last = since.indices.last {
+            since[last].replaced = since[last].replaced.intersection(since[last].retexted)
+        }
+        guard let range = map(user.anchors, through: since) else { return false }
+        if range != view.selectedRange { selection.place(range) }
+        return true
+    }
+
     /// `range`, posted with the barrier in flight, in the current display.
     private func mapThroughBarrier(_ range: BlockRange, from seen: Int = 0) -> NSRange? {
         map(range, through: barrierShown[min(seen, barrierShown.count)...])
@@ -362,21 +386,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             endUndoStep()
             noticeKey = nil
             // Marked text owns the view's offsets until it reconciles.
-            guard !composition.isActive else { return }
-            // A selection the user made meanwhile wins over every placement:
-            // held keys go there. The barrier's own echo (this delivery) may
-            // rebuild a block; offsets there keep their place.
-            var since = barrierShown[min(userSelection?.seen ?? 0, barrierShown.count)...]
-            if !since.isEmpty, let last = since.indices.last {
-                since[last].replaced = []
-                since[last].reset = false
-            }
-            if let user = userSelection, let range = map(user.anchors, through: since) {
+            guard !composition.isActive else {
                 userSelection = nil
-                selection.place(range)
                 return
             }
-            userSelection = nil
+            if endBarrierSelection(ownEcho: true) { return }
             switch barrier.placement {
             case .caret:
                 if let caret, let entry = surface.rangeIndex.entry(for: caret.blockID) {
@@ -410,6 +424,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             settleCopies(after: id, applied: false)
             guard let barrier, barrier.id == id else { return }
             self.barrier = nil
+            endBarrierSelection(ownEcho: false)
             endUndoStep()
             lastOutcome = false
             if error == .payloadTooLarge {
@@ -427,18 +442,20 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             self.barrier = nil
             // A selection the user made meanwhile carries over to the retry.
             let carried = userSelection.flatMap { mapThroughBarrier($0.anchors, from: $0.seen) }
+            userSelection = nil
             // Once, against the display that now includes what it missed, and
-            // from the selection the action was taken at.
-            if let origin = barrier.origin.flatMap({ mapThroughBarrier($0) }), origin != view?.selectedRange {
-                selection.place(origin)
+            // from the selection the action was taken at. When that selection
+            // cannot be found any more, nothing is retried.
+            let origin = barrier.origin.map { mapThroughBarrier($0) }
+            var retried = false
+            if origin != .some(nil) {
+                if let origin = origin ?? nil, origin != view?.selectedRange { selection.place(origin) }
+                retried = barrier.retry?() == true
             }
-            let retried = barrier.retry?() == true
             if let carried {
-                if self.barrier != nil {
-                    userSelection = blockRange(carried).map { ($0, 0) }
-                } else {
-                    selection.place(carried)
-                }
+                // The view shows the user's selection; the retry keeps it as theirs.
+                if self.barrier != nil { userSelection = blockRange(carried).map { ($0, 0) } }
+                if carried != view?.selectedRange { selection.place(carried) }
             }
             if retried, let next = lastCommandID, next != id {
                 // A cut's copy follows its retried delete.
@@ -458,6 +475,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             rollBack()
         case .failed:
             barrier = nil
+            userSelection = nil
             lastOutcome = false
             stopAfterStorageFailure()
         case .composition(_, let outcome):
@@ -500,12 +518,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     /// True while a command, a held key or a composition result is in flight.
     var hasInFlightWork: Bool {
-        barrier != nil || composition.isResolving || !surface.predictions.isEmpty || !intents.isEmpty
+        barrier != nil || composition.isResolving || surface.unjournaledCount > 0 || !intents.isEmpty
             || !pendingCopies.isEmpty
     }
 
     private func replayIntents() {
-        while !isBusy, !intents.isEmpty {
+        // Held keys wait for marked text too: they replay after it resolves.
+        while !isBusy, !composition.isActive, !intents.isEmpty {
             switch intents.removeFirst() {
             case .insert(let text): typeKey(text)
             case .deleteBackward: deleteKey()

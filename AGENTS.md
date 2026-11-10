@@ -2786,12 +2786,16 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   keys typed meanwhile are held as intents (`.insert`/`.deleteBackward`, from
   `NativeTextView`'s `typeKey`/`deleteKey` hooks, the delegate, UITextInput `replace`
   and a composing keyboard's direct character, also over a selection) and replayed; a
-  selection the user makes meanwhile wins over wherever the barrier would put the
-  selection (its caret, a kept or remapped range, a history step's); other actions
-  return false. A barrier that meets a change its surface had not seen comes back
-  `.stale` and is retried once from the current display, from the selection it was taken
-  at (moved through what was shown since) while a selection the user made meanwhile
-  carries over: an action on a range (marks, a range replacement, unpredicted typing) is
+  selection the user makes meanwhile is settled by one rule at every barrier end (applied,
+  refused, stale, failed): moved through what was shown since, it wins over wherever the
+  barrier would put the selection (its caret, a kept or remapped range, a history step's),
+  except in a block the barrier's own echo rewrote, and is then cleared; held keys wait
+  while text is marked and replay after it resolves; other actions return false. A barrier
+  that meets a change its surface had not seen comes back `.stale` and is retried once
+  from the current display, from the selection it was taken at (moved through what was
+  shown since; when that cannot be found, nothing is retried and the input notice shows)
+  while the view shows, and the retry keeps, a selection the user made meanwhile: an
+  action on a range (marks, a range replacement, unpredicted typing) is
   retried on that range moved through what was shown since (a non-empty range keeps an
   insertion at either end outside; a change inside it, or a rebuilt block, cancels the
   retry), and a cut's pending copy follows the retried delete. **Journal before publication,
@@ -2801,10 +2805,11 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   failed or refused append rolls the display back to canonical, freezes authoring and
   turns the dropped text (with held keys, even when no prediction was dropped) into an
   `.orphaned` `ProvisionalRecovery` banner entry, and nothing waits to be copied; while
-  text is marked the canonical blocks wait for the composition to reconcile (shown before
-  any patch buffered meanwhile) and the storage notice stays. A prediction's echo is
-  confirmed even while a composition freezes the surface, and one echoed as a whole-block
-  rebuild settles from that snapshot. **Rebase:** the session keeps, per surface, the changes it had not seen
+  text is marked the canonical blocks wait for the composition to reconcile and the
+  storage notice stays. While a composition
+  freezes the surface, prediction echoes and rollbacks wait with the patches in delivery
+  order (an echo's result does not confirm it early), so the canonical blocks keep
+  revision order; an echo spelled as a whole-block rebuild settles from that snapshot. **Rebase:** the session keeps, per surface, the changes it had not seen
   (`unseen`, every patch but its own predicted echoes, `ringCapacity` 256); a predicted
   command is rebased through them with `TextDelta.rebase(range:assoc:through:blockID:)`
   and they through it (`rebase(_:throughReplacing:length:)`), exactly as the surface

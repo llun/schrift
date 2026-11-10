@@ -33,7 +33,17 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     /// publication — can cancel it, so patches are buffered and presentation
     /// changes deferred until the engine's final deferral-complete signal.
     private var isFrozen = false
-    private var frozenPatches: [(patch: BlockPatch, settled: [String: BlockSnapshot]?)] = []
+    private var frozenPatches: [Frozen] = []
+    /// What waits for a composition to reconcile, in delivery order: patches,
+    /// and a rollback of predictions (applied where it happened, so the
+    /// canonical blocks it shows include every patch delivered before it).
+    private enum Frozen {
+        case patch(BlockPatch, settled: [String: BlockSnapshot]?)
+        case rollback(blocks: Set<String>)
+    }
+    /// Predictions whose echo arrived while frozen: journaled, confirmed when
+    /// the echo is replayed in order.
+    private var bufferedEchoes: Set<UUID> = []
     /// The surface's own hold from a composition's begin until its result
     /// (PR08b): the session's deferral signal arrives later.
     private var holdsComposition = false
@@ -76,6 +86,9 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
 
     /// Typed and shown, not yet journaled, oldest first.
     private(set) var predictions: [Prediction] = []
+    /// Predictions still waiting for their append (not just for a composition
+    /// to replay their echo).
+    var unjournaledCount: Int { predictions.count - bufferedEchoes.count }
     /// Each predicted block's canonical snapshot (journaled state, without
     /// its pending predictions).
     private var canonical: [String: BlockSnapshot] = [:]
@@ -86,10 +99,13 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     /// Blocks whose slice was rebuilt (or removed) by that delivery: offsets
     /// in them cannot be mapped through deltas. `shownReset`: the whole storage.
     private(set) var shownReplaced: Set<String> = []
+    /// The rebuilt blocks whose text changed (their offsets mean other text).
+    private(set) var shownRetexted: Set<String> = []
     private(set) var shownReset = false
     func resetShownDeltas() {
         shownDeltas = []
         shownReplaced = []
+        shownRetexted = []
         shownReset = false
     }
     /// A concurrent change could not be rebased: the session will invalidate
@@ -146,19 +162,23 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     }
 
     func applyPatch(_ patch: BlockPatch) {
-        // Confirmed even while frozen for a composition: its result removes the
-        // prediction, so a buffered echo would leave the canonical block behind
-        // (a later rollback would drop the journaled key) or replay the key.
-        if let stamp = patch.nativeCommand, stamp.surfaceID != nil, stamp.surfaceID == surfaceID,
-            predictions.contains(where: { $0.commandID == stamp.commandID })
-        {
-            // This surface's own predicted keystroke, now journaled.
-            lastNativeStamp = stamp
-            confirm(stamp.commandID, patch: patch)
+        let ownEcho =
+            patch.nativeCommand.flatMap { stamp in
+                stamp.surfaceID != nil && stamp.surfaceID == surfaceID
+                    && predictions.contains(where: { $0.commandID == stamp.commandID }) ? stamp : nil
+            }
+        guard !isFrozen else {
+            // In order with the patches before it, so the canonical blocks it
+            // settles keep revision order; its result must not confirm it early.
+            if let ownEcho { bufferedEchoes.insert(ownEcho.commandID) }
+            frozenPatches.append(.patch(patch, settled: settled))
             return
         }
-        guard !isFrozen else {
-            frozenPatches.append((patch, settled))
+        if let stamp = ownEcho {
+            // This surface's own predicted keystroke, now journaled.
+            lastNativeStamp = stamp
+            bufferedEchoes.remove(stamp.commandID)
+            confirm(stamp.commandID, patch: patch)
             return
         }
         if patch.origin == .localUser, let stamp = patch.nativeCommand {
@@ -233,7 +253,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                 replace(at: position, with: block)
             case .replaceBlock(let id, let block):
                 guard let position = rangeIndex.position(for: id) else { continue }
-                if canonical[id] != nil {
+                if predictions.contains(where: { $0.blockID == id }) {
                     canonical[id] = block
                     expectsInvalidation = true
                 }
@@ -270,6 +290,15 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                 storage.setAttributedString(
                     AttributedDocumentProjection.attributedString(
                         blocks: blocks, traits: traits, labels: labels, geometry: attachmentGeometry))
+            }
+        }
+        // A block shown from the replica with no prediction left in it needs no
+        // canonical copy: the display is canonical.
+        for change in patch.changes {
+            switch change {
+            case .text(let id, _), .props(let id, _), .replaceBlock(let id, _):
+                if !predictions.contains(where: { $0.blockID == id }) { canonical[id] = nil }
+            case .insert, .remove, .reset: break
             }
         }
         if renumbers {
@@ -316,11 +345,6 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         }
         canonical[id] = nil
         guard let journaled, let position = rangeIndex.position(for: id), blocks[position] != journaled else { return }
-        guard !isFrozen else {
-            // Marked text owns storage: the repair waits for reconciliation.
-            frozenPatches.append((BlockPatch([.replaceBlock(blockID: id, block: journaled)], origin: .other), nil))
-            return
-        }
         isApplyingPatch = true
         defer {
             isApplyingPatch = false
@@ -333,6 +357,8 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
 
     /// The result for a prediction that had no echo (nothing changed).
     func confirm(_ commandID: UUID) {
+        // Its echo waits for the composition; it confirms the prediction then.
+        guard !bufferedEchoes.contains(commandID) else { return }
         guard let index = predictions.firstIndex(where: { $0.commandID == commandID }) else { return }
         let id = predictions.remove(at: index).blockID
         if !predictions.contains(where: { $0.blockID == id }) { canonical[id] = nil }
@@ -382,26 +408,21 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     /// the dropped predictions, oldest first.
     @discardableResult
     func rollback() -> [Prediction] {
+        expectsInvalidation = false
+        guard !isFrozen else {
+            // Marked text owns storage: the canonical blocks are shown when the
+            // composition reconciles, in order with what was buffered before
+            // the rollback. Keys whose echo is buffered were journaled.
+            let dropped = predictions.filter { !bufferedEchoes.contains($0.commandID) }
+            predictions.removeAll { !bufferedEchoes.contains($0.commandID) }
+            frozenPatches.append(.rollback(blocks: Set(dropped.map(\.blockID))))
+            return dropped
+        }
         let dropped = predictions
         predictions = []
-        expectsInvalidation = false
         let restore = canonical
         canonical = [:]
         guard !restore.isEmpty else { return dropped }
-        guard !isFrozen else {
-            // Marked text owns storage: the canonical blocks are shown when the
-            // composition reconciles, never written under it.
-            // First: patches buffered meanwhile are in canonical coordinates and
-            // apply on top of the canonical blocks, never under them.
-            let restores = restore.map { (id, block) in
-                (
-                    patch: BlockPatch([.replaceBlock(blockID: id, block: block)], origin: .other),
-                    settled: [String: BlockSnapshot]?.none
-                )
-            }
-            frozenPatches.insert(contentsOf: restores, at: 0)
-            return dropped
-        }
         isApplyingPatch = true
         defer { isApplyingPatch = false }
         storage.beginEditing()
@@ -633,10 +654,23 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         let patches = frozenPatches
         frozenPatches = []
         for frozen in patches {
-            if let settled = frozen.settled {
-                applyPatch(frozen.patch, settled: settled)
-            } else {
-                applyPatch(frozen.patch)
+            switch frozen {
+            case .patch(let patch, let settled?): applyPatch(patch, settled: settled)
+            case .patch(let patch, nil): applyPatch(patch)
+            case .rollback(let ids):
+                // What a patch replayed before it did not already show from the replica.
+                let restore = ids.compactMap { id in
+                    canonical[id].flatMap { predictions.contains { $0.blockID == id } ? nil : (id, $0) }
+                }
+                guard !restore.isEmpty else { continue }
+                isApplyingPatch = true
+                storage.beginEditing()
+                for (id, block) in restore {
+                    canonical[id] = nil
+                    if let position = rangeIndex.position(for: id) { replace(at: position, with: block) }
+                }
+                storage.endEditing()
+                isApplyingPatch = false
             }
         }
         if let pending = pendingPresentation {
@@ -694,6 +728,9 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
 
     private func replace(at position: Int, with block: BlockSnapshot) {
         shownReplaced.insert(block.id)
+        if blocks[position].runs.map(\.text).joined() != block.runs.map(\.text).joined() {
+            shownRetexted.insert(block.id)
+        }
         storage.replaceCharacters(
             in: rangeIndex.entries[position].range,
             with: rendered(block, at: position))
