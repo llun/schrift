@@ -124,7 +124,7 @@ final class NativeEditorSession {
             for event in delivery.events {
                 switch event {
                 case .patch(let patch, let settled): surface.applyPatch(patch, settled: settled)
-                case .compositionDeferred(let deferred): surface.setCompositionDeferred(deferred)
+                case .compositionDeferred: break
                 }
             }
         }

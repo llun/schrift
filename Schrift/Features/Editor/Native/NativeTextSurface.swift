@@ -28,34 +28,14 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     private(set) var traits: UITraitCollection
     private var presentation: NativeTextPresentation
     private var lastNativeStamp: NativePatchStamp?
-    /// UIKit owns the marked range while a composition is active. Any
-    /// programmatic storage edit — a peer patch, a restyle, a selection
-    /// publication — can cancel it, so patches are buffered and presentation
-    /// changes deferred until the engine's final deferral-complete signal.
-    private var isFrozen = false
-    private var frozenPatches: [Frozen] = []
-    /// What waits for a composition to reconcile, in delivery order: patches,
-    /// and a rollback of predictions (applied where it happened, so the
-    /// canonical blocks it shows include every patch delivered before it).
-    private enum Frozen {
-        case patch(BlockPatch, settled: [String: BlockSnapshot]?)
-        case rollback(commands: Set<UUID>)
-    }
-    /// Predictions whose echo arrived while frozen: journaled, confirmed when
-    /// the echo is replayed in order.
-    private var bufferedEchoes: Set<UUID> = []
-    /// Predictions a rollback while frozen dropped. They stay in `predictions`
-    /// (their text is still in `blocks`, so buffered patches rebase through
-    /// them) until the rollback is replayed, in order, at reconciliation.
-    private var doomed: Set<UUID> = []
-    /// The surface's own hold from a composition's begin until its result
-    /// (PR08b): the session's deferral signal arrives later.
+    /// UIKit owns the marked range from a composition's begin until the
+    /// coordinator releases it: a restyle is a programmatic storage edit and
+    /// would cancel it, so presentation changes wait. (Deliveries wait in the
+    /// coordinator meanwhile, PR08b.)
     private var holdsComposition = false
-    private var engineDefers = false
     /// The block whose storage slice UIKit's marked text changed. Set by the
-    /// composition session before the engine freezes; reconciliation rebuilds
-    /// only this slice, so the rest of storage (and the scroll position) is
-    /// never replaced.
+    /// composition session at its begin; the release rebuilds only this
+    /// slice, so the rest of storage (and the scroll position) is never replaced.
     var provisionalBlockID: String?
     private var pendingPresentation: (traits: UITraitCollection, labels: NativeEditorLabels)?
     /// Attachment paragraph sizing (PR06e): the usable width and the image
@@ -90,9 +70,14 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
 
     /// Typed and shown, not yet journaled, oldest first.
     private(set) var predictions: [Prediction] = []
-    /// Predictions still waiting for their append (not just for a composition
-    /// to replay their echo).
-    var unjournaledCount: Int { predictions.count - bufferedEchoes.count - doomed.count }
+    /// Predicted blocks a concurrent change made show their canonical
+    /// snapshot: their predictions are off screen until the invalidation, so
+    /// later patches apply to these blocks as to any canonical block.
+    private var offscreen: Set<String> = []
+    /// A block whose display includes pending predictions.
+    private func isPredicted(_ id: String) -> Bool {
+        !offscreen.contains(id) && predictions.contains { $0.blockID == id }
+    }
     /// Each predicted block's canonical snapshot (journaled state, without
     /// its pending predictions).
     private var canonical: [String: BlockSnapshot] = [:]
@@ -171,17 +156,9 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                 stamp.surfaceID != nil && stamp.surfaceID == surfaceID
                     && predictions.contains(where: { $0.commandID == stamp.commandID }) ? stamp : nil
             }
-        guard !isFrozen else {
-            // In order with the patches before it, so the canonical blocks it
-            // settles keep revision order; its result must not confirm it early.
-            if let ownEcho { bufferedEchoes.insert(ownEcho.commandID) }
-            frozenPatches.append(.patch(patch, settled: settled))
-            return
-        }
         if let stamp = ownEcho {
             // This surface's own predicted keystroke, now journaled.
             lastNativeStamp = stamp
-            bufferedEchoes.remove(stamp.commandID)
             confirm(stamp.commandID, patch: patch)
             return
         }
@@ -211,7 +188,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
             switch change {
             case .text(let id, let deltas):
                 guard let position = rangeIndex.position(for: id) else { continue }
-                if predictions.contains(where: { $0.blockID == id }) {
+                if isPredicted(id) {
                     applyConcurrent(deltas, to: id, at: position)
                     continue
                 }
@@ -239,7 +216,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                 applyText(deltas, at: position)
             case .props(let id, let props):
                 guard let position = rangeIndex.position(for: id) else { continue }
-                if predictions.contains(where: { $0.blockID == id }) {
+                if isPredicted(id) {
                     // Props never move text: keep the predicted runs.
                     var block = blocks[position]
                     block.props = props
@@ -257,8 +234,8 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                 replace(at: position, with: block)
             case .replaceBlock(let id, let block):
                 guard let position = rangeIndex.position(for: id) else { continue }
-                if predictions.contains(where: { $0.blockID == id }) {
-                    canonical[id] = block
+                if isPredicted(id) {
+                    offscreen.insert(id)
                     expectsInvalidation = true
                 }
                 replace(at: position, with: block)
@@ -288,6 +265,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
             case .reset(let reset):
                 shownReset = true
                 if !predictions.isEmpty { expectsInvalidation = true }
+                offscreen.formUnion(predictions.map(\.blockID))
                 canonical = [:]
                 blocks = reset
                 rangeIndex = ProjectionRangeIndex(blocks: blocks, labels: labels)
@@ -301,7 +279,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         for change in patch.changes {
             switch change {
             case .text(let id, _), .props(let id, _), .replaceBlock(let id, _):
-                if !predictions.contains(where: { $0.blockID == id }) { canonical[id] = nil }
+                if !isPredicted(id) { canonical[id] = nil }
             case .insert, .remove, .reset: break
             }
         }
@@ -361,8 +339,6 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
 
     /// The result for a prediction that had no echo (nothing changed).
     func confirm(_ commandID: UUID) {
-        // Its echo waits for the composition; it confirms the prediction then.
-        guard !bufferedEchoes.contains(commandID) else { return }
         guard let index = predictions.firstIndex(where: { $0.commandID == commandID }) else { return }
         let id = predictions.remove(at: index).blockID
         if !predictions.contains(where: { $0.blockID == id }) { canonical[id] = nil }
@@ -383,6 +359,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                 // The session cannot rebase it either: show the canonical
                 // block and wait for its invalidation.
                 expectsInvalidation = true
+                offscreen.insert(id)
                 let fresh =
                     settled?[id]
                     ?? canonical[id].map { block in
@@ -390,7 +367,6 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                         block.runs = TextDelta.apply(deltas, to: block.runs)
                         return block
                     }
-                canonical[id] = fresh
                 if let fresh { replace(at: position, with: fresh) }
                 return
             }
@@ -412,28 +388,21 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     /// the dropped predictions, oldest first.
     @discardableResult
     func rollback() -> [Prediction] {
-        guard !isFrozen else {
-            // Marked text owns storage, so the whole rollback (predictions,
-            // canonical blocks, the invalidation wait) is deferred and replayed
-            // in order at reconciliation. Keys whose echo is buffered were journaled.
-            let dropped = predictions.filter {
-                !bufferedEchoes.contains($0.commandID) && !doomed.contains($0.commandID)
-            }
-            doomed.formUnion(dropped.map(\.commandID))
-            frozenPatches.append(.rollback(commands: Set(dropped.map(\.commandID))))
-            return dropped
-        }
         expectsInvalidation = false
         let dropped = predictions
         predictions = []
+        offscreen = []
         let restore = canonical
         canonical = [:]
         guard !restore.isEmpty else { return dropped }
         isApplyingPatch = true
         defer { isApplyingPatch = false }
         storage.beginEditing()
+        // A block already showing its snapshot is not rebuilt (nor recorded as shown).
         for (id, block) in restore {
-            if let position = rangeIndex.position(for: id) { replace(at: position, with: block) }
+            if let position = rangeIndex.position(for: id), blocks[position] != block {
+                replace(at: position, with: block)
+            }
         }
         storage.endEditing()
         return dropped
@@ -573,7 +542,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         // selection-driven SwiftUI updates must leave TextKit interactions alone.
         guard presentation != next else { return }
         // A restyle is a programmatic storage edit and would cancel marked text.
-        guard !isFrozen else {
+        guard !holdsComposition else {
             pendingPresentation = (traits, labels)
             return
         }
@@ -602,9 +571,9 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
 
     /// Rebuilds storage from the model after UIKit changed it behind the
     /// command path: only `blockID`'s slice when UIKit changed nothing else,
-    /// otherwise everything. Never while frozen: marked text owns storage then.
+    /// otherwise everything. Never during a composition: marked text owns storage then.
     func restoreStorage(blockID: String? = nil) {
-        guard !isFrozen else { return }
+        guard !holdsComposition else { return }
         // UIKit changed only this block's slice, so the length difference is
         // all inside it. Anything else falls back to a full rebuild.
         let delta = storage.length - rangeIndex.length
@@ -622,66 +591,16 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         }
     }
 
-    /// The engine's composition window. While frozen, UIKit's provisional text
-    /// is the only storage change; the model stays at the pre-composition state
-    /// and every patch is buffered. Completion reconciles once: restore the
-    /// model's display of the provisional block (dropping provisional text),
-    /// apply the buffered patches at model coordinates, then apply any
-    /// deferred restyle.
-    func setCompositionDeferred(_ deferred: Bool) {
-        engineDefers = deferred
-        updateFreeze()
-    }
-
-    /// Freezes for a composition the moment it begins on this surface, before
-    /// the session's own deferral arrives; released with its result.
+    /// Holds storage for a composition from its begin. The release puts the
+    /// composed block's slice back to the model (dropping UIKit's provisional
+    /// text), then applies a restyle that waited.
     func holdForComposition(_ hold: Bool) {
+        guard hold != holdsComposition else { return }
         holdsComposition = hold
-        updateFreeze()
-    }
-
-    var isCompositionFrozen: Bool { isFrozen }
-
-    private func updateFreeze() {
-        if holdsComposition || engineDefers {
-            isFrozen = true
-            return
-        }
-        guard isFrozen else { return }
-        isFrozen = false
-        reconcile()
-    }
-
-    private func reconcile() {
+        guard !hold else { return }
         if let id = provisionalBlockID {
             provisionalBlockID = nil
             restoreStorage(blockID: id)
-        }
-        let patches = frozenPatches
-        frozenPatches = []
-        for frozen in patches {
-            switch frozen {
-            case .patch(let patch, let settled?): applyPatch(patch, settled: settled)
-            case .patch(let patch, nil): applyPatch(patch)
-            case .rollback(let commands):
-                // The deferred rollback, applied where it happened.
-                let blocks = Set(predictions.filter { commands.contains($0.commandID) }.map(\.blockID))
-                predictions.removeAll { commands.contains($0.commandID) }
-                doomed.subtract(commands)
-                expectsInvalidation = false
-                let restore = blocks.compactMap { id in
-                    canonical[id].flatMap { predictions.contains { $0.blockID == id } ? nil : (id, $0) }
-                }
-                guard !restore.isEmpty else { continue }
-                isApplyingPatch = true
-                storage.beginEditing()
-                for (id, block) in restore {
-                    canonical[id] = nil
-                    if let position = rangeIndex.position(for: id) { replace(at: position, with: block) }
-                }
-                storage.endEditing()
-                isApplyingPatch = false
-            }
         }
         if let pending = pendingPresentation {
             pendingPresentation = nil
@@ -714,7 +633,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     func updateAttachmentWidth(_ width: CGFloat) {
         let width = width.rounded(.down)
         guard width > 0 else { return }
-        guard !isFrozen else {
+        guard !holdsComposition else {
             pendingAttachmentWidth = width
             return
         }

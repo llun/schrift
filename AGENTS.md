@@ -2244,10 +2244,10 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   allowed through to the overridden `setMarkedText`/`insertText` instead of becoming a
   Latin command (`allowsUIKitChange`); `textViewDidChange` restores the projection if
   UIKit ever changed storage behind the command path. While text is marked the whole
-  view is frozen (`NativeTextSurface.setCompositionDeferred(true)`): remote patches still
-  enter the replica (the engine defers the composing block), but the surface buffers
-  every patch, defers theme/width restyles and the coordinator refuses offset commands
-  and selection publication, because document-wide UIKit offsets are stale until
+  view belongs to the composition: remote patches still enter the replica (the engine
+  defers the composing block), but the coordinator queues every delivery (PR08b's
+  composition rule), the surface defers theme/width restyles and offset commands and
+  selection publication are refused, because document-wide UIKit offsets are stale until
   reconciliation. Commit (`unmarkText`, which writes what UIKit displays, or
   `insertText` replacing the marked text) resolves the anchors and writes the string
   **once** as one durable `NativeEditCommand` through
@@ -2792,14 +2792,12 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   barrier would put the selection (its caret, a kept or remapped range, a history step's),
   except in a block the barrier's own echo rewrote, is captured again even when the view's
   range did not move (the session's copy may not survive the barrier's rebuild), and is then
-  cleared; held keys wait
-  while text is marked and replay after it resolves; other actions return false. A barrier
-  that meets a change its surface had not seen comes back `.stale` and is retried once
-  from the current display (never while text is marked: a retried Return would commit it),
-  an action that reads the selection (split, join, indent, a slash item, paste, block
-  actions) from the selection it was taken at (moved through what was shown since; when
-  that cannot be found, nothing is retried and the input notice shows; a history step or a
-  block's props ignore the caret)
+  cleared; held keys replay after a composition's own answer; other actions return false.
+  A barrier that meets a change its surface had not seen comes back `.stale` and is
+  retried once from the current display, an action that reads the selection (split, join,
+  indent, a slash item, paste, block actions) from the selection it was taken at (moved
+  through what was shown since; when that cannot be found, nothing is retried and the input
+  notice shows; a history step or a block's props ignore the caret)
   while the view shows, and the retry keeps, a selection the user made meanwhile: an
   action on a range (marks, a range replacement, unpredicted typing) is
   retried on that range moved through what was shown since (a non-empty range keeps an
@@ -2810,14 +2808,14 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   network send; a predicted keystroke on screen is provisional UI, like marked text. A
   failed or refused append rolls the display back to canonical, freezes authoring and
   turns the dropped text (with held keys, even when no prediction was dropped) into an
-  `.orphaned` `ProvisionalRecovery` banner entry, and nothing waits to be copied; while
-  text is marked the canonical blocks wait for the composition to reconcile and the
-  storage notice stays. While a composition
-  freezes the surface, prediction echoes and rollbacks wait with the patches in delivery
-  order (an echo's result does not confirm it early; a rollback is deferred whole, its
-  dropped predictions staying so buffered patches rebase through their text, and its
-  replay also ends the invalidation wait), so the canonical blocks keep
-  revision order; an echo spelled as a whole-block rebuild settles from that snapshot. **Rebase:** the session keeps, per surface, the changes it had not seen
+  `.orphaned` `ProvisionalRecovery` banner entry, and nothing waits to be copied. **The
+  composition rule:** while a composition owns the view (`isActive || isResolving ||
+  markedTextRange != nil`), the surface's whole `ReplicaDelivery`s queue up unapplied,
+  results included, and its own commit or cancel answer resolves it and then applies the
+  queue in order through the normal `apply(_:)` path (no surface freeze, no buffered
+  echoes, no deferred rollback). An echo spelled as a whole-block rebuild settles from that
+  snapshot; a predicted block a concurrent change showed as canonical keeps its
+  predictions off screen until the invalidation, so later patches are not shifted by them. **Rebase:** the session keeps, per surface, the changes it had not seen
   (`unseen`, every patch but its own predicted echoes, `ringCapacity` 256); a predicted
   command is rebased through them with `TextDelta.rebase(range:assoc:through:blockID:)`
   and they through it (`rebase(_:throughReplacing:length:)`), exactly as the surface
@@ -2831,8 +2829,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   32 pending predictions per surface (then keys are held), 64 held intents (then
   `native_editor_input_busy`, English only), mailbox 256, ring 256; deliveries are
   unbounded until PR08c's resync. **IME:** begin is posted (a target the session cannot
-  capture comes back as an orphaned commit), the surface holds its freeze from begin to
-  the result, commit and cancel are barriers, `provisional.json` is written through
+  capture comes back as an orphaned commit), the surface defers restyles from begin to
+  the answer, commit and cancel are barriers, `provisional.json` is written through
   `.writeProvisional`. **Undo:** one `ReplicaHistory` per replica session, grouping
   decided on main (`ReplicaCommand.undoBefore/undoAfter`); `NativeUndoManager` only
   mirrors the stacks (a pending prediction is undoable already). **Menus:** availability

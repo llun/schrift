@@ -6,10 +6,10 @@ import UIKit
 /// recovery entries that outlive a composition.
 ///
 /// UIKit owns the provisional text in storage; the replica never sees it until
-/// the commit. While a composition is active the surface is frozen (see
-/// `NativeTextSurface.setCompositionDeferred`): remote patches are buffered,
-/// restyles deferred and offset-based commands refused, because document-wide
-/// UIKit offsets are stale until reconciliation. The commit writes the composed
+/// the commit. From its begin until its answer the composition owns the view:
+/// the input coordinator holds every delivery, the surface defers restyles and
+/// offset-based commands are refused, because document-wide UIKit offsets are
+/// stale until reconciliation. The commit writes the composed
 /// string once as one durable command and then reconciles storage to the
 /// projection. A target that was deleted or replaced is never redirected into
 /// a new text under the same block id.
@@ -145,13 +145,11 @@ final class NativeCompositionSession {
 
     /// The session's answer for the commit or cancel in flight. Returns the
     /// commit's outcome (nil for a cancel).
-    func resolve(_ result: ReplicaResult.CompositionResult, caret: EditorPosition?) -> Outcome? {
+    func resolve(_ result: ReplicaResult.CompositionResult) -> Outcome? {
         guard isResolving else { return nil }
         isResolving = false
         let commit = committing
         committing = nil
-        surface.holdForComposition(false)
-        defer { restoreSelection(caret) }
         switch result {
         case .cancelled:
             if !keepsRecoveryOnCancel { remove(commandID) }
@@ -239,7 +237,7 @@ final class NativeCompositionSession {
 
     /// The session resolves the caret against the replica, so a peer edit
     /// during the composition still lands the caret after the committed text.
-    private func restoreSelection(_ caret: EditorPosition?) {
+    func placeCaret(_ caret: EditorPosition?) {
         guard let view, let caret, let entry = surface.rangeIndex.entry(for: caret.blockID) else { return }
         let offset = min(max(0, caret.offset), entry.textRange.length)
         view.selectedRange = NSRange(location: entry.textRange.location + offset, length: 0)
