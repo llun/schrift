@@ -33,7 +33,11 @@ import Foundation
 /// **Single consumer of the delivery hooks.** `afterAllTransactions` and
 /// `onDestroy` are single-slot, so the engine asserts it is their only
 /// consumer; `afterTransaction` is chained and restored on detach.
-@MainActor
+///
+/// **Isolation (PR08a).** No actor annotation: the engine, like the replica it
+/// borrows, is confined to whichever isolation domain creates it (today the
+/// main actor; an actor in PR08b). It is not `Sendable` and never crosses
+/// domains; only its value outputs (`BlockPatch`, `EditorSelection`, …) do.
 final class DocumentEngine {
     private let doc: YDoc
     private let writer: BlockNoteWriter
@@ -339,6 +343,10 @@ final class DocumentEngine {
         case .moveUp, .moveDown, .duplicate, .deleteBlock, .insertBlock, .insertSubtrees:
             do {
                 return try prepareBlockCommand(command)
+            } catch BlockNoteSubtreePayload.Error.tooLarge {
+                // Only a paste reports its size; a grown subtree refuses like any unsupported shape.
+                if case .insertSubtrees = command.kind { throw DocumentEngineError.payloadTooLarge }
+                throw DocumentEngineError.unsupportedNativeInput
             } catch is BlockNoteWriter.Error, is BlockNoteSubtreePayload.Error {
                 throw DocumentEngineError.unsupportedNativeInput
             }
@@ -739,10 +747,13 @@ final class DocumentEngine {
                 [.element("paragraph", writer.schemas["paragraph"] ?? [], [])])
             let left = before ? item.left : item
             return ({ try writer.insertBlocks([paragraph], into: entry.group, after: left) }, { start(newID) })
-        case .insertSubtrees(let payload, let newIDs):
+        case .insertSubtrees(let payload):
+            // The payload is untrusted (any app's pasteboard): decoded, bounded
+            // and validated here, and every container gets a fresh id.
             let copies = try BlockNoteSubtreePayload.decode(payload)
             let shape = try BlockNoteSubtreePayload.validate(copies)
-            guard let last = newIDs.last, newIDs.count == shape.blocks, isFresh(newIDs),
+            let newIDs = (0..<shape.blocks).map { _ in UUID().uuidString }
+            guard let last = newIDs.last, isFresh(newIDs),
                 entry.depth + shape.depth <= BlockNoteWriter.maxNestingDepth
             else { throw DocumentEngineError.unsupportedNativeInput }
             var ids = newIDs[...]
@@ -1254,7 +1265,10 @@ final class DocumentEngine {
     /// `DocumentEngineError.detached`.
     /// An engine released without `detach()` (an editor screen closing while
     /// the replica lingers) must not leave its hooks on the replica.
-    isolated deinit {
+    // detach() reaches the surface through a `@preconcurrency` conformance; the last
+    // strong reference must drop on the surface's domain (main today; PR08b's actor
+    // must detach explicitly before the engine leaves it).
+    deinit {
         detach()
     }
 
@@ -1278,7 +1292,7 @@ final class DocumentEngine {
 /// The outcome of a composition commit. `.orphaned` means the captured target
 /// was deleted or replaced: nothing was written, and the caller keeps the text
 /// for explicit recovery rather than redirecting it into another block.
-enum CompositionCommitResult: Equatable {
+enum CompositionCommitResult: Equatable, Sendable {
     case committed(Data)
     case orphaned
 }
@@ -1295,4 +1309,7 @@ enum DocumentEngineError: Error, Equatable {
     case composingBlock
     /// Composition transitions require a transaction boundary after all cleanup.
     case insideTransaction
+    /// A paste payload past `BlockNoteSubtreePayload`'s bounds (bytes, blocks or
+    /// structs). A malformed one is `.unsupportedNativeInput`.
+    case payloadTooLarge
 }

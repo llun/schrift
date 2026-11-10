@@ -209,6 +209,17 @@ final class NativeClipboardTests: NativeEditingTestCase {
         return block
     }
 
+    /// The block ids a lossless paste added, in preorder: the engine mints them.
+    private func pastedIDs(_ harness: Harness) throws -> [String] {
+        let before = Set(harness.session.surface.blocks.map(\.id))
+        harness.view.paste(nil)
+        guard case .insertSubtrees? = harness.log.commands.last?.kind else {
+            XCTFail("not a lossless paste")
+            return []
+        }
+        return harness.session.surface.blocks.map(\.id).filter { !before.contains($0) }
+    }
+
     private func caret(_ harness: Harness, _ id: String, _ offset: Int) throws {
         setSelection(harness, NSRange(location: try location(harness.session, id, offset), length: 0))
     }
@@ -244,8 +255,8 @@ final class NativeClipboardTests: NativeEditingTestCase {
         try assertConsistent(harness, localCommands: 0)
 
         try caret(harness, "c", 2)
-        harness.view.paste(nil)
-        guard case .insertSubtrees(let payload, let newIDs)? = harness.log.commands.last?.kind else {
+        let newIDs = try pastedIDs(harness)
+        guard case .insertSubtrees(let payload)? = harness.log.commands.last?.kind else {
             return XCTFail("not a lossless paste")
         }
         XCTAssertEqual(payload, copied)
@@ -260,10 +271,7 @@ final class NativeClipboardTests: NativeEditingTestCase {
         try assertConsistent(harness, localCommands: 1)
 
         try caret(harness, "empty", 0)
-        harness.view.paste(nil)
-        guard case .insertSubtrees(_, let second)? = harness.log.commands.last?.kind else {
-            return XCTFail("not a lossless paste")
-        }
+        let second = try pastedIDs(harness)
         XCTAssertTrue(Set(second).isDisjoint(with: newIDs), "every paste mints fresh ids")
         XCTAssertEqual(session.surface.blocks.map(\.id).suffix(4), [newIDs[2]] + second, "the empty block is replaced")
         try assertConsistent(harness, localCommands: 2)
@@ -318,8 +326,8 @@ final class NativeClipboardTests: NativeEditingTestCase {
     }
 
     /// The payload is untrusted: garbage, a node BlockNote cannot hold, a
-    /// container without an id and nesting past the bound are refused whole,
-    /// by the coordinator and again by the engine.
+    /// container without an id and nesting past the bound are refused whole
+    /// by the engine, whether pasted or sent as a command.
     func testMalformedPayloadsAreRefusedWithoutAWrite() throws {
         let harness = try makeHarness()
         defer { harness.close() }
@@ -339,18 +347,19 @@ final class NativeClipboardTests: NativeEditingTestCase {
                 try session.engine.applyStructural(
                     NativeEditCommand(
                         id: UUID(), baseRevision: session.engine.revision, blockID: Self.firstID,
-                        kind: .insertSubtrees(payload: payload, newIDs: (0..<18).map { "n\($0)" }))
+                        kind: .insertSubtrees(payload: payload))
                 ) { _ in XCTFail("refused before any write") }
             ) { XCTAssertEqual($0 as? DocumentEngineError, .unsupportedNativeInput) }
         }
-        // A well-formed payload with the wrong number of ids is refused too.
-        let one = BlockNoteYjs.encode([paragraph("p", "One")], clientID: 7)
+        // An oversized payload is the engine's typed refusal (the too-large notice).
         XCTAssertThrowsError(
             try session.engine.applyStructural(
                 NativeEditCommand(
                     id: UUID(), baseRevision: session.engine.revision, blockID: Self.firstID,
-                    kind: .insertSubtrees(payload: one, newIDs: ["x", "y"]))
-            ) { _ in XCTFail("refused before any write") })
+                    kind: .insertSubtrees(payload: Data(count: BlockNoteSubtreePayload.maxBytes + 1)))
+            ) { _ in XCTFail("refused before any write") }
+        ) { XCTAssertEqual($0 as? DocumentEngineError, .payloadTooLarge) }
+        let one = BlockNoteYjs.encode([paragraph("p", "One")], clientID: 7)
         try assertConsistent(harness, localCommands: 0)
         // A valid foreign payload (BlockNote's own document encoding) pastes.
         harness.pasteboard.setItems([[payloadType: one]])
@@ -411,10 +420,7 @@ final class NativeClipboardTests: NativeEditingTestCase {
         ]
         try caret(harness, Self.firstID, 2)
         harness.pasteboard.setItems([[payloadType: BlockNoteYjs.encode([block], clientID: 7)]])
-        harness.view.paste(nil)
-        guard case .insertSubtrees(_, let ids)? = harness.log.commands.last?.kind else {
-            return XCTFail("not a lossless paste")
-        }
+        let ids = try pastedIDs(harness)
         let pasted = try self.block(session, try XCTUnwrap(ids.first))
         XCTAssertEqual(text(of: pasted), "evildeepoktrackkept", "the text stays")
         XCTAssertEqual(
@@ -447,10 +453,7 @@ final class NativeClipboardTests: NativeEditingTestCase {
         harness.pasteboard.setItems([
             [payloadType: BlockNoteYjs.encode([image("https://images.example/a.png")], clientID: 7)]
         ])
-        harness.view.paste(nil)
-        guard case .insertSubtrees(_, let ids)? = harness.log.commands.last?.kind else {
-            return XCTFail("not a lossless paste")
-        }
+        let ids = try pastedIDs(harness)
         XCTAssertEqual(try self.block(session, try XCTUnwrap(ids.first)).node, "image")
         harness.view.layoutIfNeeded()
         XCTAssertEqual(RecordingProtocol.requests, [], "no fetch for a pasted image")

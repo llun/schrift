@@ -2,7 +2,7 @@
 /// units. Negative `assoc` sticks to the character before the boundary; zero
 /// or positive sticks to the character after it (including end-of-text).
 /// A capture inside a surrogate pair is rejected rather than silently snapped.
-struct EditorPosition: Equatable {
+struct EditorPosition: Equatable, Sendable {
     var blockID: String
     var offset: Int
     var assoc: Int = -1
@@ -10,7 +10,7 @@ struct EditorPosition: Equatable {
 
 /// Endpoints retain their direction; anchor may follow head, including across
 /// blocks. A collapsed selection has equal endpoints.
-struct EditorSelection: Equatable {
+struct EditorSelection: Equatable, Sendable {
     var anchor: EditorPosition
     var head: EditorPosition
 }

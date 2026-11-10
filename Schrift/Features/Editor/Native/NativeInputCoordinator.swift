@@ -507,6 +507,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         } catch {
             if engine.nativeWriteFailed {
                 stopAfterStorageFailure()
+            } else if error as? DocumentEngineError == .payloadTooLarge {
+                noticeKey = .native_editor_paste_too_large
             } else if error as? DocumentEngineError != .unsupportedNativeInput {
                 noticeKey = .native_editor_input_unavailable
             } else if let refusal {
@@ -840,28 +842,18 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return replace(range: view.selectedRange, with: text)
     }
 
-    /// The payload is untrusted: decoded and bounded here for the notice,
-    /// and validated again by the engine before it arms.
+    /// The payload is untrusted: the engine decodes, bounds and validates it
+    /// and mints its ids; a too-large refusal (`.payloadTooLarge`) gets its own
+    /// notice.
     private func pasteBlocks(_ payload: Data) -> Bool {
         directInsertion = nil
         guard let view, view.markedTextRange == nil, !composition.isActive, !engine.nativeWriteFailed,
             !engine.isDetached
         else { return false }
-        let count: Int
-        do {
-            count = try BlockNoteSubtreePayload.validate(BlockNoteSubtreePayload.decode(payload)).blocks
-        } catch BlockNoteSubtreePayload.Error.tooLarge {
-            noticeKey = .native_editor_paste_too_large
-            return false
-        } catch {
-            noticeKey = .native_editor_paste_unavailable
-            return false
-        }
         let index = surface.rangeIndex
         guard let entry = index.entry(atUTF16: view.selectedRange.location) ?? index.entries.last else { return false }
         return applyStructural(
-            entry.blockID, .insertSubtrees(payload: payload, newIDs: (0..<count).map { _ in UUID().uuidString }),
-            refusal: .native_editor_paste_unavailable)
+            entry.blockID, .insertSubtrees(payload: payload), refusal: .native_editor_paste_unavailable)
     }
 
     private func selectionPayload(_ range: NSRange) -> Data? {

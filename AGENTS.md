@@ -559,6 +559,22 @@ new code reads like the surrounding code.
     never attaches to the manager's replica. Pass updates and projections across
     isolation domains — never the `YDoc`. Its inputs/outputs stay value types
     (`YUpdate`, `YContentRecord`), which is what keeps the boundary honest.
+  - **The document engine and its native history are confined, not isolated**
+    (PR08a). `DocumentEngine` and `ReplicaHistory` carry no actor annotation (a
+    plain `deinit`; `DocumentEngineBoundaryTests` fails on `@MainActor` in
+    `Engine/`): each belongs to whichever domain creates it with its replica, the
+    main actor today. They are not `Sendable`; their outputs are, compiler-checked
+    with no `@unchecked`: `BlockPatch`, `BlockChange`, `TextDelta`, `BlockSnapshot`,
+    `BlockPatchOrigin`, `EditorPosition`, `EditorSelection`,
+    `CompositionCommitResult`, `InlineRun`, `ProjectedBlock`, `NativeBlockSnapshot`.
+  - **`ReplicaStore`'s journal is serialized by the store, not the main actor.**
+    One `Mutex` (`Synchronization`, shared by every instance) guards each
+    read/modify/switch, so append, restore, manifest, outbox, acknowledge, compact
+    and the provisional file are callable off main. create, remove, repair,
+    set-aside and the marker reads stay `@MainActor` (the ownership marker is
+    main-actor) and take the same lock. It is not recursive: public entry points
+    lock, private helpers assume it is held, no public method calls another, and an `interrupt` hook (which runs under the lock) never calls into any store.
+    `interrupt` is `@Sendable`.
 - Value types that cross task/actor boundaries adopt `Sendable`; injected
   closures that do are `@Sendable`. Generic containers propagate it via
   constraints (`PaginatedResponse<T: Decodable & Sendable>`).
@@ -2080,7 +2096,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   and math with a local delayed image loader. No shipping launch arguments.
 
 - **PR02a persistence checkpoint.**
-  `Native/ReplicaStore` is a main-actor, throwing draft store under Application
+  `Native/ReplicaStore` is a lock-serialized (PR08a), throwing draft store under Application
   Support's `dev.llun.Schrift/ReplicaDrafts`, scoped by server/account/org/document.
   Immutable checkpoint/journal bytes and directory entries are flushed before a
   checksummed manifest is atomically switched. Only referenced files are accepted;
@@ -2626,7 +2642,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   (available actions only, computed when VoiceOver asks). Labels come through
   `NativeEditorLabels.blockMenu`/`blockActions`; indent/outdent reuse the classic strings.
   **Commands** (`NativeEditCommand.Kind`): `.moveUp`, `.moveDown`, `.duplicate(newIDs:)`,
-  `.deleteBlock`, `.insertBlock(newID:before:)`, `.insertSubtrees(payload:newIDs:)`, each
+  `.deleteBlock`, `.insertBlock(newID:before:)`, `.insertSubtrees(payload:)`, each
   one `applyStructural` (`prepareBlockCommand`, validated before arming). Availability is
   `DocumentEngine.canApplyStructural` (the same preparation, nothing armed) and, for Copy,
   `hasLosslessCopy`; the menu never offers what the engine would refuse. Moves are
@@ -2663,8 +2679,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   not write unchanged and an unknown mark key (outside `knownMarks`) carrying a URL are dropped
   (the text stays), embeds go, and a `urlProps` value (`url`, `previewUrl`, `src`, `href`) that is
   not empty or http(s) with a host refuses the payload. No provenance check (`changeCount`/HMAC):
-  it would break pasting across launches. The engine decodes again
-  before arming and also checks the ids are fresh and the landing depth. Pasted media is a
+  it would break pasting across launches. The engine decodes it in
+  `prepareBlockCommand` (PR08a), mints a fresh id per container, checks the landing depth,
+  and refuses an oversized payload with `DocumentEngineError.payloadTooLarge`. Pasted media is a
   placeholder like any other, so nothing is fetched. **Links render tappable only for
   `isOpenableLink`** (the classic writer's schemes: http(s) with a host, mailto, tel), so a
   collaborator's `javascript:` or deep link is plain text in the native view; the mark stays.
@@ -2674,10 +2691,10 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   payload when `NativeClipboard.wholeBlocks` finds whole sibling subtrees (from a block's
   text start to a block's text end, nothing shallower than the first block, later
   descendants of the last root only if folded); Copy block writes the subtree's payload and
-  its visible plain text. Paste at a caret prefers the payload (`pasteBlocks`: decode for
-  the notice, `native_editor_paste_too_large` or `native_editor_paste_unavailable`, then
-  one `.insertSubtrees` after the caret's block, replacing it when it is an empty paragraph
-  without children; caret at the end of the last pasted block); over a selection, or with
+  its visible plain text. Paste at a caret prefers the payload (`pasteBlocks`: one
+  `.insertSubtrees` after the caret's block, replacing it when it is an empty paragraph
+  without children; a refusal shows `native_editor_paste_too_large` (`.payloadTooLarge`) or
+  `native_editor_paste_unavailable`; caret at the end of the last pasted block); over a selection, or with
   no payload, the plain text as before. Partial-block copies stay plain text (marks are not
   carried). Drag to reorder is not built. Tests: `NativeBlockCommandsTests`,
   `NativeClipboardTests` (round trip byte-identical but for ids, malformed/oversized
@@ -2688,6 +2705,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   read the first three blocks' text as `tree.texts`).
 
 - **PR07b collaborative undo in the native editor.** `Native/NativeUndoManager` owns one
+  `ReplicaHistory` (PR08a: the nonisolated Yjs side — the `YUndoManager`, its trim, the
+  selection meta and `step`; `NativeUndoManager` keeps the UIKit side) and so one
   `YUndoManager` per typing session (made by `NativeInputCoordinator`, `destroy()`ed and
   released at `NativeEditorSession.close`; never persisted): scope the `document-store`
   fragment, `trackedOrigins` `[.localUser]` only, so a peer's update, a server fetch and the
@@ -2727,7 +2746,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `testHardwareUndoAndRedoAreDurableAfterRelaunch`.
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
-  `DocumentEngine` (`@MainActor`), which borrows the replica and resolves
+  `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below
   it: `BlockIndex` (block id ↔ container / content element / text children),
   `PatchBuilder` (change signal → patch), and `HeadlessSurface` (an in-memory
@@ -2816,7 +2835,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   and the engine detaches there — hooks cleared, buffered patches dropped (even
   mid-delivery, if a surface destroys the replica from `applyPatch`), and every
   later intent throws `DocumentEngineError.detached`. Releasing the engine
-  detaches it too (`isolated deinit`), so a closed editor leaves no hook on a
+  detaches it too (a plain `deinit`, run in the domain that owns engine and replica), so a closed editor leaves no hook on a
   replica that lingers. A replica destroyed by a fail-safe or a suspend teardown must
   never be touched again, and this is the hook that makes that true.
 - **Buffer in `afterTransaction`, deliver at `afterAllTransactions`.** A text

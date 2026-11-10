@@ -4,7 +4,7 @@ import Foundation
 /// Unsynced replicas belong to an account, not just to a document UUID. The
 /// directory name is a digest so neither document content nor account names
 /// appear in paths. Callers must supply the authenticated account's full scope.
-struct ReplicaScope: Codable, Equatable, Sendable {
+struct ReplicaScope: Codable, Hashable, Sendable {
     let serverOrigin: String
     let ownerUserID: UUID
     let org: String

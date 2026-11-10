@@ -121,6 +121,20 @@ final class NativeBlockCommandsTests: NativeEditingTestCase {
         return try writer.find(id).nested == nil ? nil : true
     }
 
+    /// Only a paste reports the payload's size: a subtree that grew past the payload
+    /// bounds in place refuses Delete like any shape without a lossless copy.
+    func testAGrownSubtreeRefusesDeleteAsUnsupportedNotAsATooLargePaste() throws {
+        let children = (0...BlockNoteSubtreePayload.maxBlocks).map { paragraph("k\($0)", "x") }
+        let harness = try makeHarness([nested(paragraph("big", "Big"), children), paragraph("z", "Last")])
+        defer { harness.close() }
+        let engine = harness.session.engine
+        XCTAssertThrowsError(
+            try engine.applyStructural(
+                NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: "big", kind: .deleteBlock)
+            ) { _ in XCTFail("refused before any write") }
+        ) { XCTAssertEqual($0 as? DocumentEngineError, .unsupportedNativeInput) }
+    }
+
     func testDuplicateCopiesTheSubtreeWithFreshIDs() throws {
         let harness = try makeHarness(treeSeed())
         defer { harness.close() }

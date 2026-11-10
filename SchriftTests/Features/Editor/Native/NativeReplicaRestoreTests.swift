@@ -1,3 +1,4 @@
+import Synchronization
 import XCTest
 
 @testable import Schrift
@@ -5,6 +6,14 @@ import XCTest
 @MainActor
 final class NativeReplicaRestoreTests: DocumentEngineTestCase {
     private enum Interrupted: Error { case disk }
+    /// A flag the store's `@Sendable` interrupt hook can read.
+    private final class Flag: Sendable {
+        private let state = Mutex(false)
+        var isOn: Bool {
+            get { state.withLock { $0 } }
+            set { state.withLock { $0 = newValue } }
+        }
+    }
 
     func testOfflineReopenUsesJournalRevisionAndNewNonCollidingAuthor() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -73,9 +82,9 @@ final class NativeReplicaRestoreTests: DocumentEngineTestCase {
     func testRemoteAppendFailureFreezesBeforeDisplayAndKeepsPriorDurableState() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        var failAppend = false
+        let failAppend = Flag()
         let store = ReplicaStore(directory: directory) { operation, boundary in
-            if failAppend && operation == .append && boundary == .payloadWritten { throw Interrupted.disk }
+            if failAppend.isOn && operation == .append && boundary == .payloadWritten { throw Interrupted.disk }
         }
         let scope = ReplicaScope(
             serverOrigin: "https://docs.example", ownerUserID: UUID(), org: "docs", documentID: UUID())
@@ -86,7 +95,7 @@ final class NativeReplicaRestoreTests: DocumentEngineTestCase {
         let peer = try makeDoc(clientID: 2)
         defer { peer.destroy() }
         let update = try BlockNoteWriter(doc: peer).replaceText(block: Self.firstID, range: 0..<0, with: "uncommitted")
-        failAppend = true
+        failAppend.isOn = true
         do {
             try session.integrateServerState(update)
             XCTFail("a failed append must not integrate")

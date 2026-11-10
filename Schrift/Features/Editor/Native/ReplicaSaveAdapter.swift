@@ -48,7 +48,8 @@ final class ReplicaSaveAdapter {
 
     /// The only per-keystroke work: append the incremental bytes durably.
     /// Projection/shadow generation and HTTP scheduling happen separately.
-    func record(_ command: NativeEditCommand, update: Data) throws {
+    /// Callable from any domain: the store's journal is serialized (PR08a).
+    nonisolated func record(_ command: NativeEditCommand, update: Data) throws {
         try store.append(update, for: scope, commandID: command.id, baseRevision: command.baseRevision, origin: .local)
     }
 
