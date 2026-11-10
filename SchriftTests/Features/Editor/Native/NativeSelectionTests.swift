@@ -195,4 +195,55 @@ final class NativeSelectionTests: NativeEditingTestCase {
         try select(harness, from: ("text", 1), to: ("table", 1))
         XCTAssertNil(try selection(harness))
     }
+
+    /// The keyboard holds an autocorrection or inline prediction computed
+    /// from the text it last saw. A caret moved outside a text change makes
+    /// UIKit accept it at that stale range (`prepareForSelectionChange`):
+    /// "elsewh" typed at a paragraph end became "elseeleresewhereh". Each
+    /// command's storage edit and caret must reach the keyboard as one change.
+    func testCommandsMoveTheCaretInsideOneKeyboardTextChange() throws {
+        let harness = try makeHarness()
+        defer { harness.close() }
+        let session = harness.session
+        let input = harness.input
+        let end = try XCTUnwrap(session.surface.rangeIndex.entry(for: Self.firstID)).textRange.upperBound
+        session.textView.selectedRange = NSRange(location: end, length: 0)
+        let keyboard = KeyboardInputDelegateSpy()
+        session.textView.inputDelegate = keyboard
+        XCTAssertTrue(input.replace(range: NSRange(location: end, length: 0), with: "h"))
+        XCTAssertEqual(session.textView.selectedRange, NSRange(location: end + 1, length: 0))
+        XCTAssertTrue(input.insertNewline())
+        // A peer's edit before the caret: its restored caret is a move too.
+        let peer = try makeDoc(clientID: 2)
+        defer { peer.destroy() }
+        try session.integrateServerState(
+            try BlockNoteWriter(doc: peer).replaceText(block: Self.firstID, range: 0..<0, with: "peer "))
+        XCTAssertEqual(input.selection.restoredSelections, 1, "the peer's edit moved the caret")
+        XCTAssertTrue(keyboard.events.contains("selectionWillChange"), "\(keyboard.events)")
+        XCTAssertEqual(keyboard.strayCaretMoves, 0, "every caret move is inside a text change: \(keyboard.events)")
+        XCTAssertEqual(keyboard.depth, 0, "every text change ended")
+        XCTAssertEqual(keyboard.events.filter { $0 == "textWillChange" }.count, 3, "one change per command or patch")
+    }
+}
+
+/// Records what the keyboard (`UITextView.inputDelegate`) is told.
+@MainActor
+private final class KeyboardInputDelegateSpy: NSObject, @preconcurrency UITextInputDelegate {
+    var events: [String] = []
+    var depth = 0
+    var strayCaretMoves = 0
+    func selectionWillChange(_ textInput: (any UITextInput)?) {
+        events.append("selectionWillChange")
+        if depth == 0 { strayCaretMoves += 1 }
+    }
+    func selectionDidChange(_ textInput: (any UITextInput)?) { events.append("selectionDidChange") }
+    func textWillChange(_ textInput: (any UITextInput)?) {
+        events.append("textWillChange")
+        depth += 1
+    }
+    func textDidChange(_ textInput: (any UITextInput)?) {
+        events.append("textDidChange")
+        depth -= 1
+    }
+    func conversationContext(_ context: UIConversationContext?, didChange textInput: (any UITextInput)?) {}
 }

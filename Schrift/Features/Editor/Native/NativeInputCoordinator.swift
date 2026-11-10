@@ -62,16 +62,19 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         self.selection = NativeSelectionCoordinator(engine: engine, surface: surface, view: view)
         super.init()
         surface.onPatchApplied = { [weak self] patch in
-            self?.selection.restore(after: patch)
-            // A restore may land in content this patch folded away.
-            self?.keepSelectionVisible()
+            self?.asOneKeyboardChange {
+                self?.selection.restore(after: patch)
+                // A restore may land in content this patch folded away.
+                self?.keepSelectionVisible()
+            }
             self?.refreshSelectionMarks()
         }
         // A fold sends no selection change; the caret must not stay in what it hid.
         let relayout = surface.onFoldChange
         surface.onFoldChange = { [weak self] in
             relayout?()
-            self?.keepSelectionVisible()
+            // A peer patch may have edited storage just before this fold callback.
+            self?.asOneKeyboardChange { self?.keepSelectionVisible() }
         }
         inputLanguage = { [weak view] in view?.textInputMode?.primaryLanguage }
         view.delegate = self
@@ -300,9 +303,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             marks: text.isEmpty
                 ? nil : typingMarks(marks, runs: surface.blocks[position].runs, offset..<(offset + range.length)))
         do {
-            try engine.replaceText(command) { try persist(command, $0) }
-            pendingTypingMarks = nil
-            selection.place(NSRange(location: range.location + text.utf16.count, length: 0))
+            try asOneKeyboardChange {
+                try engine.replaceText(command) { try persist(command, $0) }
+                pendingTypingMarks = nil
+                selection.place(NSRange(location: range.location + text.utf16.count, length: 0))
+            }
             noticeKey = nil
             return true
         } catch {
@@ -437,6 +442,24 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return applyStructural(entry.blockID, kind, refusal: nil, keeping: selection)
     }
 
+    /// The keyboard (`inputDelegate`) holds an autocorrection or inline
+    /// prediction for the text it last saw, and UIKit accepts it, at that
+    /// now stale range, when the caret moves outside a text change
+    /// (`prepareForSelectionChange`). So a command's storage edit and caret,
+    /// or a patch's restored selection, reach it as one text change; nested
+    /// calls (a patch inside a command) report once.
+    private var keyboardChangeDepth = 0
+
+    private func asOneKeyboardChange<T>(_ body: () throws -> T) rethrows -> T {
+        keyboardChangeDepth += 1
+        if keyboardChangeDepth == 1 { view?.inputDelegate?.textWillChange(view) }
+        defer {
+            keyboardChangeDepth -= 1
+            if keyboardChangeDepth == 0 { view?.inputDelegate?.textDidChange(view) }
+        }
+        return try body()
+    }
+
     /// `refusal` is the notice for an unsupported shape; nil keeps it quiet.
     /// `keeping` is a selection to restore instead of the command's caret;
     /// `remapping` one to restore at the same offsets in a block that moved.
@@ -451,16 +474,20 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
         let command = NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: blockID, kind: kind)
         do {
-            let caret = try engine.applyStructural(command) { try persist(command, $0) }
-            if let keeping {
-                selection.place(keeping)
-            } else if let remapping, let entry = surface.rangeIndex.entry(for: remapping.blockID) {
-                let text = entry.textRange
-                let location = text.location + min(max(0, remapping.offset), text.length)
-                selection.place(NSRange(location: location, length: min(remapping.length, NSMaxRange(text) - location)))
-            } else if let entry = surface.rangeIndex.entry(for: caret.blockID) {
-                selection.place(
-                    NSRange(location: entry.textRange.location + min(caret.offset, entry.textRange.length), length: 0))
+            try asOneKeyboardChange {
+                let caret = try engine.applyStructural(command) { try persist(command, $0) }
+                if let keeping {
+                    selection.place(keeping)
+                } else if let remapping, let entry = surface.rangeIndex.entry(for: remapping.blockID) {
+                    let text = entry.textRange
+                    let location = text.location + min(max(0, remapping.offset), text.length)
+                    selection.place(
+                        NSRange(location: location, length: min(remapping.length, NSMaxRange(text) - location)))
+                } else if let entry = surface.rangeIndex.entry(for: caret.blockID) {
+                    selection.place(
+                        NSRange(
+                            location: entry.textRange.location + min(caret.offset, entry.textRange.length), length: 0))
+                }
             }
             noticeKey = nil
             return true

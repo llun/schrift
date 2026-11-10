@@ -3,6 +3,10 @@ import SwiftUI
 struct NativeEditorView: View {
     let session: NativeEditorSession
     let title: String
+    /// The document's server origin: image previews load only through a
+    /// loader of this server's session (`MarkdownImageView.matchesSession`).
+    /// Required, like the classic image sites.
+    let serverOrigin: String
     /// Shown when the document is native-owned but editing is not enabled.
     /// The replica is preserved and read-only; the classic writer must not
     /// open over it.
@@ -12,7 +16,11 @@ struct NativeEditorView: View {
     var saveFailureDetail: String? = nil
     var saveFailureOffersRetry = true
     var onSave: () -> Void = {}
+    /// Offline, image previews show cached bytes and issue no request.
+    var isOffline = false
     @Environment(LocalizationStore.self) private var loc
+    /// The app's image loader; a host without one shows image placeholders.
+    @Environment(ImageLoader.self) private var images: ImageLoader?
     @Environment(\.docsTheme) private var theme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var linkTarget: NativeLinkTarget?
@@ -38,10 +46,17 @@ struct NativeEditorView: View {
                         done: loc[.editor_checklist_state_done_a11y],
                         notDone: loc[.editor_checklist_state_not_done_a11y], toggle: loc[.native_editor_toggle],
                         expanded: loc[.native_editor_toggle_expanded],
-                        collapsed: loc[.native_editor_toggle_collapsed], blockMenu: loc[.native_editor_block_actions],
+                        collapsed: loc[.native_editor_toggle_collapsed], named: loc[.native_editor_attachment_named],
+                        image: loc[.editor_image_a11y], video: loc[.native_editor_video],
+                        audio: loc[.native_editor_audio], file: loc[.native_editor_file], pdf: loc[.native_editor_pdf],
+                        table: loc[.native_editor_table], tableMore: loc[.native_editor_table_more],
+                        columns: loc[.native_editor_columns], math: loc[.native_editor_math],
+                        diagram: loc[.native_editor_diagram], imageExternal: loc[.editor_image_external],
+                        imageExternalA11y: loc[.editor_image_external_a11y], imageOffline: loc[.editor_image_offline],
+                        imageFailed: loc[.editor_image_failed], blockMenu: loc[.native_editor_block_actions],
                         blockActions: Dictionary(
                             uniqueKeysWithValues: NativeBlockAction.allCases.map { ($0, loc[$0.labelKey]) })),
-                    theme: theme
+                    theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline
                 )
                 .id(ObjectIdentifier(session))
             }
@@ -300,6 +315,9 @@ private struct NativeTextCanvas: UIViewRepresentable {
     let contentSize: UIContentSizeCategory
     let labels: NativeEditorLabels
     let theme: AppTheme
+    let images: ImageLoader?
+    let serverOrigin: String
+    let isOffline: Bool
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -316,6 +334,9 @@ private struct NativeTextCanvas: UIViewRepresentable {
         // Chrome only: neither reaches storage, so neither can write Yjs.
         session.textView.blockControls.theme = theme
         session.textView.blockControls.labels = labels
+        session.textView.blockControls.images = images
+        session.textView.blockControls.serverOrigin = serverOrigin
+        session.textView.blockControls.isOffline = isOffline
         coordinator.update(
             surface: session.surface, presentation: NativeTextPresentation(contentSize: contentSize, labels: labels))
     }

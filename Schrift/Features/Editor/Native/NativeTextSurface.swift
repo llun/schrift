@@ -31,6 +31,13 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     /// never replaced.
     var provisionalBlockID: String?
     private var pendingPresentation: (traits: UITraitCollection, labels: NativeEditorLabels)?
+    /// Attachment paragraph sizing (PR06e): the usable width and the image
+    /// aspect ratios known at the last restyle. Never a Yjs input.
+    private(set) var attachmentGeometry = NativeAttachmentGeometry()
+    private var pendingAttachmentWidth: CGFloat?
+    /// An image URL's remembered aspect ratio (the image loader's), read only
+    /// when the geometry is recomputed: a download never restyles storage.
+    var aspectRatio: (@MainActor (String) -> CGFloat?)?
     /// Replica-backed surfaces use the owner's settled projection to validate
     /// fast patches. Value-only fixtures may omit this callback.
     private let reprojectBlock: ((String) -> BlockSnapshot?)?
@@ -72,7 +79,8 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         self.presentation = NativeTextPresentation(
             contentSize: traits.preferredContentSizeCategory, labels: NativeEditorLabels())
         storage.setAttributedString(
-            AttributedDocumentProjection.attributedString(blocks: blocks, traits: traits, labels: labels))
+            AttributedDocumentProjection.attributedString(
+                blocks: blocks, traits: traits, labels: labels, geometry: attachmentGeometry))
         _ = refreshFolding()
     }
 
@@ -158,7 +166,8 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                 let offset =
                     position < rangeIndex.entries.count ? rangeIndex.entries[position].range.location : storage.length
                 storage.insert(
-                    AttributedDocumentProjection.attributedString(blocks: fresh, traits: traits, labels: labels),
+                    AttributedDocumentProjection.attributedString(
+                        blocks: fresh, traits: traits, labels: labels, geometry: attachmentGeometry),
                     at: offset)
                 blocks.insert(contentsOf: fresh, at: position)
                 rangeIndex = ProjectionRangeIndex(blocks: blocks, labels: labels)
@@ -166,7 +175,8 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                 blocks = reset
                 rangeIndex = ProjectionRangeIndex(blocks: blocks, labels: labels)
                 storage.setAttributedString(
-                    AttributedDocumentProjection.attributedString(blocks: blocks, traits: traits, labels: labels))
+                    AttributedDocumentProjection.attributedString(
+                        blocks: blocks, traits: traits, labels: labels, geometry: attachmentGeometry))
             }
         }
         if renumbers {
@@ -276,7 +286,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         let run = Array(blocks[first..<position]) + [block]
         return AttributedDocumentProjection.attributedBlock(
             block, traits: traits, labels: labels,
-            listNumber: AttributedDocumentProjection.listNumbers(in: run).last ?? nil)
+            listNumber: AttributedDocumentProjection.listNumbers(in: run).last ?? nil, geometry: attachmentGeometry)
     }
 
     private func applyText(_ deltas: [TextDelta], at position: Int) {
@@ -319,9 +329,11 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     private func applyPresentation(_ traits: UITraitCollection, labels: NativeEditorLabels) {
         presentation = NativeTextPresentation(contentSize: traits.preferredContentSizeCategory, labels: labels)
         self.traits = traits
+        attachmentGeometry = geometry(width: attachmentGeometry.width)
         rangeIndex = ProjectionRangeIndex(blocks: blocks, labels: labels)
         storage.setAttributedString(
-            AttributedDocumentProjection.attributedString(blocks: blocks, traits: traits, labels: labels))
+            AttributedDocumentProjection.attributedString(
+                blocks: blocks, traits: traits, labels: labels, geometry: attachmentGeometry))
     }
 
     /// Character-level equality with the model's display (O(document); only
@@ -329,7 +341,9 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     var storageMatchesModel: Bool {
         storage.length == rangeIndex.length
             && storage.string
-                == AttributedDocumentProjection.attributedString(blocks: blocks, traits: traits, labels: labels).string
+                == AttributedDocumentProjection.attributedString(
+                    blocks: blocks, traits: traits, labels: labels, geometry: attachmentGeometry
+                ).string
     }
 
     /// Rebuilds storage from the model after UIKit changed it behind the
@@ -349,7 +363,8 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                 with: rendered(blocks[position], at: position))
         } else {
             storage.setAttributedString(
-                AttributedDocumentProjection.attributedString(blocks: blocks, traits: traits, labels: labels))
+                AttributedDocumentProjection.attributedString(
+                    blocks: blocks, traits: traits, labels: labels, geometry: attachmentGeometry))
         }
     }
 
@@ -381,6 +396,53 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
             pendingPresentation = nil
             applyPresentation(pending.traits, labels: pending.labels)
         }
+        if let width = pendingAttachmentWidth {
+            pendingAttachmentWidth = nil
+            updateAttachmentWidth(width)
+        }
+    }
+
+    // MARK: Attachment geometry (PR06e)
+
+    /// The geometry for `width`, with the current ratio of every image shown.
+    private func geometry(width: CGFloat) -> NativeAttachmentGeometry {
+        var next = NativeAttachmentGeometry(width: width)
+        guard let aspectRatio else { return next }
+        for block in blocks where AttributedDocumentProjection.isPlaceholder(block) {
+            if case .image(let url, _, _)? = block.preview, let ratio = aspectRatio(url) {
+                next.aspectRatios[url] = ratio
+            }
+        }
+        return next
+    }
+
+    /// The text container's usable width changed (first layout, rotation,
+    /// split view). Only attachment paragraphs are restyled, each in place
+    /// with the same one character, so text, offsets and the selection stay;
+    /// nothing reaches Yjs. Deferred while text is marked.
+    func updateAttachmentWidth(_ width: CGFloat) {
+        let width = width.rounded(.down)
+        guard width > 0 else { return }
+        guard !isFrozen else {
+            pendingAttachmentWidth = width
+            return
+        }
+        let next = geometry(width: width)
+        guard next != attachmentGeometry else { return }
+        attachmentGeometry = next
+        let positions = blocks.indices.filter { AttributedDocumentProjection.isPlaceholder(blocks[$0]) }
+        guard !positions.isEmpty else { return }
+        isApplyingPatch = true
+        defer { isApplyingPatch = false }
+        storage.beginEditing()
+        for position in positions {
+            let range = rangeIndex.entries[position].range
+            let rendered = rendered(blocks[position], at: position)
+            if !storage.attributedSubstring(from: range).isEqual(to: rendered) {
+                storage.replaceCharacters(in: range, with: rendered)
+            }
+        }
+        storage.endEditing()
     }
 
     private func replace(at position: Int, with block: BlockSnapshot) {
