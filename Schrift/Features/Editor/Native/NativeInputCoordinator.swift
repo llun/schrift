@@ -1,5 +1,6 @@
 import Observation
 import UIKit
+import UniformTypeIdentifiers
 
 /// Ordinary input is intercepted before UIKit changes storage. Canonical
 /// engine echoes update storage after persistence; returning false prevents
@@ -437,9 +438,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     }
 
     /// `refusal` is the notice for an unsupported shape; nil keeps it quiet.
-    /// `keeping` is a selection to restore instead of the command's caret.
+    /// `keeping` is a selection to restore instead of the command's caret;
+    /// `remapping` one to restore at the same offsets in a block that moved.
     private func applyStructural(
-        _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, keeping: NSRange? = nil
+        _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, keeping: NSRange? = nil,
+        remapping: (blockID: String, offset: Int, length: Int)? = nil
     ) -> Bool {
         // Folded content is never the target of a command.
         guard !surface.isHidden(blockID: blockID) else {
@@ -451,6 +454,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             let caret = try engine.applyStructural(command) { try persist(command, $0) }
             if let keeping {
                 selection.place(keeping)
+            } else if let remapping, let entry = surface.rangeIndex.entry(for: remapping.blockID) {
+                let text = entry.textRange
+                let location = text.location + min(max(0, remapping.offset), text.length)
+                selection.place(NSRange(location: location, length: min(remapping.length, NSMaxRange(text) - location)))
             } else if let entry = surface.rangeIndex.entry(for: caret.blockID) {
                 selection.place(
                     NSRange(location: entry.textRange.location + min(caret.offset, entry.textRange.length), length: 0))
@@ -749,35 +756,206 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     // MARK: - Clipboard
 
-    /// Copy puts the selection's plain text on the pasteboard, one line per block.
+    /// Copy puts the selection's plain text on the pasteboard, one line per
+    /// block, and, when the selection is whole sibling subtrees
+    /// (`NativeClipboard.wholeBlocks`), their lossless payload beside it.
     func copySelection() {
         guard let view, let text = NativeClipboard.plainText(for: view.selectedRange, surface: surface) else {
             return
         }
-        pasteboard.string = text
+        writePasteboard(text: text, payload: selectionPayload(view.selectedRange))
     }
 
     /// Cut is copy plus one range delete; a refused delete leaves the
     /// pasteboard as it was.
     @discardableResult
     func cutSelection() -> Bool {
-        guard let view, let text = NativeClipboard.plainText(for: view.selectedRange, surface: surface),
-            replace(range: view.selectedRange, with: "")
-        else { return false }
-        pasteboard.string = text
+        guard let view, let text = NativeClipboard.plainText(for: view.selectedRange, surface: surface) else {
+            return false
+        }
+        // Read before the delete removes the blocks.
+        let payload = selectionPayload(view.selectedRange)
+        guard replace(range: view.selectedRange, with: "") else { return false }
+        writePasteboard(text: text, payload: payload)
         return true
     }
 
-    /// Paste replaces the selection with the pasteboard's plain text (rich
-    /// content contributes only that) as one command; newlines split blocks.
+    /// Paste at a caret prefers Schrift's lossless payload (one command
+    /// inserting the subtrees with fresh ids); otherwise, and over a
+    /// selection, the pasteboard's plain text replaces the selection as one
+    /// command, newlines splitting blocks.
     @discardableResult
     func pasteFromPasteboard() -> Bool {
-        guard let view, view.isEditable, let text = pasteboard.string, !text.isEmpty else { return false }
+        guard let view, view.isEditable else { return false }
+        if view.selectedRange.length == 0,
+            let payload = pasteboard.data(forPasteboardType: BlockNoteSubtreePayload.pasteboardType)
+        {
+            return pasteBlocks(payload)
+        }
+        guard let text = pasteboard.string, !text.isEmpty else { return false }
         guard !NativeClipboard.isTooLarge(NativeClipboard.normalizingLineBreaks(text)) else {
             noticeKey = .native_editor_paste_too_large
             return false
         }
         return replace(range: view.selectedRange, with: text)
+    }
+
+    /// The payload is untrusted: decoded and bounded here for the notice,
+    /// and validated again by the engine before it arms.
+    private func pasteBlocks(_ payload: Data) -> Bool {
+        directInsertion = nil
+        guard let view, view.markedTextRange == nil, !composition.isActive, !engine.nativeWriteFailed,
+            !engine.isDetached
+        else { return false }
+        let count: Int
+        do {
+            count = try BlockNoteSubtreePayload.validate(BlockNoteSubtreePayload.decode(payload)).blocks
+        } catch BlockNoteSubtreePayload.Error.tooLarge {
+            noticeKey = .native_editor_paste_too_large
+            return false
+        } catch {
+            noticeKey = .native_editor_paste_unavailable
+            return false
+        }
+        let index = surface.rangeIndex
+        guard let entry = index.entry(atUTF16: view.selectedRange.location) ?? index.entries.last else { return false }
+        return applyStructural(
+            entry.blockID, .insertSubtrees(payload: payload, newIDs: (0..<count).map { _ in UUID().uuidString }),
+            refusal: .native_editor_paste_unavailable)
+    }
+
+    private func selectionPayload(_ range: NSRange) -> Data? {
+        NativeClipboard.wholeBlocks(for: range, surface: surface).flatMap { engine.subtreePayload($0) }
+    }
+
+    /// One pasteboard item: plain text and, when there is one, the lossless
+    /// payload. Replaces whatever was there, as `string` did.
+    private func writePasteboard(text: String?, payload: Data?) {
+        var item: [String: Any] = [:]
+        if let text { item[UTType.utf8PlainText.identifier] = text }
+        if let payload { item[BlockNoteSubtreePayload.pasteboardType] = payload }
+        guard !item.isEmpty else { return }
+        pasteboard.setItems([item])
+    }
+
+    // MARK: - Block actions (PR06d)
+
+    /// The block the menu acts on: the caret's, or the one a selection lies
+    /// in. Nil across blocks, while composing, in folded content or when
+    /// editing stopped.
+    func blockActionTarget() -> String? {
+        guard let view, view.isEditable, view.markedTextRange == nil, !composition.isActive,
+            !engine.nativeWriteFailed, !engine.isDetached
+        else { return nil }
+        let range = view.selectedRange
+        let index = surface.rangeIndex
+        guard
+            let entry = index.entry(atUTF16: range.location)
+                ?? (range.location == index.length ? index.entries.last : nil),
+            NSMaxRange(range) <= NSMaxRange(entry.range), !surface.isHidden(blockID: entry.blockID)
+        else { return nil }
+        return entry.blockID
+    }
+
+    /// What `performBlockAction` would apply now (the engine's own
+    /// validation, nothing written); the menu disables the rest.
+    func availableBlockActions() -> [NativeBlockAction] {
+        guard let id = blockActionTarget() else { return [] }
+        return NativeBlockAction.allCases.filter { action in
+            guard let kind = blockKind(action, id) else { return engine.hasLosslessCopy(id) }
+            return engine.canApplyStructural(
+                NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: id, kind: kind))
+        }
+    }
+
+    /// One durable command on the target block and its subtree (Copy writes
+    /// only the pasteboard). A move or duplicate keeps the selection at the
+    /// same offsets in its block wherever that lands; delete and insert place
+    /// the engine's caret. Unavailable actions are quiet no-ops.
+    @discardableResult
+    func performBlockAction(_ action: NativeBlockAction) -> Bool {
+        directInsertion = nil
+        guard let view, let id = blockActionTarget(), let entry = surface.rangeIndex.entry(for: id) else {
+            return false
+        }
+        if action == .copy { return copyBlock(id) }
+        guard let kind = blockKind(action, id) else { return false }
+        let range = view.selectedRange
+        // The menu's target, never Tab's caret rules: whatever the menu offered
+        // (a caret at the document end, a selection with its separator) applies.
+        // Indent and outdent leave every block where it was in storage.
+        if action == .indent || action == .outdent { return applyStructural(id, kind, refusal: nil, keeping: range) }
+        let keeps = [.moveUp, .moveDown, .duplicate].contains(action)
+        return applyStructural(
+            id, kind, refusal: nil,
+            remapping: keeps ? (id, range.location - entry.textRange.location, range.length) : nil)
+    }
+
+    private func blockKind(_ action: NativeBlockAction, _ id: String) -> NativeEditCommand.Kind? {
+        switch action {
+        case .moveUp: .moveUp
+        case .moveDown: .moveDown
+        case .indent: .indent
+        case .outdent: .outdent
+        case .insertAbove: .insertBlock(newID: UUID().uuidString, before: true)
+        case .insertBelow: .insertBlock(newID: UUID().uuidString, before: false)
+        case .duplicate: .duplicate(newIDs: subtree(id).map { _ in UUID().uuidString })
+        case .delete: .deleteBlock
+        case .copy: nil
+        }
+    }
+
+    /// The block's preorder positions with its descendants, folded ones included.
+    private func subtree(_ id: String) -> Range<Int> {
+        guard let start = surface.rangeIndex.position(for: id) else { return 0..<0 }
+        var end = start + 1
+        while end < surface.blocks.count, surface.blocks[end].depth > surface.blocks[start].depth { end += 1 }
+        return start..<end
+    }
+
+    /// Copy block: the subtree's lossless payload and its visible plain text.
+    private func copyBlock(_ id: String) -> Bool {
+        let span = subtree(id)
+        guard let payload = engine.subtreePayload([id]), let first = surface.rangeIndex.entry(for: id),
+            let last = surface.rangeIndex.entries.indices.contains(span.upperBound - 1)
+                ? surface.rangeIndex.entries[span.upperBound - 1] : nil
+        else { return false }
+        let range = NSRange(location: first.range.location, length: NSMaxRange(last.textRange) - first.range.location)
+        writePasteboard(text: NativeClipboard.plainText(for: range, surface: surface), payload: payload)
+        return true
+    }
+
+    /// The edit menu's Block submenu, unavailable actions disabled.
+    func blockMenuActions() -> [UIAction] {
+        let labels = view?.blockControls.labels ?? NativeEditorLabels()
+        let available = Set(availableBlockActions())
+        guard !available.isEmpty else { return [] }
+        return NativeBlockAction.allCases.map { action in
+            UIAction(
+                title: labels.blockActions[action] ?? action.rawValue,
+                attributes: !available.contains(action) ? .disabled : action == .delete ? .destructive : []
+            ) { [weak self] _ in self?.performBlockAction(action) }
+        }
+    }
+
+    /// VoiceOver's custom actions on the text view: the available block actions.
+    func blockAccessibilityActions() -> [UIAccessibilityCustomAction] {
+        let labels = view?.blockControls.labels ?? NativeEditorLabels()
+        return availableBlockActions().map { action in
+            UIAccessibilityCustomAction(name: labels.blockActions[action] ?? action.rawValue) { [weak self] _ in
+                self?.performBlockAction(action) ?? false
+            }
+        }
+    }
+
+    /// The long-press edit menu gains a Block submenu for the target block.
+    func textView(_ textView: UITextView, editMenuForTextIn range: NSRange, suggestedActions: [UIMenuElement])
+        -> UIMenu?
+    {
+        let actions = blockMenuActions()
+        guard !actions.isEmpty else { return nil }
+        let title = view?.blockControls.labels.blockMenu ?? NativeEditorLabels().blockMenu
+        return UIMenu(children: suggestedActions + [UIMenu(title: title, children: actions)])
     }
 
     private static func isNewline(_ text: String) -> Bool {

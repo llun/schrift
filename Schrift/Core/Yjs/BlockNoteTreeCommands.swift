@@ -97,3 +97,57 @@ extension BlockNoteWriter {
         }
     }
 }
+
+/// PR06d's subtree commands, the same clone-and-delete rules: BlockNote 0.56's
+/// `moveBlocks` (`removeAndInsertBlocks` then `insertBlocks`) for one block
+/// and its subtree, `removeBlocks`, and inserting copied subtrees (duplicate,
+/// paste, a new empty block). They take the container's item, not a
+/// `Target`: a divider, page break or preserved table is not a type this
+/// writer edits, yet it can move or go whole. The caller resolves where a
+/// block lands and validates every copied block first.
+extension BlockNoteWriter {
+    /// Moves the block and its subtree after `left` in `group` (nil: first),
+    /// as a copy of every raw value; the original goes, and so does a nested
+    /// group it leaves empty. Identity is not preserved.
+    @discardableResult
+    func moveBlock(_ item: YItem, id: String, into group: YType, after left: YItem?) throws -> Data {
+        guard !item.deleted, case .type(let container) = item.content else { throw Error.missingBlock(id) }
+        let copy = try snapshot(container, block: id, depth: 0)
+        return try transaction { tx in
+            try insertCopy(tx, copy, into: group, after: left)
+            removeBlock(tx, item)
+        }
+    }
+
+    /// `removeBlocks` for one block and its subtree. A nested group left
+    /// empty goes too (ProseMirror's `blockGroup` needs a child); the root
+    /// group's last block is the caller's to refuse.
+    @discardableResult
+    func deleteBlock(_ item: YItem, id: String) throws -> Data {
+        guard !item.deleted else { throw Error.missingBlock(id) }
+        return try transaction { tx in removeBlock(tx, item) }
+    }
+
+    /// Inserts whole `blockContainer` copies after `left` in `group`, in one
+    /// transaction; `replacing` (an empty block the copies stand in for, as
+    /// ProseMirror's paste into an empty textblock) is removed after them.
+    @discardableResult
+    func insertBlocks(_ copies: [Copy], into group: YType, after left: YItem?, replacing: YItem? = nil) throws
+        -> Data
+    {
+        try transaction { tx in
+            var left = left
+            for copy in copies { left = try insertCopy(tx, copy, into: group, after: left) }
+            if let replacing { removeBlock(tx, replacing) }
+        }
+    }
+
+    private func removeBlock(_ tx: YTransaction, _ item: YItem) {
+        item.delete(tx)
+        if let group = item.parentType, children(group).isEmpty, let groupItem = group.item,
+            groupItem.parentType?.typeRef == .xmlElement(nodeName: "blockContainer")
+        {
+            groupItem.delete(tx)
+        }
+    }
+}

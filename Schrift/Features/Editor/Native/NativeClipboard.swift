@@ -1,11 +1,36 @@
 import Foundation
 
-/// Plain-text clipboard for the native editor. Copy gives one line per block;
-/// cut is copy plus one range delete; paste replaces the selection with the
-/// pasteboard's plain text as one command, newlines splitting blocks (rich
-/// content contributes only its plain text). Lossless rich and subtree
-/// transfer is PR06.
+/// The native editor's clipboard. Copy gives one line per block; cut is copy
+/// plus one range delete; paste replaces the selection with the pasteboard's
+/// plain text as one command, newlines splitting blocks. Since PR06d a copy
+/// of whole sibling subtrees (`wholeBlocks`, or the block menu's Copy block)
+/// also carries their lossless `BlockNoteSubtreePayload`, which a paste at a
+/// caret prefers (`NativeInputCoordinator.pasteFromPasteboard`).
 enum NativeClipboard {
+    /// The roots of the whole subtrees `range` selects: it runs from a
+    /// block's text start to a block's text end, nothing in it is shallower
+    /// than its first block, and every later descendant of the last root is
+    /// folded away. Nil for any other selection (part of a block, or visible
+    /// children left out), which copies as plain text only.
+    @MainActor
+    static func wholeBlocks(for range: NSRange, surface: NativeTextSurface) -> [String]? {
+        let index = surface.rangeIndex
+        guard range.length > 0, let start = index.textPosition(atUTF16: range.location),
+            let end = index.textPosition(atUTF16: NSMaxRange(range), isUpperBound: true),
+            start.offset == 0, end.offset == index.entries[end.position].textRange.length,
+            start.position <= end.position
+        else { return nil }
+        let blocks = surface.blocks
+        let depth = blocks[start.position].depth
+        guard blocks[start.position...end.position].allSatisfy({ $0.depth >= depth }) else { return nil }
+        var next = end.position + 1
+        while next < blocks.count, blocks[next].depth > depth {
+            guard surface.isHidden(position: next) else { return nil }
+            next += 1
+        }
+        return blocks[start.position...end.position].filter { $0.depth == depth }.map(\.id)
+    }
+
     /// The selected text of every block in the range, one line per block. A
     /// range from a block's end to the next block's start is one line break.
     /// Preserved placeholders contribute nothing: their label is not content.

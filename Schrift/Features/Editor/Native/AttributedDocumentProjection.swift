@@ -49,6 +49,10 @@ struct NativeEditorLabels: Equatable {
     var imageExternalA11y = Strings_en.table[.editor_image_external_a11y]!
     var imageOffline = Strings_en.table[.editor_image_offline]!
     var imageFailed = Strings_en.table[.editor_image_failed]!
+    /// The block menu's title and actions (PR06d): the edit menu and VoiceOver.
+    var blockMenu = Strings_en.table[.native_editor_block_actions]!
+    var blockActions = Dictionary(
+        uniqueKeysWithValues: NativeBlockAction.allCases.map { ($0, Strings_en.table[$0.labelKey]!) })
 }
 
 /// Disposable presentation, never a serialization or write-back source.
@@ -311,7 +315,10 @@ enum AttributedDocumentProjection {
             case "strike": attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
             case "underline": attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
             case "link":
-                if let href = YBlockProjection.linkHref(from: mark.valueJSON), let url = URL(string: href) {
+                // Only a scheme the editor writes is tappable; the mark itself stays.
+                if let href = YBlockProjection.linkHref(from: mark.valueJSON), isOpenableLink(href),
+                    let url = URL(string: href)
+                {
                     attributes[.link] = url
                 }
             case NativeMark.textColor:

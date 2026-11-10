@@ -202,6 +202,38 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(app.buttons["nativeEditor.format.indent"].waitForExistence(timeout: 5), "still typeable")
     }
 
+    /// PR06d: the formatting bar's block menu duplicates the caret's block, one
+    /// durable command in the production open route; the duplicate is still
+    /// there after a relaunch.
+    func testDuplicateFromTheBlockMenuSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-tree"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.025)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let texts = app.staticTexts["tree.texts"]
+        app.buttons["tree.read"].tap()
+        XCTAssertEqual(texts.label, "Tree first|Tree second|Owned paragraph 1.")
+        app.buttons["tree.caret"].tap()
+        app.buttons["nativeEditor.format.block"].tap()
+        let duplicate = app.buttons["nativeEditor.block.duplicate"]
+        XCTAssertTrue(duplicate.waitForExistence(timeout: 5))
+        duplicate.tap()
+        app.buttons["tree.read"].tap()
+        XCTAssertEqual(texts.label, "Tree first|Tree second|Tree second", "the second bullet was duplicated")
+        XCTAssertFalse(app.staticTexts["nativeEditor.inputNotice"].exists)
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        app.terminate()
+
+        app.launchArguments = ["--native-open", "--native-tree"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        app.buttons["tree.read"].tap()
+        XCTAssertEqual(texts.label, "Tree first|Tree second|Tree second", "the journal restores the duplicate")
+    }
+
     /// PR06b: the disclosure button folds and unfolds a toggle in the native
     /// host. Folded, the children leave the text VoiceOver reads; typing
     /// elsewhere leaves them alone, and unfolding shows them intact.

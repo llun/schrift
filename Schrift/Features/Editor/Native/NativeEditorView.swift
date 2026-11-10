@@ -53,7 +53,9 @@ struct NativeEditorView: View {
                         columns: loc[.native_editor_columns], math: loc[.native_editor_math],
                         diagram: loc[.native_editor_diagram], imageExternal: loc[.editor_image_external],
                         imageExternalA11y: loc[.editor_image_external_a11y], imageOffline: loc[.editor_image_offline],
-                        imageFailed: loc[.editor_image_failed]),
+                        imageFailed: loc[.editor_image_failed], blockMenu: loc[.native_editor_block_actions],
+                        blockActions: Dictionary(
+                            uniqueKeysWithValues: NativeBlockAction.allCases.map { ($0, loc[$0.labelKey]) })),
                     theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline
                 )
                 .id(ObjectIdentifier(session))
@@ -172,10 +174,20 @@ private struct NativeFormattingBar: View {
     let editLink: (NativeLinkTarget) -> Void
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.docsTheme) private var theme
+    @State private var showsBlockMenu = false
 
     var body: some View {
         ScrollView(.horizontal) {
             HStack(spacing: DocsSpacing.space4xs) {
+                // The block menu first: it acts on the block, the rest on text.
+                button(id: "block", label: loc[.native_editor_block_actions], isOn: false) {
+                    showsBlockMenu = true
+                } glyph: {
+                    MaterialSymbol(.more_horiz, size: 20, scales: false)
+                }
+                .popover(isPresented: $showsBlockMenu) {
+                    NativeBlockMenu(input: input) { showsBlockMenu = false }
+                }
                 toggle("bold", label: .editor_format_bold) { MaterialSymbol(.format_bold, size: 20, scales: false) }
                 toggle("italic", label: .editor_format_italic) {
                     MaterialSymbol(.format_italic, size: 20, scales: false)
@@ -258,6 +270,44 @@ private struct NativeFormattingBar: View {
         "green": .native_editor_color_green, "blue": .native_editor_color_blue,
         "purple": .native_editor_color_purple, "pink": .native_editor_color_pink,
     ]
+}
+
+/// The block menu (PR06d): the caret block's actions, worked out when it is
+/// shown; an action the engine would refuse is disabled. Each is at most one
+/// durable command.
+private struct NativeBlockMenu: View {
+    let input: NativeInputCoordinator
+    let dismiss: () -> Void
+    @Environment(LocalizationStore.self) private var loc
+    @Environment(\.docsTheme) private var theme
+
+    var body: some View {
+        let available = Set(input.availableBlockActions())
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(NativeBlockAction.allCases, id: \.self) { action in
+                row(action, isAvailable: available.contains(action))
+            }
+        }
+        .padding(.horizontal, DocsSpacing.spaceBase)
+        .padding(.vertical, DocsSpacing.space2xs)
+        .presentationCompactAdaptation(.popover)
+    }
+
+    private func row(_ action: NativeBlockAction, isAvailable: Bool) -> some View {
+        Button(role: action == .delete ? .destructive : nil) {
+            dismiss()
+            input.performBlockAction(action)
+        } label: {
+            Text(loc[action.labelKey])
+                .font(DocsFont.body)
+                .frame(maxWidth: .infinity, minHeight: DocsSpacing.rowMinHeight, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isAvailable ? theme.colors.textPrimary : theme.colors.textTertiary)
+        .disabled(!isAvailable)
+        .accessibilityIdentifier("nativeEditor.block.\(action.rawValue)")
+    }
 }
 
 private struct NativeTextCanvas: UIViewRepresentable {

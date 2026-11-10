@@ -6,8 +6,9 @@ import XCTest
 /// captures: `f-sink-bullet` (Tab, prosemirror-schema-list `sinkListItem`)
 /// and `enter-empty-nested` (Enter on an empty nested block, `liftListItem`).
 /// Each is checked on the writer's replica, on a second replica fed only the
-/// update, and through the native engine's own command path. The rest pins
-/// `liftToOuterList`'s sibling and child rules, for which no capture exists.
+/// update, and through the native engine's own command path; PR06d's moves
+/// against `BlockNoteMoveCaptures`. The rest pins `liftToOuterList`'s sibling
+/// and child rules, for which no capture exists.
 @MainActor
 final class BlockNoteTreeOracleTests: XCTestCase {
     private static let props = #"backgroundColor="default" textAlignment="left" textColor="default""#
@@ -76,6 +77,26 @@ final class BlockNoteTreeOracleTests: XCTestCase {
         try assertEngineOracle(
             seed: base64, xml: capture.xml, blockID: "kid", kind: .split(offset: 0, newID: "unused"))
         try assertEngineOracle(seed: base64, xml: capture.xml, blockID: "kid", kind: .outdent)
+    }
+
+    /// PR06d: every `moveBlocksUp`/`moveBlocksDown` capture through the
+    /// engine's command (sibling swaps, into a sibling's nearest child, out
+    /// beside the parent removing an emptied group, a toggle with children,
+    /// marks and props).
+    func testMovesMatchTheBlockNoteCaptures() throws {
+        for capture in BlockNoteMoveCaptures.captures {
+            try assertEngineOracle(
+                seed: capture.seed, xml: capture.xml, blockID: capture.block, kind: capture.up ? .moveUp : .moveDown)
+        }
+        // The first root block does not move up, as in BlockNote.
+        let first = try XCTUnwrap(BlockNoteMoveCaptures.captures.first)
+        let session = try NativeEditorSession(state: try XCTUnwrap(Data(base64Encoded: first.seed)))
+        defer { session.close() }
+        XCTAssertThrowsError(
+            try session.engine.applyStructural(
+                NativeEditCommand(id: UUID(), baseRevision: 0, blockID: "a", kind: .moveUp)
+            ) { _ in XCTFail("refused before any write") }
+        ) { XCTAssertEqual($0 as? DocumentEngineError, .unsupportedNativeInput) }
     }
 
     // MARK: - liftToOuterList without a capture

@@ -388,6 +388,16 @@ enum Strings_de {
         .native_editor_toggle: "Aufklappen oder zuklappen",
         .native_editor_toggle_expanded: "Aufgeklappt",
         .native_editor_toggle_collapsed: "Zugeklappt",
+        .native_editor_block_actions: "Blockaktionen",
+        .native_editor_block_move_up: "Nach oben verschieben",
+        .native_editor_block_move_down: "Nach unten verschieben",
+        .native_editor_block_duplicate: "Duplizieren",
+        .native_editor_block_copy: "Block kopieren",
+        .native_editor_block_delete: "Block löschen",
+        .native_editor_block_insert_above: "Block darüber einfügen",
+        .native_editor_block_insert_below: "Block darunter einfügen",
+        .native_editor_paste_unavailable:
+            "Dieser kopierte Inhalt kann hier nicht eingefügt werden. Es wurde nichts geändert.",
         .profile_native_editor: "Nativer Editor (experimentell)",
         .profile_native_editor_footer:
             "Gilt beim nächsten Öffnen eines Dokuments. Unterstützt Docs 6 mit Text, Formatierung, Links, Überschriften, Listen, Checklisten, Zitaten und Codeblöcken; andere Blöcke bleiben erhalten, sind aber noch nicht bearbeitbar.",

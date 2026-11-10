@@ -39,6 +39,23 @@ struct NativeEditCommand: Equatable, Sendable {
         case indent
         /// Lifts `blockID` out of its parent (`liftListItem`).
         case outdent
+        /// BlockNote's `moveBlocksUp`/`moveBlocksDown` for `blockID` and its
+        /// subtree (PR06d): past a sibling with children into its nearest
+        /// child, past the group's end out beside the parent.
+        case moveUp
+        case moveDown
+        /// A copy of `blockID`'s subtree after it, every container taking the
+        /// next of `newIDs` in preorder.
+        case duplicate(newIDs: [String])
+        /// Deletes `blockID` with its subtree.
+        case deleteBlock
+        /// A new empty paragraph `newID` before or after `blockID`'s subtree.
+        case insertBlock(newID: String, before: Bool)
+        /// A lossless paste: `payload` (`BlockNoteSubtreePayload`, untrusted)
+        /// as siblings after `blockID`'s subtree, replacing `blockID` when it
+        /// is an empty paragraph without children; containers take `newIDs`
+        /// in preorder.
+        case insertSubtrees(payload: Data, newIDs: [String])
     }
 
     let id: UUID
@@ -69,7 +86,9 @@ struct NativeEditCommand: Equatable, Sendable {
         switch kind {
         case .replace(_, let replacement, _): return replacement
         case .range(let range): return range.replacement
-        case .split, .join, .marks, .props, .blockType, .indent, .outdent: return ""
+        case .split, .join, .marks, .props, .blockType, .indent, .outdent, .moveUp, .moveDown, .duplicate,
+            .deleteBlock, .insertBlock, .insertSubtrees:
+            return ""
         }
     }
 }

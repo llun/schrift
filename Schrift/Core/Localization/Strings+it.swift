@@ -384,6 +384,16 @@ enum Strings_it {
         .native_editor_toggle: "Espandi o comprimi",
         .native_editor_toggle_expanded: "Espanso",
         .native_editor_toggle_collapsed: "Compresso",
+        .native_editor_block_actions: "Azioni sul blocco",
+        .native_editor_block_move_up: "Sposta su",
+        .native_editor_block_move_down: "Sposta giù",
+        .native_editor_block_duplicate: "Duplica",
+        .native_editor_block_copy: "Copia blocco",
+        .native_editor_block_delete: "Elimina blocco",
+        .native_editor_block_insert_above: "Inserisci blocco sopra",
+        .native_editor_block_insert_below: "Inserisci blocco sotto",
+        .native_editor_paste_unavailable:
+            "Questo contenuto copiato non può essere incollato qui. Non è stato modificato nulla.",
         .profile_native_editor: "Editor nativo (sperimentale)",
         .profile_native_editor_footer:
             "Si applica alla prossima apertura di un documento. Supporta Docs 6 con testo, formattazione, link, titoli, elenchi, liste di controllo, citazioni e blocchi di codice; gli altri blocchi vengono conservati ma non sono ancora modificabili.",

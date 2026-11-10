@@ -183,8 +183,8 @@ final class NativeTextView: UITextView {
         inputCoordinator.cutSelection()
     }
 
-    /// Plain text only, as one command over the selection (PR06 brings the
-    /// lossless rich clipboard).
+    /// One command: Schrift's lossless payload at a caret, else plain text
+    /// over the selection (PR06d).
     override func paste(_ sender: Any?) {
         guard let inputCoordinator, isEditable, markedTextRange == nil else { return }
         inputCoordinator.pasteFromPasteboard()
@@ -246,6 +246,13 @@ final class NativeTextView: UITextView {
             return visible
         }
         set { super.accessibilityValue = newValue }
+    }
+
+    /// VoiceOver's actions for the caret's block (PR06d): the block menu's
+    /// available actions, computed when VoiceOver asks.
+    override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
+        get { (inputCoordinator?.blockAccessibilityActions() ?? []) + (super.accessibilityCustomActions ?? []) }
+        set { super.accessibilityCustomActions = newValue }
     }
 
     override func layoutSubviews() {
