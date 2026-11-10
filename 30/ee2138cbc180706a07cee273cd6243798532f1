@@ -1,0 +1,29 @@
+SchriftTests/Features/Editor/EditorViewModelBaselineTests.swift
+  s_dc239db0cc1c9d::t_8f47415418cb76 104-125
+AGENTS.md
+  s_dc239db0cc1c9d::t_5b64025ce8ff1e 5048-5069,5071-5074
+Schrift/Features/Editor/DraftSyncDecision.swift
+  s_dc239db0cc1c9d::t_b8066c0d3cd5d2 133-147,150-164,174,263,265,269,277
+Schrift/Features/Editor/Native/ReplicaManifest.swift
+  s_dc239db0cc1c9d::t_47dda64b4ee4de 102,106
+SchriftTests/Features/Editor/DraftSyncDecisionTests.swift
+  s_dc239db0cc1c9d::t_26f5dbf4dc93ae 137-151,153-162,164-166
+SchriftTests/Features/Editor/Native/NativeShadowExportParityTests.swift
+  s_dc239db0cc1c9d::t_fce2844390c5e9 43-44,62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "30ee2138cbc180706a07cee273cd6243798532f1",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
