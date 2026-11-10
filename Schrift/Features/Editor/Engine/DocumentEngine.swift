@@ -218,11 +218,58 @@ final class DocumentEngine {
     func applyStructural(
         _ command: NativeEditCommand, persist: (Data) throws -> Void
     ) throws -> EditorPosition {
+        let (write, caret) = try prepareStructural(command)
+        nativeCommand = command
+        nativeEmission = 0
+        do {
+            let update = try write()
+            let position = caret()
+            unconfirmedNativeUpdate = update
+            try persist(update)
+            revision += 1
+            unconfirmedNativeUpdate = nil
+            nativeCommand = nil
+            flush()
+            return position
+        } catch {
+            nativeCommand = nil
+            // The writer validates before its transaction, and every transaction
+            // stamps an emission: a writer refusal with none wrote nothing (for
+            // example a malformed or duplicate id elsewhere that `find` walks).
+            if nativeEmission == 0, error is BlockNoteWriter.Error {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            // Transactions have no rollback. Stop all authoring and delivery
+            // rather than retry against a graph whose bytes were not confirmed.
+            nativeWriteFailed = true
+            buffered = []
+            throw error
+        }
+    }
+
+    /// Whether `applyStructural` would accept `command` now: the same
+    /// validation, nothing armed or written. The block menu's enabled state.
+    func canApplyStructural(_ command: NativeEditCommand) -> Bool {
+        (try? prepareStructural(command)) != nil
+    }
+
+    private typealias PreparedCommand = (write: () throws -> Data, caret: () -> EditorPosition)
+
+    private func prepareStructural(_ command: NativeEditCommand) throws -> PreparedCommand {
         try requireCompositionBoundary()
         try requireEditableBlock(command.blockID)
         guard nativeCommand == nil, !holdingDurableRemote, !isFlushing, composition == nil,
             revision == command.baseRevision, revision < UInt64.max
         else { throw DocumentEngineError.staleNativeCommand }
+        switch command.kind {
+        case .moveUp, .moveDown, .duplicate, .deleteBlock, .insertBlock, .insertSubtrees:
+            do {
+                return try prepareBlockCommand(command)
+            } catch is BlockNoteWriter.Error, is BlockNoteSubtreePayload.Error {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+        default: break
+        }
         // A prop edit (a code block's language) is the one command code accepts.
         let isPropEdit = if case .props = command.kind { true } else { false }
         let (node, units) = try structuralTarget(command.blockID, allowCode: isPropEdit)
@@ -441,33 +488,10 @@ final class DocumentEngine {
                 }
             }
             caret = { EditorPosition(blockID: command.blockID, offset: removing.lowerBound, assoc: -1) }
+        case .moveUp, .moveDown, .duplicate, .deleteBlock, .insertBlock, .insertSubtrees:
+            throw DocumentEngineError.unsupportedNativeInput  // prepared above
         }
-        nativeCommand = command
-        nativeEmission = 0
-        do {
-            let update = try write()
-            let position = caret()
-            unconfirmedNativeUpdate = update
-            try persist(update)
-            revision += 1
-            unconfirmedNativeUpdate = nil
-            nativeCommand = nil
-            flush()
-            return position
-        } catch {
-            nativeCommand = nil
-            // The writer validates before its transaction, and every transaction
-            // stamps an emission: a writer refusal with none wrote nothing (for
-            // example a malformed or duplicate id elsewhere that `find` walks).
-            if nativeEmission == 0, error is BlockNoteWriter.Error {
-                throw DocumentEngineError.unsupportedNativeInput
-            }
-            // Transactions have no rollback. Stop all authoring and delivery
-            // rather than retry against a graph whose bytes were not confirmed.
-            nativeWriteFailed = true
-            buffered = []
-            throw error
-        }
+        return (write, caret)
     }
 
     private static let listItemNodes: Set<String> = ["bulletListItem", "numberedListItem", "checkListItem"]
@@ -543,6 +567,149 @@ final class DocumentEngine {
             position += 1
         } while position < index.order.count && including(index.entries[index.order[position]]?.depth ?? -1)
         return deepest
+    }
+
+    // MARK: - Block commands (PR06d)
+
+    /// Move, duplicate, delete, insert and lossless paste for a block and its
+    /// subtree, each validated before arming. A move or duplicate needs every
+    /// block of the subtree readable and unlocked (`requireMovable`): the
+    /// clone is a proven lossless copy. Delete (and copy, `subtreePayload`)
+    /// needs a proven lossless representation instead
+    /// (`BlockNoteSubtreePayload.validate`), so an opaque block that is plain
+    /// BlockNote XML can be copied or deleted but never moved; anything else
+    /// is refused. Moves copy every raw value and delete the original, so a
+    /// peer's concurrent edit inside the moved block lands in the deleted
+    /// original (as with `sinkListItem`); identity is not preserved.
+    private func prepareBlockCommand(_ command: NativeEditCommand) throws -> PreparedCommand {
+        let index = builder.index
+        let id = command.blockID
+        guard index.isCanonical, let entry = index.entries[id], let position = index.position[id],
+            let siblings = index.groupOrder[ObjectIdentifier(entry.group)], let at = siblings.firstIndex(of: id)
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let writer = self.writer
+        let item = entry.containerItem
+        // The preorder position just past the block's subtree.
+        var end = position + 1
+        while end < index.order.count, (index.entries[index.order[end]]?.depth ?? -1) > entry.depth { end += 1 }
+        func start(_ id: String) -> EditorPosition { EditorPosition(blockID: id, offset: 0, assoc: -1) }
+        func isFresh(_ ids: [String]) -> Bool {
+            Set(ids).count == ids.count && ids.allSatisfy { !$0.isEmpty && index.entries[$0] == nil }
+        }
+        switch command.kind {
+        case .moveUp, .moveDown:
+            // BlockNote's `getMovePlacement`: past a sibling with children
+            // into its nearest child, past the group's end out beside the parent.
+            let up = command.kind == .moveUp
+            let deepest = try requireMovable(id, including: { $0 > entry.depth }) - 1
+            let destination: (group: YType, left: YItem?, depth: Int)
+            let neighbour = up ? (at > 0 ? siblings[at - 1] : nil) : (at + 1 < siblings.count ? siblings[at + 1] : nil)
+            if let neighbour, let next = index.entries[neighbour] {
+                if let nested = next.nestedGroup, let kids = index.groupOrder[ObjectIdentifier(nested)],
+                    let last = kids.last.flatMap({ index.entries[$0] }), !kids.isEmpty
+                {
+                    try requireEditableBlock(neighbour)
+                    destination = (nested, up ? last.containerItem : nil, next.depth + 1)
+                } else {
+                    destination = (entry.group, up ? next.containerItem.left : next.containerItem, entry.depth)
+                }
+            } else if let parentID = entry.parentID, let parent = index.entries[parentID] {
+                try requireEditableBlock(parentID)
+                destination = (parent.group, up ? parent.containerItem.left : parent.containerItem, parent.depth)
+            } else {
+                // The document's first or last root block: BlockNote does nothing.
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            guard destination.depth + deepest - entry.depth <= BlockNoteWriter.maxNestingDepth else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            let offset = try caretOffset(in: id)
+            return (
+                { try writer.moveBlock(item, id: id, into: destination.group, after: destination.left) },
+                { EditorPosition(blockID: id, offset: offset, assoc: -1) }
+            )
+        case .duplicate(let newIDs):
+            _ = try requireMovable(id, including: { $0 > entry.depth })
+            let copy = try writer.snapshot(entry.container, block: id, depth: 0)
+            _ = try BlockNoteSubtreePayload.validate([copy])
+            guard newIDs.count == copy.containerCount, isFresh(newIDs) else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            var ids = newIDs[...]
+            let duplicate = try copy.replacingIDs(&ids)
+            let offset = try caretOffset(in: id)
+            return (
+                { try writer.insertBlocks([duplicate], into: entry.group, after: item) },
+                { EditorPosition(blockID: id, offset: offset, assoc: -1) }
+            )
+        case .deleteBlock:
+            // The document keeps one block.
+            guard entry.depth > 0 || siblings.count > 1 else { throw DocumentEngineError.unsupportedNativeInput }
+            for p in position..<end { try requireEditableBlock(index.order[p]) }
+            _ = try BlockNoteSubtreePayload.validate([try writer.snapshot(entry.container, block: id, depth: 0)])
+            let next = end < index.order.count ? index.order[end] : nil
+            let previous = position > 0 ? index.order[position - 1] : nil
+            return (
+                { try writer.deleteBlock(item, id: id) },
+                {
+                    next.map(start)
+                        ?? EditorPosition(blockID: previous ?? id, offset: self.textLength(previous ?? id), assoc: -1)
+                }
+            )
+        case .insertBlock(let newID, let before):
+            guard isFresh([newID]) else { throw DocumentEngineError.unsupportedNativeInput }
+            let paragraph = BlockNoteWriter.Copy.element(
+                "blockContainer", [("id", .string(newID))],
+                [.element("paragraph", writer.schemas["paragraph"] ?? [], [])])
+            let left = before ? item.left : item
+            return ({ try writer.insertBlocks([paragraph], into: entry.group, after: left) }, { start(newID) })
+        case .insertSubtrees(let payload, let newIDs):
+            let copies = try BlockNoteSubtreePayload.decode(payload)
+            let shape = try BlockNoteSubtreePayload.validate(copies)
+            guard let last = newIDs.last, newIDs.count == shape.blocks, isFresh(newIDs),
+                entry.depth + shape.depth <= BlockNoteWriter.maxNestingDepth
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            var ids = newIDs[...]
+            let fresh = try copies.map { try $0.replacingIDs(&ids) }
+            // ProseMirror's paste into an empty textblock replaces it.
+            let replaces =
+                entry.nestedGroup == nil && entry.isSimpleContainer
+                && entry.element?.typeRef == .xmlElement(nodeName: "paragraph")
+                && (entry.isSimpleText || entry.element?.length == 0) && entry.runs.allSatisfy { $0.text.isEmpty }
+            return (
+                { try writer.insertBlocks(fresh, into: entry.group, after: item, replacing: replaces ? item : nil) },
+                { EditorPosition(blockID: last, offset: self.textLength(last), assoc: -1) }
+            )
+        default:
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+    }
+
+    /// The UTF-16 length of an indexed block's text (0 when it has none).
+    private func textLength(_ blockID: String) -> Int {
+        builder.index.entries[blockID]?.runs.reduce(0) { $0 + $1.text.utf16.count } ?? 0
+    }
+
+    /// Whether the block's whole subtree has a proven lossless representation
+    /// (what Copy block needs), without encoding a payload.
+    func hasLosslessCopy(_ blockID: String) -> Bool {
+        guard !isDetached, !nativeWriteFailed, builder.index.isCanonical,
+            let entry = builder.index.entries[blockID],
+            let copy = try? writer.snapshot(entry.container, block: blockID, depth: 0)
+        else { return false }
+        return (try? BlockNoteSubtreePayload.validate([copy])) != nil
+    }
+
+    /// The lossless transfer payload for these blocks' whole subtrees
+    /// (`BlockNoteSubtreePayload`), or nil when any has no proven lossless
+    /// representation. Reads only.
+    func subtreePayload(_ blockIDs: [String]) -> Data? {
+        guard !isDetached, !nativeWriteFailed, builder.index.isCanonical, !blockIDs.isEmpty else { return nil }
+        return try? BlockNoteSubtreePayload.encode(
+            blockIDs.map { id in
+                guard let entry = builder.index.entries[id] else { throw DocumentEngineError.unsupportedNativeInput }
+                return try writer.snapshot(entry.container, block: id, depth: 0)
+            })
     }
 
     /// The selection head's offset when it is in `blockID`, else 0. A tree

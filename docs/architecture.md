@@ -818,8 +818,9 @@ give a plain-text clipboard: copy is one line per block (placeholders contribute
 and nothing copyable or marked text leaves the pasteboard alone);
 cut is copy plus one range delete, leaving the pasteboard unchanged when refused; paste
 takes only the pasteboard's plain string, so rich content contributes its text, and
-refuses whole a paste over 200,000 UTF-16 units or 2,000 lines. The
-lossless rich clipboard is PR06. IME over a multi-block selection keeps PR03's refusal.
+refuses whole a paste over 200,000 UTF-16 units or 2,000 lines. Since PR06d a copy of
+whole subtrees also carries a lossless payload a paste at a caret prefers (below). IME over
+a multi-block selection keeps PR03's refusal.
 
 **PR05a Inline marks, links and colours.** Marks are Yjs format attributes beside the
 text, in BlockNote 0.56's vocabulary (`{}` for bold, italic, underline, strike and code;
@@ -899,6 +900,31 @@ installed 0.56 keyboard rules, with the open state carried in the split command 
 open toggle's Enter starts its children, a closed one splits and keeps them, an empty
 toggle resets); the slash menu offers Toggle heading and Toggle list. A toggle has no
 Markdown shadow yet, so production keeps such a document read-only, like a callout.
+
+**PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
+bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom
+actions on the text view) acts on the caret's block and its whole subtree: Move up, Move
+down, Outdent, Indent, Insert block above/below, Duplicate, Copy block and Delete block.
+Each is one validated `applyStructural` command (Copy only writes the pasteboard); the
+menu disables what the engine's own dry run (`canApplyStructural`) would refuse. Moves
+are BlockNote 0.56's `moveBlocksUp`/`moveBlocksDown` (past a sibling with children into
+its nearest child, past a group's end out beside the parent, an emptied group removed),
+checked against node captures, and like indent they copy every raw value and delete the
+original: ids survive, identity does not, and a peer's concurrent edit inside a moved
+block is lost. A folded toggle moves with its hidden children and stays folded. Opaque
+content never moves or duplicates; it can be copied or deleted only when its subtree has
+a proven lossless representation (plain BlockNote XML of known node types), otherwise
+those commands are disabled too. The **transfer payload** is the copied subtrees as the
+Yjs update of a scratch document (`BlockNoteSubtreePayload`, private pasteboard type
+beside plain text), so it is lossless by construction. A copy of whole sibling subtrees,
+or Copy block, writes it; a paste at a caret prefers it, inserting the subtrees after the
+caret's block (replacing an empty paragraph) with fresh ids in one command, and over a
+selection pastes the plain text. The pasteboard is untrusted: the payload is bounded
+(2 MiB, 2,000 blocks, 100,000 decoded structs counted before integration, 16 levels where
+it lands) and refused whole when it holds anything a BlockNote document cannot, before any
+write; a pasted link with an href the editor would not write, or an unknown mark carrying a
+URL, loses the mark, and a media URL that is not http(s) refuses the paste. Links in the native
+view are tappable only for http(s), mailto and tel, whoever wrote them. Drag to reorder is not built yet.
 
 **Selection.** `setSelection(EditorSelection?)` captures directed anchor/head
 endpoints as `YRelativePosition`s. Each `EditorPosition` holds a block id,

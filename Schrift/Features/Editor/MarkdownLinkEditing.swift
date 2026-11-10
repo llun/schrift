@@ -116,3 +116,13 @@ func sanitizedLinkURL(_ input: String) -> String? {
     }
     return candidate
 }
+
+/// Whether a stored link may be tappable: one of the schemes the editor writes
+/// (`allowedLinkSchemes`) and, for http(s), a host. A peer's or a pasted
+/// `javascript:`, custom-scheme or deep link renders as plain text instead.
+func isOpenableLink(_ href: String) -> Bool {
+    guard let url = URL(string: href), let scheme = url.scheme?.lowercased(), allowedLinkSchemes.contains(scheme)
+    else { return false }
+    if scheme == "http" || scheme == "https" { return !(url.host ?? "").isEmpty }
+    return true
+}

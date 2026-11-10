@@ -271,18 +271,24 @@ private struct SyntheticIMEControls: View {
 }
 
 /// `--native-tree`: puts the caret at the second bullet's start, as a tap
-/// there would, and reads every block's depth back from the mounted storage
-/// (the nesting is otherwise only an indent on screen).
+/// there would, and reads every block's depth (and the first three blocks'
+/// text) back from the mounted storage (the nesting is otherwise only an
+/// indent on screen).
 private struct TreeControls: View {
     @State private var depths = ""
+    @State private var texts = ""
 
     var body: some View {
         VStack(spacing: 8) {
             Button("Caret in second") { Self.placeCaret(in: "owned-tree-2") }
                 .accessibilityIdentifier("tree.caret")
-            Button("Read tree") { depths = Self.depths() }
-                .accessibilityIdentifier("tree.read")
+            Button("Read tree") {
+                depths = Self.depths()
+                texts = Self.texts()
+            }
+            .accessibilityIdentifier("tree.read")
             Text(depths).accessibilityIdentifier("tree.depths")
+            Text(texts).accessibilityIdentifier("tree.texts")
         }
         .buttonStyle(.bordered)
     }
@@ -303,6 +309,10 @@ private struct TreeControls: View {
         guard let view = mountedTextView(), let block = blocks().first(where: { $0.id == blockID }) else { return }
         view.selectedRange = NSRange(location: block.location, length: 0)
         view.delegate?.textViewDidChangeSelection?(view)
+    }
+
+    @MainActor private static func texts() -> String {
+        (mountedTextView()?.textStorage.string ?? "").components(separatedBy: "\n").prefix(3).joined(separator: "|")
     }
 
     @MainActor private static func depths() -> String {

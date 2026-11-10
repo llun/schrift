@@ -776,6 +776,8 @@ struct BlockNoteWriter {
     func snapshot(_ type: YType, range: Range<Int>? = nil, block: String, depth: Int) throws -> Copy {
         guard depth < Self.maxCopyDepth else { throw Error.malformedBlock(block) }
         if type.typeRef == .xmlText {
+            // A copy has no place for XmlText attributes: refuse rather than drop them.
+            guard type.map.values.allSatisfy(\.deleted) else { throw Error.malformedBlock(block) }
             var marks = YTextAttributes()
             var position = 0
             var values: [TextValue] = []
