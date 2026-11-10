@@ -2386,8 +2386,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `NSRange`/UIKit (`DocumentEngineBoundaryTests`); the writer has `Range<Int>` overloads. Return in a code block, and pasting
   lines into one, is one `.replace` that keeps "\n" in the block (the engine accepts "\n"
   only for `codeBlock`). Under `nativeMarks` the projection also models `callout`,
-  `pageBreak` and any numbered `start` (undefined or ≥ 1), so such documents stay
-  typeable; the classic projection keeps them opaque/lossy. Tests: `NativeBlockPresentationTests`
+  `pageBreak` and any numbered `start` (undefined or ≥ 1); the classic projection keeps
+  them opaque/lossy. Since PR06c the save shadow spells them as the export does (see the
+  PR06c bullet), so a callout or page break no longer makes the production route read-only. Tests: `NativeBlockPresentationTests`
   (checkbox, heading-level and type-change bytes/XML against the node captures),
   `NativeAccessibilityTests`, the host UI test `testCheckboxTapSurvivesRelaunch`
   (`--native-blocks` seeds a heading, checklist, code, lists, quote and divider).
@@ -2447,7 +2448,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   sibling run (`listNumbers` keys the previous number by parent). The save shadow and
   `canType` use `NativeBlockProjection.markdownShadow`: a flat document's classic shadow,
   else the tree indented (Markdown keeps list nesting, other nesting reads flat), so a
-  nested list stays typeable and savable. Tests: `NativeTreeProjectionTests`,
+  nested list stays typeable and savable (PR06c adds callouts, toggles and page breaks). Tests: `NativeTreeProjectionTests`,
   `NativeIndentTests`, `BlockNoteTreeOracleTests` (`f-sink-bullet`, `enter-empty-nested`)
   and the host UI test `testTabNestsTheSecondBulletAndSurvivesRelaunch` (`--native-tree`
   seeds two bullets and host-only caret/depth controls). Subtree
@@ -2493,15 +2494,39 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   (`resetsTo`), then merges as before. A range touching a toggle is refused (writer and
   engine). The slash menu adds native-only "Toggle heading" (level 1, `isToggleable`) and
   "Toggle list" (`toggleHeadingSlashItem`/`toggleListSlashItem`, `SlashMenuAction.toggle`,
-  never in `allSlashMenuItems`), each one `.blockType` `setBlockType`. A document with a
-  toggle has no Markdown shadow yet (`markdownShadow` reads the classic projection), so the
-  production open route keeps it read-only (`canType`), like a callout; the isolated host
-  and tests type in it. Tests: `NativeToggleTests`, `BlockNoteToggleOracleTests` (every
+  never in `allSlashMenuItems`), each one `.blockType` `setBlockType`. Since PR06c every
+  toggle shape has a Markdown shadow (below), so a toggle no longer makes the production
+  open route read-only (`canType`). Tests: `NativeToggleTests`, `BlockNoteToggleOracleTests` (every
   command against `BlockNoteToggleCaptures`, captured from the installed 0.56 through the
   view's keydown handling: tiptap's `keyboardShortcut` command replays steps with
   `maybeStep` and drops the toggle commands' later steps) and the host UI test
   `testFoldedToggleKeepsItsChildrenWhileTypingElsewhere` (`--native-typing --native-toggle`).
 
+- **PR06c rich-block save shadow.** `NativeBlockProjection.markdownShadow` spells the
+  blocks only the native projection models the way the server's Markdown export
+  (BlockNote 0.56 `blocksToMarkdownLossy`) does, checked against the real capture: a
+  callout is a paragraph with its emoji, a space and its text (`👍 Text`; background
+  dropped), a toggle list item is a bullet, a toggle heading a plain heading with its
+  children flat, and a page break is dropped. These are rewrites of the classic tree
+  (`exportSpelling`, matched by the classic opaque reasons), so the classic projection,
+  `projectedMarkdown`'s self-check, preservation and golden bytes are unchanged, and a flat
+  document with none of these blocks keeps exactly the classic shadow. A root subtree the
+  classic rendering cannot spell like the export (`needsExport`: a toggle list item with a
+  non-list descendant, as Return in an open toggle makes, or a callout or page break with
+  children) is instead the export's own Markdown from `NativeExportMarkdown`, a port of
+  0.56's `serializeBlocksExternalHTML` + `htmlToMarkdown`: a toggle's children go into its
+  `<details>` as indented continuation paragraphs, except its leading list children, which
+  move after them (`* T\n\n  c1\n  * sub` for either order); a plain block's children
+  flatten after it; inline text is not escaped. The classic parser reads those indented
+  lines as verbatim text, so the chunk skips the classic self-check (nothing to compare)
+  and is joined to the classic segments by blank lines. Lossy like the export; the raw Yjs
+  save still carries the real blocks. Only a callout without a non-empty emoji (the native
+  editor never writes one) has no shadow; tables, media, math, columns and diagrams gate
+  as before. Known gap shared by every shadow: the writer spells italic `_x_`, the export
+  `*x*`. Tests: `NativeShadowExportParityTests` (the `.review/` capture item by item up to
+  its table, the export's spellings, thirteen toggle shapes pinned byte for byte against the
+  installed exporter, `canType`, a typed save and Return in an open toggle whose shadow
+  `draftSyncDecision` reads as our last push).
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (`@MainActor`), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below
