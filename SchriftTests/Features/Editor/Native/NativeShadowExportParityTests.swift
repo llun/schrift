@@ -40,8 +40,8 @@ final class NativeShadowExportParityTests: DocumentEngineTestCase {
     }
 
     /// The real capture's marks paragraph: the server exports italic `*italic*` where the
-    /// shadow writes `_italic_`, and the two must still compare equal, or every save of an
-    /// italic document reads as the server having changed it. Skipped where the capture is absent.
+    /// shadow writes `_italic_`, and the two must still compare equal for `draftSyncDecision`
+    /// (`syncCanonicalMarkdown`), or every save of an italic document raises a conflict. Skipped where the capture is absent.
     func testTheRealCapturesMarksParagraphMatchesTheServerExport() throws {
         let (doc, export) = try Self.capture()
         defer { doc.destroy() }
@@ -59,7 +59,7 @@ final class NativeShadowExportParityTests: DocumentEngineTestCase {
         try doc.transact { tx in for item in dropped { item.delete(tx) } }
         let shadow = try XCTUnwrap(NativeBlockProjection.markdownShadow(doc))
         XCTAssertTrue(shadow.contains("_italic_"), "the shadow spells italic with underscores: \(shadow)")
-        XCTAssertEqual(canonicalMarkdown(shadow), canonicalMarkdown(String(exported) + "\n"))
+        XCTAssertEqual(syncCanonicalMarkdown(shadow), syncCanonicalMarkdown(String(exported) + "\n"))
     }
 
     /// The real capture of the test document (`.review/`, not committed): its Yjs state,

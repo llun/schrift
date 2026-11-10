@@ -101,6 +101,28 @@ final class EditorViewModelBaselineTests: EditorViewModelTestCase {
         await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
     }
 
+    /// A server body that differs from the screen only in how its marks are spelled or
+    /// ordered is still a change to `reconcileClean` (strict `canonicalMarkdown`): it is
+    /// installed, not just recorded as the baseline. Otherwise the screen keeps
+    /// `[bold, italic]` runs under a `[italic, bold]` baseline, and the next Docs 6 save reads
+    /// those blocks as user-touched (`BlockNotePreservation.sameContent` is order-sensitive)
+    /// and drops their preserved server props.
+    func testReconcileCleanInstallsASpellingOnlyServerChange() async {
+        let (viewModel, coordinator, _, _) = makeEnvironment()
+        stubLoad(content: "A **_word_** and _this_")
+        await viewModel.load()
+
+        stubLoad(content: "A _**word**_ and *this*")
+        await viewModel.load()  // not editing, not dirty
+
+        XCTAssertEqual(viewModel.blocks.map(\.text), ["A _**word**_ and *this*"])
+        XCTAssertEqual(
+            viewModel.blocks.flatMap { InlineMarkdown.parse($0.text) }.map { $0.marks.map(\.key) },
+            InlineMarkdown.parse("A _**word**_ and *this*").map { $0.marks.map(\.key) },
+            "the screen's mark order is the server's")
+        await waitUntil { coordinator.pendingSave(documentID: self.documentID) == nil }
+    }
+
     /// Opting into a body stashed behind the "Updated" banner (applyPendingUpdate)
     /// makes that body the baseline — the on-screen content now descends from it.
     func testApplyPendingUpdateCapturesBaseline() async {

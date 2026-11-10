@@ -129,18 +129,39 @@ func adoptedBaseline(_ baseline: DraftBaseline?, draftTitle: String, pushingTitl
 /// export does (zeroing leaf indents alone re-attaches a second sibling after the
 /// leaf, which the export does not). Nesting a leaf therefore never counts as a
 /// body change on its own — the content and its order still do.
-///
-/// **Insensitive to inline spelling.** The app writes italic `_x_` (`InlineMarkdownWriter`,
-/// the formatting bar) where the server's export writes `*x*`, and the two escape literal
-/// characters differently. Every block whose text is inline markdown (`rendersInlineMarkdown`)
-/// is respelled from its parsed runs (`InlineMarkdown.parse`, the reading the save encodes)
-/// by the writer at `escapeAll: true`, which round-trips — so two texts compare equal only
-/// when they encode the same runs, and the bytes a save sends never move.
 func canonicalMarkdown(_ markdown: String) -> String {
+    serializeMarkdown(flattenedLikeServerExport(parseEditorBlocks(markdown)))
+}
+
+/// `canonicalMarkdown` for `draftSyncDecision`'s body rules only, also blind to how inline
+/// marks are **spelled**: the app writes italic `_x_` (`InlineMarkdownWriter`, the formatting
+/// bar) where the server's export writes `*x*`, so a strict compare read every save of an
+/// italic document as a server change and raised a conflict against the user's own push.
+///
+/// Each `rendersInlineMarkdown` block's text is replaced by an encoding of the runs it parses
+/// to (`InlineMarkdown.parse`, the reading every save encodes): each run's exact text and its
+/// marks as a sorted set, links by their value, adjacent runs with the same set joined. Only
+/// delimiter spelling, escapes and mark order drop out — no whitespace moves, so texts compare
+/// equal exactly when they encode the same content. Everything else stays strict
+/// (`canonicalMarkdown`): those callers reinstall or preserve blocks, where order matters.
+func syncCanonicalMarkdown(_ markdown: String) -> String {
     serializeMarkdown(
         flattenedLikeServerExport(parseEditorBlocks(markdown)).map { block in
-            guard rendersInlineMarkdown(block.kind),
-                let text = InlineMarkdownWriter.write(InlineMarkdown.parse(block.text), escapeAll: true)
+            guard rendersInlineMarkdown(block.kind), !block.text.isEmpty else { return block }
+            var runs: [(text: String, marks: [[String]])] = []
+            for run in InlineMarkdown.parse(block.text) where !run.text.isEmpty {
+                let marks = run.marks.map { [$0.key, $0.valueJSON] }.sorted { $0.lexicographicallyPrecedes($1) }
+                if let last = runs.last, last.marks == marks {
+                    runs[runs.count - 1].text += run.text
+                } else {
+                    runs.append((run.text, marks))
+                }
+            }
+            let encoded = runs.map { [$0.text, $0.marks] as [Any] }
+            // Arrays of strings only, so serialization cannot fail; JSON escapes every newline,
+            // so the encoding never splits the block.
+            guard let data = try? JSONSerialization.data(withJSONObject: encoded),
+                let text = String(data: data, encoding: .utf8)
             else { return block }
             var block = block
             block.text = text
@@ -148,16 +169,9 @@ func canonicalMarkdown(_ markdown: String) -> String {
         })
 }
 
-/// `canonicalMarkdown` before it respelled inline markdown, kept for the persisted
-/// `ReplicaDraftReference.projectionDigest`: a digest written by an earlier build must still
-/// match the same shadow, or its draft would never sync. Not for comparisons with the server.
-func canonicalMarkdownStructure(_ markdown: String) -> String {
-    serializeMarkdown(flattenedLikeServerExport(parseEditorBlocks(markdown)))
-}
-
 /// Decides how to reconcile a queued draft with the server copy fetched at sync time.
 ///
-/// Rules, applied in order (every markdown comparison is canonical-form):
+/// Rules, applied in order (every markdown comparison is `syncCanonicalMarkdown`):
 ///
 /// 0. The server body **already equals our local body** → there is nothing to conflict
 ///    about: replaying is a content no-op (it still lands the title). This is the backstop
@@ -246,13 +260,13 @@ private func draftSyncBodyDecision(
     serverMarkdown: String,
     tolerance: TimeInterval
 ) -> DraftSyncBodyDecision {
-    let serverCanonical = canonicalMarkdown(serverMarkdown)
+    let serverCanonical = syncCanonicalMarkdown(serverMarkdown)
 
-    if canonicalMarkdown(localMarkdown) == serverCanonical {
+    if syncCanonicalMarkdown(localMarkdown) == serverCanonical {
         return .push(.serverHoldsOurBody)
     }
 
-    if let lastPushedMarkdown, canonicalMarkdown(lastPushedMarkdown) == serverCanonical {
+    if let lastPushedMarkdown, syncCanonicalMarkdown(lastPushedMarkdown) == serverCanonical {
         return .push(.serverHoldsOurLastPush)
     }
 
@@ -260,7 +274,7 @@ private func draftSyncBodyDecision(
         if let baselineDate = baseline.serverUpdatedAt, serverUpdatedAt <= baselineDate {
             return .push(.descendsFromBaseline)
         }
-        if canonicalMarkdown(baseline.markdown) == serverCanonical {
+        if syncCanonicalMarkdown(baseline.markdown) == serverCanonical {
             return .push(.descendsFromBaseline)
         }
         return .conflict

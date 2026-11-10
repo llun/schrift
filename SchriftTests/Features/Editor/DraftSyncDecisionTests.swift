@@ -134,18 +134,36 @@ final class DraftSyncDecisionTests: XCTestCase {
         XCTAssertEqual(written + "\n", shadowMarksParagraph, "only italic is spelled differently")
     }
 
-    func testCanonicalMarkdownIgnoresInlineSpellingButNotMarks() {
-        XCTAssertEqual(canonicalMarkdown(shadowMarksParagraph), canonicalMarkdown(serverMarksParagraph))
-        XCTAssertEqual(
-            canonicalMarkdown("# _a_ b\n- **_c_**\n> d\\*\n"), canonicalMarkdown("# *a* b\n* _**c**_\n> d\\*\n"))
-        XCTAssertEqual(canonicalMarkdown("a\\_b\n"), canonicalMarkdown("a_b\n"), "an escape that changes nothing")
+    func testSyncCanonicalMarkdownIgnoresInlineSpellingButNotMarks() {
+        func same(_ a: String, _ b: String, _ why: String, line: UInt = #line) {
+            XCTAssertEqual(syncCanonicalMarkdown(a), syncCanonicalMarkdown(b), why, line: line)
+        }
+        func differ(_ a: String, _ b: String, _ why: String, line: UInt = #line) {
+            XCTAssertNotEqual(syncCanonicalMarkdown(a), syncCanonicalMarkdown(b), why, line: line)
+        }
+        same(shadowMarksParagraph, serverMarksParagraph, "`_italic_` and `*italic*`")
+        same("# _a_ b\n- **_c_**\n> d\\*\n", "# *a* b\n* _**c**_\n> d\\*\n", "spelling and mark order")
+        same("a\\_b\n", "a_b\n", "an escape that changes nothing")
+        // The writer cannot spell these italics (`_` flanking), which must not switch the
+        // rest of the block back to a spelling-sensitive compare.
+        same("_a_ 中*文*字\n", "*a* 中*文*字\n", "CJK `*` emphasis in the same block")
+        same("_a_ *x*s\n", "*a* *x*s\n", "intraword `*` emphasis in the same block")
+        differ("*x*s\n", "_x_s\n", "intraword `_` is literal (CommonMark), so these say different things")
         // A mark gained, lost or moved is still a change.
-        XCTAssertNotEqual(canonicalMarkdown("_italic_\n"), canonicalMarkdown("italic\n"))
-        XCTAssertNotEqual(canonicalMarkdown("_italic_\n"), canonicalMarkdown("**italic**\n"))
-        XCTAssertNotEqual(canonicalMarkdown("_ital_ic\n"), canonicalMarkdown("*italic*\n"))
-        XCTAssertNotEqual(canonicalMarkdown("\\*italic\\*\n"), canonicalMarkdown("*italic*\n"))
+        differ("_italic_\n", "italic\n", "a mark removed")
+        differ("_italic_\n", "**italic**\n", "a mark changed")
+        differ("_ital_ic\n", "*italic*\n", "a literal underscore")
+        differ("\\*italic\\*\n", "*italic*\n", "escaped asterisks are text")
+        // Whitespace inside a mark is content: it encodes to different runs.
+        differ("** a**\n", " **a**\n", "a space inside bold vs before it")
+        differ("x ** a**\n", "x  **a**\n", "a space inside bold vs before it, mid-line")
+        differ("2 * 3 * 4\n", "2  _3_  4\n", "spaces inside italic vs around it")
+        differ("x *\ta*\n", "x \t*a*\n", "a tab inside italic vs before it")
+        differ("x *\u{00A0}a*\n", "x \u{00A0}*a*\n", "an NBSP inside italic vs before it")
         // Code blocks are verbatim: their spelling is their content.
-        XCTAssertNotEqual(canonicalMarkdown("```\n_x_\n```\n"), canonicalMarkdown("```\n*x*\n```\n"))
+        differ("```\n_x_\n```\n", "```\n*x*\n```\n", "code block text")
+        // Every other comparison stays strict.
+        XCTAssertNotEqual(canonicalMarkdown("_x_\n"), canonicalMarkdown("*x*\n"))
     }
 
     /// The false conflict: our save pushed the shadow (`_italic_`), the server's export of it
