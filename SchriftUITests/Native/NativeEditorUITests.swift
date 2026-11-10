@@ -510,6 +510,7 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(images.count, 2, "the drags passed several images")
         XCTAssertGreaterThanOrEqual(tables.count, 2, "and several tables")
         let endHeight = Double(readout.label) ?? 0
+        XCTAssertGreaterThan(endHeight, 0, "the content height readout is readable at the end")
         XCTAssertLessThan(
             endHeight - startHeight, 0.15 * endHeight,
             "revealed cards were estimated at their final height: \(startHeight) -> \(endHeight)")

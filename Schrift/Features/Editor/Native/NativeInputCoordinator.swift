@@ -73,7 +73,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         let relayout = surface.onFoldChange
         surface.onFoldChange = { [weak self] in
             relayout?()
-            self?.keepSelectionVisible()
+            // A peer patch may have edited storage just before this fold callback.
+            self?.asOneKeyboardChange { self?.keepSelectionVisible() }
         }
         inputLanguage = { [weak view] in view?.textInputMode?.primaryLanguage }
         view.delegate = self
