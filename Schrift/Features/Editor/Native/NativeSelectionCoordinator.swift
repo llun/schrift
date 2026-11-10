@@ -94,7 +94,7 @@ final class NativeSelectionCoordinator {
     /// are ignored: a newer one is in flight.
     func restore(from resolved: ReplicaSelection?) {
         guard let resolved, resolved.seq == seq, resolved.tracked, let view, !isRestoring,
-            view.markedTextRange == nil, let fallback
+            view.markedTextRange == nil
         else { return }
         let anchor = resolved.anchor.flatMap(documentOffset)
         let head = resolved.head.flatMap(documentOffset)
@@ -105,6 +105,8 @@ final class NativeSelectionCoordinator {
         } else if let survivor = anchor ?? head {
             range = NSRange(location: survivor, length: 0)
         } else {
+            // Only both endpoints gone needs the neighbours of the last capture.
+            guard let fallback else { return }
             let index = surface.rangeIndex
             guard !index.entries.isEmpty else { return clear() }
             if let id = fallback.after, let entry = index.entry(for: id) {

@@ -29,7 +29,10 @@ final class NativeCompositionTests: DocumentEngineTestCase {
         let log: WriteLog
         let directory: URL
 
-        func settle() async { await session.settle() }
+        func settle(file: StaticString = #filePath, line: UInt = #line) async {
+            let drained = await session.settle()
+            XCTAssertTrue(drained, "the session settled", file: file, line: line)
+        }
 
         func close() async {
             await session.close().value

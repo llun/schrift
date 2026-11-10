@@ -29,7 +29,10 @@ final class NativeStructuralTests: DocumentEngineTestCase {
         var input: NativeInputCoordinator { session.input! }
         var view: NativeTextView { session.textView }
 
-        func settle() async { await session.settle() }
+        func settle(file: StaticString = #filePath, line: UInt = #line) async {
+            let drained = await session.settle()
+            XCTAssertTrue(drained, "the session settled", file: file, line: line)
+        }
         func run(_ action: () -> Bool) async -> Bool { await session.run(action) }
         func engine<T: Sendable>(_ body: @escaping @Sendable (DocumentEngine) -> T) async -> T? {
             await session.engine(body)

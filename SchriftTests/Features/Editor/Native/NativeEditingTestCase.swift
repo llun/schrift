@@ -56,7 +56,8 @@ extension NativeEditorSession {
     func run(_ action: () -> Bool) async -> Bool {
         input?.resetOutcome()
         let taken = action()
-        await settle()
+        let drained = await settle()
+        XCTAssertTrue(drained, "the session settled")
         return taken && input?.lastOutcome != false
     }
 }
@@ -102,7 +103,12 @@ class NativeEditingTestCase: DocumentEngineTestCase {
         var view: NativeTextView { session.textView }
 
         /// Everything posted so far is handled and shown.
-        func settle() async { await session.settle() }
+        /// Fails the test when work is still in flight after the bound: an
+        /// assertion must never read a half-drained state.
+        func settle(file: StaticString = #filePath, line: UInt = #line) async {
+            let drained = await session.settle()
+            XCTAssertTrue(drained, "the session settled", file: file, line: line)
+        }
 
         /// `action`'s eventual outcome (see `NativeEditorSession.run`).
         func run(_ action: () -> Bool) async -> Bool { await session.run(action) }

@@ -83,7 +83,15 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     /// block in display coordinates (the coordinator maps the view's
     /// selection through them when the session's endpoints are stale).
     private(set) var shownDeltas: [(blockID: String, deltas: [TextDelta])] = []
-    func resetShownDeltas() { shownDeltas = [] }
+    /// Blocks whose slice was rebuilt (or removed) by that delivery: offsets
+    /// in them cannot be mapped through deltas. `shownReset`: the whole storage.
+    private(set) var shownReplaced: Set<String> = []
+    private(set) var shownReset = false
+    func resetShownDeltas() {
+        shownDeltas = []
+        shownReplaced = []
+        shownReset = false
+    }
     /// A concurrent change could not be rebased: the session will invalidate
     /// the epoch; until then nothing is predicted.
     private(set) var expectsInvalidation = false
@@ -132,10 +140,6 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
 
     /// One delivered patch with its settled per-block projections.
     func applyPatch(_ patch: BlockPatch, settled: [String: BlockSnapshot]) {
-        guard !isFrozen else {
-            frozenPatches.append((patch, settled))
-            return
-        }
         self.settled = settled
         defer { self.settled = nil }
         applyPatch(patch)
@@ -233,6 +237,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                 replace(at: position, with: block)
             case .remove(let ids):
                 let removed = Set(ids)
+                shownReplaced.formUnion(ids)
                 for id in ids where canonical.removeValue(forKey: id) != nil { expectsInvalidation = true }
                 for position in blocks.indices.reversed() where removed.contains(blocks[position].id) {
                     storage.deleteCharacters(in: rangeIndex.entries[position].range)
@@ -254,6 +259,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                 blocks.insert(contentsOf: fresh, at: position)
                 rangeIndex = ProjectionRangeIndex(blocks: blocks, labels: labels)
             case .reset(let reset):
+                shownReset = true
                 if !predictions.isEmpty { expectsInvalidation = true }
                 canonical = [:]
                 blocks = reset
@@ -294,7 +300,13 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         guard let index = predictions.firstIndex(where: { $0.commandID == commandID }) else { return }
         let prediction = predictions.remove(at: index)
         let id = prediction.blockID
-        let journaled = settled?[id]
+        // An echo the engine spelled as a whole-block rebuild (an empty block's
+        // first text) carries its own snapshot.
+        let rebuilt = patch.changes.lazy.compactMap { change -> BlockSnapshot? in
+            if case .replaceBlock(let block, let snapshot) = change, block == id { return snapshot }
+            return nil
+        }.last
+        let journaled = settled?[id] ?? rebuilt
         if predictions.contains(where: { $0.blockID == id }) {
             if let journaled { canonical[id] = journaled }
             return
@@ -368,6 +380,14 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         let restore = canonical
         canonical = [:]
         guard !restore.isEmpty else { return dropped }
+        guard !isFrozen else {
+            // Marked text owns storage: the canonical blocks are shown when the
+            // composition reconciles, never written under it.
+            for (id, block) in restore {
+                frozenPatches.append((BlockPatch([.replaceBlock(blockID: id, block: block)], origin: .other), nil))
+            }
+            return dropped
+        }
         isApplyingPatch = true
         defer { isApplyingPatch = false }
         storage.beginEditing()
@@ -659,6 +679,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     }
 
     private func replace(at position: Int, with block: BlockSnapshot) {
+        shownReplaced.insert(block.id)
         storage.replaceCharacters(
             in: rangeIndex.entries[position].range,
             with: rendered(block, at: position))

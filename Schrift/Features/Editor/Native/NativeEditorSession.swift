@@ -190,12 +190,15 @@ final class NativeEditorSession {
     }
 
     /// Returns once every message posted before it was handled and its
-    /// delivery applied, including keys held behind a barrier.
-    func settle() async {
-        for _ in 0..<64 {
+    /// delivery applied, including keys held behind a barrier. False when work
+    /// was still in flight after `maxRounds` drains (tests fail on it).
+    @discardableResult
+    func settle(maxRounds: Int = 64) async -> Bool {
+        for _ in 0..<maxRounds {
             await drainOnce()
-            guard input?.hasInFlightWork == true else { return }
+            guard input?.hasInFlightWork == true else { return true }
         }
+        return input?.hasInFlightWork != true
     }
 
     private func drainOnce() async {

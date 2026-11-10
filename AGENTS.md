@@ -2784,15 +2784,21 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   outdent, block actions, paste, undo/redo, composition commit/cancel, typing into a
   block the session once refused) is a **barrier**: shown when its result arrives;
   keys typed meanwhile are held as intents (`.insert`/`.deleteBackward`, from
-  `NativeTextView`'s `typeKey`/`deleteKey` hooks) and replayed; other actions return
+  `NativeTextView`'s `typeKey`/`deleteKey` hooks, the delegate, UITextInput `replace`
+  and a composing keyboard's direct character, also over a selection) and replayed; a
+  selection the user makes meanwhile wins over the barrier's caret; other actions return
   false. A barrier that meets a change its surface had not seen comes back `.stale`
-  and is retried once from the current display. **Journal before publication,
+  and is retried once from the current display: an action on a range (marks, a range
+  replacement, unpredicted typing) is retried on that range moved through what was shown
+  since, and a cut's pending copy follows the retried delete. **Journal before publication,
   redefined:** publication is the canonical advance, save scheduling
   (`NativeReplicaSaveScheduler.schedule` only on a journaled `.applied` or commit) or a
   network send; a predicted keystroke on screen is provisional UI, like marked text. A
   failed or refused append rolls the display back to canonical, freezes authoring and
-  turns the dropped text (with held keys) into an `.orphaned` `ProvisionalRecovery`
-  banner entry. **Rebase:** the session keeps, per surface, the changes it had not seen
+  turns the dropped text (with held keys, even when no prediction was dropped) into an
+  `.orphaned` `ProvisionalRecovery` banner entry; while text is marked the canonical
+  blocks wait for the composition to reconcile. A prediction echoed as a whole-block
+  rebuild settles from that snapshot, and a repair keeps the caret at its block offsets. **Rebase:** the session keeps, per surface, the changes it had not seen
   (`unseen`, every patch but its own predicted echoes, `ringCapacity` 256); a predicted
   command is rebased through them with `TextDelta.rebase(range:assoc:through:blockID:)`
   and they through it (`rebase(_:throughReplacing:length:)`), exactly as the surface
@@ -2815,7 +2821,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   nothing until the answer arrives (prefetched on selection changes); copy, cut and Copy
   block write the pasteboard when the session's payload arrives (a cut only once its
   delete was applied). `NativeEditorSession` is the main-actor view session (no graph):
-  it consumes deliveries in order, `settle()` waits for a drain marker and anything held,
+  it consumes deliveries in order, `settle()` waits for a drain marker and anything held
+  (and returns false if work is still in flight after its bound; the harness fails then),
   `close()` returns a `Task` that ends after every message posted before it was
   journaled (a late append's save is handed over then), and `NativeEditorOpen` awaits
   the previous close before an open and rechecks its generation and account after the
