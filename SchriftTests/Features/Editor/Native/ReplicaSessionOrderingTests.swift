@@ -965,7 +965,7 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
 
     /// I3 (round 5): a barrier that comes back stale while text is marked is
     /// handled after the composition (a retried Return would commit the
-    /// marked text); its origin was rewritten by the commit, so it is not retried.
+    /// marked text), then retried through the committed text (P5, round 8).
     func testAStaleBarrierWaitsForTheComposition() async throws {
         let harness = try await makeHarness()
         addTeardownBlock { await harness.close() }
@@ -979,10 +979,9 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
         XCTAssertNil(harness.input.noticeKey, "the stale answer waits")
         harness.view.unmarkText()
         await harness.settle()
-        XCTAssertEqual(harness.input.noticeKey, .native_editor_input_unavailable)
-        XCTAssertEqual(
-            texts(harness.session).prefix(2), ["Firstか paragraph.", "Second paragraph has bold words inside it."])
-        try await assertConsistent(harness, localCommands: 1)
+        XCTAssertNil(harness.input.noticeKey)
+        XCTAssertEqual(texts(harness.session).prefix(2), ["First", "か paragraph."])
+        try await assertConsistent(harness, localCommands: 2)
     }
 
     /// I4: a selection the user made during a barrier that rebuilt its block
@@ -1475,5 +1474,141 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
         XCTAssertEqual(texts(harness.session).prefix(2), ["paragraph.", "Second paragraph has bold words inside it."])
         XCTAssertEqual(Set(harness.input.composition.pendingRecoveries.map(\.text)), ["xyy", "か"])
         try await assertConsistent(harness, localCommands: 0)
+    }
+
+    // MARK: - Review round 8 (PR #272)
+
+    /// A gated harness whose first composition commit is still in flight, with
+    /// `held` sent by the keyboard behind it.
+    private func commitInFlight(_ disk: Latch, held: String) async throws -> Harness {
+        let harness = try await gated(disk)
+        try caret(harness, Self.firstID, 5)
+        harness.view.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0))
+        harness.view.unmarkText()
+        harness.view.setMarkedText(held, selectedRange: NSRange(location: held.utf16.count, length: 0))
+        XCTAssertEqual(harness.input.heldMarkedText, held)
+        return harness
+    }
+
+    /// P1: held marked text begins even when replayed keys leave input busy,
+    /// and the keyboard's next marked string supersedes it (no second copy).
+    func testHeldMarkedTextIsSupersededByTheKeyboardsNextString() async throws {
+        let disk = Latch()
+        let harness = try await gated(disk)
+        try caret(harness, Self.firstID, 5)
+        harness.view.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0))
+        harness.view.unmarkText()
+        harness.view.insertText("\n")
+        harness.view.insertText("y")
+        harness.view.setMarkedText("ご", selectedRange: NSRange(location: 1, length: 0))
+        // The replayed Return's append waits, so "y" stays held behind it.
+        harness.session.onDelivery = { delivery in
+            if case .composition? = delivery.result { disk.close() }
+        }
+        disk.open()
+        await waitUntil { disk.waiting == 1 }
+        harness.session.onDelivery = nil
+        harness.view.setMarkedText("ごは", selectedRange: NSRange(location: 2, length: 0))
+        disk.open()
+        harness.view.unmarkText()
+        await harness.settle()
+        XCTAssertNil(harness.view.markedTextRange)
+        XCTAssertNil(harness.input.heldMarkedText)
+        XCTAssertEqual(texts(harness.session).joined().components(separatedBy: "ご").count, 2, "one ご")
+        try await assertConsistent(harness, localCommands: 4)
+    }
+
+    /// P2: held marked text survives a storage failure as a recovery entry.
+    func testHeldMarkedTextIsRecoveredOnAFailure() async throws {
+        let disk = Latch()
+        let harness = try await commitInFlight(disk, held: "ご")
+        harness.session.freezeAuthoring()
+        disk.open()
+        _ = await harness.session.settle()
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_storage_failed)
+        XCTAssertNil(harness.input.heldMarkedText)
+        XCTAssertNil(harness.view.markedTextRange)
+        XCTAssertTrue(harness.input.composition.pendingRecoveries.map(\.text).contains("ご"))
+    }
+
+    /// P3: Return commits held marked text like a composition (no split), and
+    /// a candidate replaces it.
+    func testReturnCommitsHeldMarkedTextAndACandidateReplacesIt() async throws {
+        let disk = Latch()
+        let harness = try await commitInFlight(disk, held: "ご")
+        harness.view.insertText("\n")
+        disk.open()
+        await harness.settle()
+        XCTAssertEqual(texts(harness.session).first, "Firstにほんご paragraph.")
+        XCTAssertEqual(harness.session.surface.blocks.count, 3, "no split")
+
+        disk.close()
+        harness.view.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0))
+        harness.view.unmarkText()
+        harness.view.setMarkedText("き", selectedRange: NSRange(location: 1, length: 0))
+        harness.view.replace(try XCTUnwrap(harness.view.selectedTextRange), withText: "木")
+        disk.open()
+        await harness.settle()
+        XCTAssertNil(harness.view.markedTextRange)
+        XCTAssertEqual(texts(harness.session).first, "Firstにほんごかな木 paragraph.")
+        try await assertConsistent(harness, localCommands: 4)
+    }
+
+    /// P4: editing that ends while marked text is held keeps it as a recovery
+    /// entry; nothing composes later and deliveries keep applying.
+    func testEndingEditingRecoversHeldMarkedText() async throws {
+        let disk = Latch()
+        let harness = try await commitInFlight(disk, held: "ご")
+        harness.input.textViewDidEndEditing(harness.view)
+        disk.open()
+        await harness.settle()
+        XCTAssertFalse(harness.input.composition.isActive)
+        XCTAssertTrue(harness.input.composition.pendingRecoveries.map(\.text).contains("ご"))
+        let peer = try peerEdit { try $0.replaceText(block: Self.thirdID, range: 0..<0, with: "Peer ") }
+        harness.session.replica?.mailbox.post(.integrate(peer, reply: nil))
+        await harness.settle()
+        XCTAssertEqual(texts(harness.session).last, "Peer Third paragraph.")
+    }
+
+    /// P5: a stale barrier in the block a composition committed into is
+    /// retried through the committed text, not dropped as a rebuilt block.
+    func testAStaleBarrierInTheComposedBlockIsRetriedThroughTheCommit() async throws {
+        let blocks = [paragraph("a", "Alpha"), paragraph("b", "Beta")]
+        let harness = try await makeHarness(blocks)
+        addTeardownBlock { await harness.close() }
+        let peer = try makeDoc(blocks, clientID: 9)
+        defer { peer.destroy() }
+        let edit = try BlockNoteWriter(doc: peer).replaceText(block: "b", range: 0..<0, with: "Peer ")
+        harness.session.replica?.mailbox.post(.integrate(edit, reply: nil))
+        try caret(harness, "a", 2)
+        XCTAssertTrue(harness.input.insertNewline())
+        harness.view.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        harness.view.unmarkText()
+        await harness.settle()
+        XCTAssertNil(harness.input.noticeKey)
+        XCTAssertEqual(texts(harness.session), ["Al", "かpha", "Peer Beta"])
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
+    /// P5: a cancelled composition's caret is not taken as the user's
+    /// selection: an undo retried behind it puts the caret where its step was.
+    func testACancelledCompositionLeavesAStaleUndoItsSelection() async throws {
+        let blocks = [paragraph("a", "Alpha"), paragraph("b", "Beta")]
+        let harness = try await makeHarness(blocks)
+        addTeardownBlock { await harness.close() }
+        try caret(harness, "a", 5)
+        harness.view.insertText("!")
+        await harness.settle()
+        let peer = try makeDoc(blocks, clientID: 9)
+        defer { peer.destroy() }
+        let edit = try BlockNoteWriter(doc: peer).replaceText(block: "b", range: 0..<0, with: "Peer ")
+        harness.session.replica?.mailbox.post(.integrate(edit, reply: nil))
+        try caret(harness, "b", 2)
+        XCTAssertTrue(harness.input.undo())
+        harness.view.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        harness.view.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
+        await harness.settle()
+        XCTAssertEqual(texts(harness.session), ["Alpha", "Peer Beta"])
+        XCTAssertEqual(harness.view.selectedRange, NSRange(location: try location(harness.session, "a", 5), length: 0))
     }
 }

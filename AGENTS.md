@@ -2818,9 +2818,16 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   through `apply(_:)`; then the failure that waited, stale retries (the composition's caret
   carried as the user's selection), held keys and marked text the keyboard sent while the
   commit was in flight (held, never refused) run, in that order (no surface freeze, no
-  buffered echoes, no deferred rollback). A begin carries its epoch: one from an epoch the
-  session already invalidated is not captured, and its commit is orphaned. A cut while
-  input is held is refused with the busy notice. An echo spelled as a whole-block rebuild settles from that
+  buffered echoes, no deferred rollback). Held marked text is the keyboard's: Return
+  commits it, a candidate or the next marked string replaces it, Backspace edits it, and a
+  focus loss or a failure keeps it as a recovery entry. A composition's own rebuild maps as
+  one span change for a barrier's retry and user selection, and only a committed
+  composition's caret is carried as the user's selection. A begin carries its epoch: one
+  from an epoch the session already invalidated is not captured, and its commit is
+  orphaned. A cut while input is held is refused with the busy notice. A commit or cancel
+  that could not be posted (a full mailbox) leaves the session's engine composing: authoring
+  is frozen, and the read-only display of that block stops following peers until the
+  editor is reopened (accepted). An echo spelled as a whole-block rebuild settles from that
   snapshot; a predicted block a concurrent change showed as canonical keeps its
   predictions off screen until the invalidation, so later patches are not shifted by them. **Rebase:** the session keeps, per surface, the changes it had not seen
   (`unseen`, every patch but its own predicted echoes, `ringCapacity` 256); a predicted

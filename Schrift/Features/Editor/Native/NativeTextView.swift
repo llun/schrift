@@ -52,6 +52,8 @@ final class NativeTextView: UITextView {
             if !inputCoordinator.holdMarkedText(markedText) { inputCoordinator.refuseComposition() }
             return
         }
+        // The keyboard's marked string is cumulative: a held one is superseded.
+        inputCoordinator.endHeldMarkedText(committing: false)
         isApplyingMarkedText = true
         apply()
         isApplyingMarkedText = false
@@ -82,6 +84,14 @@ final class NativeTextView: UITextView {
             super.replace(range, withText: text)
             return
         }
+        if inputCoordinator.heldMarkedText != nil {
+            // Backspace edits held marked text; a candidate replaces it.
+            if text.isEmpty {
+                deleteBackward()
+                return
+            }
+            inputCoordinator.endHeldMarkedText(committing: false)
+        }
         if inputCoordinator.composition.isActive {
             // A keyboard committing a candidate over the marked text; any other
             // range would use offsets that are stale until reconciliation.
@@ -108,8 +118,12 @@ final class NativeTextView: UITextView {
             super.insertText(text)
             return
         }
-        // A keyboard inserting its candidate replaces marked text it held.
-        inputCoordinator.endHeldMarkedText(committing: false)
+        // Like a composition: Return commits held marked text, a candidate replaces it.
+        if inputCoordinator.heldMarkedText != nil {
+            let isReturn = text == "\n" || text == "\r"
+            inputCoordinator.endHeldMarkedText(committing: isReturn)
+            if isReturn { return }
+        }
         // Return and Tab (a hardware Tab without the key command below) are
         // structural; while a barrier is in flight every key is held (PR08b).
         if inputCoordinator.composition.isActive, text != "\n", text != "\r", text != "\t" {

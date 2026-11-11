@@ -257,15 +257,17 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         let deliveries = queued
         queued = []
         for delivery in deliveries { applyNow(delivery) }
+        let committed: Bool
+        if case .committed? = finishing?.outcome { committed = true } else { committed = false }
         finishing = nil
         // A failure that waited stops authoring before anything is retried.
         if failsAfterComposition {
             failsAfterComposition = false
             stopAfterStorageFailure()
         }
-        // The composition's caret is the user's latest selection: a barrier
-        // still in flight (or retried below) keeps it.
-        if released, barrier != nil { userSelection = blockSelection().map { ($0, barrierShown.count) } }
+        // A committed composition's caret is the user's latest selection: a
+        // barrier still in flight (or retried below) keeps it.
+        if committed, barrier != nil { userSelection = blockSelection().map { ($0, barrierShown.count) } }
         let stale = staleAfterDrain
         staleAfterDrain = []
         asOneKeyboardChange(if: !stale.isEmpty) {
@@ -275,11 +277,26 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         refreshSelectionMarks()
         replayIntents()
         // Marked text that came while the commit was in flight begins now,
-        // after the keys typed before it.
-        if let held = heldMarkedText, intents.isEmpty, !compositionOwnsView {
+        // after the keys typed before it that could replay.
+        if let held = heldMarkedText, !compositionOwnsView {
             heldMarkedText = nil
             view?.setMarkedText(held, selectedRange: NSRange(location: held.utf16.count, length: 0))
         }
+    }
+
+    /// The one contiguous change from `old` to `new` (UTF-16).
+    private static func span(_ old: String, _ new: String) -> TextDelta {
+        let a = Array(old.utf16)
+        let b = Array(new.utf16)
+        var prefix = 0
+        while prefix < min(a.count, b.count), a[prefix] == b[prefix] { prefix += 1 }
+        var suffix = 0
+        while suffix < min(a.count, b.count) - prefix, a[a.count - 1 - suffix] == b[b.count - 1 - suffix] {
+            suffix += 1
+        }
+        return TextDelta(
+            range: prefix..<(a.count - suffix),
+            replacement: String(decoding: b[prefix..<(b.count - suffix)], as: UTF16.self))
     }
 
     /// The answer a composition gets when its commit or cancel cannot be
@@ -307,11 +324,27 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return true
     }
 
-    /// The keyboard ended the held marked text: committed as typed text, or dropped.
+    /// The keyboard ended the held marked text: committed as typed text, or
+    /// dropped. Frozen, a commit keeps it as a recovery entry instead.
     func endHeldMarkedText(committing: Bool) {
         guard let held = heldMarkedText else { return }
         heldMarkedText = nil
-        if committing { typeKey(held) }
+        guard committing else { return }
+        if isFrozen { recover(held) } else { typeKey(held) }
+    }
+
+    /// Held marked text editing ended without (a focus loss) or a failure:
+    /// kept as a recovery entry, like an interrupted composition.
+    private func recoverHeldMarkedText() {
+        guard let held = heldMarkedText else { return }
+        heldMarkedText = nil
+        recover(held)
+    }
+
+    private func recover(_ text: String) {
+        if let block = blockSelection()?.start.0 ?? surface.blocks.first?.id {
+            composition.recover(text, blockID: block)
+        }
     }
 
     /// Applies one delivery: its patches in order, then its result, as one
@@ -333,6 +366,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             needsRestore = false
             surface.resetShownDeltas()
             let shownSelection = blockSelection()
+            // A composition's own rebuild: the text before it, to map it as one span change.
+            let composed: [String: String]? =
+                if case .composition? = delivery.result, barrier != nil {
+                    Dictionary(surface.blocks.map { ($0.id, text(of: $0)) }, uniquingKeysWith: { first, _ in first })
+                } else { nil }
             for event in delivery.events {
                 switch event {
                 case .patch(let patch, let settled):
@@ -348,10 +386,19 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 }
             }
             if barrier != nil {
-                barrierShown.append(
-                    Shown(
-                        deltas: surface.shownDeltas, replaced: surface.shownReplaced,
-                        retexted: surface.shownRetexted, reset: surface.shownReset))
+                var shown = Shown(
+                    deltas: surface.shownDeltas, replaced: surface.shownReplaced, retexted: surface.shownRetexted,
+                    reset: surface.shownReset)
+                // The committed (or cancelled) text is what the user saw: offsets
+                // around it map. shortcut: the span is diffed, so a commit beside
+                // equal characters may map one of them to its other side; exact
+                // enough for a caret, upgrade with the engine's commit delta.
+                for id in shown.replaced {
+                    guard let old = composed?[id], let block = block(id) else { continue }
+                    shown.replaced.remove(id)
+                    if shown.retexted.contains(id) { shown.deltas.append((id, [Self.span(old, text(of: block))])) }
+                }
+                barrierShown.append(shown)
             }
             canonicalRevision = delivery.revision
             history.mirror(canUndo: delivery.state.canUndo, canRedo: delivery.state.canRedo)
@@ -643,7 +690,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// True while a command, a held key or a composition result is in flight.
     var hasInFlightWork: Bool {
         barrier != nil || composition.isResolving || hasUnansweredPrediction || !intents.isEmpty
-            || !pendingCopies.isEmpty
+            || !pendingCopies.isEmpty || heldMarkedText != nil
     }
 
     /// A prediction whose answer has not arrived (one queued behind a
@@ -743,6 +790,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     }
 
     func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+        if heldMarkedText != nil, view?.isApplyingMarkedText != true {
+            // Held marked text is the keyboard's: Backspace edits it, a candidate replaces it.
+            if text.isEmpty {
+                view?.deleteBackward()
+                return false
+            }
+            endHeldMarkedText(committing: Self.isNewline(text))
+            if Self.isNewline(text) { return false }
+        }
         // Key input reaches `NativeTextView.insertText`, which never asks the
         // delegate; this covers UIKit paths that do, so Return routes once.
         if Self.isNewline(text), view?.isApplyingMarkedText != true {
@@ -844,6 +900,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     func textViewDidEndEditing(_ textView: UITextView) {
         // An allowance for a keystroke that never arrived ends with editing.
         directInsertion = nil
+        recoverHeldMarkedText()
         guard composition.isActive else { return }
         view?.dropMarkedText()
         composition.interrupt()
@@ -1925,6 +1982,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         isFrozen = true
         barrier = nil
         if !surface.predictions.isEmpty || !intents.isEmpty { rollBack() }
+        recoverHeldMarkedText()
         // No delete will be applied and no payload may come: nothing is copied.
         pendingCopies = [:]
         view?.isEditable = false
