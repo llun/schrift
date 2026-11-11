@@ -59,6 +59,11 @@ enum ReplicaMessage: Sendable {
     /// Awareness (PR10): peers' published cursors, by client id, resolved
     /// against the replica now. Never writes it.
     case resolveCursors([UInt: AwarenessCursor], reply: @Sendable ([UInt: PeerCursorPlaces]) -> Void)
+    /// Navigation (PR10b): every block with its handle, in document order.
+    case navigation(reply: @Sendable ([NativeNavigationEntry]) -> Void)
+    /// Navigation (PR10b): the block `handle` names if it is still that
+    /// block in this replica (same generation and item), else nil.
+    case locate(NativeBlockHandle, reply: @Sendable (String?) -> Void)
     case requestAvailability(surfaceID: UUID, blockID: String, candidates: [ReplicaAvailabilityCandidate])
     case copyPayload(surfaceID: UUID, requestID: UUID, blockIDs: [String])
     /// Installs the journal (nil makes the session read-only) and the shared
@@ -84,6 +89,8 @@ enum ReplicaMessage: Sendable {
         case .integrate(_, let reply): reply?(.failure(DocumentEngineError.detached))
         case .liveSync(_, let reply): reply(nil, nil)
         case .resolveCursors(_, let reply): reply([:])
+        case .navigation(let reply): reply([])
+        case .locate(_, let reply): reply(nil)
         case .inspect(let body): body(nil, nil, nil)
         default: break
         }

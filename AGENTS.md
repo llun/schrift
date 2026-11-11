@@ -3089,8 +3089,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   even after it resigned first responder; a resolution can lag one delivery behind the
   display (a peer caret in a block being typed into shifts by the predicted characters until
   the echo); an overlong selection highlight across folded content is not drawn (the caret
-  is); peers in a document whose replica freezes keep their last places. Navigation
-  (outline, find, reading position on generation-safe handles) is PR10b. Tests:
+  is); peers in a document whose replica freezes keep their last places. Navigation is
+  PR10b (bullet below). Tests:
   `NativeAwarenessTests` (direction and affinity through edits, malformed/oversized payloads
   and replica fingerprints, unknown root names, deletion with two peers, stale clocks,
   expiry and disconnect, the peer bound, viewport-only painting across scroll and width,
@@ -3099,6 +3099,41 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   identity read per dial, a stale identity answer dropped, frames stop when not current, the
   highlight bound, the name pill bound, the resolve cadence) and the host UI test
   `testPeerCursorsPaintVisibleGeometryAndBadgeFoldedContent` (`--native-peer`).
+
+- **PR10b Native outline, find and continue reading.** `NativeDocumentNavigation` (one per
+  `NativeEditorSession`, `session.navigation`) offers the native blocks to the classic pure
+  rules (`buildOutline`, `findMatchingBlockIDs`, `ReadingPositionSession`/`Store`) and the
+  classic `DocumentOutlineSheet` (through `DocumentOutlinePresentation`: a toolbar button
+  `nativeEditor.outline` and Command-F) as `EditorBlock`s with an id stable for the open:
+  headings carry their literal text backslash-escaped (the classic rules read markdown, so
+  `**` stays text), everything else is `.unknown` (verbatim). The entries come from the replica
+  session (`.navigation`, a projection stamped with the engine index's generation) or, for
+  the one-shot reader, its fixed surface; they are refreshed when the sheet opens and at most
+  every 500 ms after delivered patches. **A jump is generation-safe:** the entry's
+  `NativeBlockHandle` is checked on the replica (`.locate`: same index generation, same
+  container item, not deleted), so a block re-created since it was read (a move, a rebuilt
+  replica) does not jump until the next refresh; it then `reveal`s the toggles above its
+  target (view state) and scrolls with `NativeTextView.scroll(toBlock:surface:)`, which
+  relocates TextKit's viewport rather than laying out the document. A jump never writes the
+  replica or moves the selection. **Continue reading** is the classic session keyed by the
+  route's `documentID` (`NativeEditorView.documentID`, from `EditorView`): restored once after
+  the first refresh when the view has a size (every block counts as laid out; one in a fold is
+  unfolded), persisted from the top visible fragment's block on disappear and when the scene
+  leaves `.active`, Back to top (`nativeEditor.backToTop`) over the text, dismissed by a user
+  scroll (`NativeTextView.onLayout`). The fingerprint is of the native text, so a position
+  saved by the classic editor (markdown text) is not found by the native one.
+  **VoiceOver over collaborators:** carets read "name, cursor" or "name, selection", badges
+  "name, collaborator in folded content" (or "name, cursor" on a preview), and the overlay
+  groups them (`shouldGroupAccessibilityChildren`); the overlay itself is never an element, so
+  it does not cover the text. **Known limits:** a heading moved while the sheet is open needs
+  the sheet to refresh (reopen) before it jumps; the outline is at most 500 ms behind typing;
+  find matches block text only (a preview's name or caption is not searched); restore needs one
+  round trip to the replica after open; the overlay's elements still sit in the text view's
+  element order (grouped, not removed). Tests: `NativeNavigationTests` (literal headings and
+  find, a heading jump that changes no content, journal or selection, a find jump into a fold,
+  a stale handle, the outline following edits, restore at 390 and 1024 pt with Back to top,
+  leaving at the top, collaborator labels and grouping) and the host UI test
+  `testOutlineFindsInTheNativeEditorWithoutChangingText`.
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves

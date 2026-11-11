@@ -345,6 +345,10 @@ actor DocumentReplicaSession {
                 cursors.mapValues {
                     PeerCursorPlaces(anchor: engine.peerPlace($0.anchor), head: engine.peerPlace($0.head))
                 })
+        case .navigation(let reply):
+            reply(engine.navigationEntries())
+        case .locate(let handle, let reply):
+            reply(engine.locate(handle))
         case .requestAvailability(let surfaceID, let blockID, let candidates):
             let actions = candidates.filter { candidate in
                 guard let kind = candidate.kind else { return engine.hasLosslessCopy(blockID) }
