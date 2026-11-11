@@ -432,6 +432,134 @@ final class TableEditorTests: NativeEditingTestCase {
         XCTAssertEqual(harness.view.selectedRange.location, try location(harness.session, "tail", 0))
     }
 
+    // MARK: - Review fixes (PR #278)
+
+    /// T2: a peer's structure change re-reads the grid and re-shows the same
+    /// cell without selecting its text, so the next key does not replace it.
+    func testAPeerStructureChangeKeepsTheCaretInTheActiveCell() async throws {
+        let harness = try await makeHarness(state: try fixture("styled"))
+        addTeardownBlock { await harness.close() }
+        let editor = try await editor(harness)
+        let table = try XCTUnwrap(editor.cellSession)
+        editor.activate(TableGrid.CellRef(row: 1, index: 1))  // "Engineer"
+        let caret = NSRange(location: try location(table, ids(table)[4], 3), length: 0)
+        setSelection(table, caret)
+        let update = try peerUpdate("styled") { _, tx, table in
+            let cell = try XCTUnwrap(self.element(table, [2, 0]))
+            try YWrite.mapSet(tx, on: cell, key: "backgroundColor", .any([.string("red")]))
+        }
+        try await harness.session.integrateServerState(update)
+        await table.settle()
+        for _ in 0..<300 where editor.grid?.rows[2][0].string("backgroundColor") != "red" {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(editor.grid?.rows[2][0].string("backgroundColor"), "red", "the grid was read again")
+        XCTAssertEqual(editor.active, TableGrid.CellRef(row: 1, index: 1))
+        XCTAssertEqual(table.textView.selectedRange, caret, "the caret stayed; the cell is not selected")
+        table.textView.insertText("x")
+        await table.settle()
+        XCTAssertEqual(table.surface.blocks[4].runs.map(\.text).joined(), "Engxineer")
+    }
+
+    /// T3a: a merged cell (several paragraphs) is spelled in the shadow only
+    /// while unstyled, so it takes no marks, and the document stays savable.
+    func testAMergedCellTakesNoMarks() async throws {
+        let harness = try await makeHarness(state: try fixture("merged"))
+        addTeardownBlock { await harness.close() }
+        let table = try await unwrapped(await harness.session.openTable("tbl"))
+        addTeardownBlock { await table.close().value }
+        let input = try XCTUnwrap(table.input)
+        let de = [ids(table)[3], ids(table)[4]]  // "d", "e"
+        XCTAssertEqual(de.map { try? block(table, $0).runs.map(\.text).joined() }, ["d", "e"])
+        input.showCell(de)
+        setSelection(table, NSRange(location: try location(table, de[0], 0), length: 1))
+        XCTAssertFalse(input.toggleMark("bold"), "no marks in a merged cell")
+        setSelection(table, NSRange(location: try location(table, de[0], 1), length: 0))
+        XCTAssertFalse(input.toggleMark("italic"), "no pending marks either")
+        let refused = await harness.engine { engine -> Bool in
+            let mark = NativeEditCommand(
+                id: UUID(), baseRevision: engine.revision, blockID: de[0],
+                kind: .marks(
+                    NativeMarkCommand(
+                        startOffset: 0, endBlockID: de[0], endOffset: 1,
+                        attributes: [TextMark(key: "bold", valueJSON: "{}")])))
+            let typed = NativeEditCommand(
+                id: UUID(), baseRevision: engine.revision, blockID: de[0], range: 1..<1, replacement: "x",
+                marks: [TextMark(key: "bold", valueJSON: "{}")])
+            return !engine.canApplyStructural(mark) && (try? engine.replaceText(typed, persist: { _ in })) == nil
+        }
+        XCTAssertEqual(refused, true, "the engine refuses both")
+        XCTAssertEqual(harness.log.commands.count, 0)
+        let shadow = await harness.session.replicaDoc { NativeBlockProjection.markdownShadow($0) != nil }
+        XCTAssertEqual(shadow, true)
+    }
+
+    /// T3b and T3c: no command nests a table or gives one children (the
+    /// shadow spells only a childless root table): Tab under a table, a move
+    /// into a sibling's children, a table pasted into nested content.
+    func testNoCommandNestsATable() async throws {
+        let harness = try await makeHarness(state: try fixture("styled"))
+        addTeardownBlock { await harness.close() }
+        let child = UUID().uuidString
+        let outcomes = await harness.engine { engine -> [Bool] in
+            func apply(_ id: String, _ kind: NativeEditCommand.Kind) -> Bool {
+                (try? engine.applyStructural(
+                    NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: id, kind: kind),
+                    persist: { _ in })) != nil
+            }
+            let tabUnderTable = apply("tail", .indent)
+            // "lead" gets a child, so moving the table up would nest it there.
+            let inserted = apply("lead", .insertBlock(newID: child, before: false))
+            let nested = apply(child, .indent)
+            let moveIntoChildren = apply("tbl", .moveUp)
+            let payload = engine.subtreePayload(["tbl"]) ?? Data()
+            let pasteNested = apply(child, .insertSubtrees(payload: payload))
+            let pasteRoot = apply("tail", .insertSubtrees(payload: payload))
+            return [tabUnderTable, inserted, nested, moveIntoChildren, pasteNested, pasteRoot]
+        }
+        XCTAssertEqual(outcomes, [false, true, true, false, false, true])
+        let shadow = await harness.session.replicaDoc { NativeBlockProjection.markdownShadow($0) != nil }
+        XCTAssertEqual(shadow, true, "the document keeps its shadow")
+        // The coordinator's Tab is the same refusal: a quiet no-op.
+        setSelection(harness.session, NSRange(location: try location(harness.session, "tail", 0), length: 0))
+        let tabbed = await harness.run { harness.input.insertTab() }
+        XCTAssertFalse(tabbed)
+    }
+
+    /// T4: a block whose id spells a cell paragraph id makes the document
+    /// non-canonical (input refused, resets only), and the open table stops
+    /// addressing cells; it never overwrites a real paragraph's entry.
+    func testABlockIDSpellingACellParagraphIsRefused() async throws {
+        let (harness, table) = try await open()
+        let spoofed = ids(table)[4]
+        let update = try peerUpdate("styled") { _, tx, table in
+            let container = try XCTUnwrap(table.item?.parentType)
+            let group = try XCTUnwrap(container.item?.parentType)
+            let block = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            try YWrite.insertAfter(tx, into: group, after: container.item, [.type(block)])
+            let paragraph = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+            try YWrite.insertAfter(tx, into: block, after: nil, [.type(paragraph)])
+            try YWrite.mapSet(tx, on: block, key: "id", .any([.string(spoofed)]))
+        }
+        try await harness.session.integrateServerState(update)
+        await table.settle()
+        await harness.settle()
+        let open = await harness.engine { engine -> Int in engine.tableParagraphs("tbl")?.count ?? -1 }
+        XCTAssertEqual(open, 0, "no cell is addressed in a non-canonical document")
+        XCTAssertTrue(table.surface.blocks.isEmpty, "the table surface dropped its paragraphs")
+        let typed = await harness.engine { engine -> Bool in
+            (try? engine.replaceText(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: spoofed, range: 0..<0, replacement: "x"),
+                persist: { _ in })) != nil
+        }
+        XCTAssertEqual(typed, false)
+        let canonical = await harness.session.replicaDoc { doc -> Bool in
+            BlockIndex(doc: doc).isCanonical
+        }
+        XCTAssertEqual(canonical, false)
+    }
+
     func testDuplicatingATableKeepsItsCells() async throws {
         let harness = try await makeHarness(state: try fixture("styled"))
         addTeardownBlock { await harness.close() }

@@ -190,6 +190,7 @@ struct TableGrid: Equatable, Sendable {
         guard table.typeRef == .xmlElement(nodeName: "table") else { return refuse("not a table") }
         guard props(of: table) != nil else { return refuse("unreadable table attribute") }
         var count = 0
+        var area = 0
         for rowItem in YBlockProjection.children(of: table, includeFormats: false) {
             guard case .type(let row) = rowItem.content, row.typeRef == .xmlElement(nodeName: "tableRow"),
                 props(of: row) != nil
@@ -212,6 +213,12 @@ struct TableGrid: Equatable, Sendable {
                 guard let colspan = span("colspan"), let rowspan = span("rowspan") else {
                     return refuse("unreadable span")
                 }
+                // The slots the spans claim, bounded before any is allocated: a
+                // rectangular grid covers each slot once, so a familiar table has
+                // at most `maxCells` of them (spans are each ≤ `maxCells`, so the
+                // product cannot overflow).
+                area += colspan * rowspan
+                guard area <= maxCells else { return refuse("large table") }
                 switch cellProps.first(where: { $0.key == "colwidth" })?.value {
                 case nil, .null?, .undefined?: break
                 case .array(let values)? where values.count == colspan:

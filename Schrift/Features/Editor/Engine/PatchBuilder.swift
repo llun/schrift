@@ -116,7 +116,7 @@ struct PatchBuilder {
             // A table paragraph's element changed (its first text, a break,
             // an attribute): rebuild that paragraph. Anything else inside an
             // open table re-reads its paragraph list below.
-            if TableGrid.isParagraphID(id) {
+            if index.isTableParagraph(id) {
                 structural.insert(id)
                 continue
             }
@@ -297,7 +297,7 @@ struct PatchBuilder {
     /// One block at its indexed depth and parent, as the tree projection
     /// reads it. O(block); not counted (the engine's own reads use it).
     func nativeSnapshot(_ entry: BlockIndex.Entry) -> NativeBlockSnapshot {
-        if TableGrid.isParagraphID(entry.id) { return Self.paragraphSnapshot(entry) }
+        if index.isTableParagraph(entry.id) { return Self.paragraphSnapshot(entry) }
         return NativeBlockProjection.projectBlock(
             entry.containerItem, depth: entry.depth, parent: entry.parentID.flatMap { index.entries[$0]?.handle },
             generation: index.generation)

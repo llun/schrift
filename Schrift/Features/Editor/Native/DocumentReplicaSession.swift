@@ -681,6 +681,8 @@ actor DocumentReplicaSession {
     /// paragraphs and the table's own changes (which it ignores, and its
     /// editor reads as a structure signal), and a reset as its table's.
     private func events(_ events: [ReplicaDelivery.Event], for surface: SurfaceState) -> [ReplicaDelivery.Event] {
+        // The spelling is sound here: a canonical index refuses a block id
+        // holding U+0001, and a non-canonical one only ever delivers `.reset`.
         func shown(_ id: String) -> Bool {
             guard let table = surface.table else { return !TableGrid.isParagraphID(id) }
             return id == table || TableGrid.tableID(ofParagraph: id) == table && TableGrid.isParagraphID(id)

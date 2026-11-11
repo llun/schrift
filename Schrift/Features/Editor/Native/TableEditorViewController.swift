@@ -32,6 +32,7 @@ final class TableEditorViewController: UIViewController {
     /// Set once the grid is shown (tests wait for it).
     private(set) var isLoaded = false
     private var loadStarted = false
+    private var isClosed = false
     var labels = NativeEditorLabels()
     var cellLabel: (Int, Int) -> String = { "Row \($0), column \($1)" }
     var doneTitle = "Done"
@@ -77,6 +78,11 @@ final class TableEditorViewController: UIViewController {
         guard !loadStarted else { return }
         loadStarted = true
         if let session = await document.openTable(tableID) {
+            // Closed while the table surface was attaching: end it now.
+            guard !isClosed else {
+                session.close()
+                return
+            }
             cellSession = session
             grid = session.grid
             session.onApplied = { [weak self] in self?.applied($0) }
@@ -93,6 +99,7 @@ final class TableEditorViewController: UIViewController {
 
     /// Ends the table surface and hands focus back to the document.
     func close() {
+        isClosed = true
         refreshTask?.cancel()
         cellSession?.textView.resignFirstResponder()
         cellSession?.close()
@@ -120,8 +127,10 @@ final class TableEditorViewController: UIViewController {
 
     /// Makes `ref` the active cell: the text view moves over it and shows its
     /// text selected (a viewer only highlights it).
+    /// `selecting` false re-shows the same cell after a structure change and
+    /// keeps the user's caret (selecting would make the next key replace it).
     @discardableResult
-    func activate(_ ref: TableGrid.CellRef) -> Bool {
+    func activate(_ ref: TableGrid.CellRef, selecting: Bool = true) -> Bool {
         guard let grid, grid.rows.indices.contains(ref.row), grid.rows[ref.row].indices.contains(ref.index) else {
             return false
         }
@@ -129,7 +138,7 @@ final class TableEditorViewController: UIViewController {
         active = ref
         if let session = cellSession {
             let ids = paragraphIDs(ref)
-            if let input = session.input {
+            if let input = session.input, selecting {
                 input.showCell(ids)
             } else {
                 session.surface.setFocus(Set(ids))
@@ -196,7 +205,9 @@ final class TableEditorViewController: UIViewController {
             self.cellSession?.grid = grid
             self.rebuild()
             // The active cell survives by identity; a deleted one gives way to the first.
-            if let ref = grid.order.first(where: { grid.cell($0).itemID == keep }) ?? grid.order.first {
+            if let ref = grid.order.first(where: { grid.cell($0).itemID == keep }) {
+                self.activate(ref, selecting: false)
+            } else if let ref = grid.order.first {
                 self.activate(ref)
             } else {
                 self.active = nil

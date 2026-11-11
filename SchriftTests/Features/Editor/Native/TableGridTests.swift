@@ -121,6 +121,26 @@ final class TableGridTests: XCTestCase {
         XCTAssertEqual(try grid([Self.row(cells)]).familiarity, .unfamiliar("large table"))
     }
 
+    /// Review T1: spans are bounded by the slots they claim before any slot is
+    /// allocated (a crafted 1,000-row table of full-width, row-spanning cells
+    /// asked for ~5 × 10⁸ slots on open).
+    func testSpansClaimingTooManySlotsAreLargeBeforeLayout() throws {
+        let rows = (0..<3).map { index in
+            Self.row([Self.cell("x", colspan: TableGrid.maxCells, rowspan: 3 - index)])
+        }
+        XCTAssertEqual(try grid(rows).familiarity, .unfamiliar("large table"))
+        // At the bound a spanned table is still familiar.
+        let wide = try grid([Self.row([Self.cell("a", colspan: 500, rowspan: 2)]), Self.row([])])
+        XCTAssertNotEqual(wide.familiarity, .unfamiliar("large table"))
+    }
+
+    /// The export trims a cell with JS `trim()`: U+FEFF goes, U+0085 stays.
+    func testCellsTrimLikeJavaScript() throws {
+        let grid = try grid([Self.row([Self.cell("\u{FEFF}x\u{85}", header: true)])])
+        let first = try XCTUnwrap(NativeExportMarkdown.table(grid)?.split(separator: "\n").first)
+        XCTAssertTrue(first.hasPrefix("| x\u{85} "), String(first))
+    }
+
     func testParagraphIDsAreTheirTablesAndNeverABlockID() {
         let id = TableGrid.paragraphID(table: "tbl", item: YID(client: 7, clock: 42))
         XCTAssertTrue(TableGrid.isParagraphID(id))

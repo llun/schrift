@@ -159,7 +159,7 @@ final class DocumentEngine {
             entry.isProjectable,
             !builder.nativeSnapshot(entry).block.fidelity.isOpaque,
             entry.isSimpleContainer, let element = entry.element,
-            case .xmlElement(let node)? = element.typeRef, writer.schemas[node] != nil || Self.isCellText(entry),
+            case .xmlElement(let node)? = element.typeRef, writer.schemas[node] != nil || isCellText(entry),
             entry.isSimpleText || element.length == 0,
             // A code block keeps "\n" as a source line break (BlockNote's Enter
             // there); in prose a newline is a block break, a range command.
@@ -168,6 +168,10 @@ final class DocumentEngine {
             }),
             marks?.allSatisfy({ Self.isMarkValue($0) && $0.valueJSON != "null" }) != false
         else { throw DocumentEngineError.unsupportedNativeInput }
+        // The shadow spells a merged cell only while it is unstyled (PR11a).
+        if let marks, !marks.isEmpty, isCellText(entry), Self.holdsSeveralParagraphs(entry) {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
         let target = try textTarget(entry)
         let units = entry.runs.flatMap { Array($0.text.utf16) }
         func validBoundary(_ offset: Int) -> Bool {
@@ -355,7 +359,7 @@ final class DocumentEngine {
         // A table cell's paragraph (PR11a) takes text and marks only: every
         // structural command refuses it (`structuralTarget` knows no
         // `tableParagraph` schema), and a mark change stays in the paragraph.
-        if TableGrid.isParagraphID(command.blockID) { return try prepareCellMarks(command) }
+        if builder.index.isTableParagraph(command.blockID) { return try prepareCellMarks(command) }
         // A prop edit (a code block's language) is the one command code accepts.
         let isPropEdit = if case .props = command.kind { true } else { false }
         let (node, units) = try structuralTarget(command.blockID, allowCode: isPropEdit)
@@ -444,6 +448,10 @@ final class DocumentEngine {
                 let previous = index.entries[siblings[at - 1]], previous.isSimpleContainer,
                 !builder.nativeSnapshot(previous).block.fidelity.isOpaque
             else { throw DocumentEngineError.unsupportedNativeInput }
+            // Never under a table, and never a table one level down.
+            guard !isTable(previous.id), !movesTable(command.blockID, including: { $0 > entry.depth }) else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
             try requireEditableBlock(previous.id)
             let deepest = try requireMovable(command.blockID, including: { $0 > entry.depth })
             guard deepest <= BlockNoteWriter.maxNestingDepth else { throw DocumentEngineError.unsupportedNativeInput }
@@ -592,8 +600,10 @@ final class DocumentEngine {
     private func prepareCellMarks(_ command: NativeEditCommand) throws -> PreparedCommand {
         guard case .marks(let marks) = command.kind, marks.endBlockID == command.blockID,
             !marks.attributes.isEmpty, marks.attributes.allSatisfy({ Self.isMarkValue($0) }),
-            builder.index.isCanonical, let entry = builder.index.entries[command.blockID], Self.isCellText(entry),
-            entry.isProjectable, entry.isSimpleText
+            builder.index.isCanonical, let entry = builder.index.entries[command.blockID], isCellText(entry),
+            entry.isProjectable, entry.isSimpleText,
+            // A marked merged cell has no shadow (`NativeExportMarkdown.table`).
+            !Self.holdsSeveralParagraphs(entry)
         else { throw DocumentEngineError.unsupportedNativeInput }
         let units = entry.runs.flatMap { Array($0.text.utf16) }
         guard entry.textType?.length == UInt(units.count), marks.startOffset < marks.endOffset,
@@ -610,14 +620,50 @@ final class DocumentEngine {
         )
     }
 
+    /// A cell paragraph with siblings: a merged cell.
+    private static func holdsSeveralParagraphs(_ entry: BlockIndex.Entry) -> Bool {
+        YBlockProjection.children(of: entry.group, includeFormats: false).count > 1
+    }
+
+    /// A table block: the shadow spells one only as a root block without
+    /// children, so no command may nest one or give one children (PR11a).
+    private func isTable(_ blockID: String) -> Bool {
+        builder.index.entries[blockID]?.element?.typeRef == .xmlElement(nodeName: "table")
+    }
+
+    /// Whether the blocks a move takes (`blockID` and the following ones
+    /// `including` accepts, as `requireMovable` walks them) hold a table.
+    private func movesTable(_ blockID: String, including: (Int) -> Bool) -> Bool {
+        let index = builder.index
+        guard var position = index.position[blockID] else { return false }
+        repeat {
+            if isTable(index.order[position]) { return true }
+            position += 1
+        } while position < index.order.count && including(index.entries[index.order[position]]?.depth ?? -1)
+        return false
+    }
+
+    /// Whether pasted containers would put a table below the root or give
+    /// one children.
+    private static func nestsTable(_ copies: [BlockNoteWriter.Copy], depth: Int) -> Bool {
+        copies.contains { copy in
+            guard case .element("blockContainer", _, let children) = copy else { return false }
+            if case .element("table", _, _)? = children.first, depth > 0 || children.count > 1 { return true }
+            return children.dropFirst().contains { child in
+                guard case .element("blockGroup", _, let inner) = child else { return false }
+                return nestsTable(inner, depth: depth + 1)
+            }
+        }
+    }
+
     /// An open table's paragraph (PR11a): a text target with no block schema.
-    private static func isCellText(_ entry: BlockIndex.Entry) -> Bool {
-        TableGrid.isParagraphID(entry.id) && entry.element?.typeRef == .xmlElement(nodeName: "tableParagraph")
+    private func isCellText(_ entry: BlockIndex.Entry) -> Bool {
+        builder.index.isTableParagraph(entry.id) && entry.element?.typeRef == .xmlElement(nodeName: "tableParagraph")
     }
 
     /// The writer's target for a text entry: a block, or an open table's paragraph.
     private func textTarget(_ entry: BlockIndex.Entry) throws -> BlockNoteWriter.Target {
-        Self.isCellText(entry)
+        isCellText(entry)
             ? try writer.tableParagraphTarget(entry.containerItem, id: entry.id)
             : try writer.indexedTarget(entry.containerItem, id: entry.id)
     }
@@ -773,7 +819,10 @@ final class DocumentEngine {
                 // The document's first or last root block: BlockNote does nothing.
                 throw DocumentEngineError.unsupportedNativeInput
             }
-            guard destination.depth + deepest - entry.depth <= BlockNoteWriter.maxNestingDepth else {
+            guard destination.depth + deepest - entry.depth <= BlockNoteWriter.maxNestingDepth,
+                // A table stays a root block.
+                destination.depth == 0 || !movesTable(id, including: { $0 > entry.depth })
+            else {
                 throw DocumentEngineError.unsupportedNativeInput
             }
             let offset = try caretOffset(in: id)
@@ -823,7 +872,8 @@ final class DocumentEngine {
             let shape = try BlockNoteSubtreePayload.validate(copies)
             let newIDs = (0..<shape.blocks).map { _ in UUID().uuidString }
             guard let last = newIDs.last, isFresh(newIDs),
-                entry.depth + shape.depth <= BlockNoteWriter.maxNestingDepth
+                entry.depth + shape.depth <= BlockNoteWriter.maxNestingDepth,
+                !Self.nestsTable(copies, depth: entry.depth)
             else { throw DocumentEngineError.unsupportedNativeInput }
             var ids = newIDs[...]
             let fresh = try copies.map { try $0.replacingIDs(&ids) }
@@ -1157,7 +1207,7 @@ final class DocumentEngine {
         // Selection can address any projectable single text; composing also
         // requires a block the writer supports.
         guard let entry = builder.index.entries[blockID], let element = entry.element,
-            case .xmlElement(let node)? = element.typeRef, writer.schemas[node] != nil || Self.isCellText(entry)
+            case .xmlElement(let node)? = element.typeRef, writer.schemas[node] != nil || isCellText(entry)
         else { throw DocumentEngineError.invalidPosition }
         composition = CompositionQueue(range: captured)
         compositionGeneration &+= 1
@@ -1216,7 +1266,7 @@ final class DocumentEngine {
         do {
             update = try writer.transaction { _ in
                 // A cell paragraph has no block to find; a block keeps the writer's own lookup.
-                if let entry = builder.index.entries[blockID], Self.isCellText(entry) {
+                if let entry = builder.index.entries[blockID], isCellText(entry) {
                     try writer.replaceText(in: try textTarget(entry), range: range, with: text)
                 } else {
                     try writer.replaceText(block: blockID, range: range, with: text)

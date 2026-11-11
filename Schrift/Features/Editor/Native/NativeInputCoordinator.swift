@@ -1328,7 +1328,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     private var canFormat: Bool {
         guard let view else { return false }
+        // A merged table cell (several paragraphs) is spelled in the shadow
+        // only while it is unstyled (PR11a): it takes no marks.
         return view.isEditable && !isFrozen && !isDetached && !compositionOwnsView
+            && (surface.focus?.count ?? 0) <= 1
     }
 
     /// Republishes `activeMarks` and the caret's typing attributes (what UIKit
@@ -1445,7 +1448,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// is typed with the link (one block only).
     @discardableResult
     func applyLink(label: String, url: String, to target: NativeLinkTarget) -> Bool {
-        guard let href = sanitizedLinkURL(url) else { return false }
+        guard canFormat, let href = sanitizedLinkURL(url) else { return false }
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
         let text = trimmed.isEmpty ? href : trimmed
         let mark = TextMark(key: NativeMark.link, valueJSON: NativeMark.linkValue(href))

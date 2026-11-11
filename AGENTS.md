@@ -3207,12 +3207,29 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   after the table. A structure change re-reads the grid (`.tableGrid` message) and keeps the
   active cell by item, else the first. An unfamiliar table, a reader (`inspect` keeps its
   `TableGrid.tables`) or a read-only document gets the same grid with no text view.
+  **Review fixes (PR #278).** The slots a table's spans claim are bounded (at most `maxCells`)
+  before any is allocated (`large table`), so a crafted span layout cannot exhaust memory on
+  open. A structure change re-shows the active cell in place (`activate(_:selecting: false)`)
+  and keeps the caret; only a move between cells selects the cell's text. **A table stays a
+  childless root block and a merged cell unstyled**, because only those keep the shadow (the
+  open-time `canType` is not re-checked after edits): Tab under a table or of a table, a move
+  that would put a table in a sibling's children, and a paste that lands a table below the root
+  or with children are refused before arming; marks (a mark command, typed or link marks,
+  pending toggles: `canFormat`) are refused in a cell of several paragraphs. A block id holding
+  U+0001 makes the index non-canonical (input refused, every patch a `.reset`, no open table
+  re-indexed), and paragraph-ness is decided by membership in the open table
+  (`BlockIndex.isTableParagraph`), never by the spelling; the session's filter may read the
+  spelling because only canonical indices deliver per-block changes. A cell is trimmed with JS
+  `trim()`'s set (U+FEFF trimmed, U+0085 kept). Done before the table surface attached closes
+  it at once.
   **Known limits:** the active cell edits left-aligned (the grid shows its alignment); peer cursors
   are not painted in the table editor; a mixed transaction (text and a cell colour at once) does
   not re-read the grid; IME recovery entries are not written for a cell composition; Shift-Return
   (a hard break) and typing into a hard-break cell are refused; a table over 1,000 cells, a nested
   table and the 72ebe1bb test document (math, columns, media and a diagram have no shadow yet) stay
-  read-only. Tests: `BlockNoteTableOracleTests` (`BlockNoteTableCaptures`, from the installed 0.56
+  read-only; pasting another unshadowable block (math, media, an unfamiliar table) still stops
+  saves at the next capture (the pre-existing PR06d class: the capture failure freezes authoring
+  with the storage notice). Tests: `BlockNoteTableOracleTests` (`BlockNoteTableCaptures`, from the installed 0.56
   through the S3 harness: every fixture familiar with its export as the shadow, the grid's spans,
   widths and colours, typing in a cell, into an empty cell and bold over part of one equal to the
   web's XML, the hard break, structural refusals, the real `.review/` table when present),
@@ -3221,7 +3238,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   on close, marks and a pending mark, an IME commit, Tab/Shift-Tab/Return/Escape writing nothing,
   layout, undo and redo, a peer edit rebased in the active cell, a peer deleting the active row,
   relaunch, a hard-break cell, an unfamiliar table preserved and read-only, the reader's viewer,
-  the card, duplicating a table) and the host UI test `testTypingInATableCellSurvivesRelaunch`
+  the card, duplicating a table; the review fixes: the caret kept across a peer's structure
+  change, no marks in a merged cell, no command nesting a table, a block id spelling a cell
+  paragraph refused) and the host UI test `testTypingInATableCellSurvivesRelaunch`
   (`--native-open --native-table`: a web-shaped 2 × 2 table).
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above

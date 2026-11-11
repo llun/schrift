@@ -151,7 +151,7 @@ struct BlockIndex {
     /// Re-reads one block after a change. O(block), never O(document).
     mutating func refresh(_ id: String) {
         guard let entry = entries[id] else { return }
-        if TableGrid.isParagraphID(id) {
+        if isTableParagraph(id) {
             entries[id] = Self.paragraphEntry(
                 id: id, item: entry.containerItem, group: entry.group, handle: entry.handle)
             return
@@ -171,6 +171,13 @@ struct BlockIndex {
         return indexTable(id)
     }
 
+    /// Whether `id` is an open table's paragraph: membership, never the
+    /// spelling (a block id could hold the same separator).
+    func isTableParagraph(_ id: String) -> Bool {
+        guard let table = TableGrid.tableID(ofParagraph: id) else { return false }
+        return openTables[table]?.contains(id) == true
+    }
+
     mutating func closeTable(_ id: String) {
         for paragraph in openTables.removeValue(forKey: id) ?? [] {
             if let element = entries.removeValue(forKey: paragraph)?.element {
@@ -187,7 +194,7 @@ struct BlockIndex {
 
     @discardableResult
     private mutating func indexTable(_ id: String) -> Bool {
-        guard let entry = entries[id], !TableGrid.isParagraphID(id), let element = entry.element,
+        guard let entry = entries[id], !isTableParagraph(id), let element = entry.element,
             element.typeRef == .xmlElement(nodeName: "table")
         else { return false }
         let grid = TableGrid.read(element)
@@ -253,7 +260,8 @@ struct BlockIndex {
         defer {
             for table in tables {
                 openTables[table] = []
-                indexTable(table)
+                // A shape the index cannot mirror addresses no cell.
+                if isCanonical { indexTable(table) }
             }
         }
         guard let root else { return }
@@ -294,7 +302,10 @@ struct BlockIndex {
         var seen: Set<String> = []
         for child in countableChildren(of: group) {
             guard case .type(let type) = child.content, type.typeRef == .xmlElement(nodeName: "blockContainer"),
-                let id = blockID(of: type), !id.isEmpty, seen.insert(id).inserted
+                let id = blockID(of: type), !id.isEmpty, seen.insert(id).inserted,
+                // U+0001 is the cell paragraph ids' separator (PR11a): a block
+                // spelling one could pose as a table paragraph.
+                !id.unicodeScalars.contains("\u{1}")
             else { return false }
         }
         return true

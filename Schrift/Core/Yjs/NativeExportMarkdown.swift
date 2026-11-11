@@ -94,8 +94,13 @@ enum NativeExportMarkdown {
             else { return nil }
             runs = cell.paragraphs[0].runs
         }
-        return inline(runs).trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "|", with: "\\|")
+        return inline(runs).trimmingCharacters(in: jsWhitespace).replacingOccurrences(of: "|", with: "\\|")
     }
+
+    /// What JS `String.prototype.trim` removes: WhiteSpace (with U+FEFF) and
+    /// LineTerminator, but not U+0085.
+    private static let jsWhitespace = CharacterSet.whitespaces.union(
+        CharacterSet(charactersIn: "\n\u{B}\u{C}\r\u{2028}\u{2029}\u{FEFF}"))
 
     // MARK: - External HTML
 
