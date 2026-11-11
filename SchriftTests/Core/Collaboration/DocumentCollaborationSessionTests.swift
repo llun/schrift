@@ -655,4 +655,49 @@ final class DocumentCollaborationSessionTests: XCTestCase {
         await waitUntil { session.state == .ended(.closed) }
         XCTAssertEqual(fake.cancelCloseCode, .goingAway)
     }
+
+    // MARK: - Native live sends (PR09a)
+
+    func testAsyncInitialSyncStep1AndAReaderSendsOnlyStateRequests() async throws {
+        let fake = FakeWebSocket()
+        let session = DocumentCollaborationSession(
+            documentName: doc, transport: CollaborationTransport(socket: fake), canUpdate: false,
+            initialSyncStep1: {
+                await Task.yield()
+                return Data([0xAA])
+            })
+        session.start()
+        await waitUntil { fake.sentFrames.count == 1 }
+        await session.send(SyncMessage(step: .update, data: Data([0x01])))
+        await session.send(SyncMessage(step: .step2, data: Data([0x02])))
+        await session.send(SyncMessage(step: .step1, data: Data([0x03])))
+        let steps = try fake.sentFrames.map {
+            try SyncMessage(decodingPayload: HocuspocusMessage(decoding: $0).payload)
+        }
+        XCTAssertEqual(steps.map(\.step), [.step1, .step1], "a reader sends no content")
+        XCTAssertEqual(steps.map(\.data), [Data([0xAA]), Data([0x03])])
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
+
+    /// S5: a reader's session never answers a peer's SyncStep1 with content,
+    /// whatever its state provider returns.
+    func testAReaderNeverAnswersAStateRequest() async throws {
+        let fake = FakeWebSocket()
+        let capture = StateRequestCapture()
+        capture.reply = Data([0x0A, 0x0B])
+        let session = DocumentCollaborationSession(
+            documentName: doc, transport: CollaborationTransport(socket: fake), canUpdate: false,
+            onStateRequest: { vector in
+                capture.count += 1
+                return capture.reply
+            })
+        session.start()
+        await waitUntil { fake.sentFrames.count == 1 }
+        fake.deliver(message: syncFrame(step: .step1, data: Data([0x00])))
+        await waitUntil { capture.count == 1 }
+        await waitAndConfirmNever { fake.sentFrames.count > 1 }
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
 }

@@ -36,7 +36,7 @@ final class ReplicaSaveAdapter {
     /// Compaction runs once this many journal segments are already covered
     /// (acknowledged local or integrated remote). Unsent outbox segments are
     /// retained by compaction, so they never count toward it.
-    static let compactionJournalThreshold = 64
+    nonisolated static let compactionJournalThreshold = 64
 
     let scope: ReplicaScope
     private let store: ReplicaStore

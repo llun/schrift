@@ -276,7 +276,13 @@ enum YUpdateDecoder {
             var ranges: [YDeleteRange] = []
             ranges.reserveCapacity(min(Int(exactly: numRanges) ?? 0, d.remainingCount))
             for _ in 0..<numRanges {
-                ranges.append(YDeleteRange(clock: try d.readVarUInt(), length: try d.readVarUInt()))
+                let range = YDeleteRange(clock: try d.readVarUInt(), length: try d.readVarUInt())
+                // Like a struct's clock range: an end past `UInt` would trap in every
+                // later `clock + length`, so the update is refused here instead.
+                guard !range.clock.addingReportingOverflow(range.length).overflow else {
+                    throw YWireError.clockOutOfRange
+                }
+                ranges.append(range)
             }
             blocks.append(YDeleteBlock(client: client, ranges: ranges))
         }
@@ -428,6 +434,73 @@ extension YStructRecord {
         switch self {
         case .item(let item): return item.id.clock
         case .gc(let id, _), .skip(let id, _): return id.clock
+        }
+    }
+}
+
+extension YUpdate {
+    /// Whether integrating this update into `store` would leave pending structs
+    /// or deletes: a client run that starts past the store's clock or carries a
+    /// skip, an origin or parent past both the store and this update, or a
+    /// deletion of clocks neither holds. Conservative: a true answer only costs
+    /// the caller a state request (PR09a).
+    func missesDependencies(in store: YStructStore) -> Bool {
+        var reach = store.getStateVector()
+        for block in blocks {
+            guard case let first? = block.structs.first.map(Self.id(of:)) else { continue }
+            guard first.clock <= store.getState(block.client) else { return true }
+            var end = first.clock
+            for record in block.structs {
+                if case .skip = record { return true }
+                end = Self.id(of: record).clock + record.length
+            }
+            reach[block.client] = max(reach[block.client] ?? 0, end)
+        }
+        func known(_ id: YID?) -> Bool { id.map { $0.clock < (reach[$0.client] ?? 0) } ?? true }
+        for block in blocks {
+            for case .item(let item) in block.structs {
+                var parent: YID?
+                if case .id(let id)? = item.parent { parent = id }
+                guard known(item.origin), known(item.rightOrigin), known(parent) else { return true }
+            }
+        }
+        return deleteSet.contains { block in
+            block.ranges.contains { range in
+                let (end, overflow) = range.clock.addingReportingOverflow(range.length)
+                return overflow || end > (reach[block.client] ?? 0)
+            }
+        }
+    }
+
+    /// Whether integrating this update into `store` would change nothing: every
+    /// struct is already there and every deleted clock is already deleted (a
+    /// duplicate frame, an empty step2). Such an update is not journaled (PR09a).
+    func addsNothing(to store: YStructStore) -> Bool {
+        for block in blocks {
+            guard let last = block.structs.last else { continue }
+            let id = Self.id(of: last)
+            let (end, overflow) = id.clock.addingReportingOverflow(last.length)
+            if overflow || end > store.getState(block.client) { return false }
+        }
+        for block in deleteSet {
+            for range in block.ranges where range.length > 0 {
+                guard let structs = store.clients[block.client]?.structs,
+                    var index = try? YStructStore.findIndexSS(structs, range.clock)
+                else { return false }
+                let end = range.clock.addingReportingOverflow(range.length).partialValue
+                while index < structs.count, structs[index].id.clock < end {
+                    if !structs[index].deleted { return false }
+                    index += 1
+                }
+            }
+        }
+        return true
+    }
+
+    private static func id(of record: YStructRecord) -> YID {
+        switch record {
+        case .item(let item): item.id
+        case .gc(let id, _), .skip(let id, _): id
         }
     }
 }

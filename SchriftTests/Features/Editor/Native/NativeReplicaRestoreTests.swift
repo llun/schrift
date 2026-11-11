@@ -72,18 +72,19 @@ final class NativeReplicaRestoreTests: DocumentEngineTestCase {
         XCTAssertTrue(after[2].runs.map(\.text).joined().hasPrefix("server"))
         try await session.integrateServerState(serverState)
         XCTAssertEqual(session.surface.blocks, after)
-        let rev3 = await session.engine { $0.revision }
-        XCTAssertEqual(rev3, 3)
+        // The duplicate adds nothing, so it is not journaled (PR09a).
+        let rev2 = await session.engine { $0.revision }
+        XCTAssertEqual(rev2, 2)
         XCTAssertEqual(
             try store.restore(for: scope)?.manifest.outbox, [1], "remote updates never enter the local outbox")
         let reopened = try unwrapped(try await NativeEditorSession.restore(store: store, scope: scope, editable: true))
         addTeardownBlock { await reopened.close().value }
         XCTAssertEqual(reopened.surface.blocks, after)
         let revReopened = await reopened.engine { $0.revision }
-        XCTAssertEqual(revReopened, 3)
+        XCTAssertEqual(revReopened, 2)
         XCTAssertTrue(try XCTUnwrap(reopened.input).replace(range: NSRange(location: 0, length: 0), with: "more"))
         await reopened.settle()
-        XCTAssertEqual(try store.restore(for: scope)?.manifest.revision, 4)
+        XCTAssertEqual(try store.restore(for: scope)?.manifest.revision, 3)
     }
 
     func testRemoteAppendFailureFreezesBeforeDisplayAndKeepsPriorDurableState() async throws {

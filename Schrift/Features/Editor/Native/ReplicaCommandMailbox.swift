@@ -48,6 +48,11 @@ enum ReplicaMessage: Sendable {
     /// Server state merged into the replica: journaled before its patches
     /// are delivered.
     case integrate(Data, reply: (@Sendable (Result<Void, any Error>) -> Void)?)
+    /// Live sync (PR09a), answered in mailbox order: the replica's state vector
+    /// and, for a peer's SyncStep1 vector, the update it lacks (nil for a
+    /// reader, a frozen replica or a vector that cannot be read).
+    /// A message that cannot be handled answers nil for both.
+    case liveSync(peerVector: Data?, reply: @Sendable (_ stateVector: Data?, _ missing: Data?) -> Void)
     case requestAvailability(surfaceID: UUID, blockID: String, candidates: [ReplicaAvailabilityCandidate])
     case copyPayload(surfaceID: UUID, requestID: UUID, blockIDs: [String])
     /// Installs the journal (nil makes the session read-only) and the shared
@@ -71,6 +76,7 @@ enum ReplicaMessage: Sendable {
     func cancel() {
         switch self {
         case .integrate(_, let reply): reply?(.failure(DocumentEngineError.detached))
+        case .liveSync(_, let reply): reply(nil, nil)
         case .inspect(let body): body(nil, nil, nil)
         default: break
         }

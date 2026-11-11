@@ -203,8 +203,11 @@ through `retryReplicaDraft`, never the classic enqueue. A refused capture freeze
 authoring and reports `.failed`; the journal bytes stay durable.
 
 **Reconnect and accounts.** Coming back online integrates the fetched state again.
-A5's `isLiveReplicaHeld` rules are unchanged; there is no native live socket, and
-a native session never uses the live write path. Every await in open and
+A5's `isLiveReplicaHeld` rules are unchanged, and a native session never uses the
+current editor's live write path. With the Live collaboration preference on, a native
+document also joins its room (PR09a): remote updates are journaled into the same replica
+before they show, and local updates go out only after they are journaled. HTTP saving is
+unchanged and still the durable path; a dropped socket only stops the live view of peers. Every await in open and
 integration rechecks the open's generation and the remembered signed-in user. A
 change of `SessionStore.signInGeneration` closes (flushing under the account checks
 `enqueueReplica` and the sender apply) and reopens a native route, where another

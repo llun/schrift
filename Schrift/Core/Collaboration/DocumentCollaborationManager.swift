@@ -432,6 +432,21 @@ final class DocumentCollaborationManager {
         rebuildActiveSessions()
     }
 
+    /// PR09a: a socket for a native replica. `NativeCollaborationBinding` owns
+    /// the replica and the session; this manager only dials, so nothing here
+    /// tracks it. The URL and framing follow `config` (y-websocket for Docs 6,
+    /// Hocuspocus before), origin-pinned like every socket. Nil while suspended
+    /// or working offline, or when the URL cannot be pinned.
+    func nativeTransport(for documentID: UUID, config: ServerConfig) -> CollaborationTransport? {
+        guard !isSuspended, !isOffline(),
+            let request = CollaborationEndpoint.webSocketRequest(
+                serverBaseURL: serverBaseURL, documentID: documentID, cookies: cookieProvider(), config: config)
+        else { return nil }
+        return CollaborationTransport(
+            socket: socketFactory(request), wireProtocol: CollaborationWireProtocol(config: config),
+            documentName: documentID.uuidString.lowercased())
+    }
+
     /// Test/inspection: how many documents currently hold a session.
     var activeDocumentCount: Int { entries.count }
 

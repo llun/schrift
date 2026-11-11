@@ -216,7 +216,8 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         XCTAssertNil(relaunched.saveCoordinator.storedDraft(documentID: relaunched.documentID))
         await reopened.refresh(viewModel: relaunched, isOffline: false)
         XCTAssertTrue(text(restored, block: 0).hasPrefix("off"))
-        XCTAssertGreaterThan(try XCTUnwrap(env.replicaStore.manifest(for: scope)).revision, 1)
+        // The server holds nothing the replica lacks: integrating it journals nothing (PR09a).
+        XCTAssertEqual(try XCTUnwrap(env.replicaStore.manifest(for: scope)).revision, 1)
     }
 
     func testOutboxLeftByAnEndedProcessIsHandedOverOnReopen() async throws {
@@ -599,6 +600,116 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         guard case .preservedUnavailable = open.route else { return XCTFail("its draft keeps it read-only") }
     }
 
+    // MARK: - Native live gate (PR09a)
+
+    /// The socket opens only with the switch, the live preference, a Docs 6
+    /// socket and `abilities.update`; the production journal then publishes a
+    /// keystroke after its append, on both the seeded and the owned route.
+    func testNativeLiveDialsOnlyWhenTheGateHoldsAndPublishesJournaledTyping() async throws {
+        let cases: [(live: Bool, canUpdate: Bool, socket: Bool, owned: Bool, dials: Bool)] = [
+            (true, true, true, false, true), (true, true, true, true, true), (false, true, true, false, false),
+            (true, false, true, false, false), (true, true, false, false, false),
+        ]
+        for gate in cases {
+            let env = makeEnvironment()
+            let server = ServerStub(owner: owner, state: seedState())
+            server.collaborationWsUrl = gate.socket ? "wss://docs.example.org/collaboration/ws/" : nil
+            server.install()
+            if gate.owned { try seedReplica(env, typed: nil) }
+            let spy = ManagerSocketFactorySpy()
+            let open = NativeEditorOpen(preference: { true }, livePreference: { gate.live })
+            open.collaboration = DocumentCollaborationManager(
+                serverBaseURL: URL(string: "https://docs.example.org/api/v1.0/")!, cookieProvider: { [] },
+                featureEnabled: { true }, isOffline: { false }, serverConfigProvider: { nil },
+                socketFactory: spy.factory)
+            await open.open(viewModel: env.model, isOffline: false, canUpdate: gate.canUpdate)
+            guard case .native(let session) = open.route else {
+                return XCTFail("expected a native session \(gate) \(open.route)")
+            }
+            // The binding reads the replica's state vector before it dials.
+            if gate.dials {
+                await waitUntil { spy.sockets.count == 1 }
+            } else {
+                await waitAndConfirmNever { !spy.sockets.isEmpty }
+            }
+            if let socket = spy.sockets.first {
+                XCTAssertEqual(
+                    spy.requests.first?.url?.absoluteString,
+                    "wss://docs.example.org/collaboration/ws/v1/docs/\(env.model.documentID.uuidString.lowercased())")
+                session.textView.selectedRange = NSRange(location: 0, length: 0)
+                session.input?.textViewDidChangeSelection(session.textView)
+                session.textView.insertText("x")
+                await session.settle()
+                await waitUntil {
+                    socket.sentFrames.contains { frame in
+                        frame.first == 0
+                            && (try? SyncMessage(decodingPayload: Data(frame.dropFirst())))?.step == .update
+                    }
+                }
+                open.close()
+                await waitUntil { socket.cancelCloseCode == .goingAway }
+            } else {
+                open.close()
+            }
+            env.clean()
+        }
+    }
+
+    /// S4: the navigation row can be stale (an account switch, a cached row).
+    /// An online open asks the server, so a row that still says writer for a
+    /// document the account can now only read gets no typing and no socket,
+    /// on both the seeded and the owned route.
+    func testAStaleWritableRowIsCheckedWithTheServerBeforeTypingOrLive() async throws {
+        for owned in [false, true] {
+            let env = makeEnvironment()
+            let server = ServerStub(owner: owner, state: seedState())
+            server.collaborationWsUrl = "wss://docs.example.org/collaboration/ws/"
+            server.canUpdate = false
+            server.install()
+            if owned { try seedReplica(env, typed: nil) }
+            let spy = ManagerSocketFactorySpy()
+            let open = NativeEditorOpen(preference: { true }, livePreference: { true })
+            open.collaboration = DocumentCollaborationManager(
+                serverBaseURL: URL(string: "https://docs.example.org/api/v1.0/")!, cookieProvider: { [] },
+                featureEnabled: { true }, isOffline: { false }, serverConfigProvider: { nil },
+                socketFactory: spy.factory)
+            await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+            guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+            if owned {
+                // Typing started offline-first from the row; the answer downgrades it.
+                await session.settle()
+                XCTAssertFalse(session.state.writable, "the server says reader: the replica is read-only")
+            } else {
+                XCTAssertNil(session.input, "the server says reader: no typing")
+                XCTAssertEqual(env.model.saveCoordinator.nativeOwnership(documentID: env.model.documentID), .none)
+            }
+            await waitAndConfirmNever { !spy.sockets.isEmpty }
+            open.close()
+            env.clean()
+        }
+    }
+
+    /// A failed abilities request is not a reader answer: the open keeps the
+    /// row's ability, types and saves, on both routes (the server still
+    /// refuses a real reader's save).
+    func testAFailedAbilitiesRequestKeepsTheRowsAbility() async throws {
+        for owned in [false, true] {
+            let env = makeEnvironment()
+            let server = ServerStub(owner: owner, state: seedState())
+            server.detailFails = true
+            server.install()
+            if owned { try seedReplica(env, typed: nil) }
+            let open = NativeEditorOpen(preference: { true })
+            await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+            guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+            XCTAssertNotNil(session.input, "typing stays on (owned: \(owned))")
+            await session.settle()
+            XCTAssertTrue(session.state.writable, "the replica stays writable (owned: \(owned))")
+            open.close()
+            env.clean()
+        }
+    }
+
     // MARK: - Fixture
 
     private func manifestURL(_ env: Environment, _ scope: ReplicaScope) throws -> URL {
@@ -730,6 +841,9 @@ private final class ServerStub: @unchecked Sendable {
     private let owner: UUID
     private let state: Data
     private var _isOffline = false
+    private var _collaborationWsUrl: String?
+    private var _canUpdate = true
+    private var _detailFails = false
     private var _patched: [Data] = []
     private var _titles: [String] = []
     var stateGate: MockURLProtocol.ResponseGate?
@@ -743,6 +857,20 @@ private final class ServerStub: @unchecked Sendable {
     var isOffline: Bool {
         get { locked { _isOffline } }
         set { locked { _isOffline = newValue } }
+    }
+    /// The document's `abilities.update` the detail route answers.
+    var canUpdate: Bool {
+        get { locked { _canUpdate } }
+        set { locked { _canUpdate = newValue } }
+    }
+    /// The detail route answers 503, like a failing server or a captive portal.
+    var detailFails: Bool {
+        get { locked { _detailFails } }
+        set { locked { _detailFails = newValue } }
+    }
+    var collaborationWsUrl: String? {
+        get { locked { _collaborationWsUrl } }
+        set { locked { _collaborationWsUrl = newValue } }
     }
     var patchedUpdates: [Data] { locked { _patched } }
     var titles: [String] { locked { _titles } }
@@ -762,8 +890,10 @@ private final class ServerStub: @unchecked Sendable {
             let url = request.url?.absoluteString ?? ""  // `URL.path` drops the trailing slash
             let json = ["Content-Type": "application/json"]
             if url.hasSuffix("/config/") {
+                let socket = collaborationWsUrl.map { #"","COLLABORATION_WS_URL":"\#($0)"# } ?? ""
                 return .init(
-                    statusCode: 200, headers: json, body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+                    statusCode: 200, headers: json, body: Data(#"{"RELEASE_VERSION":"6.0.0\#(socket)"}"#.utf8),
+                    error: nil)
             }
             if url.hasSuffix("/users/me/") {
                 return .init(
@@ -791,6 +921,21 @@ private final class ServerStub: @unchecked Sendable {
                 return .init(
                     statusCode: 200, headers: json, body: try! JSONSerialization.data(withJSONObject: object),
                     error: nil, releasedBy: contentGate)
+            }
+            if request.httpMethod == "GET", url.hasSuffix("/"),
+                let id = url.split(separator: "/").last.flatMap({ UUID(uuidString: String($0)) })
+            {
+                if detailFails { return .init(statusCode: 503, headers: [:], body: Data(), error: nil) }
+                let detail: [String: Any] = [
+                    "id": id.uuidString.lowercased(), "title": "Fresh server title", "excerpt": NSNull(),
+                    "abilities": ["update": canUpdate], "computed_link_reach": "restricted",
+                    "computed_link_role": NSNull(), "created_at": "2026-11-07T10:00:00Z", "creator": NSNull(),
+                    "depth": 1, "link_role": "reader", "link_reach": "restricted", "numchild": 0, "path": "0001",
+                    "updated_at": "2026-11-07T10:00:00Z", "user_role": "owner",
+                ]
+                return .init(
+                    statusCode: 200, headers: json, body: try! JSONSerialization.data(withJSONObject: detail),
+                    error: nil)
             }
             if request.httpMethod == "PATCH" {
                 let body =
