@@ -2576,8 +2576,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   lines as verbatim text, so the chunk skips the classic self-check (nothing to compare)
   and is joined to the classic segments by blank lines. Lossy like the export; the raw Yjs
   save still carries the real blocks. Besides those callouts, only a callout without a
-  non-empty emoji (the native editor never writes one) has no shadow; tables, media, math, columns and diagrams gate
-  as before. The writer spells italic `_x_` where the export writes `*x*`; conflict decisions
+  non-empty emoji (the native editor never writes one) has no shadow; media, math, columns and diagrams gate
+  as before (a familiar root table is spelled since PR11a, bullet below). The writer spells italic `_x_` where the export writes `*x*`; conflict decisions
   compare parsed runs (`syncCanonicalMarkdown`), so that is not a conflict, but the port's
   verbatim chunks are compared as text. Tests: `NativeShadowExportParityTests` (the `.review/`
   capture item by item up to its table, the export's spellings, thirteen toggle shapes and
@@ -2587,7 +2587,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
 - **PR06e bounded previews and attachment sizing.** A block `AttributedDocumentProjection.isPlaceholder`
   (non-prose node or opaque) is **one U+FFFC attachment character** plus its separator:
   `displayText` is `attachmentCharacter`, so the range index, refusals and clipboard rules
-  are unchanged and these blocks stay preserved and read-only (PR11–PR14 author them).
+  are unchanged and these blocks stay preserved and read-only (PR11–PR14 author them; a
+  familiar table's cells are edited in the table editor since PR11a, bullet below).
   The preview data is `Core/Yjs/NativeBlockPreview`, read by `NativeBlockProjection.projectBlock`
   into `NativeBlockSnapshot.preview` / `BlockSnapshot.preview` (a duplicate-id rewrite gets a
   `.preserved` one), so it travels in every snapshot, reset and `.replaceBlock` and a peer's
@@ -3143,6 +3144,85 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   once typing starts) and the host UI tests `testOutlineFindsInTheNativeEditorWithoutChangingText`
   and `testAJumpSurvivesClosingTheSheetWithACaretAbove` (`--native-readout`: the top block,
   polled on the main actor; a `TimelineView` closure can run off main and trapped there).
+
+- **PR11a Native tables: the grid, preservation and cell text.** The staging plan (11a here; 11b
+  structure commands and concurrency; 11c rectangular selection, clipboard, VoiceOver grid and
+  scale) lives outside the repo. **The grid** (`Core/Yjs/TableGridModel.swift`, `TableGrid.read`)
+  is BlockNote 0.56's `table → tableRow → tableCell|tableHeader → tableParagraph+`: cell
+  attributes as stored (unknown keys kept), `colwidth` (one entry per spanned column), the slot
+  grid prosemirror-tables' `TableMap` makes (first free slot, `colspan × rowspan`), Tab order
+  (cells in row order) and the cell below (`nextCell(…, "vert", 1)`). **Familiar or not:** only the
+  four node kinds, readable attributes, a rectangular grid without overlap or a span past the edge,
+  paragraphs of marked text (readable links) or a `hardBreak`, and at most `maxCells` (1,000) cells
+  is familiar. Anything else (a mention or inline math in a cell, the shapes `fixTables` rewrites
+  on the web) is unfamiliar: the native projection keeps it opaque (`table: <reason>`), the
+  document has no shadow (read-only), `openTable` refuses it and move/duplicate refuse it, so its
+  bytes stay as authored; the viewer still shows its readable text. **The document types:** under
+  `nativeMarks` a familiar table is `.modeled` (the classic projection keeps it opaque, so classic
+  callers and golden bytes are unchanged) and `markdownShadow` spells a root table without
+  children with `NativeExportMarkdown.table`, a port of 0.56's `htmlToMarkdown.serializeTable`:
+  covered slots empty, each cell `serializeInlineContent` + JS `trim()` + `|` → `\|`, columns
+  padded to `max(10, longest)` UTF-16 units, a header row only when row 0 has a header cell (else
+  an empty one). A cell's paragraphs (a merge) and a hard break export as `\` + newline; because
+  `nodeToBlock` joins equal-styled paragraphs with "\n" and concatenates the rest, only plain
+  multi-paragraph cells are spelled, and a marked cell must be one paragraph without a break (else
+  no shadow: the document reads only). A nested table has no shadow. A familiar table is moved and
+  duplicated like any modeled block (the writer's snapshot copies every cell attribute).
+  **Cell text is the document's own machinery.** `DocumentEngine.openTable/closeTable` index an
+  open table's paragraphs in `BlockIndex` under **cell paragraph ids**
+  (`TableGrid.paragraphID`: `<tableID>\u{1}<client>.<clock>` of the paragraph item; never a
+  BlockNote id) as root-level text entries outside `order`; `blockID(for:)` resolves a change in
+  one to it. `replaceText`, composition, selection, relative positions (an empty paragraph anchors
+  on its element) and undo address them like any block (`BlockNoteWriter.tableParagraphTarget`);
+  `.marks` within one paragraph is `prepareCellMarks`; every structural command refuses them
+  (`structuralTarget` knows no `tableParagraph` schema), and a newline is never typed into one.
+  PatchBuilder gives an open paragraph's text the `.text` fast path and its element changes a
+  `.replaceBlock`; any other change inside an open table (rows, cells, spans, paragraphs) is the
+  table's `.replaceBlock` plus a diff of its paragraph list (`PatchBuilder.diff`: removes, then
+  inserts anchored after the previous kept paragraph); a tree change or rebuild re-reads every open
+  table. Snapshots are plain root paragraphs (`node: "paragraph"`, no props) whose runs read a
+  `hardBreak` as "\n"; any "\n" in a block's runs is displayed as U+2028 (one TextKit paragraph, as
+  code lines were), and a prose block holding one is never predicted (shown, not typed into).
+  **Surfaces have a scope** (`DocumentReplicaSession.attach(surfaceID:table:)`): a document
+  surface never sees a cell paragraph id; a table surface sees only its table's paragraphs and the
+  table's own changes (which `NativeTextSurface` ignores and the editor reads as a structure
+  signal), and a `.reset` re-expressed as its table's paragraphs. Epochs, unseen rings, selection
+  `seq`, prediction and the composition rule are per surface, unchanged. While a table is open the
+  document's preview is not re-rendered per keystroke; closing the last table surface sends the
+  document surfaces one `.replaceBlock(table)`. A rebuilt replica (remote fault) reopens every open
+  table. **The editor** (`TableEditorViewController`, presented full screen by `NativeEditorView`
+  from a tap or VoiceOver activation of the table card, `NativeBlockControls.onOpenTable`) lays the
+  grid out from `colwidth` (else 120 pt, BlockNote's `EMPTY_CELL_WIDTH`), spans, header cells (bold,
+  tinted), BlockNote cell colours and alignment, rows as tall as their tallest cell, and puts the
+  **table surface's own `NativeTextView`** (`NativeEditorSession.openTable`, leased by detaching,
+  no recovery entries, typing while the document types) over the active cell, never inside it.
+  That surface holds every paragraph of the table; `NativeInputCoordinator.showCell` focuses one
+  cell (`NativeTextSurface.setFocus`: every other paragraph is left out of layout exactly like
+  folded content, so the folded-content rule refuses a range or mark command reaching another
+  cell) and selects its text as `goToNextCell` does (a caret at the end of a multi-paragraph
+  cell). Moving is view state: the text view stays first responder and held keys keep flowing.
+  Keys (`tableMove`): Tab / Shift-Tab next / previous cell (nothing at either end, no new row),
+  Return the cell below (nothing on the last row), Backspace at a paragraph start nothing, Escape
+  (`UIKeyCommand.inputEscape`) and Done close the editor and put the caret at the start of the block
+  after the table. A structure change re-reads the grid (`.tableGrid` message) and keeps the
+  active cell by item, else the first. An unfamiliar table, a reader (`inspect` keeps its
+  `TableGrid.tables`) or a read-only document gets the same grid with no text view.
+  **Known limits:** the active cell edits left-aligned (the grid shows its alignment); peer cursors
+  are not painted in the table editor; a mixed transaction (text and a cell colour at once) does
+  not re-read the grid; IME recovery entries are not written for a cell composition; Shift-Return
+  (a hard break) and typing into a hard-break cell are refused; a table over 1,000 cells, a nested
+  table and the 72ebe1bb test document (math, columns, media and a diagram have no shadow yet) stay
+  read-only. Tests: `BlockNoteTableOracleTests` (`BlockNoteTableCaptures`, from the installed 0.56
+  through the S3 harness: every fixture familiar with its export as the shadow, the grid's spans,
+  widths and colours, typing in a cell, into an empty cell and bold over part of one equal to the
+  web's XML, the hard break, structural refusals, the real `.review/` table when present),
+  `TableGridTests` (every unfamiliar shape, the bound, a mention kept readable) and
+  `TableEditorTests` (predicted and journaled cell typing never shown to the document, the preview
+  on close, marks and a pending mark, an IME commit, Tab/Shift-Tab/Return/Escape writing nothing,
+  layout, undo and redo, a peer edit rebased in the active cell, a peer deleting the active row,
+  relaunch, a hard-break cell, an unfamiliar table preserved and read-only, the reader's viewer,
+  the card, duplicating a table) and the host UI test `testTypingInATableCellSurvivesRelaunch`
+  (`--native-open --native-table`: a web-shaped 2 × 2 table).
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves

@@ -223,7 +223,13 @@ private struct NativeOpenFixture: View {
                             node: "bulletListItem", props: style, runs: [InlineRun("Tree second")], id: "owned-tree-2"),
                     ], at: 0)
             }
-            _ = try replicaStore.create(for: scope, checkpoint: BlockNoteYjs.encode(blocks, clientID: 1))
+            var checkpoint = BlockNoteYjs.encode(blocks, clientID: 1)
+            // `--native-table` (PR11a): a web-shaped 2 × 2 table (a header row
+            // and an empty cell) after the first paragraph.
+            if ProcessInfo.processInfo.arguments.contains("--native-table") {
+                checkpoint = try TableFixture.inserting(into: checkpoint, after: "owned-0")
+            }
+            _ = try replicaStore.create(for: scope, checkpoint: checkpoint)
         }
         let content = DocumentContentCacheStore(directory: directory.appendingPathComponent("Content"))
         let children = DocumentChildrenCacheStore(userDefaults: defaults)
@@ -314,7 +320,7 @@ private enum MediaFixture {
                     try YWrite.insertAfter(tx, into: group, after: left, [.type(container)])
                     let table = YType(typeRef: .xmlElement(nodeName: "table"))
                     try YWrite.insertAfter(tx, into: container, after: nil, [.type(table)])
-                    var lastRow: YItem?
+                    var lastRow: YItem? = nil
                     for row in 0..<5 {
                         let rowType = YType(typeRef: .xmlElement(nodeName: "tableRow"))
                         lastRow = try YWrite.insertAfter(tx, into: table, after: lastRow, [.type(rowType)])
@@ -520,5 +526,57 @@ private struct TreeControls: View {
 
     @MainActor private static func depths() -> String {
         blocks().prefix(3).map { String($0.depth) }.joined(separator: ",")
+    }
+}
+
+/// `--native-table` (PR11a): BlockNote 0.56's table shape, as the web writes
+/// one (`tableHeader` row, `tableCell` row, every cell's default props).
+private enum TableFixture {
+    static func inserting(into state: Data, after blockID: String) throws -> Data {
+        let doc = YDoc(clientID: 2, gc: true)
+        defer { doc.destroy() }
+        try doc.applyUpdate(YUpdateDecoder.decode(state))
+        guard let root = doc.share[BlockNoteYjs.fragmentField],
+            case .type(let group)? = YBlockProjection.children(of: root, includeFormats: false).first?.content
+        else { return state }
+        let left = YBlockProjection.children(of: group, includeFormats: false).first { item in
+            guard case .type(let type) = item.content else { return false }
+            return BlockIndex.blockID(of: type) == blockID
+        }
+        try doc.transact { tx in
+            func element(_ name: String, into parent: YType, after: YItem?, _ props: [(String, YAnyValue)]) throws
+                -> (YItem?, YType)
+            {
+                let type = YType(typeRef: .xmlElement(nodeName: name))
+                let item = try YWrite.insertAfter(tx, into: parent, after: after, [.type(type)])
+                for (key, value) in props { try YWrite.mapSet(tx, on: type, key: key, .any([value])) }
+                return (item, type)
+            }
+            let (_, container) = try element(
+                "blockContainer", into: group, after: left, [("id", .string("owned-table"))])
+            let (_, table) = try element("table", into: container, after: nil, [("textColor", .string("default"))])
+            let cellProps: [(String, YAnyValue)] = [
+                ("backgroundColor", .string("default")), ("colspan", .int(1)), ("rowspan", .int(1)),
+                ("textAlignment", .string("left")), ("textColor", .string("default")),
+            ]
+            var lastRow: YItem?
+            for (index, texts) in [["Name", "Role"], ["Ada", ""]].enumerated() {
+                let (rowItem, row) = try element("tableRow", into: table, after: lastRow, [])
+                lastRow = rowItem
+                var lastCell: YItem?
+                for text in texts {
+                    let (cellItem, cell) = try element(
+                        index == 0 ? "tableHeader" : "tableCell", into: row, after: lastCell, cellProps)
+                    lastCell = cellItem
+                    let (_, paragraph) = try element("tableParagraph", into: cell, after: nil, [])
+                    if !text.isEmpty {
+                        let xmlText = YType(typeRef: .xmlText)
+                        try YWrite.insertAfter(tx, into: paragraph, after: nil, [.type(xmlText)])
+                        try xmlText.insert(0, text, nil)
+                    }
+                }
+            }
+        }
+        return try YStateEncoder.encodeStateAsUpdate(doc)
     }
 }

@@ -159,7 +159,7 @@ final class DocumentEngine {
             entry.isProjectable,
             !builder.nativeSnapshot(entry).block.fidelity.isOpaque,
             entry.isSimpleContainer, let element = entry.element,
-            case .xmlElement(let node)? = element.typeRef, writer.schemas[node] != nil,
+            case .xmlElement(let node)? = element.typeRef, writer.schemas[node] != nil || Self.isCellText(entry),
             entry.isSimpleText || element.length == 0,
             // A code block keeps "\n" as a source line break (BlockNote's Enter
             // there); in prose a newline is a block break, a range command.
@@ -168,7 +168,7 @@ final class DocumentEngine {
             }),
             marks?.allSatisfy({ Self.isMarkValue($0) && $0.valueJSON != "null" }) != false
         else { throw DocumentEngineError.unsupportedNativeInput }
-        let target = try writer.indexedTarget(entry.containerItem, id: command.blockID)
+        let target = try textTarget(entry)
         let units = entry.runs.flatMap { Array($0.text.utf16) }
         func validBoundary(_ offset: Int) -> Bool {
             guard offset >= 0, offset <= units.count else { return false }
@@ -352,6 +352,10 @@ final class DocumentEngine {
             }
         default: break
         }
+        // A table cell's paragraph (PR11a) takes text and marks only: every
+        // structural command refuses it (`structuralTarget` knows no
+        // `tableParagraph` schema), and a mark change stays in the paragraph.
+        if TableGrid.isParagraphID(command.blockID) { return try prepareCellMarks(command) }
         // A prop edit (a code block's language) is the one command code accepts.
         let isPropEdit = if case .props = command.kind { true } else { false }
         let (node, units) = try structuralTarget(command.blockID, allowCode: isPropEdit)
@@ -583,6 +587,71 @@ final class DocumentEngine {
     /// BlockNote's `resetsTo` (Backspace at the start, Enter in an empty block
     /// that `emptyEnterResets`): a toggle heading becomes a regular heading
     /// (one prop), anything else a paragraph. Children stay.
+    /// `.marks` within one open table paragraph, the one structural command a
+    /// cell takes.
+    private func prepareCellMarks(_ command: NativeEditCommand) throws -> PreparedCommand {
+        guard case .marks(let marks) = command.kind, marks.endBlockID == command.blockID,
+            !marks.attributes.isEmpty, marks.attributes.allSatisfy({ Self.isMarkValue($0) }),
+            builder.index.isCanonical, let entry = builder.index.entries[command.blockID], Self.isCellText(entry),
+            entry.isProjectable, entry.isSimpleText
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let units = entry.runs.flatMap { Array($0.text.utf16) }
+        guard entry.textType?.length == UInt(units.count), marks.startOffset < marks.endOffset,
+            Self.isBoundary(marks.startOffset, in: units), Self.isBoundary(marks.endOffset, in: units)
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let target = try textTarget(entry)
+        let attributes = YTextAttributes(marks.attributes.map { ($0.key, $0.valueJSON) })
+        return (
+            write: {
+                try self.writer.formatRange(
+                    in: target, range: marks.startOffset..<marks.endOffset, attributes: attributes)
+            },
+            caret: { EditorPosition(blockID: command.blockID, offset: marks.startOffset, assoc: -1) }
+        )
+    }
+
+    /// An open table's paragraph (PR11a): a text target with no block schema.
+    private static func isCellText(_ entry: BlockIndex.Entry) -> Bool {
+        TableGrid.isParagraphID(entry.id) && entry.element?.typeRef == .xmlElement(nodeName: "tableParagraph")
+    }
+
+    /// The writer's target for a text entry: a block, or an open table's paragraph.
+    private func textTarget(_ entry: BlockIndex.Entry) throws -> BlockNoteWriter.Target {
+        Self.isCellText(entry)
+            ? try writer.tableParagraphTarget(entry.containerItem, id: entry.id)
+            : try writer.indexedTarget(entry.containerItem, id: entry.id)
+    }
+
+    // MARK: - Open tables (PR11a)
+
+    /// Indexes table `blockID`'s paragraphs as text targets for a table
+    /// surface. Writes nothing and delivers nothing. False for anything but a
+    /// familiar table of this index.
+    @discardableResult
+    func openTable(_ blockID: String) -> Bool {
+        guard !isDetached, builder.index.isCanonical else { return false }
+        return builder.openTable(blockID)
+    }
+
+    func closeTable(_ blockID: String) {
+        builder.closeTable(blockID)
+    }
+
+    /// The open table's paragraphs, in grid order (empty once it is gone or
+    /// unfamiliar); nil when it is not open.
+    func tableParagraphs(_ blockID: String) -> [BlockSnapshot]? {
+        guard let ids = builder.index.openTables[blockID] else { return nil }
+        return ids.compactMap { builder.index.entries[$0].map { BlockSnapshot(builder.nativeSnapshot($0)) } }
+    }
+
+    /// The grid of table `blockID` as the replica holds it now.
+    func tableGrid(_ blockID: String) -> TableGrid? {
+        guard !isDetached, let element = builder.index.entries[blockID]?.element,
+            element.typeRef == .xmlElement(nodeName: "table")
+        else { return nil }
+        return TableGrid.read(element)
+    }
+
     private func resetOnBackspaceOrEnter(_ blockID: String, node: String) throws -> Data {
         guard node == "heading", isToggle(blockID) else {
             return try writer.setBlockType(block: blockID, to: "paragraph")
@@ -1087,8 +1156,8 @@ final class DocumentEngine {
         let captured = try RelativeEditorRange(blockID: blockID, range: range, assoc: assoc, index: builder.index)
         // Selection can address any projectable single text; composing also
         // requires a block the writer supports.
-        guard let element = builder.index.entries[blockID]?.element,
-            case .xmlElement(let node)? = element.typeRef, writer.schemas[node] != nil
+        guard let entry = builder.index.entries[blockID], let element = entry.element,
+            case .xmlElement(let node)? = element.typeRef, writer.schemas[node] != nil || Self.isCellText(entry)
         else { throw DocumentEngineError.invalidPosition }
         composition = CompositionQueue(range: captured)
         compositionGeneration &+= 1
@@ -1146,7 +1215,12 @@ final class DocumentEngine {
         let update: Data
         do {
             update = try writer.transaction { _ in
-                try writer.replaceText(block: blockID, range: range, with: text)
+                // A cell paragraph has no block to find; a block keeps the writer's own lookup.
+                if let entry = builder.index.entries[blockID], Self.isCellText(entry) {
+                    try writer.replaceText(in: try textTarget(entry), range: range, with: text)
+                } else {
+                    try writer.replaceText(block: blockID, range: range, with: text)
+                }
                 // Capture before cleanup/observers can edit or replace the text.
                 // Refresh only this entry in a temporary index: an empty element
                 // can now have the XmlText the writer just created. A failed

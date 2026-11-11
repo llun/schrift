@@ -220,6 +220,56 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         refreshSelectionMarks()
     }
 
+    // MARK: - Table cells (PR11a)
+
+    /// Where a table key moves the active cell (BlockNote 0.56 `TableExtension`).
+    enum TableMove {
+        /// Tab: the next cell in row order.
+        case next
+        /// Shift-Tab: the previous cell.
+        case previous
+        /// Return: the cell below.
+        case below
+        /// Escape: back to the document.
+        case exit
+    }
+
+    /// Set on a table surface's coordinator: Tab, Shift-Tab, Return and Escape
+    /// move between cells instead of nesting or splitting blocks, and
+    /// Backspace at a paragraph's start does nothing (BlockNote keeps the
+    /// cell). Returns whether the key was handled.
+    @ObservationIgnored var tableMove: ((TableMove) -> Bool)?
+
+    /// Shows the cell made of `blockIDs` (a table surface) and selects its
+    /// text, as prosemirror-tables' `goToNextCell` does; a cell of several
+    /// paragraphs gets a caret at its end. View state only.
+    func showCell(_ blockIDs: [String]) {
+        guard let view, let first = blockIDs.first, let last = blockIDs.last,
+            let start = surface.rangeIndex.position(for: first), let end = surface.rangeIndex.position(for: last)
+        else { return }
+        asOneKeyboardChange {
+            surface.setFocus(Set(blockIDs))
+            let lower = surface.rangeIndex.entries[start].textRange.location
+            let upper = NSMaxRange(surface.rangeIndex.entries[end].textRange)
+            let range =
+                start == end ? NSRange(location: lower, length: upper - lower) : NSRange(location: upper, length: 0)
+            lastCaret = range.location
+            if view.selectedRange != range { selection.place(range) }
+        }
+        refreshSelectionMarks()
+    }
+
+    /// Back from a table (PR11a): the caret at the start of the block after
+    /// it (the table itself is one atomic character), and the keyboard up.
+    func focus(after blockID: String) {
+        guard let view, let position = surface.rangeIndex.position(for: blockID) else { return }
+        if surface.rangeIndex.entries.indices.contains(position + 1) {
+            let caret = NSRange(location: surface.rangeIndex.entries[position + 1].textRange.location, length: 0)
+            asOneKeyboardChange { selection.place(caret) }
+        }
+        view.becomeFirstResponder()
+    }
+
     /// A delivered patch that was not this surface's own command: the selection
     /// is restored from the session's endpoints after the delivery.
     @ObservationIgnored private var needsRestore = false
@@ -1040,6 +1090,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     private func canPredict(_ block: BlockSnapshot, _ range: Range<Int>, _ text: String, _ marks: [TextMark]?) -> Bool {
         guard !surface.expectsInvalidation, !barrierOnly.contains(block.id), !block.isOpaque,
             !AttributedDocumentProjection.isPlaceholder(block), BlockNoteWriter.nativePropSchemas[block.node] != nil,
+            // A table cell's hard break (PR11a): shown, not typed into.
+            block.node == "codeBlock" || !block.runs.contains(where: { $0.text.contains("\n") }),
             surface.predictions.count < Self.maxPendingTyping,
             !text.unicodeScalars.contains(where: {
                 $0.value == 0xfffc || (CharacterSet.newlines.contains($0) && !(block.node == "codeBlock" && $0 == "\n"))
@@ -1092,6 +1144,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             view.dropMarkedText()
             return commitComposition()
         }
+        // In a table, Return moves to the cell below (no-op on the last row).
+        if let tableMove, !compositionOwnsView { return tableMove(.below) || true }
         // A commit still in flight owns the view: Return waits like any key.
         if compositionOwnsView {
             hold(.insert("\n"))
@@ -1137,6 +1191,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @discardableResult
     func deleteBackwardAtBlockStart() -> Bool {
         directInsertion = nil
+        // BlockNote keeps a cell's paragraphs: Backspace at a start does nothing.
+        if tableMove != nil { return true }
         guard let view, view.isEditable, !isFrozen, !isDetached,
             !compositionOwnsView, view.selectedRange.length == 0,
             isBlockStart(view.selectedRange.location),
@@ -1163,12 +1219,16 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     func indent() -> Bool { moveBlock(.indent) }
 
     @discardableResult
-    func outdent() -> Bool { moveBlock(.outdent) }
+    func outdent() -> Bool {
+        if let tableMove { return compositionOwnsView ? false : tableMove(.previous) || true }
+        return moveBlock(.outdent)
+    }
 
     /// Hardware Tab: two spaces in a code block (BlockNote's
-    /// `indentLineWithTab`), else `indent()`.
+    /// `indentLineWithTab`), the next cell in a table, else `indent()`.
     @discardableResult
     func insertTab() -> Bool {
+        if let tableMove { return compositionOwnsView ? false : tableMove(.next) || true }
         guard let view, let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location) else { return false }
         return isCode(entry.blockID) ? replace(range: view.selectedRange, with: "  ") : indent()
     }

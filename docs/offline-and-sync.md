@@ -237,7 +237,9 @@ toggles and page breaks as the server's Markdown export does (a callout as an em
 paragraph, a toggle list item as a bullet, a toggle heading as a plain heading, a page
 break not at all, and a toggle's paragraph children as the export's indented
 continuation paragraphs), so documents holding them type and save without a spurious
-conflict; tables, media, math, columns and diagrams still have no shadow and open
+conflict. Since PR11a a familiar root table is spelled as the export's own Markdown
+table (cell paragraphs and hard breaks as `\` + newline), so a document with one types too;
+an unfamiliar table, media, math, columns and diagrams still have no shadow and open
 read-only. Existing Markdown drafts retain their
 classic owner.
 

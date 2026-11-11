@@ -186,6 +186,15 @@ final class NativeAttachmentView: UIView {
         accessibilityIdentifier = "nativeEditor.attachment.\(content.blockID)"
         build()
         applyTheme()
+        if content.preview.isTable {
+            // The card opens the table editor (PR11a).
+            accessibilityTraits = [.button]
+            addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(openTable)))
+        }
+    }
+
+    @objc private func openTable() {
+        controls?.onOpenTable?(content.blockID)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -449,6 +458,10 @@ final class NativeAttachmentView: UIView {
     }
 
     override func accessibilityActivate() -> Bool {
+        if content.preview.isTable, controls?.onOpenTable != nil {
+            openTable()
+            return true
+        }
         guard loadButton != nil else { return false }
         approveAndLoad()
         return true

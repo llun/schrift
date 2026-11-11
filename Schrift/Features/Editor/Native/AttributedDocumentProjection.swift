@@ -114,8 +114,10 @@ enum AttributedDocumentProjection {
         }
     }
 
+    /// A "\n" inside a block (a code line, a table cell's hard break) is one
+    /// TextKit paragraph's line separator, never a paragraph break.
     private static func displayed(_ text: String, in block: BlockSnapshot) -> String {
-        block.node == "codeBlock" ? text.replacingOccurrences(of: "\n", with: String(codeLineSeparator)) : text
+        text.replacingOccurrences(of: "\n", with: String(codeLineSeparator))
     }
 
     /// BlockNote 0.56's numbering (`NumberedListIndexingDecorationPlugin`): a
@@ -357,6 +359,9 @@ enum AttributedDocumentProjection {
 
     /// A BlockNote background colour name as the shared dynamic colour.
     static func backgroundColor(named name: String) -> UIColor? { backgroundColors[name] }
+
+    /// A BlockNote text colour name as the shared dynamic colour.
+    static func textColor(named name: String) -> UIColor? { textColors[name] }
 
     private static func palette(_ hex: [String: (light: UInt32, dark: UInt32)]) -> [String: UIColor] {
         func color(_ value: UInt32) -> UIColor {

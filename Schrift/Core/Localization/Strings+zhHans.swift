@@ -339,6 +339,7 @@ enum Strings_zhHans {
         .native_editor_pdf: "PDF",
         .native_editor_table: "表格，%d × %d",
         .native_editor_table_more: "… 更多",
+        .native_editor_table_cell: "第 %d 行，第 %d 列",
         .native_editor_columns: "分栏，%d",
         .native_editor_math: "公式",
         .native_editor_diagram: "图表",

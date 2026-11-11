@@ -32,6 +32,9 @@ struct NativeEditorView: View {
     @Environment(\.docsTheme) private var theme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var linkTarget: NativeLinkTarget?
+    /// The table whose editor is open (PR11a).
+    @State private var openTable: NativeTableRequest?
+    @State private var lastTable: String?
 
     var body: some View {
         Group {
@@ -66,7 +69,8 @@ struct NativeEditorView: View {
                         imageFailed: loc[.editor_image_failed], blockMenu: loc[.native_editor_block_actions],
                         blockActions: Dictionary(
                             uniqueKeysWithValues: NativeBlockAction.allCases.map { ($0, loc[$0.labelKey]) })),
-                    theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline
+                    theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline,
+                    onOpenTable: { openTable = NativeTableRequest(id: $0) }
                 )
                 .id(ObjectIdentifier(session))
             }
@@ -109,6 +113,24 @@ struct NativeEditorView: View {
                     NativeFormattingBar(input: input) { linkTarget = $0 }
                 }
             }
+        }
+        .fullScreenCover(
+            item: $openTable,
+            onDismiss: { [session] in
+                // Back to the document, after the table (the keyboard stays up).
+                if let id = lastTable { session.input?.focus(after: id) }
+            }
+        ) { request in
+            TableEditorScreen(
+                document: session, tableID: request.id, labels: NativeEditorLabels(table: loc[.native_editor_table]),
+                doneTitle: loc[.editor_action_done],
+                cellLabel: { String(format: loc[.native_editor_table_cell], $0, $1) },
+                onClose: {
+                    lastTable = request.id
+                    openTable = nil
+                }
+            )
+            .ignoresSafeArea()
         }
         .sheet(item: $linkTarget) { target in
             LinkEditorSheet(
@@ -399,6 +421,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
     let images: ImageLoader?
     let serverOrigin: String
     let isOffline: Bool
+    let onOpenTable: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -418,6 +441,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
         session.textView.blockControls.images = images
         session.textView.blockControls.serverOrigin = serverOrigin
         session.textView.blockControls.isOffline = isOffline
+        session.textView.blockControls.onOpenTable = onOpenTable
         coordinator.update(
             surface: session.surface, presentation: NativeTextPresentation(contentSize: contentSize, labels: labels))
     }
@@ -438,4 +462,9 @@ private struct NativeTextCanvas: UIViewRepresentable {
                 labels: presentation.labels)
         }
     }
+}
+
+/// The table editor's subject (PR11a).
+struct NativeTableRequest: Identifiable {
+    let id: String
 }

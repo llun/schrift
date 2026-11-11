@@ -42,6 +42,61 @@ enum NativeExportMarkdown {
         return text.trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
     }
 
+    // MARK: - Tables (PR11a)
+
+    /// `serializeTable` over a familiar grid: the span-expanded grid (a
+    /// spanned slot is empty), each cell's `serializeInlineContent` trimmed
+    /// like JS `trim()` with `|` escaped, every column padded (UTF-16, as JS
+    /// `padEnd`) to the longest cell and at least 10, and a header row only
+    /// when the first row has a header cell (else an empty one). Lines are
+    /// joined without the trailing blank line, which the shadow's join adds.
+    ///
+    /// `nil` for a cell BlockNote's reading merges in a way this port does
+    /// not model: marked text next to a hard break or a paragraph join (its
+    /// `nodeToBlock` joins equal-styled text with "\n" and concatenates
+    /// anything else, so the export depends on mark order). Plain cells and
+    /// single-paragraph cells are pinned against the exporter
+    /// (`BlockNoteTableOracleTests`).
+    static func table(_ grid: TableGrid) -> String? {
+        guard grid.isFamiliar, grid.columnCount > 0 else { return nil }
+        var cells = Array(repeating: Array(repeating: "", count: grid.columnCount), count: grid.rows.count)
+        for row in grid.rows {
+            for cell in row {
+                guard let content = cellContent(cell) else { return nil }
+                cells[cell.row][cell.column] = content
+            }
+        }
+        let widths = (0..<grid.columnCount).map { column in
+            max(10, cells.map { $0[column].utf16.count }.max() ?? 0)
+        }
+        func line(_ row: [String]) -> String {
+            let parts = row.enumerated().map { column, text in
+                " " + text + String(repeating: " ", count: max(0, widths[column] - text.utf16.count)) + " "
+            }
+            return "|" + parts.joined(separator: "|") + "|"
+        }
+        let separator = "|" + widths.map { " " + String(repeating: "-", count: $0) + " " }.joined(separator: "|") + "|"
+        let lines =
+            grid.rows[0].contains(where: \.isHeader)
+            ? [line(cells[0]), separator] + cells.dropFirst().map(line)
+            : [line(Array(repeating: "", count: grid.columnCount)), separator] + cells.map(line)
+        return lines.joined(separator: "\n")
+    }
+
+    private static func cellContent(_ cell: TableGrid.Cell) -> String? {
+        let runs: [InlineRun]
+        if cell.paragraphs.allSatisfy({ $0.runs.allSatisfy { $0.marks.isEmpty } }) {
+            // Unstyled text: paragraphs join with a hard break, empty ones vanish.
+            let texts = cell.paragraphs.map { $0.runs.map(\.text).joined() }.filter { !$0.isEmpty }
+            runs = [InlineRun(texts.joined(separator: "\n"))]
+        } else {
+            guard cell.paragraphs.count == 1, !cell.paragraphs[0].runs.contains(where: { $0.text.contains("\n") })
+            else { return nil }
+            runs = cell.paragraphs[0].runs
+        }
+        return inline(runs).trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "|", with: "\\|")
+    }
+
     // MARK: - External HTML
 
     private enum Kind: Equatable {

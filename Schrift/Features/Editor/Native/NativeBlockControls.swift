@@ -69,6 +69,9 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     }
     /// Offline, the loader shows cached bytes and issues no request.
     var isOffline = false
+    /// A tap (or VoiceOver activation) on a table's card opens the table
+    /// editor (PR11a), with the block id.
+    var onOpenTable: ((String) -> Void)?
     /// Every preview view TextKit realised: the bounded-realisation seam.
     private(set) var attachmentViewLoads = 0
     let attachmentViews = NSHashTable<NativeAttachmentView>.weakObjects()

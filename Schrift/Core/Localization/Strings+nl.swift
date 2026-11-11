@@ -346,6 +346,7 @@ enum Strings_nl {
         .native_editor_pdf: "PDF",
         .native_editor_table: "Tabel, %d bij %d",
         .native_editor_table_more: "… meer",
+        .native_editor_table_cell: "Rij %d, kolom %d",
         .native_editor_columns: "Kolommen, %d",
         .native_editor_math: "Formule",
         .native_editor_diagram: "Diagram",

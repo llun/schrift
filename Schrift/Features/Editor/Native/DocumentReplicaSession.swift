@@ -63,6 +63,8 @@ actor DocumentReplicaSession {
         let recoveries: [ProvisionalRecovery]
         let state: ReplicaState
         let deliveries: AsyncStream<ReplicaDelivery>
+        /// A table surface's grid when it attached (PR11a); nil otherwise.
+        var grid: TableGrid? = nil
     }
 
     /// Unseen changes a surface keeps for rebasing (the "remote ring").
@@ -106,6 +108,10 @@ actor DocumentReplicaSession {
 
     private struct SurfaceState {
         let deliveries: AsyncStream<ReplicaDelivery>.Continuation
+        /// A table surface's table (PR11a): it sees that table's paragraphs
+        /// and nothing else. Nil for a document surface, which never sees a
+        /// table paragraph.
+        var table: String?
         var epoch: UInt64 = 0
         var selectionSeq: UInt64 = 0
         var unseen: [Unseen] = []
@@ -225,36 +231,59 @@ actor DocumentReplicaSession {
     }
 
     /// The read-only route's one-shot projection: no session outlives it.
-    static func inspect(state: Data) throws -> (blocks: [BlockSnapshot], hasUnsupportedRoot: Bool, canType: Bool) {
+    static func inspect(state: Data) throws -> (
+        blocks: [BlockSnapshot], hasUnsupportedRoot: Bool, canType: Bool, tables: [String: TableGrid]
+    ) {
         let doc = YDoc(clientID: 1, gc: true)
         defer { doc.destroy() }
         try doc.applyUpdate(YUpdateDecoder.decode(state), origin: .remote)
         let projected = NativeBlockProjection.project(doc)
         return (
             projected.blocks.map(BlockSnapshot.init), projected.blocks.isEmpty && !projected.isFullyRenderable,
-            projected.isFullyModeled && NativeBlockProjection.markdownShadow(doc) != nil
+            projected.isFullyModeled && NativeBlockProjection.markdownShadow(doc) != nil, TableGrid.tables(in: doc)
         )
     }
 
     /// The projection now and every delivery after it, in one turn.
     func attach(surfaceID: UUID) -> Attachment {
+        attach(surfaceID: surfaceID, table: nil)!
+    }
+
+    /// A table surface (PR11a): table `blockID`'s paragraphs, opened as text
+    /// targets, and only their deliveries after this. Nil (nothing attached)
+    /// when it is not a familiar table of this replica.
+    func attach(surfaceID: UUID, table blockID: String?) -> Attachment? {
         hooks.onReplicaWork?()
         if loop == nil { loop = Task { await self.run() } }
+        var grid: TableGrid?
+        if let blockID {
+            guard !isClosed, openTables[blockID] != nil || engine.openTable(blockID) else { return nil }
+            openTables[blockID, default: 0] += 1
+            grid = engine.tableGrid(blockID)
+        }
         // One slot past the bound is for the resync marker.
         let (stream, continuation) = AsyncStream<ReplicaDelivery>.makeStream(
             bufferingPolicy: .bufferingOldest(Self.deliveryBound + 1))
         if isClosed {
             continuation.finish()
         } else {
-            surfaces[surfaceID] = SurfaceState(deliveries: continuation)
+            surfaces[surfaceID] = SurfaceState(deliveries: continuation, table: blockID)
             if selectionOwner == nil { selectionOwner = surfaceID }
         }
-        let blocks = NativeBlockProjection.project(doc).blocks.map(BlockSnapshot.init)
         let recoveries = store.flatMap { store in scope.map { store.provisionalRecoveries(for: $0) } } ?? []
         return Attachment(
-            blocks: blocks, revision: engine.revision, hasUnsupportedRoot: hasUnsupportedRoot, canType: canType,
-            recoveries: recoveries, state: state, deliveries: stream)
+            blocks: projection(for: blockID), revision: engine.revision, hasUnsupportedRoot: hasUnsupportedRoot,
+            canType: canType, recoveries: recoveries, state: state, deliveries: stream, grid: grid)
     }
+
+    /// A surface's whole projection: the document, or a table's paragraphs.
+    private func projection(for table: String?) -> [BlockSnapshot] {
+        guard let table else { return NativeBlockProjection.project(doc).blocks.map(BlockSnapshot.init) }
+        return engine.tableParagraphs(table) ?? []
+    }
+
+    /// Open tables by block id, with how many table surfaces show each.
+    private var openTables: [String: Int] = [:]
 
     /// Returns once the session closed (`.close` was handled).
     func waitUntilClosed() async {
@@ -349,6 +378,8 @@ actor DocumentReplicaSession {
             reply(engine.navigationEntries())
         case .locate(let handle, let reply):
             reply(engine.locate(handle))
+        case .tableGrid(let blockID, let reply):
+            reply(engine.tableGrid(blockID))
         case .requestAvailability(let surfaceID, let blockID, let candidates):
             let actions = candidates.filter { candidate in
                 guard let kind = candidate.kind else { return engine.hasLosslessCopy(blockID) }
@@ -384,6 +415,7 @@ actor DocumentReplicaSession {
                 try? engine.compositionCancelled()
                 deliver(to: nil)
             }
+            if let table = surface.table { closeTable(table) }
         case .close:
             close()
         case .inspect(let body):
@@ -622,9 +654,68 @@ actor DocumentReplicaSession {
         engine = graph.engine
         sink = graph.sink
         history = journal == nil ? nil : ReplicaHistory(doc: doc, engine: engine)
+        // The new engine's index opens the tables surfaces show again.
+        for table in openTables.keys { engine.openTable(table) }
         for id in surfaces.keys {
             surfaces[id]?.composing = nil
             resync(id)
+        }
+    }
+
+    /// The last table surface of `table` left: its paragraphs stop being
+    /// text targets, and the document surfaces, which saw no cell text while
+    /// it was open, get the table's preview once.
+    private func closeTable(_ table: String) {
+        openTables[table, default: 1] -= 1
+        guard openTables[table] == 0 else { return }
+        openTables[table] = nil
+        engine.closeTable(table)
+        if let snapshot = engine.nativeSnapshot(for: table) {
+            sink.applyPatch(BlockPatch([.replaceBlock(blockID: table, block: snapshot)], origin: .other))
+            deliver(to: nil)
+        }
+    }
+
+    /// `events` as surface `surfaceID` sees them (PR11a): a document surface
+    /// never sees a table paragraph; a table surface sees only its table's
+    /// paragraphs and the table's own changes (which it ignores, and its
+    /// editor reads as a structure signal), and a reset as its table's.
+    private func events(_ events: [ReplicaDelivery.Event], for surface: SurfaceState) -> [ReplicaDelivery.Event] {
+        func shown(_ id: String) -> Bool {
+            guard let table = surface.table else { return !TableGrid.isParagraphID(id) }
+            return id == table || TableGrid.tableID(ofParagraph: id) == table && TableGrid.isParagraphID(id)
+        }
+        guard
+            surface.table != nil
+                || events.contains(where: { event in
+                    guard case .patch(let patch, _) = event else { return false }
+                    return patch.changes.contains { change in
+                        switch change {
+                        case .text(let id, _), .props(let id, _), .replaceBlock(let id, _): TableGrid.isParagraphID(id)
+                        case .remove(let ids): ids.contains(where: TableGrid.isParagraphID)
+                        case .insert(_, let blocks): blocks.contains { TableGrid.isParagraphID($0.id) }
+                        case .reset: false
+                        }
+                    }
+                })
+        else { return events }
+        return events.compactMap { event in
+            guard case .patch(var patch, let settled) = event else { return event }
+            patch.changes = patch.changes.compactMap { change in
+                switch change {
+                case .text(let id, _), .props(let id, _), .replaceBlock(let id, _): return shown(id) ? change : nil
+                case .remove(let ids):
+                    let kept = ids.filter(shown)
+                    return kept.isEmpty ? nil : .remove(blockIDs: kept)
+                case .insert(let after, let blocks):
+                    let kept = blocks.filter { shown($0.id) }
+                    return kept.isEmpty ? nil : .insert(after: after, blocks: kept)
+                case .reset:
+                    guard let table = surface.table else { return change }
+                    return .reset(engine.tableParagraphs(table) ?? [])
+                }
+            }
+            return patch.isEmpty ? nil : .patch(patch, settled: settled)
         }
     }
 
@@ -662,16 +753,18 @@ actor DocumentReplicaSession {
         to surfaceID: UUID?, result: ReplicaResult? = nil, selection: Bool = false, timings: ReplicaTimings? = nil
     ) {
         var events = sink.take()
-        let changed = events.contains { if case .patch = $0 { true } else { false } }
         for index in events.indices {
             guard case .patch(var patch, let settled) = events[index], var stamp = patch.nativeCommand else { continue }
             stamp.surfaceID = predicting?.commandID == stamp.commandID ? predicting?.surfaceID : surfaceID
             patch.nativeCommand = stamp
             events[index] = .patch(patch, settled: settled)
         }
+        let all = events
         for id in surfaces.keys {
             let own = id == surfaceID
             var surface = surfaces[id]!
+            let events = self.events(all, for: surface)
+            let changed = events.contains { if case .patch = $0 { true } else { false } }
             for event in events {
                 guard case .patch(let patch, _) = event, !patch.isEmpty else { continue }
                 if let stamp = patch.nativeCommand, stamp.surfaceID == id, predicting?.commandID == stamp.commandID {
@@ -731,7 +824,7 @@ actor DocumentReplicaSession {
         surface.droppedThrough = engine.revision
         surfaces[surfaceID] = surface
         for delivery in held { send(delivery, to: surfaceID) }
-        let blocks = NativeBlockProjection.project(doc).blocks.map(BlockSnapshot.init)
+        let blocks = projection(for: surface.table)
         var reset = ReplicaDelivery(
             revision: engine.revision, events: [.patch(BlockPatch([.reset(blocks)], origin: .other), settled: [:])],
             state: state)

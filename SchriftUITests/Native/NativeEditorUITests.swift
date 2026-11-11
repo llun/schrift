@@ -154,6 +154,41 @@ final class NativeEditorUITests: XCTestCase {
 
     /// The checklist checkbox is a real button in the production open route:
     /// a tap is one durable prop command the journal restores after a relaunch.
+    /// PR11a: a web-shaped table in the production open route keeps the
+    /// document typeable; its card opens the table editor, a tapped cell takes
+    /// the keyboard, Tab moves on, and the typed cell text is durable.
+    func testTypingInATableCellSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-table"]
+        app.launch()
+        let card = app.descendants(matching: .any)["nativeEditor.attachment.owned-table"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["nativeEditor.preservedNotice"].exists, "the document types")
+        card.tap()
+        let empty = app.staticTexts["nativeEditor.table.text.1.1"]
+        XCTAssertTrue(empty.waitForExistence(timeout: 5), "the table editor opened")
+        empty.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        app.typeText("Engineer")
+        // Tab moves to the next cell (none after the last: the key is kept).
+        app.typeKey(XCUIKeyboardKey.tab, modifierFlags: .shift)
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "moving between cells keeps the keyboard")
+        XCTAssertEqual(empty.value as? String, "Engineer")
+        app.buttons["nativeEditor.table.done"].tap()
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        app.terminate()
+
+        app.launchArguments = ["--native-open", "--native-table"]
+        app.launch()
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        card.tap()
+        XCTAssertTrue(empty.waitForExistence(timeout: 5))
+        XCTAssertEqual(empty.value as? String, "Engineer", "the journal restores the cell")
+        // The first cell is active: the cell's text view shows only its text.
+        XCTAssertEqual(app.textViews["nativeEditor.table.cell"].value as? String, "Name\n")
+    }
+
     func testCheckboxTapSurvivesRelaunch() {
         let app = XCUIApplication()
         app.launchArguments = ["--native-open", "--reset", "--native-blocks"]

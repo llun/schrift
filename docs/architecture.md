@@ -1066,6 +1066,21 @@ selection. Reopening a document returns to the block that was at the top of the 
 the Back to top offer, on phones and tablets alike. Collaborators' carets and badges carry
 VoiceOver labels and are grouped together.
 
+**PR11a Native tables: cells you can type in.** A web-authored table the editor fully
+understands (BlockNote's rows, header and body cells, spans, widths, colours and alignment,
+cells of marked text or a hard break) is now part of a typeable document: its save shadow is
+the server export's own Markdown table, byte for byte. Tapping the table's card opens the table
+editor over the document: the whole grid, laid out as the web lays it out, with the cursor in
+one cell. Tab and Shift-Tab walk the cells, Return goes down, Escape or Done returns to the text
+after the table, as in the web editor. A cell's text is typed through the document's own text
+path, so prediction, the journal, marks, IME, undo, offline saves and live collaboration behave
+exactly as in a paragraph; each cell paragraph is a text target of the replica session only
+while its table is open, and the document's own view never sees it. Anything the editor does not
+understand (a mention or inline math in a cell, a malformed grid the web would rewrite, a table
+over 1,000 cells) keeps the table, and the document, read-only and untouched. Adding or removing
+rows and columns, merging, header and colour changes are the next slice (PR11b); rectangular
+selection, copy and paste, VoiceOver grid navigation and very large tables follow (PR11c).
+
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom
 actions on the text view) acts on the caret's block and its whole subtree: Move up, Move

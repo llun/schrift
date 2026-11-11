@@ -116,10 +116,15 @@ final class NativeTextView: UITextView {
     /// UIKit's own Tab (a tab character) and focus movement.
     override var keyCommands: [UIKeyCommand]? {
         guard inputCoordinator != nil, isEditable else { return super.keyCommands }
-        let commands = [
+        var commands = [
             UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(nativeIndent)),
             UIKeyCommand(input: "\t", modifierFlags: .shift, action: #selector(nativeOutdent)),
         ]
+        // A table cell (PR11a): Escape returns to the document.
+        if inputCoordinator?.tableMove != nil {
+            commands.append(
+                UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(nativeEscape)))
+        }
         for command in commands { command.wantsPriorityOverSystemBehavior = true }
         return (super.keyCommands ?? []) + commands
     }
@@ -127,6 +132,11 @@ final class NativeTextView: UITextView {
     @objc private func nativeIndent() {
         guard isEditable, markedTextRange == nil else { return }
         inputCoordinator?.insertTab()
+    }
+
+    @objc private func nativeEscape() {
+        guard markedTextRange == nil else { return }
+        _ = inputCoordinator?.tableMove?(.exit)
     }
 
     @objc private func nativeOutdent() {

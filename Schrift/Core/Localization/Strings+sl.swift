@@ -359,6 +359,7 @@ enum Strings_sl {
         .native_editor_pdf: "PDF",
         .native_editor_table: "Tabela, %d krat %d",
         .native_editor_table_more: "… več",
+        .native_editor_table_cell: "Vrstica %d, stolpec %d",
         .native_editor_columns: "Stolpci, %d",
         .native_editor_math: "Formula",
         .native_editor_diagram: "Diagram",
