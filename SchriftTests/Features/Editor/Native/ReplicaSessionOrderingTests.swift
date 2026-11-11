@@ -898,7 +898,8 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
         _ = await harness.session.settle()
         harness.view.unmarkText()
         await harness.settle()
-        XCTAssertEqual(texts(harness.session).prefix(2), ["Firstかa", " paragraph."])
+        // Committed behind the held key, in order (final review R2).
+        XCTAssertEqual(texts(harness.session).prefix(2), ["First", "aか paragraph."])
         try await assertConsistent(harness, localCommands: 3)
     }
 
@@ -1450,7 +1451,9 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
         XCTAssertFalse(
             try block(harness.session, "c").props.contains(ProjectedProp(key: "checked", value: .bool(true))))
         XCTAssertEqual(harness.input.noticeKey, .native_editor_storage_failed)
-        XCTAssertEqual(harness.log.commands.count, 1, "the commit only")
+        // Committed behind the barrier, the composition was held and is kept as recovery.
+        XCTAssertEqual(harness.log.commands.count, 0)
+        XCTAssertEqual(harness.input.composition.pendingRecoveries.map(\.text), ["か"])
     }
 
     /// N8: a composition begun before the main actor saw its epoch end is not
@@ -1475,7 +1478,8 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
         harness.view.unmarkText()
         await harness.settle()
         XCTAssertEqual(texts(harness.session).prefix(2), ["paragraph.", "Second paragraph has bold words inside it."])
-        XCTAssertEqual(Set(harness.input.composition.pendingRecoveries.map(\.text)), ["xyy", "か"])
+        // Committed while the epoch was ending (input held), it rolls back with the keys.
+        XCTAssertEqual(harness.input.composition.pendingRecoveries.map(\.text), ["xyyか"])
         try await assertConsistent(harness, localCommands: 0)
     }
 
@@ -1644,5 +1648,73 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
         XCTAssertEqual(text(of: try block(harness.session, Self.firstID)), "Firstにほん paragraph.!")
         XCTAssertEqual(harness.input.composition.pendingRecoveries.map(\.text), ["ご"])
         try await assertConsistent(harness, localCommands: 1)
+    }
+
+    // MARK: - Final review (PR #272)
+
+    /// R1: Return commits an active composition even while a barrier is in
+    /// flight; the commit, held behind it, lands where typing goes.
+    func testReturnCommitsACompositionWhileBusy() async throws {
+        let disk = Latch()
+        let harness = try await gated(disk)
+        try caret(harness, Self.firstID, 5)
+        harness.input.insertNewline()
+        harness.view.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        harness.view.insertText("\n")
+        XCTAssertFalse(harness.input.composition.isActive, "committed, not held")
+        disk.open()
+        await harness.settle()
+        XCTAssertEqual(texts(harness.session).prefix(2), ["First", "か paragraph."])
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
+    /// R2: a composition committed while keys are held is held as a key behind
+    /// them, in order.
+    func testACommitWhileKeysAreHeldReplaysInOrder() async throws {
+        let disk = Latch()
+        let harness = try await gated(disk)
+        try caret(harness, Self.firstID, 5)
+        harness.view.insertText("\n")
+        harness.view.insertText("y")
+        harness.view.setMarkedText("ご", selectedRange: NSRange(location: 1, length: 0))
+        harness.view.unmarkText()
+        disk.open()
+        await harness.settle()
+        XCTAssertEqual(texts(harness.session).prefix(2), ["First", "yご paragraph."])
+        XCTAssertEqual(harness.input.composition.pendingRecoveries.map(\.text), [])
+        try await assertConsistent(harness, localCommands: 3)
+    }
+
+    /// R3a: a commit at the point of an unseen peer insertion lands after it
+    /// on both sides, so a Backspace deletes the composed character.
+    func testACommitAtAPeerInsertionLandsAfterItOnBothSides() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
+        let peer = try peerEdit { try $0.replaceText(block: Self.firstID, range: 5..<5, with: "?") }
+        harness.session.replica?.mailbox.post(.integrate(peer, reply: nil))
+        try caret(harness, Self.firstID, 5)
+        harness.view.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0))
+        harness.view.unmarkText()
+        harness.view.deleteBackward()
+        await harness.settle()
+        XCTAssertEqual(texts(harness.session).first, "First? paragraph.")
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
+    /// R3b: the session moves its unseen ring through a commit it keeps out
+    /// of it, so a later key rebases through an unseen peer edit correctly.
+    func testAKeyAfterACommitRebasesThroughAnUnseenPeerEdit() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
+        let peer = try peerEdit { try $0.replaceText(block: Self.firstID, range: 10..<10, with: "X") }
+        harness.session.replica?.mailbox.post(.integrate(peer, reply: nil))
+        try caret(harness, Self.firstID, 0)
+        harness.view.setMarkedText("ABCD", selectedRange: NSRange(location: 4, length: 0))
+        harness.view.unmarkText()
+        try caret(harness, Self.firstID, 12)
+        harness.view.deleteBackward()
+        await harness.settle()
+        XCTAssertEqual(texts(harness.session).first, "ABCDFirst praXgraph.")
+        try await assertConsistent(harness, localCommands: 2)
     }
 }

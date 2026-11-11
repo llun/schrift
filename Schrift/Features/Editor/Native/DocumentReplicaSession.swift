@@ -89,6 +89,9 @@ actor DocumentReplicaSession {
         /// Unseen entries up to this revision were dropped from the ring: a
         /// command older than it cannot be rebased.
         var droppedThrough: UInt64 = 0
+        /// The composition begun on this surface, as posted: its commit is
+        /// rebased through the unseen ring like a predicted replace.
+        var composing: (blockID: String, range: Range<Int>, base: UInt64)?
     }
 
     /// `state` is a Yjs update; `updates` replay after it (a restored journal).
@@ -241,14 +244,17 @@ actor DocumentReplicaSession {
         case .compositionBegin(let surfaceID, let epoch, let base, let blockID, let range):
             // A begin that cannot be captured (a race with an unseen change)
             // leaves no composition: its commit comes back `.orphaned`.
+            // Mapped like a predicted replace (an insertion at the same point lands first).
             guard surfaces[surfaceID]?.epoch == epoch,
-                let range = rebase(range, assoc: -1, blockID: blockID, surfaceID: surfaceID, base: base)
+                let rebased = rebase(range, assoc: 1, blockID: blockID, surfaceID: surfaceID, base: base)
             else { return }
-            try? engine.compositionBegan(blockID: blockID, replacing: range)
+            surfaces[surfaceID]?.composing = (blockID, range, base)
+            try? engine.compositionBegan(blockID: blockID, replacing: rebased)
             deliver(to: surfaceID)
         case .compositionCommit(let surfaceID, let epoch, let commandID, let text):
             commitComposition(surfaceID: surfaceID, epoch: epoch, commandID: commandID, text: text)
         case .compositionCancel(let surfaceID):
+            surfaces[surfaceID]?.composing = nil
             if engine.isComposing { try? engine.compositionCancelled() }
             deliver(to: surfaceID, result: .composition(commandID: nil, .cancelled), selection: true)
         case .writeProvisional(let entries):
@@ -395,7 +401,15 @@ actor DocumentReplicaSession {
                 text: text, commandID: commandID, persist: { try journal?($0, $1) })
             {
             case .committed(_, let folds):
-                if !folds { predicting = (surfaceID, commandID) }
+                // Its echo is out of the ring, so the ring moves through it, as
+                // through a predicted replace.
+                if !folds, var surface = surfaces[surfaceID], let begun = surface.composing {
+                    surface.unseen.removeAll { $0.revision <= begun.base }
+                    _ = rebase(begun.range, text: text, blockID: begun.blockID, unseen: &surface.unseen)
+                    surfaces[surfaceID] = surface
+                    predicting = (surfaceID, commandID)
+                }
+                surfaces[surfaceID]?.composing = nil
                 defer { predicting = nil }
                 deliver(to: surfaceID, result: .composition(commandID: commandID, .committed), selection: true)
             case .orphaned:

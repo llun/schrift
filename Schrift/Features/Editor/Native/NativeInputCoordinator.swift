@@ -382,9 +382,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         var end = range.end
         let empty = start == end
         for delivery in shown {
-            guard !delivery.reset, !delivery.replaced.contains(start.0), !delivery.replaced.contains(end.0) else {
-                return nil
-            }
+            // A block rebuilt with the same text keeps its offsets.
+            let rewritten = delivery.replaced.intersection(delivery.retexted)
+            guard !delivery.reset, !rewritten.contains(start.0), !rewritten.contains(end.0) else { return nil }
             for applied in delivery.deltas {
                 if !empty, start.0 == end.0, applied.blockID == start.0 {
                     guard let moved = TextDelta.rebase(range: start.1..<end.1, assoc: -1, through: applied.deltas)
@@ -648,6 +648,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     /// A typed key: held while a barrier is in flight, else ordinary input.
     func typeKey(_ text: String) {
+        // Return during a composition commits it, whatever is in flight.
+        if composition.isActive, text == "\n" || text == "\r" {
+            insertNewline()
+            return
+        }
         if isBusy {
             hold(.insert(text))
             return
@@ -689,7 +694,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // delegate; this covers UIKit paths that do, so Return routes once.
         if Self.isNewline(text), view?.isApplyingMarkedText != true {
             // Return over a selection replaces it with a block break.
-            if range.length == 0 { typeKey("\n") } else { _ = replace(range: range, with: "\n") }
+            if range.length == 0 || composition.isActive {
+                typeKey("\n")
+            } else {
+                _ = replace(range: range, with: "\n")
+            }
             return false
         }
         if allowsUIKitChange(range, text) { return true }
@@ -768,7 +777,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 noticeKey = .native_editor_input_unavailable
                 return false
             }
-            if range.length == 0 { typeKey("\n") } else { _ = replace(range: range, with: "\n") }
+            if range.length == 0 || composition.isActive {
+                typeKey("\n")
+            } else {
+                _ = replace(range: range, with: "\n")
+            }
             return false
         }
         if ranges.count == 1, let range = ranges.first?.rangeValue, allowsUIKitChange(range, text) { return true }
@@ -1770,12 +1783,16 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             return true
         }
         surface.holdForComposition(false)
-        guard !surface.expectsInvalidation else {
-            // The epoch is ending, so the session would orphan the commit: it
-            // is kept as a recovery entry and the session's composition cancelled.
-            composition.recover(commit.text, blockID: commit.blockID)
+        guard !isBusy, intents.isEmpty else {
+            // Behind held input the commit is held like a key, in order (the
+            // session's composition is cancelled); a full queue keeps it as recovery.
             composition.finish(commit.id)
             _ = post(.compositionCancel(surfaceID: surfaceID))
+            if intents.count < Self.maxIntents {
+                hold(.insert(commit.text))
+            } else {
+                composition.recover(commit.text, blockID: commit.blockID)
+            }
             releaseComposition()
             return true
         }

@@ -2790,7 +2790,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   refused, stale, failed): moved through what was shown since (a rollback a result caused
   included), it wins over wherever the
   barrier would put the selection (its caret, a kept or remapped range, a history step's),
-  except in a block the barrier's own echo rewrote, is captured again even when the view's
+  except in a block a delivery rewrote (a rebuild with the same text keeps its offsets), is captured again even when the view's
   range did not move (the session's copy may not survive the barrier's rebuild), and is then
   cleared; held keys replay after a composition's own answer; other actions return false.
   A barrier that meets a change its surface had not seen comes back `.stale` and is
@@ -2812,14 +2812,18 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   composition rule:** while marked text owns the view (`compositionOwnsView`: `isActive ||
   markedTextRange != nil`), the surface's whole `ReplicaDelivery`s queue up unapplied,
   results included, a local storage failure waits too, and nothing reads the view's
-  offsets. **The commit is a predicted command** (option A for IME too): it is shown at
-  once as a prediction, posted with its epoch, and the composition stops owning the view
-  there and then (no resolving window); the queue then applies in order through `apply(_:)`
+  offsets. Return during a composition always commits it. **The commit is a predicted
+  command** (option A for IME too): it is shown at once as a prediction, posted with its
+  epoch, and the composition stops owning the view there and then (no resolving window);
+  while input is held (a barrier, an awaited invalidation, the prediction bound, or held
+  keys) it is instead held as an ordinary key behind them and the session's composition
+  cancelled; the queue then applies in order through `apply(_:)`
   (rebasing through the commit like any typed key), followed by the failure that waited,
   stale retries and held keys. Its rebuild is stamped as its echo and confirms or repairs
-  it; the session keeps that echo out of the surface's unseen ring unless the rebuild
-  folded in changes the composition discarded, so the next begin (posted at the
-  pre-commit base) rebases cleanly, and after a folded rebuild comes back orphaned as a
+  it. The session maps the begin and the commit exactly like a predicted `.replace`
+  (assoc 1; the commit moves the unseen ring through its replacement) and keeps that echo
+  out of the ring unless the rebuild folded in changes the composition discarded, so the
+  next begin (posted at the pre-commit base) rebases cleanly, and after a folded rebuild comes back orphaned as a
   recovery entry. A commit whose target is gone, or whose begin was never captured, ends
   the epoch like an unrebaseable key (the rollback keeps its text); one from an epoch
   already invalidated is answered orphaned. Cancel posts with nothing to show. While a
