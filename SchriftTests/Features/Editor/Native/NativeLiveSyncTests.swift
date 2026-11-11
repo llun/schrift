@@ -641,9 +641,13 @@ final class NativeLiveSyncTests: NativeEditingTestCase {
         a.binding.connect(
             dial: { server.connect().0 }, wireProtocol: .yWebSocket, documentName: "doc", isCurrent: { true })
         try await Task.sleep(for: .milliseconds(200))
-        gate.open()
         XCTAssertTrue(server.sockets.isEmpty, "no handshake with an empty state vector")
-        XCTAssertFalse(a.binding.isConnected)
+        gate.open()
+        // Tried again after the backoff, with the replica's real vector.
+        await waitUntil { !server.sockets.isEmpty }
+        let socket = try XCTUnwrap(server.sockets.first)
+        await waitUntil { !FakeYServer.sent(socket).isEmpty }
+        XCTAssertNotEqual(FakeYServer.sent(socket).first?.data, Data([0x00]))
     }
 
     // MARK: - Reconnect and the failure matrix (PR09b)
@@ -810,6 +814,70 @@ final class NativeLiveSyncTests: NativeEditingTestCase {
         await waitUntil { a.binding.isStopped }
         XCTAssertEqual(server.sockets.count, budget + 1, "\(budget) recoveries, then live stops")
         XCTAssertFalse(a.session.state.frozen)
+    }
+
+    // MARK: - Final review (O1, O3)
+
+    /// O1: access can change while backgrounded; foreground asks for the
+    /// ability before it dials, and a reader answer dials nothing.
+    func testForegroundAsksForTheAbilityBeforeDialing() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient()
+        let reader = Locked(false)
+        let became = Locked(0)
+        try await connect(
+            a, to: server, isReader: { reader.value },
+            becameReader: {
+                became.update { $0 += 1 }
+                a.registry.setWritable(nil, for: a.scope)
+            })
+        try await server.settle { self.a(isLive: a) }
+        a.binding.collaborationSuspended()
+        reader.value = true
+        a.binding.collaborationResumed()
+        await waitUntil { became.value == 1 }
+        await waitAndConfirmNever { server.sockets.count > 1 }
+        let drained = await a.session.settle()
+        XCTAssertTrue(drained)
+        XCTAssertFalse(a.session.state.writable)
+    }
+
+    /// O1: a foreground or path edge while a 1000 close's ability check is
+    /// out never drops the reader answer.
+    func testAResumeDuringThePermissionCheckKeepsTheReaderAnswer() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient()
+        let asked = Locked(0)
+        let became = Locked(0)
+        let socket = try await connect(
+            a, to: server,
+            isReader: {
+                asked.update { $0 += 1 }
+                try? await Task.sleep(for: .milliseconds(150))
+                return true
+            }, becameReader: { became.update { $0 += 1 } })
+        try await server.settle { self.a(isLive: a) }
+        socket.serverClose(code: .normalClosure)
+        await waitUntil { asked.value == 1 }
+        a.binding.collaborationResumed()
+        await waitUntil { became.value >= 1 }
+        await waitAndConfirmNever { server.sockets.count > 1 }
+    }
+
+    /// O3: the path's return replaces a socket that still looks live.
+    func testThePathsReturnReplacesASocketThatLooksLive() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient()
+        let socket = try await connect(a, to: server)
+        try await server.settle { self.a(isLive: a) }
+        a.binding.collaborationResumed()
+        await waitUntil { socket.cancelCloseCode == .goingAway }
+        try await server.settle { server.sockets.count == 2 && self.a(isLive: a) }
+        try await type("p", a, Self.firstID, at: 0)
+        try await server.settle { self.serverText(server) == "pFirst paragraph." }
     }
 
     // MARK: - Helpers

@@ -127,9 +127,13 @@ final class NativeEditorSession {
             if let input { input.requestResync() } else { replica?.mailbox.post(.resync(surfaceID: surfaceID)) }
             return
         }
+        let wasWritable = state.writable
         state = delivery.state
         if let input {
             input.apply(delivery)
+            // The replica turned read-only (a reader answer): the view stops
+            // taking input, so nothing typed looks accepted.
+            if wasWritable, !state.writable { textView.isEditable = false }
         } else {
             for event in delivery.events {
                 switch event {
@@ -720,7 +724,7 @@ final class NativeEditorOpen {
                 nativeEnabled: enabled, liveEnabled: livePreference(),
                 serverSupports: config.supportsNativeLiveCollaboration && config.collaborationOrg == scope.org,
                 canUpdate: canUpdate),
-            let binding = registry.liveBinding(for: scope), !binding.isConnected, let collaboration
+            let binding = registry.liveBinding(for: scope), let collaboration
         else { return }
         let signedInUser = viewModel.signedInUser
         // Background, foreground and the path's return reach the socket too.

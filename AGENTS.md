@@ -2887,7 +2887,10 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   closes after its last surface and its last pending open. A scope's next restore
   waits for its previous replica's close, so two replica sessions never journal into
   one scope. Each scope has one journal (`setWritable`, posted once; nil makes every
-  surface read-only, and a predicted key then rolls back into a recovery entry) and one
+  surface read-only: the session refuses every write without a journal, an IME commit
+  included, so nothing mutates unjournaled; a predicted key or commit in flight rolls back
+  into a recovery entry, and each view stops taking input once a delivery says it is no
+  longer writable) and one
   `NativeReplicaSaveScheduler` (`scheduler(for:make:)`; a capture failure freezes every
   surface of the scope; a leased surface only flushes it when it ends). `drainAll()`
   (scene `.background`, beside `EditorView`'s own flush) flushes every scheduler at
@@ -3005,15 +3008,22 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `isCurrent`, as during a cookie handover) waits for the next resume. **Background:**
   `DocumentCollaborationManager` keeps weak `CollaborationLifecycleObserver`s
   (`addLifecycleObserver`, registered by `startLive`); `suspend` closes every native socket
-  and nothing dials, `resume` and `reconnect` (the path's return) dial at once from a fresh
-  backoff. Edits typed meanwhile are journaled and offered by the next handshake's step2,
-  deletion-only ones included. **A 1000 close** (the server's permission reset, also how a
-  server rejects a writer) asks `documents/{id}/` again (`Dialer.isReader`): a reader answer
+  and nothing dials, `resume` and `reconnect` (the path's return) replace the socket (one that
+  looks live may be dead after a path change) and dial at once from a fresh backoff. Edits
+  typed meanwhile are journaled and offered by the next handshake's step2,
+  deletion-only ones included. **Access is asked again after every gap:** a drop, a 1000
+  close (the server's permission reset, also how a server rejects a writer), background and
+  the path's return set `needsAbilityCheck`, and the next dial asks `documents/{id}/`
+  (`Dialer.isReader`) inside the dial itself, so no suspend, resume or close can drop the
+  answer (one GET per redial, paced by the backoff). A reader answer
   runs `NativeEditorOpen.becomeReader`, the first production caller of
   `NativeSessionRegistry.setWritable(nil)` (every surface of the scope stops writing; a key
   typed meanwhile becomes a recovery entry; what is journaled stays for HTTP) and
-  `disconnect`s live; any other answer, a failed request included, backs off and dials
-  again. **The Live preference** is followed while open (`EditorView`'s
+  `disconnect`s live; any other answer, a failed request included, dials. `startLive`
+  always hands the binding its dialer, so a same-document push (a second editor opening
+  before the first closes) takes over `isCurrent` and live never sticks on a closed
+  surface's. A state vector the full mailbox could not read backs off and is tried again.
+  **The Live preference** is followed while open (`EditorView`'s
   `@AppStorage(LiveCollaborationPreference.key)` → `NativeEditorOpen.liveSettingChanged`):
   off `disconnect`s (no socket, nothing dials, typing and HTTP saving unchanged), on runs the
   reconnect refresh, which rechecks the whole gate. **Budget:** refused-frame redials also

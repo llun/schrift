@@ -113,17 +113,40 @@ final class NativeSessionRegistryTests: NativeEditingTestCase {
         let replay = try replayed(fixture)
         XCTAssertEqual(a.surface.blocks, replay)
         XCTAssertEqual(b.surface.blocks, replay)
-        // Read-only for both at once: a key becomes a recovery entry, nothing is journaled.
+        // Read-only for both at once: the views stop taking input, nothing is journaled.
         XCTAssertFalse(
             fixture.registry.setWritable({ _, _ in }, for: fixture.scope), "the scope has its journal already")
         XCTAssertTrue(fixture.registry.setWritable(nil, for: fixture.scope))
         await settle(a, b)
         try caret(a, Self.thirdID, 0)
+        XCTAssertFalse(a.textView.isEditable)
+        XCTAssertFalse(b.textView.isEditable)
         a.textView.insertText("q")
         await settle(a, b)
-        XCTAssertEqual(a.input?.composition.pendingRecoveries.map(\.text), ["q"])
+        XCTAssertEqual(texts(a)[2], "Third paragraph.", "a read-only view accepts nothing")
         XCTAssertEqual(texts(b)[2], "Third paragraph.")
         XCTAssertEqual(fixture.log.commands.count, 2)
+    }
+
+    /// H1: an IME commit that reaches a read-only replica is never written
+    /// without a journal: it rolls back into a recovery entry, and nothing
+    /// is shown as accepted.
+    func testACompositionCommittedAfterGoingReadOnlyBecomesARecoveryEntry() async throws {
+        let fixture = try makeFixture()
+        let a = try await open(fixture)
+        a.textView.selectedRange = NSRange(location: try location(a, Self.firstID, 0), length: 0)
+        a.textView.setMarkedText("日本", selectedRange: NSRange(location: 2, length: 0))
+        await settle(a)
+        XCTAssertTrue(fixture.registry.setWritable(nil, for: fixture.scope))
+        await settle(a)
+        a.textView.unmarkText()
+        await settle(a)
+        XCTAssertEqual(fixture.log.commands.count, 0, "nothing was journaled")
+        XCTAssertEqual(texts(a)[0], "First paragraph.", "nothing shows as accepted")
+        XCTAssertEqual(a.input?.composition.pendingRecoveries.map(\.text), ["日本"])
+        XCTAssertEqual(a.surface.blocks, try replayed(fixture))
+        let graph = await a.engine { $0.nativeSnapshot(for: Self.firstID) }
+        XCTAssertEqual(graph.map { self.text(of: $0) }, "First paragraph.", "the replica was never mutated")
     }
 
     // 2

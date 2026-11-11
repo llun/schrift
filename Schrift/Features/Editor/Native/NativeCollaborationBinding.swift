@@ -113,6 +113,10 @@ final class NativeCollaborationBinding {
     private var needsRedial = false
     private var redials = 0
     private var recoveries = 0
+    /// Set after a gap (a drop, background, a 1000 close, the path's return):
+    /// the next dial asks for the ability first, since access may have
+    /// changed while no socket was open.
+    private var needsAbilityCheck = false
     /// A peer's SyncStep1 being answered, and the latest one that came in
     /// meanwhile: at most one waits in the mailbox, so a burst cannot fill it.
     private var answering = false
@@ -142,7 +146,10 @@ final class NativeCollaborationBinding {
         }
     }
 
-    /// Joins the room unless a socket is already up. The handshake offers the
+    /// Joins the room unless a socket is already up, and always takes this
+    /// call's dialer: the latest open's `isCurrent` decides (a surface that
+    /// closed while another opened on the scope must not keep live stuck). The
+    /// handshake offers the
     /// replica's state vector, read before dialing; the server's own
     /// SyncStep1 is answered with everything it lacks, unsent outbox edits
     /// included.
@@ -184,14 +191,24 @@ final class NativeCollaborationBinding {
     private func open() {
         guard !isStopped, !suspended, !isConnected, let dialer else { return }
         dialing = true
+        let checksAbility = needsAbilityCheck
+        needsAbilityCheck = false
         Task { [weak self, replica] in
+            // Part of the dial, so no suspend, resume or close cancels it: a
+            // reader answer is never dropped.
+            if checksAbility, await dialer.isReader() {
+                guard let self else { return }
+                self.dialing = false
+                dialer.becameReader()
+                return self.disconnect()
+            }
             // A full mailbox answers nil: no handshake, rather than one asking
-            // for the whole document.
+            // for the whole document; it is tried again after the backoff.
             let vector = await Self.stateVector(of: replica)
             guard let self else { return }
             self.dialing = false
-            guard let vector, !self.isStopped, !self.suspended, self.dialer != nil, dialer.isCurrent() else { return }
-            guard let transport = dialer.dial() else { return self.scheduleReconnect() }
+            guard !self.isStopped, !self.suspended, self.dialer != nil, dialer.isCurrent() else { return }
+            guard let vector, let transport = dialer.dial() else { return self.scheduleReconnect() }
             self.start(transport: transport, dialer: dialer, stateVector: vector)
         }
     }
@@ -200,6 +217,7 @@ final class NativeCollaborationBinding {
         generation += 1
         needsRedial = false
         synced = false
+        liveSince = nil
         let generation = self.generation
         let session = DocumentCollaborationSession(
             documentName: dialer.documentName, transport: transport, wireProtocol: dialer.wireProtocol,
@@ -236,19 +254,11 @@ final class NativeCollaborationBinding {
         liveSince = nil
         switch reason {
         case .selfClosed: return
-        case .transient: scheduleReconnect()
-        case .permissionsReset:
-            guard let dialer else { return }
-            reconnecting = Task { [weak self] in
-                let reader = await dialer.isReader()
-                guard !Task.isCancelled, let self else { return }
-                self.reconnecting = nil
-                guard !reader else {
-                    dialer.becameReader()
-                    return self.disconnect()
-                }
-                self.scheduleReconnect()
-            }
+        case .transient, .permissionsReset:
+            // The next dial asks first: a 1000 close is the server's
+            // permission reset, and access may change during any gap.
+            needsAbilityCheck = true
+            scheduleReconnect()
         }
     }
 
@@ -258,12 +268,14 @@ final class NativeCollaborationBinding {
         closeSocket()
     }
 
-    /// Foreground, or the path came back: dial now, from a fresh backoff.
+    /// Foreground, or the path came back: a fresh socket now (one that looks
+    /// live may be dead after a path change), from a fresh backoff, asking
+    /// for the ability first.
     func resume() {
         suspended = false
+        needsAbilityCheck = true
+        closeSocket()
         attempt = 0
-        reconnecting?.cancel()
-        reconnecting = nil
         open()
     }
 

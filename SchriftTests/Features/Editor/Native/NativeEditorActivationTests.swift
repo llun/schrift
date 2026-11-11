@@ -769,6 +769,34 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         await waitUntil { spy.sockets.count == 2 }
     }
 
+    /// O2: a push of the same document opens a second editor before the
+    /// first closes; once the first is gone, the second's typing still goes
+    /// live (the binding takes the latest open's dialer).
+    func testASecondOpenOfTheSameDocumentKeepsLiveAfterTheFirstCloses() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        let spy = ManagerSocketFactorySpy()
+        let (first, _) = try await liveOpen(env, server: server, live: Locked(true), spy: spy)
+        let second = NativeEditorOpen(preference: { true }, livePreference: { true })
+        second.registry = first.registry
+        second.collaboration = first.collaboration
+        defer { second.close() }
+        await second.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = second.route else { return XCTFail("expected a native session") }
+        first.close()
+        let socket = try XCTUnwrap(spy.sockets.first)
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText("s")
+        await session.settle()
+        await waitUntil {
+            socket.sentFrames.contains { frame in
+                frame.first == 0 && (try? SyncMessage(decodingPayload: Data(frame.dropFirst())))?.step == .update
+            }
+        }
+    }
+
     // MARK: - Fixture
 
     private func manifestURL(_ env: Environment, _ scope: ReplicaScope) throws -> URL {
