@@ -209,7 +209,8 @@ document also joins its room (PR09a): remote updates are journaled into the same
 before they show, and local updates go out only after they are journaled. HTTP saving is
 unchanged and still the durable path. A dropped socket dials again with backoff, the
 background closes it and the foreground dials at once, and every handshake offers what was
-typed meanwhile (PR09b). Every await in open and
+typed meanwhile (PR09b). Collaborators' cursors ride that socket (PR10a) and are view state
+only: never journaled, saved or undone, and gone when the socket ends. Every await in open and
 integration rechecks the open's generation and the remembered signed-in user. A
 change of `SessionStore.signInGeneration` closes (flushing under the account checks
 `enqueueReplica` and the sender apply) and reopens a native route, where another

@@ -95,6 +95,9 @@ actor DocumentReplicaSession {
     /// The surface that set the engine's selection last: only its deliveries
     /// carry it (another surface's view follows its own shown deltas).
     private var selectionOwner: UUID?
+    /// Awareness (PR10): hears the selection's relative positions when they change.
+    private var cursorSink: (@Sendable (AwarenessCursor?) -> Void)?
+    private var reportedCursor: AwarenessCursor?
 
     private struct Unseen {
         let revision: UInt64
@@ -273,7 +276,19 @@ actor DocumentReplicaSession {
             hooks.beforeMessage?()
             hooks.onReplicaWork?()
             handle(message)
+            reportCursor()
         }
+    }
+
+    /// Our selection as awareness: none for a reader (no journal).
+    private var cursor: AwarenessCursor? { journal == nil ? nil : engine.awarenessCursor() }
+
+    private func reportCursor() {
+        guard let cursorSink, !isClosed else { return }
+        let cursor = self.cursor
+        guard cursor != reportedCursor else { return }
+        reportedCursor = cursor
+        cursorSink(cursor)
     }
 
     private var state: ReplicaState {
@@ -320,6 +335,16 @@ actor DocumentReplicaSession {
             reply?(result)
         case .liveSync(let peerVector, let reply):
             reply(YStateEncoder.encodeStateVector(doc), peerVector.flatMap(missingUpdate(since:)))
+        case .watchCursor(let sink):
+            cursorSink = sink
+            reportedCursor = cursor
+            sink(reportedCursor)
+        case .resolveCursors(let cursors, let reply):
+            // Untrusted peer positions: never a write, never a fail-safe.
+            reply(
+                cursors.mapValues {
+                    PeerCursorPlaces(anchor: engine.peerPlace($0.anchor), head: engine.peerPlace($0.head))
+                })
         case .requestAvailability(let surfaceID, let blockID, let candidates):
             let actions = candidates.filter { candidate in
                 guard let kind = candidate.kind else { return engine.hasLosslessCopy(blockID) }

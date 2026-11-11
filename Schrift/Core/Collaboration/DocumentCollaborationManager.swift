@@ -98,6 +98,8 @@ final class DocumentCollaborationManager {
     /// derived by the App-layer provider — Core never reaches into the avatar
     /// palette — so this stays a plain value.
     private var localAwareness: LocalAwarenessState?
+    /// Our name and color for the native editor's own socket (PR10).
+    var localAwarenessState: LocalAwarenessState? { localAwareness }
 
     /// Per-document change-signal counters (see `remoteChangeToken(for:)`).
     private var remoteChangeTokens: [UUID: Int] = [:]

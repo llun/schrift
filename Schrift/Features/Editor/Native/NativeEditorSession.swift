@@ -32,6 +32,9 @@ final class NativeEditorSession {
     @ObservationIgnored private var consumer: Task<Void, Never>?
     @ObservationIgnored private var drains: [UUID: CheckedContinuation<Void, Never>] = [:]
     @ObservationIgnored private var closing: Task<Void, Never>?
+    /// The scope's collaborators (PR10), set when it goes live: the presence
+    /// bar and the cursor overlay read it.
+    private(set) var awareness: NativeAwarenessController?
     /// Set by `NativeSessionRegistry` for a leased surface: closing detaches
     /// it, and the registry closes the replica after its last surface.
     @ObservationIgnored var release: (() -> Task<Void, Never>)?
@@ -117,6 +120,13 @@ final class NativeEditorSession {
         }
     }
 
+    /// Paints `awareness`'s peers over this surface (PR10).
+    func showAwareness(_ awareness: NativeAwarenessController) {
+        self.awareness = awareness
+        textView.cursorOverlay.surface = surface
+        awareness.addView(textView)
+    }
+
     /// Tests: sees every delivery before it is applied.
     @ObservationIgnored var onDelivery: ((ReplicaDelivery) -> Void)?
 
@@ -143,6 +153,9 @@ final class NativeEditorSession {
             }
         }
         revision = delivery.revision
+        if delivery.events.contains(where: { if case .patch = $0 { true } else { false } }) {
+            awareness?.documentChanged()
+        }
         if let token = delivery.drained { drains.removeValue(forKey: token)?.resume() }
     }
 
@@ -743,7 +756,9 @@ final class NativeEditorOpen {
                 guard let viewModel else { return false }
                 return await Self.serverSaysReader(viewModel, asking: true)
             },
-            becameReader: { [weak self] in self?.becomeReader(scope) })
+            becameReader: { [weak self] in self?.becomeReader(scope) },
+            localState: collaboration.localAwarenessState)
+        session.showAwareness(binding.awareness)
     }
 
     /// The server says this account may only read now: every surface of the

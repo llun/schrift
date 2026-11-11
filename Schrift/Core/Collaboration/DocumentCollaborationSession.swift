@@ -59,9 +59,14 @@ final class DocumentCollaborationSession {
     /// A fresh random client id for this session — never persisted (reuse risks
     /// duplicate ids = silent corruption), 32-bit to match yjs's clientID range.
     private let clientID: UInt
+    /// Our awareness id: a peer entry carrying it is our own echo.
+    var awarenessClientID: UInt { clientID }
     /// Our awareness state (name and color: flat on Hocuspocus, nested under `user` on
     /// y-websocket) broadcast to peers, or nil to join as an observer (always for a reader).
-    private let localState: LocalAwarenessState?
+    /// Only its cursor changes (`updateLocalCursor`, PR10).
+    private var localState: LocalAwarenessState?
+    /// Our awareness went out once: a cursor change is sent at once from then on.
+    private var announced = false
     /// y-protocols awareness clock: every publish must carry a higher one, or peers
     /// ignore it (an equal clock does not refresh their 30 s outdated timer).
     private var awarenessClock: UInt = 0
@@ -101,6 +106,8 @@ final class DocumentCollaborationSession {
     /// Fired once when the socket ends, with why (the native binding's
     /// reconnect, PR09b; the manager rebuilds sessions itself).
     private let onDisconnect: (@MainActor (CollaborationDisconnect) -> Void)?
+    /// Every decoded awareness batch, as received (the native cursors, PR10).
+    private let onAwareness: (@MainActor ([AwarenessEntry]) -> Void)?
     /// Latches `onInitialSync` to a single firing per session.
     private var didInitialSync = false
     private var pumpTask: Task<Void, Never>?
@@ -119,7 +126,8 @@ final class DocumentCollaborationSession {
         onStateRequest: @escaping @MainActor (Data) -> Data? = { _ in nil },
         onInitialSync: @escaping @MainActor () -> Void = {},
         onSync: (@MainActor (SyncMessage) -> Void)? = nil,
-        onDisconnect: (@MainActor (CollaborationDisconnect) -> Void)? = nil
+        onDisconnect: (@MainActor (CollaborationDisconnect) -> Void)? = nil,
+        onAwareness: (@MainActor ([AwarenessEntry]) -> Void)? = nil
     ) {
         self.documentName = documentName
         self.transport = transport
@@ -135,6 +143,7 @@ final class DocumentCollaborationSession {
         self.onInitialSync = onInitialSync
         self.onSync = onSync
         self.onDisconnect = onDisconnect
+        self.onAwareness = onAwareness
     }
 
     /// Resumes the socket, sends the handshake, and pumps inbound events.
@@ -184,7 +193,19 @@ final class DocumentCollaborationSession {
         return HocuspocusMessage(documentName: documentName, type: .awareness, payload: payload)
     }
 
+    /// Publishes our cursor with a fresh clock once we have announced, and
+    /// carries it in every renewal. Nothing for an observer (always a reader).
+    func updateLocalCursor(_ cursor: AwarenessCursor?) {
+        guard localState != nil, localState?.cursor != cursor else { return }
+        localState?.cursor = cursor
+        guard announced, renewalTask?.isCancelled == false, let frame = nextAwarenessFrame() else { return }
+        let transport = self.transport
+        // Out-of-order sends are harmless: peers keep the highest clock.
+        Task { try? await transport.send(frame) }
+    }
+
     private func startAwarenessRenewal() {
+        announced = true
         let interval = awarenessRenewInterval
         let transport = self.transport
         renewalTask = Task { [weak self] in
@@ -284,6 +305,7 @@ final class DocumentCollaborationSession {
                 if let entries = try? AwarenessCodec.decodePayload(message.payload) {
                     peers = updatedPeers(
                         peers, applying: entries, excludingLocalClientID: clientID, wireProtocol: wireProtocol)
+                    onAwareness?(entries)
                 }
             case .queryAwareness where wireProtocol == .yWebSocket:
                 guard let frame = nextAwarenessFrame() else { return }  // readers never publish, even on query

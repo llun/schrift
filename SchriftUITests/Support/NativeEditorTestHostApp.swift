@@ -85,6 +85,9 @@ struct NativeEditorTestHostApp: App {
                         documentID: UUID())
                     _ = try store.create(for: scope, checkpoint: fixture)
                     session = try await NativeEditorSession.restore(store: store, scope: scope, editable: true)
+                    if ProcessInfo.processInfo.arguments.contains("--native-peer"), let session {
+                        await PeerFixture.install(on: session)
+                    }
                 } else {
                     session = try await NativeEditorSession.inspect(state: fixture)
                 }
@@ -340,6 +343,41 @@ private let slowDisk: (@Sendable (ReplicaStore.Operation, ReplicaStore.Boundary)
     ? { @Sendable operation, boundary in
         if operation == .append, boundary == .payloadFlushed { Thread.sleep(forTimeInterval: 0.06) }
     } : nil
+
+/// `--native-peer` (PR10): two collaborators as a web client would publish
+/// them, fed straight to the awareness controller (no socket): "Web Peer"
+/// (client 7) at "fixture-2" offset 4 and, with `--native-toggle`, "Folded
+/// Peer" (client 8) inside the folded toggle.
+@MainActor
+private enum PeerFixture {
+    static func install(on session: NativeEditorSession) async {
+        guard let replica = session.replica else { return }
+        let awareness = NativeAwarenessController(replica: replica, timeout: .seconds(3_600))
+        session.showAwareness(awareness)
+        let spots: [(id: UInt, name: String, block: String, offset: Int)] = [
+            (7, "Web Peer", "fixture-2", 4), (8, "Folded Peer", "fixture-toggle-1", 2),
+        ]
+        let positions = await withCheckedContinuation { (done: CheckedContinuation<[YRelativePositionJSON?], Never>) in
+            replica.mailbox.post(
+                .inspect { engine, _, _ in
+                    done.resume(
+                        returning: spots.map { spot in
+                            engine?.awarenessPosition(EditorPosition(blockID: spot.block, offset: spot.offset))
+                        })
+                })
+        }
+        awareness.receive(
+            zip(spots, positions).compactMap { spot, position in
+                position.map {
+                    AwarenessEntry(
+                        clientID: spot.id, clock: 1,
+                        stateJSON: LocalAwarenessState(
+                            name: spot.name, color: "#000000", cursor: AwarenessCursor(anchor: $0, head: $0)
+                        ).json(wireProtocol: .yWebSocket))
+                }
+            })
+    }
+}
 
 /// Fails every request as offline, so the fixture never reaches a network.
 private final class OfflineURLProtocol: URLProtocol {

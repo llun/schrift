@@ -254,7 +254,12 @@ final class NativeTextView: UITextView {
         blockControls?.updateAttachmentWidth()
         super.layoutSubviews()
         blockControls?.layoutControls()
+        // After the viewport settled: collaborators' cursors on screen (PR10).
+        cursorOverlay.layout(in: self)
     }
+
+    /// Collaborators' cursors (PR10), painted over the text, never touched.
+    let cursorOverlay = NativeCursorOverlay()
 
     init() {
         super.init(frame: .zero, textContainer: nil)
@@ -278,6 +283,7 @@ final class NativeTextView: UITextView {
             top: DocsSpacing.spaceBase, left: DocsSpacing.spaceBase,
             bottom: DocsSpacing.spaceLG, right: DocsSpacing.spaceBase)
         accessibilityIdentifier = "nativeEditor.text"
+        addSubview(cursorOverlay)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
