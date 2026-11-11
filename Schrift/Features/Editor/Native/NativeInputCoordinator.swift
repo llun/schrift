@@ -80,6 +80,12 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @ObservationIgnored private var staleAfterDrain: [UUID] = []
     /// A storage failure while a composition owned the view, applied after it.
     @ObservationIgnored private var failsAfterComposition = false
+    /// Resyncs asked for whose reset has not arrived (PR08c). Until it does,
+    /// arriving deliveries lose their patches (the reset shows them), nothing
+    /// is applied, and keys are held.
+    @ObservationIgnored private var resyncsAsked = 0
+    /// A reset is on its way or queued: keys wait for it.
+    private var awaitsReset: Bool { resyncsAsked > 0 || queued.contains { $0.resync != nil } }
     /// Marked text owns the view: storage and its offsets are UIKit's.
     private var compositionOwnsView: Bool { composition.isActive || view?.markedTextRange != nil }
     /// A selection the user made while the barrier was in flight, and how many
@@ -223,15 +229,42 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// The one composition rule (PR08b): while marked text owns the view,
     /// whole deliveries wait unapplied, results included; its commit or cancel
     /// applies them in order.
+    ///
+    /// **Bounded delivery (PR08c).** A surface with
+    /// `DocumentReplicaSession.deliveryBound` deliveries waiting (in the
+    /// session's stream, or here behind marked text) asks for a resync: what
+    /// arrives until its reset keeps only its answers, and the reset shows the
+    /// canonical state under a new epoch. Keys typed meanwhile are held.
     func apply(_ delivery: ReplicaDelivery) {
-        queued.append(delivery)
-        guard !compositionOwnsView else { return }
+        if case .reset? = delivery.resync {
+            resyncsAsked = max(0, resyncsAsked - 1)
+            // Everything queued before it is shown by it.
+            queued = queued.compactMap { $0.withoutPatches() }
+            queued.append(delivery)
+        } else if resyncsAsked > 0 {
+            if let answers = delivery.withoutPatches() { queued.append(answers) }
+        } else {
+            queued.append(delivery)
+        }
+        guard !compositionOwnsView else {
+            let sinceReset = queued.count - (queued.lastIndex { $0.resync != nil }.map { $0 + 1 } ?? 0)
+            if resyncsAsked == 0, sinceReset >= DocumentReplicaSession.deliveryBound { requestResync() }
+            return
+        }
         drain()
     }
 
+    /// The session's resync marker (or marked text holding the bound): ask
+    /// for the reset. A post that fails froze authoring instead.
+    func requestResync() {
+        if post(.resync(surfaceID: surfaceID)) { resyncsAsked += 1 }
+    }
+
     /// Every queued patch and result first; then what acts on the display
-    /// they reached: a failure that waited, stale retries, held keys.
+    /// they reached: a failure that waited, stale retries, held keys. Nothing
+    /// is applied while a reset asked for is still on its way.
     private func drain() {
+        guard resyncsAsked == 0 else { return }
         let deliveries = queued
         queued = []
         for delivery in deliveries { applyNow(delivery) }
@@ -296,6 +329,17 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             }
             canonicalRevision = delivery.revision
             history.mirror(canUndo: delivery.state.canUndo, canRedo: delivery.state.canRedo)
+            if case .reset(let epoch)? = delivery.resync {
+                self.epoch = epoch
+                // Every key posted before the ask was answered before the
+                // reset and later ones were held, so normally nothing is
+                // pending; anything that is becomes a recovery entry.
+                let dropped = surface.rollback()
+                for prediction in dropped { composition.finish(prediction.commandID) }
+                if let first = dropped.first {
+                    composition.recover(dropped.map(\.text).joined(), blockID: first.blockID)
+                }
+            }
             if case .stale(let id)? = delivery.result {
                 staleAfterDrain.append(id)
             } else if let result = delivery.result {
@@ -580,12 +624,12 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// composition's own delivery included: held keys go after its text).
     private var isBusy: Bool {
         barrier != nil || surface.expectsInvalidation
-            || surface.predictions.count >= Self.maxPendingTyping
+            || surface.predictions.count >= Self.maxPendingTyping || awaitsReset
     }
 
-    /// True while a command, a held key or a composition result is in flight.
+    /// True while a command, a held key, a composition result or a reset is in flight.
     var hasInFlightWork: Bool {
-        barrier != nil || hasUnansweredPrediction || !intents.isEmpty || !pendingCopies.isEmpty
+        barrier != nil || hasUnansweredPrediction || !intents.isEmpty || !pendingCopies.isEmpty || awaitsReset
     }
 
     /// A prediction whose answer has not arrived (one queued behind a
@@ -955,7 +999,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         let caret = NSRange(location: range.location + text.utf16.count, length: 0)
         // Typing continues one undo step only from where typing left the caret.
         let undoBefore = view.selectedRange != typingCaret
-        guard barrier == nil else { return false }
+        guard barrier == nil, !awaitsReset else { return false }
         guard canPredict(surface.blocks[position], blockRange, text, typed) else {
             // The engine's own validation decides: shown on its result.
             return postBarrier(

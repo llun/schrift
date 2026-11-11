@@ -1005,9 +1005,22 @@ and the journal agree; when it cannot be rebased the surface's epoch is invalida
 its pending keys become a recovery entry, and a barrier that met such a change is
 retried once. IME begin is posted and commit is a barrier; the history is one per replica
 session with grouping decided on the main actor; block-menu availability and copy payloads
-are asked of the session asynchronously. Multi-window stays off and the session has one
-surface; the per-scope registry and fan-out are PR08c, the collaboration-manager facade
-PR09. AGENTS.md has the operational detail and the bounds.
+are asked of the session asynchronously. Multi-window stays off; the per-scope registry
+and fan-out are PR08c (below), the collaboration-manager facade PR09. AGENTS.md has the
+operational detail and the bounds.
+
+**PR08c One replica session per scope, fanned out, with bounded delivery.**
+`NativeSessionRegistry`, owned by the signed-in container in `RootView` and shared through
+the environment, keeps one `DocumentReplicaSession` per replica scope. Each open leases a
+surface on it; the replica closes after its last surface, and a scope's next replica is
+restored only after the previous one closed, so two sessions never journal into one scope.
+The scope's journal and save scheduler are shared by its surfaces. The scene going to the
+background drains every replica and hands its debounced save over; a sign-out or any sign-in
+change closes them all. Every surface sees every change and only its own results; the one
+engine selection and the one composition belong to the surface that set them. Each surface
+may have 256 deliveries waiting, in its stream or behind marked text; past that it gets one
+reset to the canonical state under a new epoch, keeps only the answers of what came between,
+and holds its keys until the reset, so nothing typed is lost. Multi-window stays off.
 
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom

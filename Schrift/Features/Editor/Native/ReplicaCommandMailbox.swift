@@ -56,6 +56,10 @@ enum ReplicaMessage: Sendable {
     /// A marker delivered back to the surface once everything before it was
     /// handled (tests' `settle`, a close's flush).
     case drain(surfaceID: UUID, token: UUID)
+    /// The surface read its resync marker (or marked text held too many
+    /// deliveries): send what was held and a `.reset` under a new epoch (PR08c).
+    case resync(surfaceID: UUID)
+    /// The surface leaves; the session stays for the others (PR08c).
     case detach(surfaceID: UUID)
     case close
     /// Tests only: runs on the session in mailbox order, with the live graph
@@ -131,6 +135,16 @@ struct ReplicaDelivery: Sendable {
         case compositionDeferred(Bool)
     }
 
+    /// The bounded-delivery handshake (PR08c).
+    enum Resync: Sendable, Equatable {
+        /// The surface reached `DocumentReplicaSession.deliveryBound`: it asks
+        /// for its resync and holds its keys until the reset.
+        case requested
+        /// This delivery's `.reset` patch is the canonical state; commands
+        /// carry `epoch` from now on.
+        case reset(epoch: UInt64)
+    }
+
     var revision: UInt64
     var events: [Event] = []
     var result: ReplicaResult?
@@ -140,6 +154,17 @@ struct ReplicaDelivery: Sendable {
     var clipboard: (requestID: UUID, payload: Data?)?
     var drained: UUID?
     var timings: ReplicaTimings?
+    var resync: Resync?
+
+    /// This delivery without its patches and selection, for a surface whose
+    /// reset is on its way (it shows them); nil when nothing else is left.
+    func withoutPatches() -> ReplicaDelivery? {
+        var kept = self
+        kept.events = []
+        kept.selection = nil
+        let answers = result != nil || drained != nil || clipboard != nil || availability != nil || resync != nil
+        return answers ? kept : nil
+    }
 }
 
 /// The main → session channel: one ordered, bounded stream. A full mailbox

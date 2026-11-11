@@ -25,6 +25,17 @@ import Foundation
 /// `TextDelta.rebase`, and they through it, exactly as the surface rebases its
 /// pending predictions, so both arrive at the same text. A command that cannot
 /// be rebased invalidates the surface's epoch; a barrier is `.stale`.
+///
+/// **Fan-out (PR08c).** Every attached surface gets every change; a result
+/// goes only to the surface whose command it answers. The one engine
+/// selection belongs to the surface that set it last (a select or a command)
+/// and only its deliveries carry it; the one engine composition belongs to the
+/// surface whose begin was captured, and another surface's begin is not.
+///
+/// **Bounded delivery (PR08c).** A surface with `deliveryBound` deliveries
+/// waiting gets a resync marker; until it asks (`.resync`), its deliveries are
+/// held without their patches, and then they come followed by one `.reset`
+/// from the canonical state, under a new epoch.
 actor DocumentReplicaSession {
     typealias Journal = @Sendable (NativeEditCommand, Data) throws -> Void
 
@@ -56,6 +67,8 @@ actor DocumentReplicaSession {
 
     /// Unseen changes a surface keeps for rebasing (the "remote ring").
     static let ringCapacity = 256
+    /// Deliveries a surface may have waiting before the rest is a resync.
+    static let deliveryBound = 256
 
     nonisolated let mailbox = ReplicaCommandMailbox()
     private let doc: YDoc
@@ -75,6 +88,9 @@ actor DocumentReplicaSession {
     /// The surface whose predicted command is being applied: its echo is not
     /// an unseen change for it.
     private var predicting: (surfaceID: UUID, commandID: UUID)?
+    /// The surface that set the engine's selection last: only its deliveries
+    /// carry it (another surface's view follows its own shown deltas).
+    private var selectionOwner: UUID?
 
     private struct Unseen {
         let revision: UInt64
@@ -92,6 +108,10 @@ actor DocumentReplicaSession {
         /// The composition begun on this surface, as posted: its commit is
         /// rebased through the unseen ring like a predicted replace.
         var composing: (blockID: String, range: Range<Int>, base: UInt64)?
+        /// Non-nil once the bound was reached: what the surface must still be
+        /// told (results, drain markers, payloads), without patches, until it
+        /// asks for its resync.
+        var held: [ReplicaDelivery]?
     }
 
     /// `state` is a Yjs update; `updates` replay after it (a restored journal).
@@ -192,12 +212,14 @@ actor DocumentReplicaSession {
     func attach(surfaceID: UUID) -> Attachment {
         hooks.onReplicaWork?()
         if loop == nil { loop = Task { await self.run() } }
-        let (stream, continuation) = AsyncStream<ReplicaDelivery>.makeStream()
-        // shortcut: deliveries are unbounded per surface; PR08c bounds them at 256 with a .reset resync.
+        // One slot past the bound is for the resync marker.
+        let (stream, continuation) = AsyncStream<ReplicaDelivery>.makeStream(
+            bufferingPolicy: .bufferingOldest(Self.deliveryBound + 1))
         if isClosed {
             continuation.finish()
         } else {
             surfaces[surfaceID] = SurfaceState(deliveries: continuation)
+            if selectionOwner == nil { selectionOwner = surfaceID }
         }
         let blocks = NativeBlockProjection.project(doc).blocks.map(BlockSnapshot.init)
         let recoveries = store.flatMap { store in scope.map { store.provisionalRecoveries(for: $0) } } ?? []
@@ -239,23 +261,26 @@ actor DocumentReplicaSession {
         case .select(let surfaceID, let seq, let base, let selection):
             guard surfaces[surfaceID] != nil else { return }
             surfaces[surfaceID]?.selectionSeq = seq
+            selectionOwner = surfaceID
             let rebased = selection.flatMap { rebase($0, surfaceID: surfaceID, base: base) }
             if (try? engine.setSelection(rebased)) == nil { try? engine.setSelection(nil) }
         case .compositionBegin(let surfaceID, let epoch, let base, let blockID, let range):
             // A begin that cannot be captured (a race with an unseen change)
             // leaves no composition: its commit comes back `.orphaned`.
             // Mapped like a predicted replace (an insertion at the same point lands first).
-            guard surfaces[surfaceID]?.epoch == epoch,
+            // One engine composition: another surface's begin is not captured.
+            guard surfaces[surfaceID]?.epoch == epoch, !engine.isComposing,
                 let rebased = rebase(range, assoc: 1, blockID: blockID, surfaceID: surfaceID, base: base)
             else { return }
-            surfaces[surfaceID]?.composing = (blockID, range, base)
-            try? engine.compositionBegan(blockID: blockID, replacing: rebased)
+            if (try? engine.compositionBegan(blockID: blockID, replacing: rebased)) != nil {
+                surfaces[surfaceID]?.composing = (blockID, range, base)
+            }
             deliver(to: surfaceID)
         case .compositionCommit(let surfaceID, let epoch, let commandID, let text):
             commitComposition(surfaceID: surfaceID, epoch: epoch, commandID: commandID, text: text)
         case .compositionCancel(let surfaceID):
+            if surfaces[surfaceID]?.composing != nil, engine.isComposing { try? engine.compositionCancelled() }
             surfaces[surfaceID]?.composing = nil
-            if engine.isComposing { try? engine.compositionCancelled() }
             deliver(to: surfaceID, result: .composition(commandID: nil, .cancelled), selection: true)
         case .writeProvisional(let entries):
             // A convenience copy, never committed content: a failed write
@@ -273,11 +298,11 @@ actor DocumentReplicaSession {
             }.map(\.action)
             var delivery = ReplicaDelivery(revision: engine.revision, state: state)
             delivery.availability = (blockID, engine.revision, actions)
-            surfaces[surfaceID]?.deliveries.yield(delivery)
+            send(delivery, to: surfaceID)
         case .copyPayload(let surfaceID, let requestID, let blockIDs):
             var delivery = ReplicaDelivery(revision: engine.revision, state: state)
             delivery.clipboard = (requestID, engine.subtreePayload(blockIDs))
-            surfaces[surfaceID]?.deliveries.yield(delivery)
+            send(delivery, to: surfaceID)
         case .setWritable(let journal):
             self.journal = journal
             if journal != nil, history == nil { history = ReplicaHistory(doc: doc, engine: engine) }
@@ -285,9 +310,21 @@ actor DocumentReplicaSession {
         case .drain(let surfaceID, let token):
             var delivery = ReplicaDelivery(revision: engine.revision, state: state)
             delivery.drained = token
-            surfaces[surfaceID]?.deliveries.yield(delivery)
+            send(delivery, to: surfaceID)
+        case .resync(let surfaceID):
+            resync(surfaceID)
         case .detach(let surfaceID):
-            surfaces.removeValue(forKey: surfaceID)?.deliveries.finish()
+            guard let surface = surfaces.removeValue(forKey: surfaceID) else { return }
+            surface.deliveries.finish()
+            if selectionOwner == surfaceID {
+                selectionOwner = nil
+                try? engine.setSelection(nil)
+            }
+            // A composition nobody can commit any more ends here.
+            if surface.composing != nil, engine.isComposing {
+                try? engine.compositionCancelled()
+                deliver(to: nil)
+            }
         case .close:
             close()
         case .inspect(let body):
@@ -305,7 +342,12 @@ actor DocumentReplicaSession {
             return
         }
         guard journal != nil else {
-            deliver(to: message.surfaceID, result: .refused(commandID: id, nil))
+            // Read-only (`setWritable(nil)`): a predicted key rolls back into a recovery entry.
+            if message.predicted {
+                invalidate(message.surfaceID, commandID: id)
+            } else {
+                deliver(to: message.surfaceID, result: .refused(commandID: id, nil))
+            }
             return
         }
         surface.unseen.removeAll { $0.revision <= message.command.baseRevision }
@@ -329,6 +371,7 @@ actor DocumentReplicaSession {
                 kind: .replace(range: rebased, replacement: text, marks: marks))
         }
         surfaces[message.surfaceID] = surface
+        selectionOwner = message.surfaceID
         // Stamped with the engine's own revision: only this surface's commands
         // (already in its display) or rebased changes came between.
         command = NativeEditCommand(id: id, baseRevision: engine.revision, blockID: command.blockID, kind: command.kind)
@@ -381,13 +424,16 @@ actor DocumentReplicaSession {
     /// unless discarded peer changes were folded in. A commit whose target
     /// is gone ends the surface's epoch like an unrebaseable key.
     private func commitComposition(surfaceID: UUID, epoch: UInt64, commandID: UUID, text: String) {
+        // Only this surface's own composition is ended here.
+        let begun = surfaces[surfaceID]?.composing
+        surfaces[surfaceID]?.composing = nil
         guard surfaces[surfaceID]?.epoch == epoch else {
             // The surface rolls this epoch back already.
-            if engine.isComposing { try? engine.compositionCancelled() }
+            if begun != nil, engine.isComposing { try? engine.compositionCancelled() }
             deliver(to: surfaceID, result: .composition(commandID: commandID, .orphaned))
             return
         }
-        guard engine.isComposing else {
+        guard engine.isComposing, let begun else {
             // The begin never captured its target: nothing is written.
             invalidate(surfaceID, commandID: commandID)
             return
@@ -403,13 +449,12 @@ actor DocumentReplicaSession {
             case .committed(_, let folds):
                 // Its echo is out of the ring, so the ring moves through it, as
                 // through a predicted replace.
-                if !folds, var surface = surfaces[surfaceID], let begun = surface.composing {
+                if !folds, var surface = surfaces[surfaceID] {
                     surface.unseen.removeAll { $0.revision <= begun.base }
                     _ = rebase(begun.range, text: text, blockID: begun.blockID, unseen: &surface.unseen)
                     surfaces[surfaceID] = surface
                     predicting = (surfaceID, commandID)
                 }
-                surfaces[surfaceID]?.composing = nil
                 defer { predicting = nil }
                 deliver(to: surfaceID, result: .composition(commandID: commandID, .committed), selection: true)
             case .orphaned:
@@ -470,7 +515,7 @@ actor DocumentReplicaSession {
     // MARK: - Delivery
 
     /// Everything the engine delivered since the last call goes to every
-    /// surface (in this PR, one), the result only to `surfaceID`. Changes that
+    /// surface, the result only to `surfaceID`. Changes that
     /// are not a surface's own predicted echo join its unseen ring.
     private func deliver(
         to surfaceID: UUID?, result: ReplicaResult? = nil, selection: Bool = false, timings: ReplicaTimings? = nil
@@ -504,15 +549,58 @@ actor DocumentReplicaSession {
                 delivery.result = result
                 delivery.timings = timings
             }
-            if own ? (selection || changed) : changed {
+            if id == selectionOwner, own ? (selection || changed) : changed {
                 // `try?` flattens: nil when there is no selection (or detached).
                 let endpoints = try? engine.currentSelectionEndpoints()
                 delivery.selection = ReplicaSelection(
                     seq: surface.selectionSeq, anchor: endpoints?.anchor, head: endpoints?.head,
                     tracked: endpoints != nil)
             }
-            surface.deliveries.yield(delivery)
+            send(delivery, to: id)
         }
+    }
+
+    /// Every delivery leaves through here. At the bound the surface gets the
+    /// marker in the slot kept for it, and from then on only what answers
+    /// something is kept, without patches (the reset will show them).
+    private func send(_ delivery: ReplicaDelivery, to surfaceID: UUID) {
+        guard var surface = surfaces[surfaceID] else { return }
+        defer { surfaces[surfaceID] = surface }
+        if surface.held != nil {
+            if let answers = delivery.withoutPatches() { surface.held?.append(answers) }
+            return
+        }
+        if case .enqueued(let remaining) = surface.deliveries.yield(delivery), remaining > 1 { return }
+        surface.held = []
+        var marker = ReplicaDelivery(revision: delivery.revision, state: delivery.state)
+        marker.resync = .requested
+        surface.deliveries.yield(marker)
+    }
+
+    /// The surface asked to catch up (it read the marker, or marked text held
+    /// too many deliveries): what was held, then the canonical state as one
+    /// `.reset` under a new epoch. Commands of the old epoch posted after the
+    /// ask are dropped like an invalidated epoch's; the surface held its keys.
+    private func resync(_ surfaceID: UUID) {
+        guard var surface = surfaces[surfaceID] else { return }
+        let held = surface.held ?? []
+        surface.held = nil
+        surface.epoch += 1
+        surface.unseen = []
+        surface.droppedThrough = engine.revision
+        surfaces[surfaceID] = surface
+        for delivery in held { send(delivery, to: surfaceID) }
+        let blocks = NativeBlockProjection.project(doc).blocks.map(BlockSnapshot.init)
+        var reset = ReplicaDelivery(
+            revision: engine.revision, events: [.patch(BlockPatch([.reset(blocks)], origin: .other), settled: [:])],
+            state: state)
+        reset.resync = .reset(epoch: surface.epoch)
+        if surfaceID == selectionOwner {
+            let endpoints = try? engine.currentSelectionEndpoints()
+            reset.selection = ReplicaSelection(
+                seq: surface.selectionSeq, anchor: endpoints?.anchor, head: endpoints?.head, tracked: endpoints != nil)
+        }
+        send(reset, to: surfaceID)
     }
 
     // MARK: - Rebase

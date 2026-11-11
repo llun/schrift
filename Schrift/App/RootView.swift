@@ -33,6 +33,8 @@ private struct AuthenticatedHomeContainer: View {
     @State private var collaboration: DocumentCollaborationManager
     @State private var attachments: AttachmentLoader
     @State private var images: ImageLoader
+    /// Every native replica open in this server session, one per scope (PR08c).
+    @State private var nativeSessions = NativeSessionRegistry()
     let serverURL: URL
     let serverHost: String
     /// `siteOrigin(for: serverURL)` — the origin document images are gated
@@ -123,7 +125,12 @@ private struct AuthenticatedHomeContainer: View {
             // Answering the re-login sheet can change *which account* this is, and this
             // container is not rebuilt when it does — so the tabs are told, and the ones
             // holding account-scoped state re-read it. See `SessionStore.signInGeneration`.
-            signInGeneration: sessionStore.signInGeneration, onSignOut: onSignOut
+            signInGeneration: sessionStore.signInGeneration,
+            onSignOut: {
+                // No replica keeps journaling under the account that is leaving.
+                nativeSessions.closeAll()
+                onSignOut()
+            }
         )
         .onChange(of: workOffline) { _, isOffline in
             viewModel.availability.preferencesChanged()
@@ -185,7 +192,12 @@ private struct AuthenticatedHomeContainer: View {
             // The server may have rotated or extended its cookies since sign-in; snapshot them
             // before iOS can terminate the process, or the next launch restores stale ones and
             // its first request 401s on a session that was still alive.
-            if phase == .background { sessionStore.refreshPersistedSessionCookies() }
+            if phase == .background {
+                sessionStore.refreshPersistedSessionCookies()
+                // Hand every native replica's debounced save over, then again
+                // once what was already typed is journaled.
+                nativeSessions.drainAll()
+            }
             // Live sockets follow the scene: closed on real background, rebuilt on
             // return; a transient `.inactive` blip is ignored. (No-op while the
             // manager holds no sessions.)
@@ -198,7 +210,11 @@ private struct AuthenticatedHomeContainer: View {
             let homeViewModel = viewModel
             Task { await homeViewModel.syncPendingDrafts() }
         }
+        // The session under every screen may be another account's now: close
+        // every replica; mounted native editors reopen on the same signal.
+        .onChange(of: sessionStore.signInGeneration) { _, _ in nativeSessions.closeAll() }
         .environment(collaboration)
+        .environment(nativeSessions)
         .environment(attachments)
         .environment(images)
         .task {
