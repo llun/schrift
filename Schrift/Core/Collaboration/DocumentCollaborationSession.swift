@@ -95,6 +95,9 @@ final class DocumentCollaborationSession {
     /// that frame's bytes, so the manager can integrate them before marking
     /// the initial sync applied.
     private let onInitialSync: @MainActor () -> Void
+    /// When set, every inbound step2/update goes here with its step instead
+    /// of `onSyncUpdate` (the native binding tells a step2 from an update, PR09a).
+    private let onSync: (@MainActor (SyncMessage) -> Void)?
     /// Latches `onInitialSync` to a single firing per session.
     private var didInitialSync = false
     private var pumpTask: Task<Void, Never>?
@@ -111,7 +114,8 @@ final class DocumentCollaborationSession {
         onSyncUpdate: @escaping @MainActor (Data) -> Void = { _ in },
         initialSyncStep1: @escaping @MainActor () async -> Data = { Data([0x00]) },
         onStateRequest: @escaping @MainActor (Data) -> Data? = { _ in nil },
-        onInitialSync: @escaping @MainActor () -> Void = {}
+        onInitialSync: @escaping @MainActor () -> Void = {},
+        onSync: (@MainActor (SyncMessage) -> Void)? = nil
     ) {
         self.documentName = documentName
         self.transport = transport
@@ -125,6 +129,7 @@ final class DocumentCollaborationSession {
         self.initialSyncStep1 = initialSyncStep1
         self.onStateRequest = onStateRequest
         self.onInitialSync = onInitialSync
+        self.onSync = onSync
     }
 
     /// Resumes the socket, sends the handshake, and pumps inbound events.
@@ -225,10 +230,8 @@ final class DocumentCollaborationSession {
     /// tolerated the same way every other send here is, via the pump's
     /// disconnect event.
     private func sendStep2(_ data: Data) {
-        let payload = SyncMessage(step: .step2, data: data).encodedPayload()
-        let frame = HocuspocusMessage(documentName: documentName, type: .sync, payload: payload)
-        let transport = self.transport
-        Task { try? await transport.send(frame) }
+        // Through `send`, so a reader never answers with content.
+        Task { await send(SyncMessage(step: .step2, data: data)) }
     }
 
     private func handle(_ event: CollaborationEvent) {
@@ -263,13 +266,13 @@ final class DocumentCollaborationSession {
                 case .step2:
                     // Deliver the bytes first so the manager integrates them, THEN
                     // signal "initial sync applied" — never the other order.
-                    onSyncUpdate(sync.data)
+                    if let onSync { onSync(sync) } else { onSyncUpdate(sync.data) }
                     if !didInitialSync {
                         didInitialSync = true
                         onInitialSync()
                     }
                 case .update:
-                    onSyncUpdate(sync.data)
+                    if let onSync { onSync(sync) } else { onSyncUpdate(sync.data) }
                 }
             case .awareness:
                 // Peers' presence: fold it into `peers` (never including us).

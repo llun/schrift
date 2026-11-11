@@ -276,7 +276,13 @@ enum YUpdateDecoder {
             var ranges: [YDeleteRange] = []
             ranges.reserveCapacity(min(Int(exactly: numRanges) ?? 0, d.remainingCount))
             for _ in 0..<numRanges {
-                ranges.append(YDeleteRange(clock: try d.readVarUInt(), length: try d.readVarUInt()))
+                let range = YDeleteRange(clock: try d.readVarUInt(), length: try d.readVarUInt())
+                // Like a struct's clock range: an end past `UInt` would trap in every
+                // later `clock + length`, so the update is refused here instead.
+                guard !range.clock.addingReportingOverflow(range.length).overflow else {
+                    throw YWireError.clockOutOfRange
+                }
+                ranges.append(range)
             }
             blocks.append(YDeleteBlock(client: client, ranges: ranges))
         }
@@ -459,8 +465,36 @@ extension YUpdate {
             }
         }
         return deleteSet.contains { block in
-            block.ranges.contains { $0.clock + $0.length > (reach[block.client] ?? 0) }
+            block.ranges.contains { range in
+                let (end, overflow) = range.clock.addingReportingOverflow(range.length)
+                return overflow || end > (reach[block.client] ?? 0)
+            }
         }
+    }
+
+    /// Whether integrating this update into `store` would change nothing: every
+    /// struct is already there and every deleted clock is already deleted (a
+    /// duplicate frame, an empty step2). Such an update is not journaled (PR09a).
+    func addsNothing(to store: YStructStore) -> Bool {
+        for block in blocks {
+            guard let last = block.structs.last else { continue }
+            let id = Self.id(of: last)
+            let (end, overflow) = id.clock.addingReportingOverflow(last.length)
+            if overflow || end > store.getState(block.client) { return false }
+        }
+        for block in deleteSet {
+            for range in block.ranges where range.length > 0 {
+                guard let structs = store.clients[block.client]?.structs,
+                    var index = try? YStructStore.findIndexSS(structs, range.clock)
+                else { return false }
+                let end = range.clock.addingReportingOverflow(range.length).partialValue
+                while index < structs.count, structs[index].id.clock < end {
+                    if !structs[index].deleted { return false }
+                    index += 1
+                }
+            }
+        }
+        return true
     }
 
     private static func id(of record: YStructRecord) -> YID {

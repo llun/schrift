@@ -679,4 +679,25 @@ final class DocumentCollaborationSessionTests: XCTestCase {
         session.stop()
         await waitUntil { session.state == .ended(.closed) }
     }
+
+    /// S5: a reader's session never answers a peer's SyncStep1 with content,
+    /// whatever its state provider returns.
+    func testAReaderNeverAnswersAStateRequest() async throws {
+        let fake = FakeWebSocket()
+        let capture = StateRequestCapture()
+        capture.reply = Data([0x0A, 0x0B])
+        let session = DocumentCollaborationSession(
+            documentName: doc, transport: CollaborationTransport(socket: fake), canUpdate: false,
+            onStateRequest: { vector in
+                capture.count += 1
+                return capture.reply
+            })
+        session.start()
+        await waitUntil { fake.sentFrames.count == 1 }
+        fake.deliver(message: syncFrame(step: .step1, data: Data([0x00])))
+        await waitUntil { capture.count == 1 }
+        await waitAndConfirmNever { fake.sentFrames.count > 1 }
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
 }

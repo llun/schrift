@@ -24,8 +24,9 @@ func nativeLiveCollaborationEligible(
 ///   (`.integrate`), journaled before any surface shows them. At most
 ///   `inboundBound` wait there, so a burst from the socket never fills the
 ///   mailbox a keystroke needs; past it, and after an update that overtook what
-///   it builds on, the binding sends a fresh SyncStep1 once the in-flight ones
-///   are answered, and the server's step2 brings what was skipped.
+///   it builds on, the binding redials once the in-flight ones are answered,
+///   and the fresh handshake's step2 brings what was skipped. A step2 the
+///   replica refuses stops live instead (every handshake would repeat it).
 /// - **Outbound** is only what the replica journaled: the scope's journal
 ///   publishes each local update into `outbox` after its append succeeded, and
 ///   a peer's SyncStep1 is answered by the replica in mailbox order into the
@@ -53,54 +54,69 @@ final class NativeCollaborationBinding {
     }
 
     static let inboundBound = 64
+    /// Recovery redials per binding; past it a peer that keeps sending
+    /// frames the replica must refuse cannot make it reconnect forever.
+    static let redialLimit = 3
+
+    /// How to reach the room again: a redial is a fresh handshake.
+    private struct Dialer {
+        let dial: @MainActor () -> CollaborationTransport?
+        let wireProtocol: CollaborationWireProtocol
+        let documentName: String
+        /// The open and its account still hold: nothing is dialed or sent otherwise.
+        let isCurrent: @MainActor () -> Bool
+    }
 
     nonisolated let outbox = Outbox()
     private let replica: DocumentReplicaSession
     private(set) var session: DocumentCollaborationSession?
+    private var dialer: Dialer?
+    private var dialing = false
+    /// Bumped per socket: answers for an older socket's frames ask nothing.
+    private var generation = 0
     private var inFlight = 0
+    /// This socket's step2 arrived: an update refused after it is a real gap.
     private var synced = false
-    private var needsSync = false
+    private var needsRedial = false
+    private var redials = 0
+    /// A peer's SyncStep1 being answered, and the latest one that came in
+    /// meanwhile: at most one waits in the mailbox, so a burst cannot fill it.
+    private var answering = false
+    private var nextStateRequest: Data?
     private(set) var isStopped = false
     private var consumer: Task<Void, Never>?
 
     init(replica: DocumentReplicaSession) {
         self.replica = replica
         consumer = Task { [weak self, outbox] in
-            for await message in outbox.messages { await self?.session?.send(message) }
+            for await message in outbox.messages {
+                // Rechecked per frame: an account change stops content leaving
+                // even before the binding itself is stopped.
+                guard let self, self.dialer?.isCurrent() == true else { continue }
+                await self.session?.send(message)
+            }
         }
     }
 
-    /// A socket is open or opening.
+    /// A socket is open, opening or being dialed.
     var isConnected: Bool {
+        if dialing { return true }
         switch session?.state {
-        case .connecting?, .live?: true
-        case .reconnecting?, .ended?, nil: false
+        case .connecting?, .live?: return true
+        case .reconnecting?, .ended?, nil: return false
         }
     }
 
-    /// Joins the room over `transport` unless a socket is already up. The
-    /// handshake offers the replica's state vector; the server's own SyncStep1
-    /// is answered with everything it lacks, unsent outbox edits included.
-    func connect(transport: CollaborationTransport, wireProtocol: CollaborationWireProtocol, documentName: String) {
-        guard !isStopped, !isConnected else { return }
-        session?.stop()
-        synced = false
-        needsSync = false
-        let replica = self.replica
-        let outbox = self.outbox
-        let session = DocumentCollaborationSession(
-            documentName: documentName, transport: transport, wireProtocol: wireProtocol, canUpdate: true,
-            onSyncUpdate: { [weak self] in self?.receive($0) },
-            initialSyncStep1: { await Self.stateVector(of: replica) },
-            onStateRequest: { vector in
-                // Answered in mailbox order, into the stream journaled updates use.
-                replica.mailbox.post(
-                    .liveSync(peerVector: vector, reply: { _, missing in missing.map(outbox.reply) }))
-                return nil
-            },
-            onInitialSync: { [weak self] in self?.synced = true })
-        self.session = session
-        session.start()
+    /// Joins the room unless a socket is already up. The handshake offers the
+    /// replica's state vector, read before dialing; the server's own
+    /// SyncStep1 is answered with everything it lacks, unsent outbox edits
+    /// included.
+    func connect(
+        dial: @escaping @MainActor () -> CollaborationTransport?, wireProtocol: CollaborationWireProtocol,
+        documentName: String, isCurrent: @escaping @MainActor () -> Bool
+    ) {
+        dialer = Dialer(dial: dial, wireProtocol: wireProtocol, documentName: documentName, isCurrent: isCurrent)
+        open()
     }
 
     /// Closes the socket for good (the replica closed or the open went away).
@@ -111,47 +127,119 @@ final class NativeCollaborationBinding {
         outbox.finish()
     }
 
-    private func receive(_ update: Data) {
+    private func open() {
+        guard !isStopped, !isConnected, let dialer else { return }
+        dialing = true
+        Task { [weak self, replica] in
+            // A full mailbox answers nil: no handshake, rather than one asking
+            // for the whole document.
+            let vector = await Self.stateVector(of: replica)
+            guard let self else { return }
+            self.dialing = false
+            guard let vector, !self.isStopped, dialer.isCurrent(), let transport = dialer.dial() else { return }
+            self.start(transport: transport, dialer: dialer, stateVector: vector)
+        }
+    }
+
+    private func start(transport: CollaborationTransport, dialer: Dialer, stateVector: Data) {
+        generation += 1
+        needsRedial = false
+        synced = false
+        let generation = self.generation
+        let session = DocumentCollaborationSession(
+            documentName: dialer.documentName, transport: transport, wireProtocol: dialer.wireProtocol,
+            canUpdate: true, initialSyncStep1: { stateVector },
+            onStateRequest: { [weak self] vector in
+                self?.answer(vector)
+                return nil
+            },
+            onSync: { [weak self] in self?.receive($0, generation: generation) })
+        self.session = session
+        session.start()
+    }
+
+    /// A refused frame is recovered by a fresh handshake, whose step2 is the
+    /// server's whole diff: that works whether or not the server answers a
+    /// SyncStep1 later in a session.
+    private func redial() {
+        guard redials < Self.redialLimit else { return stop() }
+        redials += 1
+        session?.stop()
+        session = nil
+        open()
+    }
+
+    /// Answered in mailbox order, into the stream journaled updates use. A
+    /// later request supersedes one not yet posted (its vector is newer).
+    private func answer(_ vector: Data) {
+        guard !answering else {
+            nextStateRequest = vector
+            return
+        }
+        answering = true
+        let outbox = self.outbox
+        replica.mailbox.post(
+            .liveSync(
+                peerVector: vector,
+                reply: { _, missing in
+                    missing.map(outbox.reply)
+                    Task { @MainActor [weak self] in self?.answered() }
+                }))
+    }
+
+    private func answered() {
+        answering = false
+        if let next = nextStateRequest {
+            nextStateRequest = nil
+            answer(next)
+        }
+    }
+
+    private func receive(_ sync: SyncMessage, generation: Int) {
+        let step2 = sync.step == .step2
+        // An update ahead of the handshake's step2 is in that step2.
+        let early = !step2 && !synced
+        if step2 { synced = true }
         guard inFlight < Self.inboundBound else {
-            // Skipped: the next SyncStep1 asks the server for it again.
-            needsSync = true
+            // Skipped: the next handshake brings it again.
+            if generation == self.generation { needsRedial = true }
             return
         }
         inFlight += 1
         replica.mailbox.post(
             .integrate(
-                update,
+                sync.data,
                 reply: { result in
-                    Task { @MainActor [weak self] in self?.integrated(result) }
+                    Task { @MainActor [weak self] in
+                        self?.integrated(result, step2: step2, early: early, generation: generation)
+                    }
                 }))
     }
 
-    private func integrated(_ result: Result<Void, any Error>) {
+    private func integrated(_ result: Result<Void, any Error>, step2: Bool, early: Bool, generation: Int) {
         inFlight -= 1
-        if case .failure(let error) = result {
+        if case .failure(let error) = result, generation == self.generation {
             switch error {
-            case NativeLiveError.missingDependencies:
-                // Before the first step2 that reply brings it anyway.
-                if synced { needsSync = true }
+            case NativeLiveError.missingDependencies where !step2:
+                // An update that overtook what it builds on: the next
+                // handshake's step2 has both.
+                if !early { needsRedial = true }
             case DocumentEngineError.detached:
                 // A full mailbox dropped it (or the replica closed, and stop follows).
-                needsSync = true
+                needsRedial = true
             default:
-                // A malformed frame, a frozen replica or a failed append: live
-                // ends here and HTTP keeps saving what is journaled.
-                stop()
-                return
+                // A step2 the replica cannot take would be sent again by every
+                // handshake; a malformed frame, a frozen replica or a failed
+                // append end live too. HTTP keeps saving what is journaled.
+                return stop()
             }
         }
-        guard inFlight == 0, needsSync, let session else { return }
-        needsSync = false
-        let replica = self.replica
-        Task { await session.send(SyncMessage(step: .step1, data: await Self.stateVector(of: replica))) }
+        guard inFlight == 0, needsRedial, !isStopped else { return }
+        redial()
     }
 
-    private static func stateVector(of replica: DocumentReplicaSession) async -> Data {
+    private static func stateVector(of replica: DocumentReplicaSession) async -> Data? {
         await withCheckedContinuation { done in
-            // A post that cannot be handled is answered with the empty vector.
             replica.mailbox.post(.liveSync(peerVector: nil, reply: { vector, _ in done.resume(returning: vector) }))
         }
     }

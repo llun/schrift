@@ -358,7 +358,7 @@ final class NativeEditorOpen {
         guard !isOpen else { return }
         isOpen = true
         enabled = preference()
-        self.canUpdate = canUpdate
+        self.canUpdate = false
         isPreservedReadOnly = false
         // A reappearing classic editor keeps its SwiftUI identity and local
         // view state while the optional native eligibility read is in flight.
@@ -409,10 +409,15 @@ final class NativeEditorOpen {
             if let session = restored {
                 // The "turn the switch on" explanation is only true while it is off.
                 isPreservedReadOnly = !enabled
-                if enabled, canUpdate, session.canType, mayType(viewModel) {
-                    installTyping(session, scope: scope, viewModel: viewModel)
-                }
                 route = .native(session)
+                if enabled, session.canType, mayType(viewModel) {
+                    let verified = await verifiedCanUpdate(canUpdate, viewModel: viewModel, isOffline: isOffline)
+                    guard !Task.isCancelled, generation == request, !session.isClosed,
+                        viewModel.signedInUser.userID == account
+                    else { return }
+                    self.canUpdate = verified
+                    if verified { installTyping(session, scope: scope, viewModel: viewModel) }
+                }
                 // Offline-first: the replica is on screen before any request.
                 await integrateServerState(
                     into: session, scope: scope, viewModel: viewModel, request: request, isOffline: isOffline)
@@ -508,7 +513,14 @@ final class NativeEditorOpen {
         else { return }
         // A document that is not fully projectable, or a reader, stays in PR01's
         // in-memory read-only view and never gains a replica or marker.
-        guard enabled, canUpdate, session.canType, let account, mayType(viewModel) else {
+        let verified =
+            enabled && session.canType && mayType(viewModel)
+            ? await verifiedCanUpdate(canUpdate, viewModel: viewModel, isOffline: isOffline) : false
+        guard !Task.isCancelled, generation == request,
+            canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account)
+        else { return }
+        self.canUpdate = verified
+        guard verified, let account else {
             route = .native(session)
             return
         }
@@ -520,7 +532,7 @@ final class NativeEditorOpen {
             state: state, scope: scope, viewModel: viewModel, request: request, account: account)
         guard let seeded else { return }
         route = seeded
-        if case .native(let session) = seeded { startLive(session, scope: scope, config: config) }
+        if case .native(let session) = seeded { startLive(session, scope: scope, config: config, viewModel: viewModel) }
     }
 
     /// Reconnect: merge the fetched raw state into the open durable owner.
@@ -672,7 +684,7 @@ final class NativeEditorOpen {
             guard isCurrent() else { return }
             try await session.integrateServerState(state)
             guard isCurrent() else { return }
-            startLive(session, scope: scope, config: config)
+            startLive(session, scope: scope, config: config, viewModel: viewModel)
             // Refreshes the server title native saves send.
             _ = try await viewModel.refreshOfflineCacheForNativeReader(isCurrent: isCurrent)
         } catch {
@@ -681,22 +693,41 @@ final class NativeEditorOpen {
         }
     }
 
+    /// The open's update ability. The navigation row can be stale (an account
+    /// switch reuses the screen; a cached row predates a permission change), so
+    /// an online open asks the server and a failed ask fails closed. An offline
+    /// open keeps the row: offline typing stays possible, and the server still
+    /// refuses a reader's save. A row that says reader is never asked.
+    private func verifiedCanUpdate(_ pinned: Bool, viewModel: EditorViewModel, isOffline: Bool) async -> Bool {
+        guard pinned else { return false }
+        guard !isOffline, !viewModel.availability.showsOfflineStatus else { return true }
+        return (try? await viewModel.client.document(documentID: viewModel.documentID))?.abilities.update == true
+    }
+
     /// Joins the scope's live room when the native live gate holds, unless its
     /// socket is up already. Only a typing session goes live: a reader never
     /// opens a socket. A socket that ended is dialed again on the next
     /// reconnect refresh; backoff and background handling are PR09b.
-    private func startLive(_ session: NativeEditorSession, scope: ReplicaScope, config: ServerConfig) {
+    private func startLive(
+        _ session: NativeEditorSession, scope: ReplicaScope, config: ServerConfig, viewModel: EditorViewModel
+    ) {
         guard session.input != nil, !session.isClosed,
             nativeLiveCollaborationEligible(
                 nativeEnabled: enabled, liveEnabled: livePreference(),
                 serverSupports: config.supportsNativeLiveCollaboration && config.collaborationOrg == scope.org,
                 canUpdate: canUpdate),
-            let binding = registry.liveBinding(for: scope), !binding.isConnected,
-            let transport = collaboration?.nativeTransport(for: scope.documentID, config: config)
+            let binding = registry.liveBinding(for: scope), !binding.isConnected, let collaboration
         else { return }
+        let signedInUser = viewModel.signedInUser
         binding.connect(
-            transport: transport, wireProtocol: CollaborationWireProtocol(config: config),
-            documentName: scope.documentID.uuidString.lowercased())
+            dial: { [weak collaboration] in collaboration?.nativeTransport(for: scope.documentID, config: config) },
+            wireProtocol: CollaborationWireProtocol(config: config),
+            documentName: scope.documentID.uuidString.lowercased(),
+            // A cookie handover forgets the signed-in user before /users/me
+            // confirms the next one: nothing is dialed or sent for the scope then.
+            isCurrent: { [weak session] in
+                session.map { !$0.isClosed } == true && signedInUser.userID == scope.ownerUserID
+            })
     }
 
     /// Typing also needs no live owner (a native session never takes the live

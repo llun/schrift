@@ -71,9 +71,13 @@ actor DocumentReplicaSession {
     static let deliveryBound = 256
 
     nonisolated let mailbox = ReplicaCommandMailbox()
-    private let doc: YDoc
-    private let engine: DocumentEngine
-    private let sink: ReplicaPatchSink
+    /// Replaced only when a remote update fails to integrate: the graph is
+    /// rebuilt from the journal (`recoverFromRemoteFault`).
+    private var doc: YDoc
+    private var engine: DocumentEngine
+    private var sink: ReplicaPatchSink
+    /// Remote entries journaled since the last compaction (PR09a).
+    private var remoteAppends = 0
     private var history: ReplicaHistory?
     private let store: ReplicaStore?
     private let scope: ReplicaScope?
@@ -120,6 +124,31 @@ actor DocumentReplicaSession {
         state: Data, updates: [Data], revision: UInt64, store: ReplicaStore?, scope: ReplicaScope?,
         freshClientID: Bool, makeReplica: @Sendable () -> YDoc, hooks: Hooks
     ) throws {
+        let graph = try Self.build(
+            state: state, updates: updates, revision: revision, durable: store != nil, freshClientID: freshClientID,
+            makeReplica: makeReplica)
+        hasUnsupportedRoot = graph.hasUnsupportedRoot
+        canType = graph.canType
+        self.doc = graph.doc
+        self.sink = graph.sink
+        self.engine = graph.engine
+        self.store = store
+        self.scope = scope
+        self.hooks = hooks
+    }
+
+    private struct Graph {
+        let doc: YDoc
+        let engine: DocumentEngine
+        let sink: ReplicaPatchSink
+        let hasUnsupportedRoot: Bool
+        let canType: Bool
+    }
+
+    private static func build(
+        state: Data, updates: [Data], revision: UInt64, durable: Bool, freshClientID: Bool,
+        makeReplica: () -> YDoc
+    ) throws -> Graph {
         let doc = makeReplica()
         do {
             try doc.applyUpdate(YUpdateDecoder.decode(state), origin: .remote)
@@ -141,26 +170,22 @@ actor DocumentReplicaSession {
             throw error
         }
         let projected = NativeBlockProjection.project(doc)
-        hasUnsupportedRoot = projected.blocks.isEmpty && !projected.isFullyRenderable
-        // Marks never make the native projection lossy (raw Yjs write-back
-        // keeps them all); the Markdown shadow is the one `ReplicaSaveAdapter`
-        // captures, which drops what Markdown cannot spell.
-        canType = projected.isFullyModeled && NativeBlockProjection.markdownShadow(doc) != nil
         let sink = ReplicaPatchSink()
         let engine = DocumentEngine(doc: doc, surface: sink, revision: revision)
         sink.engine = engine
-        if store != nil {
+        if durable {
             // Every revision must be a journal entry: an unjournaled
             // transaction freezes the engine (it has no rollback); the next
             // delivery's state says so and the surface stops authoring.
             engine.onUnjournaledTransaction = {}
         }
-        self.doc = doc
-        self.sink = sink
-        self.engine = engine
-        self.store = store
-        self.scope = scope
-        self.hooks = hooks
+        // Marks never make the native projection lossy (raw Yjs write-back
+        // keeps them all); the Markdown shadow is the one `ReplicaSaveAdapter`
+        // captures, which drops what Markdown cannot spell.
+        return Graph(
+            doc: doc, engine: engine, sink: sink,
+            hasUnsupportedRoot: projected.blocks.isEmpty && !projected.isFullyRenderable,
+            canType: projected.isFullyModeled && NativeBlockProjection.markdownShadow(doc) != nil)
     }
 
     /// An in-memory replica of `state` (no journal until `setWritable`).
@@ -493,20 +518,77 @@ actor DocumentReplicaSession {
         // would leave pending structs, which the durable path treats as corrupt
         // and freezes on. The live binding asks for state again instead.
         guard !decoded.missesDependencies(in: doc.store) else { throw NativeLiveError.missingDependencies }
+        // A duplicate or empty frame changes nothing: it is not journaled.
+        guard !decoded.addsNothing(to: doc.store) else { return }
         let doc = self.doc
         defer { deliver(to: nil) }
-        try engine.durablyIntegrateRemote(
-            update: update,
-            apply: {
-                try doc.applyUpdate(decoded, origin: .remote)
-                guard doc.store.pendingStructs == nil, doc.store.pendingDs == nil else {
-                    throw ReplicaStoreError.corrupt
-                }
-            },
-            persist: { [store, scope] revision in
-                guard let store, let scope else { return }
-                try store.append(update, for: scope, commandID: UUID(), baseRevision: revision, origin: .remote)
-            })
+        var applied = false
+        var appendFailed = false
+        do {
+            try engine.durablyIntegrateRemote(
+                update: update,
+                apply: {
+                    applied = true
+                    try doc.applyUpdate(decoded, origin: .remote)
+                    guard doc.store.pendingStructs == nil, doc.store.pendingDs == nil else {
+                        throw ReplicaStoreError.corrupt
+                    }
+                },
+                persist: { [store, scope] revision in
+                    guard let store, let scope else { return }
+                    do {
+                        try store.append(update, for: scope, commandID: UUID(), baseRevision: revision, origin: .remote)
+                    } catch {
+                        appendFailed = true
+                        throw error
+                    }
+                })
+        } catch {
+            // A failed append is ours: authoring stays frozen. An update that
+            // failed to integrate is the peer's: it may have half-mutated the
+            // graph, which is rebuilt from the journal, and only the caller
+            // (the live binding) stops.
+            if applied, !appendFailed { recoverFromRemoteFault() }
+            throw error
+        }
+        remoteAppends += 1
+        compactIfNeeded()
+    }
+
+    /// Remote entries are covered as soon as they are journaled, so a live
+    /// document that is only read still compacts (the HTTP ack compacts too).
+    private func compactIfNeeded() {
+        guard let store, let scope, remoteAppends >= ReplicaSaveAdapter.compactionJournalThreshold,
+            !engine.nativeWriteFailed, let checkpoint = try? YStateEncoder.encodeStateAsUpdate(doc)
+        else { return }
+        remoteAppends = 0
+        // Best effort: a failure leaves the journal as it was.
+        try? store.compact(for: scope, checkpoint: checkpoint, baseRevision: engine.revision)
+    }
+
+    /// The graph a failed remote update left is replaced by a replay of the
+    /// durable journal, which never held that update, and every surface gets
+    /// a `.reset` under a new epoch (keys in flight become recovery entries).
+    /// Undo history and the selection start over. An in-memory replica has no
+    /// journal to replay and stays frozen.
+    private func recoverFromRemoteFault() {
+        guard let store, let scope, let restored = try? store.restore(for: scope),
+            let graph = try? Self.build(
+                state: restored.checkpoint, updates: restored.updates, revision: restored.manifest.revision,
+                durable: true, freshClientID: true,
+                makeReplica: { YDoc(clientID: UInt.random(in: 1...UInt(UInt32.max))) })
+        else { return }
+        _ = sink.take()
+        history?.destroy()
+        doc.destroy()
+        doc = graph.doc
+        engine = graph.engine
+        sink = graph.sink
+        history = journal == nil ? nil : ReplicaHistory(doc: doc, engine: engine)
+        for id in surfaces.keys {
+            surfaces[id]?.composing = nil
+            resync(id)
+        }
     }
 
     private func invalidate(_ surfaceID: UUID, commandID: UUID) {
