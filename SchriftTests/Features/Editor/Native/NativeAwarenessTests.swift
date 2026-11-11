@@ -16,12 +16,13 @@ final class NativeAwarenessTests: NativeEditingTestCase {
     private let clock = TestClock()
 
     private func controller(
-        _ harness: Harness, timeout: Duration = .seconds(30), publishInterval: Duration = .milliseconds(100)
+        _ harness: Harness, timeout: Duration = .seconds(30), publishInterval: Duration = .milliseconds(100),
+        resolveInterval: Duration = .milliseconds(100)
     ) throws -> NativeAwarenessController {
         let clock = self.clock
         let awareness = NativeAwarenessController(
             replica: try XCTUnwrap(harness.session.replica), timeout: timeout, publishInterval: publishInterval,
-            now: { clock.now })
+            resolveInterval: resolveInterval, now: { clock.now })
         harness.session.showAwareness(awareness)
         return awareness
     }
@@ -439,7 +440,7 @@ final class NativeAwarenessTests: NativeEditingTestCase {
                 sockets.append(socket)
                 return CollaborationTransport(socket: socket, wireProtocol: .yWebSocket, documentName: "doc")
             }, wireProtocol: .yWebSocket, documentName: "doc", isCurrent: { true },
-            localState: LocalAwarenessState(name: "Me", color: "#abcdef"))
+            localState: { LocalAwarenessState(name: "Me", color: "#abcdef") })
         await waitUntil { sockets.first.map { !self.awarenessFrames($0).isEmpty } == true }
         let socket = try XCTUnwrap(sockets.first)
         let own = try XCTUnwrap(awarenessFrames(socket).first)
@@ -457,5 +458,178 @@ final class NativeAwarenessTests: NativeEditingTestCase {
         socket.failTransport()
         await waitUntil { binding.awareness.peers.isEmpty }
         await registry.closeAll().value
+    }
+
+    // MARK: - Review fixes (PR #276)
+
+    private final class Box<Value> {
+        var value: Value
+        init(_ value: Value) { self.value = value }
+    }
+
+    /// One binding over a fresh durable replica, dialing fake sockets.
+    private func bindingFixture(
+        isCurrent: @escaping @MainActor () -> Bool = { true },
+        localState: @escaping @MainActor () -> LocalAwarenessState?
+    ) async throws -> (NativeSessionRegistry, NativeCollaborationBinding, Box<[FakeWebSocket]>) {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let scope = ReplicaScope(
+            serverOrigin: "https://example.test", ownerUserID: UUID(), org: "docs", documentID: UUID())
+        let store = ReplicaStore(directory: directory)
+        _ = try store.create(
+            for: scope, checkpoint: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID))
+        let registry = NativeSessionRegistry()
+        registry.liveBackoff = .init(base: .milliseconds(10), cap: .milliseconds(20), stableAfter: .seconds(30))
+        _ = try await unwrapped(registry.open(store: store, scope: scope))
+        let binding = try unwrapped(registry.liveBinding(for: scope))
+        let sockets = Box<[FakeWebSocket]>([])
+        binding.connect(
+            dial: {
+                let socket = FakeWebSocket()
+                sockets.value.append(socket)
+                return CollaborationTransport(socket: socket, wireProtocol: .yWebSocket, documentName: "doc")
+            }, wireProtocol: .yWebSocket, documentName: "doc", isCurrent: isCurrent, localState: localState)
+        return (registry, binding, sockets)
+    }
+
+    private func announcedName(_ socket: FakeWebSocket) -> String? {
+        awarenessFrames(socket).first.flatMap {
+            CollaborationPeer(clientID: $0.clientID, stateJSON: $0.stateJSON, wireProtocol: .yWebSocket)?.name
+        }
+    }
+
+    /// A1: with a presence owner the session never folds frames into its own
+    /// unbounded `peers`; the controller's bounds are the only table.
+    func testASessionWithAPresenceOwnerKeepsNoPeerTableOfItsOwn() async throws {
+        let socket = FakeWebSocket()
+        let received = Box(0)
+        let session = DocumentCollaborationSession(
+            documentName: "doc",
+            transport: CollaborationTransport(socket: socket, wireProtocol: .yWebSocket, documentName: "doc"),
+            wireProtocol: .yWebSocket, onAwareness: { received.value += $0.count })
+        session.start()
+        let entries = (1...500).map { entry(UInt($0), name: "P\($0)", cursor: nil) }
+        socket.deliver(
+            message: CollaborationWireProtocol.yWebSocket.encode(
+                HocuspocusMessage(
+                    documentName: "", type: .awareness, payload: AwarenessCodec.encodePayload(entries))))
+        await waitUntil { received.value == 500 }
+        XCTAssertTrue(session.peers.isEmpty, "the owner keeps presence")
+        session.stop()
+    }
+
+    /// A2: the identity is read at each dial: after a re-authentication the
+    /// next socket announces the account signed in now, never the previous.
+    func testEachDialAnnouncesTheIdentityOfThatMoment() async throws {
+        let identity = Box<LocalAwarenessState?>(LocalAwarenessState(name: "Account A", color: "#000000"))
+        let (registry, _, sockets) = try await bindingFixture(localState: { identity.value })
+        await waitUntil { sockets.value.first.map { self.announcedName($0) != nil } == true }
+        XCTAssertEqual(sockets.value.first.flatMap(announcedName), "Account A")
+        identity.value = LocalAwarenessState(name: "Account B", color: "#000000")
+        sockets.value.first?.failTransport()
+        await waitUntil { sockets.value.count == 2 && self.announcedName(sockets.value[1]) != nil }
+        XCTAssertEqual(announcedName(sockets.value[1]), "Account B")
+        await registry.closeAll().value
+    }
+
+    /// A2: a sign-in change forgets our identity, and an answer still in
+    /// flight for the previous account is dropped.
+    func testASignInChangeForgetsTheIdentityAndDropsAStaleAnswer() async throws {
+        let (gate, release) = AsyncStream<Void>.makeStream()
+        let manager = DocumentCollaborationManager(
+            serverBaseURL: URL(string: "https://example.test")!, cookieProvider: { [] }, featureEnabled: { true },
+            isOffline: { false }, serverConfigProvider: { nil },
+            localStateProvider: {
+                for await _ in gate { break }
+                return LocalAwarenessState(name: "Account A", color: "#000000")
+            }, socketFactory: { _ in FakeWebSocket() })
+        let refresh = Task { await manager.refreshLocalAwareness() }
+        try await Task.sleep(for: .milliseconds(50))
+        manager.forgetLocalAwareness()
+        release.yield()
+        await refresh.value
+        XCTAssertNil(manager.localAwarenessState, "the previous account's answer is not adopted")
+        let fresh = Task { await manager.refreshLocalAwareness() }
+        release.yield()
+        await fresh.value
+        XCTAssertEqual(manager.localAwarenessState?.name, "Account A", "a refresh after the change is")
+    }
+
+    /// S4: awareness frames leave only while the open and account are
+    /// current, like content: no cursor update and no query reply after.
+    func testAwarenessStopsLeavingOnceTheOpenIsNotCurrent() async throws {
+        let current = Box(true)
+        let (registry, binding, sockets) = try await bindingFixture(
+            isCurrent: { current.value }, localState: { LocalAwarenessState(name: "Me", color: "#000000") })
+        await waitUntil { sockets.value.first.map { !self.awarenessFrames($0).isEmpty } == true }
+        let socket = try XCTUnwrap(sockets.value.first)
+        let sent = awarenessFrames(socket).count
+        current.value = false
+        let point = YRelativePositionJSON(type: nil, tname: nil, item: YID(client: 1, clock: 2), assoc: 0)
+        binding.session?.updateLocalCursor(AwarenessCursor(anchor: point, head: point))
+        socket.deliver(
+            message: CollaborationWireProtocol.yWebSocket.encode(
+                HocuspocusMessage(documentName: "", type: .queryAwareness)))
+        await waitAndConfirmNever { self.awarenessFrames(socket).count > sent }
+        await registry.closeAll().value
+    }
+
+    /// S1: at most `maxHighlights` selections are tinted in one pass; every
+    /// caret is still drawn.
+    func testSelectionHighlightsAreBoundedPerPass() async throws {
+        let harness = try await makeHarness()
+        host(harness.view)
+        let awareness = try controller(harness)
+        let start = try await position(harness, Self.firstID, 0)
+        let end = try await position(harness, Self.firstID, 10)
+        awareness.receive(
+            (1...20).map { entry(UInt($0), name: "P\($0)", cursor: AwarenessCursor(anchor: start, head: end)) })
+        await waitUntil { awareness.places.count == 20 }
+        harness.view.layoutIfNeeded()
+        XCTAssertEqual(harness.view.cursorOverlay.highlights.count, NativeCursorOverlay.maxHighlights)
+        XCTAssertEqual(painted(harness).filter { $0.hasPrefix("nativeEditor.peerCursor") }.count, 20)
+        await harness.close()
+    }
+
+    /// S3: a hostile name is one truncated, clipped caption line.
+    func testAPeerNamePillIsBounded() async throws {
+        let harness = try await makeHarness()
+        host(harness.view)
+        let awareness = try controller(harness)
+        let point = try await position(harness, Self.secondID, 3)
+        let name = String(repeating: "W\u{0301}\u{0302}\u{0303}\u{0304}\u{0305}\u{0306}\u{0307}\u{0308}", count: 30)
+        awareness.receive([entry(7, name: name, cursor: AwarenessCursor(anchor: point, head: point))])
+        await waitUntil { awareness.places.count == 1 }
+        harness.view.layoutIfNeeded()
+        let caret = try XCTUnwrap(
+            harness.view.cursorOverlay.subviews.first { $0.accessibilityIdentifier == "nativeEditor.peerCursor.7" })
+        let label = try XCTUnwrap(caret.subviews.first as? UILabel)
+        XCTAssertLessThanOrEqual(label.frame.width, NativeCursorOverlay.maxLabelWidth)
+        XCTAssertEqual(label.frame.height, ceil(label.font.lineHeight))
+        XCTAssertEqual(label.numberOfLines, 1)
+        XCTAssertTrue(label.clipsToBounds)
+        await harness.close()
+    }
+
+    /// S2: a burst of edits re-resolves peers on the cadence, not per patch,
+    /// and still lands where the peer is.
+    func testEditsReResolveOnTheCadenceNotPerPatch() async throws {
+        let harness = try await makeHarness()
+        let awareness = try controller(harness, resolveInterval: .milliseconds(500))
+        let point = try await position(harness, Self.thirdID, 5)
+        awareness.receive([entry(7, cursor: AwarenessCursor(anchor: point, head: point))])
+        await waitUntil { awareness.places.count == 1 }
+        let before = awareness.resolveCount
+        setSelection(harness, NSRange(location: try location(harness.session, Self.thirdID, 0), length: 0))
+        for _ in 0..<12 {
+            _ = await harness.run {
+                harness.input.typeKey("x")
+                return true
+            }
+        }
+        await waitUntil { awareness.places[7]?.head == self.caret(Self.thirdID, 17) }
+        XCTAssertLessThanOrEqual(awareness.resolveCount - before, 3, "not one resolve per keystroke")
+        await harness.close()
     }
 }

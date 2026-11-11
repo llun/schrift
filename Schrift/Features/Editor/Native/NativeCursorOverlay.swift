@@ -14,7 +14,12 @@ final class NativeCursorOverlay: UIView {
     weak var surface: NativeTextSurface?
     private var carets: [UInt: UIView] = [:]
     private var badges: [UInt: UIView] = [:]
-    private var highlights: [UInt: [UIView]] = [:]
+    /// Peers whose selection is tinted now (tests read the bound).
+    private(set) var highlights: [UInt: [UIView]] = [:]
+    /// At most this many selections are tinted per pass; carets are not capped.
+    static let maxHighlights = 16
+    /// A name pill's largest width; its height is one caption line.
+    static let maxLabelWidth: CGFloat = 160
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -55,6 +60,8 @@ final class NativeCursorOverlay: UIView {
         guard let awareness, let surface, !awareness.places.isEmpty, let visible = visibleRange(textView)
         else { return }
         var badgesPerBlock: [String: Int] = [:]
+        // Once per pass, not per peer: walking the folds is O(blocks).
+        let hidden = surface.hiddenRanges
         for peer in awareness.peers {
             guard let places = awareness.places[peer.clientID], let head = places.head.flatMap({ mark($0, surface) })
             else { continue }
@@ -68,7 +75,10 @@ final class NativeCursorOverlay: UIView {
                 place(caret: peer, color: color, at: rect, origin: textView.bounds.origin)
                 if case .caret(let anchor)? = places.anchor.flatMap({ mark($0, surface) }), anchor != offset {
                     let range = NSRange(location: min(anchor, offset), length: abs(anchor - offset))
-                    if highlight(peer.clientID, range: range, visible: visible, color: color, in: textView) {
+                    if shownHighlights.count < Self.maxHighlights,
+                        highlight(
+                            peer.clientID, range: range, visible: visible, hidden: hidden, color: color, in: textView)
+                    {
                         shownHighlights.insert(peer.clientID)
                     }
                 }
@@ -128,7 +138,10 @@ final class NativeCursorOverlay: UIView {
         label?.backgroundColor = color
         view.subviews.last?.backgroundColor = color
         view.accessibilityLabel = peer.name
-        let labelSize = label?.sizeThatFits(CGSize(width: 160, height: 20)) ?? .zero
+        // A peer's name is untrusted: one truncated caption line, clipped.
+        let fitted = label?.sizeThatFits(CGSize(width: Self.maxLabelWidth, height: .greatestFiniteMagnitude)) ?? .zero
+        let labelSize = CGSize(
+            width: min(fitted.width, Self.maxLabelWidth - 8), height: ceil(label?.font.lineHeight ?? fitted.height))
         let top = max(rect.minY - origin.y - labelSize.height, 0)
         view.frame = CGRect(
             x: rect.minX - origin.x, y: top, width: max(2, labelSize.width + 8),
@@ -145,6 +158,9 @@ final class NativeCursorOverlay: UIView {
         label.font = .preferredFont(forTextStyle: .caption2)
         label.textColor = .white
         label.textAlignment = .center
+        label.numberOfLines = 1
+        label.lineBreakMode = .byTruncatingTail
+        label.clipsToBounds = true
         label.layer.cornerRadius = 3
         label.layer.masksToBounds = true
         view.addSubview(label)
@@ -156,11 +172,11 @@ final class NativeCursorOverlay: UIView {
 
     /// The selection's visible part, tinted. Not drawn across folded content.
     private func highlight(
-        _ id: UInt, range: NSRange, visible: NSRange, color: UIColor, in textView: NativeTextView
+        _ id: UInt, range: NSRange, visible: NSRange, hidden: [NSRange], color: UIColor, in textView: NativeTextView
     ) -> Bool {
         let shown = NSIntersectionRange(range, visible)
         guard shown.length > 0,
-            surface?.hiddenRanges.contains(where: { NSIntersectionRange($0, shown).length > 0 }) != true,
+            !hidden.contains(where: { NSIntersectionRange($0, shown).length > 0 }),
             let start = textView.position(from: textView.beginningOfDocument, offset: shown.location),
             let end = textView.position(from: start, offset: shown.length),
             let textRange = textView.textRange(from: start, to: end)

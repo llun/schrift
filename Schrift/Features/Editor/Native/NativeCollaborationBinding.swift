@@ -89,8 +89,10 @@ final class NativeCollaborationBinding {
         let isReader: @MainActor () async -> Bool
         /// The scope became read-only for this account; live ends.
         let becameReader: @MainActor () -> Void
-        /// Our name and color for awareness (PR10); nil joins as an observer.
-        let localState: LocalAwarenessState?
+        /// Our name and color for awareness (PR10), read at each dial so a
+        /// re-authenticated account never announces the previous one; nil
+        /// joins as an observer.
+        let localState: @MainActor () -> LocalAwarenessState?
     }
 
     nonisolated let outbox = Outbox()
@@ -162,7 +164,7 @@ final class NativeCollaborationBinding {
         dial: @escaping @MainActor () -> CollaborationTransport?, wireProtocol: CollaborationWireProtocol,
         documentName: String, isCurrent: @escaping @MainActor () -> Bool,
         isReader: @escaping @MainActor () async -> Bool = { false }, becameReader: @escaping @MainActor () -> Void = {},
-        localState: LocalAwarenessState? = nil
+        localState: @escaping @MainActor () -> LocalAwarenessState? = { nil }
     ) {
         dialer = Dialer(
             dial: dial, wireProtocol: wireProtocol, documentName: documentName, isCurrent: isCurrent,
@@ -227,7 +229,7 @@ final class NativeCollaborationBinding {
         liveSince = nil
         let generation = self.generation
         let session = DocumentCollaborationSession(
-            documentName: dialer.documentName, transport: transport, localState: dialer.localState,
+            documentName: dialer.documentName, transport: transport, localState: dialer.localState(),
             wireProtocol: dialer.wireProtocol, canUpdate: true, initialSyncStep1: { stateVector },
             onStateRequest: { [weak self] vector in
                 self?.answer(vector)
@@ -238,7 +240,9 @@ final class NativeCollaborationBinding {
             onAwareness: { [weak self] entries in
                 guard let self, generation == self.generation else { return }
                 self.awareness.receive(entries)
-            })
+            },
+            // Awareness frames leave only for the current open and account, like content.
+            isCurrent: dialer.isCurrent)
         self.session = session
         awareness.wireProtocol = dialer.wireProtocol
         awareness.session = session

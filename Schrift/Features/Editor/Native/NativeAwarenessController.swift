@@ -72,6 +72,12 @@ final class NativeAwarenessController {
     @ObservationIgnored var wireProtocol: CollaborationWireProtocol
     @ObservationIgnored private let timeout: Duration
     @ObservationIgnored private let publishInterval: Duration
+    /// Edits re-resolve peers at most this often (each resolve walks the
+    /// positions' siblings on the replica).
+    @ObservationIgnored private let resolveInterval: Duration
+    @ObservationIgnored private var resolveTask: Task<Void, Never>?
+    /// Resolutions posted to the replica (tests read the throttle).
+    @ObservationIgnored private(set) var resolveCount = 0
     @ObservationIgnored private let now: @MainActor () -> ContinuousClock.Instant
     @ObservationIgnored private var resolving = false
     @ObservationIgnored private var needsResolve = false
@@ -82,12 +88,14 @@ final class NativeAwarenessController {
     init(
         replica: DocumentReplicaSession, wireProtocol: CollaborationWireProtocol = .yWebSocket,
         timeout: Duration = .seconds(30), publishInterval: Duration = .milliseconds(100),
+        resolveInterval: Duration = .milliseconds(100),
         now: @escaping @MainActor () -> ContinuousClock.Instant = { ContinuousClock.now }
     ) {
         self.replica = replica
         self.wireProtocol = wireProtocol
         self.timeout = timeout
         self.publishInterval = publishInterval
+        self.resolveInterval = resolveInterval
         self.now = now
         replica.mailbox.post(
             .watchCursor { [weak self] cursor in
@@ -104,6 +112,9 @@ final class NativeAwarenessController {
         var changed = false
         for entry in entries where entry.clientID != ownID {
             guard entry.stateJSON.utf8.count <= Self.maxStateBytes else { continue }
+            // Cheap refusals before any JSON is parsed: an unknown id at the
+            // cap, or the removal of one never seen.
+            if table[entry.clientID] == nil, table.count >= Self.maxPeers || entry.stateJSON == "null" { continue }
             if let known = table[entry.clientID] {
                 // y-protocols: only a higher clock, or a removal at the same clock.
                 guard entry.clock > known.clock || (entry.clock == known.clock && entry.stateJSON == "null") else {
@@ -117,7 +128,6 @@ final class NativeAwarenessController {
                 changed = table.removeValue(forKey: entry.clientID) != nil || changed
                 continue
             }
-            guard table[entry.clientID] != nil || table.count < Self.maxPeers else { continue }
             table[entry.clientID] = Peer(
                 peer: peer, clock: entry.clock, cursor: AwarenessCursor.parse(stateJSON: entry.stateJSON),
                 lastSeen: instant)
@@ -172,10 +182,17 @@ final class NativeAwarenessController {
 
     // MARK: - Resolution
 
-    /// The displayed document changed: the peers' positions move with it.
+    /// The displayed document changed: the peers' positions move with it,
+    /// re-resolved at most every `resolveInterval` however fast edits arrive.
     func documentChanged() {
-        guard !table.isEmpty else { return }
-        resolve()
+        guard !table.isEmpty, resolveTask == nil else { return }
+        let interval = resolveInterval
+        resolveTask = Task { [weak self] in
+            try? await Task.sleep(for: interval)
+            guard !Task.isCancelled, let self else { return }
+            self.resolveTask = nil
+            self.resolve()
+        }
     }
 
     private func resolve() {
@@ -190,6 +207,7 @@ final class NativeAwarenessController {
         }
         resolving = true
         needsResolve = false
+        resolveCount += 1
         let posted = replica.mailbox.post(
             .resolveCursors(
                 cursors,
@@ -249,5 +267,6 @@ final class NativeAwarenessController {
     isolated deinit {
         publishTask?.cancel()
         sweepTask?.cancel()
+        resolveTask?.cancel()
     }
 }

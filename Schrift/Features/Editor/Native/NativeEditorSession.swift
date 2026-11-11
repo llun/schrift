@@ -757,7 +757,7 @@ final class NativeEditorOpen {
                 return await Self.serverSaysReader(viewModel, asking: true)
             },
             becameReader: { [weak self] in self?.becomeReader(scope) },
-            localState: collaboration.localAwarenessState)
+            localState: { [weak collaboration] in collaboration?.localAwarenessState })
         session.showAwareness(binding.awareness)
     }
 

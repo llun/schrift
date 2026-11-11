@@ -3045,16 +3045,23 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
 
 - **PR10a Awareness and relative cursors.** Awareness rides the binding's one socket: each
   `NativeCollaborationBinding` owns a `NativeAwarenessController` (`@MainActor`), its
-  session announces `LocalAwarenessState` (from `DocumentCollaborationManager
-  .localAwarenessState`; nil joins as an observer) and hands every decoded batch to it
-  (`onAwareness`); a socket that ends (drop, background, Live off, stop) clears every peer.
+  session announces `LocalAwarenessState` (read from `DocumentCollaborationManager
+  .localAwarenessState` **at each dial**, never snapshotted at open; nil joins as an
+  observer) and hands every decoded batch to it (`onAwareness`, which replaces the session's
+  own unbounded `peers` fold); a socket that ends (drop, background, Live off, stop) clears
+  every peer. A `signInGeneration` change calls `forgetLocalAwareness` (RootView), which also
+  drops a `refreshLocalAwareness` answer still in flight for the previous account. Every
+  awareness frame (announce, renewal, query reply, cursor) checks the binding's `isCurrent`,
+  like content.
   **Inbound is untrusted:** a state over `maxStateBytes` (8 KiB) is ignored; y-protocols'
   clock rule (only a higher clock, or `null` at the same clock; an equal clock does not
   renew); `null` or an unparseable user removes the peer; a malformed `cursor` hides only the
-  cursor (`AwarenessCursor.parse`); at most `maxPeers` (64); a peer not renewed for 30 s
+  cursor (`AwarenessCursor.parse`); at most `maxPeers` (64; an unknown id at the cap, or a
+  `null` for an unknown id, is refused before any JSON is parsed); a peer not renewed for 30 s
   expires (`sweep`). Peer colors come from the name (`avatarColorHex`), never the peer's
   string. **Resolution** is a mailbox message (`.resolveCursors`, at most one in flight, asked
-  again after any delivered patch or peer change) answered by `DocumentEngine.peerPlace`: a
+  again at once after a peer change and at most every 100 ms after delivered patches, since
+  each resolve walks the positions' left siblings) answered by `DocumentEngine.peerPlace`: a
   root `tname` that is not already in `doc.share` is never resolved (stricter than "existing
   or schema-owned": a missing `document-store` has nothing to point into), a throw or a
   missing id is nil (never `nativeWriteFailed`), a deleted type is nil, a position in a
@@ -3066,7 +3073,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   layout pass, so scroll, rotation, folding and edits re-place it) draws only what lies in
   TextKit's viewport: a caret with the name and the selection's visible part, or, for a
   folded block (badge on the nearest shown ancestor), an opaque/preview block or `.block`,
-  a badge on the owner until it is opened. The overlay uses the last resolution even when
+  a badge on the owner until it is opened. Per pass it reads `hiddenRanges` once and tints at
+  most `maxHighlights` (16) selections; a peer's name is one truncated, clipped caption line
+  at most `maxLabelWidth` (160 pt) wide. The overlay uses the last resolution even when
   the display moved on (a predicted keystroke) and clamps; it never forces layout outside
   the viewport. **Outbound:** after every message the replica reports the engine's
   selection as its captured relative positions (`awarenessCursor`, direction kept) to the
@@ -3086,7 +3095,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   and replica fingerprints, unknown root names, deletion with two peers, stale clocks,
   expiry and disconnect, the peer bound, viewport-only painting across scroll and width,
   folded/math/image badges, throttled directed publication, no reader publication, the
-  binding's single socket) and the host UI test
+  binding's single socket; the PR #276 review fixes: no session peer table under an owner,
+  identity read per dial, a stale identity answer dropped, frames stop when not current, the
+  highlight bound, the name pill bound, the resolve cadence) and the host UI test
   `testPeerCursorsPaintVisibleGeometryAndBadgeFoldedContent` (`--native-peer`).
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above

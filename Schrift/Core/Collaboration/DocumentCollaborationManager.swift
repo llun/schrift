@@ -100,6 +100,15 @@ final class DocumentCollaborationManager {
     private var localAwareness: LocalAwarenessState?
     /// Our name and color for the native editor's own socket (PR10).
     var localAwarenessState: LocalAwarenessState? { localAwareness }
+    private var awarenessGeneration = 0
+
+    /// The signed-in account may have changed (`SessionStore.signInGeneration`):
+    /// forget who we were until `refreshLocalAwareness` learns the new one, and
+    /// drop any answer still in flight for the previous account.
+    func forgetLocalAwareness() {
+        awarenessGeneration += 1
+        localAwareness = nil
+    }
 
     /// Per-document change-signal counters (see `remoteChangeToken(for:)`).
     private var remoteChangeTokens: [UUID: Int] = [:]
@@ -177,8 +186,10 @@ final class DocumentCollaborationManager {
     /// re-announces us with the now-known awareness. Idempotent — no rebuild when
     /// the value is unchanged.
     func refreshLocalAwareness() async {
+        let generation = awarenessGeneration
         let resolved = await localStateProvider()
-        guard resolved != localAwareness else { return }
+        // A sign-in change meanwhile: this answer may be the previous account's.
+        guard generation == awarenessGeneration, resolved != localAwareness else { return }
         localAwareness = resolved
         guard !isSuspended else { return }
         rebuildActiveSessions()
