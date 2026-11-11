@@ -2,9 +2,17 @@ import Observation
 import UIKit
 import UniformTypeIdentifiers
 
-/// Ordinary input is intercepted before UIKit changes storage. Canonical
-/// engine echoes update storage after persistence; returning false prevents
-/// UIKit from applying the same edit a second time.
+/// Ordinary input is intercepted before UIKit changes storage; returning false
+/// prevents UIKit from applying the same edit a second time.
+///
+/// **Option A (PR08b).** The replica lives in `DocumentReplicaSession`, off the
+/// main actor. Same-block typing is predicted: shown at once
+/// (`NativeTextSurface.predict`) and posted, then journaled a few milliseconds
+/// later in order; its echo confirms it. Every other command is a barrier,
+/// shown when its result arrives; keys typed meanwhile are held as intents
+/// and replayed. A barrier that meets a change this surface had not seen is
+/// retried once. A failed append, or an invalidated epoch, rolls the display
+/// back to canonical and turns the dropped text into a recovery entry.
 ///
 /// Marked text (IME) is different: UIKit owns the provisional range in storage
 /// for the whole composition, so `NativeCompositionSession` freezes the surface
@@ -12,11 +20,102 @@ import UniformTypeIdentifiers
 /// because document-wide UIKit offsets are stale until reconciliation.
 @MainActor @Observable
 final class NativeInputCoordinator: NSObject, UITextViewDelegate {
-    private let engine: DocumentEngine
+    /// How many predicted keystrokes may wait for their journal append; more
+    /// keys are held as intents.
+    static let maxPendingTyping = 32
+    /// How many held keys a surface keeps; more show `native_editor_input_busy`.
+    static let maxIntents = 64
+
+    private let replica: DocumentReplicaSession
+    let surfaceID: UUID
     private let surface: NativeTextSurface
     private weak var view: NativeTextView?
-    private let persist: (NativeEditCommand, Data) throws -> Void
     let composition: NativeCompositionSession
+    /// The revision the canonical display shows (the last delivery's).
+    private(set) var canonicalRevision: UInt64
+    /// Mirrored from deliveries: authoring stopped (a failed append, an
+    /// unjournaled transaction or a full mailbox) or the session closed.
+    private(set) var isFrozen = false
+    private(set) var isDetached = false
+    /// The surface's epoch in the session: commands of an older one are dropped.
+    private var epoch: UInt64 = 0
+    /// Called once a command's bytes are journaled (the save scheduler).
+    @ObservationIgnored var onJournaled: () -> Void = {}
+    /// Called when authoring stops for a storage reason.
+    @ObservationIgnored var onFrozen: () -> Void = {}
+
+    /// The barrier in flight: displayed on its result.
+    private struct Barrier {
+        enum Placement {
+            /// The engine's caret.
+            case caret
+            /// This selection, unchanged.
+            case keeping(NSRange)
+            /// The same offsets in a block that moved.
+            case remapping(blockID: String, offset: Int, length: Int)
+            /// A caret at this document offset (a barrier replacement).
+            case at(Int)
+            /// The selection the history step restored.
+            case history
+        }
+        let id: UUID
+        let refusal: L10nKey?
+        let placement: Placement
+        /// Re-derives the action from the current display once, for `.stale`.
+        let retry: (() -> Bool)?
+        /// The selection the action was taken from, for an action whose retry
+        /// reads the selection: the retry runs against it (moved through what
+        /// was shown since), not one made meanwhile. Nil for an action on its
+        /// own target (a history step, a block's props, a mapped range).
+        let origin: BlockRange?
+    }
+    @ObservationIgnored private var barrier: Barrier?
+    /// What the deliveries since the barrier was posted showed: a retry and a
+    /// selection the user made meanwhile are mapped through it.
+    @ObservationIgnored private var barrierShown: [Shown] = []
+    /// Deliveries that arrived while a composition owned the view, in order.
+    @ObservationIgnored private var queued: [ReplicaDelivery] = []
+    /// Stale answers wait for the end of their drain, so a retry runs on the
+    /// display (and base revision) every queued delivery has reached.
+    @ObservationIgnored private var staleAfterDrain: [UUID] = []
+    /// A storage failure while a composition owned the view, applied after it.
+    @ObservationIgnored private var failsAfterComposition = false
+    /// Marked text owns the view: storage and its offsets are UIKit's.
+    private var compositionOwnsView: Bool { composition.isActive || view?.markedTextRange != nil }
+    /// A selection the user made while the barrier was in flight, and how many
+    /// of `barrierShown`'s deliveries it had already seen: it wins over wherever
+    /// the barrier would put the selection.
+    @ObservationIgnored private var userSelection: (anchors: BlockRange, seen: Int)?
+    /// What one delivery showed: text deltas per block, and the blocks it
+    /// rebuilt or removed (offsets there cannot be mapped), or a reset.
+    private struct Shown {
+        var deltas: [(blockID: String, deltas: [TextDelta])]
+        var replaced: Set<String>
+        /// The rebuilt blocks whose text changed.
+        var retexted: Set<String> = []
+        var reset: Bool
+    }
+    private typealias BlockRange = (start: (String, Int), end: (String, Int))
+    private enum Intent {
+        case insert(String)
+        case deleteBackward
+    }
+    @ObservationIgnored private var intents: [Intent] = []
+    /// Blocks whose predictions the session refused: typing there is a barrier.
+    @ObservationIgnored private var barrierOnly: Set<String> = []
+    /// Block-menu availability by (block, structural revision), from the session.
+    private var availability: [String: (revision: UInt64, actions: [NativeBlockAction])] = [:]
+    @ObservationIgnored private var requestedAvailability: Set<String> = []
+    /// Bumped by every delivery with a non-text change: block-menu answers are
+    /// keyed by it, since typing never changes what the menu offers.
+    @ObservationIgnored private var structureRevision: UInt64 = 0
+    /// Copies waiting for their lossless payload.
+    @ObservationIgnored private var pendingCopies: [UUID: PendingCopy] = [:]
+    /// The last command posted (a cut's delete).
+    @ObservationIgnored private var lastCommandID: UUID?
+    /// Tests: false once any command posted since `resetOutcome` was refused,
+    /// went stale twice, was invalidated or failed.
+    @ObservationIgnored private(set) var lastOutcome: Bool?
     /// Directed relative selection: published on every UIKit change and
     /// restored after each peer patch or rebuild.
     @ObservationIgnored let selection: NativeSelectionCoordinator
@@ -54,27 +153,51 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @ObservationIgnored private var typingCaret: NSRange?
 
     init(
-        doc: YDoc, engine: DocumentEngine, surface: NativeTextSurface, view: NativeTextView,
-        persist: @escaping (NativeEditCommand, Data) throws -> Void,
-        recoveryStore: (store: ReplicaStore, scope: ReplicaScope)? = nil
+        replica: DocumentReplicaSession, surfaceID: UUID, revision: UInt64, surface: NativeTextSurface,
+        view: NativeTextView, recoveries: [ProvisionalRecovery] = [], hasRecoveryStore: Bool = false
     ) {
-        self.engine = engine
+        self.replica = replica
+        self.surfaceID = surfaceID
+        self.canonicalRevision = revision
         self.surface = surface
         self.view = view
-        self.persist = persist
+        let mailbox = replica.mailbox
+        var stop: () -> Void = {}
+        var base: () -> UInt64 = { revision }
+        var canAuthor: () -> Bool = { true }
+        var currentEpoch: () -> UInt64 = { 0 }
         self.composition = NativeCompositionSession(
-            engine: engine, surface: surface, view: view, persist: persist, recoveryStore: recoveryStore)
-        self.selection = NativeSelectionCoordinator(engine: engine, surface: surface, view: view)
-        self.history = NativeUndoManager(doc: doc, engine: engine)
+            surface: surface, view: view,
+            port: NativeCompositionSession.Port(
+                begin: { blockID, range in
+                    let posted = mailbox.post(
+                        .compositionBegin(
+                            surfaceID: surfaceID, epoch: currentEpoch(), baseRevision: base(), blockID: blockID,
+                            range: range))
+                    if !posted { stop() }
+                    return posted
+                },
+                cancel: { if !mailbox.post(.compositionCancel(surfaceID: surfaceID)) { stop() } },
+                writeRecoveries: { mailbox.post(.writeProvisional($0)) }),
+            recoveries: recoveries, hasRecoveryStore: hasRecoveryStore, canAuthor: { canAuthor() })
+        var postSelection: (UInt64, EditorSelection?) -> Void = { _, _ in }
+        self.selection = NativeSelectionCoordinator(surface: surface, view: view) { postSelection($0, $1) }
+        self.history = NativeUndoManager()
         super.init()
+        stop = { [weak self] in self?.stopAfterStorageFailure() }
+        currentEpoch = { [weak self] in self?.epoch ?? 0 }
+        base = { [weak self] in self?.canonicalRevision ?? revision }
+        canAuthor = { [weak self] in self.map { !$0.isFrozen && !$0.isDetached } ?? false }
+        postSelection = { [weak self] seq, selection in
+            guard let self else { return }
+            _ = self.post(
+                .select(surfaceID: surfaceID, seq: seq, baseRevision: self.canonicalRevision, selection))
+        }
         history.system.input = self
+        surface.surfaceID = surfaceID
         surface.onPatchApplied = { [weak self] patch in
-            self?.asOneKeyboardChange {
-                self?.selection.restore(after: patch)
-                // A restore may land in content this patch folded away.
-                self?.keepSelectionVisible()
-            }
-            self?.refreshSelectionMarks()
+            // The editor's own commands place their caret themselves.
+            if patch.nativeCommand?.surfaceID != surfaceID { self?.needsRestore = true }
         }
         // A fold sends no selection change; the caret must not stay in what it hid.
         let relayout = surface.onFoldChange
@@ -91,12 +214,491 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         refreshSelectionMarks()
     }
 
+    /// A delivered patch that was not this surface's own command: the selection
+    /// is restored from the session's endpoints after the delivery.
+    @ObservationIgnored private var needsRestore = false
+
+    // MARK: - Deliveries (PR08b)
+
+    /// The one composition rule (PR08b): while marked text owns the view,
+    /// whole deliveries wait unapplied, results included; its commit or cancel
+    /// applies them in order.
+    func apply(_ delivery: ReplicaDelivery) {
+        queued.append(delivery)
+        guard !compositionOwnsView else { return }
+        drain()
+    }
+
+    /// Every queued patch and result first; then what acts on the display
+    /// they reached: a failure that waited, stale retries, held keys.
+    private func drain() {
+        let deliveries = queued
+        queued = []
+        for delivery in deliveries { applyNow(delivery) }
+        if failsAfterComposition {
+            failsAfterComposition = false
+            stopAfterStorageFailure()
+        }
+        let stale = staleAfterDrain
+        staleAfterDrain = []
+        asOneKeyboardChange(if: !stale.isEmpty) {
+            for id in stale { handle(.stale(commandID: id), selection: nil) }
+        }
+        refreshSelectionMarks()
+        replayIntents()
+    }
+
+    /// Marked text ended: storage is the model's again, and what waited applies.
+    private func releaseComposition() {
+        surface.holdForComposition(false)
+        drain()
+        keepSelectionVisible()
+    }
+
+    /// Applies one delivery: its patches in order, then its result, as one
+    /// keyboard change.
+    private func applyNow(_ delivery: ReplicaDelivery) {
+        // Only what can move storage or the caret is a keyboard text change:
+        // this surface's own keystroke echoes and drain markers are not.
+        let changes =
+            delivery.events.contains { event in
+                guard case .patch(let patch, _) = event else { return true }
+                guard let stamp = patch.nativeCommand, stamp.surfaceID == surfaceID else { return true }
+                return !surface.predictions.contains { $0.commandID == stamp.commandID }
+            }
+            || delivery.result.map { result in
+                if case .applied(let id, _, _) = result { return barrier?.id == id }
+                return true
+            } ?? false
+        asOneKeyboardChange(if: changes) {
+            needsRestore = false
+            surface.resetShownDeltas()
+            let shownSelection = blockSelection()
+            for event in delivery.events {
+                switch event {
+                case .patch(let patch, let settled):
+                    if patch.changes.contains(where: { if case .text = $0 { false } else { true } })
+                        || patch.nativeCommand?.surfaceID != surfaceID
+                    {
+                        structureRevision &+= 1
+                    }
+                    surface.applyPatch(patch, settled: settled)
+                case .compositionDeferred:
+                    // The engine's own deferral: the queue already held this delivery.
+                    break
+                }
+            }
+            if barrier != nil {
+                barrierShown.append(
+                    Shown(
+                        deltas: surface.shownDeltas, replaced: surface.shownReplaced,
+                        retexted: surface.shownRetexted, reset: surface.shownReset))
+            }
+            canonicalRevision = delivery.revision
+            history.mirror(canUndo: delivery.state.canUndo, canRedo: delivery.state.canRedo)
+            if case .stale(let id)? = delivery.result {
+                staleAfterDrain.append(id)
+            } else if let result = delivery.result {
+                let shownBefore = (surface.shownDeltas.count, surface.shownReplaced, surface.shownRetexted)
+                handle(result, selection: delivery.selection)
+                // A rollback or a reconciliation the result caused is shown
+                // too: a barrier still in flight maps through it.
+                if barrier != nil, surface.shownDeltas.count > shownBefore.0 || surface.shownReplaced != shownBefore.1 {
+                    barrierShown.append(
+                        Shown(
+                            deltas: Array(surface.shownDeltas[shownBefore.0...]),
+                            replaced: surface.shownReplaced.subtracting(shownBefore.1),
+                            retexted: surface.shownRetexted.subtracting(shownBefore.2), reset: false))
+                }
+            } else if needsRestore {
+                if delivery.selection?.seq == selection.seq {
+                    selection.restore(from: delivery.selection)
+                } else if let shownSelection {
+                    // A newer capture is still in flight: the session's endpoints
+                    // are for an older one. Map the view's own range instead.
+                    follow(shownSelection)
+                }
+                // A restore may land in content this patch folded away.
+                keepSelectionVisible()
+            }
+            needsRestore = false
+            if delivery.state.detached { isDetached = true }
+            if delivery.state.frozen, !isFrozen { stopAfterStorageFailure() }
+        }
+        if let answer = delivery.availability {
+            availability[answer.blockID] = (structureRevision, answer.actions)
+            requestedAvailability.remove(answer.blockID)
+        }
+        if let clipboard = delivery.clipboard, pendingCopies[clipboard.requestID] != nil {
+            pendingCopies[clipboard.requestID]?.payload = .some(clipboard.payload)
+            flushCopies()
+        }
+        refreshSelectionMarks()
+    }
+
+    /// A block-relative point as a document offset, clamped to its block's text.
+    private func resolve(_ point: (String, Int)) -> Int? {
+        guard let entry = surface.rangeIndex.entry(for: point.0) else { return nil }
+        return entry.textRange.location + min(max(0, point.1), entry.textRange.length)
+    }
+
+    /// The view's selection as block-relative endpoints.
+    private func blockSelection() -> BlockRange? {
+        guard let view, view.markedTextRange == nil else { return nil }
+        return blockRange(view.selectedRange)
+    }
+
+    /// A document range as block-relative endpoints.
+    private func blockRange(_ range: NSRange) -> BlockRange? {
+        let index = surface.rangeIndex
+        guard let start = index.textPosition(atUTF16: range.location),
+            let end = index.textPosition(atUTF16: NSMaxRange(range), isUpperBound: range.length > 0)
+        else { return nil }
+        return (
+            (index.entries[start.position].blockID, start.offset), (index.entries[end.position].blockID, end.offset)
+        )
+    }
+
+    /// Moves the view's selection through the text this delivery showed.
+    private func follow(_ shown: BlockRange) {
+        let delivery = Shown(deltas: surface.shownDeltas, replaced: [], reset: false)
+        guard let view, let range = map(shown, through: [delivery][...]) else { return }
+        if range != view.selectedRange {
+            selection.place(range)
+        } else if surface.shownReplaced.contains(shown.start.0) || surface.shownReplaced.contains(shown.end.0) {
+            // The session's capture did not survive the rebuild of its block.
+            selection.publish(range)
+        }
+    }
+
+    /// Block-relative endpoints moved through what deliveries showed, as a
+    /// document range; nil when an endpoint's block was rebuilt, removed or
+    /// reset, or a change overlapped the inside of a range in one block. A
+    /// non-empty range keeps a concurrent insertion at either end outside it
+    /// (as `NativeSelectionCoordinator.publish` captures it); a caret stays
+    /// before one.
+    private func map(_ range: BlockRange, through shown: ArraySlice<Shown>) -> NSRange? {
+        var start = range.start
+        var end = range.end
+        let empty = start == end
+        for delivery in shown {
+            // A block rebuilt with the same text keeps its offsets.
+            let rewritten = delivery.replaced.intersection(delivery.retexted)
+            guard !delivery.reset, !rewritten.contains(start.0), !rewritten.contains(end.0) else { return nil }
+            for applied in delivery.deltas {
+                if !empty, start.0 == end.0, applied.blockID == start.0 {
+                    guard let moved = TextDelta.rebase(range: start.1..<end.1, assoc: -1, through: applied.deltas)
+                    else { return nil }
+                    start.1 = moved.lowerBound
+                    end.1 = moved.upperBound
+                    continue
+                }
+                if applied.blockID == start.0 {
+                    guard
+                        let moved = TextDelta.rebase(
+                            range: start.1..<start.1, assoc: empty ? -1 : 1, through: applied.deltas)
+                    else { return nil }
+                    start.1 = moved.lowerBound
+                }
+                if empty {
+                    end = start
+                } else if applied.blockID == end.0 {
+                    guard let moved = TextDelta.rebase(range: end.1..<end.1, assoc: -1, through: applied.deltas)
+                    else { return nil }
+                    end.1 = moved.lowerBound
+                }
+            }
+        }
+        guard let lower = resolve(start), let upper = resolve(end), upper >= lower else { return nil }
+        return NSRange(location: lower, length: upper - lower)
+    }
+
+    /// The one rule at every barrier end: a selection the user made while it
+    /// was in flight, moved through what was shown since, wins over wherever
+    /// the barrier would put the selection, and held keys replay there. A
+    /// block the barrier's own echo rebuilt keeps the user's offsets only when
+    /// its text is unchanged. Clears the user's selection; true when placed.
+    @discardableResult
+    private func endBarrierSelection(ownEcho: Bool) -> Bool {
+        defer { userSelection = nil }
+        guard let user = userSelection else { return false }
+        var since = barrierShown[min(user.seen, barrierShown.count)...]
+        if ownEcho, let last = since.indices.last {
+            since[last].replaced = since[last].replaced.intersection(since[last].retexted)
+        }
+        guard let range = map(user.anchors, through: since) else { return false }
+        show(range)
+        return true
+    }
+
+    /// Shows a selection and captures it again even when the view's range did
+    /// not move: the session's capture may not have survived what was shown.
+    private func show(_ range: NSRange) {
+        if range != view?.selectedRange { selection.place(range) } else { selection.publish(range) }
+    }
+
+    /// `range`, posted with the barrier in flight, in the current display.
+    private func mapThroughBarrier(_ range: BlockRange, from seen: Int = 0) -> NSRange? {
+        map(range, through: barrierShown[min(seen, barrierShown.count)...])
+    }
+
+    private func handle(_ result: ReplicaResult, selection resolved: ReplicaSelection?) {
+        switch result {
+        case .applied(let id, let caret, let journaled):
+            if journaled { onJournaled() }
+            surface.confirm(id)
+            settleCopies(after: id, applied: true)
+            guard let barrier, barrier.id == id else { return }
+            self.barrier = nil
+            endUndoStep()
+            noticeKey = nil
+            if endBarrierSelection(ownEcho: true) { return }
+            switch barrier.placement {
+            case .caret:
+                if let caret, let entry = surface.rangeIndex.entry(for: caret.blockID) {
+                    selection.place(
+                        NSRange(
+                            location: entry.textRange.location + min(caret.offset, entry.textRange.length), length: 0))
+                }
+            case .keeping(let range):
+                selection.place(range)
+            case .remapping(let blockID, let offset, let length):
+                if let entry = surface.rangeIndex.entry(for: blockID) {
+                    let text = entry.textRange
+                    let location = text.location + min(max(0, offset), text.length)
+                    selection.place(NSRange(location: location, length: min(length, NSMaxRange(text) - location)))
+                }
+            case .at(let location):
+                typingCaret = NSRange(location: location, length: 0)
+                selection.place(NSRange(location: min(location, surface.storage.length), length: 0))
+            case .history:
+                guard journaled else {
+                    lastOutcome = false
+                    return
+                }
+                // A step whose patch changed nothing on screen still moves the caret.
+                selection.restore(from: resolved)
+                keepSelectionVisible()
+                pendingTypingMarks = nil
+            }
+            noticeKey = nil
+        case .refused(let id, let error):
+            settleCopies(after: id, applied: false)
+            guard let barrier, barrier.id == id else { return }
+            self.barrier = nil
+            endBarrierSelection(ownEcho: false)
+            endUndoStep()
+            lastOutcome = false
+            if error == .payloadTooLarge {
+                noticeKey = .native_editor_paste_too_large
+            } else if error != .unsupportedNativeInput {
+                noticeKey = .native_editor_input_unavailable
+            } else if let refusal = barrier.refusal {
+                noticeKey = refusal
+            }
+        case .stale(let id):
+            guard let barrier, barrier.id == id else {
+                settleCopies(after: id, applied: false)
+                return
+            }
+            self.barrier = nil
+            // A selection the user made meanwhile carries over to the retry.
+            let carried = userSelection.flatMap { mapThroughBarrier($0.anchors, from: $0.seen) }
+            userSelection = nil
+            // Once, against the display that now includes what it missed, and
+            // from the selection the action was taken at. When that selection
+            // cannot be found any more, nothing is retried.
+            let origin = barrier.origin.map { mapThroughBarrier($0) }
+            var retried = false
+            if origin != .some(nil) {
+                if let origin = origin ?? nil, origin != view?.selectedRange { selection.place(origin) }
+                retried = barrier.retry?() == true
+            }
+            if let carried {
+                // The view shows the user's selection; the retry keeps it as theirs.
+                if self.barrier != nil { userSelection = blockRange(carried).map { ($0, 0) } }
+                show(carried)
+            }
+            if retried, let next = lastCommandID, next != id {
+                // A cut's copy follows its retried delete.
+                for (copy, pending) in pendingCopies where pending.after == id { pendingCopies[copy]?.after = next }
+            } else {
+                settleCopies(after: id, applied: false)
+                lastOutcome = false
+                if self.barrier == nil, noticeKey == nil { noticeKey = .native_editor_input_unavailable }
+            }
+        case .invalidated(let epoch, let id):
+            settleCopies(after: id, applied: false)
+            if let predicted = surface.predictions.first(where: { $0.commandID == id }) {
+                barrierOnly.insert(predicted.blockID)
+            }
+            self.epoch = epoch
+            lastOutcome = false
+            rollBack()
+        case .failed:
+            barrier = nil
+            userSelection = nil
+            lastOutcome = false
+            stopAfterStorageFailure()
+        case .composition(let id, let result):
+            if let id { composition.finish(id) }
+            switch result {
+            case .committed:
+                onJournaled()
+                if let id { surface.confirm(id) }
+            case .failed:
+                lastOutcome = false
+                stopAfterStorageFailure()
+            case .orphaned, .cancelled:
+                // An orphaned commit's epoch already ended: its rollback keeps the text.
+                break
+            }
+            endUndoStep()
+        }
+    }
+
+    /// Every pending prediction and held key is dropped from the display and
+    /// kept as one recovery entry the user can insert again.
+    private func rollBack() {
+        let dropped = surface.rollback()
+        // A dropped commit's text becomes the recovery entry below.
+        for prediction in dropped { composition.finish(prediction.commandID) }
+        var text = dropped.map(\.text).joined()
+        for case .insert(let typed) in intents { text += typed }
+        intents = []
+        typingCaret = nil
+        // Held keys with no prediction behind them are kept too, at the caret's block.
+        if let block = dropped.first?.blockID ?? blockSelection()?.start.0 ?? surface.blocks.first?.id {
+            composition.recover(text, blockID: block)
+        }
+        if let view {
+            selection.place(NSRange(location: min(view.selectedRange.location, surface.storage.length), length: 0))
+        }
+    }
+
+    /// Something is in flight that the next key must wait for (a resolved
+    /// composition's own delivery included: held keys go after its text).
+    private var isBusy: Bool {
+        barrier != nil || surface.expectsInvalidation
+            || surface.predictions.count >= Self.maxPendingTyping
+    }
+
+    /// True while a command, a held key or a composition result is in flight.
+    var hasInFlightWork: Bool {
+        barrier != nil || hasUnansweredPrediction || !intents.isEmpty || !pendingCopies.isEmpty
+    }
+
+    /// A prediction whose answer has not arrived (one queued behind a
+    /// composition has: it waits for the user, not the session).
+    private var hasUnansweredPrediction: Bool {
+        // An invalidation or a failure answers every prediction of its epoch.
+        guard
+            !queued.contains(where: {
+                switch $0.result {
+                case .invalidated?, .failed?: true
+                default: false
+                }
+            })
+        else { return false }
+        let answered = Set(
+            queued.compactMap { delivery -> UUID? in
+                switch delivery.result {
+                case .applied(let id, _, _)?, .refused(let id, _)?, .stale(let id)?, .invalidated(_, let id)?,
+                    .failed(let id)?, .composition(let id?, _)?:
+                    id
+                case .composition(nil, _)?, nil: nil
+                }
+            })
+        return surface.predictions.contains { !answered.contains($0.commandID) }
+    }
+
+    private func replayIntents() {
+        // Held keys wait for marked text too: they replay after it resolves.
+        while !isBusy, !compositionOwnsView, !intents.isEmpty {
+            switch intents.removeFirst() {
+            case .insert(let text): typeKey(text)
+            case .deleteBackward: deleteKey()
+            }
+        }
+    }
+
+    private func hold(_ intent: Intent) {
+        guard intents.count < Self.maxIntents else {
+            noticeKey = .native_editor_input_busy
+            return
+        }
+        intents.append(intent)
+    }
+
+    /// Tests: forget earlier outcomes before an action.
+    func resetOutcome() { lastOutcome = nil }
+
+    /// Every message goes through the bounded mailbox; a full one stops
+    /// authoring rather than lose input silently.
+    private func post(_ message: ReplicaMessage) -> Bool {
+        guard !isDetached else { return false }
+        guard replica.mailbox.post(message) else {
+            stopAfterStorageFailure()
+            return false
+        }
+        return true
+    }
+
+    // MARK: - Key input hooks (NativeTextView)
+
+    /// A typed key: held while a barrier is in flight, else ordinary input.
+    func typeKey(_ text: String) {
+        // Return during a composition commits it, whatever is in flight.
+        if composition.isActive, text == "\n" || text == "\r" {
+            insertNewline()
+            return
+        }
+        if isBusy {
+            hold(.insert(text))
+            return
+        }
+        guard let view else { return }
+        if text == "\n" || text == "\r" {
+            insertNewline()
+        } else if text == "\t" {
+            insertTab()
+        } else {
+            replace(range: view.selectedRange, with: text)
+        }
+    }
+
+    /// The delete key: held while a barrier is in flight.
+    func deleteKey() {
+        if isBusy {
+            hold(.deleteBackward)
+            return
+        }
+        guard let view else { return }
+        var range = view.selectedRange
+        if range.length == 0 {
+            // A block start is structural (PR04a): a join or a reset to a
+            // paragraph, else a quiet no-op. Every other caret takes the command
+            // path, which refuses the document-end boundary's separator with a notice.
+            if isBlockStart(range.location) {
+                deleteBackwardAtBlockStart()
+                return
+            }
+            guard range.location > 0 else { return }
+            range = (surface.storage.string as NSString).rangeOfComposedCharacterSequence(at: range.location - 1)
+        }
+        replace(range: range, with: "")
+    }
+
     func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
         // Key input reaches `NativeTextView.insertText`, which never asks the
         // delegate; this covers UIKit paths that do, so Return routes once.
         if Self.isNewline(text), view?.isApplyingMarkedText != true {
             // Return over a selection replaces it with a block break.
-            _ = range.length == 0 ? insertNewline() : replace(range: range, with: "\n")
+            if range.length == 0 || composition.isActive {
+                typeKey("\n")
+            } else {
+                _ = replace(range: range, with: "\n")
+            }
             return false
         }
         if allowsUIKitChange(range, text) { return true }
@@ -112,7 +714,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     private func allowsUIKitChange(_ range: NSRange, _ text: String) -> Bool {
         guard let view else { return false }
         if view.isApplyingMarkedText || (composition.isActive && view.markedTextRange != nil) { return true }
-        guard let language = inputLanguage(),
+        // A key typed while the composition still owns the view is held, never written by UIKit.
+        guard !compositionOwnsView, let language = inputLanguage(),
             ["ja", "zh", "yue", "ko"].contains(where: { language.hasPrefix($0) }),
             range == view.selectedRange, text.utf16.count == 1,
             !text.unicodeScalars.contains(where: { CharacterSet.newlines.contains($0) || $0.value == 0xfffc }),
@@ -134,15 +737,23 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// it as an ordinary durable command. Anything else bypassed the journal:
     /// restore the projection rather than let storage drift from the replica.
     func textViewDidChange(_ textView: UITextView) {
-        guard let view, !view.isApplyingMarkedText, !composition.isActive else { return }
+        guard let view, !view.isApplyingMarkedText, !compositionOwnsView else { return }
         let direct = directInsertion
-        directInsertion = nil
+        // Kept until UIKit's own write is undone: the selection changes that
+        // causes are not the user's.
+        defer { directInsertion = nil }
         if let direct, let blockID = surface.rangeIndex.entry(atUTF16: direct.range.location)?.blockID,
             surface.storage.length == surface.rangeIndex.length + direct.text.utf16.count - direct.range.length,
             (surface.storage.string as NSString).substring(
                 with: NSRange(location: direct.range.location, length: direct.text.utf16.count)) == direct.text
         {
             surface.restoreStorage(blockID: blockID)
+            if isBusy {
+                // Behind a barrier, the keyboard's own character waits like any key.
+                selection.place(direct.range)
+                hold(.insert(direct.text))
+                return
+            }
             // A refused command must still leave storage equal to the model.
             if !replace(range: direct.range, with: direct.text), !surface.storageMatchesModel {
                 surface.restoreStorage()
@@ -166,7 +777,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 noticeKey = .native_editor_input_unavailable
                 return false
             }
-            _ = range.length == 0 ? insertNewline() : replace(range: range, with: "\n")
+            if range.length == 0 || composition.isActive {
+                typeKey("\n")
+            } else {
+                _ = replace(range: range, with: "\n")
+            }
             return false
         }
         if ranges.count == 1, let range = ranges.first?.rangeValue, allowsUIKitChange(range, text) { return true }
@@ -187,6 +802,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         guard composition.isActive else { return }
         view?.dropMarkedText()
         composition.interrupt()
+        releaseComposition()
     }
 
     /// UIKit's selection, including hardware Shift-arrows, is published as
@@ -194,12 +810,17 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// Marked text owns storage and its offsets are stale until the
     /// composition reconciles, so publication waits for that.
     func textViewDidChangeSelection(_ textView: UITextView) {
-        guard let view, !view.isApplyingMarkedText, view.markedTextRange == nil, !composition.isActive else {
-            return
-        }
+        guard let view, !view.isApplyingMarkedText, !compositionOwnsView else { return }
         if !surface.isApplyingPatch {
             pendingTypingMarks = nil
             revealCaret(in: view)
+            // The user moved while a barrier is in flight: that selection, not
+            // the barrier's caret, is where held keys go. (Not UIKit moving the
+            // caret past a composing keyboard's direct character, nor the
+            // editor's own placement.)
+            if barrier != nil, directInsertion == nil, !selection.isRestoring {
+                userSelection = blockSelection().map { ($0, barrierShown.count) }
+            }
         }
         lastCaret = view.selectedRange.location
         selection.selectionDidChange()
@@ -227,7 +848,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// end. A selection with no endpoint in folded content is left alone, so
     /// this never fights a drag over visible text.
     private func keepSelectionVisible() {
-        guard let view, view.markedTextRange == nil, !composition.isActive else { return }
+        guard let view, !compositionOwnsView else { return }
         let range = view.selectedRange
         let start = hiddenRun(at: range.location)
         let end = range.length > 0 ? hiddenRun(at: NSMaxRange(range)) : start
@@ -267,11 +888,35 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @discardableResult
     func replace(range: NSRange, with text: String, marks: [TextMark]? = nil) -> Bool {
         directInsertion = nil
-        guard let view, view.isEditable, !engine.nativeWriteFailed, !engine.isDetached else { return false }
+        guard let view, view.isEditable, !isFrozen, !isDetached else { return false }
         guard range.length != 0 || !text.isEmpty else { return false }
         // The composition owns input until it reconciles: UIKit's offsets are
         // stale and a second command would race the commit.
         guard view.markedTextRange == nil, !composition.isActive else { return false }
+        // The software keyboard also types through the delegate and UITextInput
+        // `replace`, not only `insertText`: behind a barrier, typing at the caret
+        // and deleting the character before it are held like keys.
+        // Typing over a selection is held the same way and replays over the
+        // selection then current.
+        if isBusy {
+            if range == view.selectedRange, !text.isEmpty {
+                hold(.insert(text))
+                return true
+            }
+            let caret = view.selectedRange
+            if text.isEmpty, range.length > 0,
+                range == caret
+                    || (caret.length == 0 && NSMaxRange(range) == caret.location
+                        && range
+                            == (surface.storage.string as NSString).rangeOfComposedCharacterSequence(
+                                at: range.location))
+            {
+                hold(.deleteBackward)
+                return true
+            }
+        }
+        // Anything else would read offsets a commit still in flight owns.
+        guard !compositionOwnsView else { return false }
         // The software keyboard deletes the separator before a block start
         // through the delegate or UITextInput `replace`, not `deleteBackward`:
         // it is the same boundary Backspace.
@@ -304,30 +949,66 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             return false
         }
         let offset = range.location - entry.textRange.location
+        let blockRange = offset..<(offset + range.length)
+        let runs = surface.blocks[position].runs
+        let typed = text.isEmpty ? nil : typingMarks(marks, runs: runs, blockRange)
+        let caret = NSRange(location: range.location + text.utf16.count, length: 0)
         // Typing continues one undo step only from where typing left the caret.
-        if view.selectedRange != typingCaret { history.stopCapturing() }
-        let command = NativeEditCommand(
-            id: UUID(), baseRevision: engine.revision, blockID: entry.blockID,
-            range: offset..<(offset + range.length), replacement: text,
-            marks: text.isEmpty
-                ? nil : typingMarks(marks, runs: surface.blocks[position].runs, offset..<(offset + range.length)))
-        do {
-            try asOneKeyboardChange {
-                try engine.replaceText(command) { try persist(command, $0) }
-                pendingTypingMarks = nil
-                typingCaret = NSRange(location: range.location + text.utf16.count, length: 0)
-                selection.place(NSRange(location: range.location + text.utf16.count, length: 0))
-            }
-            noticeKey = nil
-            return true
-        } catch {
-            if engine.nativeWriteFailed {
-                stopAfterStorageFailure()
-            } else {
-                noticeKey = .native_editor_input_unavailable
-            }
-            return false
+        let undoBefore = view.selectedRange != typingCaret
+        guard barrier == nil else { return false }
+        guard canPredict(surface.blocks[position], blockRange, text, typed) else {
+            // The engine's own validation decides: shown on its result.
+            return postBarrier(
+                entry.blockID, .replace(range: blockRange, replacement: text, marks: typed),
+                refusal: .native_editor_input_unavailable, placement: .at(caret.location), undoBefore: undoBefore,
+                undoAfter: false,
+                retry: again(at: range) { [weak self] in self?.replace(range: $0, with: text, marks: marks) ?? false })
         }
+        let command = NativeEditCommand(
+            id: UUID(), baseRevision: canonicalRevision, blockID: entry.blockID, range: blockRange,
+            replacement: text, marks: typed)
+        guard
+            post(
+                .command(
+                    ReplicaCommand(
+                        surfaceID: surfaceID, epoch: epoch, predicted: true, command: command,
+                        undoBefore: undoBefore, undoAfter: false)))
+        else { return false }
+        lastCommandID = command.id
+        asOneKeyboardChange {
+            surface.predict(
+                NativeTextSurface.Prediction(
+                    commandID: command.id, blockID: entry.blockID, range: blockRange, text: text,
+                    marks: typed ?? NativeMarkSelection.inherited(runs, at: blockRange.lowerBound)))
+            pendingTypingMarks = nil
+            typingCaret = caret
+            selection.place(caret)
+        }
+        noticeKey = nil
+        return true
+    }
+
+    /// Option A's prediction guard: the checks `DocumentEngine.replaceText`
+    /// makes that the display can make (a writable, projectable text without a
+    /// placeholder, no line break outside code, no object character, no split
+    /// surrogate). The session refuses anything else, and a block it refused
+    /// once is typed through barriers from then on.
+    private func canPredict(_ block: BlockSnapshot, _ range: Range<Int>, _ text: String, _ marks: [TextMark]?) -> Bool {
+        guard !surface.expectsInvalidation, !barrierOnly.contains(block.id), !block.isOpaque,
+            !AttributedDocumentProjection.isPlaceholder(block), BlockNoteWriter.nativePropSchemas[block.node] != nil,
+            surface.predictions.count < Self.maxPendingTyping,
+            !text.unicodeScalars.contains(where: {
+                $0.value == 0xfffc || (CharacterSet.newlines.contains($0) && !(block.node == "codeBlock" && $0 == "\n"))
+            }),
+            marks?.allSatisfy({ $0.valueJSON != "null" }) != false
+        else { return false }
+        let units = Array(block.runs.map(\.text).joined().utf16)
+        func boundary(_ offset: Int) -> Bool {
+            guard offset >= 0, offset <= units.count else { return false }
+            return offset == 0 || offset == units.count
+                || !(0xd800...0xdbff).contains(units[offset - 1]) || !(0xdc00...0xdfff).contains(units[offset])
+        }
+        return boundary(range.lowerBound) && boundary(range.upperBound)
     }
 
     /// One range command replacing a document range that may span blocks.
@@ -352,7 +1033,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             startOffset: start.offset, endBlockID: index.entries[end.position].blockID, endOffset: end.offset,
             replacement: text, newBlockIDs: (1..<lines.count).map { _ in UUID().uuidString })
         return applyStructural(
-            index.entries[start.position].blockID, .range(command), refusal: .native_editor_range_unavailable)
+            index.entries[start.position].blockID, .range(command), refusal: .native_editor_range_unavailable,
+            retry: again(at: range) { [weak self] in self?.replaceRange($0, with: text) ?? false })
     }
 
     /// Return: one durable structural command at the caret, or a range
@@ -361,10 +1043,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @discardableResult
     func insertNewline() -> Bool {
         directInsertion = nil
-        guard let view, view.isEditable, !engine.nativeWriteFailed, !engine.isDetached else { return false }
+        guard let view, view.isEditable, !isFrozen, !isDetached else { return false }
         if composition.isActive {
             view.dropMarkedText()
             return commitComposition()
+        }
+        // A commit still in flight owns the view: Return waits like any key.
+        if compositionOwnsView {
+            hold(.insert("\n"))
+            return true
         }
         let selection = view.selectedRange
         if selection.length > 0, view.markedTextRange == nil { return replace(range: selection, with: "\n") }
@@ -384,7 +1071,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         let open = Set([entry.blockID, surface.blocks[position].parentID].compactMap { $0 }.filter(surface.isExpanded))
         return applyStructural(
             entry.blockID, .split(offset: offset, newID: UUID().uuidString, open: open),
-            refusal: .native_editor_input_unavailable)
+            refusal: .native_editor_input_unavailable, retry: again { [weak self] in self?.insertNewline() ?? false },
+            readsSelection: true)
     }
 
     /// The folded-content rule (PR06b): a range or mark command that touches
@@ -405,8 +1093,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @discardableResult
     func deleteBackwardAtBlockStart() -> Bool {
         directInsertion = nil
-        guard let view, view.isEditable, !engine.nativeWriteFailed, !engine.isDetached,
-            view.markedTextRange == nil, !composition.isActive, view.selectedRange.length == 0,
+        guard let view, view.isEditable, !isFrozen, !isDetached,
+            !compositionOwnsView, view.selectedRange.length == 0,
             isBlockStart(view.selectedRange.location),
             let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location),
             let position = surface.rangeIndex.position(for: entry.blockID)
@@ -417,7 +1105,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         if surface.blocks[position].node == "paragraph", position > 0, surface.isHidden(position: position - 1) {
             surface.reveal(surface.blocks[position - 1].id)
         }
-        return applyStructural(entry.blockID, .join, refusal: nil)
+        return applyStructural(
+            entry.blockID, .join, refusal: nil,
+            retry: again { [weak self] in self?.deleteBackwardAtBlockStart() ?? false }, readsSelection: true)
     }
 
     /// Tab and Shift-Tab, and the bar's Indent/Outdent (BlockNote's
@@ -441,15 +1131,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     private func moveBlock(_ kind: NativeEditCommand.Kind) -> Bool {
         directInsertion = nil
-        guard let view, view.isEditable, !engine.nativeWriteFailed, !engine.isDetached,
-            view.markedTextRange == nil, !composition.isActive
-        else { return false }
+        guard let view, view.isEditable, !isFrozen, !isDetached, !compositionOwnsView else { return false }
         let selection = view.selectedRange
         guard let entry = surface.rangeIndex.entry(atUTF16: selection.location),
             selection.location <= NSMaxRange(entry.textRange),
             NSMaxRange(selection) <= NSMaxRange(entry.textRange)
         else { return false }
-        return applyStructural(entry.blockID, kind, refusal: nil, keeping: selection)
+        return applyStructural(
+            entry.blockID, kind, refusal: nil, keeping: selection,
+            retry: again { [weak self] in self?.moveBlock(kind) ?? false }, readsSelection: true)
     }
 
     /// The keyboard (`inputDelegate`) holds an autocorrection or inline
@@ -460,7 +1150,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// calls (a patch inside a command) report once.
     private var keyboardChangeDepth = 0
 
-    private func asOneKeyboardChange<T>(_ body: () throws -> T) rethrows -> T {
+    private func asOneKeyboardChange<T>(if reported: Bool = true, _ body: () throws -> T) rethrows -> T {
+        guard reported else { return try body() }
         keyboardChangeDepth += 1
         if keyboardChangeDepth == 1 { view?.inputDelegate?.textWillChange(view) }
         defer {
@@ -473,49 +1164,48 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// `refusal` is the notice for an unsupported shape; nil keeps it quiet.
     /// `keeping` is a selection to restore instead of the command's caret;
     /// `remapping` one to restore at the same offsets in a block that moved.
+    /// A barrier: shown when the session's result arrives.
     private func applyStructural(
         _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, keeping: NSRange? = nil,
-        remapping: (blockID: String, offset: Int, length: Int)? = nil
+        remapping: (blockID: String, offset: Int, length: Int)? = nil, retry: (() -> Bool)? = nil,
+        readsSelection: Bool = false
     ) -> Bool {
         // Folded content is never the target of a command.
         guard !surface.isHidden(blockID: blockID) else {
             if let refusal { noticeKey = refusal }
             return false
         }
-        let command = NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: blockID, kind: kind)
+        let placement: Barrier.Placement =
+            if let keeping { .keeping(keeping) } else if let remapping {
+                .remapping(blockID: remapping.blockID, offset: remapping.offset, length: remapping.length)
+            } else { .caret }
         // A structural command is its own undo step.
-        history.stopCapturing()
-        defer { endUndoStep() }
-        do {
-            try asOneKeyboardChange {
-                let caret = try engine.applyStructural(command) { try persist(command, $0) }
-                if let keeping {
-                    selection.place(keeping)
-                } else if let remapping, let entry = surface.rangeIndex.entry(for: remapping.blockID) {
-                    let text = entry.textRange
-                    let location = text.location + min(max(0, remapping.offset), text.length)
-                    selection.place(
-                        NSRange(location: location, length: min(remapping.length, NSMaxRange(text) - location)))
-                } else if let entry = surface.rangeIndex.entry(for: caret.blockID) {
-                    selection.place(
-                        NSRange(
-                            location: entry.textRange.location + min(caret.offset, entry.textRange.length), length: 0))
-                }
-            }
-            noticeKey = nil
-            return true
-        } catch {
-            if engine.nativeWriteFailed {
-                stopAfterStorageFailure()
-            } else if error as? DocumentEngineError == .payloadTooLarge {
-                noticeKey = .native_editor_paste_too_large
-            } else if error as? DocumentEngineError != .unsupportedNativeInput {
-                noticeKey = .native_editor_input_unavailable
-            } else if let refusal {
-                noticeKey = refusal
-            }
-            return false
-        }
+        return postBarrier(
+            blockID, kind, refusal: refusal, placement: placement, undoBefore: true, undoAfter: true, retry: retry,
+            readsSelection: readsSelection)
+    }
+
+    private func postBarrier(
+        _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, placement: Barrier.Placement,
+        undoBefore: Bool, undoAfter: Bool, retry: (() -> Bool)?, readsSelection: Bool = false
+    ) -> Bool {
+        guard barrier == nil else { return false }
+        let command = NativeEditCommand(id: UUID(), baseRevision: canonicalRevision, blockID: blockID, kind: kind)
+        guard
+            post(
+                .command(
+                    ReplicaCommand(
+                        surfaceID: surfaceID, epoch: epoch, predicted: false, command: command, undoBefore: undoBefore,
+                        undoAfter: undoAfter)))
+        else { return false }
+        barrier = Barrier(
+            id: command.id, refusal: refusal, placement: placement, retry: retry,
+            origin: readsSelection ? blockSelection() : nil)
+        barrierShown = []
+        userSelection = nil
+        lastCommandID = command.id
+        if undoAfter { typingCaret = nil }
+        return true
     }
 
     // MARK: - Marks
@@ -534,14 +1224,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     private var canFormat: Bool {
         guard let view else { return false }
-        return view.isEditable && !engine.nativeWriteFailed && !engine.isDetached && view.markedTextRange == nil
-            && !composition.isActive
+        return view.isEditable && !isFrozen && !isDetached && !compositionOwnsView
     }
 
     /// Republishes `activeMarks` and the caret's typing attributes (what UIKit
     /// shows marked text with), after a selection change or a patch.
     func refreshSelectionMarks() {
-        guard let view, view.markedTextRange == nil, !composition.isActive else { return }
+        guard let view, !compositionOwnsView else { return }
+        // The edit menu and VoiceOver ask synchronously: have the answer ready.
+        if let id = blockActionTarget(), availability[id]?.revision != structureRevision { requestAvailability(id) }
         let range = view.selectedRange
         let index = surface.rangeIndex
         var marks: [TextMark] = []
@@ -618,7 +1309,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             attributes: attributes)
         return applyStructural(
             index.entries[start.position].blockID, .marks(command), refusal: .native_editor_range_unavailable,
-            keeping: range)
+            keeping: range, retry: again(at: range) { [weak self] in self?.applyMarks(attributes, over: $0) ?? false })
     }
 
     /// What the link sheet edits: the selection (its link when the whole
@@ -725,7 +1416,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         else { return false }
         return applyStructural(
             entry.blockID, .blockType(node: type.node, props: type.props, removing: token),
-            refusal: .native_editor_input_unavailable)
+            refusal: .native_editor_input_unavailable,
+            retry: again { [weak self] in self?.applySlashItem(item) ?? false }, readsSelection: true)
     }
 
     /// A paragraph starting with "/" and the caret after it, with no
@@ -785,7 +1477,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
         guard props.contains(where: { current($0.key) != $0.value }) else { return true }
         return applyStructural(
-            blockID, .props(props), refusal: .native_editor_input_unavailable, keeping: view.selectedRange)
+            blockID, .props(props), refusal: .native_editor_input_unavailable, keeping: view.selectedRange,
+            retry: again { [weak self] in self?.setProps(blockID, props) ?? false })
     }
 
     private func block(_ blockID: String) -> BlockSnapshot? {
@@ -802,23 +1495,38 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// block, and, when the selection is whole sibling subtrees
     /// (`NativeClipboard.wholeBlocks`), their lossless payload beside it.
     func copySelection() {
-        guard let view, let text = NativeClipboard.plainText(for: view.selectedRange, surface: surface) else {
+        guard let view, !compositionOwnsView,
+            let text = NativeClipboard.plainText(for: view.selectedRange, surface: surface)
+        else {
             return
         }
-        writePasteboard(text: text, payload: selectionPayload(view.selectedRange))
+        copy(text: text, blocks: NativeClipboard.wholeBlocks(for: view.selectedRange, surface: surface))
+        flushCopies()
     }
 
     /// Cut is copy plus one range delete; a refused delete leaves the
     /// pasteboard as it was.
     @discardableResult
     func cutSelection() -> Bool {
-        guard let view, let text = NativeClipboard.plainText(for: view.selectedRange, surface: surface) else {
+        // A delete held behind a barrier would leave its copy unwritten.
+        guard !isBusy else {
+            noticeKey = .native_editor_input_busy
             return false
         }
-        // Read before the delete removes the blocks.
-        let payload = selectionPayload(view.selectedRange)
-        guard replace(range: view.selectedRange, with: "") else { return false }
-        writePasteboard(text: text, payload: payload)
+        guard let view, !compositionOwnsView,
+            let text = NativeClipboard.plainText(for: view.selectedRange, surface: surface)
+        else {
+            return false
+        }
+        // Asked for before the delete removes the blocks (the mailbox is
+        // ordered), written once the delete is applied.
+        let copy = copy(text: text, blocks: NativeClipboard.wholeBlocks(for: view.selectedRange, surface: surface))
+        let before = lastCommandID
+        guard replace(range: view.selectedRange, with: ""), lastCommandID != before, let delete = lastCommandID else {
+            pendingCopies[copy] = nil
+            return false
+        }
+        pendingCopies[copy]?.after = delete
         return true
     }
 
@@ -847,17 +1555,56 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// notice.
     private func pasteBlocks(_ payload: Data) -> Bool {
         directInsertion = nil
-        guard let view, view.markedTextRange == nil, !composition.isActive, !engine.nativeWriteFailed,
-            !engine.isDetached
-        else { return false }
+        guard let view, !compositionOwnsView, !isFrozen, !isDetached else { return false }
         let index = surface.rangeIndex
         guard let entry = index.entry(atUTF16: view.selectedRange.location) ?? index.entries.last else { return false }
         return applyStructural(
-            entry.blockID, .insertSubtrees(payload: payload), refusal: .native_editor_paste_unavailable)
+            entry.blockID, .insertSubtrees(payload: payload), refusal: .native_editor_paste_unavailable,
+            retry: again { [weak self] in self?.pasteBlocks(payload) ?? false }, readsSelection: true)
     }
 
-    private func selectionPayload(_ range: NSRange) -> Data? {
-        NativeClipboard.wholeBlocks(for: range, surface: surface).flatMap { engine.subtreePayload($0) }
+    /// Writes `text` (and, for whole blocks, their lossless payload, which the
+    /// session encodes) once the payload arrives and, for a cut, once its delete
+    /// was applied. `requiresPayload` (Copy block) writes nothing without one.
+    @discardableResult
+    private func copy(text: String?, blocks: [String]?, requiresPayload: Bool = false) -> UUID {
+        let id = UUID()
+        pendingCopies[id] = PendingCopy(
+            text: text, requiresPayload: requiresPayload, payload: blocks == nil ? .some(nil) : nil, after: nil)
+        if let blocks, !post(.copyPayload(surfaceID: surfaceID, requestID: id, blockIDs: blocks)) {
+            pendingCopies[id] = nil
+        }
+        return id
+    }
+
+    private struct PendingCopy {
+        let text: String?
+        let requiresPayload: Bool
+        /// Nil until the session answered.
+        var payload: Data??
+        /// A cut's delete: written only once it was applied.
+        var after: UUID?
+    }
+
+    private func flushCopies() {
+        for (id, copy) in pendingCopies where copy.after == nil {
+            guard let payload = copy.payload else { continue }
+            pendingCopies[id] = nil
+            if copy.requiresPayload, payload == nil {
+                // Copy block without a lossless payload copies nothing.
+                lastOutcome = false
+                continue
+            }
+            writePasteboard(text: copy.text, payload: payload)
+        }
+    }
+
+    /// A command's result releases (or, refused, drops) the copies waiting for it.
+    private func settleCopies(after command: UUID, applied: Bool) {
+        for (id, copy) in pendingCopies where copy.after == command {
+            if applied { pendingCopies[id]?.after = nil } else { pendingCopies[id] = nil }
+        }
+        flushCopies()
     }
 
     /// One pasteboard item: plain text and, when there is one, the lossless
@@ -876,9 +1623,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// in. Nil across blocks, while composing, in folded content or when
     /// editing stopped.
     func blockActionTarget() -> String? {
-        guard let view, view.isEditable, view.markedTextRange == nil, !composition.isActive,
-            !engine.nativeWriteFailed, !engine.isDetached
-        else { return nil }
+        guard let view, view.isEditable, !compositionOwnsView, !isFrozen, !isDetached else { return nil }
         let range = view.selectedRange
         let index = surface.rangeIndex
         guard
@@ -891,13 +1636,23 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     /// What `performBlockAction` would apply now (the engine's own
     /// validation, nothing written); the menu disables the rest.
+    /// The session answers asynchronously (PR08b): until its answer for this
+    /// block and structure is in, nothing is offered, and the answer refreshes
+    /// the menu (`availability` is observed).
     func availableBlockActions() -> [NativeBlockAction] {
         guard let id = blockActionTarget() else { return [] }
-        return NativeBlockAction.allCases.filter { action in
-            guard let kind = blockKind(action, id) else { return engine.hasLosslessCopy(id) }
-            return engine.canApplyStructural(
-                NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: id, kind: kind))
+        if let cached = availability[id], cached.revision == structureRevision { return cached.actions }
+        requestAvailability(id)
+        return []
+    }
+
+    private func requestAvailability(_ id: String) {
+        guard !requestedAvailability.contains(id) else { return }
+        requestedAvailability.insert(id)
+        let candidates = NativeBlockAction.allCases.map {
+            ReplicaAvailabilityCandidate(action: $0, kind: blockKind($0, id))
         }
+        _ = post(.requestAvailability(surfaceID: surfaceID, blockID: id, candidates: candidates))
     }
 
     /// One durable command on the target block and its subtree (Copy writes
@@ -916,11 +1671,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // The menu's target, never Tab's caret rules: whatever the menu offered
         // (a caret at the document end, a selection with its separator) applies.
         // Indent and outdent leave every block where it was in storage.
-        if action == .indent || action == .outdent { return applyStructural(id, kind, refusal: nil, keeping: range) }
+        let retry = again { [weak self] in self?.performBlockAction(action) ?? false }
+        if action == .indent || action == .outdent {
+            return applyStructural(id, kind, refusal: nil, keeping: range, retry: retry, readsSelection: true)
+        }
         let keeps = [.moveUp, .moveDown, .duplicate].contains(action)
         return applyStructural(
             id, kind, refusal: nil,
-            remapping: keeps ? (id, range.location - entry.textRange.location, range.length) : nil)
+            remapping: keeps ? (id, range.location - entry.textRange.location, range.length) : nil, retry: retry,
+            readsSelection: true)
     }
 
     private func blockKind(_ action: NativeBlockAction, _ id: String) -> NativeEditCommand.Kind? {
@@ -945,15 +1704,16 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return start..<end
     }
 
-    /// Copy block: the subtree's lossless payload and its visible plain text.
+    /// Copy block: the subtree's lossless payload and its visible plain text,
+    /// written when the session has encoded it (nothing without one).
     private func copyBlock(_ id: String) -> Bool {
         let span = subtree(id)
-        guard let payload = engine.subtreePayload([id]), let first = surface.rangeIndex.entry(for: id),
+        guard let first = surface.rangeIndex.entry(for: id),
             let last = surface.rangeIndex.entries.indices.contains(span.upperBound - 1)
                 ? surface.rangeIndex.entries[span.upperBound - 1] : nil
         else { return false }
         let range = NSRange(location: first.range.location, length: NSMaxRange(last.textRange) - first.range.location)
-        writePasteboard(text: NativeClipboard.plainText(for: range, surface: surface), payload: payload)
+        copy(text: NativeClipboard.plainText(for: range, surface: surface), blocks: [id], requiresPayload: true)
         return true
     }
 
@@ -1003,7 +1763,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     /// Called by `setMarkedText` before UIKit applies the marked range.
     func beginComposition(markedText: String) -> Bool {
-        guard let view, view.isEditable, !engine.nativeWriteFailed, !engine.isDetached else { return false }
+        guard let view, view.isEditable, !isFrozen, !isDetached else { return false }
         directInsertion = nil
         let began = composition.begin(markedText: markedText)
         if began { noticeKey = nil }
@@ -1012,22 +1772,59 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     /// `text` is UIKit's committed string; nil commits the last marked string.
     /// An orphaned commit becomes a pending recovery entry, shown by the view.
+    /// A barrier: the result reconciles the display (one undo step, grouped
+    /// by the session).
     @discardableResult
     func commitComposition(text: String? = nil) -> Bool {
         guard composition.isActive else { return false }
-        // A composition commit is one undo step.
-        history.stopCapturing()
-        defer { endUndoStep() }
-        switch composition.commit(text: text) {
-        case .committed, .orphaned:
-            noticeKey = nil
-        case .failed:
-            if engine.nativeWriteFailed {
-                stopAfterStorageFailure()
+        typingCaret = nil
+        guard let commit = composition.commit(text: text) else {
+            releaseComposition()
+            return true
+        }
+        surface.holdForComposition(false)
+        guard !isBusy, intents.isEmpty else {
+            // Behind held input the commit is held like a key, in order (the
+            // session's composition is cancelled); a full queue keeps it as recovery.
+            composition.finish(commit.id)
+            _ = post(.compositionCancel(surfaceID: surfaceID))
+            if intents.count < Self.maxIntents {
+                hold(.insert(commit.text))
             } else {
-                noticeKey = .native_editor_input_unavailable
+                composition.recover(commit.text, blockID: commit.blockID)
+            }
+            releaseComposition()
+            return true
+        }
+        // Shown at once and journaled in order, like a typed key; what waited
+        // for the composition then rebases through it.
+        if let entry = surface.rangeIndex.entry(for: commit.blockID),
+            let position = surface.rangeIndex.position(for: commit.blockID)
+        {
+            let runs = surface.blocks[position].runs
+            let caret = NSRange(
+                location: entry.textRange.location + commit.range.lowerBound + commit.text.utf16.count, length: 0)
+            asOneKeyboardChange {
+                surface.predict(
+                    NativeTextSurface.Prediction(
+                        commandID: commit.id, blockID: commit.blockID, range: commit.range, text: commit.text,
+                        marks: NativeMarkSelection.inherited(runs, at: commit.range.lowerBound)))
+                selection.place(caret)
+            }
+            // While a barrier is in flight its retry maps through the commit,
+            // and the commit's caret is the user's latest selection.
+            if barrier != nil {
+                barrierShown.append(
+                    Shown(
+                        deltas: [(commit.blockID, [TextDelta(range: commit.range, replacement: commit.text)])],
+                        replaced: [], reset: false))
+                userSelection = blockSelection().map { ($0, barrierShown.count) }
             }
         }
+        lastCommandID = commit.id
+        // A post that fails stops authoring; the rollback keeps the text.
+        _ = post(.compositionCommit(surfaceID: surfaceID, epoch: epoch, commandID: commit.id, text: commit.text))
+        releaseComposition()
         return true
     }
 
@@ -1035,7 +1832,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     func cancelComposition() -> Bool {
         guard composition.isActive else { return false }
         let cancelled = composition.cancel()
-        if cancelled { noticeKey = nil }
+        // A cancel that could not be posted froze authoring: its notice stays.
+        if cancelled, !isFrozen { noticeKey = nil }
+        releaseComposition()
         return cancelled
     }
 
@@ -1043,8 +1842,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     /// Whether Undo applies now: there is a step, and editing is possible (not
     /// read-only, frozen or composing).
-    var canUndo: Bool { canFormat && history.canUndo }
-    var canRedo: Bool { canFormat && history.canRedo }
+    /// The stacks are the session's, mirrored from each delivery; a typed key
+    /// still waiting for its append is undoable already (the step follows it).
+    var canUndo: Bool { canFormat && (history.canUndo || !surface.predictions.isEmpty) }
+    var canRedo: Bool { canFormat && history.canRedo && surface.predictions.isEmpty }
 
     @discardableResult
     func undo() -> Bool { applyHistory(.undo) }
@@ -1058,43 +1859,39 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     private func applyHistory(_ kind: NativeEditCommand.Kind) -> Bool {
         directInsertion = nil
         guard canFormat else { return false }
-        history.stopCapturing()
-        defer { endUndoStep() }
-        let command = NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: "", kind: kind)
-        do {
-            let undo = kind == .undo
-            let applied = try asOneKeyboardChange {
-                guard
-                    try engine.applyHistoryStep(
-                        command, step: { try history.step(undo: undo) },
-                        persist: {
-                            try persist(command, $0)
-                        })
-                else { return false }
-                // A step whose patch changed nothing on screen still moves the caret.
-                selection.restore(after: BlockPatch(origin: .other))
-                keepSelectionVisible()
-                return true
-            }
-            guard applied else { return false }
-            pendingTypingMarks = nil
-            refreshSelectionMarks()
-            noticeKey = nil
-            return true
-        } catch {
-            if engine.nativeWriteFailed {
-                stopAfterStorageFailure()
-            } else {
-                noticeKey = .native_editor_input_unavailable
-            }
-            return false
+        return postBarrier(
+            "", kind, refusal: nil, placement: .history, undoBefore: true, undoAfter: true,
+            retry: again { [weak self] in self?.applyHistory(kind) ?? false })
+    }
+
+    /// The next typing starts a new undo step (the session already stopped
+    /// capturing around the command).
+    private func endUndoStep() {
+        typingCaret = nil
+    }
+
+    /// A retry for a stale barrier: none while retrying, so it happens once.
+    private var isRetrying = false
+
+    /// A retry of an action on a document range captured when it was posted:
+    /// the range is first moved through what the display showed since, so a
+    /// peer edit before it does not shift the retry onto other text.
+    private func again(at range: NSRange, _ action: @escaping (NSRange) -> Bool) -> (() -> Bool)? {
+        guard !isRetrying, let anchors = blockRange(range) else { return nil }
+        return again { [weak self] in
+            guard let self, let mapped = self.mapThroughBarrier(anchors) else { return false }
+            return action(mapped)
         }
     }
 
-    /// The next typing starts a new undo step.
-    private func endUndoStep() {
-        history.stopCapturing()
-        typingCaret = nil
+    private func again(_ action: @escaping () -> Bool) -> (() -> Bool)? {
+        guard !isRetrying else { return nil }
+        return { [weak self] in
+            guard let self else { return false }
+            self.isRetrying = true
+            defer { self.isRetrying = false }
+            return action()
+        }
     }
 
     // MARK: - Recovery
@@ -1103,7 +1900,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// command path. A caret the command path refuses keeps the entry.
     @discardableResult
     func insertRecovery(_ recovery: ProvisionalRecovery) -> Bool {
-        guard let view, !composition.isActive, replace(range: view.selectedRange, with: recovery.text) else {
+        guard let view, !compositionOwnsView, replace(range: view.selectedRange, with: recovery.text) else {
             return false
         }
         composition.resolveRecovery(recovery)
@@ -1119,11 +1916,33 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         composition.resolveRecovery(recovery)
     }
 
+    /// Authoring stops: predictions roll back into a recovery entry, held keys
+    /// with them, and the view is read-only.
     func stopAfterStorageFailure() {
+        // Under a composition the rollback's offsets are not storage's: it waits.
+        guard !compositionOwnsView else {
+            failsAfterComposition = true
+            return
+        }
         directInsertion = nil
+        let first = !isFrozen
+        isFrozen = true
+        barrier = nil
+        if !surface.predictions.isEmpty || !intents.isEmpty { rollBack() }
+        // No delete will be applied and no payload may come: nothing is copied.
+        pendingCopies = [:]
         view?.isEditable = false
         view?.resignFirstResponder()
         noticeKey = .native_editor_storage_failed
+        if first { onFrozen() }
+    }
+
+    /// The session closed: nothing more is posted.
+    func detach() {
+        isDetached = true
+        barrier = nil
+        intents = []
+        history.destroy()
     }
 
     /// A composition this editor cannot support (a multi-block selection, an
@@ -1140,7 +1959,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             noticeKey = .native_editor_range_unavailable
             return
         }
-        noticeKey = .native_editor_marked_unavailable
+        // A storage failure (a begin that could not be posted) keeps its notice.
+        if !isFrozen { noticeKey = .native_editor_marked_unavailable }
         view?.isEditable = false
         view?.resignFirstResponder()
     }

@@ -103,4 +103,15 @@ struct NativePatchStamp: Equatable, Sendable {
     let commandID: UUID
     let baseRevision: UInt64
     let emission: Int
+    /// The surface whose command this is (PR08b), set by the replica session
+    /// when it delivers; the engine knows no surfaces. A surface skips only its
+    /// own predicted commands' echoes.
+    var surfaceID: UUID?
+
+    init(commandID: UUID, baseRevision: UInt64, emission: Int, surfaceID: UUID? = nil) {
+        self.commandID = commandID
+        self.baseRevision = baseRevision
+        self.emission = emission
+        self.surfaceID = surfaceID
+    }
 }

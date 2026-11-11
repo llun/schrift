@@ -193,6 +193,81 @@ struct TextDelta: Equatable, Sendable {
     }
 }
 
+extension TextDelta {
+    /// `range`, a block-relative UTF-16 range in `blockID`'s text before
+    /// `changes`, mapped into the text after them (PR08b's rebase of a
+    /// predicted command through a concurrent change). Both sides of the
+    /// replica session call this, so they agree. Changes to other blocks leave
+    /// it alone, and so do prop changes. Nil when it cannot be mapped: the
+    /// block was replaced, removed or reset, or a delta overlaps the range's
+    /// interior. An insertion exactly at an empty range moves it after the
+    /// inserted text when `assoc >= 0`; a non-empty range keeps insertions at
+    /// its boundaries outside.
+    static func rebase(range: Range<Int>, assoc: Int, through changes: [BlockChange], blockID: String) -> Range<Int>? {
+        var range = range
+        for change in changes {
+            switch change {
+            case .text(let id, let deltas) where id == blockID:
+                guard let mapped = rebase(range: range, assoc: assoc, through: deltas) else { return nil }
+                range = mapped
+            case .props, .text, .insert: continue
+            case .replaceBlock(let id, _): if id == blockID { return nil }
+            case .remove(let ids): if ids.contains(blockID) { return nil }
+            case .reset: return nil
+            }
+        }
+        return range
+    }
+
+    /// `range` through one patch's ordered, non-overlapping deltas.
+    static func rebase(range: Range<Int>, assoc: Int, through deltas: [TextDelta]) -> Range<Int>? {
+        var shift = 0
+        for delta in deltas {
+            let before: Bool
+            if range.isEmpty {
+                let point = range.lowerBound
+                if delta.range.lowerBound < point, point < delta.range.upperBound { return nil }
+                // An insertion exactly at the point is before it only with `assoc >= 0`.
+                before =
+                    delta.range.upperBound < point
+                    || (delta.range.upperBound == point && (!delta.range.isEmpty || assoc >= 0))
+            } else {
+                if delta.range.upperBound <= range.lowerBound {
+                    before = true
+                } else if delta.range.lowerBound >= range.upperBound {
+                    before = false
+                } else {
+                    return nil
+                }
+            }
+            guard before else { break }
+            shift += delta.replacement.utf16.count - delta.range.count
+        }
+        return (range.lowerBound + shift)..<(range.upperBound + shift)
+    }
+
+    /// `deltas` (a concurrent change to the same text) mapped through a
+    /// replacement of `range` by `length` UTF-16 units: the other half of
+    /// `rebase`. An insertion at either end of the range stays outside it, at
+    /// its start before the replacement (as `rebase` with `assoc >= 0` moves
+    /// an empty range after it). Nil when a delta overlaps the range's interior.
+    static func rebase(_ deltas: [TextDelta], throughReplacing range: Range<Int>, length: Int) -> [TextDelta]? {
+        let grown = length - range.count
+        var out: [TextDelta] = []
+        for var delta in deltas {
+            if delta.range.upperBound <= range.lowerBound {
+                out.append(delta)
+            } else if delta.range.lowerBound >= range.upperBound {
+                delta.range = (delta.range.lowerBound + grown)..<(delta.range.upperBound + grown)
+                out.append(delta)
+            } else {
+                return nil
+            }
+        }
+        return out
+    }
+}
+
 /// One inline mark: a BlockNote attribute key and its raw JSON value
 /// (`"{}"` for a boolean mark, `{"href":"…"}` for a link, `"null"` to remove).
 struct TextMark: Equatable, Sendable {

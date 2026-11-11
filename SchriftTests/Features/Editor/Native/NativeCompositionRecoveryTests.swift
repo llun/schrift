@@ -12,36 +12,53 @@ import XCTest
 final class NativeCompositionRecoveryTests: DocumentEngineTestCase {
     private enum DiskError: Error { case full }
 
-    @MainActor
-    private final class Replica {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let scope = ReplicaScope(
-            serverOrigin: "https://example.test", ownerUserID: UUID(), org: "docs", documentID: UUID())
-        lazy var store = ReplicaStore(directory: directory)
-        var writes: [NativeEditCommand] = []
-        var failNextAppend = false
+    final class Replica: Sendable {
+        let directory: URL
+        let scope: ReplicaScope
+        let store: ReplicaStore
+        let writes = Locked<[NativeEditCommand]>([])
+        let failNextAppend = Locked<Bool>(false)
 
-        isolated deinit { try? FileManager.default.removeItem(at: directory) }
+        init(directory: URL, scope: ReplicaScope, store: ReplicaStore) {
+            self.directory = directory
+            self.scope = scope
+            self.store = store
+        }
+
+        deinit { try? FileManager.default.removeItem(at: directory) }
     }
 
     private func makeReplica(_ blocks: [BlockNoteBlock] = seedBlocks()) throws -> Replica {
-        let replica = Replica()
-        _ = try replica.store.create(for: replica.scope, checkpoint: BlockNoteYjs.encode(blocks, clientID: 1))
-        return replica
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let scope = ReplicaScope(
+            serverOrigin: "https://example.test", ownerUserID: UUID(), org: "docs", documentID: UUID())
+        let store = ReplicaStore(directory: directory)
+        _ = try store.create(for: scope, checkpoint: BlockNoteYjs.encode(blocks, clientID: 1))
+        return Replica(directory: directory, scope: scope, store: store)
     }
 
     /// One app launch over the replica: restore, then durable typing.
-    private func launch(_ replica: Replica) throws -> NativeEditorSession {
-        let session = try XCTUnwrap(NativeEditorSession.restore(store: replica.store, scope: replica.scope))
-        session.enableTyping { command, update in
-            if replica.failNextAppend {
-                replica.failNextAppend = false
+    private func launch(_ replica: Replica) async throws -> NativeEditorSession {
+        let session = try unwrapped(try await NativeEditorSession.restore(store: replica.store, scope: replica.scope))
+        let store = replica.store
+        let scope = replica.scope
+        let failNext = replica.failNextAppend
+        let writes = replica.writes
+        session.enableTyping(persist: { command, update in
+            var shouldFail = false
+            failNext.update { failing in
+                if failing {
+                    failing = false
+                    shouldFail = true
+                }
+            }
+            if shouldFail {
                 throw DiskError.full
             }
-            try replica.store.append(
-                update, for: replica.scope, commandID: command.id, baseRevision: command.baseRevision, origin: .local)
-            replica.writes.append(command)
-        }
+            try store.append(
+                update, for: scope, commandID: command.id, baseRevision: command.baseRevision, origin: .local)
+            writes.update { $0.append(command) }
+        })
         return session
     }
 
@@ -54,11 +71,12 @@ final class NativeCompositionRecoveryTests: DocumentEngineTestCase {
         return session.surface.blocks[position].runs.map(\.text).joined()
     }
 
-    private func compose(_ session: NativeEditorSession, _ marked: [String], at location: Int) {
+    private func compose(_ session: NativeEditorSession, _ marked: [String], at location: Int) async {
         session.textView.selectedRange = NSRange(location: location, length: 0)
         for text in marked {
             session.textView.setMarkedText(text, selectedRange: NSRange(location: (text as NSString).length, length: 0))
         }
+        await session.settle()
     }
 
     private func assertMatches(_ session: NativeEditorSession, file: StaticString = #filePath, line: UInt = #line) {
@@ -81,14 +99,14 @@ final class NativeCompositionRecoveryTests: DocumentEngineTestCase {
 
     // MARK: - Persistence
 
-    func testProvisionalTextIsPersistedOnEveryChangeOutsideTheJournal() throws {
+    func testProvisionalTextIsPersistedOnEveryChangeOutsideTheJournal() async throws {
         let replica = try makeReplica()
-        let session = try launch(replica)
-        defer { session.close() }
+        let session = try await launch(replica)
+        addTeardownBlock { await session.close().value }
 
-        compose(session, ["に"], at: try caret(session, Self.firstID, 0))
+        await compose(session, ["に"], at: try caret(session, Self.firstID, 0))
         XCTAssertEqual(replica.store.provisionalRecoveries(for: replica.scope).map(\.text), ["に"])
-        compose(session, ["にほん", "日本"], at: try caret(session, Self.firstID, 0))
+        await compose(session, ["にほん", "日本"], at: try caret(session, Self.firstID, 0))
 
         let entries = replica.store.provisionalRecoveries(for: replica.scope)
         XCTAssertEqual(entries.map(\.text), ["日本"])
@@ -98,27 +116,29 @@ final class NativeCompositionRecoveryTests: DocumentEngineTestCase {
         try assertNothingCommitted(replica)
     }
 
-    func testCommitWritesOnceAndClearsTheProvisionalFile() throws {
+    func testCommitWritesOnceAndClearsTheProvisionalFile() async throws {
         let replica = try makeReplica()
-        let session = try launch(replica)
-        defer { session.close() }
-        compose(session, ["にほん", "日本"], at: try caret(session, Self.firstID, 6))
+        let session = try await launch(replica)
+        addTeardownBlock { await session.close().value }
+        await compose(session, ["にほん", "日本"], at: try caret(session, Self.firstID, 6))
 
         session.textView.unmarkText()
+        await session.settle()
 
-        XCTAssertEqual(replica.writes.map(\.replacement), ["日本"])
+        XCTAssertEqual(replica.writes.value.map(\.replacement), ["日本"])
         XCTAssertTrue(replica.store.provisionalRecoveries(for: replica.scope).isEmpty)
         XCTAssertTrue(session.input?.composition.pendingRecoveries.isEmpty == true)
         XCTAssertEqual(try replica.store.manifest(for: replica.scope)?.outbox, [1])
     }
 
-    func testCancelWritesNothingAndClearsTheProvisionalFile() throws {
+    func testCancelWritesNothingAndClearsTheProvisionalFile() async throws {
         let replica = try makeReplica()
-        let session = try launch(replica)
-        defer { session.close() }
-        compose(session, ["にほん"], at: try caret(session, Self.firstID, 6))
+        let session = try await launch(replica)
+        addTeardownBlock { await session.close().value }
+        await compose(session, ["にほん"], at: try caret(session, Self.firstID, 6))
 
         session.textView.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
+        await session.settle()
 
         XCTAssertTrue(replica.store.provisionalRecoveries(for: replica.scope).isEmpty)
         XCTAssertTrue(session.input?.composition.pendingRecoveries.isEmpty == true)
@@ -128,82 +148,87 @@ final class NativeCompositionRecoveryTests: DocumentEngineTestCase {
 
     // MARK: - Crash and relaunch
 
-    func testRelaunchMidCompositionOffersRecoveryAndNeverAutoCommits() throws {
+    func testRelaunchMidCompositionOffersRecoveryAndNeverAutoCommits() async throws {
         let replica = try makeReplica()
-        let crashed = try launch(replica)
-        compose(crashed, ["にほん"], at: try caret(crashed, Self.firstID, 6))
+        let crashed = try await launch(replica)
+        await compose(crashed, ["にほん"], at: try caret(crashed, Self.firstID, 6))
         // A crash runs no commit, cancel or cleanup; only the files remain.
-        crashed.close()
+        await crashed.close().value
 
-        let session = try launch(replica)
-        defer { session.close() }
+        let session = try await launch(replica)
+        addTeardownBlock { await session.close().value }
 
         let pending = try XCTUnwrap(session.input?.composition.pendingRecoveries)
         XCTAssertEqual(pending.map(\.text), ["にほん"])
         XCTAssertEqual(pending.map(\.state), [.composing])
         XCTAssertEqual(try text(session, Self.firstID), "First paragraph.", "never inserted silently")
         XCTAssertFalse(session.textView.textStorage.string.contains("にほん"))
-        XCTAssertEqual(session.engine.revision, 0)
+        let rev = await session.engine { $0.revision }
+        XCTAssertEqual(rev, 0)
         try assertNothingCommitted(replica)
-        XCTAssertTrue(replica.writes.isEmpty)
+        XCTAssertTrue(replica.writes.value.isEmpty)
         assertMatches(session)
 
         // A further relaunch still offers it: only an explicit choice resolves it.
-        session.close()
-        let again = try launch(replica)
-        defer { again.close() }
+        await session.close().value
+        let again = try await launch(replica)
+        addTeardownBlock { await again.close().value }
         XCTAssertEqual(again.input?.composition.pendingRecoveries.map(\.text), ["にほん"])
     }
 
-    func testInsertingRecoveredTextAtTheCaretIsOneDurableWrite() throws {
+    func testInsertingRecoveredTextAtTheCaretIsOneDurableWrite() async throws {
         let replica = try makeReplica()
-        let crashed = try launch(replica)
-        compose(crashed, ["にほん", "日本"], at: try caret(crashed, Self.firstID, 6))
-        crashed.close()
-        let session = try launch(replica)
-        defer { session.close() }
+        let crashed = try await launch(replica)
+        await compose(crashed, ["にほん", "日本"], at: try caret(crashed, Self.firstID, 6))
+        await crashed.close().value
+        let session = try await launch(replica)
+        addTeardownBlock { await session.close().value }
         let input = try XCTUnwrap(session.input)
         let recovery = try XCTUnwrap(input.composition.pendingRecoveries.first)
         session.textView.selectedRange = NSRange(location: try caret(session, Self.thirdID, 5), length: 0)
 
-        XCTAssertTrue(input.insertRecovery(recovery))
+        let inserted = await session.run { input.insertRecovery(recovery) }
+        XCTAssertTrue(inserted)
 
-        XCTAssertEqual(replica.writes.map(\.replacement), ["日本"])
+        XCTAssertEqual(replica.writes.value.map(\.replacement), ["日本"])
         XCTAssertEqual(try text(session, Self.thirdID), "Third日本 paragraph.", "at the chosen caret")
         XCTAssertTrue(input.composition.pendingRecoveries.isEmpty)
         XCTAssertTrue(replica.store.provisionalRecoveries(for: replica.scope).isEmpty)
         assertMatches(session)
-        session.close()
-        let relaunched = try launch(replica)
-        defer { relaunched.close() }
+        await session.close().value
+        let relaunched = try await launch(replica)
+        addTeardownBlock { await relaunched.close().value }
         XCTAssertTrue(relaunched.input?.composition.pendingRecoveries.isEmpty == true)
         XCTAssertEqual(try text(relaunched, Self.thirdID), "Third日本 paragraph.")
     }
 
-    func testCopyAndDiscardResolveRecoveryWithoutWriting() throws {
+    func testCopyAndDiscardResolveRecoveryWithoutWriting() async throws {
         let replica = try makeReplica()
-        let crashed = try launch(replica)
-        compose(crashed, ["かな"], at: try caret(crashed, Self.firstID, 0))
-        crashed.close()
-        var session = try launch(replica)
+        let crashed = try await launch(replica)
+        await compose(crashed, ["かな"], at: try caret(crashed, Self.firstID, 0))
+        await crashed.close().value
+        var session = try await launch(replica)
         var input = try XCTUnwrap(session.input)
         let pasteboard = UIPasteboard.general.items
         defer { UIPasteboard.general.items = pasteboard }
 
         input.copyRecovery(try XCTUnwrap(input.composition.pendingRecoveries.first))
+        await session.settle()
 
         XCTAssertEqual(UIPasteboard.general.string, "かな")
         XCTAssertTrue(input.composition.pendingRecoveries.isEmpty)
         XCTAssertTrue(replica.store.provisionalRecoveries(for: replica.scope).isEmpty)
-        session.close()
+        await session.close().value
 
-        session = try launch(replica)
-        compose(session, ["すて"], at: try caret(session, Self.firstID, 0))
-        session.close()
-        session = try launch(replica)
-        defer { session.close() }
+        session = try await launch(replica)
+        await compose(session, ["すて"], at: try caret(session, Self.firstID, 0))
+        await session.close().value
+        session = try await launch(replica)
+        let last = session
+        addTeardownBlock { await last.close().value }
         input = try XCTUnwrap(session.input)
         input.discardRecovery(try XCTUnwrap(input.composition.pendingRecoveries.first))
+        await session.settle()
 
         XCTAssertTrue(input.composition.pendingRecoveries.isEmpty)
         XCTAssertTrue(replica.store.provisionalRecoveries(for: replica.scope).isEmpty)
@@ -211,18 +236,20 @@ final class NativeCompositionRecoveryTests: DocumentEngineTestCase {
         try assertNothingCommitted(replica)
     }
 
-    func testRecoveryInsertAtAnUnownedCaretKeepsTheEntry() throws {
+    func testRecoveryInsertAtAnUnownedCaretKeepsTheEntry() async throws {
         let replica = try makeReplica()
-        let crashed = try launch(replica)
-        compose(crashed, ["に"], at: try caret(crashed, Self.firstID, 0))
-        crashed.close()
-        let session = try launch(replica)
-        defer { session.close() }
+        let crashed = try await launch(replica)
+        await compose(crashed, ["に"], at: try caret(crashed, Self.firstID, 0))
+        await crashed.close().value
+        let session = try await launch(replica)
+        addTeardownBlock { await session.close().value }
         let input = try XCTUnwrap(session.input)
         // After the last separator, which no block owns.
         session.textView.selectedRange = NSRange(location: session.textView.textStorage.length, length: 0)
 
-        XCTAssertFalse(input.insertRecovery(try XCTUnwrap(input.composition.pendingRecoveries.first)))
+        let recovery = try XCTUnwrap(input.composition.pendingRecoveries.first)
+        let inserted = await session.run { input.insertRecovery(recovery) }
+        XCTAssertFalse(inserted)
 
         XCTAssertEqual(input.noticeKey, .native_editor_input_unavailable)
         XCTAssertEqual(input.composition.pendingRecoveries.map(\.text), ["に"])
@@ -231,96 +258,103 @@ final class NativeCompositionRecoveryTests: DocumentEngineTestCase {
 
     // MARK: - Orphaned commit
 
-    func testOrphanedCommitIsPersistedForRecoveryAcrossRelaunch() throws {
+    func testOrphanedCommitIsPersistedForRecoveryAcrossRelaunch() async throws {
         let replica = try makeReplica()
-        let session = try launch(replica)
+        let session = try await launch(replica)
+        addTeardownBlock { await session.close().value }
         let peer = try makeDoc(clientID: 2)
         defer { peer.destroy() }
         let peerEngine = DocumentEngine(doc: peer, surface: HeadlessSurface(blocks: projection(peer)))
-        compose(session, ["にほん"], at: try caret(session, Self.secondID, 6))
-        try session.integrateServerState(peerEngine.joinBlocks(block: Self.secondID))
+        await compose(session, ["にほん"], at: try caret(session, Self.secondID, 6))
+        let joinUpdate = try peerEngine.joinBlocks(block: Self.secondID)
+        try await session.integrateServerState(joinUpdate)
 
         session.textView.unmarkText()
+        await session.settle()
 
-        XCTAssertTrue(replica.writes.isEmpty, "never redirected into another block")
+        XCTAssertTrue(replica.writes.value.isEmpty, "never redirected into another block")
         XCTAssertEqual(session.input?.composition.pendingRecoveries.map(\.state), [.orphaned])
         assertMatches(session)
-        session.close()
+        await session.close().value
 
-        let relaunched = try launch(replica)
-        defer { relaunched.close() }
+        let relaunched = try await launch(replica)
+        addTeardownBlock { await relaunched.close().value }
         let pending = try XCTUnwrap(relaunched.input?.composition.pendingRecoveries)
         XCTAssertEqual(pending.map(\.text), ["にほん"])
         XCTAssertEqual(pending.map(\.state), [.orphaned])
         XCTAssertEqual(try replica.store.manifest(for: replica.scope)?.outbox, [], "the peer join is remote only")
     }
 
-    func testANewCompositionKeepsAnEarlierRecoveryEntry() throws {
+    func testANewCompositionKeepsAnEarlierRecoveryEntry() async throws {
         let replica = try makeReplica()
-        let crashed = try launch(replica)
-        compose(crashed, ["まえ"], at: try caret(crashed, Self.firstID, 0))
-        crashed.close()
-        let session = try launch(replica)
-        defer { session.close() }
+        let crashed = try await launch(replica)
+        await compose(crashed, ["まえ"], at: try caret(crashed, Self.firstID, 0))
+        await crashed.close().value
+        let session = try await launch(replica)
+        addTeardownBlock { await session.close().value }
 
-        compose(session, ["あと"], at: try caret(session, Self.thirdID, 0))
+        await compose(session, ["あと"], at: try caret(session, Self.thirdID, 0))
         XCTAssertEqual(session.input?.composition.pendingRecoveries.map(\.text), ["まえ"])
         session.textView.unmarkText()
+        await session.settle()
 
-        XCTAssertEqual(replica.writes.map(\.replacement), ["あと"])
+        XCTAssertEqual(replica.writes.value.map(\.replacement), ["あと"])
         XCTAssertEqual(replica.store.provisionalRecoveries(for: replica.scope).map(\.text), ["まえ"])
     }
 
     // MARK: - Failure and crash windows
 
-    func testFailedCommitAppendKeepsTheTextOnDiskAndPublishesNothing() throws {
+    func testFailedCommitAppendKeepsTheTextOnDiskAndPublishesNothing() async throws {
         let replica = try makeReplica()
-        let session = try launch(replica)
+        let session = try await launch(replica)
         let before = session.surface.blocks
-        compose(session, ["日本"], at: try caret(session, Self.firstID, 0))
-        replica.failNextAppend = true
+        await compose(session, ["日本"], at: try caret(session, Self.firstID, 0))
+        replica.failNextAppend.value = true
 
         session.textView.unmarkText()
+        await session.settle()
 
         XCTAssertEqual(session.input?.noticeKey, .native_editor_storage_failed)
         XCTAssertFalse(session.textView.isEditable)
         XCTAssertEqual(session.surface.blocks, before, "no publication without the journal")
         assertMatches(session)
         try assertNothingCommitted(replica)
-        session.close()
+        await session.close().value
 
-        let relaunched = try launch(replica)
-        defer { relaunched.close() }
+        let relaunched = try await launch(replica)
+        addTeardownBlock { await relaunched.close().value }
         XCTAssertEqual(relaunched.input?.composition.pendingRecoveries.map(\.text), ["日本"])
         XCTAssertEqual(try text(relaunched, Self.firstID), "First paragraph.")
     }
 
-    func testAnEntryWhoseCommandReachedTheJournalIsDroppedAsCommitted() throws {
+    func testAnEntryWhoseCommandReachedTheJournalIsDroppedAsCommitted() async throws {
         let replica = try makeReplica()
-        let session = try launch(replica)
-        compose(session, ["日本"], at: try caret(session, Self.firstID, 0))
+        let session = try await launch(replica)
+        await compose(session, ["日本"], at: try caret(session, Self.firstID, 0))
         let live = try XCTUnwrap(replica.store.provisionalRecoveries(for: replica.scope).first)
         session.textView.unmarkText()
-        session.close()
+        await session.settle()
+        await session.close().value
         // A crash between the journal append and the provisional cleanup.
         try replica.store.writeProvisionalRecoveries([live], for: replica.scope)
 
-        XCTAssertEqual(replica.writes.map(\.id), [live.commandID], "the commit used the persisted id")
+        XCTAssertEqual(replica.writes.value.map(\.id), [live.commandID], "the commit used the persisted id")
         XCTAssertTrue(replica.store.provisionalRecoveries(for: replica.scope).isEmpty)
         XCTAssertNil(try provisionalFile(replica), "the read purges the committed entry from disk")
-        let relaunched = try launch(replica)
-        defer { relaunched.close() }
+        let relaunched = try await launch(replica)
+        addTeardownBlock { await relaunched.close().value }
         XCTAssertTrue(relaunched.input?.composition.pendingRecoveries.isEmpty == true)
         XCTAssertEqual(try text(relaunched, Self.firstID), "日本First paragraph.", "committed exactly once")
     }
 
-    func testAFailedPurgeRewriteStillReturnsTheUncommittedEntries() throws {
+    func testAFailedPurgeRewriteStillReturnsTheUncommittedEntries() async throws {
         let replica = try makeReplica()
-        let session = try launch(replica)
-        compose(session, ["日本"], at: try caret(session, Self.firstID, 0))
+        let session = try await launch(replica)
+        await compose(session, ["日本"], at: try caret(session, Self.firstID, 0))
         let committed = try XCTUnwrap(replica.store.provisionalRecoveries(for: replica.scope).first)
         session.textView.unmarkText()
-        session.close()
+        await session.settle()
+        await session.close().value
         let live = ProvisionalRecovery(commandID: UUID(), blockID: Self.thirdID, text: "まだ", state: .composing)
         try replica.store.writeProvisionalRecoveries([committed, live], for: replica.scope)
         let failing = ReplicaStore(directory: replica.directory) { operation, _ in
@@ -331,13 +365,14 @@ final class NativeCompositionRecoveryTests: DocumentEngineTestCase {
         XCTAssertEqual(replica.store.provisionalRecoveries(for: replica.scope), [live], "a later read purges")
     }
 
-    func testCompactionPurgesACommittedEntryBeforeDroppingItsJournalProof() throws {
+    func testCompactionPurgesACommittedEntryBeforeDroppingItsJournalProof() async throws {
         let replica = try makeReplica()
-        let session = try launch(replica)
-        compose(session, ["日本"], at: try caret(session, Self.firstID, 0))
+        let session = try await launch(replica)
+        await compose(session, ["日本"], at: try caret(session, Self.firstID, 0))
         let live = try XCTUnwrap(replica.store.provisionalRecoveries(for: replica.scope).first)
         session.textView.unmarkText()
-        session.close()
+        await session.settle()
+        await session.close().value
         // A crash between the journal append and the provisional cleanup,
         // then a save acknowledges the edit and compaction drops its entry.
         try replica.store.writeProvisionalRecoveries([live], for: replica.scope)
@@ -358,11 +393,11 @@ final class NativeCompositionRecoveryTests: DocumentEngineTestCase {
         return FileManager.default.contents(atPath: file.path)
     }
 
-    func testRemovingTheReplicaRemovesItsProvisionalText() throws {
+    func testRemovingTheReplicaRemovesItsProvisionalText() async throws {
         let replica = try makeReplica()
-        let session = try launch(replica)
-        compose(session, ["に"], at: try caret(session, Self.firstID, 0))
-        session.close()
+        let session = try await launch(replica)
+        await compose(session, ["に"], at: try caret(session, Self.firstID, 0))
+        await session.close().value
 
         try replica.store.remove(for: replica.scope)
 

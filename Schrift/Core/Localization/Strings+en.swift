@@ -358,6 +358,7 @@ enum Strings_en {
         .native_editor_math: "Math",
         .native_editor_diagram: "Diagram",
         .native_editor_input_unavailable: "This input isn't supported in the native editor yet.",
+        .native_editor_input_busy: "Still saving earlier typing. Try that key again in a moment.",
         .native_editor_range_unavailable: "This selection includes content the native editor can't change yet.",
         .native_editor_paste_too_large:
             "This paste is too large for the native editor. Paste up to 2,000 lines at a time.",

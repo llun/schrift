@@ -8,10 +8,19 @@
 struct CompositionQueue {
     let range: RelativeEditorRange
     private(set) var requiresReset = false
+    /// A change other than the commit's own write was discarded: the final
+    /// rebuild carries more than the composed text.
+    private(set) var foldsOtherChanges = false
 
     var blockID: String { range.blockID }
 
     mutating func filter(_ patch: BlockPatch) -> BlockPatch {
+        let filtered = filtering(patch)
+        if patch.nativeCommand == nil, filtered.changes.count != patch.changes.count { foldsOtherChanges = true }
+        return filtered
+    }
+
+    private mutating func filtering(_ patch: BlockPatch) -> BlockPatch {
         guard !requiresReset else { return BlockPatch(origin: patch.origin) }
         let id = blockID
         if patch.changes.contains(where: { change in

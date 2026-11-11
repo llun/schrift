@@ -554,10 +554,10 @@ new code reads like the surrounding code.
     a replica is mutable shared state, so exactly one owner may touch it — the
     **main actor**, through `DocumentCollaborationManager` (`@MainActor final
     class`, `Schrift/Core/Collaboration/DocumentCollaborationManager.swift`),
-    which holds one `YDoc` per document (C1). The opt-in read-only native route
-    instead has a separate private main-actor owner, `NativeEditorSession`; it
-    never attaches to the manager's replica. Pass updates and projections across
-    isolation domains — never the `YDoc`. Its inputs/outputs stay value types
+    which holds one `YDoc` per document (C1). The opt-in native route instead
+    has a separate owner off the main actor, `actor DocumentReplicaSession`
+    (PR08b); it never attaches to the manager's replica. Pass updates and
+    projections across isolation domains — never the `YDoc`. Its inputs/outputs stay value types
     (`YUpdate`, `YContentRecord`), which is what keeps the boundary honest.
   - **The document engine and its native history are confined, not isolated**
     (PR08a). `DocumentEngine` and `ReplicaHistory` carry no actor annotation (a
@@ -567,6 +567,14 @@ new code reads like the surrounding code.
     with no `@unchecked`: `BlockPatch`, `BlockChange`, `TextDelta`, `BlockSnapshot`,
     `BlockPatchOrigin`, `EditorPosition`, `EditorSelection`,
     `CompositionCommitResult`, `InlineRun`, `ProjectedBlock`, `NativeBlockSnapshot`.
+  - **The native replica lives on `actor DocumentReplicaSession`** (PR08b), which
+    creates the `YDoc`, the `DocumentEngine` and the shared `ReplicaHistory` and is
+    the only code that touches them. Only `Sendable` values cross: `ReplicaMessage`
+    in, `ReplicaDelivery` out. `DocumentReplicaSession.swift` has no `@unchecked
+    Sendable` and no `nonisolated(unsafe)`, and no `@MainActor` file under
+    `Features/Editor/Native/` names `YDoc`, `DocumentEngine`, `YUndoManager` or
+    `ReplicaHistory` (`ReplicaSessionOrderingTests` greps both; `ReplicaSaveAdapter`'s
+    throwaway save-capture decode is exempt by owner decision).
   - **`ReplicaStore`'s journal is serialized by the store, not the main actor.**
     One `Mutex` (`Synchronization`, shared by every instance) guards each
     read/modify/switch, so append, restore, manifest, outbox, acknowledge, compact
@@ -2076,9 +2084,10 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   and preserves its title/server timestamp for the classic offline fallback.
   This refresh covers content only; it does not populate the children cache.
   It never installs classic display state or changes the classic load route.
-  `NativeEditorSession` privately owns its own main-actor `YDoc`, seeds
-  `NativeTextSurface` before attaching one engine, and calls `destroy()` on close,
-  failed initialization and deinitialization. It never borrows the manager's replica.
+  Since PR08b the read-only reader is `NativeEditorSession.inspect(state:)`: a one-shot
+  projection with no replica session at all. An editable session's replica belongs
+  to `DocumentReplicaSession` (PR08b bullet below), which destroys it on close, failed
+  initialization and deinitialization. It never borrows the manager's replica.
   `NativeTextView` is selectable, non-editable TextKit 2 with one main scroller;
   never read its legacy layout manager or force full-document layout/measurement.
   `AttributedDocumentProjection` and `ProjectionRangeIndex` keep paragraph
@@ -2122,7 +2131,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   callback returns durably, then advances revision and delivers stamped emissions.
   The surface deduplicates exact command emissions, never all `.localUser` patches;
   untagged locals and `.other` rebuilds always apply. No whole-document projection
-  or state encoding is performed per keystroke.
+  or state encoding is performed per keystroke. Since PR08b same-block typing is
+  predicted (shown before its append) and everything else waits for its result:
+  see the PR08b bullet.
   Non-simple/unprojectable/opaque text, placeholders, invalid/surrogate-splitting
   UTF-16 ranges and inline object characters are rejected before mutation; ranges
   across separators and newline input are PR04b range commands (below). Marked text
@@ -2233,10 +2244,10 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   allowed through to the overridden `setMarkedText`/`insertText` instead of becoming a
   Latin command (`allowsUIKitChange`); `textViewDidChange` restores the projection if
   UIKit ever changed storage behind the command path. While text is marked the whole
-  view is frozen (`NativeTextSurface.setCompositionDeferred(true)`): remote patches still
-  enter the replica (the engine defers the composing block), but the surface buffers
-  every patch, defers theme/width restyles and the coordinator refuses offset commands
-  and selection publication, because document-wide UIKit offsets are stale until
+  view belongs to the composition: remote patches still enter the replica (the engine
+  defers the composing block), but the coordinator queues every delivery (PR08b's
+  composition rule), the surface defers theme/width restyles and offset commands and
+  selection publication are refused, because document-wide UIKit offsets are stale until
   reconciliation. Commit (`unmarkText`, which writes what UIKit displays, or
   `insertText` replacing the marked text) resolves the anchors and writes the string
   **once** as one durable `NativeEditCommand` through
@@ -2707,8 +2718,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
 - **PR07b collaborative undo in the native editor.** `Native/NativeUndoManager` owns one
   `ReplicaHistory` (PR08a: the nonisolated Yjs side — the `YUndoManager`, its trim, the
   selection meta and `step`; `NativeUndoManager` keeps the UIKit side) and so one
-  `YUndoManager` per typing session (made by `NativeInputCoordinator`, `destroy()`ed and
-  released at `NativeEditorSession.close`; never persisted): scope the `document-store`
+  `YUndoManager` per typing session (since PR08b made by `DocumentReplicaSession` at
+  `setWritable`, one shared history per replica session, `destroy()`ed and released when
+  it closes; never persisted): scope the `document-store`
   fragment, `trackedOrigins` `[.localUser]` only, so a peer's update, a server fetch and the
   nil-origin format cleanup are never undoable. At most `maxDepth` (100) undo steps: an
   added step past it calls `trimUndoStack`, a nil-origin keep-only transaction the engine
@@ -2744,6 +2756,123 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   publication and one outbox entry, refusals, selection, bound, release with the session),
   `YUndoManagerTests.testTrimDropsTheOldestItemsAndReleasesTheirKeep`, and the host UI test
   `testHardwareUndoAndRedoAreDurableAfterRelaunch`.
+
+- **PR08b `DocumentReplicaSession`, the ordered mailbox, optimistic typing plus barriers.**
+  `actor DocumentReplicaSession` (`Native/DocumentReplicaSession.swift`) owns the
+  native replica: `seed`/`restore` build it off main (restore replays checkpoint and
+  journal into a fresh author), `inspect` is the read-only one-shot, `attach` returns
+  the projection at revision R and the stream of everything after it in one turn.
+  Main → session is one `ReplicaCommandMailbox` (`AsyncStream`, `bufferingOldest(256)`;
+  a dropped message freezes authoring with the storage notice). Every
+  `ReplicaMessage` (command, select, composition begin/commit/cancel,
+  `writeProvisional`, integrate, availability, copy payload, `setWritable`, drain,
+  detach, close) is handled in one synchronous turn: **no await between the engine
+  call, the journal append and the delivery yield.** The engine's surface there is a
+  private `ReplicaPatchSink` that collects patches with each `.text`/`.props` block's
+  settled projection (what `reprojectBlock` used to ask) and composition deferrals.
+  Session → surface is `ReplicaDelivery` (revision, ordered events, the command's
+  `ReplicaResult` `.applied/.refused/.stale/.invalidated/.failed/.composition`, the
+  selection resolved for the surface's latest `seq`, mirrored `canUndo`/`canRedo`/
+  frozen state, availability, clipboard payloads, drain markers, timings). The echo's
+  `NativePatchStamp.surfaceID` names the surface whose command it is.
+  **Owner decision (2026-11-10), option A:** same-block typing (`replace` in one
+  block's text that `canPredict` accepts: the display-side half of
+  `DocumentEngine.replaceText`'s guards) is shown at once
+  (`NativeTextSurface.predict`) and posted, then journaled a few milliseconds later in
+  order; its echo confirms it and repairs the slice if the journaled block differs.
+  Every other command (split, join, ranges, marks, links, props, block type, indent,
+  outdent, block actions, paste, undo/redo, composition commit/cancel, typing into a
+  block the session once refused) is a **barrier**: shown when its result arrives;
+  keys typed meanwhile are held as intents (`.insert`/`.deleteBackward`, from
+  `NativeTextView`'s `typeKey`/`deleteKey` hooks, the delegate, UITextInput `replace`
+  and a composing keyboard's direct character, also over a selection) and replayed; a
+  selection the user makes meanwhile is settled by one rule at every barrier end (applied,
+  refused, stale, failed): moved through what was shown since (a rollback a result caused
+  included), it wins over wherever the
+  barrier would put the selection (its caret, a kept or remapped range, a history step's),
+  except in a block a delivery rewrote (a rebuild with the same text keeps its offsets), is captured again even when the view's
+  range did not move (the session's copy may not survive the barrier's rebuild), and is then
+  cleared; held keys replay after a composition's own answer; other actions return false.
+  A barrier that meets a change its surface had not seen comes back `.stale` and is
+  retried once from the current display, an action that reads the selection (split, join,
+  indent, a slash item, paste, block actions) from the selection it was taken at (moved
+  through what was shown since; when that cannot be found, nothing is retried and the input
+  notice shows; a history step or a block's props ignore the caret)
+  while the view shows, and the retry keeps, a selection the user made meanwhile: an
+  action on a range (marks, a range replacement, unpredicted typing) is
+  retried on that range moved through what was shown since (a non-empty range keeps an
+  insertion at either end outside; a change inside it, or a rebuilt block, cancels the
+  retry), and a cut's pending copy follows the retried delete. **Journal before publication,
+  redefined:** publication is the canonical advance, save scheduling
+  (`NativeReplicaSaveScheduler.schedule` only on a journaled `.applied` or commit) or a
+  network send; a predicted keystroke on screen is provisional UI, like marked text. A
+  failed or refused append rolls the display back to canonical, freezes authoring and
+  turns the dropped text (with held keys, even when no prediction was dropped) into an
+  `.orphaned` `ProvisionalRecovery` banner entry, and nothing waits to be copied. **The
+  composition rule:** while marked text owns the view (`compositionOwnsView`: `isActive ||
+  markedTextRange != nil`), the surface's whole `ReplicaDelivery`s queue up unapplied,
+  results included, a local storage failure waits too, and nothing reads the view's
+  offsets. Return during a composition always commits it. **The commit is a predicted
+  command** (option A for IME too): it is shown at once as a prediction, posted with its
+  epoch, and the composition stops owning the view there and then (no resolving window);
+  while input is held (a barrier, an awaited invalidation, the prediction bound, or held
+  keys) it is instead held as an ordinary key behind them and the session's composition
+  cancelled; the queue then applies in order through `apply(_:)`
+  (rebasing through the commit like any typed key), followed by the failure that waited,
+  stale retries and held keys. Its rebuild is stamped as its echo and confirms or repairs
+  it. The session maps the begin and the commit exactly like a predicted `.replace`
+  (assoc 1; the commit moves the unseen ring through its replacement) and keeps that echo
+  out of the ring unless the rebuild folded in changes the composition discarded, so the
+  next begin (posted at the pre-commit base) rebases cleanly, and after a folded rebuild comes back orphaned as a
+  recovery entry. A commit whose target is gone, or whose begin was never captured, ends
+  the epoch like an unrebaseable key (the rollback keeps its text); one from an epoch
+  already invalidated is answered orphaned. Cancel posts with nothing to show. While a
+  barrier is in flight the commit is recorded as a shown change and its caret as the
+  user's selection; the editor's own placements are never taken for the user's. A begin
+  carries its epoch: one from an invalidated epoch is not captured. A cut while input is
+  held is refused with the busy notice. A begin or cancel that could not be posted (a full
+  mailbox) freezes authoring; the session's engine may stay composing, and the read-only
+  display of that block stops following peers until the editor is reopened (accepted).
+  An echo spelled as a whole-block rebuild settles from that
+  snapshot; a predicted block a concurrent change showed as canonical keeps its
+  predictions off screen until the invalidation, so later patches are not shifted by them. **Rebase:** the session keeps, per surface, the changes it had not seen
+  (`unseen`, every patch but its own predicted echoes, `ringCapacity` 256); a predicted
+  command is rebased through them with `TextDelta.rebase(range:assoc:through:blockID:)`
+  and they through it (`rebase(_:throughReplacing:length:)`), exactly as the surface
+  rebases its pending predictions through a concurrent patch, so both reach the same
+  text (a concurrent insertion at the same point lands first). Anything not rebaseable
+  (an overlap, a replaced, removed or reset block, a dropped ring entry) invalidates
+  the surface's epoch: every command of the old epoch is dropped and the surface rolls
+  back into a recovery entry. A selection is posted with an increasing `seq` and
+  `baseRevision` (rebased the same way); a delivery's endpoints restore it only when
+  they answer the latest `seq`, else the view's range follows the shown deltas. Bounds:
+  32 pending predictions per surface (then keys are held), 64 held intents (then
+  `native_editor_input_busy`, English only), mailbox 256, ring 256; deliveries are
+  unbounded until PR08c's resync. **IME:** begin is posted (a target the session cannot
+  capture comes back as an orphaned commit), the surface defers restyles from begin to
+  the answer, commit and cancel are barriers, `provisional.json` is written through
+  `.writeProvisional`. **Undo:** one `ReplicaHistory` per replica session, grouping
+  decided on main (`ReplicaCommand.undoBefore/undoAfter`); `NativeUndoManager` only
+  mirrors the stacks (a pending prediction is undoable already). **Menus:** availability
+  is asked of the session per (block, structural revision) and cached; the menu offers
+  nothing until the answer arrives (prefetched on selection changes); copy, cut and Copy
+  block write the pasteboard when the session's payload arrives (a cut only once its
+  delete was applied). `NativeEditorSession` is the main-actor view session (no graph):
+  it consumes deliveries in order, `settle()` waits for a drain marker and anything held
+  (and returns false if work is still in flight after its bound; the harness fails then),
+  `close()` returns a `Task` that ends after every message posted before it was
+  journaled (a late append's save is handed over then), and `NativeEditorOpen` awaits
+  the previous close before an open and rechecks its generation and account after the
+  off-main restore. Multi-window stays off; the registry and fan-out are PR08c, so one
+  surface per session; the collaboration-manager facade is PR09. Tests:
+  `ReplicaSessionOrderingTests` (a latching disk gate on `ReplicaStore`'s interrupt hook,
+  a mailbox gate on `Hooks.beforeMessage`, fixed client ids: ordering, rebase,
+  invalidation, held keys, stale retry, append failure, publication, `onReplicaWork` off
+  main plus the grep, bounds, IME, undo, close, timings), `NativeEditorActivationTests`'
+  closed-during-restore case, and the host UI test
+  `testRapidTypingUnderSlowDiskSurvivesRelaunch` (`--native-slow-disk`, 60 ms per
+  append, with an in-flight readout). Native suites drive the session through
+  `harness.settle()`/`run`/`engine`/`history`/`replicaDoc` (`NativeEditingTestCase`).
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
@@ -2831,7 +2960,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   on commit/cancel. The engine stays headless; the native IME surface is the
   PR03 composition session above.
 - **The engine borrows the replica; it never owns it.** `DocumentCollaborationManager`
-  keeps the one-owner rule. `YDoc.onDestroy` fires at the start of `destroy()`
+  (classic) and `DocumentReplicaSession` (native, PR08b) keep the one-owner rule. `YDoc.onDestroy` fires at the start of `destroy()`
   and the engine detaches there — hooks cleared, buffered patches dropped (even
   mid-delivery, if a surface destroys the replica from `applyPatch`), and every
   later intent throws `DocumentEngineError.detached`. Releasing the engine
@@ -2857,8 +2986,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   patch. `.replaceBlock`/`.props`/`.reset` are assignments and idempotent either
   way; `.insert`/`.remove` skip ids already present/absent. `HeadlessSurface`
   never mutates on its own, so it applies every patch regardless of origin and
-  equals the projection after each step. There is no optimistic overlay (plan
-  §2.3).
+  equals the projection after each step. The engine has no optimistic overlay (plan
+  §2.3); the native surface's PR08b predictions live in `NativeTextSurface`, outside
+  the engine, and are confirmed by their stamped echo.
 - **`.text` has exactly one shape.** A block, at any depth, gets `.text` only when
   (a) its container holds its content element and at most one nested `blockGroup`,
   (b) its content element has exactly

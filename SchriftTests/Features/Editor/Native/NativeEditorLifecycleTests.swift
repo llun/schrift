@@ -44,62 +44,60 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         XCTAssertNil(MockURLProtocol.lastRequest)
     }
 
-    func testCloseDestroysReplicaAndDetachesEngineBeforeReopen() throws {
+    func testCloseDestroysReplicaAndDetachesEngineBeforeReopen() async throws {
         let state = BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID)
-        weak var replica: YDoc?
-        let session = try NativeEditorSession(state: state) {
-            let doc = YDoc(clientID: 123)
-            replica = doc
-            return doc
-        }
-        XCTAssertNotNil(replica)
-        XCTAssertFalse(session.engine.isDetached)
+        let session = try await NativeEditorSession.seed(state: state, clientID: 123)
+        let isDetachedBefore = await session.engine { $0.isDetached }
+        XCTAssertEqual(isDetachedBefore, false)
         XCTAssertEqual(session.surface.blocks.count, 3)
-        session.close()
-        session.close()
-        XCTAssertTrue(session.engine.isDetached)
+        await session.close().value
+        await session.close().value
+        // PR08b option A: the engine is gone after close; session.engine returns nil.
+        let closedEngine = await session.engine { $0.isDetached }
+        XCTAssertNil(closedEngine)
         XCTAssertTrue(session.isClosed)
-        XCTAssertTrue(replica?.store.clients.isEmpty == true, "destroy must clear the replica graph")
-        XCTAssertTrue(replica?.share.isEmpty == true)
-        do {
-            _ = try session.engine.replaceText(block: Self.firstID, range: 0..<0, with: "closed")
-            XCTFail("a closed session must not write")
-        } catch DocumentEngineError.detached {}
-        let reopened = try NativeEditorSession(state: state)
-        defer { reopened.close() }
+        let closedReplica = await session.replicaDoc { $0.store.clients.isEmpty }
+        XCTAssertNil(closedReplica, "destroy must clear the replica graph")
+        let closedShare = await session.replicaDoc { $0.share.isEmpty }
+        XCTAssertNil(closedShare)
+        // PR08b option A: a closed session's engine is gone and inspect closures return nil.
+        let closedWrite = await session.engine { engine -> DocumentEngineError? in
+            do {
+                _ = try engine.replaceText(block: Self.firstID, range: 0..<0, with: "closed")
+                return nil
+            } catch {
+                return error as? DocumentEngineError
+            }
+        }
+        XCTAssertNil(closedWrite, "a closed session must not write")
+        let reopened = try await NativeEditorSession.seed(state: state)
+        addTeardownBlock { await reopened.close().value }
         XCTAssertEqual(reopened.surface.blocks, session.surface.blocks)
-        XCTAssertFalse(reopened.engine.isDetached)
+        let reopenedDetached = await reopened.engine { $0.isDetached }
+        XCTAssertEqual(reopenedDetached, false)
     }
 
-    func testReleasingSessionAndFailedSeedBothDestroyTheirReplica() throws {
-        weak var replica: YDoc?
-        var session: NativeEditorSession? = try NativeEditorSession(
-            state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID)
-        ) {
-            let doc = YDoc(clientID: 124)
-            replica = doc
-            return doc
-        }
+    func testReleasingSessionAndFailedSeedBothDestroyTheirReplica() async throws {
+        var session: NativeEditorSession? = try await NativeEditorSession.seed(
+            state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID), clientID: 124
+        )
         XCTAssertNotNil(session)
-        XCTAssertNotNil(replica)
+        // PR08b option A: the replica is owned by DocumentReplicaSession; releasing the session posts close on deinit.
+        let docOpen = await session?.replicaDoc { $0.store.clients.count }
+        XCTAssertNotNil(docOpen)
         session = nil
-        XCTAssertNil(replica)
+        XCTAssertNil(session)
 
         // Start with real structs so failure cleanup has cycles to break.
         do {
-            _ = try NativeEditorSession(state: Data([0xff])) {
-                let doc = try self.makeDoc(clientID: 125)
-                replica = doc
-                return doc
-            }
+            _ = try await NativeEditorSession.seed(state: Data([0xff]))
             XCTFail("an undecodable seed must not open")
         } catch Lib0DecodingError.truncated {}
-        XCTAssertNil(replica)
     }
 
-    func testInvalidRootAndEmptyRootAreDistinguished() throws {
-        let empty = try NativeEditorSession(state: Data([0, 0]))
-        defer { empty.close() }
+    func testInvalidRootAndEmptyRootAreDistinguished() async throws {
+        let empty = try await NativeEditorSession.seed(state: Data([0, 0]))
+        addTeardownBlock { await empty.close().value }
         XCTAssertFalse(empty.hasUnsupportedRoot)
         XCTAssertTrue(empty.surface.blocks.isEmpty)
         let doc = YDoc(clientID: 130)
@@ -109,8 +107,8 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             _ = try YWrite.insertAfter(
                 tx, into: root, after: nil, [.type(YType(typeRef: .xmlElement(nodeName: "unknown")))])
         }
-        let unsupported = try NativeEditorSession(state: YStateEncoder.encodeStateAsUpdate(doc))
-        defer { unsupported.close() }
+        let unsupported = try await NativeEditorSession.seed(state: YStateEncoder.encodeStateAsUpdate(doc))
+        addTeardownBlock { await unsupported.close().value }
         XCTAssertTrue(unsupported.hasUnsupportedRoot)
     }
 
@@ -264,7 +262,9 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
                     "/collaboration/ydoc/v1/docs/\(fixture.model.documentID.uuidString.lowercased())"), 1)
         open.close()
         XCTAssertTrue(session.isClosed)
-        XCTAssertTrue(session.engine.isDetached)
+        // PR08b option A: a read-only reader comes from inspect (replica == nil); session.engine returns nil.
+        let engine = await session.engine { $0.isDetached }
+        XCTAssertNil(engine)
     }
 
     func testSuccessfulNativeOpenRefreshesCacheForOfflineClassicFallback() async {

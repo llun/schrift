@@ -410,32 +410,33 @@ final class NativeShadowExportParityTests: NativeEditingTestCase {
     /// A document whose only non-flat blocks are a callout, toggles, a page
     /// break and a nested list is typeable in the production route, a toggle
     /// with a paragraph child included.
-    func testRichBlocksAreTypeable() throws {
-        let harness = try makeHarness(richSeed())
-        defer { harness.close() }
+    func testRichBlocksAreTypeable() async throws {
+        let harness = try await makeHarness(richSeed())
+        addTeardownBlock { await harness.close() }
         XCTAssertTrue(harness.session.canType)
-        let paragraphChild = try makeHarness([toggle("t", "Title", [paragraph("c", "Child")])])
-        defer { paragraphChild.close() }
+        let paragraphChild = try await makeHarness([toggle("t", "Title", [paragraph("c", "Child")])])
+        addTeardownBlock { await paragraphChild.close() }
         XCTAssertTrue(paragraphChild.session.canType)
     }
 
     /// Return in an open toggle makes its first child a paragraph: the
     /// document stays typeable after a relaunch, and the save of what was
     /// typed there is the export's spelling, so no conflict.
-    func testReturnInAnOpenToggleStaysTypeableAndSavesWithoutAConflict() throws {
-        let harness = try makeHarness([paragraph("p", "Intro"), toggle("t", "Title")])
-        defer { harness.close() }
+    func testReturnInAnOpenToggleStaysTypeableAndSavesWithoutAConflict() async throws {
+        let harness = try await makeHarness([paragraph("p", "Intro"), toggle("t", "Title")])
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         session.surface.setExpanded("t", true)
         setSelection(harness, NSRange(location: try location(session, "t", 5), length: 0))
         session.textView.insertText("\n")
+        await harness.settle()
         let child = try XCTUnwrap(session.surface.blocks.last)
         XCTAssertEqual(child.parentID, "t")
         XCTAssertEqual(child.node, "paragraph")
         let adapter = ReplicaSaveAdapter(store: harness.store, scope: harness.scope)
         XCTAssertNoThrow(try adapter.prepare(), "an empty child still has a shadow")
         session.textView.insertText("Detail")
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
         let (_, markdown) = try adapter.prepare()
         let export = "Intro\n\n* Title\n\n  Detail\n"  // BlockNote 0.56 `blocksToMarkdownLossy`
         assertCanonicalItems(markdown, export)
@@ -447,25 +448,25 @@ final class NativeShadowExportParityTests: NativeEditingTestCase {
             serverUpdatedAt: Date(timeIntervalSince1970: 3_000), serverMarkdown: export)
         XCTAssertEqual(decision, .push(title: "Doc", evidence: .serverHoldsOurLastPush))
 
-        session.close()
-        let restored = try XCTUnwrap(NativeEditorSession.restore(store: harness.store, scope: harness.scope))
-        defer { restored.close() }
+        await session.close().value
+        let restored = try unwrapped(try await NativeEditorSession.restore(store: harness.store, scope: harness.scope))
+        addTeardownBlock { await restored.close().value }
         XCTAssertTrue(restored.canType, "a toggle with a paragraph child stays typeable")
     }
 
     /// Typing in such a document and saving: the save's shadow is what the
     /// server exports for the saved body, so `draftSyncDecision` sees our own
     /// last push, not a conflict, after the save bumped `updated_at`.
-    func testASavedRichDocumentIsNotAConflict() throws {
-        let harness = try makeHarness(richSeed())
-        defer { harness.close() }
+    func testASavedRichDocumentIsNotAConflict() async throws {
+        let harness = try await makeHarness(richSeed())
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         XCTAssertTrue(session.canType)
         setSelection(harness, NSRange(location: try location(session, "c", 0), length: 0))
         session.textView.insertText("New ")
         setSelection(harness, NSRange(location: try location(session, "t", 0), length: 0))
         session.textView.insertText("Open ")
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
         let (_, markdown) = try ReplicaSaveAdapter(store: harness.store, scope: harness.scope).prepare()
         let baseline = DraftBaseline(
             serverUpdatedAt: Date(timeIntervalSince1970: 1_000), markdown: "Intro\n", title: "Doc")

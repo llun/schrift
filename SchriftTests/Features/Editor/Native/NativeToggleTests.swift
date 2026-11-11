@@ -76,9 +76,9 @@ final class NativeToggleTests: NativeEditingTestCase {
 
     // MARK: - Render, fold and unfold
 
-    func testTogglesRenderCollapsedAndFoldWithoutWritingYjs() throws {
-        let harness = try makeHarness(seed() + [toggleHeading("h", "Section", [paragraph("h1", "Under")])])
-        defer { harness.close() }
+    func testTogglesRenderCollapsedAndFoldWithoutWritingYjs() async throws {
+        let harness = try await makeHarness(seed() + [toggleHeading("h", "Section", [paragraph("h1", "Under")])])
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         let window = host(harness)
         defer { window.isHidden = true }
@@ -89,7 +89,7 @@ final class NativeToggleTests: NativeEditingTestCase {
         XCTAssertEqual(session.surface.hidden, [false, false, true, true, true, false, false, true])
         XCTAssertTrue(harness.view.textStorage.string.contains("Hidden one"))
         XCTAssertEqual(try laidOut(harness), ["intro", "t", "after", "h"])
-        try assertConsistent(harness, localCommands: 0)
+        try await assertConsistent(harness, localCommands: 0)
 
         let triangle = try button(harness, "t")
         XCTAssertTrue(triangle.isAccessibilityElement)
@@ -112,8 +112,8 @@ final class NativeToggleTests: NativeEditingTestCase {
         XCTAssertNil(harness.view.blockControls.checkboxes["c2"])
         XCTAssertEqual(harness.view.blockControls.headingRanges().count, 1, "Section only, not the folded Inner")
 
-        let revision = session.engine.revision
-        let visited = session.engine.visitedTypeCount
+        let revision = await harness.engine { $0.revision }
+        let visited = await harness.engine { $0.visitedTypeCount }
         try tap(harness, "t")
         XCTAssertEqual(triangle.accessibilityValue, "Expanded")
         XCTAssertEqual(triangle.accessibilityExpandedStatus, .expanded)
@@ -126,15 +126,17 @@ final class NativeToggleTests: NativeEditingTestCase {
         XCTAssertNil(harness.view.blockControls.checkboxes["c2"], "a folded checkbox is removed")
         XCTAssertEqual(harness.view.blockControls.headingRanges().count, 1)
         // No Yjs transaction, no command, no journal entry: view state only.
-        XCTAssertEqual(session.engine.revision, revision)
-        XCTAssertEqual(session.engine.visitedTypeCount, visited)
-        try assertConsistent(harness, localCommands: 0)
+        let finalRevision = await harness.engine { $0.revision }
+        let finalVisited = await harness.engine { $0.visitedTypeCount }
+        XCTAssertEqual(finalRevision, revision)
+        XCTAssertEqual(finalVisited, visited)
+        try await assertConsistent(harness, localCommands: 0)
     }
 
     /// The reader (no input coordinator) folds too: folding is not an edit.
-    func testTheReadOnlyReaderFolds() throws {
-        let session = try NativeEditorSession(state: BlockNoteYjs.encode(seed(), clientID: 1))
-        defer { session.close() }
+    func testTheReadOnlyReaderFolds() async throws {
+        let session = try await NativeEditorSession.seed(state: BlockNoteYjs.encode(seed(), clientID: 1))
+        addTeardownBlock { await session.close().value }
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 2_000))
         session.textView.frame = window.bounds
         window.addSubview(session.textView)
@@ -145,14 +147,15 @@ final class NativeToggleTests: NativeEditingTestCase {
         XCTAssertTrue(triangle.isEnabled)
         triangle.sendActions(for: .primaryActionTriggered)
         XCTAssertTrue(session.surface.isExpanded("t"))
-        XCTAssertEqual(session.engine.revision, 0)
+        let revision = await session.engine { $0.revision }
+        XCTAssertEqual(revision, 0)
     }
 
     // MARK: - Fold, remote change, unfold
 
-    func testARemoteChangeToFoldedChildrenShowsOnUnfold() throws {
-        let harness = try makeHarness(seed())
-        defer { harness.close() }
+    func testARemoteChangeToFoldedChildrenShowsOnUnfold() async throws {
+        let harness = try await makeHarness(seed())
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         let window = host(harness)
         defer { window.isHidden = true }
@@ -161,29 +164,29 @@ final class NativeToggleTests: NativeEditingTestCase {
         let peer = try makeDoc(seed(), clientID: 2)
         defer { peer.destroy() }
         let writer = BlockNoteWriter(doc: peer, schemas: BlockNoteWriter.nativePropSchemas)
-        try session.integrateServerState(try writer.replaceText(block: "c1", range: 10..<10, with: " edited"))
+        try await session.integrateServerState(try writer.replaceText(block: "c1", range: 10..<10, with: " edited"))
         // The hidden block's storage took the patch; it is still folded.
         XCTAssertEqual(text(of: try block(session, "c1")), "Hidden one edited")
         XCTAssertTrue(session.surface.isHidden(blockID: "c1"))
         XCTAssertFalse(try laidOut(harness).contains("c1"))
         XCTAssertFalse(harness.view.accessibilityValue?.contains("edited") ?? true)
-        try assertConsistent(harness, localCommands: 0)
+        try await assertConsistent(harness, localCommands: 0)
 
         try tap(harness, "t")
         XCTAssertTrue(try laidOut(harness).contains("c1"))
         XCTAssertTrue(harness.view.accessibilityValue?.contains("Hidden one edited") ?? false)
-        try assertConsistent(harness, localCommands: 0)
+        try await assertConsistent(harness, localCommands: 0)
 
         // A toggle that gains a child opens (BlockNote's toggle frame), even
         // when the child came from a peer.
         try tap(harness, "t")
         XCTAssertFalse(session.surface.isExpanded("t"))
         let split = try writer.splitBlock(block: "c2", at: 11, newID: "c9")
-        try session.integrateServerState(split)
+        try await session.integrateServerState(split)
         XCTAssertTrue(session.surface.isExpanded("t"))
         XCTAssertEqual(try block(session, "c9").parentID, "t")
         XCTAssertTrue(try laidOut(harness).contains("c9"))
-        try assertConsistent(harness, localCommands: 0)
+        try await assertConsistent(harness, localCommands: 0)
     }
 
     // MARK: - The folded-range rule
@@ -191,28 +194,33 @@ final class NativeToggleTests: NativeEditingTestCase {
     /// A range or mark command over a folded toggle's hidden children is
     /// refused before it is armed; unfolded, a mark command applies to them.
     /// A caret never rests in folded content.
-    func testARangeAcrossAFoldedToggleIsRefused() throws {
-        let harness = try makeHarness(seed())
-        defer { harness.close() }
+    func testARangeAcrossAFoldedToggleIsRefused() async throws {
+        let harness = try await makeHarness(seed())
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         let original = harness.view.textStorage.string
         harness.pasteboard.string = "kept"
         try select(harness, from: ("intro", 2), to: ("after", 2))
         harness.view.insertText("x")
+        await harness.settle()
         XCTAssertEqual(harness.input.noticeKey, .native_editor_range_unavailable)
         harness.view.deleteBackward()
+        await harness.settle()
         harness.view.cut(nil)
+        await harness.settle()
         XCTAssertEqual(harness.pasteboard.string, "kept", "a refused cut leaves the pasteboard")
-        XCTAssertFalse(harness.input.toggleMark("bold"))
+        let boldRefused = await harness.run { harness.input.toggleMark("bold") }
+        XCTAssertFalse(boldRefused)
         XCTAssertEqual(harness.view.textStorage.string, original)
-        try assertConsistent(harness, localCommands: 0)
+        try await assertConsistent(harness, localCommands: 0)
 
         // Expanded, the same bold reaches every block in the range.
         session.surface.setExpanded("t", true)
         try select(harness, from: ("intro", 2), to: ("after", 2))
-        XCTAssertTrue(harness.input.toggleMark("bold"))
+        let boldApplied = await harness.run { harness.input.toggleMark("bold") }
+        XCTAssertTrue(boldApplied)
         XCTAssertTrue(try block(session, "c1").runs.allSatisfy { $0.marks.contains { $0.key == "bold" } })
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
 
         // A caret placed inside folded content moves past it, keeping its direction.
         session.surface.setExpanded("t", false)
@@ -222,53 +230,59 @@ final class NativeToggleTests: NativeEditingTestCase {
         try caret(harness, "c2", 1)
         XCTAssertEqual(harness.view.selectedRange, NSRange(location: try location(session, "t", 5), length: 0))
         harness.view.insertText("!")
+        await harness.settle()
         XCTAssertEqual(text(of: try block(session, "t")), "Title!", "typing lands in the visible title")
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
     }
 
     // MARK: - Editing the title
 
-    func testTitleTypingMarksAndJoins() throws {
-        let harness = try makeHarness(
+    func testTitleTypingMarksAndJoins() async throws {
+        let harness = try await makeHarness(
             seed() + [toggle("bare", "Bare"), paragraph("tail", "Tail"), paragraph("last", "Last")])
-        defer { harness.close() }
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         try caret(harness, "t", 5)
         harness.view.insertText(" here")
+        await harness.settle()
         XCTAssertEqual(text(of: try block(session, "t")), "Title here")
         try select(harness, from: ("t", 0), to: ("t", 5))
-        XCTAssertTrue(harness.input.toggleMark("italic"))
+        let marked = await harness.run { harness.input.toggleMark("italic") }
+        XCTAssertTrue(marked)
         XCTAssertEqual(try block(session, "t").runs.first?.marks.map(\.key), ["italic"])
         XCTAssertEqual(try block(session, "t").node, "toggleListItem")
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
 
         // Backspace after a childless toggle joins into its title.
         try caret(harness, "tail", 0)
         harness.view.deleteBackward()
+        await harness.settle()
         XCTAssertEqual(text(of: try block(session, "bare")), "BareTail")
         XCTAssertEqual(harness.view.selectedRange.location, try location(session, "bare", 4))
-        try assertConsistent(harness, localCommands: 3)
+        try await assertConsistent(harness, localCommands: 3)
 
         // Backspace after a folded toggle with children: the merge target is
         // its hidden last descendant, so the toggle unfolds first.
         try caret(harness, "after", 0)
         XCTAssertTrue(session.surface.isHidden(blockID: "c3"))
         harness.view.deleteBackward()
+        await harness.settle()
         XCTAssertTrue(session.surface.isExpanded("t"))
         XCTAssertEqual(text(of: try block(session, "c3")), "InnerAfter")
         XCTAssertFalse(session.surface.isHidden(blockID: "c3"))
-        try assertConsistent(harness, localCommands: 4)
+        try await assertConsistent(harness, localCommands: 4)
     }
 
     // MARK: - Return
 
-    func testReturnFollowsTheToggleOpenState() throws {
-        let harness = try makeHarness(seed())
-        defer { harness.close() }
+    func testReturnFollowsTheToggleOpenState() async throws {
+        let harness = try await makeHarness(seed())
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         // Collapsed: a sibling toggle takes the tail; the hidden children stay.
         try caret(harness, "t", 3)
         harness.view.insertText("\n")
+        await harness.settle()
         guard case .split(3, let sibling, let open)? = harness.log.commands.last?.kind else {
             return XCTFail("not a split")
         }
@@ -278,12 +292,13 @@ final class NativeToggleTests: NativeEditingTestCase {
         XCTAssertEqual(try block(session, sibling).node, "toggleListItem")
         XCTAssertEqual(try block(session, sibling).depth, 0)
         XCTAssertEqual(harness.view.selectedRange.location, try location(session, sibling, 0))
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
 
         // Expanded: Return at the end of the title inserts a first child.
         session.surface.setExpanded("t", true)
         try caret(harness, "t", 3)
         harness.view.insertText("\n")
+        await harness.settle()
         guard case .split(3, let child, ["t"])? = harness.log.commands.last?.kind else {
             return XCTFail("not an open split")
         }
@@ -291,41 +306,47 @@ final class NativeToggleTests: NativeEditingTestCase {
         XCTAssertEqual(try block(session, child).parentID, "t")
         XCTAssertEqual(try block(session, child).node, "paragraph")
         XCTAssertEqual(harness.view.selectedRange.location, try location(session, child, 0))
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
 
         // Return in that empty child of an open toggle adds another child.
         harness.view.insertText("\n")
+        await harness.settle()
         guard case .split(0, let next, ["t"])? = harness.log.commands.last?.kind else {
             return XCTFail("not a split")
         }
         XCTAssertEqual(try block(session, next).parentID, "t")
         XCTAssertEqual(try block(session, child).parentID, "t", "an open toggle keeps empty children")
-        try assertConsistent(harness, localCommands: 3)
+        try await assertConsistent(harness, localCommands: 3)
 
         // Return in an empty toggle resets it to a paragraph; its children stay.
         try caret(harness, sibling, 0)
         harness.view.insertText("\n")
+        await harness.settle()
         XCTAssertEqual(try block(session, sibling).node, "toggleListItem", "not empty yet: an empty toggle above")
-        try assertConsistent(harness, localCommands: 4)
+        try await assertConsistent(harness, localCommands: 4)
         let empty = session.surface.blocks[try XCTUnwrap(session.surface.rangeIndex.position(for: sibling)) - 1]
         XCTAssertEqual(empty.node, "toggleListItem")
         try caret(harness, empty.id, 0)
         harness.view.insertText("\n")
+        await harness.settle()
         XCTAssertEqual(try block(session, empty.id).node, "paragraph")
-        try assertConsistent(harness, localCommands: 5)
+        try await assertConsistent(harness, localCommands: 5)
     }
 
-    func testReturnInAToggleHeading() throws {
-        let harness = try makeHarness([toggleHeading("h", "HeadTail", [paragraph("k", "Kid")]), paragraph("z", "Z")])
-        defer { harness.close() }
+    func testReturnInAToggleHeading() async throws {
+        let harness = try await makeHarness([
+            toggleHeading("h", "HeadTail", [paragraph("k", "Kid")]), paragraph("z", "Z"),
+        ])
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         try caret(harness, "h", 4)
         harness.view.insertText("\n")
+        await harness.settle()
         guard case .split(_, let id, _)? = harness.log.commands.last?.kind else { return XCTFail("not a split") }
         XCTAssertEqual(session.surface.blocks.map(\.id), ["h", "k", id, "z"])
         XCTAssertEqual(try block(session, id).node, "paragraph", "a toggle heading splits into a paragraph")
         XCTAssertEqual(try block(session, "k").parentID, "h")
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
     }
 
     // MARK: - Backspace
@@ -333,100 +354,110 @@ final class NativeToggleTests: NativeEditingTestCase {
     /// BlockNote's order: a toggle heading resets to a heading, then to a
     /// paragraph, then merges; a toggle list item resets to a paragraph. The
     /// children stay and, no longer under a toggle, show.
-    func testBackspaceResetsAToggleFirst() throws {
-        let harness = try makeHarness([
+    func testBackspaceResetsAToggleFirst() async throws {
+        let harness = try await makeHarness([
             paragraph("a", "A"), toggleHeading("h", "Head", [paragraph("k", "Kid")]),
             toggle("t", "T", [paragraph("j", "J")]),
         ])
-        defer { harness.close() }
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         XCTAssertTrue(session.surface.isHidden(blockID: "k"))
         try caret(harness, "h", 0)
         harness.view.deleteBackward()
+        await harness.settle()
         XCTAssertEqual(try block(session, "h").node, "heading")
         XCTAssertFalse(AttributedDocumentProjection.isToggle(try block(session, "h")))
         XCTAssertFalse(session.surface.isHidden(blockID: "k"))
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
         harness.view.deleteBackward()
+        await harness.settle()
         XCTAssertEqual(try block(session, "h").node, "paragraph")
         harness.view.deleteBackward()
+        await harness.settle()
         XCTAssertEqual(text(of: try block(session, "a")), "AHead")
         XCTAssertEqual(try block(session, "k").depth, 0, "the merged block's children take its place")
-        try assertConsistent(harness, localCommands: 3)
+        try await assertConsistent(harness, localCommands: 3)
 
         try caret(harness, "t", 0)
         harness.view.deleteBackward()
+        await harness.settle()
         XCTAssertEqual(try block(session, "t").node, "paragraph")
         XCTAssertEqual(try block(session, "j").parentID, "t")
         XCTAssertFalse(session.surface.isHidden(blockID: "j"))
-        try assertConsistent(harness, localCommands: 4)
+        try await assertConsistent(harness, localCommands: 4)
     }
 
     // MARK: - Slash menu
 
-    func testSlashConvertsToTogglesDurably() throws {
-        let harness = try makeHarness([paragraph("p", "/toggle"), paragraph("q", "/toggle")])
-        defer { harness.close() }
+    func testSlashConvertsToTogglesDurably() async throws {
+        let harness = try await makeHarness([paragraph("p", "/toggle"), paragraph("q", "/toggle")])
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         try caret(harness, "p", 7)
         XCTAssertEqual(harness.input.slashMenuQuery, "toggle")
         let offered = filteredSlashItems(query: "toggle", items: NativeInputCoordinator.slashItems)
         XCTAssertEqual(offered.map(\.id), ["toggleHeading", "toggleList"])
         XCTAssertFalse(allSlashMenuItems.contains { $0.id.hasPrefix("toggle") }, "never in the classic menu")
-        XCTAssertTrue(harness.input.applySlashItem(toggleListSlashItem))
+        let appliedList = await harness.run { harness.input.applySlashItem(toggleListSlashItem) }
+        XCTAssertTrue(appliedList)
         XCTAssertEqual(try block(session, "p").node, "toggleListItem")
         XCTAssertEqual(text(of: try block(session, "p")), "")
         guard case .blockType("toggleListItem", [], 0..<7)? = harness.log.commands.last?.kind else {
             return XCTFail("not one type change")
         }
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
 
         try caret(harness, "q", 7)
-        XCTAssertTrue(harness.input.applySlashItem(toggleHeadingSlashItem))
+        let appliedHeading = await harness.run { harness.input.applySlashItem(toggleHeadingSlashItem) }
+        XCTAssertTrue(appliedHeading)
         let heading = try block(session, "q")
         XCTAssertEqual(heading.node, "heading")
         XCTAssertTrue(heading.props.contains(ProjectedProp(key: "level", value: .int(1))))
         XCTAssertTrue(AttributedDocumentProjection.isToggle(heading))
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
         XCTAssertNotNil(Strings_en.table[.editor_slash_toggle_list])
     }
 
     // MARK: - Indent and outdent
 
-    func testIndentAndOutdentWithToggleChildren() throws {
-        let harness = try makeHarness(seed() + [paragraph("more", "More")])
-        defer { harness.close() }
+    func testIndentAndOutdentWithToggleChildren() async throws {
+        let harness = try await makeHarness(seed() + [paragraph("more", "More")])
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         session.surface.setExpanded("t", true)
         try caret(harness, "c2", 2)
-        XCTAssertTrue(harness.input.indent())
+        let indented1 = await harness.run { harness.input.indent() }
+        XCTAssertTrue(indented1)
         XCTAssertEqual(try block(session, "c2").parentID, "c1")
         XCTAssertEqual(try block(session, "c2").depth, 2)
         XCTAssertEqual(harness.view.selectedRange.location, try location(session, "c2", 2))
-        XCTAssertTrue(harness.input.outdent())
+        let outdented1 = await harness.run { harness.input.outdent() }
+        XCTAssertTrue(outdented1)
         XCTAssertEqual(try block(session, "c2").parentID, "t")
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
 
         // Tab under a folded toggle: it gains a child, so it opens, and the
         // moved block (and the caret in it) stays visible.
         session.surface.setExpanded("t", false)
         try caret(harness, "after", 1)
         harness.view.insertText("\t")
+        await harness.settle()
         XCTAssertEqual(try block(session, "after").parentID, "t")
         XCTAssertTrue(session.surface.isExpanded("t"))
         XCTAssertFalse(session.surface.isHidden(blockID: "after"))
         XCTAssertEqual(harness.view.selectedRange.location, try location(session, "after", 1))
-        try assertConsistent(harness, localCommands: 3)
+        try await assertConsistent(harness, localCommands: 3)
 
         // Moving the toggle itself carries its children and its fold state.
         session.surface.setExpanded("t", false)
         try caret(harness, "t", 0)
-        XCTAssertTrue(harness.input.indent())
+        let indented2 = await harness.run { harness.input.indent() }
+        XCTAssertTrue(indented2)
         XCTAssertEqual(try block(session, "t").parentID, "intro")
         XCTAssertEqual(try block(session, "c1").depth, 2)
         XCTAssertFalse(session.surface.isExpanded("t"))
         XCTAssertTrue(session.surface.isHidden(blockID: "c1"))
-        try assertConsistent(harness, localCommands: 4)
+        try await assertConsistent(harness, localCommands: 4)
     }
 
     // MARK: - Folded content and every input path (review round 1)
@@ -435,9 +466,9 @@ final class NativeToggleTests: NativeEditingTestCase {
     /// delegate) edits nothing: a composing keyboard's direct keystroke and
     /// marked text are refused like typing (dictation's final result is
     /// `insertText`), paste, Tab and UITextInput `replace`.
-    func testNoInputPathWritesIntoFoldedContent() throws {
-        let harness = try makeHarness(seed())
-        defer { harness.close() }
+    func testNoInputPathWritesIntoFoldedContent() async throws {
+        let harness = try await makeHarness(seed())
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         let view = harness.view
         harness.input.inputLanguage = { "ja" }
@@ -455,33 +486,39 @@ final class NativeToggleTests: NativeEditingTestCase {
         strand()
         XCTAssertFalse(harness.input.textView(view, shouldChangeTextIn: hidden, replacementText: "a"))
         view.insertText("x")
+        await harness.settle()
         harness.pasteboard.string = "pasted"
         strand()
         view.paste(nil)
+        await harness.settle()
         strand()
         let position = try XCTUnwrap(view.position(from: view.beginningOfDocument, offset: hidden.location))
         view.replace(try XCTUnwrap(view.textRange(from: position, to: position)), withText: "r")
+        await harness.settle()
         strand()
         view.insertText("\t")
+        await harness.settle()
         XCTAssertEqual(texts(session), ["Intro", "Title", "Hidden one", "Hidden task", "Inner", "After"])
         XCTAssertEqual(try block(session, "c1").depth, 1)
-        try assertConsistent(harness, localCommands: 0)
+        try await assertConsistent(harness, localCommands: 0)
 
         strand()
         view.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
         XCTAssertFalse(harness.input.composition.isActive, "no composition starts in folded content")
         view.unmarkText()
+        await harness.settle()
         XCTAssertEqual(texts(session), ["Intro", "Title", "Hidden one", "Hidden task", "Inner", "After"])
         XCTAssertTrue(harness.log.commands.isEmpty)
-        XCTAssertEqual(session.engine.revision, 0)
+        let revision = await session.engine { $0.revision }
+        XCTAssertEqual(revision, 0)
     }
 
     /// Folding the toggle the caret is in, or a peer folding it away (a
     /// parent turned into a toggle), moves the caret to the end of the
     /// visible title, so typing goes on there.
-    func testFoldingMovesTheCaretOutOfTheHiddenChildren() throws {
-        let harness = try makeHarness(seed())
-        defer { harness.close() }
+    func testFoldingMovesTheCaretOutOfTheHiddenChildren() async throws {
+        let harness = try await makeHarness(seed())
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         // With no caret before it, a caret UIKit puts in folded content goes
         // back to the title, not forward.
@@ -491,35 +528,39 @@ final class NativeToggleTests: NativeEditingTestCase {
         session.surface.setExpanded("t", true)
         try caret(harness, "c1", 3)
         session.surface.setExpanded("t", false)
+        await harness.settle()
         XCTAssertEqual(harness.view.selectedRange, NSRange(location: try location(session, "t", 5), length: 0))
-        XCTAssertEqual(try session.engine.currentSelection()?.head.blockID, "t")
+        let headBlockID = await session.engine { (try? $0.currentSelection())?.head.blockID }
+        XCTAssertEqual(headBlockID, "t")
         harness.view.insertText("!")
-        XCTAssertEqual(text(of: try block(session, "t")), "Title!")
-        try assertConsistent(harness, localCommands: 1)
+        await harness.settle()
+        XCTAssertEqual(text(of: try block(session, "t")), "Title!", "typing lands in the visible title")
+        try await assertConsistent(harness, localCommands: 1)
 
         var parent = paragraph("h", "Parent")
         parent.children = [paragraph("k", "Kid")]
-        let peered = try makeHarness([paragraph("a", "A"), parent])
-        defer { peered.close() }
+        let peered = try await makeHarness([paragraph("a", "A"), parent])
+        addTeardownBlock { await peered.close() }
         try caret(peered, "k", 2)
         let peer = try makeDoc([paragraph("a", "A"), parent], clientID: 2)
         defer { peer.destroy() }
         let writer = BlockNoteWriter(doc: peer, schemas: BlockNoteWriter.nativePropSchemas)
-        try peered.session.integrateServerState(try writer.setBlockType(block: "h", to: "toggleListItem"))
+        try await peered.session.integrateServerState(try writer.setBlockType(block: "h", to: "toggleListItem"))
         XCTAssertTrue(peered.session.surface.isHidden(blockID: "k"))
         XCTAssertEqual(
             peered.view.selectedRange, NSRange(location: try location(peered.session, "h", 6), length: 0))
         peered.view.insertText("x")
+        await peered.settle()
         XCTAssertEqual(text(of: try block(peered.session, "h")), "Parentx")
-        try assertConsistent(peered, localCommands: 1)
+        try await assertConsistent(peered, localCommands: 1)
     }
 
     /// Folding is view state: a composition that would start in folded
     /// content is cancelled, never the PR03 read-only refusal. Nothing is
     /// marked or written, the caret leaves the fold and typing goes on.
-    func testACompositionInFoldedContentNeverLocksTheEditor() throws {
-        let harness = try makeHarness(seed())
-        defer { harness.close() }
+    func testACompositionInFoldedContentNeverLocksTheEditor() async throws {
+        let harness = try await makeHarness(seed())
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         let view = harness.view
         let delegate = view.delegate
@@ -532,82 +573,90 @@ final class NativeToggleTests: NativeEditingTestCase {
         XCTAssertNil(view.markedTextRange)
         XCTAssertEqual(harness.input.noticeKey, .native_editor_range_unavailable)
         XCTAssertEqual(view.selectedRange, NSRange(location: try location(session, "t", 5), length: 0))
-        try assertConsistent(harness, localCommands: 0)
+        try await assertConsistent(harness, localCommands: 0)
         view.insertText("x")
+        await harness.settle()
         XCTAssertEqual(texts(session), ["Intro", "Titlex", "Hidden one", "Hidden task", "Inner", "After"])
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
     }
 
     /// A fold trims a selection to visible content and never grows it over the
     /// hidden run; a selection with both ends visible is left alone.
-    func testFoldingTrimsTheSelectionToVisibleContent() throws {
-        let harness = try makeHarness(seed())
-        defer { harness.close() }
+    func testFoldingTrimsTheSelectionToVisibleContent() async throws {
+        let harness = try await makeHarness(seed())
+        addTeardownBlock { await harness.close() }
         let session = harness.session
-        func fold(from anchor: (String, Int), to head: (String, Int)) throws -> NSRange {
+        func fold(from anchor: (String, Int), to head: (String, Int)) async throws -> NSRange {
             session.surface.setExpanded("t", true)
             try select(harness, from: anchor, to: head)
             session.surface.setExpanded("t", false)
+            await harness.settle()
             return harness.view.selectedRange
         }
         let afterStart = try location(session, "after", 0)
         let hiddenStart = try location(session, "c1", 0)
         // Start folded: it moves forward past the run.
-        XCTAssertEqual(try fold(from: ("c2", 1), to: ("after", 2)), NSRange(location: afterStart, length: 2))
-        XCTAssertEqual(try session.engine.currentSelection()?.anchor.blockID, "after")
+        let folded1 = try await fold(from: ("c2", 1), to: ("after", 2))
+        XCTAssertEqual(folded1, NSRange(location: afterStart, length: 2))
+        let anchorBlockID = await session.engine { (try? $0.currentSelection())?.anchor.blockID }
+        XCTAssertEqual(anchorBlockID, "after")
         // End folded: it moves back to the run's start.
         let introOne = try location(session, "intro", 1)
-        XCTAssertEqual(
-            try fold(from: ("intro", 1), to: ("c2", 1)),
-            NSRange(location: introOne, length: hiddenStart - introOne))
+        let folded2 = try await fold(from: ("intro", 1), to: ("c2", 1))
+        XCTAssertEqual(folded2, NSRange(location: introOne, length: hiddenStart - introOne))
         // Both in one run: a caret at the title's end.
-        XCTAssertEqual(
-            try fold(from: ("c1", 1), to: ("c3", 2)), NSRange(location: try location(session, "t", 5), length: 0))
+        let folded3 = try await fold(from: ("c1", 1), to: ("c3", 2))
+        XCTAssertEqual(folded3, NSRange(location: try location(session, "t", 5), length: 0))
         // Both ends visible (a drag over the fold): untouched.
-        let spanning = try fold(from: ("intro", 1), to: ("after", 2))
+        let spanning = try await fold(from: ("intro", 1), to: ("after", 2))
         XCTAssertEqual(spanning, NSRange(location: introOne, length: afterStart + 2 - introOne))
-        try assertConsistent(harness, localCommands: 0)
+        try await assertConsistent(harness, localCommands: 0)
     }
 
     /// Copy is what shows: a folded toggle's children are left out.
-    func testCopySkipsFoldedContent() throws {
-        let harness = try makeHarness(seed())
-        defer { harness.close() }
+    func testCopySkipsFoldedContent() async throws {
+        let harness = try await makeHarness(seed())
+        addTeardownBlock { await harness.close() }
         try select(harness, from: ("intro", 2), to: ("after", 2))
         harness.input.copySelection()
+        await harness.settle()
         XCTAssertEqual(harness.pasteboard.string, "tro\nTitle\nAf")
         harness.session.surface.setExpanded("t", true)
         try select(harness, from: ("intro", 2), to: ("after", 2))
         harness.input.copySelection()
+        await harness.settle()
         XCTAssertEqual(harness.pasteboard.string, "tro\nTitle\nHidden one\nHidden task\nInner\nAf")
     }
 
     // MARK: - Relaunch
 
-    func testRelaunchReplaysTogglesAndFoldsThemAgain() throws {
-        let harness = try makeHarness([paragraph("p", "/toggle"), paragraph("z", "Zed")])
+    func testRelaunchReplaysTogglesAndFoldsThemAgain() async throws {
+        let harness = try await makeHarness([paragraph("p", "/toggle"), paragraph("z", "Zed")])
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         try caret(harness, "p", 7)
-        XCTAssertTrue(harness.input.applySlashItem(toggleListSlashItem))
+        let applied = await harness.run { harness.input.applySlashItem(toggleListSlashItem) }
+        XCTAssertTrue(applied)
         session.textView.insertText("Notes")
+        await harness.settle()
         session.surface.setExpanded("p", true)
         session.textView.insertText("\n")
+        await harness.settle()
         session.textView.insertText("First child")
+        await harness.settle()
         session.surface.setExpanded("p", false)
-        try assertConsistent(harness, localCommands: 4)
+        try await assertConsistent(harness, localCommands: 4)
         let expected = session.surface.blocks
         XCTAssertEqual(expected.map(\.depth), [0, 1, 0])
         let expectedText = session.textView.textStorage.string
-        session.close()
+        await session.close().value
 
-        let restored = try XCTUnwrap(NativeEditorSession.restore(store: harness.store, scope: harness.scope))
-        defer {
-            restored.close()
-            try? FileManager.default.removeItem(at: harness.directory)
-        }
+        let restored = try unwrapped(try await NativeEditorSession.restore(store: harness.store, scope: harness.scope))
+        addTeardownBlock { await restored.close().value }
         XCTAssertEqual(restored.surface.blocks, expected)
         XCTAssertEqual(restored.textView.textStorage.string, expectedText)
-        XCTAssertEqual(restored.engine.revision, 4)
+        let restoredRevision = await restored.engine { $0.revision }
+        XCTAssertEqual(restoredRevision, 4)
         // Fold state is this open document's memory only: a reopened toggle is collapsed.
         XCTAssertEqual(restored.surface.hidden, [false, true, false])
     }

@@ -1,17 +1,93 @@
+import Synchronization
 import UIKit
 import XCTest
 
 @testable import Schrift
 
+/// A value the replica session's journal (off the main actor) and the test
+/// both read and write.
+final class Locked<Value: Sendable>: Sendable {
+    private let mutex: Mutex<Value>
+    init(_ value: sending Value) { mutex = Mutex(value) }
+    var value: Value {
+        get { mutex.withLock { $0 } }
+        set { mutex.withLock { $0 = newValue } }
+    }
+    func update(_ body: (inout Value) -> Void) { mutex.withLock { body(&$0) } }
+}
+
+extension NativeEditorSession {
+    /// Tests only: reads the live engine on the replica session, in mailbox
+    /// order (after everything posted before). Nil once it closed.
+    func engine<T: Sendable>(_ body: @escaping @Sendable (DocumentEngine) -> T) async -> T? {
+        guard let replica else { return nil }
+        return await withCheckedContinuation { (done: CheckedContinuation<T?, Never>) in
+            replica.mailbox.post(.inspect({ engine, _, _ in done.resume(returning: engine.map(body)) }))
+        }
+    }
+
+    /// The same for an optional result, flattened.
+    func engine<T: Sendable>(_ body: @escaping @Sendable (DocumentEngine) -> T?) async -> T? {
+        guard let replica else { return nil }
+        return await withCheckedContinuation { (done: CheckedContinuation<T?, Never>) in
+            replica.mailbox.post(.inspect({ engine, _, _ in done.resume(returning: engine.flatMap(body)) }))
+        }
+    }
+
+    /// Tests only: the replica itself, for byte-level checks.
+    func replicaDoc<T: Sendable>(_ body: @escaping @Sendable (YDoc) -> T) async -> T? {
+        guard let replica else { return nil }
+        return await withCheckedContinuation { (done: CheckedContinuation<T?, Never>) in
+            replica.mailbox.post(.inspect({ _, doc, _ in done.resume(returning: doc.map(body)) }))
+        }
+    }
+
+    /// Tests only: the session's shared undo history (nil before typing).
+    func history<T: Sendable>(_ body: @escaping @Sendable (ReplicaHistory) -> T) async -> T? {
+        guard let replica else { return nil }
+        return await withCheckedContinuation { (done: CheckedContinuation<T?, Never>) in
+            replica.mailbox.post(.inspect({ _, _, history in done.resume(returning: history.map(body)) }))
+        }
+    }
+
+    /// Settles, then runs `action` and settles again: true when it was taken
+    /// and nothing it posted was refused, stale twice, invalidated or failed
+    /// (barriers answer asynchronously since PR08b).
+    func run(_ action: () -> Bool) async -> Bool {
+        input?.resetOutcome()
+        let taken = action()
+        let drained = await settle()
+        XCTAssertTrue(drained, "the session settled")
+        return taken && input?.lastOutcome != false
+    }
+}
+
 /// The PR04b harness: a real `NativeTextView` over a restored durable replica
 /// (so the unjournaled-transaction freeze is armed), every local command
-/// journaled through `ReplicaStore.append`, and a private pasteboard. No sleeps.
+/// journaled through `ReplicaStore.append` on the replica session, and a
+/// private pasteboard. No sleeps: `settle` waits for the session's drain marker.
 @MainActor
 class NativeEditingTestCase: DocumentEngineTestCase {
-    final class WriteLog {
-        var commands: [NativeEditCommand] = []
-        /// The surface's blocks when each command was journaled.
-        var blocksAtPersist: [[BlockSnapshot]] = []
+    final class WriteLog: Sendable {
+        private let state = Locked<(commands: [NativeEditCommand], blocks: [[BlockSnapshot]])>(([], []))
+        var commands: [NativeEditCommand] { state.value.commands }
+        /// The surface's blocks when each command was journaled (read on the
+        /// main thread while the session waits in the append).
+        var blocksAtPersist: [[BlockSnapshot]] { state.value.blocks }
+        func record(_ command: NativeEditCommand, blocks: [BlockSnapshot]) {
+            state.update {
+                $0.commands.append(command)
+                $0.blocks.append(blocks)
+            }
+        }
+    }
+
+    /// The display's blocks, read from the session's thread (the journal
+    /// closure) while the main thread is free: what the surface showed when a
+    /// command was being journaled.
+    nonisolated static func displayedBlocks(_ session: NativeEditorSession?) -> [BlockSnapshot] {
+        guard let session else { return [] }
+        return DispatchQueue.main.sync { MainActor.assumeIsolated { session.surface.blocks } }
     }
 
     @MainActor
@@ -26,33 +102,61 @@ class NativeEditingTestCase: DocumentEngineTestCase {
         var input: NativeInputCoordinator { session.input! }
         var view: NativeTextView { session.textView }
 
-        func close() {
-            session.close()
+        /// Everything posted so far is handled and shown.
+        /// Fails the test when work is still in flight after the bound: an
+        /// assertion must never read a half-drained state.
+        func settle(file: StaticString = #filePath, line: UInt = #line) async {
+            let drained = await session.settle()
+            XCTAssertTrue(drained, "the session settled", file: file, line: line)
+        }
+
+        /// `action`'s eventual outcome (see `NativeEditorSession.run`).
+        func run(_ action: () -> Bool) async -> Bool { await session.run(action) }
+
+        /// Reads the live engine on the replica session, after everything posted.
+        func engine<T: Sendable>(_ body: @escaping @Sendable (DocumentEngine) -> T) async -> T? {
+            await session.engine(body)
+        }
+
+        func engine<T: Sendable>(_ body: @escaping @Sendable (DocumentEngine) -> T?) async -> T? {
+            await session.engine(body)
+        }
+
+        func close() async {
+            await session.close().value
             UIPasteboard.remove(withName: pasteboard.name)
             try? FileManager.default.removeItem(at: directory)
         }
     }
 
-    func makeHarness(_ blocks: [BlockNoteBlock] = seedBlocks()) throws -> Harness {
-        try makeHarness(state: BlockNoteYjs.encode(blocks, clientID: Self.seedClientID))
+    func makeHarness(
+        _ blocks: [BlockNoteBlock] = seedBlocks(),
+        interrupt: (@Sendable (ReplicaStore.Operation, ReplicaStore.Boundary) throws -> Void)? = nil,
+        hooks: DocumentReplicaSession.Hooks = .init()
+    ) async throws -> Harness {
+        try await makeHarness(
+            state: BlockNoteYjs.encode(blocks, clientID: Self.seedClientID), interrupt: interrupt, hooks: hooks)
     }
 
     /// The same harness over any checkpoint, for shapes the block encoder
     /// cannot spell (tables, column lists).
-    func makeHarness(state: Data) throws -> Harness {
+    func makeHarness(
+        state: Data, interrupt: (@Sendable (ReplicaStore.Operation, ReplicaStore.Boundary) throws -> Void)? = nil,
+        hooks: DocumentReplicaSession.Hooks = .init()
+    ) async throws -> Harness {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let scope = ReplicaScope(
             serverOrigin: "https://example.test", ownerUserID: UUID(), org: "docs", documentID: UUID())
-        let store = ReplicaStore(directory: directory)
+        let store = ReplicaStore(directory: directory, interrupt: interrupt)
         _ = try store.create(for: scope, checkpoint: state)
-        let session = try XCTUnwrap(NativeEditorSession.restore(store: store, scope: scope))
+        let restored = try await NativeEditorSession.restore(store: store, scope: scope, hooks: hooks)
+        let session = try XCTUnwrap(restored)
         let log = WriteLog()
-        session.enableTyping { [weak session] command, update in
-            log.commands.append(command)
-            log.blocksAtPersist.append(session?.surface.blocks ?? [])
+        session.enableTyping(persist: { [weak session] command, update in
+            log.record(command, blocks: Self.displayedBlocks(session))
             try store.append(
                 update, for: scope, commandID: command.id, baseRevision: command.baseRevision, origin: .local)
-        }
+        })
         let pasteboard = UIPasteboard.withUniqueName()
         session.input?.pasteboard = pasteboard
         return Harness(
@@ -64,7 +168,8 @@ class NativeEditingTestCase: DocumentEngineTestCase {
     /// surface. Nothing froze.
     func assertConsistent(
         _ harness: Harness, localCommands: Int, file: StaticString = #filePath, line: UInt = #line
-    ) throws {
+    ) async throws {
+        await harness.settle()
         let session = harness.session
         let fresh = AttributedDocumentProjection.attributedString(
             blocks: session.surface.blocks, traits: session.surface.traits, labels: session.surface.labels,
@@ -82,7 +187,8 @@ class NativeEditingTestCase: DocumentEngineTestCase {
         XCTAssertEqual(
             harness.log.commands.count, localCommands, "one journaled command per action", file: file, line: line)
         XCTAssertEqual(session.surface.blocks, try replay(harness), "replay equals the surface", file: file, line: line)
-        XCTAssertFalse(session.engine.nativeWriteFailed, file: file, line: line)
+        let failed = await harness.engine { $0.nativeWriteFailed }
+        XCTAssertEqual(failed, false, file: file, line: line)
         XCTAssertTrue(session.textView.isEditable, file: file, line: line)
     }
 
@@ -148,4 +254,44 @@ class NativeEditingTestCase: DocumentEngineTestCase {
     func bullet(_ id: String, _ text: String) -> BlockNoteBlock {
         BlockNoteBlock(node: "bulletListItem", props: Self.paragraphProps, runs: [InlineRun(text)], id: id)
     }
+}
+
+/// Every patch the replica session delivered to a view session, in order
+/// (what a recording `EditorSurface` saw before PR08b moved the engine off the
+/// main actor). One per session: it takes `onDelivery`.
+@MainActor
+final class PatchLog {
+    private(set) var patches: [BlockPatch] = []
+    private(set) var deliveries: [ReplicaDelivery] = []
+
+    init(_ session: NativeEditorSession) {
+        session.onDelivery = { [weak self] delivery in
+            self?.deliveries.append(delivery)
+            for case .patch(let patch, _) in delivery.events { self?.patches.append(patch) }
+        }
+    }
+
+    var kinds: Set<String> {
+        Set(
+            patches.flatMap(\.changes).map {
+                switch $0 {
+                case .text: "text"
+                case .props: "props"
+                case .insert: "insert"
+                case .remove: "remove"
+                case .replaceBlock: "replaceBlock"
+                case .reset: "reset"
+                }
+            })
+    }
+
+    var didReset: Bool {
+        patches.contains { $0.changes.contains { if case .reset = $0 { true } else { false } } }
+    }
+}
+
+/// `XCTUnwrap` with a plain argument, so the value may be awaited in place
+/// (XCTest's autoclosures cannot contain `await`).
+func unwrapped<T>(_ value: T?, _ message: String = "", file: StaticString = #filePath, line: UInt = #line) throws -> T {
+    try XCTUnwrap(value, message, file: file, line: line)
 }

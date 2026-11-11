@@ -11,9 +11,9 @@ final class NativeMarkOracleTests: XCTestCase {
 
     /// `toggleStyles` bold on and then off over "cdef": one `.marks` command
     /// each, byte-identical to the web's update.
-    func testBoldOnAndOffMatchTheCapture() throws {
+    func testBoldOnAndOffMatchTheCapture() async throws {
         let checkpoints = BlockNote056ToggleBoldOnOffTests.checkpoints
-        try assertSteps(checkpoints, identical: true, blockID: "p-b") { step in
+        try await assertSteps(checkpoints, identical: true, blockID: "p-b") { step in
             [
                 .marks(
                     NativeMarkCommand(
@@ -26,10 +26,10 @@ final class NativeMarkOracleTests: XCTestCase {
     /// Typing with bold, a link and a text colour: the native typing command's
     /// explicit marks reach the web's XML (the bytes differ only in where the
     /// format closers are, see `BlockNoteWriterOracleTests`).
-    func testTypingMarksLinkAndColorMatchTheCapture() throws {
+    func testTypingMarksLinkAndColorMatchTheCapture() async throws {
         let checkpoints = BlockNote056TypingMarksLinkColorTests.checkpoints
         let link = TextMark(key: "link", valueJSON: NativeMark.linkValue("https://example.com/"))
-        try assertSteps(checkpoints, identical: false, blockID: "p-a") { step in
+        try await assertSteps(checkpoints, identical: false, blockID: "p-a") { step in
             func typing(_ offset: Int, _ text: String, _ marks: [TextMark]?) -> NativeEditCommand.Kind {
                 .replace(range: offset..<offset, replacement: text, marks: marks)
             }
@@ -45,32 +45,42 @@ final class NativeMarkOracleTests: XCTestCase {
 
     private func assertSteps(
         _ checkpoints: [Checkpoint], identical: Bool, blockID: String, commands: (Int) -> [NativeEditCommand.Kind]
-    ) throws {
+    ) async throws {
         let seed = try XCTUnwrap(Data(base64Encoded: checkpoints[0].updateBase64))
         // The captures' author client, so a byte-identical step is comparable.
-        let session = try NativeEditorSession(state: seed) { YDoc(clientID: 2, gc: false) }
-        defer { session.close() }
+        let session = try await NativeEditorSession.seed(state: seed, clientID: 2, gc: false)
+        addTeardownBlock { await session.close().value }
         let replica = YDoc(clientID: 9, gc: false)
         defer { replica.destroy() }
         try replica.applyUpdate(YUpdateDecoder.decode(seed))
         for step in 1..<checkpoints.count {
             for kind in commands(step) {
-                let command = NativeEditCommand(
-                    id: UUID(), baseRevision: session.engine.revision, blockID: blockID, kind: kind)
-                var updates: [Data] = []
-                if case .marks = command.kind {
-                    try session.engine.applyStructural(command) { updates.append($0) }
-                } else {
-                    try session.engine.replaceText(command) { updates.append($0) }
+                let updates = await session.engine { engine -> [Data] in
+                    let command = NativeEditCommand(
+                        id: UUID(), baseRevision: engine.revision, blockID: blockID, kind: kind)
+                    var updates: [Data] = []
+                    do {
+                        if case .marks = command.kind {
+                            try engine.applyStructural(command) { updates.append($0) }
+                        } else {
+                            try engine.replaceText(command) { updates.append($0) }
+                        }
+                    } catch {
+                        XCTFail("command failed: \(error)")
+                    }
+                    return updates
                 }
-                XCTAssertEqual(updates.count, 1, checkpoints[step].label)
-                let update = try XCTUnwrap(updates.first)
+                let unwrapUpdates = try XCTUnwrap(updates, checkpoints[step].label)
+                XCTAssertEqual(unwrapUpdates.count, 1, checkpoints[step].label)
+                let update = try XCTUnwrap(unwrapUpdates.first, checkpoints[step].label)
                 try replica.applyUpdate(YUpdateDecoder.decode(update))
-                if identical { XCTAssertEqual(update, Data(base64Encoded: checkpoints[step].updateBase64)) }
+                if identical {
+                    XCTAssertEqual(update, Data(base64Encoded: checkpoints[step].updateBase64), checkpoints[step].label)
+                }
             }
             XCTAssertEqual(YXMLString.fragment(replica), checkpoints[step].xml, checkpoints[step].label)
-            XCTAssertNil(replica.store.pendingStructs)
-            XCTAssertNil(replica.store.pendingDs)
+            XCTAssertNil(replica.store.pendingStructs, checkpoints[step].label)
+            XCTAssertNil(replica.store.pendingDs, checkpoints[step].label)
         }
     }
 }

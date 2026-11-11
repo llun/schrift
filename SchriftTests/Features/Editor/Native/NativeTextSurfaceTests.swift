@@ -19,6 +19,24 @@ final class NativeTextSurfaceTests: DocumentEngineTestCase {
             file: file, line: line)
     }
 
+    private func assertMatches(
+        _ session: NativeEditorSession, file: StaticString = #filePath, line: UInt = #line
+    ) async throws {
+        let replicaBlocks = await session.replicaDoc {
+            NativeBlockProjection.project($0).blocks.map(BlockSnapshot.init)
+        }
+        let blocks = try XCTUnwrap(replicaBlocks, file: file, line: line)
+        let surface = session.surface
+        XCTAssertEqual(surface.blocks, blocks, file: file, line: line)
+        let fresh = AttributedDocumentProjection.attributedString(
+            blocks: blocks, traits: surface.traits, labels: surface.labels)
+        XCTAssertEqual(surface.storage.string, fresh.string, file: file, line: line)
+        XCTAssertEqual(normalized(surface.storage), normalized(fresh), file: file, line: line)
+        XCTAssertEqual(
+            surface.rangeIndex.entries, ProjectionRangeIndex(blocks: blocks, labels: surface.labels).entries,
+            file: file, line: line)
+    }
+
     /// UIKit can copy/coalesce attribute objects. Compare their semantic values
     /// at every UTF-16 unit, independent of object identity and run boundaries.
     private func normalized(_ string: NSAttributedString) -> [[String: String]] {
@@ -78,94 +96,100 @@ final class NativeTextSurfaceTests: DocumentEngineTestCase {
         }
     }
 
-    func testToggleableHeadingTextAndPropsAlwaysMatchFreshProjection() throws {
+    func testToggleableHeadingTextAndPropsAlwaysMatchFreshProjection() async throws {
         let id = Self.firstID
-        let doc = try makeDoc(
-            [
-                BlockNoteBlock(
-                    node: "heading", props: Self.paragraphProps + [("level", .int(2)), ("isToggleable", .bool(true))],
-                    runs: [InlineRun(String(repeating: "heading ", count: 30))], id: id),
-                Self.seedBlocks()[1],
-            ], clientID: 40)
-        let session = try NativeEditorSession(state: Data([0, 0]), makeReplica: { doc })
-        defer { session.close() }
-        let recorder = NativeRecordingSurface(session.surface)
-        session.engine.surface = recorder
+        let blocks = [
+            BlockNoteBlock(
+                node: "heading", props: Self.paragraphProps + [("level", .int(2)), ("isToggleable", .bool(true))],
+                runs: [InlineRun(String(repeating: "heading ", count: 30))], id: id),
+            Self.seedBlocks()[1],
+        ]
+        let state = BlockNoteYjs.encode(blocks, clientID: Self.seedClientID)
+        let session = try await NativeEditorSession.seed(state: state, clientID: 40)
+        addTeardownBlock { await session.close().value }
+        let recorder = PatchLog(session)
+
+        let peerDoc = try makeDoc(blocks, clientID: 41)
+        defer { peerDoc.destroy() }
+        let peer = DocumentEngine(doc: peerDoc)
+
         // PR06b: the native projection models a toggle heading as text.
         XCTAssertFalse(AttributedDocumentProjection.isPlaceholder(session.surface.blocks[0]))
-        try session.engine.replaceText(block: id, range: 100..<100, with: "😀")
-        assertMatches(session.surface, doc)
+        let textUpdate = try peer.replaceText(block: id, range: 100..<100, with: "😀")
+        try await session.integrateServerState(textUpdate)
+        try await assertMatches(session)
         XCTAssertTrue(recorder.kinds.contains("text"))
 
         for toggleable in [false, true, false] {
-            try session.engine.setBlockType(
+            let propUpdate = try peer.setBlockType(
                 block: id, to: "heading", props: [("level", .int(2)), ("isToggleable", .bool(toggleable))])
-            assertMatches(session.surface, doc)
+            try await session.integrateServerState(propUpdate)
+            try await assertMatches(session)
             XCTAssertFalse(session.surface.blocks[0].isOpaque)
             XCTAssertEqual(AttributedDocumentProjection.isToggle(session.surface.blocks[0]), toggleable)
-            try session.engine.replaceText(block: id, range: 110..<110, with: "e\u{301}")
-            assertMatches(session.surface, doc)
+            let editUpdate = try peer.replaceText(block: id, range: 110..<110, with: "e\u{301}")
+            try await session.integrateServerState(editUpdate)
+            try await assertMatches(session)
         }
         XCTAssertTrue(recorder.kinds.contains("props"))
     }
 
-    func testReplicaValidatedPlainTextStillEditsOnlyTheDeltaRange() throws {
-        let doc = try makeDoc(clientID: 40)
-        let session = try NativeEditorSession(state: Data([0, 0]), makeReplica: { doc })
-        defer { session.close() }
+    func testReplicaValidatedPlainTextStillEditsOnlyTheDeltaRange() async throws {
+        let blocks = Self.seedBlocks()
+        let state = BlockNoteYjs.encode(blocks, clientID: Self.seedClientID)
+        let session = try await NativeEditorSession.seed(state: state, clientID: 40)
+        addTeardownBlock { await session.close().value }
+        let peerDoc = try makeDoc(blocks, clientID: 41)
+        defer { peerDoc.destroy() }
+        let peer = DocumentEngine(doc: peerDoc)
         let edits = NativeStorageEdits()
         session.surface.storage.delegate = edits
-        try session.engine.replaceText(block: Self.firstID, range: 3..<4, with: "X")
+        let update = try peer.replaceText(block: Self.firstID, range: 3..<4, with: "X")
+        try await session.integrateServerState(update)
         XCTAssertEqual(edits.ranges, [NSRange(location: 3, length: 1)])
-        assertMatches(session.surface, doc)
+        try await assertMatches(session)
     }
 
-    func testUnknownNodeWithInlineTextReceivesRemoteTextPatchesAsPlaceholder() throws {
+    func testUnknownNodeWithInlineTextReceivesRemoteTextPatchesAsPlaceholder() async throws {
         let blocks = [
             BlockNoteBlock(
                 node: "futureBlock", props: [], runs: [InlineRun(String(repeating: "unknown ", count: 30))],
                 id: Self.firstID), Self.seedBlocks()[1],
         ]
-        let local = try makeDoc(blocks, clientID: 40)
+        let state = BlockNoteYjs.encode(blocks, clientID: Self.seedClientID)
+        let session = try await NativeEditorSession.seed(state: state, clientID: 40)
+        addTeardownBlock { await session.close().value }
         let peer = try makeDoc(blocks, clientID: 41)
-        let session = try NativeEditorSession(state: Data([0, 0]), makeReplica: { local })
-        defer {
-            session.close()
-            peer.destroy()
-        }
-        let recorder = NativeRecordingSurface(session.surface)
-        session.engine.surface = recorder
+        defer { peer.destroy() }
+        let recorder = PatchLog(session)
         let text = try XCTUnwrap(BlockIndex(doc: peer).entries[Self.firstID]?.textType)
         for replacement in ["😀", "more text"] {
             try peer.transact { _ in try text.insert(120, replacement) }
-            try local.applyUpdate(YUpdateDecoder.decode(YStateEncoder.encodeStateAsUpdate(peer)), origin: .remote)
-            assertMatches(session.surface, local)
+            try await session.integrateServerState(try YStateEncoder.encodeStateAsUpdate(peer))
+            try await assertMatches(session)
             XCTAssertTrue(AttributedDocumentProjection.isPlaceholder(session.surface.blocks[0]))
         }
         XCTAssertTrue(recorder.kinds.contains("text"))
     }
 
-    func testCodeBlockGainingAndLosingAMarkRebuildsFidelity() throws {
+    func testCodeBlockGainingAndLosingAMarkRebuildsFidelity() async throws {
         let blocks = [
             BlockNoteBlock(
                 node: "codeBlock", props: [("language", .string("swift"))], runs: [InlineRun("let value = 1")],
                 id: Self.firstID),
             Self.seedBlocks()[1],
         ]
-        let local = try makeDoc(blocks, clientID: 40)
+        let state = BlockNoteYjs.encode(blocks, clientID: Self.seedClientID)
+        let session = try await NativeEditorSession.seed(state: state, clientID: 40)
+        addTeardownBlock { await session.close().value }
         let peer = try makeDoc(blocks, clientID: 41)
-        let session = try NativeEditorSession(state: Data([0, 0]), makeReplica: { local })
-        defer {
-            session.close()
-            peer.destroy()
-        }
-        let recorder = NativeRecordingSurface(session.surface)
-        session.engine.surface = recorder
+        defer { peer.destroy() }
+        let recorder = PatchLog(session)
         let text = try XCTUnwrap(BlockIndex(doc: peer).entries[Self.firstID]?.textType)
         for mark in ["{}", "null"] {
             try peer.transact { _ in try text.format(0, 3, ["bold": mark]) }
-            try local.applyUpdate(YUpdateDecoder.decode(YStateEncoder.encodeStateAsUpdate(peer)), origin: .remote)
-            assertMatches(session.surface, local)
+            try await session.integrateServerState(try YStateEncoder.encodeStateAsUpdate(peer))
+            try await assertMatches(session)
             XCTAssertEqual(session.surface.blocks[0].isOpaque, mark != "null")
         }
         XCTAssertTrue(recorder.kinds.contains("text"))

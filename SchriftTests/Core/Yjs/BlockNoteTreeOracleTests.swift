@@ -41,62 +41,77 @@ final class BlockNoteTreeOracleTests: XCTestCase {
     private func assertEngineOracle(
         seed base64: String, xml: String, blockID: String, kind: NativeEditCommand.Kind,
         file: StaticString = #filePath, line: UInt = #line
-    ) throws {
+    ) async throws {
         let state = try XCTUnwrap(Data(base64Encoded: base64))
-        let session = try NativeEditorSession(state: state)
-        defer { session.close() }
-        var updates: [Data] = []
-        try session.engine.applyStructural(
-            NativeEditCommand(id: UUID(), baseRevision: 0, blockID: blockID, kind: kind)
-        ) { updates.append($0) }
-        XCTAssertEqual(updates.count, 1, file: file, line: line)
+        let session = try await NativeEditorSession.seed(state: state)
+        addTeardownBlock { await session.close().value }
+        let updates = await session.engine { engine -> [Data] in
+            let command = NativeEditCommand(id: UUID(), baseRevision: 0, blockID: blockID, kind: kind)
+            var updates: [Data] = []
+            do {
+                try engine.applyStructural(command) { updates.append($0) }
+            } catch {
+                XCTFail("applyStructural failed: \(error)")
+            }
+            return updates
+        }
+        let unwrapUpdates = try XCTUnwrap(updates, file: file, line: line)
+        XCTAssertEqual(unwrapUpdates.count, 1, file: file, line: line)
         let replica = YDoc(clientID: 9, gc: false)
         defer { replica.destroy() }
         try replica.applyUpdate(YUpdateDecoder.decode(state))
-        try replica.applyUpdate(YUpdateDecoder.decode(try XCTUnwrap(updates.first)))
+        try replica.applyUpdate(YUpdateDecoder.decode(try XCTUnwrap(unwrapUpdates.first)))
         XCTAssertEqual(YXMLString.fragment(replica), xml, file: file, line: line)
+        session.replica?.mailbox.post(.setWritable(nil))
+        await session.settle()
         XCTAssertEqual(
             session.surface.blocks, NativeBlockProjection.project(replica).blocks.map(BlockSnapshot.init),
             file: file, line: line)
     }
 
-    func testSinkMatchesTheSinkBulletCapture() throws {
+    func testSinkMatchesTheSinkBulletCapture() async throws {
         let checkpoints = BlockNote056SinkBulletTests.checkpoints
         try assertOracle(seed: checkpoints[0].updateBase64, xml: checkpoints[1].xml) {
             try $0.sinkListItem(block: "li-f-second")
         }
-        try assertEngineOracle(
+        try await assertEngineOracle(
             seed: checkpoints[0].updateBase64, xml: checkpoints[1].xml, blockID: "li-f-second", kind: .indent)
     }
 
-    func testLiftMatchesTheEnterEmptyNestedCapture() throws {
+    func testLiftMatchesTheEnterEmptyNestedCapture() async throws {
         let capture = try XCTUnwrap(BlockNoteWriterCaptures.captures["enter-empty-nested"])
         let base64 = try XCTUnwrap(BlockNoteWriterCaptures.seeds[capture.seed])
         try assertOracle(seed: base64, xml: capture.xml) { try $0.liftListItem(block: "kid") }
         // Return in the empty nested paragraph and Shift-Tab write the same tree.
-        try assertEngineOracle(
+        try await assertEngineOracle(
             seed: base64, xml: capture.xml, blockID: "kid", kind: .split(offset: 0, newID: "unused"))
-        try assertEngineOracle(seed: base64, xml: capture.xml, blockID: "kid", kind: .outdent)
+        try await assertEngineOracle(seed: base64, xml: capture.xml, blockID: "kid", kind: .outdent)
     }
 
     /// PR06d: every `moveBlocksUp`/`moveBlocksDown` capture through the
     /// engine's command (sibling swaps, into a sibling's nearest child, out
     /// beside the parent removing an emptied group, a toggle with children,
     /// marks and props).
-    func testMovesMatchTheBlockNoteCaptures() throws {
+    func testMovesMatchTheBlockNoteCaptures() async throws {
         for capture in BlockNoteMoveCaptures.captures {
-            try assertEngineOracle(
+            try await assertEngineOracle(
                 seed: capture.seed, xml: capture.xml, blockID: capture.block, kind: capture.up ? .moveUp : .moveDown)
         }
         // The first root block does not move up, as in BlockNote.
         let first = try XCTUnwrap(BlockNoteMoveCaptures.captures.first)
-        let session = try NativeEditorSession(state: try XCTUnwrap(Data(base64Encoded: first.seed)))
-        defer { session.close() }
-        XCTAssertThrowsError(
-            try session.engine.applyStructural(
-                NativeEditCommand(id: UUID(), baseRevision: 0, blockID: "a", kind: .moveUp)
-            ) { _ in XCTFail("refused before any write") }
-        ) { XCTAssertEqual($0 as? DocumentEngineError, .unsupportedNativeInput) }
+        let session = try await NativeEditorSession.seed(state: try XCTUnwrap(Data(base64Encoded: first.seed)))
+        addTeardownBlock { await session.close().value }
+        let error = await session.engine { engine -> DocumentEngineError? in
+            do {
+                try engine.applyStructural(
+                    NativeEditCommand(id: UUID(), baseRevision: 0, blockID: "a", kind: .moveUp)
+                ) { _ in XCTFail("refused before any write") }
+                return nil
+            } catch {
+                return error as? DocumentEngineError
+            }
+        }
+        XCTAssertEqual(error, .unsupportedNativeInput)
     }
 
     // MARK: - liftToOuterList without a capture

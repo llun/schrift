@@ -102,21 +102,14 @@ final class NativeTextView: UITextView {
             super.insertText(text)
             return
         }
-        if text == "\n" || text == "\r" {
-            inputCoordinator.insertNewline()
-            return
-        }
-        // Tab nests the block (a hardware Tab without the key command below).
-        if text == "\t" {
-            inputCoordinator.insertTab()
-            return
-        }
-        if inputCoordinator.composition.isActive {
+        // Return and Tab (a hardware Tab without the key command below) are
+        // structural; while a barrier is in flight every key is held (PR08b).
+        if inputCoordinator.composition.isActive, text != "\n", text != "\r", text != "\t" {
             dropMarkedText()
             inputCoordinator.commitComposition(text: text)
             return
         }
-        inputCoordinator.replace(range: selectedRange, with: text)
+        inputCoordinator.typeKey(text)
     }
 
     /// Tab and Shift-Tab nest and unnest the block, as in BlockNote, ahead of
@@ -156,19 +149,8 @@ final class NativeTextView: UITextView {
             setMarkedText(shorter, selectedRange: NSRange(location: shorter.utf16.count, length: 0))
             return
         }
-        var range = selectedRange
-        if range.length == 0 {
-            // A block start is structural (PR04a): a join or a reset to a
-            // paragraph, else a quiet no-op. Every other caret takes the command
-            // path, which refuses the document-end boundary's separator with a notice.
-            if inputCoordinator.isBlockStart(range.location) {
-                inputCoordinator.deleteBackwardAtBlockStart()
-                return
-            }
-            guard range.location > 0 else { return }
-            range = (textStorage.string as NSString).rangeOfComposedCharacterSequence(at: range.location - 1)
-        }
-        inputCoordinator.replace(range: range, with: "")
+        // A block start is structural (PR04a); held while a barrier is in flight.
+        inputCoordinator.deleteKey()
     }
 
     /// Dictation's final result is ordinary input: the command path, or the

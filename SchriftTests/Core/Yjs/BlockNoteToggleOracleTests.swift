@@ -14,33 +14,42 @@ final class BlockNoteToggleOracleTests: XCTestCase {
     private func assertOracle(
         _ name: String, blockID: String, kind: NativeEditCommand.Kind, file: StaticString = #filePath,
         line: UInt = #line
-    ) throws {
+    ) async throws {
         let capture = try XCTUnwrap(BlockNoteToggleCaptures.captures[name], file: file, line: line)
         let state = try XCTUnwrap(Data(base64Encoded: capture.seed), file: file, line: line)
-        let session = try NativeEditorSession(state: state)
-        defer { session.close() }
+        let session = try await NativeEditorSession.seed(state: state)
+        addTeardownBlock { await session.close().value }
         XCTAssertTrue(
             session.surface.blocks.allSatisfy { !$0.isOpaque }, "toggles are native blocks", file: file, line: line)
-        var updates: [Data] = []
-        try session.engine.applyStructural(
-            NativeEditCommand(id: UUID(), baseRevision: 0, blockID: blockID, kind: kind)
-        ) { updates.append($0) }
-        XCTAssertEqual(updates.count, 1, file: file, line: line)
+        let updates = await session.engine { engine -> [Data] in
+            let command = NativeEditCommand(id: UUID(), baseRevision: 0, blockID: blockID, kind: kind)
+            var updates: [Data] = []
+            do {
+                try engine.applyStructural(command) { updates.append($0) }
+            } catch {
+                XCTFail("applyStructural failed: \(error)")
+            }
+            return updates
+        }
+        let unwrapUpdates = try XCTUnwrap(updates, file: file, line: line)
+        XCTAssertEqual(unwrapUpdates.count, 1, file: file, line: line)
         let replica = YDoc(clientID: 9, gc: false)
         defer { replica.destroy() }
         try replica.applyUpdate(YUpdateDecoder.decode(state))
-        try replica.applyUpdate(YUpdateDecoder.decode(try XCTUnwrap(updates.first)))
+        try replica.applyUpdate(YUpdateDecoder.decode(try XCTUnwrap(unwrapUpdates.first)))
         XCTAssertEqual(YXMLString.fragment(replica), capture.xml, name, file: file, line: line)
         XCTAssertNil(replica.store.pendingStructs, file: file, line: line)
+        session.replica?.mailbox.post(.setWritable(nil))
+        await session.settle()
         XCTAssertEqual(
             session.surface.blocks, NativeBlockProjection.project(replica).blocks.map(BlockSnapshot.init),
             file: file, line: line)
     }
 
-    func testSlashConversionsMatchUpdateBlock() throws {
-        try assertOracle(
+    func testSlashConversionsMatchUpdateBlock() async throws {
+        try await assertOracle(
             "slash-toggle-list", blockID: "p", kind: .blockType(node: "toggleListItem", props: [], removing: 0..<0))
-        try assertOracle(
+        try await assertOracle(
             "slash-toggle-heading", blockID: "p",
             kind: .blockType(
                 node: "heading",
@@ -53,41 +62,41 @@ final class BlockNoteToggleOracleTests: XCTestCase {
     /// An open toggle's Enter goes into its children (`enter: "into-children"`):
     /// the text after the caret becomes a new first paragraph, in a new group
     /// when there is none; the children stay.
-    func testEnterInAnOpenToggleStartsItsChildren() throws {
-        try assertOracle("enter-open-new-body", blockID: "t", kind: .split(offset: 5, newID: "1", open: ["t"]))
-        try assertOracle("enter-open-end", blockID: "t", kind: .split(offset: 5, newID: "1", open: ["t"]))
-        try assertOracle("enter-open-heading", blockID: "t", kind: .split(offset: 5, newID: "1", open: ["t"]))
+    func testEnterInAnOpenToggleStartsItsChildren() async throws {
+        try await assertOracle("enter-open-new-body", blockID: "t", kind: .split(offset: 5, newID: "1", open: ["t"]))
+        try await assertOracle("enter-open-end", blockID: "t", kind: .split(offset: 5, newID: "1", open: ["t"]))
+        try await assertOracle("enter-open-heading", blockID: "t", kind: .split(offset: 5, newID: "1", open: ["t"]))
     }
 
     /// A closed toggle splits into a sibling (a toggle list item's split keeps
     /// its type, a toggle heading's is a paragraph) and keeps its children.
-    func testEnterInAClosedToggleSplitsAndKeepsTheChildren() throws {
-        try assertOracle("enter-closed-split", blockID: "t", kind: .split(offset: 5, newID: "1"))
-        try assertOracle("enter-closed-heading", blockID: "t", kind: .split(offset: 5, newID: "1"))
+    func testEnterInAClosedToggleSplitsAndKeepsTheChildren() async throws {
+        try await assertOracle("enter-closed-split", blockID: "t", kind: .split(offset: 5, newID: "1"))
+        try await assertOracle("enter-closed-heading", blockID: "t", kind: .split(offset: 5, newID: "1"))
     }
 
     /// Enter at the start of non-empty content inserts an empty block above,
     /// before the into-children rule; an empty toggle resets first.
-    func testEnterAtTheStartAndInAnEmptyToggle() throws {
-        try assertOracle("enter-start-toggle", blockID: "t", kind: .split(offset: 0, newID: "1", open: ["t"]))
-        try assertOracle("enter-empty-toggle", blockID: "t", kind: .split(offset: 0, newID: "1", open: ["t"]))
-        try assertOracle("enter-empty-toggle-heading", blockID: "t", kind: .split(offset: 0, newID: "1"))
+    func testEnterAtTheStartAndInAnEmptyToggle() async throws {
+        try await assertOracle("enter-start-toggle", blockID: "t", kind: .split(offset: 0, newID: "1", open: ["t"]))
+        try await assertOracle("enter-empty-toggle", blockID: "t", kind: .split(offset: 0, newID: "1", open: ["t"]))
+        try await assertOracle("enter-empty-toggle-heading", blockID: "t", kind: .split(offset: 0, newID: "1"))
     }
 
     /// An empty child of an open toggle gets a new child after it
     /// (`emptyChildEnter: "stay"`); of a closed one, it outdents.
-    func testEnterInAnEmptyChildFollowsTheParentsOpenState() throws {
-        try assertOracle("enter-empty-child-open", blockID: "e", kind: .split(offset: 0, newID: "1", open: ["t"]))
-        try assertOracle("enter-empty-child-closed", blockID: "e", kind: .split(offset: 0, newID: "1"))
+    func testEnterInAnEmptyChildFollowsTheParentsOpenState() async throws {
+        try await assertOracle("enter-empty-child-open", blockID: "e", kind: .split(offset: 0, newID: "1", open: ["t"]))
+        try await assertOracle("enter-empty-child-closed", blockID: "e", kind: .split(offset: 0, newID: "1"))
     }
 
     /// Backspace at a toggle's start resets it (`resetsTo`): a toggle heading
     /// to a heading, a toggle list item to a paragraph, children kept. A first
     /// child merges back into the toggle's title.
-    func testBackspaceResetsThenMerges() throws {
-        try assertOracle("backspace-toggle-heading", blockID: "t", kind: .join)
-        try assertOracle("backspace-toggle-list", blockID: "t", kind: .join)
-        try assertOracle("backspace-first-child", blockID: "c", kind: .join)
+    func testBackspaceResetsThenMerges() async throws {
+        try await assertOracle("backspace-toggle-heading", blockID: "t", kind: .join)
+        try await assertOracle("backspace-toggle-list", blockID: "t", kind: .join)
+        try await assertOracle("backspace-first-child", blockID: "c", kind: .join)
     }
 
     /// The classic projection and writer are unchanged: a toggle stays opaque

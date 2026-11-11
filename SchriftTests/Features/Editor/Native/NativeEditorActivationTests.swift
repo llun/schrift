@@ -30,6 +30,25 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         XCTAssertFalse(open.isPreservedReadOnly)
     }
 
+    /// PR08b: the restore runs on the replica session, off the main actor. An
+    /// open closed meanwhile drops (and closes) what it restored: the route
+    /// never shows a session for a gone open.
+    func testAnOpenClosedDuringTheRestoreDropsTheRestoredSession() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        _ = try seedReplica(env, typed: "x")
+        let attach = Latch()
+        let open = NativeEditorOpen(
+            preference: { true }, replicaHooks: DocumentReplicaSession.Hooks(onReplicaWork: { attach.pass() }))
+        let opening = Task { await open.open(viewModel: env.model, isOffline: true, canUpdate: true) }
+        await waitUntil { attach.waiting == 1 }
+        open.close()
+        attach.open()
+        await opening.value
+        guard case .loading = open.route else { return XCTFail("a closed open shows nothing") }
+        XCTAssertFalse(open.isPreservedReadOnly)
+    }
+
     func testOwnedReplicaRestoresOfflineFirstThenIntegratesTheServerState() async throws {
         let env = makeEnvironment()
         defer { env.clean() }
@@ -115,7 +134,9 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
     // MARK: - Saves
 
     func testTypingSchedulesADebouncedSaveThatIsSentAndAcknowledged() async throws {
-        let env = makeEnvironment(autosaveInterval: .zero)
+        // PR08b: the save is scheduled when the append's result arrives, an await
+        // away; a zero debounce would already have fired by the assertion below.
+        let env = makeEnvironment(autosaveInterval: .milliseconds(300))
         defer { env.clean() }
         let server = ServerStub(owner: owner, state: seedState())
         server.install()
@@ -126,6 +147,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
             return XCTFail("expected a typeable session")
         }
         XCTAssertTrue(try XCTUnwrap(session.input).replace(range: NSRange(location: 0, length: 0), with: "x"))
+        await session.settle()
         XCTAssertTrue(session.hasPendingSave, "journaled but not handed over: saved on this device")
         let journaled = try XCTUnwrap(env.replicaStore.outbox(for: scope)).updates
         XCTAssertEqual(server.log.count(ofMethod: "PATCH"), 0, "no request before the debounce fires")
@@ -147,6 +169,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
         guard case .native(let session) = open.route else { return XCTFail("expected a typeable session") }
         XCTAssertTrue(try XCTUnwrap(session.input).replace(range: NSRange(location: 0, length: 0), with: "x"))
+        await session.settle()
         open.close()
         XCTAssertNotNil(env.model.saveCoordinator.pendingSave(documentID: env.model.documentID))
         await waitUntil { self.isSaved(env.model.saveCoordinator.state(for: env.model.documentID)) }
@@ -171,6 +194,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         guard case .native(let session) = offline.route else { return XCTFail("owned replica must restore offline") }
         XCTAssertEqual(server.log.methods.count, requests, "an offline open never fetches")
         XCTAssertTrue(try XCTUnwrap(session.input).replace(range: NSRange(location: 0, length: 0), with: "off"))
+        await session.settle()
         offline.close()
         await waitUntil { self.isPendingSync(env.model.saveCoordinator.state(for: env.model.documentID)) }
         XCTAssertNotNil(env.model.saveCoordinator.storedDraft(documentID: env.model.documentID)?.replica)
@@ -266,6 +290,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
             return XCTFail("expected a typeable session")
         }
         XCTAssertTrue(try XCTUnwrap(session.input).replace(range: NSRange(location: 0, length: 0), with: "x"))
+        await session.settle()
         SignedInUserStore(userDefaults: env.defaults).remember(UUID())
         open.flushPendingSave()
         guard case .failed = env.model.saveCoordinator.state(for: env.model.documentID) else {
@@ -289,6 +314,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
             return XCTFail("expected a typeable session")
         }
         XCTAssertTrue(try XCTUnwrap(session.input).replace(range: NSRange(location: 0, length: 0), with: "x"))
+        await session.settle()
         // `noteSessionCookiesReplaced`: the identity is forgotten and the view closes and reopens.
         let identity = SignedInUserStore(userDefaults: env.defaults)
         identity.clear()
@@ -319,6 +345,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
         guard case .native(let session) = open.route else { return XCTFail("expected a typeable session") }
         XCTAssertTrue(try XCTUnwrap(session.input).replace(range: NSRange(location: 0, length: 0), with: "x"))
+        await session.settle()
         let identity = SignedInUserStore(userDefaults: env.defaults)
         identity.clear()  // a sign-out or cookie handover the view has not reacted to yet
         open.flushPendingSave()

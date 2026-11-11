@@ -35,9 +35,9 @@ final class NativeAccessibilityTests: NativeEditingTestCase {
 
     // MARK: - Checkbox
 
-    func testCheckboxIsALabelledButtonWithItsState() throws {
-        let harness = try makeHarness([paragraph("p", "Intro"), check("task", "Buy milk")])
-        defer { harness.close() }
+    func testCheckboxIsALabelledButtonWithItsState() async throws {
+        let harness = try await makeHarness([paragraph("p", "Intro"), check("task", "Buy milk")])
+        addTeardownBlock { await harness.close() }
         let window = host(harness.view)
         defer { window.isHidden = true }
         let button = try XCTUnwrap(harness.view.blockControls.checkboxes["task"])
@@ -52,17 +52,18 @@ final class NativeAccessibilityTests: NativeEditingTestCase {
         XCTAssertTrue(harness.view.subviews.contains(button))
 
         button.sendActions(for: .primaryActionTriggered)
+        await harness.settle()
         harness.view.layoutIfNeeded()
         XCTAssertEqual(button.accessibilityLabel, "Mark as not done")
         XCTAssertEqual(button.accessibilityValue, "Done")
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
     }
 
     /// The read-only reader shows the state but offers no action.
-    func testReadOnlyCheckboxIsDisabled() throws {
-        let session = try NativeEditorSession(
+    func testReadOnlyCheckboxIsDisabled() async throws {
+        let session = try await NativeEditorSession.seed(
             state: BlockNoteYjs.encode([check("task", "Done", checked: true)], clientID: 1))
-        defer { session.close() }
+        addTeardownBlock { await session.close().value }
         let window = host(session.textView)
         defer { window.isHidden = true }
         let button = try XCTUnwrap(session.textView.blockControls.checkboxes["task"])
@@ -71,9 +72,9 @@ final class NativeAccessibilityTests: NativeEditingTestCase {
         XCTAssertEqual(button.accessibilityValue, "Done")
     }
 
-    func testControlsUseTheLocalizedLabels() throws {
-        let harness = try makeHarness([check("task", "Tâche"), code("code", "x", language: "swift")])
-        defer { harness.close() }
+    func testControlsUseTheLocalizedLabels() async throws {
+        let harness = try await makeHarness([check("task", "Tâche"), code("code", "x", language: "swift")])
+        addTeardownBlock { await harness.close() }
         let window = host(harness.view)
         defer { window.isHidden = true }
         let french = Strings_fr.table
@@ -93,11 +94,11 @@ final class NativeAccessibilityTests: NativeEditingTestCase {
 
     // MARK: - Code language
 
-    func testCodeLanguageMenuIsALabelledControlListingEveryLanguage() throws {
-        let harness = try makeHarness([
+    func testCodeLanguageMenuIsALabelledControlListingEveryLanguage() async throws {
+        let harness = try await makeHarness([
             code("code", "fn main() {}", language: "rust"), code("odd", "x", language: "zig"),
         ])
-        defer { harness.close() }
+        addTeardownBlock { await harness.close() }
         let window = host(harness.view)
         defer { window.isHidden = true }
         let button = try XCTUnwrap(harness.view.blockControls.languageButtons["code"])
@@ -119,22 +120,23 @@ final class NativeAccessibilityTests: NativeEditingTestCase {
             harness.view.position(from: harness.view.beginningOfDocument, offset: entry.range.location))
         XCTAssertLessThanOrEqual(button.frame.maxY, harness.view.caretRect(for: start).minY + 1)
 
-        XCTAssertTrue(harness.input.setCodeLanguage(blockID: "code", language: "swift"))
+        let set = await harness.run { harness.input.setCodeLanguage(blockID: "code", language: "swift") }
+        XCTAssertTrue(set)
         harness.view.layoutIfNeeded()
         XCTAssertEqual(button.accessibilityValue, "swift")
         XCTAssertEqual(
             (button.menu?.children as? [UIAction])?.filter { $0.state == .on }.map(\.title), ["swift"])
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
     }
 
     // MARK: - Headings
 
-    func testHeadingsCarryTheirLevelForVoiceOver() throws {
-        let harness = try makeHarness([
+    func testHeadingsCarryTheirLevelForVoiceOver() async throws {
+        let harness = try await makeHarness([
             headingBlock("h1", "Title", level: 1), paragraph("p", "Body"), headingBlock("h2", "Section", level: 2),
             headingBlock("h3", "Sub", level: 3),
         ])
-        defer { harness.close() }
+        addTeardownBlock { await harness.close() }
         let storage = harness.view.textStorage
         for (id, level) in [("h1", 1), ("h2", 2), ("h3", 3)] {
             let entry = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: id))
@@ -151,14 +153,14 @@ final class NativeAccessibilityTests: NativeEditingTestCase {
 
     /// The system Headings rotor visits each heading's text in order, both
     /// ways, including headings far outside the laid-out viewport.
-    func testHeadingsRotorWalksEveryHeadingInOrder() throws {
+    func testHeadingsRotorWalksEveryHeadingInOrder() async throws {
         var blocks = [headingBlock("h1", "First", level: 1)]
         blocks += (0..<300).map { paragraph("a\($0)", "Paragraph \($0) of filler text.") }
         blocks.append(headingBlock("h2", "Second", level: 2))
         blocks += (0..<300).map { paragraph("b\($0)", "More filler \($0).") }
         blocks.append(headingBlock("h3", "Third", level: 3))
-        let harness = try makeHarness(blocks)
-        defer { harness.close() }
+        let harness = try await makeHarness(blocks)
+        addTeardownBlock { await harness.close() }
         let window = host(harness.view)
         defer { window.isHidden = true }
         let view = harness.view
@@ -190,17 +192,20 @@ final class NativeAccessibilityTests: NativeEditingTestCase {
     }
 
     /// A heading made by the slash menu joins the rotor at once.
-    func testSlashHeadingJoinsTheRotor() throws {
-        let harness = try makeHarness([paragraph("p", "Body"), paragraph("s", "")])
-        defer { harness.close() }
+    func testSlashHeadingJoinsTheRotor() async throws {
+        let harness = try await makeHarness([paragraph("p", "Body"), paragraph("s", "")])
+        addTeardownBlock { await harness.close() }
         XCTAssertTrue(harness.view.blockControls.headingRanges().isEmpty)
         setSelection(harness, NSRange(location: try location(harness.session, "s", 0), length: 0))
         harness.view.insertText("/")
+        await harness.settle()
         let item = try XCTUnwrap(NativeInputCoordinator.slashItems.first { $0.id == "heading2" })
-        XCTAssertTrue(harness.input.applySlashItem(item))
+        let applied = await harness.run { harness.input.applySlashItem(item) }
+        XCTAssertTrue(applied)
         harness.view.insertText("Topic")
+        await harness.settle()
         let ranges = harness.view.blockControls.headingRanges()
         XCTAssertEqual(ranges.map { (harness.view.textStorage.string as NSString).substring(with: $0) }, ["Topic"])
-        try assertConsistent(harness, localCommands: 3)
+        try await assertConsistent(harness, localCommands: 3)
     }
 }

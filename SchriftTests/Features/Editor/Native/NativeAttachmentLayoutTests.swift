@@ -241,9 +241,9 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
 
     // MARK: - Every family
 
-    func testEveryFamilyRendersABoundedReadOnlyPreview() throws {
-        let harness = try makeHarness(state: everyFamily())
-        defer { harness.close() }
+    func testEveryFamilyRendersABoundedReadOnlyPreview() async throws {
+        let harness = try await makeHarness(state: everyFamily())
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         let window = host(harness.view)
         defer { window.isHidden = true }
@@ -299,7 +299,7 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         XCTAssertFalse(texts.contains("H4"), "columns past the bound are not shown")
         XCTAssertTrue(texts.contains("… more"))
         assertS2Consistent(session)
-        try assertConsistent(harness, localCommands: 0)
+        try await assertConsistent(harness, localCommands: 0)
     }
 
     private func labels(in view: UIView) -> [String] {
@@ -313,11 +313,12 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
     }
 
     /// A range command that touches a preview is refused before any write.
-    func testRangeCommandsAcrossAPreviewAreStillRefused() throws {
-        let harness = try makeHarness(state: everyFamily())
-        defer { harness.close() }
+    func testRangeCommandsAcrossAPreviewAreStillRefused() async throws {
+        let harness = try await makeHarness(state: everyFamily())
+        addTeardownBlock { await harness.close() }
         try select(harness, from: ("intro", 2), to: ("vid", 0))
-        harness.input.replace(range: harness.view.selectedRange, with: "x")
+        let replaced = await harness.run { harness.input.replace(range: harness.view.selectedRange, with: "x") }
+        XCTAssertFalse(replaced)
         XCTAssertEqual(harness.input.noticeKey, .native_editor_range_unavailable)
         XCTAssertTrue(harness.log.commands.isEmpty)
         XCTAssertEqual(try journalCount(harness), 0)
@@ -328,9 +329,9 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
     /// The line is exactly the attachment: the fragment's first line is the
     /// attachment's height, the view sits inside its fragment (no overlap with
     /// the paragraph above), and the view's intrinsic size is its bounds.
-    func testAttachmentLineHeightBoundsAndViewAgree() throws {
-        let harness = try makeHarness(state: everyFamily())
-        defer { harness.close() }
+    func testAttachmentLineHeightBoundsAndViewAgree() async throws {
+        let harness = try await makeHarness(state: everyFamily())
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         let window = host(harness.view)
         defer { window.isHidden = true }
@@ -353,8 +354,8 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
     /// storage and every fragment below stay put (no scroll jump), and no Yjs
     /// is written. The remembered ratio applies at the next width change.
     func testImageLoadKeepsItsBoxAndRatioAppliesOnTheNextWidth() async throws {
-        let harness = try makeHarness(state: everyFamily())
-        defer { harness.close() }
+        let harness = try await makeHarness(state: everyFamily())
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         let log = FetchLog()
         harness.view.blockControls.images = loader(log)
@@ -391,7 +392,7 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         XCTAssertEqual(after.content.size.width, usable.rounded(.down))
         XCTAssertEqual(after.content.size.height, ceil(usable.rounded(.down) / 2))
         assertS2Consistent(session)
-        try assertConsistent(harness, localCommands: 0)
+        try await assertConsistent(harness, localCommands: 0)
         XCTAssertEqual(try journalCount(harness), 0)
     }
 
@@ -416,9 +417,9 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
     }
 
     /// Dynamic Type restyles every card to its new size, consistently.
-    func testDynamicTypeKeepsBoundsAndLineHeightsConsistent() throws {
-        let harness = try makeHarness(state: everyFamily())
-        defer { harness.close() }
+    func testDynamicTypeKeepsBoundsAndLineHeightsConsistent() async throws {
+        let harness = try await makeHarness(state: everyFamily())
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         let window = host(harness.view)
         defer { window.isHidden = true }
@@ -429,7 +430,7 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         harness.view.layoutIfNeeded()
         XCTAssertGreaterThan(try attachment(session, "vid").content.size.height, small)
         assertS2Consistent(session)
-        try assertConsistent(harness, localCommands: 0)
+        try await assertConsistent(harness, localCommands: 0)
     }
 
     // MARK: - Privacy
@@ -438,8 +439,8 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
     /// reader taps "External image · tap to load".
     func testExternalImageWaitsForATap() async throws {
         let url = "https://elsewhere.example/cat.png"
-        let harness = try makeHarness([paragraph("p", "Before"), image("ext", url: url, caption: "A cat")])
-        defer { harness.close() }
+        let harness = try await makeHarness([paragraph("p", "Before"), image("ext", url: url, caption: "A cat")])
+        addTeardownBlock { await harness.close() }
         let log = FetchLog()
         harness.view.blockControls.images = loader(log)
         harness.view.blockControls.serverOrigin = Self.origin
@@ -470,8 +471,10 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
     /// its cached image nor requests one, and a tap-to-load does nothing.
     func testALoaderOfAnotherSessionShowsAndRequestsNothing() async throws {
         let url = "\(Self.origin)/media/photo.png"
-        let harness = try makeHarness([image("img", url: url), image("ext", url: "https://elsewhere.example/a.png")])
-        defer { harness.close() }
+        let harness = try await makeHarness([
+            image("img", url: url), image("ext", url: "https://elsewhere.example/a.png"),
+        ])
+        addTeardownBlock { await harness.close() }
         let log = FetchLog()
         let images = loader(log)
         // The image is already decoded and cached in that loader's session.
@@ -496,8 +499,8 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
 
     /// A theme change keeps a loaded image's card clear.
     func testThemeChangeKeepsALoadedImageClear() async throws {
-        let harness = try makeHarness([image("img", url: "\(Self.origin)/media/photo.png")])
-        defer { harness.close() }
+        let harness = try await makeHarness([image("img", url: "\(Self.origin)/media/photo.png")])
+        addTeardownBlock { await harness.close() }
         harness.view.blockControls.images = loader(FetchLog())
         harness.view.blockControls.serverOrigin = Self.origin
         let window = host(harness.view)
@@ -511,8 +514,8 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
 
     /// Offline, an uncached image issues no request and says so.
     func testOfflineImageIssuesNoRequest() async throws {
-        let harness = try makeHarness([image("img", url: "\(Self.origin)/media/photo.png")])
-        defer { harness.close() }
+        let harness = try await makeHarness([image("img", url: "\(Self.origin)/media/photo.png")])
+        addTeardownBlock { await harness.close() }
         let log = FetchLog()
         harness.view.blockControls.images = loader(log)
         harness.view.blockControls.serverOrigin = Self.origin
@@ -527,9 +530,9 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
     }
 
     /// No loader (a host without one): a placeholder, never a request.
-    func testWithoutALoaderTheImageStaysAPlaceholder() throws {
-        let harness = try makeHarness([image("img", url: "\(Self.origin)/media/photo.png")])
-        defer { harness.close() }
+    func testWithoutALoaderTheImageStaysAPlaceholder() async throws {
+        let harness = try await makeHarness([image("img", url: "\(Self.origin)/media/photo.png")])
+        addTeardownBlock { await harness.close() }
         let window = host(harness.view)
         defer { window.isHidden = true }
         let view = try XCTUnwrap(realized(harness.session, "img"))
@@ -542,7 +545,7 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
     /// 5,000 mixed blocks with 200 previews: only the ones around the
     /// viewport are realised, at the top and after scrolling, and opening and
     /// scrolling write nothing.
-    func testOnlyVisibleAttachmentsAreRealisedAt5000Blocks() throws {
+    func testOnlyVisibleAttachmentsAreRealisedAt5000Blocks() async throws {
         var blocks: [BlockNoteBlock] = []
         var tables: [(after: String, node: XNode)] = []
         for index in 0..<4_800 {
@@ -556,8 +559,8 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
                 tables.append((after: "p\(index)", node: container("tbl\(index)", table([["a", "b"], ["c", "d"]]))))
             }
         }
-        let harness = try makeHarness(state: state(blocks, inserting: tables))
-        defer { harness.close() }
+        let harness = try await makeHarness(state: state(blocks, inserting: tables))
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         XCTAssertEqual(session.surface.blocks.count, 5_000)
         XCTAssertEqual(session.surface.blocks.filter(AttributedDocumentProjection.isPlaceholder).count, 200)
@@ -580,15 +583,16 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         XCTAssertLessThanOrEqual(log.urls.count, 15, "only realised images load")
         XCTAssertTrue(harness.log.commands.isEmpty)
         XCTAssertEqual(try journalCount(harness), 0, "opening and scrolling write nothing")
-        XCTAssertFalse(session.engine.nativeWriteFailed)
+        let failed = await harness.engine { $0.nativeWriteFailed }
+        XCTAssertEqual(failed, false)
     }
 
     /// A peer's edit inside a table reaches the preview (one `.replaceBlock`).
-    func testPeerTableEditRefreshesThePreview() throws {
+    func testPeerTableEditRefreshesThePreview() async throws {
         let checkpoint = try state(
             [paragraph("intro", "Intro")], inserting: [(after: "intro", node: container("tbl", table([["A"], ["b"]])))])
-        let harness = try makeHarness(state: checkpoint)
-        defer { harness.close() }
+        let harness = try await makeHarness(state: checkpoint)
+        addTeardownBlock { await harness.close() }
         let peer = YDoc(clientID: 77, gc: true)
         defer { peer.destroy() }
         try peer.applyUpdate(YUpdateDecoder.decode(checkpoint))
@@ -605,7 +609,7 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         }
         find(root)
         try XCTUnwrap(text).insert(1, "eta", nil)
-        try harness.session.integrateServerState(YStateEncoder.encodeStateAsUpdate(peer))
+        try await harness.session.integrateServerState(YStateEncoder.encodeStateAsUpdate(peer))
         guard case .table(let cells, _, _) = try attachment(harness.session, "tbl").content.preview else {
             return XCTFail("still a table")
         }
@@ -615,9 +619,9 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
 
     // MARK: - VoiceOver
 
-    func testVoiceOverLabels() throws {
-        let harness = try makeHarness(state: everyFamily())
-        defer { harness.close() }
+    func testVoiceOverLabels() async throws {
+        let harness = try await makeHarness(state: everyFamily())
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         let window = host(harness.view)
         defer { window.isHidden = true }
@@ -650,15 +654,15 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
     /// The real test document (`.review/state.bin`, git-ignored): tables,
     /// media, math, columns and a diagram. Every block renders, scrolling end
     /// to end, without a crash.
-    func testRealCaptureRendersEveryBlock() throws {
+    func testRealCaptureRendersEveryBlock() async throws {
         let review = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent(".review")
         guard let state = try? Data(contentsOf: review.appendingPathComponent("state.bin")) else {
             throw XCTSkip("no .review capture")
         }
-        let session = try NativeEditorSession(state: state)
-        defer { session.close() }
+        let session = try await NativeEditorSession.seed(state: state)
+        addTeardownBlock { await session.close().value }
         let view = session.textView
         let window = host(view, height: 844)
         defer { window.isHidden = true }

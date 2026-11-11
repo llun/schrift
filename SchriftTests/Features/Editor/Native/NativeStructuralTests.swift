@@ -10,8 +10,12 @@ import XCTest
 /// command, storage equal to the projection and replay equal to the surface.
 @MainActor
 final class NativeStructuralTests: DocumentEngineTestCase {
-    private final class WriteLog {
-        var commands: [NativeEditCommand] = []
+    private final class WriteLog: Sendable {
+        private let state = Locked<[NativeEditCommand]>([])
+        var commands: [NativeEditCommand] { state.value }
+        func record(_ command: NativeEditCommand) {
+            state.update { $0.append(command) }
+        }
     }
 
     @MainActor
@@ -22,25 +26,38 @@ final class NativeStructuralTests: DocumentEngineTestCase {
         let log: WriteLog
         let directory: URL
 
-        func close() {
-            session.close()
+        var input: NativeInputCoordinator { session.input! }
+        var view: NativeTextView { session.textView }
+
+        func settle(file: StaticString = #filePath, line: UInt = #line) async {
+            let drained = await session.settle()
+            XCTAssertTrue(drained, "the session settled", file: file, line: line)
+        }
+        func run(_ action: () -> Bool) async -> Bool { await session.run(action) }
+        func engine<T: Sendable>(_ body: @escaping @Sendable (DocumentEngine) -> T) async -> T? {
+            await session.engine(body)
+        }
+
+        func close() async {
+            await session.close().value
             try? FileManager.default.removeItem(at: directory)
         }
     }
 
-    private func makeHarness(_ blocks: [BlockNoteBlock] = seedBlocks()) throws -> Harness {
+    private func makeHarness(_ blocks: [BlockNoteBlock] = seedBlocks()) async throws -> Harness {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let scope = ReplicaScope(
             serverOrigin: "https://example.test", ownerUserID: UUID(), org: "docs", documentID: UUID())
         let store = ReplicaStore(directory: directory)
         _ = try store.create(for: scope, checkpoint: BlockNoteYjs.encode(blocks, clientID: Self.seedClientID))
-        let session = try XCTUnwrap(NativeEditorSession.restore(store: store, scope: scope))
+        let restored = try await NativeEditorSession.restore(store: store, scope: scope)
+        let session = try XCTUnwrap(restored)
         let log = WriteLog()
-        session.enableTyping { command, update in
-            log.commands.append(command)
+        session.enableTyping(persist: { command, update in
+            log.record(command)
             try store.append(
                 update, for: scope, commandID: command.id, baseRevision: command.baseRevision, origin: .local)
-        }
+        })
         return Harness(session: session, store: store, scope: scope, log: log, directory: directory)
     }
 
@@ -48,7 +65,8 @@ final class NativeStructuralTests: DocumentEngineTestCase {
     /// index is current, and the durable journal replays to those blocks.
     private func assertConsistent(
         _ harness: Harness, localCommands: Int, file: StaticString = #filePath, line: UInt = #line
-    ) throws {
+    ) async throws {
+        await harness.settle()
         let session = harness.session
         let fresh = AttributedDocumentProjection.attributedString(
             blocks: session.surface.blocks, traits: session.surface.traits, labels: session.surface.labels)
@@ -69,7 +87,8 @@ final class NativeStructuralTests: DocumentEngineTestCase {
         try replica.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
         for update in restored.updates { try replica.applyUpdate(YUpdateDecoder.decode(update), origin: .remote) }
         XCTAssertEqual(session.surface.blocks, projection(replica), "replay equals the surface", file: file, line: line)
-        XCTAssertFalse(session.engine.nativeWriteFailed, file: file, line: line)
+        let failed = await harness.engine { $0.nativeWriteFailed }
+        XCTAssertEqual(failed, false, file: file, line: line)
         XCTAssertTrue(session.textView.isEditable, file: file, line: line)
     }
 
@@ -114,20 +133,20 @@ final class NativeStructuralTests: DocumentEngineTestCase {
 
     // MARK: - Return
 
-    func testReturnSplitsAtTheStartMiddleAndEnd() throws {
+    func testReturnSplitsAtTheStartMiddleAndEnd() async throws {
         // (offset, block keeping the old id, new block's text, new block's index, caret block)
         for (offset, kept, created, createdIndex, caretOnNew) in [
             (0, "First paragraph.", "", 0, false),
             (5, "First", " paragraph.", 1, true),
             (16, "First paragraph.", "", 1, true),
         ] {
-            let harness = try makeHarness()
-            defer { harness.close() }
+            let harness = try await makeHarness()
+            addTeardownBlock { await harness.close() }
             let session = harness.session
-            let recorder = StructuralPatchRecorder(session.surface)
-            session.engine.surface = recorder
+            let recorder = PatchLog(session)
             try place(session, Self.firstID, offset)
             session.textView.insertText("\n")
+            await harness.settle()
 
             let command = try XCTUnwrap(harness.log.commands.first)
             XCTAssertEqual(command.blockID, Self.firstID)
@@ -144,21 +163,24 @@ final class NativeStructuralTests: DocumentEngineTestCase {
             XCTAssertEqual(
                 session.textView.selectedRange,
                 NSRange(location: try caret(session, caretOnNew ? id : Self.firstID, 0), length: 0))
-            XCTAssertEqual(session.engine.revision, 1)
+            let rev = await harness.engine { $0.revision }
+            XCTAssertEqual(rev, 1)
             XCTAssertNil(session.input?.noticeKey)
             XCTAssertEqual(recorder.patches.count, 1, "one stamped emission, reconciled once")
             XCTAssertNotNil(recorder.patches.first?.nativeCommand)
             XCTAssertFalse(recorder.didReset, "slices are reconciled, never the whole storage")
-            try assertConsistent(harness, localCommands: 1)
+            try await assertConsistent(harness, localCommands: 1)
+            await harness.close()
         }
     }
 
-    func testHeadingSplitKeepsTheHeadingAndCreatesAParagraph() throws {
-        let harness = try makeHarness([heading("heading", "Heading text", level: 2)])
-        defer { harness.close() }
+    func testHeadingSplitKeepsTheHeadingAndCreatesAParagraph() async throws {
+        let harness = try await makeHarness([heading("heading", "Heading text", level: 2)])
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         try place(session, "heading", 8)
         session.textView.insertText("\n")
+        await harness.settle()
 
         let id = newID(harness)
         let source = try block(session, "heading")
@@ -172,16 +194,17 @@ final class NativeStructuralTests: DocumentEngineTestCase {
             Dictionary(uniqueKeysWithValues: created.props.map { ($0.key, $0.value) }),
             Dictionary(uniqueKeysWithValues: Self.paragraphProps.map { ($0.key, $0.value) }), "default props")
         XCTAssertEqual(session.textView.selectedRange.location, try caret(session, id, 0))
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
     }
 
-    func testListItemSplitKeepsTheSameKind() throws {
+    func testListItemSplitKeepsTheSameKind() async throws {
         for node in ["bulletListItem", "numberedListItem", "checkListItem"] {
-            let harness = try makeHarness([listItem(node, "item", "Item text")])
-            defer { harness.close() }
+            let harness = try await makeHarness([listItem(node, "item", "Item text")])
+            addTeardownBlock { await harness.close() }
             let session = harness.session
             try place(session, "item", 5)
             session.textView.insertText("\n")
+            await harness.settle()
 
             let id = newID(harness)
             XCTAssertEqual(try block(session, "item").node, node)
@@ -189,20 +212,22 @@ final class NativeStructuralTests: DocumentEngineTestCase {
             XCTAssertEqual(try block(session, id).node, node, "a split list item keeps its kind")
             XCTAssertEqual(text(of: try block(session, id)), "text")
             XCTAssertEqual(session.textView.selectedRange.location, try caret(session, id, 0))
-            try assertConsistent(harness, localCommands: 1)
+            try await assertConsistent(harness, localCommands: 1)
+            await harness.close()
         }
     }
 
     /// BlockNote's list-item Enter: an empty item becomes a paragraph in
     /// place. No block is created, so the minted id never reaches the model.
-    func testReturnOnAnEmptyListItemTurnsItIntoAParagraph() throws {
-        let harness = try makeHarness([
+    func testReturnOnAnEmptyListItemTurnsItIntoAParagraph() async throws {
+        let harness = try await makeHarness([
             listItem("bulletListItem", "full", "Full"), listItem("bulletListItem", "empty", ""),
         ])
-        defer { harness.close() }
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         try place(session, "empty", 0)
         session.textView.insertText("\n")
+        await harness.settle()
 
         let id = newID(harness)
         XCTAssertEqual(session.surface.blocks.map(\.id), ["full", "empty"])
@@ -210,19 +235,19 @@ final class NativeStructuralTests: DocumentEngineTestCase {
         XCTAssertEqual(try block(session, "empty").node, "paragraph")
         XCTAssertEqual(try block(session, "full").node, "bulletListItem")
         XCTAssertEqual(session.textView.selectedRange.location, try caret(session, "empty", 0))
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
     }
 
     // MARK: - Backspace
 
-    func testBackspaceJoinsAParagraphIntoAParagraph() throws {
-        let harness = try makeHarness()
-        defer { harness.close() }
+    func testBackspaceJoinsAParagraphIntoAParagraph() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
         let session = harness.session
-        let recorder = StructuralPatchRecorder(session.surface)
-        session.engine.surface = recorder
+        let recorder = PatchLog(session)
         try place(session, Self.secondID, 0)
         session.textView.deleteBackward()
+        await harness.settle()
 
         let command = try XCTUnwrap(harness.log.commands.first)
         XCTAssertEqual(command.blockID, Self.secondID)
@@ -233,86 +258,94 @@ final class NativeStructuralTests: DocumentEngineTestCase {
         XCTAssertEqual(joined.runs.first { $0.text == "bold words" }?.marks.map(\.key), ["bold"], "marks survive")
         XCTAssertEqual(
             session.textView.selectedRange, NSRange(location: try caret(session, Self.firstID, 16), length: 0))
-        XCTAssertEqual(session.engine.revision, 1)
+        let rev = await harness.engine { $0.revision }
+        XCTAssertEqual(rev, 1)
         XCTAssertNil(session.input?.noticeKey)
         XCTAssertFalse(recorder.didReset)
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
     }
 
-    func testBackspaceJoinsAParagraphIntoAHeading() throws {
-        let harness = try makeHarness([heading("heading", "Heading"), paragraph("body", "Body")])
-        defer { harness.close() }
+    func testBackspaceJoinsAParagraphIntoAHeading() async throws {
+        let harness = try await makeHarness([heading("heading", "Heading"), paragraph("body", "Body")])
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         try place(session, "body", 0)
         session.textView.deleteBackward()
+        await harness.settle()
 
         XCTAssertEqual(session.surface.blocks.map(\.id), ["heading"])
         let joined = try block(session, "heading")
         XCTAssertEqual(joined.node, "heading")
         XCTAssertEqual(text(of: joined), "HeadingBody")
         XCTAssertEqual(session.textView.selectedRange.location, try caret(session, "heading", 7))
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
     }
 
     /// An empty paragraph above with the same props is removed instead; the
     /// source keeps its id and the caret stays at its start.
-    func testBackspaceAfterAnEmptyParagraphRemovesIt() throws {
-        let harness = try makeHarness([paragraph("empty", ""), paragraph("body", "Body")])
-        defer { harness.close() }
+    func testBackspaceAfterAnEmptyParagraphRemovesIt() async throws {
+        let harness = try await makeHarness([paragraph("empty", ""), paragraph("body", "Body")])
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         try place(session, "body", 0)
         session.textView.deleteBackward()
+        await harness.settle()
 
         XCTAssertEqual(session.surface.blocks.map(\.id), ["body"])
         XCTAssertEqual(session.textView.selectedRange.location, try caret(session, "body", 0))
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
     }
 
     /// BlockNote's Backspace at a heading or list item start resets it to a
     /// paragraph (even the first block); only a paragraph joins.
-    func testBackspaceAtAHeadingOrListItemStartResetsItToAParagraph() throws {
-        let harness = try makeHarness([heading("heading", "Title"), listItem("checkListItem", "item", "Task")])
-        defer { harness.close() }
+    func testBackspaceAtAHeadingOrListItemStartResetsItToAParagraph() async throws {
+        let harness = try await makeHarness([heading("heading", "Title"), listItem("checkListItem", "item", "Task")])
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         for (count, id) in [(1, "heading"), (2, "item")] {
             try place(session, id, 0)
             session.textView.deleteBackward()
+            await harness.settle()
             XCTAssertEqual(harness.log.commands.last?.kind, .join)
             XCTAssertEqual(try block(session, id).node, "paragraph")
             XCTAssertEqual(session.surface.blocks.count, 2)
             XCTAssertEqual(session.textView.selectedRange.location, try caret(session, id, 0))
-            try assertConsistent(harness, localCommands: count)
+            try await assertConsistent(harness, localCommands: count)
         }
     }
 
-    func testBackspaceAtTheFirstParagraphAndAroundAnOpaqueBlockIsAQuietNoOp() throws {
+    func testBackspaceAtTheFirstParagraphAndAroundAnOpaqueBlockIsAQuietNoOp() async throws {
         let table = BlockNoteBlock(node: "table", props: [], runs: [], id: "table")
-        let harness = try makeHarness([
+        let harness = try await makeHarness([
             paragraph("first", "First"), table, paragraph("second", "Second"), paragraph("third", "Third"),
         ])
-        defer { harness.close() }
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         let original = session.textView.textStorage.string
         for id in ["first", "table", "second"] {
             try place(session, id, 0)
             session.textView.deleteBackward()
+            await harness.settle()
         }
         XCTAssertTrue(harness.log.commands.isEmpty)
         XCTAssertEqual(session.textView.textStorage.string, original)
         XCTAssertNil(session.input?.noticeKey, "an unsupported join is a quiet no-op")
-        XCTAssertEqual(session.engine.revision, 0)
+        let rev0 = await harness.engine { $0.revision }
+        XCTAssertEqual(rev0, 0)
         // Return in a placeholder is refused with a notice, never written.
         try place(session, "table", 0)
         session.textView.insertText("\n")
+        await harness.settle()
         XCTAssertEqual(session.input?.noticeKey, .native_editor_input_unavailable)
         XCTAssertTrue(harness.log.commands.isEmpty)
 
         // The same Backspace between text blocks joins.
         try place(session, "third", 0)
         session.textView.deleteBackward()
+        await harness.settle()
         XCTAssertEqual(text(of: try block(session, "second")), "SecondThird")
         XCTAssertNil(session.input?.noticeKey)
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
     }
 
     /// PR06a, BlockNote 0.56's Backspace order at a nested block's start
@@ -320,118 +353,131 @@ final class NativeStructuralTests: DocumentEngineTestCase {
     /// the block above (the previous sibling's last descendant, or a first
     /// child's parent, whose group its children join), outdenting only when
     /// that merge cannot happen (`NativeIndentTests`). One command each.
-    func testBackspaceAtANestedStartResetsThenMergesIntoTheBlockAbove() throws {
+    func testBackspaceAtANestedStartResetsThenMergesIntoTheBlockAbove() async throws {
         var x = listItem("bulletListItem", "x", "Ex")
         x.children = [paragraph("x1", "Deep")]
         var a = listItem("bulletListItem", "a", "Alpha")
         a.children = [x, listItem("bulletListItem", "y", "Why")]
-        let harness = try makeHarness([a, paragraph("tail", "Tail")])
-        defer { harness.close() }
+        let harness = try await makeHarness([a, paragraph("tail", "Tail")])
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         try place(session, "y", 0)
         session.textView.deleteBackward()
+        await harness.settle()
         XCTAssertEqual(try block(session, "y").node, "paragraph")
         XCTAssertEqual(try block(session, "y").depth, 1)
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
         // Into the previous sibling's last descendant, not an outdent.
         session.textView.deleteBackward()
+        await harness.settle()
         XCTAssertEqual(session.surface.blocks.map(\.id), ["a", "x", "x1", "tail"])
         XCTAssertEqual(text(of: try block(session, "x1")), "DeepWhy")
         XCTAssertEqual(session.textView.selectedRange.location, try caret(session, "x1", 4))
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
         // A first child merges into its parent; its own child takes its place.
         try place(session, "x", 0)
         session.textView.deleteBackward()
+        await harness.settle()
         session.textView.deleteBackward()
+        await harness.settle()
         XCTAssertEqual(session.surface.blocks.map(\.id), ["a", "x1", "tail"])
         XCTAssertEqual(text(of: try block(session, "a")), "AlphaEx")
         XCTAssertEqual(try block(session, "x1").parentID, "a")
         XCTAssertEqual(session.textView.selectedRange.location, try caret(session, "a", 5))
-        try assertConsistent(harness, localCommands: 4)
+        try await assertConsistent(harness, localCommands: 4)
         // A sole child without children takes the group with it.
         try place(session, "x1", 0)
         session.textView.deleteBackward()
+        await harness.settle()
         XCTAssertEqual(session.surface.blocks.map { text(of: $0) }, ["AlphaExDeepWhy", "Tail"])
         XCTAssertEqual(session.surface.blocks.map(\.depth), [0, 0])
-        try assertConsistent(harness, localCommands: 5)
+        try await assertConsistent(harness, localCommands: 5)
     }
 
     // MARK: - Concurrency, IME and scroll
 
     /// A peer that never saw the split edits the same block; its durable
     /// remote entry converges, and the join afterwards is still one command.
-    func testPeerEditInTheSameBlockConverges() throws {
-        let harness = try makeHarness()
-        defer { harness.close() }
+    func testPeerEditInTheSameBlockConverges() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         try place(session, Self.firstID, 5)
         session.textView.insertText("\n")
+        await harness.settle()
         let id = newID(harness)
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
 
         let peer = try makeDoc(clientID: 2)
         defer { peer.destroy() }
         let writer = BlockNoteWriter(doc: peer)
-        try session.integrateServerState(try writer.replaceText(block: Self.firstID, range: 16..<16, with: "!"))
-        try session.integrateServerState(try writer.replaceText(block: Self.firstID, range: 0..<0, with: "Peer "))
+        try await session.integrateServerState(try writer.replaceText(block: Self.firstID, range: 16..<16, with: "!"))
+        try await session.integrateServerState(try writer.replaceText(block: Self.firstID, range: 0..<0, with: "Peer "))
         XCTAssertEqual(text(of: try block(session, Self.firstID)), "Peer First!")
         XCTAssertEqual(text(of: try block(session, id)), " paragraph.")
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
 
         try place(session, id, 0)
         session.textView.deleteBackward()
+        await harness.settle()
         XCTAssertEqual(text(of: try block(session, Self.firstID)), "Peer First! paragraph.")
         XCTAssertEqual(session.textView.selectedRange.location, try caret(session, Self.firstID, 11))
-        XCTAssertEqual(session.engine.revision, 4)
-        try assertConsistent(harness, localCommands: 2)
+        let rev = await harness.engine { $0.revision }
+        XCTAssertEqual(rev, 4)
+        try await assertConsistent(harness, localCommands: 2)
     }
 
-    func testReturnThenImmediateCompositionCommitsInTheNewBlock() throws {
-        let harness = try makeHarness()
-        defer { harness.close() }
+    func testReturnThenImmediateCompositionCommitsInTheNewBlock() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         try place(session, Self.firstID, 16)
         session.textView.insertText("\n")
+        await harness.settle()
         let id = newID(harness)
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
 
         // The new block is empty (no XmlText yet) and a valid composition target.
         session.textView.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
         XCTAssertEqual(session.input?.composition.isActive, true)
         session.textView.unmarkText()
+        await harness.settle()
 
         XCTAssertEqual(harness.log.commands.last?.blockID, id)
         XCTAssertEqual(harness.log.commands.last?.kind, .replace(range: 0..<0, replacement: "に"))
         XCTAssertEqual(text(of: try block(session, id)), "に")
-        XCTAssertEqual(session.engine.revision, 2)
+        let rev = await harness.engine { $0.revision }
+        XCTAssertEqual(rev, 2)
         // Typing continues in the new block after the commit.
         session.textView.insertText("x")
+        await harness.settle()
         XCTAssertEqual(text(of: try block(session, id)), "にx")
-        try assertConsistent(harness, localCommands: 3)
+        try await assertConsistent(harness, localCommands: 3)
     }
 
-    func testReturnWhileMarkedCommitsTheCompositionAndDoesNotSplit() throws {
-        let harness = try makeHarness()
-        defer { harness.close() }
+    func testReturnWhileMarkedCommitsTheCompositionAndDoesNotSplit() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         try place(session, Self.firstID, 5)
         session.textView.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
         XCTAssertEqual(session.input?.composition.isActive, true)
         session.textView.insertText("\n")
+        await harness.settle()
 
         XCTAssertEqual(session.input?.composition.isActive, false)
         XCTAssertEqual(harness.log.commands.first?.kind, .replace(range: 5..<5, replacement: "に"))
         XCTAssertEqual(session.surface.blocks.count, 3, "never split mid-composition")
         XCTAssertEqual(text(of: try block(session, Self.firstID)), "Firstに paragraph.")
-        try assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1)
     }
 
     /// Return and Backspace edit the visible slice only: the scroll offset of a
     /// laid-out view stays where the reader left it.
-    func testReturnAndBackspaceKeepTheScrollPosition() throws {
+    func testReturnAndBackspaceKeepTheScrollPosition() async throws {
         let blocks = (0..<200).map { paragraph("p\($0)", "Paragraph \($0) has enough words to wrap on a phone line.") }
-        let harness = try makeHarness(blocks)
-        defer { harness.close() }
+        let harness = try await makeHarness(blocks)
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
         session.textView.frame = window.bounds
@@ -451,44 +497,51 @@ final class NativeStructuralTests: DocumentEngineTestCase {
 
         try place(session, id, 9)
         session.textView.insertText("\n")
+        await harness.settle()
         session.textView.layoutIfNeeded()
         XCTAssertEqual(session.textView.contentOffset.y, before, accuracy: 1)
         session.textView.deleteBackward()
+        await harness.settle()
         session.textView.layoutIfNeeded()
         XCTAssertEqual(session.textView.contentOffset.y, before, accuracy: 1)
         XCTAssertEqual(text(of: try block(session, id)), original)
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
     }
 
     /// The UI test's key sequence: Return, Return (an empty block above the
     /// moved text), Backspace (that empty block is removed), then typing.
-    func testReturnTwiceThenBackspaceRemovesTheEmptyBlock() throws {
-        let harness = try makeHarness()
-        defer { harness.close() }
+    func testReturnTwiceThenBackspaceRemovesTheEmptyBlock() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         try place(session, Self.firstID, 5)
         session.textView.insertText("\n")
+        await harness.settle()
         let lower = newID(harness)
         session.textView.insertText("\n")
+        await harness.settle()
         XCTAssertEqual(session.surface.blocks.count, 5)
         XCTAssertEqual(session.textView.selectedRange.location, try caret(session, lower, 0))
         session.textView.deleteBackward()
+        await harness.settle()
         session.textView.insertText("beta")
+        await harness.settle()
         XCTAssertEqual(session.surface.blocks.map { text(of: $0) }.prefix(2), ["First", "beta paragraph."])
         XCTAssertNil(session.input?.noticeKey)
-        try assertConsistent(harness, localCommands: 4)
+        try await assertConsistent(harness, localCommands: 4)
     }
 
     /// The simulator's software keyboard deletes the separator before the caret
     /// through the delegate (or UITextInput `replace`) instead of `deleteBackward`.
-    func testKeyboardSeparatorDeletionAtABlockStartIsTheSameJoin() throws {
-        let harness = try makeHarness()
-        defer { harness.close() }
+    func testKeyboardSeparatorDeletionAtABlockStartIsTheSameJoin() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
         let session = harness.session
         let input = try XCTUnwrap(session.input)
         try place(session, Self.secondID, 0)
         let separator = try XCTUnwrap(session.surface.rangeIndex.entry(for: Self.firstID)).separatorRange
         XCTAssertFalse(input.textView(session.textView, shouldChangeTextIn: separator, replacementText: ""))
+        await harness.settle()
         XCTAssertEqual(harness.log.commands.map(\.kind), [.join])
         XCTAssertEqual(session.surface.blocks.map(\.id), [Self.firstID, Self.thirdID])
         XCTAssertNil(input.noticeKey)
@@ -502,83 +555,74 @@ final class NativeStructuralTests: DocumentEngineTestCase {
                     session.textView.position(
                         from: session.textView.beginningOfDocument, offset: try caret(session, Self.thirdID, 0)))))
         session.textView.replace(textInputRange, withText: "")
+        await harness.settle()
         XCTAssertEqual(session.surface.blocks.count, 1)
         XCTAssertNil(input.noticeKey)
-        try assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(harness, localCommands: 2)
     }
 
     // MARK: - Relaunch
 
-    func testRelaunchReplayEqualsTheProjection() throws {
-        let harness = try makeHarness([heading("heading", "Title"), paragraph("body", "Body text")])
+    func testRelaunchReplayEqualsTheProjection() async throws {
+        let harness = try await makeHarness([heading("heading", "Title"), paragraph("body", "Body text")])
         let session = harness.session
         try place(session, "body", 4)
         session.textView.insertText("\n")
+        await harness.settle()
         try place(session, "body", 0)
         session.textView.deleteBackward()
-        try assertConsistent(harness, localCommands: 2)
+        await harness.settle()
+        try await assertConsistent(harness, localCommands: 2)
         let expected = session.surface.blocks
         let expectedText = session.textView.textStorage.string
-        session.close()
+        await session.close().value
 
-        let restored = try XCTUnwrap(NativeEditorSession.restore(store: harness.store, scope: harness.scope))
+        let restored = try unwrapped(try await NativeEditorSession.restore(store: harness.store, scope: harness.scope))
+        addTeardownBlock { await restored.close().value }
         defer {
-            restored.close()
             try? FileManager.default.removeItem(at: harness.directory)
         }
         XCTAssertEqual(restored.surface.blocks, expected)
         XCTAssertEqual(restored.surface.blocks.map { text(of: $0) }, ["TitleBody", " text"])
         XCTAssertEqual(restored.textView.textStorage.string, expectedText)
-        XCTAssertEqual(restored.engine.revision, 2)
+        let rev = await restored.engine { $0.revision }
+        XCTAssertEqual(rev, 2)
     }
 
     // MARK: - Node oracle (yjs 13.6.33 + BlockNote 0.56.0 captures)
 
-    func testSplitConvergesToTheNodeOracleXML() throws {
-        try assertOracle(
+    func testSplitConvergesToTheNodeOracleXML() async throws {
+        try await assertOracle(
             BlockNote056SplitParagraphTests.checkpoints, blockID: "p-c", kind: .split(offset: 5, newID: "1"))
     }
 
-    func testJoinConvergesToTheNodeOracleXML() throws {
-        try assertOracle(BlockNote056MergeParagraphsTests.checkpoints, blockID: "p-d-second", kind: .join)
+    func testJoinConvergesToTheNodeOracleXML() async throws {
+        try await assertOracle(BlockNote056MergeParagraphsTests.checkpoints, blockID: "p-d-second", kind: .join)
     }
 
     private func assertOracle(
         _ checkpoints: [(label: String, updateBase64: String, xml: String)], blockID: String,
         kind: NativeEditCommand.Kind
-    ) throws {
+    ) async throws {
         let seed = try XCTUnwrap(Data(base64Encoded: checkpoints[0].updateBase64))
-        let session = try NativeEditorSession(state: seed)
-        defer { session.close() }
-        var updates: [Data] = []
-        try session.engine.applyStructural(
-            NativeEditCommand(id: UUID(), baseRevision: 0, blockID: blockID, kind: kind)
-        ) { updates.append($0) }
-        XCTAssertEqual(updates.count, 1)
+        let session = try await NativeEditorSession.seed(state: seed)
+        addTeardownBlock { await session.close().value }
+        let updateResult = await session.engine { engine -> Data? in
+            var update: Data?
+            _ = try? engine.applyStructural(
+                NativeEditCommand(id: UUID(), baseRevision: 0, blockID: blockID, kind: kind),
+                persist: { update = $0 }
+            )
+            return update
+        }
+        let update = try XCTUnwrap(updateResult ?? nil)
 
         let replica = YDoc(clientID: 9, gc: false)
         defer { replica.destroy() }
         try replica.applyUpdate(YUpdateDecoder.decode(seed))
-        try replica.applyUpdate(YUpdateDecoder.decode(try XCTUnwrap(updates.first)))
+        try replica.applyUpdate(YUpdateDecoder.decode(update))
         XCTAssertEqual(YXMLString.fragment(replica), checkpoints[1].xml)
         XCTAssertNil(replica.store.pendingStructs)
         XCTAssertNil(replica.store.pendingDs)
-    }
-}
-
-@MainActor
-private final class StructuralPatchRecorder: @preconcurrency EditorSurface {
-    let surface: NativeTextSurface
-    var patches: [BlockPatch] = []
-    var didReset: Bool {
-        patches.contains { $0.changes.contains { if case .reset = $0 { true } else { false } } }
-    }
-    init(_ surface: NativeTextSurface) { self.surface = surface }
-    func applyPatch(_ patch: BlockPatch) {
-        patches.append(patch)
-        surface.applyPatch(patch)
-    }
-    func setCompositionDeferred(_ deferred: Bool) {
-        surface.setCompositionDeferred(deferred)
     }
 }
