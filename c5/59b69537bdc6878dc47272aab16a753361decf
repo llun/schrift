@@ -1,0 +1,55 @@
+Schrift/Features/Editor/Native/DocumentReplicaSession.swift
+  s_dc239db0cc1c9d::t_a58c03ed4dcd8d 578-579
+  s_dc239db0cc1c9d::t_99bea04053bdb4 74-80,127-151,176,182-188,521-522,526-530,532-550,552-577,580-591
+  s_dc239db0cc1c9d::t_221f27cfc75f63 525,531,551
+Schrift/Core/Collaboration/DocumentCollaborationSession.swift
+  s_dc239db0cc1c9d::t_0fadae39c5b3ad 98-100,117-118,132,269,275
+  s_dc239db0cc1c9d::t_353e3a4a40f2a6 233-234
+SchriftTests/Features/Editor/Native/NativeEditorActivationTests.swift
+  s_dc239db0cc1c9d::t_a58c03ed4dcd8d 629-634
+  s_dc239db0cc1c9d::t_593f07afd223d4 658-687,820,835-839,896-907
+  s_dc239db0cc1c9d::t_a1b41ffb5a29c8 219-220,894-895
+SchriftTests/Core/Collaboration/DocumentCollaborationSessionTests.swift
+  s_dc239db0cc1c9d::t_41b3ebe3bc53ad 682-702
+AGENTS.md
+  s_dc239db0cc1c9d::t_680e5a2fb5d3d4 2929,2933-2970,2976-2981,2983-2991
+Schrift/Features/Editor/Native/NativeCollaborationBinding.swift
+  s_dc239db0cc1c9d::t_353e3a4a40f2a6 82-85,152-153,170-195
+  s_dc239db0cc1c9d::t_927a081341ff0c 27-29,57-68,73-76,80-81,92-97,101,103,105-106,110-124,126-146,148,150-151,156,161-166,169,198-199,204-205,211,221,223-225,229,231-234,237-238,241
+  s_dc239db0cc1c9d::t_0fadae39c5b3ad 78,200-202,213-215,219,226
+Schrift/Core/Yjs/YUpdateDecoder.swift
+  s_dc239db0cc1c9d::t_0a5a318aff0d44 279-285,468-495,497
+SchriftTests/Features/Editor/Native/NativeLiveSyncTests.swift
+  s_dc239db0cc1c9d::t_4ec949846cceeb 14,16-20,46,60-65,153-154,156-163,202-203,229-230,257,259-260,275,279,294,308,313,324,339,365,377,440,455,493,529,546-605
+  s_dc239db0cc1c9d::t_a58c03ed4dcd8d 432-433
+  s_dc239db0cc1c9d::t_181846d4e8e92a 476-477,480,503-504,541-542,610
+  s_dc239db0cc1c9d::t_41b3ebe3bc53ad 425-431,434-439,441-454,456-475,478-479,481-492,494-502,505-514,517-528,530-540,543-545,606-607,611-612
+  s_dc239db0cc1c9d::t_25357de97180f2 515-516
+  s_dc239db0cc1c9d::t_2739e138655679 613,617
+Schrift/Features/Editor/Native/ReplicaSaveAdapter.swift
+  s_dc239db0cc1c9d::t_99bea04053bdb4 39
+Schrift/Features/Editor/Native/ReplicaCommandMailbox.swift
+  s_dc239db0cc1c9d::t_0fadae39c5b3ad 54-55,79
+SchriftTests/Features/Editor/Native/NativeReplicaRestoreTests.swift
+  s_dc239db0cc1c9d::t_124c82160a75d1 75-77,84,87
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_dc239db0cc1c9d::t_0fadae39c5b3ad 535,687,711-713,719,721,723-730
+  s_dc239db0cc1c9d::t_b9ea54de65fdab 361,413-420,516-523,696-704
+  s_dc239db0cc1c9d::t_395076eca8bebc 705-706
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c559b69537bdc6878dc47272aab16a753361decf",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
