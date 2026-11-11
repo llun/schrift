@@ -303,13 +303,17 @@ final class NativeEditorOpen {
     private(set) var isPreservedReadOnly = false
     private var isOpen = false
     private let preference: @MainActor () -> Bool
+    /// The Live collaboration preference, one input of the native live gate (PR09a).
+    private let livePreference: @MainActor () -> Bool
+    /// The open's `abilities.update`, another input of that gate.
+    private var canUpdate = false
     /// Bumped by every open and close (including the close a sign-in change
     /// forces), so an awaited fetch, restore or save result is dropped once
     /// the open that asked for it is gone.
     private var generation = 0
     private enum OpenResult: Sendable {
         case classic
-        case state(Data, org: String)
+        case state(Data, config: ServerConfig)
     }
     private var pendingOpen: AsyncStream<OpenResult>.Continuation?
     /// The reopen and reconnect work `EditorView` starts outside its `.task`;
@@ -325,13 +329,18 @@ final class NativeEditorOpen {
     /// Where replicas are opened (PR08c): `EditorView` hands in the app's
     /// shared one before opening; tests keep this private one.
     @ObservationIgnored var registry = NativeSessionRegistry()
+    /// Dials the native live socket (PR09a); `EditorView` hands in the app's
+    /// manager. Without one (tests, previews) no socket is opened.
+    @ObservationIgnored var collaboration: DocumentCollaborationManager?
 
     init(
         preference: @escaping @MainActor () -> Bool = { NativeEditorPreference.isEnabled() },
+        livePreference: @escaping @MainActor () -> Bool = { LiveCollaborationPreference.isEnabled() },
         waitForTimeout: @escaping @MainActor () async throws -> Void = { try await Task.sleep(for: .seconds(3)) },
         replicaHooks: DocumentReplicaSession.Hooks = .init()
     ) {
         self.preference = preference
+        self.livePreference = livePreference
         self.replicaHooks = replicaHooks
         // Preserve the immediate default-off classic renderer. This initial
         // value only chooses the initial view; every safe open rereads the key.
@@ -349,6 +358,7 @@ final class NativeEditorOpen {
         guard !isOpen else { return }
         isOpen = true
         enabled = preference()
+        self.canUpdate = canUpdate
         isPreservedReadOnly = false
         // A reappearing classic editor keeps its SwiftUI identity and local
         // view state while the optional native eligibility read is in flight.
@@ -456,7 +466,7 @@ final class NativeEditorOpen {
                     continuation.yield(.classic)
                     return
                 }
-                continuation.yield(.state(state, org: config.collaborationOrg))
+                continuation.yield(.state(state, config: config))
             } catch {
                 continuation.yield(.classic)
             }
@@ -482,7 +492,7 @@ final class NativeEditorOpen {
         var iterator = results.makeAsyncIterator()
         guard let result = await iterator.next(), !Task.isCancelled, generation == request else { return }
         guard canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account),
-            case .state(let state, let org) = result
+            case .state(let state, let config) = result
         else {
             route = .classic
             return
@@ -504,12 +514,13 @@ final class NativeEditorOpen {
         }
         session.close()
         let scope = ReplicaScope(
-            serverOrigin: viewModel.client.serverOrigin, ownerUserID: account, org: org,
+            serverOrigin: viewModel.client.serverOrigin, ownerUserID: account, org: config.collaborationOrg,
             documentID: viewModel.documentID)
         let seeded = await seedReplica(
             state: state, scope: scope, viewModel: viewModel, request: request, account: account)
         guard let seeded else { return }
         route = seeded
+        if case .native(let session) = seeded { startLive(session, scope: scope, config: config) }
     }
 
     /// Reconnect: merge the fetched raw state into the open durable owner.
@@ -624,8 +635,14 @@ final class NativeEditorOpen {
                 })
         }
         // The append runs on the replica session; the save is scheduled only on
-        // the journaled result (journal before publication).
-        registry.setWritable({ try adapter.record($0, update: $1) }, for: scope)
+        // the journaled result, and the live socket gets the bytes only after
+        // the append succeeded (journal before publication).
+        let outbox = registry.liveBinding(for: scope)?.outbox
+        registry.setWritable(
+            { command, update in
+                try adapter.record(command, update: update)
+                outbox?.publish(update)
+            }, for: scope)
         session.enableTyping(persist: nil, scheduler: scheduler)
         // Edits an earlier process journaled but never handed over (it ended
         // inside the debounce) have no draft, so no replay pass knows them.
@@ -654,13 +671,32 @@ final class NativeEditorOpen {
                 documentID: scope.documentID, org: scope.org)
             guard isCurrent() else { return }
             try await session.integrateServerState(state)
-            // Refreshes the server title native saves send.
             guard isCurrent() else { return }
+            startLive(session, scope: scope, config: config)
+            // Refreshes the server title native saves send.
             _ = try await viewModel.refreshOfflineCacheForNativeReader(isCurrent: isCurrent)
         } catch {
             // Offline-first: the restored replica stays on screen. A disk
             // failure inside the integration has already frozen authoring.
         }
+    }
+
+    /// Joins the scope's live room when the native live gate holds, unless its
+    /// socket is up already. Only a typing session goes live: a reader never
+    /// opens a socket. A socket that ended is dialed again on the next
+    /// reconnect refresh; backoff and background handling are PR09b.
+    private func startLive(_ session: NativeEditorSession, scope: ReplicaScope, config: ServerConfig) {
+        guard session.input != nil, !session.isClosed,
+            nativeLiveCollaborationEligible(
+                nativeEnabled: enabled, liveEnabled: livePreference(),
+                serverSupports: config.supportsNativeLiveCollaboration && config.collaborationOrg == scope.org,
+                canUpdate: canUpdate),
+            let binding = registry.liveBinding(for: scope), !binding.isConnected,
+            let transport = collaboration?.nativeTransport(for: scope.documentID, config: config)
+        else { return }
+        binding.connect(
+            transport: transport, wireProtocol: CollaborationWireProtocol(config: config),
+            documentName: scope.documentID.uuidString.lowercased())
     }
 
     /// Typing also needs no live owner (a native session never takes the live

@@ -599,6 +599,56 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         guard case .preservedUnavailable = open.route else { return XCTFail("its draft keeps it read-only") }
     }
 
+    // MARK: - Native live gate (PR09a)
+
+    /// The socket opens only with the switch, the live preference, a Docs 6
+    /// socket and `abilities.update`; the production journal then publishes a
+    /// keystroke after its append, on both the seeded and the owned route.
+    func testNativeLiveDialsOnlyWhenTheGateHoldsAndPublishesJournaledTyping() async throws {
+        let cases: [(live: Bool, canUpdate: Bool, socket: Bool, owned: Bool, dials: Bool)] = [
+            (true, true, true, false, true), (true, true, true, true, true), (false, true, true, false, false),
+            (true, false, true, false, false), (true, true, false, false, false),
+        ]
+        for gate in cases {
+            let env = makeEnvironment()
+            let server = ServerStub(owner: owner, state: seedState())
+            server.collaborationWsUrl = gate.socket ? "wss://docs.example.org/collaboration/ws/" : nil
+            server.install()
+            if gate.owned { try seedReplica(env, typed: nil) }
+            let spy = ManagerSocketFactorySpy()
+            let open = NativeEditorOpen(preference: { true }, livePreference: { gate.live })
+            open.collaboration = DocumentCollaborationManager(
+                serverBaseURL: URL(string: "https://docs.example.org/api/v1.0/")!, cookieProvider: { [] },
+                featureEnabled: { true }, isOffline: { false }, serverConfigProvider: { nil },
+                socketFactory: spy.factory)
+            await open.open(viewModel: env.model, isOffline: false, canUpdate: gate.canUpdate)
+            guard case .native(let session) = open.route else {
+                return XCTFail("expected a native session \(gate) \(open.route)")
+            }
+            XCTAssertEqual(spy.sockets.count, gate.dials ? 1 : 0, "\(gate)")
+            if let socket = spy.sockets.first {
+                XCTAssertEqual(
+                    spy.requests.first?.url?.absoluteString,
+                    "wss://docs.example.org/collaboration/ws/v1/docs/\(env.model.documentID.uuidString.lowercased())")
+                session.textView.selectedRange = NSRange(location: 0, length: 0)
+                session.input?.textViewDidChangeSelection(session.textView)
+                session.textView.insertText("x")
+                await session.settle()
+                await waitUntil {
+                    socket.sentFrames.contains { frame in
+                        frame.first == 0
+                            && (try? SyncMessage(decodingPayload: Data(frame.dropFirst())))?.step == .update
+                    }
+                }
+                open.close()
+                await waitUntil { socket.cancelCloseCode == .goingAway }
+            } else {
+                open.close()
+            }
+            env.clean()
+        }
+    }
+
     // MARK: - Fixture
 
     private func manifestURL(_ env: Environment, _ scope: ReplicaScope) throws -> URL {
@@ -730,6 +780,7 @@ private final class ServerStub: @unchecked Sendable {
     private let owner: UUID
     private let state: Data
     private var _isOffline = false
+    private var _collaborationWsUrl: String?
     private var _patched: [Data] = []
     private var _titles: [String] = []
     var stateGate: MockURLProtocol.ResponseGate?
@@ -743,6 +794,10 @@ private final class ServerStub: @unchecked Sendable {
     var isOffline: Bool {
         get { locked { _isOffline } }
         set { locked { _isOffline = newValue } }
+    }
+    var collaborationWsUrl: String? {
+        get { locked { _collaborationWsUrl } }
+        set { locked { _collaborationWsUrl = newValue } }
     }
     var patchedUpdates: [Data] { locked { _patched } }
     var titles: [String] { locked { _titles } }
@@ -762,8 +817,10 @@ private final class ServerStub: @unchecked Sendable {
             let url = request.url?.absoluteString ?? ""  // `URL.path` drops the trailing slash
             let json = ["Content-Type": "application/json"]
             if url.hasSuffix("/config/") {
+                let socket = collaborationWsUrl.map { #"","COLLABORATION_WS_URL":"\#($0)"# } ?? ""
                 return .init(
-                    statusCode: 200, headers: json, body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+                    statusCode: 200, headers: json, body: Data(#"{"RELEASE_VERSION":"6.0.0\#(socket)"}"#.utf8),
+                    error: nil)
             }
             if url.hasSuffix("/users/me/") {
                 return .init(

@@ -32,4 +32,30 @@ final class LiveCollaborationAvailabilityTests: XCTestCase {
     func testProvenUnavailableIsUnavailableEvenWhenServerSupports() {
         XCTAssertEqual(availability(server: true, proven: true), .serverUnavailable)
     }
+
+    // MARK: - Native live gate (PR09a)
+
+    func testNativeLiveNeedsAllFourInputs() {
+        XCTAssertTrue(
+            nativeLiveCollaborationEligible(
+                nativeEnabled: true, liveEnabled: true, serverSupports: true, canUpdate: true))
+        for missing in 0..<4 {
+            var inputs = [true, true, true, true]
+            inputs[missing] = false
+            XCTAssertFalse(
+                nativeLiveCollaborationEligible(
+                    nativeEnabled: inputs[0], liveEnabled: inputs[1], serverSupports: inputs[2], canUpdate: inputs[3]),
+                "input \(missing) is required")
+        }
+    }
+
+    func testNativeServerCapabilityIsADocs6SocketOnly() {
+        XCTAssertTrue(
+            ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: "wss://a.example/collaboration/ws/")
+                .supportsNativeLiveCollaboration)
+        XCTAssertFalse(ServerConfig(releaseVersion: "6.0.0").supportsNativeLiveCollaboration)
+        XCTAssertFalse(
+            ServerConfig(releaseVersion: "4.8.0", collaborationWsUrl: "wss://a.example/collaboration/ws/")
+                .supportsNativeLiveCollaboration, "native typing is Docs 6 only")
+    }
 }

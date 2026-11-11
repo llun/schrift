@@ -299,6 +299,8 @@ struct EditorView: View {
     @State private var nativeOpen = NativeEditorOpen()
     /// The app's replica registry (PR08c); hosts without one keep the open's own.
     @Environment(NativeSessionRegistry.self) private var nativeSessions: NativeSessionRegistry?
+    /// Dials the native live socket (PR09a); hosts without one stay HTTP-only.
+    @Environment(DocumentCollaborationManager.self) private var collaboration: DocumentCollaborationManager?
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.scenePhase) private var scenePhase
 
@@ -351,6 +353,7 @@ struct EditorView: View {
 
     private func openNative() async {
         if let nativeSessions { nativeOpen.registry = nativeSessions }
+        nativeOpen.collaboration = collaboration
         // Both navigation surfaces pass the server Document as pinRow. Missing
         // metadata fails closed to the read-only view.
         await nativeOpen.open(

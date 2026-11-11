@@ -30,6 +30,13 @@ struct ServerConfig: Codable, Equatable, Sendable {
             && (!usesCollaborationYDocServer || Self.yWebSocketLiveCollaborationEnabled)
     }
 
+    /// The native editor's server capability (PR09a): a Docs 6 deployment that
+    /// advertises its collaboration socket. Native typing exists only on Docs 6,
+    /// and this never reads `yWebSocketLiveCollaborationEnabled` (A5's switch).
+    var supportsNativeLiveCollaboration: Bool {
+        collaborationWsUrl?.isEmpty == false && usesCollaborationYDocServer
+    }
+
     /// Internal release capability, deliberately separate from the user preference.
     static let yWebSocketLiveCollaborationEnabled = true
 

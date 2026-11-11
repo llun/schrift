@@ -727,7 +727,7 @@ corrupt or lost marker data from the scoped manifests on disk and native drafts
 cannot be read or two scopes claim a document with no draft or single outbox to
 choose by; the alert can then set the unreadable folders aside (bytes kept in
 `ReplicaDraftsSetAside`, never read) and repair again. A native draft owns its document
-even without a marker entry. No native live socket exists,
+even without a marker entry. Native live content has its own socket (PR09a, below),
 and a native session never takes the live write path. The isolated host's
 `--native-open` fixture runs the real `EditorView` route offline over an owned
 replica; its UI test types, relaunches and finds the text restored.
@@ -1006,7 +1006,7 @@ its pending keys become a recovery entry, and a barrier that met such a change i
 retried once. IME begin is posted and commit is a barrier; the history is one per replica
 session with grouping decided on the main actor; block-menu availability and copy payloads
 are asked of the session asynchronously. Multi-window stays off; the per-scope registry
-and fan-out are PR08c (below), the collaboration-manager facade PR09. AGENTS.md has the
+and fan-out are PR08c (below), the native live socket PR09a. AGENTS.md has the
 operational detail and the bounds.
 
 **PR08c One replica session per scope, fanned out, with bounded delivery.**
@@ -1021,6 +1021,19 @@ engine selection and the one composition belong to the surface that set them. Ea
 may have 256 deliveries waiting, in its stream or behind marked text; past that it gets one
 reset to the canonical state under a new epoch, keeps only the answers of what came between,
 and holds its keys until the reset, so nothing typed is lost. Multi-window stays off.
+
+**PR09a Native live content over the same replica.** A `NativeCollaborationBinding` per
+replica scope, kept by the registry, joins the document's room when the native switch, the
+Live collaboration preference, a Docs 6 server's advertised socket and the document's update
+ability all hold; the current editor's live switch (A5) is not consulted. The collaboration
+manager only dials the socket. Inbound updates enter the replica through its mailbox and are
+journaled before they are shown; an update that builds on structs the replica lacks is
+refused untouched and fetched again with a fresh SyncStep1, and the number waiting is bounded
+so typing always finds room. Outbound is only what was journaled: the journal publishes each
+local update after its append, and the replica answers a peer's state request in mailbox
+order into the same stream. The HTTP save keeps sending the same outbox and keeps owning
+acknowledgment; the server takes both idempotently. Reconnect, background, permission
+refetch and the failure matrix are PR09b; cursors are PR10.
 
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom

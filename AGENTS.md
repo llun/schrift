@@ -2229,7 +2229,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   treats an unparseable id as unknown, never as a failed sign-in.
   `SignedInUserStore.epoch` moves at every clear, and the Home/Profile `/users/me/`
   writers drop answers whose epoch moved. Close cancels `NativeEditorOpen.reopen`/
-  `refreshInBackground`; the native cache refresh checks currency and discard. No native live socket; a native session never takes the
+  `refreshInBackground`; the native cache refresh checks currency and discard. Native live content is its own socket (PR09a bullet below); a native session never takes the
   live write path. `NativeEditorActivationTests` covers these; the native host's
   `--native-open` fixture runs the real `EditorView` route offline over an owned
   replica (`--reset` clears it) and its UI test types, relaunches and checks the text.
@@ -2865,7 +2865,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   journaled (a late append's save is handed over then), and `NativeEditorOpen` awaits
   the previous close before an open and rechecks its generation and account after the
   off-main restore. Multi-window stays off; the registry, fan-out and bounded delivery
-  are PR08c (bullet below); the collaboration-manager facade is PR09. Tests:
+  are PR08c (bullet below); the live socket is PR09a (bullet below). Tests:
   `ReplicaSessionOrderingTests` (a latching disk gate on `ReplicaStore`'s interrupt hook,
   a mailbox gate on `Hooks.beforeMessage`, fixed client ids: ordering, rebase,
   invalidation, held keys, stale retry, append failure, publication, `onReplicaWork` off
@@ -2920,6 +2920,48 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   close under a slow disk, per-surface epochs, one composition, `drainAll` with the
   shared scheduler, `closeAll(where:)` with an open in flight, sign-out during a pending
   append then reopen, the stream bound and the marked-text bound).
+
+- **PR09a `NativeCollaborationBinding`, native live content over the same replica.**
+  One binding per `ReplicaScope`, kept by `NativeSessionRegistry` beside the scope's journal
+  and scheduler (`liveBinding(for:)`) and stopped when the replica closes. **The gate, in one
+  sentence:** a native document goes live only when the native switch, the Live
+  collaboration preference, a Docs 6 server advertising its collaboration socket
+  (`ServerConfig.supportsNativeLiveCollaboration`, same org as the scope) and the open's
+  `abilities.update` all hold, on a session that types (`nativeLiveCollaborationEligible`;
+  `NativeEditorOpen.startLive` after the open's server-state integration or seed). It never
+  reads `ServerConfig.yWebSocketLiveCollaborationEnabled` (A5's switch for the current
+  editor), and a reader never opens a socket. `DocumentCollaborationManager.nativeTransport`
+  only dials (origin-pinned URL, the config's framing: y-websocket for Docs 6, Hocuspocus
+  before; nil while suspended or working offline) and tracks nothing; the binding owns a
+  plain `DocumentCollaborationSession` with no awareness (PR10). **Inbound:** every
+  step2/update goes to the replica as `.integrate` (journaled as remote before any surface
+  shows it, never in the outbox). At most `inboundBound` (64) wait in the mailbox, so a burst
+  never takes the slots a keystroke needs; past it the frame is skipped. `integrate` refuses
+  an update whose run starts past the store's clock, carries a skip, or names an origin,
+  parent or deletion neither the store nor the update holds
+  (`YUpdate.missesDependencies(in:)`), untouched and without freezing
+  (`NativeLiveError.missingDependencies`); after the first step2, a refused or skipped frame
+  makes the binding send one fresh SyncStep1 once the in-flight ones are answered, and the
+  server's step2 brings what was missing (before it, that step2 brings it anyway). Any other
+  integrate failure (malformed, frozen, a failed append) stops the binding; HTTP keeps saving.
+  **Outbound, journal before publication:** the scope's journal closure
+  (`installTyping`) appends, then calls `binding.outbox.publish`; a peer's SyncStep1 is
+  answered by the replica in mailbox order (`.liveSync`) into the same `Outbox` stream, so
+  frames leave in journal order, once. `.liveSync` answers nothing for a reader
+  (`setWritable(nil)`) or a frozen replica (its graph may hold an unjournaled mutation). The
+  HTTP save path is unchanged and still owns acknowledgment: the server takes the same
+  update from both idempotently, and the handshake offers unsent outbox edits through the
+  step2. Remote format cleanup deletions stay unjournaled and unpublished (every replica,
+  the server's included, derives them). Not yet (PR09b): reconnect with backoff (an ended
+  socket is dialed again only by the next reconnect refresh or reopen), background suspend,
+  abilities refetch on a 1000 close and its `setWritable(nil)` downgrade, 401, server
+  rejection, toggling the preference off mid-session, and the failure matrix.
+  Tests: `NativeLiveSyncTests` (a fake y-websocket relay with its own replica: two and three
+  clients, a web peer's format, duplicate and out-of-order frames, a frame overtaking the
+  first step2, the inbound bound, a failed append publishing nothing, offline edits offered
+  in the handshake, a read-only replica sending nothing, the dependency check),
+  `NativeEditorActivationTests`' gate matrix, `YWebSocketTests`' native transport,
+  `DocumentCollaborationSessionTests`' reader sends and `LiveCollaborationAvailabilityTests`.
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
@@ -4756,7 +4798,7 @@ markdown write endpoint**. Understand this before touching the save path:
   server-support seam remains available to tests. The independent default-off
   `schrift.liveCollaboration` user preference still gates session availability.
   A server permission change mid-session is not re-read by the client; the server enforces
-  write permission, and refetching abilities on reset belongs with native live editing (phase 2 PR09).
+  write permission, and refetching abilities on reset belongs with native live editing (phase 2 PR09b).
   **Switch-on evidence (S4/S5):** on the real yhub server,
   snapshot and live sync for a document filled with every web block were byte-identical;
   Schrift's core re-encoded them identically to yjs 13.6.33; the web cursor arrived as

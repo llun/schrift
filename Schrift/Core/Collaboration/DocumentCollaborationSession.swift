@@ -80,8 +80,9 @@ final class DocumentCollaborationSession {
     /// Produces the state vector for the initial SyncStep1 handshake. Defaults
     /// to the signal-only empty state vector (`Data([0x00])`), so a caller with
     /// no replica wired keeps today's behavior; C2 passes the real replica's
-    /// state vector instead so the peer's step2 reply is an actual diff.
-    private let initialSyncStep1: @MainActor () -> Data
+    /// state vector instead so the peer's step2 reply is an actual diff. Async
+    /// so a native replica, which lives on its own actor (PR09a), can answer.
+    private let initialSyncStep1: @MainActor () async -> Data
     /// Called on the main actor with a peer's step1 state-vector payload
     /// (`SyncMessage.data`) when they request our state. A non-nil return is
     /// sent back as a `.sync` `.step2` frame carrying the diff; `nil` (the
@@ -108,7 +109,7 @@ final class DocumentCollaborationSession {
         canUpdate: Bool = true,
         onRemoteChange: @escaping @MainActor () -> Void = {},
         onSyncUpdate: @escaping @MainActor (Data) -> Void = { _ in },
-        initialSyncStep1: @escaping @MainActor () -> Data = { Data([0x00]) },
+        initialSyncStep1: @escaping @MainActor () async -> Data = { Data([0x00]) },
         onStateRequest: @escaping @MainActor (Data) -> Data? = { _ in nil },
         onInitialSync: @escaping @MainActor () -> Void = {}
     ) {
@@ -141,7 +142,7 @@ final class DocumentCollaborationSession {
             // one-byte empty vector, `Data([0x00])`, so the peer replies with
             // its full update — which we treat as a change signal until a real
             // replica is wired in via `initialSyncStep1`).
-            let payload = SyncMessage(step: .step1, data: initialSyncStep1()).encodedPayload()
+            let payload = SyncMessage(step: .step1, data: await initialSyncStep1()).encodedPayload()
             let frame = HocuspocusMessage(documentName: documentName, type: .sync, payload: payload)
             // A send failure means the socket is already broken; the pump's
             // disconnect event reclassifies the state, so ignore it here.
@@ -199,9 +200,15 @@ final class DocumentCollaborationSession {
     /// same way the handshake's is — the pump's disconnect event reclassifies
     /// the state, so there is nothing more to do here.
     func broadcast(update: Data) async {
-        guard canUpdate else { return }
-        let payload = SyncMessage(step: .update, data: update).encodedPayload()
-        let frame = HocuspocusMessage(documentName: documentName, type: .sync, payload: payload)
+        await send(SyncMessage(step: .update, data: update))
+    }
+
+    /// Sends one y-sync message as a `.sync` frame. A step2 or an update carries
+    /// content, so a reader sends neither; a step1 (asking for state) is always
+    /// allowed. Failures are tolerated like every other send here.
+    func send(_ sync: SyncMessage) async {
+        guard canUpdate || sync.step == .step1 else { return }
+        let frame = HocuspocusMessage(documentName: documentName, type: .sync, payload: sync.encodedPayload())
         try? await transport.send(frame)
     }
 

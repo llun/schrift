@@ -293,6 +293,8 @@ actor DocumentReplicaSession {
             // Evaluated first: an optional call skips its arguments when nil.
             let result = Result { try integrate(update) }
             reply?(result)
+        case .liveSync(let peerVector, let reply):
+            reply(YStateEncoder.encodeStateVector(doc), peerVector.flatMap(missingUpdate(since:)))
         case .requestAvailability(let surfaceID, let blockID, let candidates):
             let actions = candidates.filter { candidate in
                 guard let kind = candidate.kind else { return engine.hasLosslessCopy(blockID) }
@@ -471,9 +473,26 @@ actor DocumentReplicaSession {
         }
     }
 
+    /// What a peer at `vector` lacks. Only journaled state is published: a
+    /// reader (no journal) or a frozen replica, whose graph may hold an
+    /// unjournaled mutation, answers nothing.
+    private func missingUpdate(since vector: Data) -> Data? {
+        guard journal != nil, !engine.nativeWriteFailed,
+            let entries = try? YUpdateDecoder.decodeStateVector(vector)
+        else { return nil }
+        // `uniquingKeysWith`: the vector is wire data and may repeat a client.
+        let since = Dictionary(entries.map { ($0.client, $0.clock) }, uniquingKeysWith: { _, latest in latest })
+        return try? YStateEncoder.encodeStateAsUpdate(doc, since: since)
+    }
+
     private func integrate(_ state: Data) throws {
         let update = state.isEmpty ? Data([0, 0]) : state
         let decoded = try YUpdateDecoder.decode(update)
+        // An update that builds on structs this replica lacks (a live frame
+        // that overtook its dependency) is refused untouched: integrating it
+        // would leave pending structs, which the durable path treats as corrupt
+        // and freezes on. The live binding asks for state again instead.
+        guard !decoded.missesDependencies(in: doc.store) else { throw NativeLiveError.missingDependencies }
         let doc = self.doc
         defer { deliver(to: nil) }
         try engine.durablyIntegrateRemote(

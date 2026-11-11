@@ -655,4 +655,28 @@ final class DocumentCollaborationSessionTests: XCTestCase {
         await waitUntil { session.state == .ended(.closed) }
         XCTAssertEqual(fake.cancelCloseCode, .goingAway)
     }
+
+    // MARK: - Native live sends (PR09a)
+
+    func testAsyncInitialSyncStep1AndAReaderSendsOnlyStateRequests() async throws {
+        let fake = FakeWebSocket()
+        let session = DocumentCollaborationSession(
+            documentName: doc, transport: CollaborationTransport(socket: fake), canUpdate: false,
+            initialSyncStep1: {
+                await Task.yield()
+                return Data([0xAA])
+            })
+        session.start()
+        await waitUntil { fake.sentFrames.count == 1 }
+        await session.send(SyncMessage(step: .update, data: Data([0x01])))
+        await session.send(SyncMessage(step: .step2, data: Data([0x02])))
+        await session.send(SyncMessage(step: .step1, data: Data([0x03])))
+        let steps = try fake.sentFrames.map {
+            try SyncMessage(decodingPayload: HocuspocusMessage(decoding: $0).payload)
+        }
+        XCTAssertEqual(steps.map(\.step), [.step1, .step1], "a reader sends no content")
+        XCTAssertEqual(steps.map(\.data), [Data([0xAA]), Data([0x03])])
+        session.stop()
+        await waitUntil { session.state == .ended(.closed) }
+    }
 }

@@ -431,3 +431,42 @@ extension YStructRecord {
         }
     }
 }
+
+extension YUpdate {
+    /// Whether integrating this update into `store` would leave pending structs
+    /// or deletes: a client run that starts past the store's clock or carries a
+    /// skip, an origin or parent past both the store and this update, or a
+    /// deletion of clocks neither holds. Conservative: a true answer only costs
+    /// the caller a state request (PR09a).
+    func missesDependencies(in store: YStructStore) -> Bool {
+        var reach = store.getStateVector()
+        for block in blocks {
+            guard case let first? = block.structs.first.map(Self.id(of:)) else { continue }
+            guard first.clock <= store.getState(block.client) else { return true }
+            var end = first.clock
+            for record in block.structs {
+                if case .skip = record { return true }
+                end = Self.id(of: record).clock + record.length
+            }
+            reach[block.client] = max(reach[block.client] ?? 0, end)
+        }
+        func known(_ id: YID?) -> Bool { id.map { $0.clock < (reach[$0.client] ?? 0) } ?? true }
+        for block in blocks {
+            for case .item(let item) in block.structs {
+                var parent: YID?
+                if case .id(let id)? = item.parent { parent = id }
+                guard known(item.origin), known(item.rightOrigin), known(parent) else { return true }
+            }
+        }
+        return deleteSet.contains { block in
+            block.ranges.contains { $0.clock + $0.length > (reach[block.client] ?? 0) }
+        }
+    }
+
+    private static func id(of record: YStructRecord) -> YID {
+        switch record {
+        case .item(let item): item.id
+        case .gc(let id, _), .skip(let id, _): id
+        }
+    }
+}

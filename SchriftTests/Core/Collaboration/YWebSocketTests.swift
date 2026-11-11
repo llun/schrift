@@ -261,4 +261,36 @@ final class YWebSocketTests: DocumentCollaborationManagerTestCase {
         // Nothing the writer typed is lost from the shared replica.
         XCTAssertEqual(manager.projectedReplica(for: docID, interlinkingOrigin: nil)?.blocks.count, edited.count)
     }
+
+    // MARK: - Native live transport (PR09a)
+
+    func testNativeTransportDialsTheDocs6RoomWithoutTheManagerTrackingIt() async throws {
+        let spy = ManagerSocketFactorySpy()
+        let manager = await yhubManager(spy, enabled: false)
+        let config = ServerConfig(
+            releaseVersion: "6.0.0", collaborationWsUrl: "wss://untrusted.example/collaboration/ws/v1/team")
+        // The current editor's gate stays shut; the native socket does not read it.
+        XCTAssertNil(manager.session(for: docID, canUpdate: true))
+        let transport = try XCTUnwrap(manager.nativeTransport(for: docID, config: config))
+        XCTAssertEqual(
+            spy.requests.last?.url?.absoluteString,
+            "wss://docs.example.org/collaboration/ws/v1/team/\(docID.uuidString.lowercased())")
+        XCTAssertEqual(manager.activeDocumentCount, 0)
+        let session = DocumentCollaborationSession(
+            documentName: docID.uuidString.lowercased(), transport: transport, wireProtocol: .yWebSocket,
+            initialSyncStep1: { Data([0x00]) })
+        session.start()
+        await waitUntil { spy.sockets.last?.sentFrames.isEmpty == false }
+        XCTAssertEqual(spy.sockets.last?.sentFrames.first?.first, 0, "y-websocket framing, no document prefix")
+        session.stop()
+        manager.suspend()
+        XCTAssertNil(manager.nativeTransport(for: docID, config: config), "no socket while backgrounded")
+    }
+
+    func testNativeTransportStaysClosedWhileWorkingOffline() {
+        let spy = ManagerSocketFactorySpy()
+        let manager = makeManager(offline: true, spy: spy)
+        XCTAssertNil(manager.nativeTransport(for: docID, config: ServerConfig(releaseVersion: "6.0.0")))
+        XCTAssertTrue(spy.sockets.isEmpty)
+    }
 }

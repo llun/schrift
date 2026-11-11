@@ -1,0 +1,419 @@
+import Foundation
+import UIKit
+import XCTest
+
+@testable import Schrift
+
+/// A y-websocket relay in memory, like Docs 6's collaboration server: it holds
+/// its own replica, sends SyncStep1 when a socket connects, answers a step1
+/// with the diff, applies every step2/update and relays it to the other
+/// sockets. Nothing here touches the network.
+@MainActor
+private final class FakeYServer {
+    let doc = YDoc(clientID: 900, gc: true)
+    private var sockets: [FakeWebSocket] = []
+    private var handled: [Int] = []
+
+    init(state: Data) throws {
+        try doc.applyUpdate(YUpdateDecoder.decode(state), origin: .remote)
+    }
+
+    static func frame(_ step: SyncStep, _ data: Data) -> Data {
+        CollaborationWireProtocol.yWebSocket.encode(
+            HocuspocusMessage(
+                documentName: "", type: .sync, payload: SyncMessage(step: step, data: data).encodedPayload()))
+    }
+
+    /// The sync messages `socket` sent, in order.
+    static func sent(_ socket: FakeWebSocket) -> [SyncMessage] {
+        socket.sentFrames.compactMap { data in
+            guard let message = try? CollaborationWireProtocol.yWebSocket.decode(data, documentName: ""),
+                message.type == 0
+            else { return nil }
+            return try? SyncMessage(decodingPayload: message.payload)
+        }
+    }
+
+    func connect() -> (CollaborationTransport, FakeWebSocket) {
+        let socket = FakeWebSocket()
+        sockets.append(socket)
+        handled.append(0)
+        socket.deliver(message: Self.frame(.step1, YStateEncoder.encodeStateVector(doc)))
+        return (CollaborationTransport(socket: socket, wireProtocol: .yWebSocket, documentName: "doc"), socket)
+    }
+
+    /// Handles everything the clients sent since the last call.
+    func pump() throws {
+        for (index, socket) in sockets.enumerated() {
+            let frames = Self.sent(socket)
+            while handled[index] < frames.count {
+                let message = frames[handled[index]]
+                handled[index] += 1
+                switch message.step {
+                case .step1:
+                    let entries = try YUpdateDecoder.decodeStateVector(message.data)
+                    let since = Dictionary(entries.map { ($0.client, $0.clock) }, uniquingKeysWith: { _, b in b })
+                    socket.deliver(
+                        message: Self.frame(.step2, try YStateEncoder.encodeStateAsUpdate(doc, since: since)))
+                case .step2, .update:
+                    try apply(message.data, relayExcept: index)
+                }
+            }
+        }
+    }
+
+    /// A web peer's edit: applied here and relayed to every client.
+    func peerEdit(_ update: Data) throws { try apply(update, relayExcept: nil) }
+
+    /// Applied here only: a client learns of it from a later step2.
+    func applyUnrelayed(_ update: Data) throws {
+        try doc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote)
+    }
+
+    private func apply(_ update: Data, relayExcept origin: Int?) throws {
+        try doc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote)
+        for (index, socket) in sockets.enumerated() where index != origin {
+            socket.deliver(message: Self.frame(.update, update))
+        }
+    }
+
+    func settle(
+        timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line,
+        until condition: @MainActor () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            try pump()
+            if condition() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try pump()
+        if !condition() { XCTFail("the clients did not converge in \(timeout)s", file: file, line: line) }
+    }
+}
+
+/// PR09a: `NativeCollaborationBinding` over real durable replica sessions and
+/// a fake y-websocket server. Each client is its own device: its own store,
+/// registry and owner. The journal closure is the production one
+/// (`NativeEditorOpen.installTyping`): append, then publish.
+@MainActor
+final class NativeLiveSyncTests: NativeEditingTestCase {
+    private struct Client {
+        let registry: NativeSessionRegistry
+        let store: ReplicaStore
+        let scope: ReplicaScope
+        let session: NativeEditorSession
+        let binding: NativeCollaborationBinding
+    }
+
+    private let documentID = UUID()
+    private var nextPeer: UInt32 = 40
+
+    private func seedState() -> Data { BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID) }
+
+    private func makeClient(
+        state: Data? = nil, hooks: DocumentReplicaSession.Hooks = .init(),
+        interrupt: (@Sendable (ReplicaStore.Operation, ReplicaStore.Boundary) throws -> Void)? = nil
+    ) async throws -> Client {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let scope = ReplicaScope(
+            serverOrigin: "https://example.test", ownerUserID: UUID(), org: "docs", documentID: documentID)
+        let store = ReplicaStore(directory: directory, interrupt: interrupt)
+        _ = try store.create(for: scope, checkpoint: state ?? seedState())
+        let registry = NativeSessionRegistry()
+        addTeardownBlock {
+            await registry.closeAll().value
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let session = try await unwrapped(registry.open(store: store, scope: scope, hooks: hooks))
+        let binding = try unwrapped(registry.liveBinding(for: scope))
+        let outbox = binding.outbox
+        registry.setWritable(
+            { command, update in
+                try store.append(
+                    update, for: scope, commandID: command.id, baseRevision: command.baseRevision, origin: .local)
+                outbox.publish(update)
+            }, for: scope)
+        session.enableTyping(persist: nil)
+        return Client(registry: registry, store: store, scope: scope, session: session, binding: binding)
+    }
+
+    @discardableResult
+    private func connect(_ client: Client, to server: FakeYServer) -> FakeWebSocket {
+        let (transport, socket) = server.connect()
+        client.binding.connect(transport: transport, wireProtocol: .yWebSocket, documentName: "doc")
+        return socket
+    }
+
+    private func type(_ text: String, _ client: Client, _ blockID: String, at offset: Int) async throws {
+        let session = client.session
+        session.textView.selectedRange = NSRange(location: try location(session, blockID, offset), length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText(text)
+        let settled = await session.settle()
+        XCTAssertTrue(settled)
+    }
+
+    private func updates(_ socket: FakeWebSocket) -> [Data] {
+        FakeYServer.sent(socket).filter { $0.step == .update }.map(\.data)
+    }
+
+    private func step1Count(_ socket: FakeWebSocket) -> Int {
+        FakeYServer.sent(socket).filter { $0.step == .step1 }.count
+    }
+
+    /// A peer replica of the server's current state, as a web client has it.
+    private func peer(of server: FakeYServer) throws -> YDoc {
+        nextPeer += 1
+        let peer = YDoc(clientID: UInt(nextPeer), gc: true)
+        try peer.applyUpdate(YUpdateDecoder.decode(YStateEncoder.encodeStateAsUpdate(server.doc)), origin: .remote)
+        return peer
+    }
+
+    private func outboxCount(_ client: Client) throws -> Int {
+        try XCTUnwrap(client.store.manifest(for: client.scope)).outbox.count
+    }
+
+    // MARK: - Two and three clients
+
+    func testTwoNativeClientsSyncBothWaysAndPublishEachEditOnce() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient()
+        let b = try await makeClient()
+        let socketA = connect(a, to: server)
+        let socketB = connect(b, to: server)
+        try await server.settle { self.step1Count(socketA) == 1 && self.step1Count(socketB) == 1 }
+
+        try await type("A", a, Self.firstID, at: 5)
+        try await server.settle { self.texts(b.session)[0] == "FirstA paragraph." }
+        try await type("B", b, Self.firstID, at: 0)
+        try await server.settle { self.texts(a.session)[0] == "BFirstA paragraph." }
+
+        XCTAssertEqual(projection(server.doc), a.session.surface.blocks)
+        XCTAssertEqual(a.session.surface.blocks, b.session.surface.blocks)
+        XCTAssertEqual(updates(socketA).count, 1, "one keystroke, one frame")
+        XCTAssertEqual(updates(socketB).count, 1)
+        // The frame is exactly the journaled local entry, and a remote edit
+        // never enters the HTTP outbox.
+        let journal = try XCTUnwrap(a.store.restore(for: a.scope)).updates
+        XCTAssertTrue(journal.contains(try XCTUnwrap(updates(socketA).first)))
+        XCTAssertEqual(try outboxCount(a), 1)
+        XCTAssertEqual(try outboxCount(b), 1)
+        XCTAssertFalse(a.session.state.frozen)
+    }
+
+    func testThreeClientsConvergeOnAWebPeerFormatAndLaterTyping() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient()
+        let b = try await makeClient()
+        let socketA = connect(a, to: server)
+        let socketB = connect(b, to: server)
+        try await server.settle { self.step1Count(socketA) == 1 && self.step1Count(socketB) == 1 }
+
+        let web = try peer(of: server)
+        defer { web.destroy() }
+        try server.peerEdit(
+            BlockNoteWriter(doc: web).formatRange(block: Self.thirdID, range: 0..<5, attributes: ["bold": "{}"]))
+        func boldFirstRun(_ client: Client) -> Bool {
+            (try? block(client.session, Self.thirdID).runs.first?.marks.map(\.key)) == ["bold"]
+        }
+        try await server.settle { boldFirstRun(a) && boldFirstRun(b) }
+        try await type("!", a, Self.thirdID, at: 16)
+        try await server.settle { self.texts(b.session)[2] == "Third paragraph.!" }
+
+        XCTAssertEqual(projection(server.doc), a.session.surface.blocks)
+        XCTAssertEqual(a.session.surface.blocks, b.session.surface.blocks)
+        try web.applyUpdate(
+            YUpdateDecoder.decode(YStateEncoder.encodeStateAsUpdate(server.doc)), origin: .remote)
+        XCTAssertEqual(projection(web), a.session.surface.blocks, "the web peer converges too")
+    }
+
+    // MARK: - Delivery order
+
+    func testDuplicateAndOutOfOrderUpdatesConvergeWithoutFreezing() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient()
+        let socket = connect(a, to: server)
+        try await server.settle { self.step1Count(socket) == 1 && self.a(isLive: a) }
+
+        let web = try peer(of: server)
+        defer { web.destroy() }
+        let writer = BlockNoteWriter(doc: web)
+        let first = try writer.replaceText(block: Self.firstID, range: 0..<0, with: "x")
+        let second = try writer.replaceText(block: Self.firstID, range: 1..<1, with: "y")
+        try server.applyUnrelayed(first)
+        try server.applyUnrelayed(second)
+        // The second overtakes the first, and the first arrives twice.
+        socket.deliver(message: FakeYServer.frame(.update, second))
+        socket.deliver(message: FakeYServer.frame(.update, first))
+        socket.deliver(message: FakeYServer.frame(.update, first))
+        try await server.settle { self.texts(a.session)[0] == "xyFirst paragraph." }
+
+        XCTAssertEqual(step1Count(socket), 2, "the refused update is fetched again with one SyncStep1")
+        XCTAssertFalse(a.session.state.frozen, "a missing dependency never freezes the editor")
+        let replay = try XCTUnwrap(a.store.restore(for: a.scope))
+        XCTAssertFalse(replay.updates.isEmpty)
+        let restored = try await makeClientRestoring(a)
+        XCTAssertEqual(restored, a.session.surface.blocks, "the journal replays with no pending structs")
+    }
+
+    func testAnUpdateThatOvertakesTheInitialStepTwoWaitsForIt() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let web = try peer(of: server)
+        defer { web.destroy() }
+        let writer = BlockNoteWriter(doc: web)
+        let first = try writer.replaceText(block: Self.firstID, range: 0..<0, with: "x")
+        let second = try writer.replaceText(block: Self.firstID, range: 1..<1, with: "y")
+        try server.applyUnrelayed(first)
+        try server.applyUnrelayed(second)
+        let a = try await makeClient()
+        let socket = connect(a, to: server)
+        // Before the server answers our SyncStep1, a relayed frame that needs
+        // the first edit arrives.
+        socket.deliver(message: FakeYServer.frame(.update, second))
+        try await server.settle { self.texts(a.session)[0] == "xyFirst paragraph." }
+        XCTAssertFalse(a.session.state.frozen)
+        XCTAssertEqual(projection(server.doc), a.session.surface.blocks)
+    }
+
+    func testAnInboundBurstPastTheBoundIsFetchedAgain() async throws {
+        let gate = Latch(open: true)
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient(hooks: .init(beforeMessage: { gate.pass() }))
+        let socket = connect(a, to: server)
+        try await server.settle { self.step1Count(socket) == 1 && self.a(isLive: a) }
+        let web = try peer(of: server)
+        defer { web.destroy() }
+        let writer = BlockNoteWriter(doc: web)
+        gate.close()
+        let burst = NativeCollaborationBinding.inboundBound + 6
+        for index in 0..<burst {
+            try server.peerEdit(writer.replaceText(block: Self.thirdID, range: index..<index, with: "z"))
+        }
+        try server.pump()
+        try await Task.sleep(for: .milliseconds(100))
+        gate.open()
+        let expected = String(repeating: "z", count: burst) + "Third paragraph."
+        try await server.settle { self.texts(a.session)[2] == expected }
+        XCTAssertEqual(step1Count(socket), 2, "the skipped frames come back in one step2")
+        XCTAssertFalse(a.session.state.frozen)
+    }
+
+    // MARK: - Journal before publication
+
+    func testOnlyJournaledBytesAreSentAndAFrozenReplicaAnswersNothing() async throws {
+        let failing = Locked(false)
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient(interrupt: { operation, boundary in
+            if failing.value, operation == .append, boundary == .payloadWritten {
+                throw CocoaError(.fileWriteNoPermission)
+            }
+        })
+        let socket = connect(a, to: server)
+        try await server.settle { self.step1Count(socket) == 1 && self.a(isLive: a) }
+        try await type("A", a, Self.firstID, at: 0)
+        try await server.settle { self.updates(socket).count == 1 }
+
+        failing.value = true
+        try await type("B", a, Self.firstID, at: 1)
+        XCTAssertTrue(a.session.state.frozen, "the failed append froze authoring")
+        let sent = socket.sentFrames.count
+        // A peer asking for our state now gets nothing: the graph may hold the
+        // unjournaled keystroke.
+        socket.deliver(message: FakeYServer.frame(.step1, Data([0x00])))
+        await a.session.settle()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(socket.sentFrames.count, sent, "nothing unjournaled leaves")
+        try server.pump()
+        XCTAssertEqual(texts(a.session)[0].first, "A")
+        XCTAssertEqual(projection(server.doc)[0].runs.map(\.text).joined(), "AFirst paragraph.")
+    }
+
+    func testEditsJournaledBeforeConnectingAreOfferedInTheHandshake() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient()
+        try await type("Offline ", a, Self.firstID, at: 0)
+        XCTAssertEqual(try outboxCount(a), 1)
+        let socket = connect(a, to: server)
+        try await server.settle { self.text(of: self.projection(server.doc)[0]) == "Offline First paragraph." }
+        XCTAssertTrue(updates(socket).isEmpty, "the server's SyncStep1 is answered with a step2, not a replay")
+        XCTAssertEqual(try outboxCount(a), 1, "the HTTP outbox still owns the acknowledgment")
+    }
+
+    // MARK: - Readers
+
+    func testAReadOnlyReplicaReceivesButSendsNothing() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient()
+        let socket = connect(a, to: server)
+        try await server.settle { self.step1Count(socket) == 1 && self.a(isLive: a) }
+        XCTAssertTrue(a.registry.setWritable(nil, for: a.scope))
+        await a.session.settle()
+        let sent = socket.sentFrames.count
+
+        let web = try peer(of: server)
+        defer { web.destroy() }
+        try server.peerEdit(BlockNoteWriter(doc: web).replaceText(block: Self.firstID, range: 0..<0, with: "w"))
+        try await server.settle { self.texts(a.session)[0] == "wFirst paragraph." }
+        try await type("r", a, Self.firstID, at: 0)
+        socket.deliver(message: FakeYServer.frame(.step1, Data([0x00])))
+        try await Task.sleep(for: .milliseconds(100))
+        await a.session.settle()
+        XCTAssertEqual(socket.sentFrames.count, sent, "a reader sends no edit and answers no SyncStep1")
+        XCTAssertEqual(texts(a.session)[0], "wFirst paragraph.")
+    }
+
+    // MARK: - Dependency check
+
+    func testMissingDependenciesAreFoundBeforeIntegration() throws {
+        let doc = try makeDoc(clientID: 2)
+        defer { doc.destroy() }
+        let web = try makeDoc(clientID: 3)
+        defer { web.destroy() }
+        let writer = BlockNoteWriter(doc: web)
+        let first = try YUpdateDecoder.decode(writer.replaceText(block: Self.firstID, range: 0..<0, with: "x"))
+        let second = try YUpdateDecoder.decode(writer.replaceText(block: Self.firstID, range: 1..<1, with: "y"))
+        let deletion = try YUpdateDecoder.decode(writer.replaceText(block: Self.firstID, range: 0..<2, with: ""))
+        XCTAssertFalse(first.missesDependencies(in: doc.store))
+        XCTAssertTrue(second.missesDependencies(in: doc.store), "a run that starts past the store's clock")
+        XCTAssertTrue(deletion.missesDependencies(in: doc.store), "a deletion of clocks the store lacks")
+        try doc.applyUpdate(first, origin: .remote)
+        XCTAssertFalse(second.missesDependencies(in: doc.store))
+        let foreign = YUpdate(
+            blocks: [
+                YClientBlock(
+                    client: 77,
+                    structs: [
+                        .item(
+                            YItemRecord(
+                                id: YID(client: 77, clock: 0), info: 0x80 | 4, origin: YID(client: 55, clock: 3),
+                                rightOrigin: nil, parent: nil, parentSub: nil, content: .string("q")))
+                    ])
+            ], deleteSet: [])
+        XCTAssertTrue(foreign.missesDependencies(in: doc.store), "an origin no one holds")
+    }
+
+    // MARK: - Helpers
+
+    private func a(isLive client: Client) -> Bool { client.binding.session?.state == .live }
+
+    /// The client's journal replayed into a fresh replica, as a cold relaunch does.
+    private func makeClientRestoring(_ client: Client) async throws -> [BlockSnapshot] {
+        let restored = try XCTUnwrap(client.store.restore(for: client.scope))
+        let replica = YDoc(clientID: 99)
+        defer { replica.destroy() }
+        try replica.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
+        for update in restored.updates { try replica.applyUpdate(YUpdateDecoder.decode(update), origin: .remote) }
+        XCTAssertNil(replica.store.pendingStructs)
+        XCTAssertNil(replica.store.pendingDs)
+        return projection(replica)
+    }
+}

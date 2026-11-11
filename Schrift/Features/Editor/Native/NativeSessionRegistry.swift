@@ -22,6 +22,8 @@ final class NativeSessionRegistry {
         /// Opens awaiting the restore or their attach: the replica stays.
         var opening = 0
         var scheduler: NativeReplicaSaveScheduler?
+        /// The scope's live socket binding (PR09a), stopped with the replica.
+        var live: NativeCollaborationBinding?
         var isWritable = false
         /// Set once the replica's close was posted.
         var closed: Task<Void, Never>?
@@ -82,6 +84,18 @@ final class NativeSessionRegistry {
         let scheduler = make()
         entries[scope]?.scheduler = scheduler
         return scheduler
+    }
+
+    /// The scope's one live binding (PR09a), made over its replica on first
+    /// use; its outbox is what the scope's journal publishes into. Nil when the
+    /// scope has no open surface.
+    func liveBinding(for scope: ReplicaScope) -> NativeCollaborationBinding? {
+        guard let entry = entries[scope] else { return nil }
+        if let live = entry.live { return live }
+        guard let replica = entry.surfaces.first?.replica else { return nil }
+        let live = NativeCollaborationBinding(replica: replica)
+        entry.live = live
+        return live
     }
 
     /// Installs (or, nil, removes) the scope's journal: the replica is
@@ -148,6 +162,7 @@ final class NativeSessionRegistry {
     private func retire(_ entry: Entry, scope: ReplicaScope) -> Task<Void, Never> {
         if let closed = entry.closed { return closed }
         if entries[scope] === entry { entries[scope] = nil }
+        entry.live?.stop()
         let task = Task {
             guard let replica = try? await entry.replica.value else { return }
             replica.mailbox.post(.close)
