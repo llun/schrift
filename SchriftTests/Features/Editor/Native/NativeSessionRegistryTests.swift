@@ -308,6 +308,46 @@ final class NativeSessionRegistryTests: NativeEditingTestCase {
         XCTAssertFalse(staying.isClosed)
     }
 
+    // 8b
+    func testCloseAllDuringARestoreLetsTheScopeReopen() async throws {
+        let fixture = try makeFixture()
+        // Every store shares one lock: an append held inside it (on another
+        // store) holds the restore of `fixture` before it can attach.
+        let disk = Latch()
+        addTeardownBlock { disk.open() }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let other = ReplicaStore(directory: directory, interrupt: diskGate(disk))
+        let otherScope = ReplicaScope(
+            serverOrigin: "https://example.test", ownerUserID: UUID(), org: "docs", documentID: UUID())
+        _ = try other.create(for: otherScope, checkpoint: BlockNoteYjs.encode(Self.seedBlocks(), clientID: 2))
+        let held = Task.detached {
+            try other.append(Data([0, 0]), for: otherScope, commandID: UUID(), baseRevision: 0, origin: .local)
+        }
+        await waitUntil { disk.waiting == 1 }
+        let inFlight = Task { @MainActor in
+            try await fixture.registry.open(store: fixture.store, scope: fixture.scope)
+        }
+        await waitUntil { fixture.registry.openScopes.contains(fixture.scope) }
+        // A sign-in change lands while the restore waits.
+        let closed = fixture.registry.closeAll()
+        disk.open()
+        _ = try? await held.value
+        let late = try await inFlight.value
+        XCTAssertNil(late, "the dropped open never attaches")
+        let reopened = Locked<NativeEditorSession?>(nil)
+        let reopen = Task { @MainActor in
+            reopened.value = try await fixture.registry.open(store: fixture.store, scope: fixture.scope)
+        }
+        await waitUntil { reopened.value != nil }
+        // Without the close, both tasks would wait forever: fail instead of hanging.
+        guard reopened.value != nil else {
+            return XCTFail("the never-attached replica closed, so the scope reopens")
+        }
+        await closed.value
+        _ = try? await reopen.value
+    }
+
     // 9
     func testSignOutDuringAPendingAppendJournalsItAndAReopenShowsIt() async throws {
         let disk = Latch()

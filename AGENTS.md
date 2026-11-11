@@ -2893,7 +2893,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   (scene `.background`, beside `EditorView`'s own flush) flushes every scheduler at
   once, then again after each surface's drain marker; `closeAll(where:)` (sign-out, and
   every `SessionStore.signInGeneration` change, when mounted native editors reopen
-  anyway) closes matching surfaces and replicas, and an open still waiting returns nil.
+  anyway) closes matching surfaces and replicas, and an open still waiting returns nil
+  (a replica closed before any attach starts its loop in `waitUntilClosed` to handle the close).
   **Fan-out:** every surface gets every change; a result goes only to the surface whose
   command it answers. Epochs, unseen rings and selection `seq`s are per surface. The one
   engine selection belongs to the surface that set it last (a select or a command) and

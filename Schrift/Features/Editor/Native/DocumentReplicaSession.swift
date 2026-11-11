@@ -231,6 +231,9 @@ actor DocumentReplicaSession {
     /// Returns once the session closed (`.close` was handled).
     func waitUntilClosed() async {
         guard !isClosed else { return }
+        // A replica closed before any attach (an open dropped during its
+        // restore) has no loop yet to handle the `.close`.
+        if loop == nil { loop = Task { await self.run() } }
         await withCheckedContinuation { closeWaiters.append($0) }
     }
 
