@@ -2809,25 +2809,27 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   failed or refused append rolls the display back to canonical, freezes authoring and
   turns the dropped text (with held keys, even when no prediction was dropped) into an
   `.orphaned` `ProvisionalRecovery` banner entry, and nothing waits to be copied. **The
-  composition rule:** while a composition owns the view (`compositionOwnsView`:
-  `isActive || isResolving || markedTextRange != nil`, or the drain of what waited for it),
-  the surface's whole `ReplicaDelivery`s queue up unapplied, results included, a local
-  storage failure waits too, and nothing reads the view's offsets; its own commit or cancel
-  answer (a local one when the post fails: orphaned for a commit, cancelled for a cancel)
-  resolves it, releases storage like a patch, and applies every queued delivery in order
-  through `apply(_:)`; then the failure that waited, stale retries (the composition's caret
-  carried as the user's selection), held keys and marked text the keyboard sent while the
-  commit was in flight (held, never refused) run, in that order (no surface freeze, no
-  buffered echoes, no deferred rollback). Held marked text is the keyboard's: Return
-  commits it, a candidate or the next marked string replaces it, Backspace edits it, and a
-  focus loss or a failure keeps it as a recovery entry. A composition's own rebuild maps as
-  one span change for a barrier's retry and user selection, and only a committed
-  composition's caret is carried as the user's selection. A begin carries its epoch: one
-  from an epoch the session already invalidated is not captured, and its commit is
-  orphaned. A cut while input is held is refused with the busy notice. A commit or cancel
-  that could not be posted (a full mailbox) leaves the session's engine composing: authoring
-  is frozen, and the read-only display of that block stops following peers until the
-  editor is reopened (accepted). An echo spelled as a whole-block rebuild settles from that
+  composition rule:** while marked text owns the view (`compositionOwnsView`: `isActive ||
+  markedTextRange != nil`), the surface's whole `ReplicaDelivery`s queue up unapplied,
+  results included, a local storage failure waits too, and nothing reads the view's
+  offsets. **The commit is a predicted command** (option A for IME too): it is shown at
+  once as a prediction, posted with its epoch, and the composition stops owning the view
+  there and then (no resolving window); the queue then applies in order through `apply(_:)`
+  (rebasing through the commit like any typed key), followed by the failure that waited,
+  stale retries and held keys. Its rebuild is stamped as its echo and confirms or repairs
+  it; the session keeps that echo out of the surface's unseen ring unless the rebuild
+  folded in changes the composition discarded, so the next begin (posted at the
+  pre-commit base) rebases cleanly, and after a folded rebuild comes back orphaned as a
+  recovery entry. A commit whose target is gone, or whose begin was never captured, ends
+  the epoch like an unrebaseable key (the rollback keeps its text); one from an epoch
+  already invalidated is answered orphaned. Cancel posts with nothing to show. While a
+  barrier is in flight the commit is recorded as a shown change and its caret as the
+  user's selection; the editor's own placements are never taken for the user's. A begin
+  carries its epoch: one from an invalidated epoch is not captured. A cut while input is
+  held is refused with the busy notice. A begin or cancel that could not be posted (a full
+  mailbox) freezes authoring; the session's engine may stay composing, and the read-only
+  display of that block stops following peers until the editor is reopened (accepted).
+  An echo spelled as a whole-block rebuild settles from that
   snapshot; a predicted block a concurrent change showed as canonical keeps its
   predictions off screen until the invalidation, so later patches are not shifted by them. **Rebase:** the session keeps, per surface, the changes it had not seen
   (`unseen`, every patch but its own predicted echoes, `ringCapacity` 256); a predicted

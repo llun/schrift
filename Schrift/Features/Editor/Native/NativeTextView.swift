@@ -43,17 +43,13 @@ final class NativeTextView: UITextView {
         guard let inputCoordinator, isEditable else { return }
         guard let markedText, !markedText.isEmpty else {
             dropMarkedText()
-            inputCoordinator.endHeldMarkedText(committing: false)
             inputCoordinator.cancelComposition()
             return
         }
         guard inputCoordinator.beginComposition(markedText: markedText) else {
-            // Behind a commit still in flight the marked text is held, not refused.
-            if !inputCoordinator.holdMarkedText(markedText) { inputCoordinator.refuseComposition() }
+            inputCoordinator.refuseComposition()
             return
         }
-        // The keyboard's marked string is cumulative: a held one is superseded.
-        inputCoordinator.endHeldMarkedText(committing: false)
         isApplyingMarkedText = true
         apply()
         isApplyingMarkedText = false
@@ -63,10 +59,6 @@ final class NativeTextView: UITextView {
     /// displays and reconciles it to the projection, so clear the marked
     /// state first.
     override func unmarkText() {
-        if let inputCoordinator, inputCoordinator.heldMarkedText != nil {
-            inputCoordinator.endHeldMarkedText(committing: true)
-            return
-        }
         guard let inputCoordinator, inputCoordinator.composition.isActive else {
             super.unmarkText()
             return
@@ -83,14 +75,6 @@ final class NativeTextView: UITextView {
         if isApplyingMarkedText {
             super.replace(range, withText: text)
             return
-        }
-        if inputCoordinator.heldMarkedText != nil {
-            // Backspace edits held marked text; a candidate replaces it.
-            if text.isEmpty {
-                deleteBackward()
-                return
-            }
-            inputCoordinator.endHeldMarkedText(committing: false)
         }
         if inputCoordinator.composition.isActive {
             // A keyboard committing a candidate over the marked text; any other
@@ -117,12 +101,6 @@ final class NativeTextView: UITextView {
         if isApplyingMarkedText {
             super.insertText(text)
             return
-        }
-        // Like a composition: Return commits held marked text, a candidate replaces it.
-        if inputCoordinator.heldMarkedText != nil {
-            let isReturn = text == "\n" || text == "\r"
-            inputCoordinator.endHeldMarkedText(committing: isReturn)
-            if isReturn { return }
         }
         // Return and Tab (a hardware Tab without the key command below) are
         // structural; while a barrier is in flight every key is held (PR08b).
@@ -158,10 +136,10 @@ final class NativeTextView: UITextView {
 
     override func deleteBackward() {
         guard let inputCoordinator, isEditable else { return }
-        if inputCoordinator.composition.isActive || inputCoordinator.heldMarkedText != nil {
-            // Backspace edits the provisional text (or the held one), never
-            // committed storage; an emptied composition cancels.
-            let marked = (inputCoordinator.heldMarkedText ?? markedTextRange.flatMap { text(in: $0) } ?? "") as NSString
+        if inputCoordinator.composition.isActive {
+            // Backspace edits the provisional text, never committed storage;
+            // an emptied composition cancels.
+            let marked = (markedTextRange.flatMap { text(in: $0) } ?? "") as NSString
             // An empty string has no composed character to find (it throws).
             let shorter =
                 marked.length == 0

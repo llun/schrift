@@ -173,8 +173,10 @@ final class NativeCompositionTests: DocumentEngineTestCase {
         session.textView.unmarkText()
         await harness.settle()
 
+        // Option A (PR08b): the commit shows as a prediction before its append,
+        // like a typed key; publication (the save) still waits for the journal.
         XCTAssertEqual(harness.log.blocksAtPersist.count, 1)
-        XCTAssertEqual(harness.log.blocksAtPersist.first, before, "the rebuild waits for the journal")
+        XCTAssertEqual(harness.log.blocksAtPersist.first?.first?.runs.map(\.text).joined(), "日本First paragraph.")
         XCTAssertNotEqual(session.surface.blocks, before)
         assertMatches(session)
     }

@@ -159,6 +159,14 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         if let stamp = ownEcho {
             // This surface's own predicted keystroke, now journaled.
             lastNativeStamp = stamp
+            // A composition commit whose rebuild had to reset the list: the reset shows it.
+            if patch.changes.contains(where: { if case .reset = $0 { true } else { false } }) {
+                predictions.removeAll { $0.commandID == stamp.commandID }
+                var plain = patch
+                plain.nativeCommand = nil
+                applyPatch(plain)
+                return
+            }
             confirm(stamp.commandID, patch: patch)
             return
         }

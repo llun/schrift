@@ -246,8 +246,8 @@ actor DocumentReplicaSession {
             else { return }
             try? engine.compositionBegan(blockID: blockID, replacing: range)
             deliver(to: surfaceID)
-        case .compositionCommit(let surfaceID, let commandID, let text):
-            commitComposition(surfaceID: surfaceID, commandID: commandID, text: text)
+        case .compositionCommit(let surfaceID, let epoch, let commandID, let text):
+            commitComposition(surfaceID: surfaceID, epoch: epoch, commandID: commandID, text: text)
         case .compositionCancel(let surfaceID):
             if engine.isComposing { try? engine.compositionCancelled() }
             deliver(to: surfaceID, result: .composition(commandID: nil, .cancelled), selection: true)
@@ -370,31 +370,43 @@ actor DocumentReplicaSession {
             timings: ReplicaTimings(engine: ContinuousClock.now - started, journal: journalTime))
     }
 
-    private func commitComposition(surfaceID: UUID, commandID: UUID, text: String) {
+    /// A commit is a predicted command: the surface shows its text already.
+    /// Its rebuild is the surface's own echo, kept out of its unseen ring
+    /// unless discarded peer changes were folded in. A commit whose target
+    /// is gone ends the surface's epoch like an unrebaseable key.
+    private func commitComposition(surfaceID: UUID, epoch: UInt64, commandID: UUID, text: String) {
+        guard surfaces[surfaceID]?.epoch == epoch else {
+            // The surface rolls this epoch back already.
+            if engine.isComposing { try? engine.compositionCancelled() }
+            deliver(to: surfaceID, result: .composition(commandID: commandID, .orphaned))
+            return
+        }
         guard engine.isComposing else {
             // The begin never captured its target: nothing is written.
-            deliver(to: surfaceID, result: .composition(commandID: commandID, .orphaned), selection: true)
+            invalidate(surfaceID, commandID: commandID)
             return
         }
         // A composition commit is one undo step.
         history?.stopCapturing()
         defer { history?.stopCapturing() }
         let journal = self.journal
-        let outcome: ReplicaResult.CompositionResult
         do {
             switch try engine.compositionCommitted(
                 text: text, commandID: commandID, persist: { try journal?($0, $1) })
             {
-            case .committed: outcome = .committed
-            case .orphaned: outcome = .orphaned
+            case .committed(_, let folds):
+                if !folds { predicting = (surfaceID, commandID) }
+                defer { predicting = nil }
+                deliver(to: surfaceID, result: .composition(commandID: commandID, .committed), selection: true)
+            case .orphaned:
+                invalidate(surfaceID, commandID: commandID)
             }
         } catch {
-            // A boundary refusal leaves the engine composing; end it so the
-            // surface unfreezes. A failed append keeps the entry on disk.
+            // A boundary refusal leaves the engine composing; end it. A failed
+            // append keeps the entry on disk.
             if engine.isComposing { try? engine.compositionCancelled() }
-            outcome = .failed
+            deliver(to: surfaceID, result: .composition(commandID: commandID, .failed), selection: true)
         }
-        deliver(to: surfaceID, result: .composition(commandID: commandID, outcome), selection: true)
     }
 
     private func integrate(_ state: Data) throws {

@@ -27,7 +27,9 @@ final class NativeSelectionCoordinator {
     private let post: (UInt64, EditorSelection?) -> Void
     private let surface: NativeTextSurface
     private weak var view: NativeTextView?
-    private var isRestoring = false
+    /// True while the editor itself sets the view's selection (a placement
+    /// or a restore): UIKit's callback for it is not the user's.
+    private(set) var isRestoring = false
     private var previous: NSRange?
     private(set) var isBackward = false
     /// How many restores set the view's selection. A programmatic set sends no

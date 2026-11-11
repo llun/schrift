@@ -1044,7 +1044,7 @@ final class DocumentEngine {
     @discardableResult
     func compositionCommitted(text: String) throws -> Data {
         switch try commitComposition(text: text, persist: nil) {
-        case .committed(let update): return update
+        case .committed(let update, _): return update
         case .orphaned: return Data([0, 0])
         }
     }
@@ -1102,7 +1102,7 @@ final class DocumentEngine {
         }
         guard !isDetached else {
             nativeCommand = nil
-            return .committed(update)
+            return .committed(update, foldsOtherChanges: true)
         }
         unconfirmedNativeUpdate = update
         do {
@@ -1128,8 +1128,12 @@ final class DocumentEngine {
         nativeCommand = nil
         // The snapshot also contains discarded peer changes, so an optimistic
         // surface must apply it even when it already displayed the marked text.
-        finishComposition(origin: .other)
-        return .committed(update)
+        // It is the commit's echo: stamped with its command.
+        let folds = composition?.foldsOtherChanges ?? true
+        finishComposition(
+            origin: .other,
+            echo: NativePatchStamp(commandID: command.id, baseRevision: command.baseRevision, emission: nativeEmission))
+        return .committed(update, foldsOtherChanges: folds || isWholeListDeferred)
     }
 
     /// No write. The caret returns to the resolved start of the replaced span,
@@ -1144,7 +1148,7 @@ final class DocumentEngine {
         finishComposition(origin: .other)
     }
 
-    private func finishComposition(origin: BlockPatchOrigin) {
+    private func finishComposition(origin: BlockPatchOrigin, echo: NativePatchStamp? = nil) {
         guard let composing = composition else { return }
         let change: BlockChange
         if !composing.requiresReset, builder.index.isCanonical,
@@ -1156,7 +1160,7 @@ final class DocumentEngine {
                 NativeBlockProjection.project(doc, generation: builder.index.generation).blocks.map(BlockSnapshot.init))
         }
         composition = nil
-        buffered.append(.patch(BlockPatch([change], origin: origin)))
+        buffered.append(.patch(BlockPatch([change], origin: origin, nativeCommand: echo)))
         buffered.append(.compositionEnded(compositionGeneration))
         flush()
     }
@@ -1293,7 +1297,9 @@ final class DocumentEngine {
 /// was deleted or replaced: nothing was written, and the caller keeps the text
 /// for explicit recovery rather than redirecting it into another block.
 enum CompositionCommitResult: Equatable, Sendable {
-    case committed(Data)
+    /// `foldsOtherChanges`: the final rebuild also carries changes the
+    /// composition discarded (or a reset), not only the composed text.
+    case committed(Data, foldsOtherChanges: Bool)
     case orphaned
 }
 
