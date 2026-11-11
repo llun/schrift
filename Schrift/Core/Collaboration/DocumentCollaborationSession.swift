@@ -98,6 +98,9 @@ final class DocumentCollaborationSession {
     /// When set, every inbound step2/update goes here with its step instead
     /// of `onSyncUpdate` (the native binding tells a step2 from an update, PR09a).
     private let onSync: (@MainActor (SyncMessage) -> Void)?
+    /// Fired once when the socket ends, with why (the native binding's
+    /// reconnect, PR09b; the manager rebuilds sessions itself).
+    private let onDisconnect: (@MainActor (CollaborationDisconnect) -> Void)?
     /// Latches `onInitialSync` to a single firing per session.
     private var didInitialSync = false
     private var pumpTask: Task<Void, Never>?
@@ -115,7 +118,8 @@ final class DocumentCollaborationSession {
         initialSyncStep1: @escaping @MainActor () async -> Data = { Data([0x00]) },
         onStateRequest: @escaping @MainActor (Data) -> Data? = { _ in nil },
         onInitialSync: @escaping @MainActor () -> Void = {},
-        onSync: (@MainActor (SyncMessage) -> Void)? = nil
+        onSync: (@MainActor (SyncMessage) -> Void)? = nil,
+        onDisconnect: (@MainActor (CollaborationDisconnect) -> Void)? = nil
     ) {
         self.documentName = documentName
         self.transport = transport
@@ -130,6 +134,7 @@ final class DocumentCollaborationSession {
         self.onStateRequest = onStateRequest
         self.onInitialSync = onInitialSync
         self.onSync = onSync
+        self.onDisconnect = onDisconnect
     }
 
     /// Resumes the socket, sends the handshake, and pumps inbound events.
@@ -298,6 +303,7 @@ final class DocumentCollaborationSession {
             case .selfClosed: state = .ended(.closed)
             case .transient: state = .reconnecting
             }
+            onDisconnect?(reason)
         }
     }
 }

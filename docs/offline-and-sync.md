@@ -207,7 +207,9 @@ A5's `isLiveReplicaHeld` rules are unchanged, and a native session never uses th
 current editor's live write path. With the Live collaboration preference on, a native
 document also joins its room (PR09a): remote updates are journaled into the same replica
 before they show, and local updates go out only after they are journaled. HTTP saving is
-unchanged and still the durable path; a dropped socket only stops the live view of peers. Every await in open and
+unchanged and still the durable path. A dropped socket dials again with backoff, the
+background closes it and the foreground dials at once, and every handshake offers what was
+typed meanwhile (PR09b). Every await in open and
 integration rechecks the open's generation and the remembered signed-in user. A
 change of `SessionStore.signInGeneration` closes (flushing under the account checks
 `enqueueReplica` and the sender apply) and reopens a native route, where another

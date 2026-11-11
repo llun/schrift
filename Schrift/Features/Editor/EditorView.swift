@@ -303,6 +303,8 @@ struct EditorView: View {
     @Environment(DocumentCollaborationManager.self) private var collaboration: DocumentCollaborationManager?
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.scenePhase) private var scenePhase
+    /// Followed while open: a native document leaves or rejoins its room (PR09b).
+    @AppStorage(LiveCollaborationPreference.key) private var liveCollaboration = false
 
     private var showsOffline: Bool { isOffline || viewModel.availability.isOffline }
 
@@ -342,6 +344,9 @@ struct EditorView: View {
         .onChange(of: showsOffline) { _, offline in
             guard !offline else { return }
             nativeOpen.refreshInBackground(viewModel: viewModel, isOffline: showsOffline)
+        }
+        .onChange(of: liveCollaboration) { _, _ in
+            nativeOpen.liveSettingChanged(viewModel: viewModel, isOffline: showsOffline)
         }
         .onChange(of: signInGeneration) { _, _ in
             // A mounted classic editor keeps its own session handling and is never swapped.

@@ -710,6 +710,65 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         }
     }
 
+    // MARK: - Mid-session changes (PR09b)
+
+    private func liveOpen(
+        _ env: Environment, server: ServerStub, live: Locked<Bool>, spy: ManagerSocketFactorySpy
+    ) async throws -> (NativeEditorOpen, NativeEditorSession) {
+        server.collaborationWsUrl = "wss://docs.example.org/collaboration/ws/"
+        server.install()
+        let open = NativeEditorOpen(preference: { true }, livePreference: { live.value })
+        open.collaboration = DocumentCollaborationManager(
+            serverBaseURL: URL(string: "https://docs.example.org/api/v1.0/")!, cookieProvider: { [] },
+            featureEnabled: { true }, isOffline: { false }, serverConfigProvider: { nil },
+            socketFactory: spy.factory)
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else {
+            XCTFail("expected a native session")
+            throw CancellationError()
+        }
+        await waitUntil { spy.sockets.count == 1 }
+        return (open, session)
+    }
+
+    /// A permission change closes the socket with 1000; the open asks the
+    /// server again, and a reader answer makes every surface read-only through
+    /// `setWritable(nil)` with no socket left.
+    func testAPermissionResetToReaderMakesTheOpenReadOnlyWithoutASocket() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        let spy = ManagerSocketFactorySpy()
+        let (open, session) = try await liveOpen(env, server: server, live: Locked(true), spy: spy)
+        defer { open.close() }
+        XCTAssertTrue(session.state.writable)
+        server.canUpdate = false
+        try XCTUnwrap(spy.sockets.first).serverClose(code: .normalClosure)
+        await waitUntil { !session.state.writable }
+        await waitAndConfirmNever(timeout: 1.5) { spy.sockets.count > 1 }
+    }
+
+    /// Turning Live collaboration off while open closes the socket and nothing
+    /// dials; turning it on joins again. Typing and HTTP saving go on.
+    func testTurningLiveOffAndOnMidSession() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        let spy = ManagerSocketFactorySpy()
+        let live = Locked(true)
+        let (open, session) = try await liveOpen(env, server: server, live: live, spy: spy)
+        defer { open.close() }
+        live.value = false
+        open.liveSettingChanged(viewModel: env.model, isOffline: false)
+        let first = try XCTUnwrap(spy.sockets.first)
+        await waitUntil { first.cancelCloseCode == .goingAway }
+        XCTAssertNotNil(session.input, "typing stays on")
+        await waitAndConfirmNever(timeout: 1.5) { spy.sockets.count > 1 }
+        live.value = true
+        open.liveSettingChanged(viewModel: env.model, isOffline: false)
+        await waitUntil { spy.sockets.count == 2 }
+    }
+
     // MARK: - Fixture
 
     private func manifestURL(_ env: Environment, _ scope: ReplicaScope) throws -> URL {

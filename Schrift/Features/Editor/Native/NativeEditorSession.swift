@@ -685,8 +685,7 @@ final class NativeEditorOpen {
                 guard isCurrent() else { return }
                 // The row was stale: every surface of the scope stops writing
                 // (a key typed meanwhile becomes a recovery entry) and no socket opens.
-                canUpdate = false
-                registry.setWritable(nil, for: scope)
+                becomeReader(scope)
             }
             startLive(session, scope: scope, config: config, viewModel: viewModel)
             // Refreshes the server title native saves send.
@@ -724,6 +723,8 @@ final class NativeEditorOpen {
             let binding = registry.liveBinding(for: scope), !binding.isConnected, let collaboration
         else { return }
         let signedInUser = viewModel.signedInUser
+        // Background, foreground and the path's return reach the socket too.
+        collaboration.addLifecycleObserver(binding)
         binding.connect(
             dial: { [weak collaboration] in collaboration?.nativeTransport(for: scope.documentID, config: config) },
             wireProtocol: CollaborationWireProtocol(config: config),
@@ -732,7 +733,34 @@ final class NativeEditorOpen {
             // confirms the next one: nothing is dialed or sent for the scope then.
             isCurrent: { [weak session] in
                 session.map { !$0.isClosed } == true && signedInUser.userID == scope.ownerUserID
-            })
+            },
+            // A 1000 close is the server's permission reset: ask again.
+            isReader: { [weak viewModel] in
+                guard let viewModel else { return false }
+                return await Self.serverSaysReader(viewModel, asking: true)
+            },
+            becameReader: { [weak self] in self?.becomeReader(scope) })
+    }
+
+    /// The server says this account may only read now: every surface of the
+    /// scope stops writing (a key typed meanwhile becomes a recovery entry,
+    /// what is journaled stays for HTTP) and no socket stays open.
+    private func becomeReader(_ scope: ReplicaScope) {
+        canUpdate = false
+        registry.setWritable(nil, for: scope)
+        registry.liveBinding(for: scope, create: false)?.disconnect()
+    }
+
+    /// The Live collaboration preference changed while open (PR09b): off
+    /// closes the socket and leaves HTTP saving; on joins again through the
+    /// reconnect refresh, which rechecks the whole gate.
+    func liveSettingChanged(viewModel: EditorViewModel, isOffline: Bool) {
+        guard isOpen, case .native(let session) = route, let scope = session.scope else { return }
+        if livePreference() {
+            refreshInBackground(viewModel: viewModel, isOffline: isOffline)
+        } else {
+            registry.liveBinding(for: scope, create: false)?.disconnect()
+        }
     }
 
     /// Typing also needs no live owner (a native session never takes the live

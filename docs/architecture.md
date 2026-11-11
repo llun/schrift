@@ -1032,8 +1032,18 @@ refused untouched and fetched again with a fresh SyncStep1, and the number waiti
 so typing always finds room. Outbound is only what was journaled: the journal publishes each
 local update after its append, and the replica answers a peer's state request in mailbox
 order into the same stream. The HTTP save keeps sending the same outbox and keeps owning
-acknowledgment; the server takes both idempotently. Reconnect, background, permission
-refetch and the failure matrix are PR09b; cursors are PR10.
+acknowledgment; the server takes both idempotently. Cursors are PR10.
+
+**PR09b Reconnect, background and mid-session changes.** A dropped socket dials again after
+an exponential backoff (1 s doubling to 30 s, counted again after a 30-second stable
+connection, a foreground or the network's return). The collaboration manager tells native
+sockets when the app goes to the background (they close) and comes back (they dial at once).
+A server close for a permission change makes the editor ask for the document's abilities
+again; a reader answer makes every view of the document read-only and closes the socket.
+Turning Live collaboration off while a document is open closes its socket and leaves HTTP
+saving as it was; turning it on joins again. Redials caused by refused updates are bounded in
+a row and per open. HTTP stays the only acknowledgment, so an update a server already applied
+is simply taken again.
 
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom

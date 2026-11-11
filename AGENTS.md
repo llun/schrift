@@ -2976,11 +2976,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   The HTTP save path is unchanged and still owns acknowledgment: the server takes the same
   update from both idempotently, and the handshake offers unsent outbox edits through the
   step2. Remote format cleanup deletions stay unjournaled and unpublished (every replica,
-  the server's included, derives them). Not yet (PR09b): reconnect with backoff (an ended
-  socket is dialed again only by the next reconnect refresh or reopen), background suspend,
-  abilities refetch on a 1000 close and its `setWritable(nil)` downgrade, 401, server
-  rejection, toggling the preference off mid-session, and the failure matrix. **Known
-  limits:** after three recoveries in a row with no step2 between them, live stays off until
+  the server's included, derives them). Reconnect, background, permission changes and the
+  Live switch mid-session are PR09b (bullet below). **Known limits:** after three recoveries
+  in a row with no step2 between them, or `recoveryBudget` in one open, live stays off until
   the document is reopened; an offline open, or one whose abilities request fails, trusts
   the navigation row's ability; the outbox is unbounded
   while a socket's send stalls (it grows only with local typing); a dial that races the
@@ -2996,6 +2994,44 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   dial), `NativeEditorActivationTests`' gate matrix and stale-row check, `YWebSocketTests`'
   native transport, `DocumentCollaborationSessionTests`' reader sends and
   `LiveCollaborationAvailabilityTests`.
+
+- **PR09b Reconnect, background and mid-session changes.** One small state machine in
+  `NativeCollaborationBinding`, no new queue. **A drop** (`CollaborationDisconnect.transient`,
+  reported by the session's `onDisconnect`) dials again after `Backoff.delay(attempt)`:
+  1 s doubled per attempt up to 30 s; the attempts count again once a socket stayed up for
+  `stableAfter` (30 s, measured from its step2), on foreground and when the path returns, so
+  a server that accepts the handshake and then closes is retried at most every 30 s. A dial
+  the manager refuses (suspended, working offline) backs off too; one the open refuses (not
+  `isCurrent`, as during a cookie handover) waits for the next resume. **Background:**
+  `DocumentCollaborationManager` keeps weak `CollaborationLifecycleObserver`s
+  (`addLifecycleObserver`, registered by `startLive`); `suspend` closes every native socket
+  and nothing dials, `resume` and `reconnect` (the path's return) dial at once from a fresh
+  backoff. Edits typed meanwhile are journaled and offered by the next handshake's step2,
+  deletion-only ones included. **A 1000 close** (the server's permission reset, also how a
+  server rejects a writer) asks `documents/{id}/` again (`Dialer.isReader`): a reader answer
+  runs `NativeEditorOpen.becomeReader`, the first production caller of
+  `NativeSessionRegistry.setWritable(nil)` (every surface of the scope stops writing; a key
+  typed meanwhile becomes a recovery entry; what is journaled stays for HTTP) and
+  `disconnect`s live; any other answer, a failed request included, backs off and dials
+  again. **The Live preference** is followed while open (`EditorView`'s
+  `@AppStorage(LiveCollaborationPreference.key)` → `NativeEditorOpen.liveSettingChanged`):
+  off `disconnect`s (no socket, nothing dials, typing and HTTP saving unchanged), on runs the
+  reconnect refresh, which rechecks the whole gate. **Budget:** refused-frame redials also
+  back off and stop live past `redialLimit` (3) in a row or `recoveryBudget` (10) in one open,
+  so a peer that keeps sending refused updates cannot drive reconnects forever. **401:** a
+  socket refused for an expired session drops like any other and backs off; the re-login
+  sheet comes from the REST 401s (the 1000-close ability check, saves), a cookie handover
+  stops dials through `isCurrent`, and the sign-in change reopens the route with a fresh
+  binding, whose handshake delivers what was typed meanwhile. Nothing here acknowledges the
+  outbox: HTTP still does, and a server that already applied an update (live, or an HTTP save
+  whose answer was lost) takes it again idempotently. **Known limits:** a downgraded reader
+  stops receiving live updates until it reopens (a reader open is PR01's snapshot view); the
+  socket's own HTTP 401 is not read, so the sheet waits for a REST request; a socket refused
+  for good backs off forever at the 30 s cap while the document stays open. Tests:
+  `NativeLiveSyncTests` (a drop with typing meanwhile, background with a deletion-only edit,
+  cold relaunch, an edit applied but unacknowledged, a 1000 close as writer then reader,
+  dials held during re-authentication, the per-open budget) and `NativeEditorActivationTests`
+  (a permission reset to reader through `setWritable(nil)`, Live off and on while open).
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves

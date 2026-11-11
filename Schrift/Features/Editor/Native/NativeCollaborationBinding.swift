@@ -32,8 +32,11 @@ func nativeLiveCollaborationEligible(
 ///   a peer's SyncStep1 is answered by the replica in mailbox order into the
 ///   same stream, so every frame leaves in journal order, once. HTTP saving
 ///   keeps sending the same outbox; the server takes both idempotently.
-/// - A disconnect ends the socket; HTTP keeps saving. Reconnect, background
-///   and permission refetch are PR09b.
+/// - A drop dials again after an exponential backoff; background closes the
+///   socket and foreground dials at once (through
+///   `DocumentCollaborationManager`'s lifecycle observers); a 1000 close asks
+///   the server for the ability and a reader answer makes the scope read-only.
+///   HTTP keeps saving throughout (PR09b).
 @MainActor
 final class NativeCollaborationBinding {
     /// Frames in the order the replica produced them. Unbounded but always
@@ -59,6 +62,20 @@ final class NativeCollaborationBinding {
     /// step2 integrates starts the count again, so separate stalls in one open
     /// each get their own.
     static let redialLimit = 3
+    /// Recovery redials in one open, however far apart (PR09b): a peer that
+    /// keeps sending refused updates between good handshakes stops live here.
+    static let recoveryBudget = 10
+
+    /// When to dial again after a socket ended (PR09b): `base` doubled per
+    /// attempt up to `cap`. The attempts count again from zero once a socket
+    /// stayed up for `stableAfter`, on foreground and when the path returns.
+    struct Backoff: Sendable {
+        var base: Duration = .seconds(1)
+        var cap: Duration = .seconds(30)
+        var stableAfter: Duration = .seconds(30)
+
+        func delay(_ attempt: Int) -> Duration { min(cap, base * (1 << min(attempt, 16))) }
+    }
 
     /// How to reach the room again: a redial is a fresh handshake.
     private struct Dialer {
@@ -67,13 +84,27 @@ final class NativeCollaborationBinding {
         let documentName: String
         /// The open and its account still hold: nothing is dialed or sent otherwise.
         let isCurrent: @MainActor () -> Bool
+        /// After a 1000 close (a permission change): true when the server now
+        /// answers `update: false`. A failed request is false (keep writing).
+        let isReader: @MainActor () async -> Bool
+        /// The scope became read-only for this account; live ends.
+        let becameReader: @MainActor () -> Void
     }
 
     nonisolated let outbox = Outbox()
     private let replica: DocumentReplicaSession
+    private let backoff: Backoff
     private(set) var session: DocumentCollaborationSession?
+    /// Nil until `connect` and after `disconnect` (Live turned off).
     private var dialer: Dialer?
     private var dialing = false
+    private var reconnecting: Task<Void, Never>?
+    /// The app is in the background (`DocumentCollaborationManager.suspend`).
+    private var suspended = false
+    /// Dials since the last stable socket: the backoff exponent.
+    private var attempt = 0
+    /// When the current socket's step2 integrated.
+    private var liveSince: ContinuousClock.Instant?
     /// Bumped per socket: answers for an older socket's frames ask nothing.
     private var generation = 0
     private var inFlight = 0
@@ -81,6 +112,7 @@ final class NativeCollaborationBinding {
     private var synced = false
     private var needsRedial = false
     private var redials = 0
+    private var recoveries = 0
     /// A peer's SyncStep1 being answered, and the latest one that came in
     /// meanwhile: at most one waits in the mailbox, so a burst cannot fill it.
     private var answering = false
@@ -88,8 +120,9 @@ final class NativeCollaborationBinding {
     private(set) var isStopped = false
     private var consumer: Task<Void, Never>?
 
-    init(replica: DocumentReplicaSession) {
+    init(replica: DocumentReplicaSession, backoff: Backoff = Backoff()) {
         self.replica = replica
+        self.backoff = backoff
         consumer = Task { [weak self, outbox] in
             for await message in outbox.messages {
                 // Rechecked per frame: an account change stops content leaving
@@ -100,9 +133,9 @@ final class NativeCollaborationBinding {
         }
     }
 
-    /// A socket is open, opening or being dialed.
+    /// A socket is open, opening, being dialed or waiting to be dialed again.
     var isConnected: Bool {
-        if dialing { return true }
+        if dialing || reconnecting != nil { return true }
         switch session?.state {
         case .connecting?, .live?: return true
         case .reconnecting?, .ended?, nil: return false
@@ -115,22 +148,41 @@ final class NativeCollaborationBinding {
     /// included.
     func connect(
         dial: @escaping @MainActor () -> CollaborationTransport?, wireProtocol: CollaborationWireProtocol,
-        documentName: String, isCurrent: @escaping @MainActor () -> Bool
+        documentName: String, isCurrent: @escaping @MainActor () -> Bool,
+        isReader: @escaping @MainActor () async -> Bool = { false }, becameReader: @escaping @MainActor () -> Void = {}
     ) {
-        dialer = Dialer(dial: dial, wireProtocol: wireProtocol, documentName: documentName, isCurrent: isCurrent)
+        dialer = Dialer(
+            dial: dial, wireProtocol: wireProtocol, documentName: documentName, isCurrent: isCurrent,
+            isReader: isReader, becameReader: becameReader)
         open()
+    }
+
+    /// Live turned off: the socket closes and nothing dials until `connect`.
+    /// The replica, journal and HTTP saving are untouched.
+    func disconnect() {
+        dialer = nil
+        closeSocket()
     }
 
     /// Closes the socket for good (the replica closed or the open went away).
     func stop() {
         isStopped = true
-        session?.stop()
-        session = nil
+        closeSocket()
         outbox.finish()
     }
 
+    private func closeSocket() {
+        reconnecting?.cancel()
+        reconnecting = nil
+        // Its frames, answers and close are no longer this binding's.
+        generation += 1
+        session?.stop()
+        session = nil
+        liveSince = nil
+    }
+
     private func open() {
-        guard !isStopped, !isConnected, let dialer else { return }
+        guard !isStopped, !suspended, !isConnected, let dialer else { return }
         dialing = true
         Task { [weak self, replica] in
             // A full mailbox answers nil: no handshake, rather than one asking
@@ -138,7 +190,8 @@ final class NativeCollaborationBinding {
             let vector = await Self.stateVector(of: replica)
             guard let self else { return }
             self.dialing = false
-            guard let vector, !self.isStopped, dialer.isCurrent(), let transport = dialer.dial() else { return }
+            guard let vector, !self.isStopped, !self.suspended, self.dialer != nil, dialer.isCurrent() else { return }
+            guard let transport = dialer.dial() else { return self.scheduleReconnect() }
             self.start(transport: transport, dialer: dialer, stateVector: vector)
         }
     }
@@ -155,23 +208,76 @@ final class NativeCollaborationBinding {
                 self?.answer(vector)
                 return nil
             },
-            onSync: { [weak self] in self?.receive($0, generation: generation) })
+            onSync: { [weak self] in self?.receive($0, generation: generation) },
+            onDisconnect: { [weak self] in self?.ended($0, generation: generation) })
         self.session = session
         session.start()
     }
 
+    /// Dials again after the backoff for this attempt.
+    private func scheduleReconnect() {
+        guard !isStopped, !suspended, dialer != nil, reconnecting == nil else { return }
+        let delay = backoff.delay(attempt)
+        attempt += 1
+        reconnecting = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self else { return }
+            self.reconnecting = nil
+            self.open()
+        }
+    }
+
+    /// The socket ended on its own: a drop backs off and dials again; a 1000
+    /// close (the server's permission reset) asks for the ability first.
+    private func ended(_ reason: CollaborationDisconnect, generation: Int) {
+        guard generation == self.generation, !isStopped else { return }
+        if let liveSince, ContinuousClock.now - liveSince >= backoff.stableAfter { attempt = 0 }
+        session = nil
+        liveSince = nil
+        switch reason {
+        case .selfClosed: return
+        case .transient: scheduleReconnect()
+        case .permissionsReset:
+            guard let dialer else { return }
+            reconnecting = Task { [weak self] in
+                let reader = await dialer.isReader()
+                guard !Task.isCancelled, let self else { return }
+                self.reconnecting = nil
+                guard !reader else {
+                    dialer.becameReader()
+                    return self.disconnect()
+                }
+                self.scheduleReconnect()
+            }
+        }
+    }
+
+    /// Background: the socket closes and nothing dials until `resume`.
+    func suspend() {
+        suspended = true
+        closeSocket()
+    }
+
+    /// Foreground, or the path came back: dial now, from a fresh backoff.
+    func resume() {
+        suspended = false
+        attempt = 0
+        reconnecting?.cancel()
+        reconnecting = nil
+        open()
+    }
+
     /// A refused frame is recovered by a fresh handshake, whose step2 is the
     /// server's whole diff: that works whether or not the server answers a
-    /// SyncStep1 later in a session.
+    /// SyncStep1 later in a session. Backed off like any dial, and bounded in
+    /// a row and per open.
     private func redial() {
-        guard redials < Self.redialLimit else { return stop() }
+        guard redials < Self.redialLimit, recoveries < Self.recoveryBudget else { return stop() }
         redials += 1
+        recoveries += 1
         needsRedial = false
-        // Answers still due from the old socket's frames ask nothing more.
-        generation += 1
-        session?.stop()
-        session = nil
-        open()
+        closeSocket()
+        scheduleReconnect()
     }
 
     /// Answered in mailbox order, into the stream journaled updates use. A
@@ -223,7 +329,10 @@ final class NativeCollaborationBinding {
 
     private func integrated(_ result: Result<Void, any Error>, step2: Bool, early: Bool, generation: Int) {
         inFlight -= 1
-        if case .success = result, step2, generation == self.generation { redials = 0 }
+        if case .success = result, step2, generation == self.generation {
+            redials = 0
+            liveSince = ContinuousClock.now
+        }
         if case .failure(let error) = result, generation == self.generation {
             switch error {
             case NativeLiveError.missingDependencies where !step2:
@@ -252,6 +361,12 @@ final class NativeCollaborationBinding {
 
     isolated deinit {
         consumer?.cancel()
+        reconnecting?.cancel()
         session?.stop()
     }
+}
+
+extension NativeCollaborationBinding: CollaborationLifecycleObserver {
+    func collaborationSuspended() { suspend() }
+    func collaborationResumed() { resume() }
 }
