@@ -1,0 +1,44 @@
+SchriftTests/Features/Editor/Native/NativeCompositionTests.swift
+  s_dc239db0cc1c9d::t_7fee356f5d4da4 176-177,179
+SchriftTests/Features/Editor/Native/ReplicaSessionOrderingTests.swift
+  s_dc239db0cc1c9d::t_7fee356f5d4da4 1174-1175,1179-1182,1192-1197,1373-1375,1384
+  s_dc239db0cc1c9d::t_2f443c4f93b23a 1583-1584
+  s_dc239db0cc1c9d::t_915e9a9501c22a 1604-1647
+  s_dc239db0cc1c9d::t_f45e328dab8c7b 1189,1303,1400,1492,1538
+AGENTS.md
+  s_dc239db0cc1c9d::t_07beec3b6f4e85 2812-2832
+Schrift/Features/Editor/Engine/CompositionQueue.swift
+  s_dc239db0cc1c9d::t_d1a90c0cbfb779 11-13,18-23
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_dc239db0cc1c9d::t_850d7f1b80f2e9 1047,1105,1131-1136,1151,1163,1300-1302
+Schrift/Features/Editor/Native/DocumentReplicaSession.swift
+  s_dc239db0cc1c9d::t_7fab1f7e511501 249-250,373-383,386,397-402,405-406,408
+Schrift/Features/Editor/Native/NativeCompositionSession.swift
+  s_dc239db0cc1c9d::t_878adb6a2f9dbc 9-13,25-30,57-59,63,89,96,102-107,109-115,118,121-125,132-135,138,141,144-148,166
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  s_dc239db0cc1c9d::t_717da89352c1fe 83-84,180,223-225,228-234,251-255,292-295,366-371,543-549,551-554,564-565,582,588,607,609,792,806-808,945,1179,1768-1810,1820
+Schrift/Features/Editor/Native/NativeSelectionCoordinator.swift
+  s_dc239db0cc1c9d::t_3f5b55022ec3b5 30-32
+Schrift/Features/Editor/Native/NativeTextSurface.swift
+  s_dc239db0cc1c9d::t_8f77ddc8d23364 162-169
+Schrift/Features/Editor/Native/NativeTextView.swift
+  s_dc239db0cc1c9d::t_92fd830834e04b 50,139-142
+Schrift/Features/Editor/Native/ReplicaCommandMailbox.swift
+  s_dc239db0cc1c9d::t_d43baa60eeb812 43-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bdd95ba3afb18fb079300df0db5305fbf9d542f3",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
