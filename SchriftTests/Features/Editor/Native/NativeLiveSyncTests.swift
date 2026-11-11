@@ -545,6 +545,35 @@ final class NativeLiveSyncTests: NativeEditingTestCase {
         XCTAssertEqual(try outboxCount(a), 1)
     }
 
+    /// The redial cap counts recoveries in a row: a socket whose step2
+    /// integrates starts it again, so more stalls than the cap in one open
+    /// each recover and live keeps going.
+    func testEachSeparateStallRecoversPastTheRedialCap() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient()
+        try await connect(a, to: server)
+        try await server.settle { self.a(isLive: a) }
+        let web = try peer(of: server)
+        defer { web.destroy() }
+        let writer = BlockNoteWriter(doc: web)
+        var expected = "First paragraph."
+        let stalls = NativeCollaborationBinding.redialLimit + 1
+        for stall in 0..<stalls {
+            let socket = try XCTUnwrap(server.sockets.last)
+            let first = try writer.replaceText(block: Self.firstID, range: 0..<0, with: "x")
+            let second = try writer.replaceText(block: Self.firstID, range: 1..<1, with: "y")
+            try server.applyUnrelayed(first)
+            try server.applyUnrelayed(second)
+            // Only the second reaches this socket: the first was lost in a stall.
+            socket.deliver(message: FakeYServer.frame(.update, second))
+            expected = "xy" + expected
+            try await server.settle { self.texts(a.session)[0] == expected && self.a(isLive: a) }
+            XCTAssertEqual(server.sockets.count, stall + 2, "stall \(stall) recovered with one redial")
+        }
+        XCTAssertFalse(a.binding.isStopped, "separate stalls never exhaust the cap")
+    }
+
     /// T1: a step2 the replica refuses would come back with every handshake;
     /// live stops instead of looping on SyncStep1.
     func testARefusedStepTwoStopsLiveInsteadOfLooping() async throws {

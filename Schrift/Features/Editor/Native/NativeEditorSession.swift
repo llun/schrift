@@ -313,7 +313,8 @@ final class NativeEditorOpen {
     private var generation = 0
     private enum OpenResult: Sendable {
         case classic
-        case state(Data, config: ServerConfig)
+        /// `isReader`: the server answered `abilities.update` false.
+        case state(Data, config: ServerConfig, isReader: Bool)
     }
     private var pendingOpen: AsyncStream<OpenResult>.Continuation?
     /// The reopen and reconnect work `EditorView` starts outside its `.task`;
@@ -409,15 +410,13 @@ final class NativeEditorOpen {
             if let session = restored {
                 // The "turn the switch on" explanation is only true while it is off.
                 isPreservedReadOnly = !enabled
-                route = .native(session)
-                if enabled, session.canType, mayType(viewModel) {
-                    let verified = await verifiedCanUpdate(canUpdate, viewModel: viewModel, isOffline: isOffline)
-                    guard !Task.isCancelled, generation == request, !session.isClosed,
-                        viewModel.signedInUser.userID == account
-                    else { return }
-                    self.canUpdate = verified
-                    if verified { installTyping(session, scope: scope, viewModel: viewModel) }
+                if enabled, canUpdate, session.canType, mayType(viewModel) {
+                    // Typing starts from the row at once; an online open's
+                    // integration asks the server and downgrades a reader.
+                    self.canUpdate = true
+                    installTyping(session, scope: scope, viewModel: viewModel)
                 }
+                route = .native(session)
                 // Offline-first: the replica is on screen before any request.
                 await integrateServerState(
                     into: session, scope: scope, viewModel: viewModel, request: request, isOffline: isOffline)
@@ -456,8 +455,11 @@ final class NativeEditorOpen {
                     continuation.yield(.classic)
                     return
                 }
+                // Asked beside the state, inside the same deadline.
+                async let isReader = Self.serverSaysReader(viewModel, asking: canUpdate)
                 let state = try await viewModel.client.collaborationYDocState(
                     documentID: viewModel.documentID, org: config.collaborationOrg)
+                let reader = await isReader
                 guard !Task.isCancelled else { return }
                 guard
                     self?.canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account)
@@ -471,7 +473,7 @@ final class NativeEditorOpen {
                     continuation.yield(.classic)
                     return
                 }
-                continuation.yield(.state(state, config: config))
+                continuation.yield(.state(state, config: config, isReader: reader))
             } catch {
                 continuation.yield(.classic)
             }
@@ -497,7 +499,7 @@ final class NativeEditorOpen {
         var iterator = results.makeAsyncIterator()
         guard let result = await iterator.next(), !Task.isCancelled, generation == request else { return }
         guard canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account),
-            case .state(let state, let config) = result
+            case .state(let state, let config, let isReader) = result
         else {
             route = .classic
             return
@@ -513,14 +515,9 @@ final class NativeEditorOpen {
         else { return }
         // A document that is not fully projectable, or a reader, stays in PR01's
         // in-memory read-only view and never gains a replica or marker.
-        let verified =
-            enabled && session.canType && mayType(viewModel)
-            ? await verifiedCanUpdate(canUpdate, viewModel: viewModel, isOffline: isOffline) : false
-        guard !Task.isCancelled, generation == request,
-            canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account)
-        else { return }
+        let verified = canUpdate && !isReader
         self.canUpdate = verified
-        guard verified, let account else {
+        guard enabled, verified, session.canType, let account, mayType(viewModel) else {
             route = .native(session)
             return
         }
@@ -684,6 +681,13 @@ final class NativeEditorOpen {
             guard isCurrent() else { return }
             try await session.integrateServerState(state)
             guard isCurrent() else { return }
+            if canUpdate, await Self.serverSaysReader(viewModel, asking: true) {
+                guard isCurrent() else { return }
+                // The row was stale: every surface of the scope stops writing
+                // (a key typed meanwhile becomes a recovery entry) and no socket opens.
+                canUpdate = false
+                registry.setWritable(nil, for: scope)
+            }
             startLive(session, scope: scope, config: config, viewModel: viewModel)
             // Refreshes the server title native saves send.
             _ = try await viewModel.refreshOfflineCacheForNativeReader(isCurrent: isCurrent)
@@ -693,15 +697,16 @@ final class NativeEditorOpen {
         }
     }
 
-    /// The open's update ability. The navigation row can be stale (an account
-    /// switch reuses the screen; a cached row predates a permission change), so
-    /// an online open asks the server and a failed ask fails closed. An offline
-    /// open keeps the row: offline typing stays possible, and the server still
-    /// refuses a reader's save. A row that says reader is never asked.
-    private func verifiedCanUpdate(_ pinned: Bool, viewModel: EditorViewModel, isOffline: Bool) async -> Bool {
-        guard pinned else { return false }
-        guard !isOffline, !viewModel.availability.showsOfflineStatus else { return true }
-        return (try? await viewModel.client.document(documentID: viewModel.documentID))?.abilities.update == true
+    /// Whether the server says this account may only read the document. The
+    /// navigation row can be stale (an account switch reuses the screen; a
+    /// cached row predates a permission change), so online opens ask. Only an
+    /// explicit `update: false` answer counts: a failed request (offline, a
+    /// 5xx, a timeout, a captive portal) keeps the row, and the server still
+    /// refuses a real reader's save. A row that says reader is never asked.
+    private static func serverSaysReader(_ viewModel: EditorViewModel, asking: Bool) async -> Bool {
+        guard asking, let document = try? await viewModel.client.document(documentID: viewModel.documentID)
+        else { return false }
+        return !document.abilities.update
     }
 
     /// Joins the scope's live room when the native live gate holds, unless its

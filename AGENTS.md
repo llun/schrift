@@ -2932,9 +2932,13 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   reads `ServerConfig.yWebSocketLiveCollaborationEnabled` (A5's switch for the current
   editor), and a reader never opens a socket. **The ability is the server's:** the
   navigation row can be stale (an account switch reuses the screen, a cached row predates a
-  permission change), so an online open asks `documents/{id}/` before typing or live and a
-  failed ask fails closed; an offline open keeps the row (the server still refuses a
-  reader's save), and a row that says reader is never asked (`verifiedCanUpdate`).
+  permission change), so an online open asks `documents/{id}/` (`serverSaysReader`). Only an
+  explicit `update: false` answer fails closed: the seeded route asks beside the state fetch
+  (inside its deadline) and stays read-only; the owned route types from the row at once
+  (offline-first) and, on that answer, its integration calls `setWritable(nil)` for the
+  scope before any socket (a key typed meanwhile becomes a recovery entry). A failed request
+  (offline, a 5xx, a timeout, a captive portal) keeps the row's ability, and the server still
+  refuses a real reader's save; a row that says reader is never asked.
   `DocumentCollaborationManager.nativeTransport` only dials (origin-pinned URL, the config's
   framing: y-websocket for Docs 6, Hocuspocus before; nil while suspended or working
   offline) and tracks nothing; the binding owns a plain `DocumentCollaborationSession` with
@@ -2953,7 +2957,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   (`NativeLiveError.missingDependencies`). A skipped frame, a dropped post or an update
   refused after the socket's step2 makes the binding **redial** once the in-flight frames are
   answered (a fresh handshake's step2 is the server's whole diff, whether or not the server
-  answers a later SyncStep1), at most `redialLimit` (3) times per binding; a refused step2
+  answers a later SyncStep1), at most `redialLimit` (3) times in a row (a socket whose step2
+  integrates starts the count again; a redial ignores answers still due from the old
+  socket); a refused step2
   stops live (every handshake would repeat it). **A remote frame never freezes authoring:** an
   update that fails inside integration (after the checks) may have half-mutated the graph,
   so the session rebuilds doc, engine and history from the journal, which never held it,
@@ -2974,8 +2980,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   socket is dialed again only by the next reconnect refresh or reopen), background suspend,
   abilities refetch on a 1000 close and its `setWritable(nil)` downgrade, 401, server
   rejection, toggling the preference off mid-session, and the failure matrix. **Known
-  limits:** after three recoveries in one open, live stays off until the document is
-  reopened; an offline open trusts the navigation row's ability; the outbox is unbounded
+  limits:** after three recoveries in a row with no step2 between them, live stays off until
+  the document is reopened; an offline open, or one whose abilities request fails, trusts
+  the navigation row's ability; the outbox is unbounded
   while a socket's send stalls (it grows only with local typing); a dial that races the
   cookie write itself, before the handover clears the account, is caught only at the next
   send.

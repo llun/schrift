@@ -675,11 +675,36 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
                 socketFactory: spy.factory)
             await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
             guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
-            XCTAssertNil(session.input, "the server says reader (owned: \(owned))")
-            XCTAssertTrue(spy.sockets.isEmpty, "no live socket for a reader (owned: \(owned))")
-            if !owned {
+            if owned {
+                // Typing started offline-first from the row; the answer downgrades it.
+                await session.settle()
+                XCTAssertFalse(session.state.writable, "the server says reader: the replica is read-only")
+            } else {
+                XCTAssertNil(session.input, "the server says reader: no typing")
                 XCTAssertEqual(env.model.saveCoordinator.nativeOwnership(documentID: env.model.documentID), .none)
             }
+            await waitAndConfirmNever { !spy.sockets.isEmpty }
+            open.close()
+            env.clean()
+        }
+    }
+
+    /// A failed abilities request is not a reader answer: the open keeps the
+    /// row's ability, types and saves, on both routes (the server still
+    /// refuses a real reader's save).
+    func testAFailedAbilitiesRequestKeepsTheRowsAbility() async throws {
+        for owned in [false, true] {
+            let env = makeEnvironment()
+            let server = ServerStub(owner: owner, state: seedState())
+            server.detailFails = true
+            server.install()
+            if owned { try seedReplica(env, typed: nil) }
+            let open = NativeEditorOpen(preference: { true })
+            await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+            guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+            XCTAssertNotNil(session.input, "typing stays on (owned: \(owned))")
+            await session.settle()
+            XCTAssertTrue(session.state.writable, "the replica stays writable (owned: \(owned))")
             open.close()
             env.clean()
         }
@@ -818,6 +843,7 @@ private final class ServerStub: @unchecked Sendable {
     private var _isOffline = false
     private var _collaborationWsUrl: String?
     private var _canUpdate = true
+    private var _detailFails = false
     private var _patched: [Data] = []
     private var _titles: [String] = []
     var stateGate: MockURLProtocol.ResponseGate?
@@ -836,6 +862,11 @@ private final class ServerStub: @unchecked Sendable {
     var canUpdate: Bool {
         get { locked { _canUpdate } }
         set { locked { _canUpdate = newValue } }
+    }
+    /// The detail route answers 503, like a failing server or a captive portal.
+    var detailFails: Bool {
+        get { locked { _detailFails } }
+        set { locked { _detailFails = newValue } }
     }
     var collaborationWsUrl: String? {
         get { locked { _collaborationWsUrl } }
@@ -894,6 +925,7 @@ private final class ServerStub: @unchecked Sendable {
             if request.httpMethod == "GET", url.hasSuffix("/"),
                 let id = url.split(separator: "/").last.flatMap({ UUID(uuidString: String($0)) })
             {
+                if detailFails { return .init(statusCode: 503, headers: [:], body: Data(), error: nil) }
                 let detail: [String: Any] = [
                     "id": id.uuidString.lowercased(), "title": "Fresh server title", "excerpt": NSNull(),
                     "abilities": ["update": canUpdate], "computed_link_reach": "restricted",

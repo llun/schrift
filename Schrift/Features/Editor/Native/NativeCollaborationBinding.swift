@@ -54,8 +54,10 @@ final class NativeCollaborationBinding {
     }
 
     static let inboundBound = 64
-    /// Recovery redials per binding; past it a peer that keeps sending
-    /// frames the replica must refuse cannot make it reconnect forever.
+    /// Recovery redials in a row; past it a peer that keeps sending frames the
+    /// replica must refuse cannot make it reconnect forever. A socket whose
+    /// step2 integrates starts the count again, so separate stalls in one open
+    /// each get their own.
     static let redialLimit = 3
 
     /// How to reach the room again: a redial is a fresh handshake.
@@ -164,6 +166,9 @@ final class NativeCollaborationBinding {
     private func redial() {
         guard redials < Self.redialLimit else { return stop() }
         redials += 1
+        needsRedial = false
+        // Answers still due from the old socket's frames ask nothing more.
+        generation += 1
         session?.stop()
         session = nil
         open()
@@ -218,6 +223,7 @@ final class NativeCollaborationBinding {
 
     private func integrated(_ result: Result<Void, any Error>, step2: Bool, early: Bool, generation: Int) {
         inFlight -= 1
+        if case .success = result, step2, generation == self.generation { redials = 0 }
         if case .failure(let error) = result, generation == self.generation {
             switch error {
             case NativeLiveError.missingDependencies where !step2:
