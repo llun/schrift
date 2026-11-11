@@ -68,6 +68,26 @@ final class NativeDocumentNavigation {
         } else {
             read = surface?.blocks.map { NativeNavigationEntry($0, handle: nil) } ?? []
         }
+        refreshCount += 1
+        let (next, built) = build(read)
+        entries = next
+        if built != blocks { blocks = built }
+    }
+
+    /// Replica reads this open asked for (tests read the sheet-only cadence).
+    @ObservationIgnored private(set) var refreshCount = 0
+    /// While the outline sheet is up it follows edits; otherwise nothing is
+    /// projected for navigation while anyone types.
+    @ObservationIgnored var isOutlinePresented = false {
+        didSet {
+            if !isOutlinePresented {
+                refreshTask?.cancel()
+                refreshTask = nil
+            }
+        }
+    }
+
+    private func build(_ read: [NativeNavigationEntry]) -> ([UUID: NativeNavigationEntry], [EditorBlock]) {
         var seen: Set<String> = []
         var next: [UUID: NativeNavigationEntry] = [:]
         var built: [EditorBlock] = []
@@ -78,13 +98,12 @@ final class NativeDocumentNavigation {
             next[id] = entry
             built.append(Self.editorBlock(entry, id: id))
         }
-        entries = next
-        if built != blocks { blocks = built }
+        return (next, built)
     }
 
-    /// A delivered patch: the outline follows, at most every `refreshDelay`.
+    /// A delivered patch: the open outline follows, at most every `refreshDelay`.
     func documentChanged() {
-        guard refreshTask == nil else { return }
+        guard isOutlinePresented, refreshTask == nil else { return }
         let delay = refreshDelay
         refreshTask = Task { [weak self] in
             try? await Task.sleep(for: delay)
@@ -144,7 +163,8 @@ final class NativeDocumentNavigation {
     /// Decides the restore once per open, and scrolls once the view has a size.
     func restore() {
         guard let reading, let textView else { return }
-        let scrolled = textView.contentOffset.y + textView.adjustedContentInset.top > 8
+        // A reader who already scrolled, or tapped to type, keeps their place.
+        let scrolled = textView.contentOffset.y + textView.adjustedContentInset.top > 8 || textView.isFirstResponder
         if reading.beginRestore(blocks: blocks, userHasScrolled: scrolled) != nil { restorePending = true }
         layoutPassed()
     }
@@ -152,7 +172,7 @@ final class NativeDocumentNavigation {
     /// Called after each layout pass of the text view.
     func layoutPassed() {
         guard let textView, let reading else { return }
-        if textView.isTracking || textView.isDecelerating {
+        if textView.isTracking || textView.isDecelerating || (restorePending && textView.isFirstResponder) {
             reading.dismissBackToTop()
             reading.cancelPendingRestore()
             restorePending = false
@@ -180,8 +200,11 @@ final class NativeDocumentNavigation {
 
     /// Records the block at the top of the screen (leaving, background).
     func persist() {
-        guard let reading, let textView else { return }
-        reading.persist(blocks: blocks, topVisibleBlockID: textView.topVisibleBlockID().flatMap { ids[$0] })
+        guard let reading, let textView, let surface else { return }
+        // Built from the surface now (O(blocks), once per leave): the outline's
+        // copy is only kept fresh while the sheet is up.
+        let current = build(surface.blocks.map { NativeNavigationEntry($0, handle: nil) }).1
+        reading.persist(blocks: current, topVisibleBlockID: textView.topVisibleBlockID().flatMap { ids[$0] })
     }
 
     isolated deinit { refreshTask?.cancel() }

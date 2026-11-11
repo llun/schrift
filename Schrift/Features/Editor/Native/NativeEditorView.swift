@@ -135,7 +135,8 @@ struct NativeEditorView: View {
                 blocks: session.navigation.blocks, findShortcutTitle: loc[.outline_find_placeholder],
                 findShortcutEnabled: !session.hasUnsupportedRoot, closesOutline: false,
                 onFindShortcut: { presentOutline(focusingFind: true) },
-                onScroll: { target in jump(target) }, onAppear: {}, onDismiss: {},
+                onScroll: { target in jump(target) }, onAppear: { session.navigation.isOutlinePresented = true },
+                onDismiss: { session.navigation.isOutlinePresented = false },
                 onSelectHeading: { jump(.block($0)) })
         )
         .task(id: ObjectIdentifier(session)) {
@@ -187,6 +188,7 @@ struct NativeEditorView: View {
 extension NativeEditorView {
     fileprivate func presentOutline(focusingFind: Bool) {
         outlineFocusesFind = focusingFind
+        session.navigation.isOutlinePresented = true
         isPresentingOutline = true
         Task { await session.navigation.refresh() }
     }

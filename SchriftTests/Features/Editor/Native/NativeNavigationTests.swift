@@ -144,6 +144,7 @@ final class NativeNavigationTests: NativeEditingTestCase {
         let harness = try await makeHarness([heading("h1", "Title"), paragraph("p1", "Body")])
         let navigation = harness.session.navigation
         await navigation.refresh()
+        navigation.isOutlinePresented = true
         setSelection(harness, NSRange(location: try location(harness.session, "h1", 5), length: 0))
         let typed = await harness.run {
             harness.input.typeKey("!")
@@ -253,6 +254,104 @@ final class NativeNavigationTests: NativeEditingTestCase {
         XCTAssertEqual(labels["nativeEditor.peerBadge.9"], "Cy, collaborator in folded content")
         XCTAssertTrue(overlay.shouldGroupAccessibilityChildren)
         XCTAssertFalse(overlay.isAccessibilityElement, "the overlay itself never covers the text")
+        await harness.close()
+    }
+
+    // MARK: - Review fixes (PR #277)
+
+    private func paragraphText(_ index: Int) -> String {
+        "Paragraph \(index) with enough words to wrap onto two lines here."
+    }
+
+    private func savePosition(_ store: ReadingPositionStore, at index: Int, documentID: UUID) {
+        store.save(
+            blockID: UUID(),
+            fingerprint: readingPositionFingerprint(of: EditorBlock(kind: .unknown, text: paragraphText(index))),
+            blockIndex: index, serverOrigin: "https://example.test", documentID: documentID)
+    }
+
+    /// With the sheet closed, typing projects nothing for navigation.
+    func testTypingWithTheSheetClosedReprojectsNothing() async throws {
+        let harness = try await makeHarness([heading("h1", "Title"), paragraph("p1", "Body")])
+        let navigation = harness.session.navigation
+        await navigation.refresh()
+        setSelection(harness, NSRange(location: try location(harness.session, "p1", 4), length: 0))
+        for _ in 0..<5 {
+            _ = await harness.run {
+                harness.input.typeKey("x")
+                return true
+            }
+        }
+        await waitAndConfirmNever(timeout: 1) { navigation.refreshCount > 1 }
+        await harness.close()
+    }
+
+    /// Leaving records the text shown now, not the outline's older copy.
+    func testPersistReadsTheSurfaceNotAStaleOutline() async throws {
+        let documentID = UUID()
+        let store = ReadingPositionStore(userDefaults: defaults)
+        let harness = try await makeHarness(long())
+        host(harness.view)
+        let navigation = harness.session.navigation
+        navigation.enableReadingPosition(store: store, serverOrigin: "https://example.test", documentID: documentID)
+        await navigation.refresh()
+        navigation.restore()
+        setSelection(harness, NSRange(location: try location(harness.session, "p40", 0), length: 0))
+        let typed = await harness.run {
+            harness.input.typeKey("Z")
+            return true
+        }
+        XCTAssertTrue(typed)
+        let jumped = await navigation.jump(to: .block(try id(navigation, "p40")))
+        XCTAssertTrue(jumped)
+        navigation.persist()
+        let saved = try XCTUnwrap(store.position(serverOrigin: "https://example.test", documentID: documentID))
+        XCTAssertEqual(
+            saved.fingerprint,
+            readingPositionFingerprint(of: EditorBlock(kind: .unknown, text: "Z" + paragraphText(40))))
+        await harness.close()
+    }
+
+    /// A reader who tapped to type before the restore was decided keeps
+    /// their place: no jump, no offer.
+    func testRestoreNeverMovesAReaderWhoIsTyping() async throws {
+        let documentID = UUID()
+        let store = ReadingPositionStore(userDefaults: defaults)
+        savePosition(store, at: 40, documentID: documentID)
+        let harness = try await makeHarness(long())
+        let window = host(harness.view)
+        window.makeKeyAndVisible()
+        XCTAssertTrue(harness.view.becomeFirstResponder())
+        let navigation = harness.session.navigation
+        navigation.enableReadingPosition(store: store, serverOrigin: "https://example.test", documentID: documentID)
+        await navigation.refresh()
+        navigation.restore()
+        await waitAndConfirmNever { harness.view.topVisibleBlockID() != "p0" }
+        XCTAssertEqual(navigation.reading?.offersBackToTop, false)
+        await harness.close()
+    }
+
+    /// A restore decided before the view had a size is dropped when the
+    /// reader starts typing before it can scroll.
+    func testAPendingRestoreIsDroppedOnceTheReaderTypes() async throws {
+        let documentID = UUID()
+        let store = ReadingPositionStore(userDefaults: defaults)
+        savePosition(store, at: 40, documentID: documentID)
+        let harness = try await makeHarness(long())
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
+        window.addSubview(harness.view)
+        window.makeKeyAndVisible()
+        harness.view.frame = CGRect(x: 0, y: 0, width: 390, height: 0)
+        let navigation = harness.session.navigation
+        navigation.enableReadingPosition(store: store, serverOrigin: "https://example.test", documentID: documentID)
+        await navigation.refresh()
+        navigation.restore()
+        XCTAssertTrue(navigation.reading?.hasPendingRestoreScroll == true, "decided, waiting for a size")
+        XCTAssertTrue(harness.view.becomeFirstResponder())
+        harness.view.frame = window.bounds
+        harness.view.layoutIfNeeded()
+        await waitAndConfirmNever { harness.view.topVisibleBlockID() != "p0" }
+        XCTAssertEqual(navigation.reading?.offersBackToTop, false)
         await harness.close()
     }
 }

@@ -301,6 +301,34 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertEqual(text(of: editor), before, "a jump changes no text")
     }
 
+    /// PR10b review: with a caret in an early paragraph, a jump made from the
+    /// sheet is not undone when it closes (UIKit handing focus back would
+    /// scroll to the caret).
+    func testAJumpSurvivesClosingTheSheetWithACaretAbove() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-typing", "--native-readout"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(editor.waitForStableFrame())
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10))
+        app.buttons["nativeEditor.outline"].tap()
+        let field = app.textFields["Find in this document"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("Paragraph 12:")
+        XCTAssertTrue(app.staticTexts["1 of 1"].waitForExistence(timeout: 5))
+        app.buttons["Close"].firstMatch.tap()
+        XCTAssertTrue(field.waitForNonExistence(timeout: 5))
+        let top = app.staticTexts["nativeEditor.topBlock"]
+        XCTAssertTrue(top.waitForExistence(timeout: 5))
+        // Settled after the dismissal: it must still be the match, not the caret's block.
+        let moved = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label != %@", "fixture-11"), object: top)
+        XCTAssertEqual(XCTWaiter.wait(for: [moved], timeout: 3), .timedOut, "still at the match: \(top.label)")
+    }
+
     /// PR10: a collaborator's cursor is painted where they are, a peer in a
     /// folded toggle badges the toggle until it opens, both show in the
     /// presence bar, and a cursor scrolled off screen is not painted.

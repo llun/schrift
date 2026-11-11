@@ -3108,18 +3108,24 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   headings carry their literal text backslash-escaped (the classic rules read markdown, so
   `**` stays text), everything else is `.unknown` (verbatim). The entries come from the replica
   session (`.navigation`, a projection stamped with the engine index's generation) or, for
-  the one-shot reader, its fixed surface; they are refreshed when the sheet opens and at most
-  every 500 ms after delivered patches. **A jump is generation-safe:** the entry's
+  the one-shot reader, its fixed surface; they are refreshed when the sheet opens and, **only
+  while it is presented** (`isOutlinePresented`), at most every 500 ms after delivered patches:
+  with the sheet closed nothing is projected for navigation while anyone types (the "a
+  keystroke projects no block" rule). **A jump is generation-safe:** the entry's
   `NativeBlockHandle` is checked on the replica (`.locate`: same index generation, same
   container item, not deleted), so a block re-created since it was read (a move, a rebuilt
   replica) does not jump until the next refresh; it then `reveal`s the toggles above its
   target (view state) and scrolls with `NativeTextView.scroll(toBlock:surface:)`, which
   relocates TextKit's viewport rather than laying out the document. A jump never writes the
-  replica or moves the selection. **Continue reading** is the classic session keyed by the
+  replica or moves the selection. Closing the sheet with a caret in an early paragraph does not
+  scroll the jump back to the caret (UIKit hands focus back without a selection change);
+  `testAJumpSurvivesClosingTheSheetWithACaretAbove` pins that, so nothing resigns focus. **Continue reading** is the classic session keyed by the
   route's `documentID` (`NativeEditorView.documentID`, from `EditorView`): restored once after
   the first refresh when the view has a size (every block counts as laid out; one in a fold is
-  unfolded), persisted from the top visible fragment's block on disappear and when the scene
-  leaves `.active`, Back to top (`nativeEditor.backToTop`) over the text, dismissed by a user
+  unfolded), **never while the text view is first responder** (a reader who tapped to type
+  before the first reply, or before the view had a size, keeps their place), persisted from the
+  top visible fragment's block on disappear and when the scene leaves `.active` (built from
+  `surface.blocks` at that moment, not the outline's copy), Back to top (`nativeEditor.backToTop`) over the text, dismissed by a user
   scroll (`NativeTextView.onLayout`). The fingerprint is of the native text, so a position
   saved by the classic editor (markdown text) is not found by the native one.
   **VoiceOver over collaborators:** carets read "name, cursor" or "name, selection", badges
@@ -3132,8 +3138,11 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   element order (grouped, not removed). Tests: `NativeNavigationTests` (literal headings and
   find, a heading jump that changes no content, journal or selection, a find jump into a fold,
   a stale handle, the outline following edits, restore at 390 and 1024 pt with Back to top,
-  leaving at the top, collaborator labels and grouping) and the host UI test
-  `testOutlineFindsInTheNativeEditorWithoutChangingText`.
+  leaving at the top, collaborator labels and grouping; the PR #277 fixes: no reprojection with
+  the sheet closed, persist from the surface, no restore while typing, a pending restore dropped
+  once typing starts) and the host UI tests `testOutlineFindsInTheNativeEditorWithoutChangingText`
+  and `testAJumpSurvivesClosingTheSheetWithACaretAbove` (`--native-readout`: the top block,
+  polled on the main actor; a `TimelineView` closure can run off main and trapped there).
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves

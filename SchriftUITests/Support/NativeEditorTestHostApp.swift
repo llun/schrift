@@ -97,6 +97,10 @@ struct NativeEditorTestHostApp: App {
         }
         .overlay(alignment: .bottomLeading) {
             if ProcessInfo.processInfo.arguments.contains("--native-media") { ContentHeightReadout() }
+            // `--native-readout` (PR10b): the block at the top of the text, polled.
+            if ProcessInfo.processInfo.arguments.contains("--native-readout"), let session {
+                TopBlockReadout(session: session)
+            }
         }
         .environment(localization)
         .environment(images)
@@ -343,6 +347,25 @@ private let slowDisk: (@Sendable (ReplicaStore.Operation, ReplicaStore.Boundary)
     ? { @Sendable operation, boundary in
         if operation == .append, boundary == .payloadFlushed { Thread.sleep(forTimeInterval: 0.06) }
     } : nil
+
+/// `--native-readout` (PR10b): the block at the top of the text, polled on
+/// the main actor (the text view is UIKit; a `TimelineView` may render off main).
+private struct TopBlockReadout: View {
+    let session: NativeEditorSession
+    @State private var top = "none"
+
+    var body: some View {
+        Text(top)
+            .font(.caption2)
+            .accessibilityIdentifier("nativeEditor.topBlock")
+            .task {
+                while !Task.isCancelled {
+                    top = session.textView.topVisibleBlockID() ?? "none"
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+            }
+    }
+}
 
 /// `--native-peer` (PR10): two collaborators as a web client would publish
 /// them, fed straight to the awareness controller (no socket): "Web Peer"
