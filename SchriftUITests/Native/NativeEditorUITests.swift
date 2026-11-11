@@ -279,6 +279,33 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(unfolded.contains("elsewhere"))
     }
 
+    /// PR10: a collaborator's cursor is painted where they are, a peer in a
+    /// folded toggle badges the toggle until it opens, both show in the
+    /// presence bar, and a cursor scrolled off screen is not painted.
+    func testPeerCursorsPaintVisibleGeometryAndBadgeFoldedContent() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-typing", "--native-toggle", "--native-peer"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        let cursor = app.descendants(matching: .any)["nativeEditor.peerCursor.7"]
+        XCTAssertTrue(cursor.waitForExistence(timeout: 10))
+        XCTAssertEqual(cursor.label, "Web Peer")
+        let badge = app.descendants(matching: .any)["nativeEditor.peerBadge.8"]
+        XCTAssertTrue(badge.waitForExistence(timeout: 5), "a peer in folded content badges its toggle")
+        XCTAssertTrue(app.descendants(matching: .any)["nativeEditor.presence"].waitForExistence(timeout: 5))
+        XCTAssertTrue(editor.frame.intersects(cursor.frame))
+
+        app.buttons["nativeEditor.toggle.fixture-toggle"].tap()
+        let folded = app.descendants(matching: .any)["nativeEditor.peerCursor.8"]
+        XCTAssertTrue(folded.waitForExistence(timeout: 5), "opened, the caret replaces the badge")
+        XCTAssertFalse(badge.exists)
+
+        for _ in 0..<4 { editor.swipeUp(velocity: .fast) }
+        XCTAssertTrue(cursor.waitForNonExistence(timeout: 10), "scrolled away, it is not painted")
+        XCTAssertTrue(text(of: editor).contains("Paragraph"), "nothing a peer did changed the text")
+    }
+
     /// The production open route (`EditorView` → `NativeEditorOpen`) over an
     /// owned replica, offline: real keyboard input is journaled durably,
     /// reported as saved on this device and restored after a relaunch.

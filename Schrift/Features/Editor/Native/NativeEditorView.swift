@@ -118,6 +118,14 @@ struct NativeEditorView: View {
                 onCancel: { linkTarget = nil })
         }
         .toolbar {
+            // Collaborators on the scope's live socket (PR10); stale offline.
+            if let peers = session.awareness?.peers,
+                presentedPeerCount(peerCount: peers.count, isOffline: isOffline) != nil
+            {
+                ToolbarItem(placement: .topBarTrailing) {
+                    PresenceBar(peers: peers).accessibilityIdentifier("nativeEditor.presence")
+                }
+            }
             if let saveStatus, saveStatus != .none {
                 ToolbarItem(placement: .topBarTrailing) {
                     SaveStatusIndicator(

@@ -89,9 +89,15 @@ final class NativeCollaborationBinding {
         let isReader: @MainActor () async -> Bool
         /// The scope became read-only for this account; live ends.
         let becameReader: @MainActor () -> Void
+        /// Our name and color for awareness (PR10), read at each dial so a
+        /// re-authenticated account never announces the previous one; nil
+        /// joins as an observer.
+        let localState: @MainActor () -> LocalAwarenessState?
     }
 
     nonisolated let outbox = Outbox()
+    /// The scope's collaborators and our cursor, over this socket (PR10).
+    let awareness: NativeAwarenessController
     private let replica: DocumentReplicaSession
     private let backoff: Backoff
     private(set) var session: DocumentCollaborationSession?
@@ -127,6 +133,7 @@ final class NativeCollaborationBinding {
     init(replica: DocumentReplicaSession, backoff: Backoff = Backoff()) {
         self.replica = replica
         self.backoff = backoff
+        awareness = NativeAwarenessController(replica: replica)
         consumer = Task { [weak self, outbox] in
             for await message in outbox.messages {
                 // Rechecked per frame: an account change stops content leaving
@@ -156,11 +163,12 @@ final class NativeCollaborationBinding {
     func connect(
         dial: @escaping @MainActor () -> CollaborationTransport?, wireProtocol: CollaborationWireProtocol,
         documentName: String, isCurrent: @escaping @MainActor () -> Bool,
-        isReader: @escaping @MainActor () async -> Bool = { false }, becameReader: @escaping @MainActor () -> Void = {}
+        isReader: @escaping @MainActor () async -> Bool = { false }, becameReader: @escaping @MainActor () -> Void = {},
+        localState: @escaping @MainActor () -> LocalAwarenessState? = { nil }
     ) {
         dialer = Dialer(
             dial: dial, wireProtocol: wireProtocol, documentName: documentName, isCurrent: isCurrent,
-            isReader: isReader, becameReader: becameReader)
+            isReader: isReader, becameReader: becameReader, localState: localState)
         open()
     }
 
@@ -186,6 +194,7 @@ final class NativeCollaborationBinding {
         session?.stop()
         session = nil
         liveSince = nil
+        awareness.clear()
     }
 
     private func open() {
@@ -220,15 +229,23 @@ final class NativeCollaborationBinding {
         liveSince = nil
         let generation = self.generation
         let session = DocumentCollaborationSession(
-            documentName: dialer.documentName, transport: transport, wireProtocol: dialer.wireProtocol,
-            canUpdate: true, initialSyncStep1: { stateVector },
+            documentName: dialer.documentName, transport: transport, localState: dialer.localState(),
+            wireProtocol: dialer.wireProtocol, canUpdate: true, initialSyncStep1: { stateVector },
             onStateRequest: { [weak self] vector in
                 self?.answer(vector)
                 return nil
             },
             onSync: { [weak self] in self?.receive($0, generation: generation) },
-            onDisconnect: { [weak self] in self?.ended($0, generation: generation) })
+            onDisconnect: { [weak self] in self?.ended($0, generation: generation) },
+            onAwareness: { [weak self] entries in
+                guard let self, generation == self.generation else { return }
+                self.awareness.receive(entries)
+            },
+            // Awareness frames leave only for the current open and account, like content.
+            isCurrent: dialer.isCurrent)
         self.session = session
+        awareness.wireProtocol = dialer.wireProtocol
+        awareness.session = session
         session.start()
     }
 
@@ -252,6 +269,7 @@ final class NativeCollaborationBinding {
         if let liveSince, ContinuousClock.now - liveSince >= backoff.stableAfter { attempt = 0 }
         session = nil
         liveSince = nil
+        awareness.clear()
         switch reason {
         case .selfClosed: return
         case .transient, .permissionsReset:

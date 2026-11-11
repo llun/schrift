@@ -1,11 +1,29 @@
 import Foundation
 
+/// A collaborator's selection as y-prosemirror's cursor plugin publishes it
+/// (`{"cursor": {"anchor": …, "head": …}}`): two directed relative positions,
+/// in `relativePositionToJSON` shape. `anchor` may follow `head`.
+struct AwarenessCursor: Equatable, Codable, Sendable {
+    var anchor: YRelativePositionJSON
+    var head: YRelativePositionJSON
+
+    /// A peer's cursor field, or nil when it is absent, null or malformed.
+    /// Malformed never drops the peer: only its cursor is hidden.
+    static func parse(stateJSON: String) -> AwarenessCursor? {
+        struct Envelope: Decodable { let cursor: AwarenessCursor? }
+        return (try? JSONDecoder().decode(Envelope.self, from: Data(stateJSON.utf8)))?.cursor
+    }
+}
+
 /// The local user's awareness: flat `{name, color}` for Hocuspocus, nested under
 /// `user` for y-websocket/BlockNote peers. Built with `JSONSerialization` so a name with
 /// quotes/backslashes is escaped, never string-interpolated into JSON.
 struct LocalAwarenessState: Equatable, Sendable {
     let name: String
     let color: String
+    /// The native editor's selection (PR10), published beside `user` as
+    /// y-prosemirror does; nil leaves the field out (no cursor on the web).
+    var cursor: AwarenessCursor? = nil
 
     /// The protocol's user object as JSON, the value that rides inside an
     /// awareness entry's `stateJSON`. Built with `JSONSerialization` (slashes
@@ -13,7 +31,12 @@ struct LocalAwarenessState: Equatable, Sendable {
     /// fails, so a broadcast never carries a malformed body.
     func json(wireProtocol: CollaborationWireProtocol = .hocuspocus) -> String {
         let user = ["name": name, "color": color]
-        let object: [String: Any] = wireProtocol == .yWebSocket ? ["user": user] : user
+        var object: [String: Any] = wireProtocol == .yWebSocket ? ["user": user] : user
+        if let cursor, let data = try? JSONEncoder().encode(cursor),
+            let encoded = try? JSONSerialization.jsonObject(with: data)
+        {
+            object["cursor"] = encoded
+        }
         guard
             let data = try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes]),
             let string = String(data: data, encoding: .utf8)

@@ -53,6 +53,12 @@ enum ReplicaMessage: Sendable {
     /// reader, a frozen replica or a vector that cannot be read).
     /// A message that cannot be handled answers nil for both.
     case liveSync(peerVector: Data?, reply: @Sendable (_ stateVector: Data?, _ missing: Data?) -> Void)
+    /// Awareness (PR10): `sink` hears the engine's selection as relative
+    /// positions after every message that changed it (nil for a reader).
+    case watchCursor(@Sendable (AwarenessCursor?) -> Void)
+    /// Awareness (PR10): peers' published cursors, by client id, resolved
+    /// against the replica now. Never writes it.
+    case resolveCursors([UInt: AwarenessCursor], reply: @Sendable ([UInt: PeerCursorPlaces]) -> Void)
     case requestAvailability(surfaceID: UUID, blockID: String, candidates: [ReplicaAvailabilityCandidate])
     case copyPayload(surfaceID: UUID, requestID: UUID, blockIDs: [String])
     /// Installs the journal (nil makes the session read-only) and the shared
@@ -77,6 +83,7 @@ enum ReplicaMessage: Sendable {
         switch self {
         case .integrate(_, let reply): reply?(.failure(DocumentEngineError.detached))
         case .liveSync(_, let reply): reply(nil, nil)
+        case .resolveCursors(_, let reply): reply([:])
         case .inspect(let body): body(nil, nil, nil)
         default: break
         }

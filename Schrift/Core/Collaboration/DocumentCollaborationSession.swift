@@ -59,9 +59,14 @@ final class DocumentCollaborationSession {
     /// A fresh random client id for this session — never persisted (reuse risks
     /// duplicate ids = silent corruption), 32-bit to match yjs's clientID range.
     private let clientID: UInt
+    /// Our awareness id: a peer entry carrying it is our own echo.
+    var awarenessClientID: UInt { clientID }
     /// Our awareness state (name and color: flat on Hocuspocus, nested under `user` on
     /// y-websocket) broadcast to peers, or nil to join as an observer (always for a reader).
-    private let localState: LocalAwarenessState?
+    /// Only its cursor changes (`updateLocalCursor`, PR10).
+    private var localState: LocalAwarenessState?
+    /// Our awareness went out once: a cursor change is sent at once from then on.
+    private var announced = false
     /// y-protocols awareness clock: every publish must carry a higher one, or peers
     /// ignore it (an equal clock does not refresh their 30 s outdated timer).
     private var awarenessClock: UInt = 0
@@ -101,6 +106,12 @@ final class DocumentCollaborationSession {
     /// Fired once when the socket ends, with why (the native binding's
     /// reconnect, PR09b; the manager rebuilds sessions itself).
     private let onDisconnect: (@MainActor (CollaborationDisconnect) -> Void)?
+    /// When set, every decoded awareness batch goes here instead of `peers`
+    /// (the native controller owns presence, PR10).
+    private let onAwareness: (@MainActor ([AwarenessEntry]) -> Void)?
+    /// Checked before every awareness frame (announce, renewal, query reply,
+    /// cursor): the native binding's open and account still hold (PR10).
+    private let isCurrent: @MainActor () -> Bool
     /// Latches `onInitialSync` to a single firing per session.
     private var didInitialSync = false
     private var pumpTask: Task<Void, Never>?
@@ -119,7 +130,9 @@ final class DocumentCollaborationSession {
         onStateRequest: @escaping @MainActor (Data) -> Data? = { _ in nil },
         onInitialSync: @escaping @MainActor () -> Void = {},
         onSync: (@MainActor (SyncMessage) -> Void)? = nil,
-        onDisconnect: (@MainActor (CollaborationDisconnect) -> Void)? = nil
+        onDisconnect: (@MainActor (CollaborationDisconnect) -> Void)? = nil,
+        onAwareness: (@MainActor ([AwarenessEntry]) -> Void)? = nil,
+        isCurrent: @escaping @MainActor () -> Bool = { true }
     ) {
         self.documentName = documentName
         self.transport = transport
@@ -135,6 +148,8 @@ final class DocumentCollaborationSession {
         self.onInitialSync = onInitialSync
         self.onSync = onSync
         self.onDisconnect = onDisconnect
+        self.onAwareness = onAwareness
+        self.isCurrent = isCurrent
     }
 
     /// Resumes the socket, sends the handshake, and pumps inbound events.
@@ -175,7 +190,7 @@ final class DocumentCollaborationSession {
 
     /// Our awareness entry with a fresh clock, or nil for an observer (always for a reader).
     private func nextAwarenessFrame() -> HocuspocusMessage? {
-        guard let localState else { return nil }
+        guard let localState, isCurrent() else { return nil }
         awarenessClock += 1
         let payload = AwarenessCodec.encodePayload([
             AwarenessEntry(
@@ -184,7 +199,19 @@ final class DocumentCollaborationSession {
         return HocuspocusMessage(documentName: documentName, type: .awareness, payload: payload)
     }
 
+    /// Publishes our cursor with a fresh clock once we have announced, and
+    /// carries it in every renewal. Nothing for an observer (always a reader).
+    func updateLocalCursor(_ cursor: AwarenessCursor?) {
+        guard localState != nil, localState?.cursor != cursor else { return }
+        localState?.cursor = cursor
+        guard announced, renewalTask?.isCancelled == false, let frame = nextAwarenessFrame() else { return }
+        let transport = self.transport
+        // Out-of-order sends are harmless: peers keep the highest clock.
+        Task { try? await transport.send(frame) }
+    }
+
     private func startAwarenessRenewal() {
+        announced = true
         let interval = awarenessRenewInterval
         let transport = self.transport
         renewalTask = Task { [weak self] in
@@ -281,7 +308,12 @@ final class DocumentCollaborationSession {
                 }
             case .awareness:
                 // Peers' presence: fold it into `peers` (never including us).
-                if let entries = try? AwarenessCodec.decodePayload(message.payload) {
+                guard let entries = try? AwarenessCodec.decodePayload(message.payload) else { return }
+                // An owner of presence (the native controller, bounded and expiring)
+                // takes the batch instead: `peers` is unbounded and re-sorted per frame.
+                if let onAwareness {
+                    onAwareness(entries)
+                } else {
                     peers = updatedPeers(
                         peers, applying: entries, excludingLocalClientID: clientID, wireProtocol: wireProtocol)
                 }

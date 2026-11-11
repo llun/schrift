@@ -1999,13 +1999,13 @@ that are easy to violate and expensive to discover:
   `assoc` is load-bearing at `index == length`: `assoc 0` captures the end-of-type
   position (`item == nil`) and follows text a peer appends, `assoc -1` captures the
   last character's id and stays before it — the C2 end-of-paragraph IME fix, pinned
-  by `YRelativePositionTests`. **Caller rules for the future cursor path** (all in
+  by `YRelativePositionTests`. **Caller rules for the cursor path** (PR10a's `DocumentEngine.peerPlace` follows them; all in
   `resolve`'s doc comment): an unknown `tname` **creates that root permanently** in
   `doc.share`, so a peer-fed caller (awareness cursors) must only resolve names that
   already exist or that the schema owns (`document-store`); a **throw means a
   malformed position, not a corrupt replica** — drop the cursor and never latch
   `replicaFailSafe`; and `resolve` reads/mutates the live doc, so it runs on the
-  replica's owner (main actor), unlike the value and its codecs.
+  replica's owner (since PR08b the `DocumentReplicaSession` actor), unlike the value and its codecs.
 - **`YDoc.destroy()` is not optional.** The item graph is a mesh of strong cycles,
   so releasing a `YDoc` frees nothing; whoever owns a replica must tear it down.
 - **`YTextOps` is the format-aware text write path (B4), and three of its rules are
@@ -2944,8 +2944,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   refuses a real reader's save; a row that says reader is never asked.
   `DocumentCollaborationManager.nativeTransport` only dials (origin-pinned URL, the config's
   framing: y-websocket for Docs 6, Hocuspocus before; nil while suspended or working
-  offline) and tracks nothing; the binding owns a plain `DocumentCollaborationSession` with
-  no awareness (PR10), told a step2 from an update (`onSync`). The binding reads the
+  offline) and tracks nothing; the binding owns a plain `DocumentCollaborationSession`
+  (awareness since PR10a, bullet below), told a step2 from an update (`onSync`). The binding reads the
   replica's state vector before it dials (a full mailbox answers nil: nothing is dialed,
   never an empty-vector handshake), and dials and sends content only while `isCurrent`
   holds (the open, and the remembered signed-in user owning the scope, which a cookie
@@ -3042,6 +3042,63 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   cold relaunch, an edit applied but unacknowledged, a 1000 close as writer then reader,
   dials held during re-authentication, the per-open budget) and `NativeEditorActivationTests`
   (a permission reset to reader through `setWritable(nil)`, Live off and on while open).
+
+- **PR10a Awareness and relative cursors.** Awareness rides the binding's one socket: each
+  `NativeCollaborationBinding` owns a `NativeAwarenessController` (`@MainActor`), its
+  session announces `LocalAwarenessState` (read from `DocumentCollaborationManager
+  .localAwarenessState` **at each dial**, never snapshotted at open; nil joins as an
+  observer) and hands every decoded batch to it (`onAwareness`, which replaces the session's
+  own unbounded `peers` fold); a socket that ends (drop, background, Live off, stop) clears
+  every peer. A `signInGeneration` change calls `forgetLocalAwareness` (RootView), which also
+  drops a `refreshLocalAwareness` answer still in flight for the previous account. Every
+  awareness frame (announce, renewal, query reply, cursor) checks the binding's `isCurrent`,
+  like content.
+  **Inbound is untrusted:** a state over `maxStateBytes` (8 KiB) is ignored; y-protocols'
+  clock rule (only a higher clock, or `null` at the same clock; an equal clock does not
+  renew); `null` or an unparseable user removes the peer; a malformed `cursor` hides only the
+  cursor (`AwarenessCursor.parse`); at most `maxPeers` (64; an unknown id at the cap, or a
+  `null` for an unknown id, is refused before any JSON is parsed); a peer not renewed for 30 s
+  expires (`sweep`). Peer colors come from the name (`avatarColorHex`), never the peer's
+  string. **Resolution** is a mailbox message (`.resolveCursors`, at most one in flight, asked
+  again at once after a peer change and at most every 100 ms after delivered patches, since
+  each resolve walks the positions' left siblings) answered by `DocumentEngine.peerPlace`: a
+  root `tname` that is not already in `doc.share` is never resolved (stricter than "existing
+  or schema-owned": a missing `document-store` has nothing to point into), a throw or a
+  missing id is nil (never `nativeWriteFailed`), a deleted type is nil, a position in a
+  block's own `XmlText` (or between its content element's children) is `.text`, anything
+  else inside an indexed block (inline nodes, table cell, column, leaf) is `.block(id)`.
+  Nothing writes the replica; awareness is never journaled, persisted or undone. A peer
+  whose cursor cannot resolve stays in `peers`. **Painting:** `NativeCursorOverlay`
+  (a non-interactive subview of `NativeTextView`, laid out after `layoutControls` in every
+  layout pass, so scroll, rotation, folding and edits re-place it) draws only what lies in
+  TextKit's viewport: a caret with the name and the selection's visible part, or, for a
+  folded block (badge on the nearest shown ancestor), an opaque/preview block or `.block`,
+  a badge on the owner until it is opened. Per pass it reads `hiddenRanges` once and tints at
+  most `maxHighlights` (16) selections; a peer's name is one truncated, clipped caption line
+  at most `maxLabelWidth` (160 pt) wide. The overlay uses the last resolution even when
+  the display moved on (a predicted keystroke) and clamps; it never forces layout outside
+  the viewport. **Outbound:** after every message the replica reports the engine's
+  selection as its captured relative positions (`awarenessCursor`, direction kept) to the
+  `.watchCursor` sink when it changed; a replica without a journal reports nil, and a
+  session built for a reader (`canUpdate` false) has no local state, so readers publish
+  nothing (they open no socket anyway). The controller publishes at most every 100 ms (the
+  latest wins) through `DocumentCollaborationSession.updateLocalCursor`, which sends a frame
+  with a higher clock once announced and carries the cursor in every renewal and
+  query-awareness reply. `NativeEditorView` shows `PresenceBar` from `awareness.peers`
+  (hidden offline). **Known limits:** a cursor is published while the view keeps a selection
+  even after it resigned first responder; a resolution can lag one delivery behind the
+  display (a peer caret in a block being typed into shifts by the predicted characters until
+  the echo); an overlong selection highlight across folded content is not drawn (the caret
+  is); peers in a document whose replica freezes keep their last places. Navigation
+  (outline, find, reading position on generation-safe handles) is PR10b. Tests:
+  `NativeAwarenessTests` (direction and affinity through edits, malformed/oversized payloads
+  and replica fingerprints, unknown root names, deletion with two peers, stale clocks,
+  expiry and disconnect, the peer bound, viewport-only painting across scroll and width,
+  folded/math/image badges, throttled directed publication, no reader publication, the
+  binding's single socket; the PR #276 review fixes: no session peer table under an owner,
+  identity read per dial, a stale identity answer dropped, frames stop when not current, the
+  highlight bound, the name pill bound, the resolve cadence) and the host UI test
+  `testPeerCursorsPaintVisibleGeometryAndBadgeFoldedContent` (`--native-peer`).
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves

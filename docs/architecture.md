@@ -1032,7 +1032,7 @@ refused untouched and fetched again with a fresh SyncStep1, and the number waiti
 so typing always finds room. Outbound is only what was journaled: the journal publishes each
 local update after its append, and the replica answers a peer's state request in mailbox
 order into the same stream. The HTTP save keeps sending the same outbox and keeps owning
-acknowledgment; the server takes both idempotently. Cursors are PR10.
+acknowledgment; the server takes both idempotently. Cursors are PR10a (below).
 
 **PR09b Reconnect, background and mid-session changes.** A dropped socket dials again after
 an exponential backoff (1 s doubling to 30 s, counted again after a 30-second stable
@@ -1044,6 +1044,18 @@ Turning Live collaboration off while a document is open closes its socket and le
 saving as it was; turning it on joins again. Redials caused by refused updates are bounded in
 a row and per open. HTTP stays the only acknowledgment, so an update a server already applied
 is simply taken again.
+
+**PR10a Awareness and relative cursors.** The same socket carries awareness. A
+`NativeAwarenessController` per replica scope keeps the collaborators (bounded, expiring after
+30 s without renewal, cleared when the socket ends) and treats everything a peer sends as
+untrusted: oversized states are ignored, a malformed cursor hides only that cursor, and a
+peer's position is resolved on the replica session without ever writing it (an unknown root
+name is never resolved, a malformed position is simply not shown). A position in a block's
+text is a caret; one in folded or structured content badges the block that owns it.
+`NativeCursorOverlay` paints only what lies in the laid-out viewport and follows every layout
+pass. Our own selection goes out as directed y-prosemirror relative positions, at most every
+100 ms; a reader publishes nothing. Awareness is never journaled, persisted or undone.
+Navigation on generation-safe handles is PR10b.
 
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom

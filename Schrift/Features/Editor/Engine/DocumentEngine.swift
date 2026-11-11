@@ -986,6 +986,50 @@ final class DocumentEngine {
         }
     }
 
+    // MARK: - Awareness (PR10)
+
+    /// The selection as y-prosemirror's cursor field: the relative positions
+    /// captured when it was set, direction kept. Never writes the replica.
+    func awarenessCursor() -> AwarenessCursor? {
+        guard !isDetached, let selection else { return nil }
+        return AwarenessCursor(anchor: selection.anchor.relative.json, head: selection.head.relative.json)
+    }
+
+    /// `position` as a relative position a peer could publish (tests and the
+    /// UI test host's fake peer).
+    func awarenessPosition(_ position: EditorPosition) -> YRelativePositionJSON? {
+        guard !isDetached else { return nil }
+        return (try? RelativeEditorPosition(position, index: builder.index))?.relative.json
+    }
+
+    /// Where a peer's published position lands, or nil when it cannot be shown.
+    /// The position is untrusted wire data: a root name that does not exist is
+    /// never resolved (yjs's `doc.get` would create it), a malformed position
+    /// is nil (never `replicaFailSafe`), and nothing here writes the replica.
+    /// Text inside a block's own `XmlText` is a caret place; anything else in
+    /// a block (inline nodes, a table cell, a column, a preview) is the block.
+    func peerPlace(_ json: YRelativePositionJSON) -> PeerCursorPlace? {
+        guard !isDetached else { return nil }
+        let relative = YRelativePosition(json: json)
+        if relative.item == nil, let tname = relative.tname, doc.share[tname] == nil { return nil }
+        guard let absolute = try? relative.resolve(in: doc), absolute.type.item?.deleted != true,
+            let index = Int(exactly: absolute.index), let blockID = builder.index.blockID(for: absolute.type),
+            let entry = builder.index.entries[blockID]
+        else { return nil }
+        let length = entry.textType.flatMap { Int(exactly: $0.length) } ?? 0
+        if entry.isProjectable, let text = entry.textType, absolute.type === text {
+            return .text(EditorPosition(blockID: blockID, offset: min(index, length), assoc: absolute.assoc))
+        }
+        // Between the content element's children (y-prosemirror's position in
+        // an empty paragraph, or before/after its text).
+        if entry.isProjectable, entry.isSimpleContainer, let element = entry.element, absolute.type === element,
+            entry.textType != nil || element.length == 0
+        {
+            return .text(EditorPosition(blockID: blockID, offset: index == 0 ? 0 : length, assoc: absolute.assoc))
+        }
+        return .block(blockID)
+    }
+
     /// Captures an insertion anchor, normally the current selection's head.
     /// An explicit offset lets a surface begin composition before reporting its
     /// selection. The composed string is an insertion, not a replacement range.
