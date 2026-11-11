@@ -14,6 +14,8 @@ final class NativeEditorSession {
     let surfaceID: UUID
     let textView: NativeTextView
     let surface: NativeTextSurface
+    /// Outline, find and reading position over this surface (PR10b).
+    @ObservationIgnored let navigation: NativeDocumentNavigation
     let hasUnsupportedRoot: Bool
     /// Only a fully modeled document with a total Markdown shadow may be
     /// authored: anything else would be written back lossily. Opaque/rich
@@ -55,6 +57,9 @@ final class NativeEditorSession {
         if surface.hidden.contains(true) { view.blockControls.foldDidChange() }
         self.textView = view
         self.surface = surface
+        let navigation = NativeDocumentNavigation(replica: replica, surface: surface, textView: view)
+        self.navigation = navigation
+        view.onLayout = { [weak navigation] in navigation?.layoutPassed() }
         self.hasUnsupportedRoot = hasUnsupportedRoot
         self.canType = canType
         self.revision = revision
@@ -155,6 +160,7 @@ final class NativeEditorSession {
         revision = delivery.revision
         if delivery.events.contains(where: { if case .patch = $0 { true } else { false } }) {
             awareness?.documentChanged()
+            navigation.documentChanged()
         }
         if let token = delivery.drained { drains.removeValue(forKey: token)?.resume() }
     }

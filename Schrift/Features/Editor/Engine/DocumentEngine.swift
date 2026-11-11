@@ -986,6 +986,26 @@ final class DocumentEngine {
         }
     }
 
+    // MARK: - Navigation (PR10b)
+
+    /// Every block in document order with the handle this engine's index
+    /// gives it. Reads only.
+    func navigationEntries() -> [NativeNavigationEntry] {
+        guard !isDetached else { return [] }
+        return NativeBlockProjection.project(doc, generation: builder.index.generation).blocks.map {
+            NativeNavigationEntry(BlockSnapshot($0), handle: $0.handle)
+        }
+    }
+
+    /// The block `handle` names, while it is still that block: same index
+    /// generation, same container item, not deleted.
+    func locate(_ handle: NativeBlockHandle) -> String? {
+        guard !isDetached, let entry = builder.index.entries[handle.stringID], entry.handle == handle,
+            !entry.containerItem.deleted
+        else { return nil }
+        return handle.stringID
+    }
+
     // MARK: - Awareness (PR10)
 
     /// The selection as y-prosemirror's cursor field: the relative positions

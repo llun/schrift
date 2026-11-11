@@ -1055,7 +1055,16 @@ text is a caret; one in folded or structured content badges the block that owns 
 `NativeCursorOverlay` paints only what lies in the laid-out viewport and follows every layout
 pass. Our own selection goes out as directed y-prosemirror relative positions, at most every
 100 ms; a reader publishes nothing. Awareness is never journaled, persisted or undone.
-Navigation on generation-safe handles is PR10b.
+Navigation is PR10b (below).
+
+**PR10b Native outline, find and continue reading.** The native editor reuses the classic
+"In this document" sheet, its find rules and the reading-position store. Each jump names its
+block by a handle (the replica's generation and the block's own item), checked on the replica
+session, so a block that was replaced since the outline was read is not jumped to by mistake.
+A jump unfolds the toggles above its target and scrolls; it never changes the document or the
+selection. Reopening a document returns to the block that was at the top of the screen, with
+the Back to top offer, on phones and tablets alike. Collaborators' carets and badges carry
+VoiceOver labels and are grouped together.
 
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom

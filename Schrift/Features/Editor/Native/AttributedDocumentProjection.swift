@@ -33,6 +33,10 @@ struct NativeEditorLabels: Equatable {
     var toggle = Strings_en.table[.native_editor_toggle]!
     var expanded = Strings_en.table[.native_editor_toggle_expanded]!
     var collapsed = Strings_en.table[.native_editor_toggle_collapsed]!
+    /// Collaborators' carets and badges for VoiceOver (PR10b), each `%@` the name.
+    var peerCursor = Strings_en.table[.native_editor_peer_cursor]!
+    var peerSelection = Strings_en.table[.native_editor_peer_selection]!
+    var peerFolded = Strings_en.table[.native_editor_peer_folded]!
     // Preview names and states (PR06e).
     var named = Strings_en.table[.native_editor_attachment_named]!
     var image = Strings_en.table[.editor_image_a11y]!

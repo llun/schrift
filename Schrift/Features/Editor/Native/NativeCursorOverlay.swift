@@ -25,6 +25,8 @@ final class NativeCursorOverlay: UIView {
         super.init(frame: frame)
         isUserInteractionEnabled = false
         accessibilityIdentifier = "nativeEditor.cursorOverlay"
+        // VoiceOver visits collaborators together, not between the text's controls.
+        shouldGroupAccessibilityChildren = true
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -32,7 +34,7 @@ final class NativeCursorOverlay: UIView {
     /// What a resolved endpoint is drawn as on this surface.
     private enum Mark: Equatable {
         case caret(Int)
-        case badge(String)
+        case badge(String, folded: Bool)
     }
 
     /// Re-places every visible cursor; called from the text view's layout.
@@ -66,6 +68,7 @@ final class NativeCursorOverlay: UIView {
             guard let places = awareness.places[peer.clientID], let head = places.head.flatMap({ mark($0, surface) })
             else { continue }
             let color = UIColor(rgb: avatarColorHex(for: peer.name))
+            let labels = textView.blockControls.labels
             switch head {
             case .caret(let offset):
                 guard visible.contains(offset) || offset == NSMaxRange(visible),
@@ -73,7 +76,10 @@ final class NativeCursorOverlay: UIView {
                 else { continue }
                 shownCarets.insert(peer.clientID)
                 place(caret: peer, color: color, at: rect, origin: textView.bounds.origin)
-                if case .caret(let anchor)? = places.anchor.flatMap({ mark($0, surface) }), anchor != offset {
+                let anchor = places.anchor.flatMap { mark($0, surface) }
+                carets[peer.clientID]?.accessibilityLabel = String(
+                    format: anchor.map { $0 != head } == true ? labels.peerSelection : labels.peerCursor, peer.name)
+                if case .caret(let anchor)? = anchor, anchor != offset {
                     let range = NSRange(location: min(anchor, offset), length: abs(anchor - offset))
                     if shownHighlights.count < Self.maxHighlights,
                         highlight(
@@ -82,7 +88,7 @@ final class NativeCursorOverlay: UIView {
                         shownHighlights.insert(peer.clientID)
                     }
                 }
-            case .badge(let blockID):
+            case .badge(let blockID, let folded):
                 guard let entry = surface.rangeIndex.entry(for: blockID), visible.contains(entry.range.location),
                     let rect = caretRect(entry.range.location, in: textView)
                 else { continue }
@@ -90,6 +96,8 @@ final class NativeCursorOverlay: UIView {
                 let index = badgesPerBlock[blockID, default: 0]
                 badgesPerBlock[blockID] = index + 1
                 place(badge: peer, color: color, line: rect, index: index, in: textView)
+                badges[peer.clientID]?.accessibilityLabel = String(
+                    format: folded ? labels.peerFolded : labels.peerCursor, peer.name)
             }
         }
     }
@@ -110,7 +118,7 @@ final class NativeCursorOverlay: UIView {
         let block = surface.blocks[position]
         guard !folded, case .text(let caret) = place, !block.isOpaque, block.preview == nil,
             let range = surface.rangeIndex.documentRange(blockID: id, textRange: caret.offset..<caret.offset)
-        else { return .badge(id) }
+        else { return .badge(id, folded: folded) }
         return .caret(range.location)
     }
 
@@ -137,7 +145,6 @@ final class NativeCursorOverlay: UIView {
         label?.text = String(peer.name.prefix(40))
         label?.backgroundColor = color
         view.subviews.last?.backgroundColor = color
-        view.accessibilityLabel = peer.name
         // A peer's name is untrusted: one truncated caption line, clipped.
         let fitted = label?.sizeThatFits(CGSize(width: Self.maxLabelWidth, height: .greatestFiniteMagnitude)) ?? .zero
         let labelSize = CGSize(
@@ -205,7 +212,6 @@ final class NativeCursorOverlay: UIView {
         let view = (badges[peer.clientID] as? UILabel) ?? makeBadge(peer)
         view.text = avatarInitials(for: peer.name)
         view.backgroundColor = color
-        view.accessibilityLabel = peer.name
         let trailing = textView.bounds.width - textView.textContainerInset.right - size
         view.frame = CGRect(
             x: trailing - CGFloat(index) * (size + 2), y: line.midY - textView.bounds.minY - size / 2, width: size,

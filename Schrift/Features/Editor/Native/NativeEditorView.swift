@@ -18,7 +18,15 @@ struct NativeEditorView: View {
     var onSave: () -> Void = {}
     /// Offline, image previews show cached bytes and issue no request.
     var isOffline = false
+    /// Where this document is remembered as read (PR10b); nil keeps no position.
+    var documentID: UUID? = nil
+    /// A host's own store (tests); the app's by default.
+    var readingPositions: ReadingPositionStore? = nil
     @Environment(LocalizationStore.self) private var loc
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isPresentingOutline = false
+    @State private var outlineFocusesFind = false
     /// The app's image loader; a host without one shows image placeholders.
     @Environment(ImageLoader.self) private var images: ImageLoader?
     @Environment(\.docsTheme) private var theme
@@ -46,7 +54,9 @@ struct NativeEditorView: View {
                         done: loc[.editor_checklist_state_done_a11y],
                         notDone: loc[.editor_checklist_state_not_done_a11y], toggle: loc[.native_editor_toggle],
                         expanded: loc[.native_editor_toggle_expanded],
-                        collapsed: loc[.native_editor_toggle_collapsed], named: loc[.native_editor_attachment_named],
+                        collapsed: loc[.native_editor_toggle_collapsed], peerCursor: loc[.native_editor_peer_cursor],
+                        peerSelection: loc[.native_editor_peer_selection], peerFolded: loc[.native_editor_peer_folded],
+                        named: loc[.native_editor_attachment_named],
                         image: loc[.editor_image_a11y], video: loc[.native_editor_video],
                         audio: loc[.native_editor_audio], file: loc[.native_editor_file], pdf: loc[.native_editor_pdf],
                         table: loc[.native_editor_table], tableMore: loc[.native_editor_table_more],
@@ -61,6 +71,8 @@ struct NativeEditorView: View {
                 .id(ObjectIdentifier(session))
             }
         }
+        // Over the text, above the formatting bar's inset.
+        .overlay(alignment: .bottom) { backToTopOffer }
         .safeAreaInset(edge: .top) {
             if let preservedNotice {
                 Text(loc[preservedNotice])
@@ -117,7 +129,40 @@ struct NativeEditorView: View {
                 },
                 onCancel: { linkTarget = nil })
         }
+        .modifier(
+            DocumentOutlinePresentation(
+                isPresented: $isPresentingOutline, focusesFind: outlineFocusesFind, documentTitle: title,
+                blocks: session.navigation.blocks, findShortcutTitle: loc[.outline_find_placeholder],
+                findShortcutEnabled: !session.hasUnsupportedRoot, closesOutline: false,
+                onFindShortcut: { presentOutline(focusingFind: true) },
+                onScroll: { target in jump(target) }, onAppear: { session.navigation.isOutlinePresented = true },
+                onDismiss: { session.navigation.isOutlinePresented = false },
+                onSelectHeading: { jump(.block($0)) })
+        )
+        .task(id: ObjectIdentifier(session)) {
+            if let documentID {
+                session.navigation.enableReadingPosition(
+                    store: readingPositions ?? ReadingPositionStore(), serverOrigin: serverOrigin,
+                    documentID: documentID)
+            }
+            await session.navigation.refresh()
+            session.navigation.restore()
+        }
+        .onDisappear { session.navigation.persist() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { session.navigation.persist() }
+        }
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    presentOutline(focusingFind: false)
+                } label: {
+                    MaterialSymbol(.subject, size: 20, scales: false)
+                }
+                .accessibilityLabel(loc[.outline_title])
+                .accessibilityIdentifier("nativeEditor.outline")
+                .disabled(session.hasUnsupportedRoot)
+            }
             // Collaborators on the scope's live socket (PR10); stale offline.
             if let peers = session.awareness?.peers,
                 presentedPeerCount(peerCount: peers.count, isOffline: isOffline) != nil
@@ -141,6 +186,34 @@ struct NativeEditorView: View {
 }
 
 extension NativeEditorView {
+    fileprivate func presentOutline(focusingFind: Bool) {
+        outlineFocusesFind = focusingFind
+        session.navigation.isOutlinePresented = true
+        isPresentingOutline = true
+        Task { await session.navigation.refresh() }
+    }
+
+    /// A heading, a find match or the title: the reader chose where to be.
+    fileprivate func jump(_ target: EditorScrollTarget) {
+        session.navigation.noteDeliberateJump()
+        Task { await session.navigation.jump(to: target) }
+    }
+
+    /// The classic offer after a restore, over the native text.
+    @ViewBuilder fileprivate var backToTopOffer: some View {
+        ZStack {
+            if session.navigation.reading?.offersBackToTop == true {
+                BackToTopPill(title: loc[.editor_back_to_top], accessibilityLabel: loc[.editor_back_to_top_a11y]) {
+                    session.navigation.backToTop()
+                }
+                .padding(.bottom, DocsSpacing.spaceBase)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                .accessibilityIdentifier("nativeEditor.backToTop")
+            }
+        }
+        .animation(reduceMotion ? nil : .snappy, value: session.navigation.reading?.offersBackToTop)
+    }
+
     /// Uncommitted IME text is never inserted silently: the user chooses.
     fileprivate func recoveryBanner(_ recovery: ProvisionalRecovery, input: NativeInputCoordinator) -> some View {
         VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {

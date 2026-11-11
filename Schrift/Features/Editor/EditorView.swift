@@ -321,7 +321,8 @@ struct EditorView: View {
                     saveStatus: session.input == nil ? nil : nativeSaveStatus(session),
                     saveFailureDetail: viewModel.saveFailureDetail,
                     saveFailureOffersRetry: viewModel.saveFailureOffersRetry,
-                    onSave: { nativeOpen.saveNow(viewModel: viewModel) }, isOffline: showsOffline)
+                    onSave: { nativeOpen.saveNow(viewModel: viewModel) }, isOffline: showsOffline,
+                    documentID: viewModel.documentID)
             case .preservedUnavailable:
                 ContentUnavailableView(
                     loc[.native_editor_owned_unavailable_title], systemImage: "doc.richtext",

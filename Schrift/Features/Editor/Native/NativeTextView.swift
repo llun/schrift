@@ -256,7 +256,11 @@ final class NativeTextView: UITextView {
         blockControls?.layoutControls()
         // After the viewport settled: collaborators' cursors on screen (PR10).
         cursorOverlay.layout(in: self)
+        onLayout?()
     }
+
+    /// After every layout pass: scrolling, size changes (PR10b's reading position).
+    var onLayout: (() -> Void)?
 
     /// Collaborators' cursors (PR10), painted over the text, never touched.
     let cursorOverlay = NativeCursorOverlay()
