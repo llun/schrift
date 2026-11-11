@@ -37,7 +37,9 @@ enum ReplicaMessage: Sendable {
     /// The surface's selection, `seq` increasing per surface, in display
     /// coordinates at `baseRevision`.
     case select(surfaceID: UUID, seq: UInt64, baseRevision: UInt64, EditorSelection?)
-    case compositionBegin(surfaceID: UUID, baseRevision: UInt64, blockID: String, range: Range<Int>)
+    /// `epoch`: a begin from an epoch the session already invalidated is not
+    /// captured (its offsets may count dropped predictions); the commit is orphaned.
+    case compositionBegin(surfaceID: UUID, epoch: UInt64, baseRevision: UInt64, blockID: String, range: Range<Int>)
     case compositionCommit(surfaceID: UUID, commandID: UUID, text: String)
     case compositionCancel(surfaceID: UUID)
     /// The surface's IME recovery entries, written to `provisional.json`.

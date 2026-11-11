@@ -238,10 +238,10 @@ actor DocumentReplicaSession {
             surfaces[surfaceID]?.selectionSeq = seq
             let rebased = selection.flatMap { rebase($0, surfaceID: surfaceID, base: base) }
             if (try? engine.setSelection(rebased)) == nil { try? engine.setSelection(nil) }
-        case .compositionBegin(let surfaceID, let base, let blockID, let range):
+        case .compositionBegin(let surfaceID, let epoch, let base, let blockID, let range):
             // A begin that cannot be captured (a race with an unseen change)
             // leaves no composition: its commit comes back `.orphaned`.
-            guard surfaces[surfaceID] != nil,
+            guard surfaces[surfaceID]?.epoch == epoch,
                 let range = rebase(range, assoc: -1, blockID: blockID, surfaceID: surfaceID, base: base)
             else { return }
             try? engine.compositionBegan(blockID: blockID, replacing: range)

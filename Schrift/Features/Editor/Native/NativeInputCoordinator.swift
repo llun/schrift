@@ -173,12 +173,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         var base: () -> UInt64 = { revision }
         var canAuthor: () -> Bool = { true }
         var unanswered: (UUID?) -> Void = { _ in }
+        var currentEpoch: () -> UInt64 = { 0 }
         self.composition = NativeCompositionSession(
             surface: surface, view: view,
             port: NativeCompositionSession.Port(
                 begin: { blockID, range in
                     let posted = mailbox.post(
-                        .compositionBegin(surfaceID: surfaceID, baseRevision: base(), blockID: blockID, range: range))
+                        .compositionBegin(
+                            surfaceID: surfaceID, epoch: currentEpoch(), baseRevision: base(), blockID: blockID,
+                            range: range))
                     if !posted { stop() }
                     return posted
                 },
@@ -203,6 +206,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         super.init()
         stop = { [weak self] in self?.stopAfterStorageFailure() }
         unanswered = { [weak self] in self?.answerCompositionLocally($0) }
+        currentEpoch = { [weak self] in self?.epoch ?? 0 }
         base = { [weak self] in self?.canonicalRevision ?? revision }
         canAuthor = { [weak self] in self.map { !$0.isFrozen && !$0.isDetached } ?? false }
         postSelection = { [weak self] seq, selection in
@@ -254,27 +258,60 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         queued = []
         for delivery in deliveries { applyNow(delivery) }
         finishing = nil
+        // A failure that waited stops authoring before anything is retried.
+        if failsAfterComposition {
+            failsAfterComposition = false
+            stopAfterStorageFailure()
+        }
+        // The composition's caret is the user's latest selection: a barrier
+        // still in flight (or retried below) keeps it.
+        if released, barrier != nil { userSelection = blockSelection().map { ($0, barrierShown.count) } }
         let stale = staleAfterDrain
         staleAfterDrain = []
         asOneKeyboardChange(if: !stale.isEmpty) {
             for id in stale { handle(.stale(commandID: id), selection: nil) }
         }
-        if failsAfterComposition {
-            failsAfterComposition = false
-            stopAfterStorageFailure()
-        }
         if released { keepSelectionVisible() }
         refreshSelectionMarks()
         replayIntents()
+        // Marked text that came while the commit was in flight begins now,
+        // after the keys typed before it.
+        if let held = heldMarkedText, intents.isEmpty, !compositionOwnsView {
+            heldMarkedText = nil
+            view?.setMarkedText(held, selectedRange: NSRange(location: held.utf16.count, length: 0))
+        }
     }
 
     /// The answer a composition gets when its commit or cancel cannot be
-    /// posted: orphaned (its text stays a recovery entry), through the queue.
+    /// posted (a commit is orphaned: its text stays a recovery entry; a cancel
+    /// is cancelled), through the queue after everything delivered before it.
     private func answerCompositionLocally(_ commandID: UUID?) {
+        var state = queued.last?.state ?? ReplicaState(canUndo: history.canUndo, canRedo: history.canRedo)
+        state.frozen = true
         apply(
             ReplicaDelivery(
-                revision: canonicalRevision, result: .composition(commandID: commandID, .orphaned),
-                state: ReplicaState(frozen: true)))
+                revision: queued.last?.revision ?? canonicalRevision,
+                result: .composition(commandID: commandID, commandID == nil ? .cancelled : .orphaned), state: state))
+    }
+
+    // MARK: - Marked text behind a commit
+
+    /// Marked text UIKit sent while the previous commit was still in flight:
+    /// held like a key, never refused, and begun once that commit is applied.
+    @ObservationIgnored private(set) var heldMarkedText: String?
+
+    /// True when `markedText` is held behind a resolving commit.
+    func holdMarkedText(_ markedText: String) -> Bool {
+        guard composition.isResolving, !isFrozen, !isDetached else { return false }
+        heldMarkedText = markedText
+        return true
+    }
+
+    /// The keyboard ended the held marked text: committed as typed text, or dropped.
+    func endHeldMarkedText(committing: Bool) {
+        guard let held = heldMarkedText else { return }
+        heldMarkedText = nil
+        if committing { typeKey(held) }
     }
 
     /// Applies one delivery: its patches in order, then its result, as one
@@ -921,6 +958,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 return true
             }
         }
+        // Anything else would read offsets a commit still in flight owns.
+        guard !compositionOwnsView else { return false }
         // The software keyboard deletes the separator before a block start
         // through the delegate or UITextInput `replace`, not `deleteBackward`:
         // it is the same boundary Backspace.
@@ -1051,6 +1090,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         if composition.isActive {
             view.dropMarkedText()
             return commitComposition()
+        }
+        // A commit still in flight owns the view: Return waits like any key.
+        if compositionOwnsView {
+            hold(.insert("\n"))
+            return true
         }
         let selection = view.selectedRange
         if selection.length > 0, view.markedTextRange == nil { return replace(range: selection, with: "\n") }
@@ -1494,7 +1538,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// block, and, when the selection is whole sibling subtrees
     /// (`NativeClipboard.wholeBlocks`), their lossless payload beside it.
     func copySelection() {
-        guard let view, let text = NativeClipboard.plainText(for: view.selectedRange, surface: surface) else {
+        guard let view, !compositionOwnsView,
+            let text = NativeClipboard.plainText(for: view.selectedRange, surface: surface)
+        else {
             return
         }
         copy(text: text, blocks: NativeClipboard.wholeBlocks(for: view.selectedRange, surface: surface))
@@ -1505,7 +1551,14 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// pasteboard as it was.
     @discardableResult
     func cutSelection() -> Bool {
-        guard let view, let text = NativeClipboard.plainText(for: view.selectedRange, surface: surface) else {
+        // A delete held behind a barrier would leave its copy unwritten.
+        guard !isBusy else {
+            noticeKey = .native_editor_input_busy
+            return false
+        }
+        guard let view, !compositionOwnsView,
+            let text = NativeClipboard.plainText(for: view.selectedRange, surface: surface)
+        else {
             return false
         }
         // Asked for before the delete removes the blocks (the mailbox is
@@ -1776,7 +1829,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     func cancelComposition() -> Bool {
         guard composition.isActive else { return false }
         let cancelled = composition.cancel()
-        if cancelled { noticeKey = nil }
+        // A cancel that could not be posted froze authoring: its notice stays.
+        if cancelled, !isFrozen { noticeKey = nil }
         return cancelled
     }
 
@@ -1901,7 +1955,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             noticeKey = .native_editor_range_unavailable
             return
         }
-        noticeKey = .native_editor_marked_unavailable
+        // A storage failure (a begin that could not be posted) keeps its notice.
+        if !isFrozen { noticeKey = .native_editor_marked_unavailable }
         view?.isEditable = false
         view?.resignFirstResponder()
     }

@@ -1285,9 +1285,10 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
         let replica = try XCTUnwrap(first.session.replica)
         try caret(first, Self.firstID, 5)
         while replica.mailbox.post(.writeProvisional([])) {}
-        XCTAssertFalse(first.input.beginComposition(markedText: "に"))
+        first.view.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
         XCTAssertFalse(first.input.composition.isActive)
-        XCTAssertEqual(first.input.noticeKey, .native_editor_storage_failed)
+        XCTAssertNil(first.view.markedTextRange)
+        XCTAssertEqual(first.input.noticeKey, .native_editor_storage_failed, "N5: the refusal keeps it")
         blocked.open()
 
         let gate = Latch()
@@ -1326,5 +1327,153 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
         XCTAssertEqual(text(of: try block(harness.session, Self.firstID)), "aFirst pah.")
         XCTAssertEqual(harness.input.composition.pendingRecoveries.map(\.text), ["b"])
         try await assertConsistent(harness, localCommands: 1)
+    }
+
+    // MARK: - Review round 7 (PR #272)
+
+    /// N5: the next IME key while the previous commit is still in flight is
+    /// held and begins once that commit is applied; the editor is not locked.
+    func testMarkedTextBehindACommitInFlightIsHeldNotRefused() async throws {
+        let disk = Latch()
+        let harness = try await gated(disk)
+        try caret(harness, Self.firstID, 5)
+        harness.view.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0))
+        harness.view.unmarkText()
+        harness.view.setMarkedText("ご", selectedRange: NSRange(location: 1, length: 0))
+        XCTAssertTrue(harness.view.isEditable, "not refused")
+        XCTAssertNil(harness.input.noticeKey)
+        disk.open()
+        _ = await harness.session.settle()
+        XCTAssertEqual(harness.view.markedTextRange.flatMap { harness.view.text(in: $0) }, "ご")
+        harness.view.unmarkText()
+        await harness.settle()
+        XCTAssertEqual(texts(harness.session).first, "Firstにほんご paragraph.")
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
+    /// N7a: a cut while a barrier is in flight is refused with the busy notice
+    /// (a held delete would leave its copy unwritten); nothing is deleted.
+    func testACutWhileBusyIsRefused() async throws {
+        let disk = Latch()
+        let harness = try await gated(disk)
+        harness.pasteboard.string = "kept"
+        try caret(harness, Self.firstID, 5)
+        harness.view.insertText("\n")
+        setSelection(harness, NSRange(location: try location(harness.session, Self.thirdID, 0), length: 5))
+        XCTAssertFalse(harness.input.cutSelection())
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_input_busy)
+        disk.open()
+        await harness.settle()
+        XCTAssertEqual(harness.pasteboard.string, "kept")
+        XCTAssertEqual(texts(harness.session).last, "Third paragraph.")
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    /// N7b: copy reads no offsets while a commit is in flight.
+    func testCopyWhileACommitIsInFlightCopiesNothing() async throws {
+        let disk = Latch()
+        let harness = try await gated(disk)
+        harness.pasteboard.string = "kept"
+        try caret(harness, Self.firstID, 5)
+        harness.view.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0))
+        harness.view.unmarkText()
+        harness.view.selectedRange = NSRange(location: try location(harness.session, Self.secondID, 0), length: 6)
+        harness.view.copy(nil)
+        XCTAssertEqual(harness.pasteboard.string, "kept")
+        disk.open()
+        await harness.settle()
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    /// N1 and N2: a cancel that cannot be posted is answered as cancelled: no
+    /// recovery entry, and the storage notice stays.
+    func testACancelWhosePostFailsIsCancelledAndKeepsTheNotice() async throws {
+        let gate = Latch()
+        let harness = try await gated(Latch(open: true), mailbox: gate)
+        let mailbox = try XCTUnwrap(harness.session.replica).mailbox
+        try caret(harness, Self.firstID, 5)
+        harness.view.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0))
+        while mailbox.post(.writeProvisional([])) {}
+        harness.view.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
+        XCTAssertFalse(harness.input.composition.isResolving)
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_storage_failed)
+        XCTAssertEqual(harness.input.composition.pendingRecoveries.map(\.text), [])
+        XCTAssertTrue(harness.session.surface.storageMatchesModel)
+        gate.open()
+    }
+
+    /// N3: a stale barrier retried after a composition keeps the
+    /// composition's caret, the user's latest selection.
+    func testACompositionsCaretSurvivesAStaleRetryQueuedBehindIt() async throws {
+        let blocks = [paragraph("a", "Alpha"), paragraph("b", "Beta"), paragraph("c", "Gamma")]
+        let harness = try await makeHarness(blocks)
+        addTeardownBlock { await harness.close() }
+        let peer = try makeDoc(blocks, clientID: 9)
+        defer { peer.destroy() }
+        let edit = try BlockNoteWriter(doc: peer).replaceText(block: "a", range: 0..<0, with: "Peer ")
+        harness.session.replica?.mailbox.post(.integrate(edit, reply: nil))
+        try caret(harness, "c", 2)
+        XCTAssertTrue(harness.input.indent())
+        try caret(harness, "b", 4)
+        harness.view.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        harness.view.unmarkText()
+        await harness.settle()
+        XCTAssertEqual(text(of: try block(harness.session, "b")), "Betaか")
+        XCTAssertEqual(try block(harness.session, "c").parentID, "b", "the retried indent ran")
+        XCTAssertEqual(harness.view.selectedRange, NSRange(location: try location(harness.session, "b", 5), length: 0))
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
+    /// N4: a failure that waited for a composition stops authoring before a
+    /// stale barrier queued behind it could be retried.
+    func testAFailureThatWaitedForACompositionStopsAStaleRetry() async throws {
+        let blocks = [
+            paragraph("a", "Alpha"), paragraph("b", "Beta"),
+            BlockNoteBlock(
+                node: "checkListItem", props: Self.paragraphProps + [("checked", .bool(false))],
+                runs: [InlineRun("Task")], id: "c"),
+        ]
+        let harness = try await makeHarness(blocks)
+        addTeardownBlock { await harness.close() }
+        let peer = try makeDoc(blocks, clientID: 9)
+        defer { peer.destroy() }
+        let edit = try BlockNoteWriter(doc: peer).replaceText(block: "b", range: 0..<0, with: "Peer ")
+        harness.session.replica?.mailbox.post(.integrate(edit, reply: nil))
+        try caret(harness, "a", 5)
+        XCTAssertTrue(harness.input.toggleCheckbox(blockID: "c"))
+        harness.view.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        harness.session.freezeAuthoring()
+        harness.view.unmarkText()
+        _ = await harness.session.settle()
+        XCTAssertFalse(
+            try block(harness.session, "c").props.contains(ProjectedProp(key: "checked", value: .bool(true))))
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_storage_failed)
+        XCTAssertEqual(harness.log.commands.count, 1, "the commit only")
+    }
+
+    /// N8: a composition begun before the main actor saw its epoch end is not
+    /// captured (its offsets count a dropped prediction): the commit is orphaned.
+    func testACompositionBegunBeforeAnInvalidationArrivesIsOrphaned() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
+        let peer = try peerEdit { try $0.replaceText(block: Self.firstID, range: 0..<6, with: "") }
+        harness.session.replica?.mailbox.post(.integrate(peer, reply: nil))
+        try caret(harness, Self.firstID, 3)
+        harness.view.insertText("x")
+        try caret(harness, Self.secondID, 0)
+        harness.view.insertText("yy")
+        var began = false
+        harness.session.onDelivery = { delivery in
+            guard case .invalidated? = delivery.result, !began else { return }
+            began = true
+            harness.view.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        }
+        _ = await harness.session.settle()
+        XCTAssertTrue(began)
+        harness.view.unmarkText()
+        await harness.settle()
+        XCTAssertEqual(texts(harness.session).prefix(2), ["paragraph.", "Second paragraph has bold words inside it."])
+        XCTAssertEqual(Set(harness.input.composition.pendingRecoveries.map(\.text)), ["xyy", "か"])
+        try await assertConsistent(harness, localCommands: 0)
     }
 }

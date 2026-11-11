@@ -2813,10 +2813,14 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `isActive || isResolving || markedTextRange != nil`, or the drain of what waited for it),
   the surface's whole `ReplicaDelivery`s queue up unapplied, results included, a local
   storage failure waits too, and nothing reads the view's offsets; its own commit or cancel
-  answer (a local orphaned one when the post fails) resolves it, releases storage like a
-  patch, and applies every queued delivery in order through `apply(_:)` before stale
-  retries, the failure that waited and held keys run (no surface freeze, no buffered
-  echoes, no deferred rollback). An echo spelled as a whole-block rebuild settles from that
+  answer (a local one when the post fails: orphaned for a commit, cancelled for a cancel)
+  resolves it, releases storage like a patch, and applies every queued delivery in order
+  through `apply(_:)`; then the failure that waited, stale retries (the composition's caret
+  carried as the user's selection), held keys and marked text the keyboard sent while the
+  commit was in flight (held, never refused) run, in that order (no surface freeze, no
+  buffered echoes, no deferred rollback). A begin carries its epoch: one from an epoch the
+  session already invalidated is not captured, and its commit is orphaned. A cut while
+  input is held is refused with the busy notice. An echo spelled as a whole-block rebuild settles from that
   snapshot; a predicted block a concurrent change showed as canonical keeps its
   predictions off screen until the invalidation, so later patches are not shifted by them. **Rebase:** the session keeps, per surface, the changes it had not seen
   (`unseen`, every patch but its own predicted echoes, `ringCapacity` 256); a predicted
