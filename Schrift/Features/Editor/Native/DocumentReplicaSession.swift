@@ -468,6 +468,14 @@ actor DocumentReplicaSession {
             invalidate(surfaceID, commandID: commandID)
             return
         }
+        guard journal != nil else {
+            // Read-only (`setWritable(nil)`): like a predicted key, the commit
+            // is never written without a journal and rolls back into a
+            // recovery entry.
+            try? engine.compositionCancelled()
+            invalidate(surfaceID, commandID: commandID)
+            return
+        }
         // A composition commit is one undo step.
         history?.stopCapturing()
         defer { history?.stopCapturing() }

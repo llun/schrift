@@ -123,16 +123,26 @@ final class NativeLiveSyncTests: NativeEditingTestCase {
 
     private func seedState() -> Data { BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID) }
 
+    /// Reconnect timing short enough for tests (PR09b).
+    static let fastBackoff = NativeCollaborationBinding.Backoff(
+        base: .milliseconds(10), cap: .milliseconds(80), stableAfter: .milliseconds(300))
+
+    /// `relaunching` opens the same durable replica again with a new registry,
+    /// as a cold launch does (close the previous client's registry first).
     private func makeClient(
         state: Data? = nil, hooks: DocumentReplicaSession.Hooks = .init(),
-        interrupt: (@Sendable (ReplicaStore.Operation, ReplicaStore.Boundary) throws -> Void)? = nil
+        interrupt: (@Sendable (ReplicaStore.Operation, ReplicaStore.Boundary) throws -> Void)? = nil,
+        relaunching previous: Client? = nil
     ) async throws -> Client {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let scope = ReplicaScope(
-            serverOrigin: "https://example.test", ownerUserID: UUID(), org: "docs", documentID: documentID)
-        let store = ReplicaStore(directory: directory, interrupt: interrupt)
-        _ = try store.create(for: scope, checkpoint: state ?? seedState())
+        let scope =
+            previous?.scope
+            ?? ReplicaScope(
+                serverOrigin: "https://example.test", ownerUserID: UUID(), org: "docs", documentID: documentID)
+        let store = previous?.store ?? ReplicaStore(directory: directory, interrupt: interrupt)
+        if previous == nil { _ = try store.create(for: scope, checkpoint: state ?? seedState()) }
         let registry = NativeSessionRegistry()
+        registry.liveBackoff = Self.fastBackoff
         addTeardownBlock {
             await registry.closeAll().value
             try? FileManager.default.removeItem(at: directory)
@@ -154,11 +164,13 @@ final class NativeLiveSyncTests: NativeEditingTestCase {
     /// returns the socket the server accepted.
     @discardableResult
     private func connect(
-        _ client: Client, to server: FakeYServer, isCurrent: @escaping @MainActor () -> Bool = { true }
+        _ client: Client, to server: FakeYServer, isCurrent: @escaping @MainActor () -> Bool = { true },
+        isReader: @escaping @MainActor () async -> Bool = { false }, becameReader: @escaping @MainActor () -> Void = {}
     ) async throws -> FakeWebSocket {
         let before = server.sockets.count
         client.binding.connect(
-            dial: { server.connect().0 }, wireProtocol: .yWebSocket, documentName: "doc", isCurrent: isCurrent)
+            dial: { server.connect().0 }, wireProtocol: .yWebSocket, documentName: "doc", isCurrent: isCurrent,
+            isReader: isReader, becameReader: becameReader)
         await waitUntil { server.sockets.count > before }
         return try XCTUnwrap(server.sockets.last)
     }
@@ -629,9 +641,243 @@ final class NativeLiveSyncTests: NativeEditingTestCase {
         a.binding.connect(
             dial: { server.connect().0 }, wireProtocol: .yWebSocket, documentName: "doc", isCurrent: { true })
         try await Task.sleep(for: .milliseconds(200))
-        gate.open()
         XCTAssertTrue(server.sockets.isEmpty, "no handshake with an empty state vector")
-        XCTAssertFalse(a.binding.isConnected)
+        gate.open()
+        // Tried again after the backoff, with the replica's real vector.
+        await waitUntil { !server.sockets.isEmpty }
+        let socket = try XCTUnwrap(server.sockets.first)
+        await waitUntil { !FakeYServer.sent(socket).isEmpty }
+        XCTAssertNotEqual(FakeYServer.sent(socket).first?.data, Data([0x00]))
+    }
+
+    // MARK: - Reconnect and the failure matrix (PR09b)
+
+    private func serverText(_ server: FakeYServer, _ index: Int = 0) -> String {
+        text(of: projection(server.doc)[index])
+    }
+
+    /// A dropped socket dials again after its backoff, and the handshake
+    /// offers what was typed while it was down.
+    func testADropReconnectsAndDeliversWhatWasTypedMeanwhile() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient()
+        let socket = try await connect(a, to: server)
+        try await server.settle { self.a(isLive: a) }
+        socket.failTransport()
+        try await type("D", a, Self.firstID, at: 0)
+        try await server.settle { self.serverText(server) == "DFirst paragraph." }
+        XCTAssertEqual(server.sockets.count, 2, "one reconnect")
+        XCTAssertEqual(texts(a.session)[0], "DFirst paragraph.")
+    }
+
+    /// Background closes the socket and nothing dials until foreground, which
+    /// dials at once; a deletion made in between (the state vector does not
+    /// move) still reaches the server.
+    func testBackgroundSuspendsAndForegroundDeliversADeleteOnlyEdit() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let manager = DocumentCollaborationManager(
+            serverBaseURL: URL(string: "https://example.test/api/v1.0/")!, cookieProvider: { [] },
+            featureEnabled: { true }, isOffline: { false }, serverConfigProvider: { nil },
+            socketFactory: { _ in FakeWebSocket() })
+        let a = try await makeClient()
+        manager.addLifecycleObserver(a.binding)
+        let socket = try await connect(a, to: server)
+        try await server.settle { self.a(isLive: a) }
+        manager.suspend()
+        await waitUntil { socket.cancelCloseCode == .goingAway }
+        XCTAssertTrue(try XCTUnwrap(a.session.input).replace(range: NSRange(location: 0, length: 6), with: ""))
+        let drained = await a.session.settle()
+        XCTAssertTrue(drained)
+        await waitAndConfirmNever { server.sockets.count > 1 }
+        manager.resume()
+        try await server.settle { self.serverText(server) == "paragraph." }
+        XCTAssertEqual(server.sockets.count, 2)
+    }
+
+    /// Cold relaunch: what an ended process journaled but never sent is
+    /// offered by the next launch's handshake.
+    func testColdRelaunchOffersWhatTheEndedProcessJournaled() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let first = try await makeClient()
+        try await type("K", first, Self.firstID, at: 0)
+        await first.registry.closeAll().value
+        let relaunched = try await makeClient(relaunching: first)
+        XCTAssertEqual(texts(relaunched.session)[0], "KFirst paragraph.")
+        try await connect(relaunched, to: server)
+        try await server.settle { self.serverText(server) == "KFirst paragraph." }
+    }
+
+    /// The server applied an update (live, or an HTTP save whose answer was
+    /// lost) that the client still holds unacknowledged: the next handshake
+    /// sends it again and nothing is duplicated.
+    func testAnAppliedButUnacknowledgedEditIsNeverDuplicated() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient()
+        // HTTP half-land: the server took the bytes, the client kept its outbox.
+        try await type("H", a, Self.firstID, at: 0)
+        let journaled = try XCTUnwrap(a.store.restore(for: a.scope)).updates
+        for update in journaled { try server.applyUnrelayed(update) }
+        let socket = try await connect(a, to: server)
+        try await server.settle { self.a(isLive: a) }
+        // Live: applied by the server, then the socket drops.
+        try await type("L", a, Self.firstID, at: 1)
+        try await server.settle { self.serverText(server) == "HLFirst paragraph." }
+        socket.failTransport()
+        try await server.settle { server.sockets.count == 2 && self.a(isLive: a) }
+        try await Task.sleep(for: .milliseconds(100))
+        try server.pump()
+        XCTAssertEqual(serverText(server), "HLFirst paragraph.")
+        XCTAssertEqual(texts(a.session)[0], "HLFirst paragraph.")
+        XCTAssertEqual(try outboxCount(a), 2, "HTTP still owns the acknowledgment")
+    }
+
+    /// Server rejection and a permission change both close with 1000: the
+    /// binding asks for the ability. A writer dials again; a reader answer
+    /// makes the scope read-only and no socket opens.
+    func testA1000CloseAsksForTheAbilityAndAReaderStopsLive() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient()
+        let reader = Locked(false)
+        let asked = Locked(0)
+        let socket = try await connect(
+            a, to: server,
+            isReader: {
+                asked.update { $0 += 1 }
+                return reader.value
+            }, becameReader: { a.registry.setWritable(nil, for: a.scope) })
+        try await server.settle { self.a(isLive: a) }
+        try await type("w", a, Self.firstID, at: 0)
+        socket.serverClose(code: .normalClosure)
+        try await server.settle { server.sockets.count == 2 && self.a(isLive: a) }
+        XCTAssertEqual(asked.value, 1, "a writer is asked once and dials again")
+
+        reader.value = true
+        try XCTUnwrap(server.sockets.last).serverClose(code: .normalClosure)
+        await waitUntil { asked.value == 2 }
+        let drained = await a.session.settle()
+        XCTAssertTrue(drained)
+        XCTAssertFalse(a.session.state.writable, "the reader answer made the replica read-only")
+        await waitAndConfirmNever { server.sockets.count > 2 }
+        XCTAssertEqual(try outboxCount(a), 1, "what was journaled stays for HTTP")
+        XCTAssertEqual(serverText(server), "wFirst paragraph.")
+    }
+
+    /// 401 re-authentication: while the open is not current (a cookie
+    /// handover forgot the account) a drop dials nothing; once current again,
+    /// the path's return dials and the handshake delivers what was typed.
+    func testNothingDialsDuringReauthenticationAndTheEditsArriveAfter() async throws {
+        let current = Locked(true)
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient()
+        let socket = try await connect(a, to: server, isCurrent: { current.value })
+        try await server.settle { self.a(isLive: a) }
+        current.value = false
+        socket.failTransport()
+        try await type("r", a, Self.firstID, at: 0)
+        await waitAndConfirmNever { server.sockets.count > 1 }
+        current.value = true
+        a.binding.collaborationResumed()
+        try await server.settle { self.serverText(server) == "rFirst paragraph." }
+    }
+
+    /// The per-open budget: a peer that keeps sending refused updates between
+    /// good handshakes stops live after `recoveryBudget` redials, instead of
+    /// driving reconnects forever.
+    func testRefusedUpdatesBetweenGoodHandshakesExhaustTheOpensBudget() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient()
+        try await connect(a, to: server)
+        try await server.settle { self.a(isLive: a) }
+        let web = try peer(of: server)
+        defer { web.destroy() }
+        let writer = BlockNoteWriter(doc: web)
+        let budget = NativeCollaborationBinding.recoveryBudget
+        for round in 0...budget {
+            guard !a.binding.isStopped else { break }
+            let socket = try XCTUnwrap(server.sockets.last)
+            let first = try writer.replaceText(block: Self.thirdID, range: 0..<0, with: "x")
+            let second = try writer.replaceText(block: Self.thirdID, range: 1..<1, with: "y")
+            try server.applyUnrelayed(first)
+            try server.applyUnrelayed(second)
+            socket.deliver(message: FakeYServer.frame(.update, second))
+            if round < budget {
+                try await server.settle { server.sockets.count == round + 2 && self.a(isLive: a) }
+            }
+        }
+        await waitUntil { a.binding.isStopped }
+        XCTAssertEqual(server.sockets.count, budget + 1, "\(budget) recoveries, then live stops")
+        XCTAssertFalse(a.session.state.frozen)
+    }
+
+    // MARK: - Final review (O1, O3)
+
+    /// O1: access can change while backgrounded; foreground asks for the
+    /// ability before it dials, and a reader answer dials nothing.
+    func testForegroundAsksForTheAbilityBeforeDialing() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient()
+        let reader = Locked(false)
+        let became = Locked(0)
+        try await connect(
+            a, to: server, isReader: { reader.value },
+            becameReader: {
+                became.update { $0 += 1 }
+                a.registry.setWritable(nil, for: a.scope)
+            })
+        try await server.settle { self.a(isLive: a) }
+        a.binding.collaborationSuspended()
+        reader.value = true
+        a.binding.collaborationResumed()
+        await waitUntil { became.value == 1 }
+        await waitAndConfirmNever { server.sockets.count > 1 }
+        let drained = await a.session.settle()
+        XCTAssertTrue(drained)
+        XCTAssertFalse(a.session.state.writable)
+    }
+
+    /// O1: a foreground or path edge while a 1000 close's ability check is
+    /// out never drops the reader answer.
+    func testAResumeDuringThePermissionCheckKeepsTheReaderAnswer() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient()
+        let asked = Locked(0)
+        let became = Locked(0)
+        let socket = try await connect(
+            a, to: server,
+            isReader: {
+                asked.update { $0 += 1 }
+                try? await Task.sleep(for: .milliseconds(150))
+                return true
+            }, becameReader: { became.update { $0 += 1 } })
+        try await server.settle { self.a(isLive: a) }
+        socket.serverClose(code: .normalClosure)
+        await waitUntil { asked.value == 1 }
+        a.binding.collaborationResumed()
+        await waitUntil { became.value >= 1 }
+        await waitAndConfirmNever { server.sockets.count > 1 }
+    }
+
+    /// O3: the path's return replaces a socket that still looks live.
+    func testThePathsReturnReplacesASocketThatLooksLive() async throws {
+        let server = try FakeYServer(state: seedState())
+        defer { server.doc.destroy() }
+        let a = try await makeClient()
+        let socket = try await connect(a, to: server)
+        try await server.settle { self.a(isLive: a) }
+        a.binding.collaborationResumed()
+        await waitUntil { socket.cancelCloseCode == .goingAway }
+        try await server.settle { server.sockets.count == 2 && self.a(isLive: a) }
+        try await type("p", a, Self.firstID, at: 0)
+        try await server.settle { self.serverText(server) == "pFirst paragraph." }
     }
 
     // MARK: - Helpers

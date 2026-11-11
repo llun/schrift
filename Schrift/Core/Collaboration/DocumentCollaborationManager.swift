@@ -13,6 +13,15 @@ enum CollaborationWriteError: Error, Equatable {
     case notWritable
 }
 
+/// Something that holds a socket the manager does not own (the native
+/// editor's binding, PR09b) and follows the app's background and reconnect
+/// edges through it.
+@MainActor
+protocol CollaborationLifecycleObserver: AnyObject {
+    func collaborationSuspended()
+    func collaborationResumed()
+}
+
 /// App-scoped owner of live-collaboration sessions, keyed by document id — built
 /// once per authenticated server session and injected, alongside `DocsAPIClient`
 /// and `DocumentSaveCoordinator`.
@@ -65,6 +74,11 @@ final class DocumentCollaborationManager {
     }
 
     private var entries: [UUID: Entry] = [:]
+    private struct WeakObserver {
+        weak var observer: (any CollaborationLifecycleObserver)?
+    }
+    /// Native sockets follow `suspend`/`resume`/`reconnect` too (PR09b).
+    @ObservationIgnored private var lifecycleObservers: [WeakObserver] = []
     /// True between `suspend()` and `resume()` (app backgrounded). While set,
     /// `resume()` is the only path that rebuilds, and a reconnect edge is ignored
     /// (we don't reopen sockets in the background).
@@ -413,6 +427,7 @@ final class DocumentCollaborationManager {
             }
         }
         if releasedHeldReplica { onHeldReplicaReleased?() }
+        notifyObservers(suspended: true)
     }
 
     /// scenePhase foreground: rebuild a fresh session for every still-referenced
@@ -422,6 +437,7 @@ final class DocumentCollaborationManager {
         guard isSuspended else { return }
         isSuspended = false
         rebuildActiveSessions()
+        notifyObservers(suspended: false)
     }
 
     /// Reconnect trigger, shared with draft sync: on the `ConnectivityMonitor`
@@ -430,6 +446,7 @@ final class DocumentCollaborationManager {
     func reconnect() {
         guard !isSuspended else { return }
         rebuildActiveSessions()
+        notifyObservers(suspended: false)
     }
 
     /// PR09a: a socket for a native replica. `NativeCollaborationBinding` owns
@@ -445,6 +462,19 @@ final class DocumentCollaborationManager {
         return CollaborationTransport(
             socket: socketFactory(request), wireProtocol: CollaborationWireProtocol(config: config),
             documentName: documentID.uuidString.lowercased())
+    }
+
+    /// Registers an observer (weakly; once) for the background and reconnect edges.
+    func addLifecycleObserver(_ observer: any CollaborationLifecycleObserver) {
+        lifecycleObservers.removeAll { $0.observer == nil }
+        guard !lifecycleObservers.contains(where: { $0.observer === observer }) else { return }
+        lifecycleObservers.append(WeakObserver(observer: observer))
+    }
+
+    private func notifyObservers(suspended: Bool) {
+        for entry in lifecycleObservers {
+            if suspended { entry.observer?.collaborationSuspended() } else { entry.observer?.collaborationResumed() }
+        }
     }
 
     /// Test/inspection: how many documents currently hold a session.

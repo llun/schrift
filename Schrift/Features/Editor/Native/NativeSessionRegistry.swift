@@ -32,6 +32,8 @@ final class NativeSessionRegistry {
     }
 
     @ObservationIgnored private var entries: [ReplicaScope: Entry] = [:]
+    /// The live bindings' reconnect timing (tests shorten it).
+    @ObservationIgnored var liveBackoff = NativeCollaborationBinding.Backoff()
     /// Each scope's last replica close, awaited by its next restore.
     @ObservationIgnored private var closing: [ReplicaScope: Task<Void, Never>] = [:]
 
@@ -89,11 +91,12 @@ final class NativeSessionRegistry {
     /// The scope's one live binding (PR09a), made over its replica on first
     /// use; its outbox is what the scope's journal publishes into. Nil when the
     /// scope has no open surface.
-    func liveBinding(for scope: ReplicaScope) -> NativeCollaborationBinding? {
+    func liveBinding(for scope: ReplicaScope, create: Bool = true) -> NativeCollaborationBinding? {
         guard let entry = entries[scope] else { return nil }
         if let live = entry.live { return live }
+        guard create else { return nil }
         guard let replica = entry.surfaces.first?.replica else { return nil }
-        let live = NativeCollaborationBinding(replica: replica)
+        let live = NativeCollaborationBinding(replica: replica, backoff: liveBackoff)
         entry.live = live
         return live
     }
