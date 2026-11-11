@@ -1,0 +1,46 @@
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_dc239db0cc1c9d::t_8ea7c173eeedae 162,362,603,660-661,666,1210,1269
+  s_dc239db0cc1c9d::t_e53bfe6997a80d 171-174,451,453-454,604-606,623-657,822-825,875-876
+  s_dc239db0cc1c9d::t_0f82e97cae39c7 452
+  s_dc239db0cc1c9d::t_ddde93964bf163 658
+Schrift/Features/Editor/Native/DocumentReplicaSession.swift
+  s_dc239db0cc1c9d::t_9d5f96e7068523 684-685
+AGENTS.md
+  s_dc239db0cc1c9d::t_77eb9e61b1c429 3210-3224,3230-3232,3241-3243
+Schrift/Features/Editor/Engine/PatchBuilder.swift
+  s_dc239db0cc1c9d::t_8ea7c173eeedae 119,300
+Schrift/Core/Yjs/NativeExportMarkdown.swift
+  s_dc239db0cc1c9d::t_a3d1a731e0864a 97,100-103
+  s_dc239db0cc1c9d::t_929802e045764b 104
+SchriftTests/Features/Editor/Native/TableEditorTests.swift
+  s_dc239db0cc1c9d::t_5bdd4b3114a3a3 435-546,549,551-556,561-562
+  s_dc239db0cc1c9d::t_20ec5afdab8d74 547-548,550,557-560
+Schrift/Features/Editor/Native/TableEditorViewController.swift
+  s_dc239db0cc1c9d::t_9d5f96e7068523 35,81-85,102,130-131,133,141,208-210
+SchriftTests/Features/Editor/Native/TableGridTests.swift
+  s_dc239db0cc1c9d::t_a3d1a731e0864a 124-143
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  s_dc239db0cc1c9d::t_eeca5606e25516 1331-1332,1451
+  s_dc239db0cc1c9d::t_8aa601bb33ca51 1334
+Schrift/Features/Editor/Engine/BlockIndex.swift
+  s_dc239db0cc1c9d::t_8ea7c173eeedae 154,174-180,197,263-264,305-308
+Schrift/Core/Yjs/TableGridModel.swift
+  s_dc239db0cc1c9d::t_61cc4e5633933d 221
+  s_dc239db0cc1c9d::t_a3d1a731e0864a 193,216-220
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a70e21a2d0d97c84cdfb841e69438b0abc6cc0e3",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
