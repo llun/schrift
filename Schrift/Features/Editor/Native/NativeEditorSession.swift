@@ -5,7 +5,8 @@ import Observation
 /// which solely owns the replica. This side holds no `YDoc` or engine: it
 /// shows the attach snapshot, applies the session's deliveries in order and
 /// posts input through the session's mailbox. A read-only reader made by
-/// `inspect` has no replica session at all.
+/// `inspect` has no replica session at all. One replica session may have
+/// several of these surfaces, leased from `NativeSessionRegistry` (PR08c).
 @MainActor @Observable
 final class NativeEditorSession {
     @ObservationIgnored let replica: DocumentReplicaSession?
@@ -31,6 +32,9 @@ final class NativeEditorSession {
     @ObservationIgnored private var consumer: Task<Void, Never>?
     @ObservationIgnored private var drains: [UUID: CheckedContinuation<Void, Never>] = [:]
     @ObservationIgnored private var closing: Task<Void, Never>?
+    /// Set by `NativeSessionRegistry` for a leased surface: closing detaches
+    /// it, and the registry closes the replica after its last surface.
+    @ObservationIgnored var release: (() -> Task<Void, Never>)?
 
     private init(
         replica: DocumentReplicaSession?, surfaceID: UUID = UUID(), blocks: [BlockSnapshot], revision: UInt64,
@@ -83,20 +87,21 @@ final class NativeEditorSession {
         guard let replica = try await DocumentReplicaSession.restore(store: store, scope: scope, hooks: hooks) else {
             return nil
         }
-        let session = await attach(replica)
-        session.scope = scope
-        session.hasRecoveryStore = true
+        let session = await attach(replica, scope: scope)
         if editable { session.enableTyping(persist: DocumentReplicaSession.journal(store: store, scope: scope)) }
         return session
     }
 
-    private static func attach(_ replica: DocumentReplicaSession) async -> NativeEditorSession {
+    /// A new surface on `replica`; `scope` names its durable store.
+    static func attach(_ replica: DocumentReplicaSession, scope: ReplicaScope? = nil) async -> NativeEditorSession {
         let surfaceID = UUID()
         let attachment = await replica.attach(surfaceID: surfaceID)
         let session = NativeEditorSession(
             replica: replica, surfaceID: surfaceID, blocks: attachment.blocks, revision: attachment.revision,
             hasUnsupportedRoot: attachment.hasUnsupportedRoot, canType: attachment.canType,
             recoveries: attachment.recoveries, state: attachment.state)
+        session.scope = scope
+        session.hasRecoveryStore = scope != nil
         session.consume(attachment.deliveries)
         return session
     }
@@ -117,6 +122,11 @@ final class NativeEditorSession {
 
     private func apply(_ delivery: ReplicaDelivery) {
         onDelivery?(delivery)
+        if delivery.resync == .requested {
+            // The bound was reached: ask for the reset (PR08c).
+            if let input { input.requestResync() } else { replica?.mailbox.post(.resync(surfaceID: surfaceID)) }
+            return
+        }
         state = delivery.state
         if let input {
             input.apply(delivery)
@@ -140,22 +150,24 @@ final class NativeEditorSession {
         input?.detach()
         input = nil
         saveScheduler?.flush()
-        saveScheduler?.cancel()
+        // A leased surface's scheduler is shared with the scope's other surfaces.
+        if release == nil { saveScheduler?.cancel() }
         saveScheduler = nil
     }
 
-    /// `persist` is the journal the session appends every local command to;
+    /// `persist` is the journal the session appends every local command to
+    /// (nil when the registry installed it for the replica already);
     /// `scheduler` is retained so a debounced save outlives the keystroke that
     /// armed it, and is called only once a command is journaled. The
     /// production open route additionally requires `canType`; the isolated
     /// host and component tests type around preserved blocks, which input
     /// refuses.
     func enableTyping(
-        persist: @escaping DocumentReplicaSession.Journal, scheduler: NativeReplicaSaveScheduler? = nil
+        persist: DocumentReplicaSession.Journal?, scheduler: NativeReplicaSaveScheduler? = nil
     ) {
         guard let replica, !isClosed, !hasUnsupportedRoot, input == nil else { return }
         saveScheduler = scheduler
-        replica.mailbox.post(.setWritable(persist))
+        if let persist { replica.mailbox.post(.setWritable(persist)) }
         let input = NativeInputCoordinator(
             replica: replica, surfaceID: surfaceID, revision: revision, surface: surface, view: textView,
             recoveries: recoveries, hasRecoveryStore: hasRecoveryStore)
@@ -215,7 +227,8 @@ final class NativeEditorSession {
     /// Ends the session: any debounced save is handed to the coordinator (the
     /// scheduler reads the durable store, not the graph), the view stops
     /// editing, and the replica session closes after every message already
-    /// posted. The returned task completes once it has.
+    /// posted (a leased surface detaches; the registry closes the replica
+    /// after its last surface). The returned task completes once it has.
     @discardableResult
     func close() -> Task<Void, Never> {
         if let closing { return closing }
@@ -233,9 +246,16 @@ final class NativeEditorSession {
             closing = Task {}
             return closing!
         }
-        replica.mailbox.post(.close)
+        let closed: Task<Void, Never>
+        if let release {
+            replica.mailbox.post(.detach(surfaceID: surfaceID))
+            closed = release()
+        } else {
+            replica.mailbox.post(.close)
+            closed = Task { await replica.waitUntilClosed() }
+        }
         let task = Task { [consumer] in
-            await replica.waitUntilClosed()
+            await closed.value
             await consumer?.value
         }
         closing = task
@@ -243,7 +263,12 @@ final class NativeEditorSession {
     }
 
     isolated deinit {
-        if !isClosed { replica?.mailbox.post(.close) }
+        guard !isClosed, let replica else { return }
+        if release != nil {
+            replica.mailbox.post(.detach(surfaceID: surfaceID))
+        } else {
+            replica.mailbox.post(.close)
+        }
     }
 }
 
@@ -291,13 +316,15 @@ final class NativeEditorOpen {
     /// close cancels both.
     private var reopenTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
-    /// The last native session's close: the next open waits for it, so two
-    /// replica sessions never journal into one scope at once (PR08c's registry
-    /// serializes this per scope).
+    /// The last native session's close: the next open waits for it (the
+    /// registry also serializes each scope's replica lifecycle, PR08c).
     private var closing: Task<Void, Never>?
     private let waitForTimeout: @MainActor () async throws -> Void
     /// Tests: the replica sessions this route restores run these hooks.
     private let replicaHooks: DocumentReplicaSession.Hooks
+    /// Where replicas are opened (PR08c): `EditorView` hands in the app's
+    /// shared one before opening; tests keep this private one.
+    @ObservationIgnored var registry = NativeSessionRegistry()
 
     init(
         preference: @escaping @MainActor () -> Bool = { NativeEditorPreference.isEnabled() },
@@ -357,8 +384,7 @@ final class NativeEditorOpen {
             }
             let restored: NativeEditorSession?
             do {
-                restored = try await NativeEditorSession.restore(
-                    store: coordinator.replicaStore, scope: scope, hooks: replicaHooks)
+                restored = try await registry.open(store: coordinator.replicaStore, scope: scope, hooks: replicaHooks)
             } catch {
                 guard generation == request else { return }
                 route = .preservedUnavailable
@@ -538,8 +564,7 @@ final class NativeEditorOpen {
         let coordinator = viewModel.saveCoordinator
         do {
             _ = try coordinator.replicaStore.create(for: scope, checkpoint: state)
-            let restored = try await NativeEditorSession.restore(
-                store: coordinator.replicaStore, scope: scope, hooks: replicaHooks)
+            let restored = try await registry.open(store: coordinator.replicaStore, scope: scope, hooks: replicaHooks)
             guard !Task.isCancelled, generation == request, viewModel.signedInUser.userID == account else {
                 restored?.close()
                 return nil
@@ -561,7 +586,8 @@ final class NativeEditorOpen {
     }
 
     /// Every persisted command schedules a debounced save through the
-    /// coordinator's replica path, at the classic autosave cadence.
+    /// coordinator's replica path, at the classic autosave cadence. The
+    /// scope's journal and scheduler are shared by its surfaces (PR08c).
     private func installTyping(_ session: NativeEditorSession, scope: ReplicaScope, viewModel: EditorViewModel) {
         let coordinator = viewModel.saveCoordinator
         let adapter = ReplicaSaveAdapter(store: coordinator.replicaStore, scope: scope)
@@ -569,33 +595,38 @@ final class NativeEditorOpen {
         let contentCache = viewModel.contentCache
         let signedInUser = viewModel.signedInUser
         let listTitle = viewModel.title
-        let scheduler = NativeReplicaSaveScheduler(
-            interval: viewModel.autosaveInterval,
-            enqueue: {
-                // The native view never edits the title. Send the server copy on
-                // disk (refreshed at each online open) as title and baseline, so
-                // replay keeps a web rename and checks the body like classic.
-                // A stored draft keeps its own baseline. `enqueueReplica`
-                // refuses another account's scope. An unknown account (a login
-                // handing over its cookies) is not a refusal: the journal is
-                // durable and the reopen under the known owner hands it over.
-                guard signedInUser.userID != nil else { return false }
-                let cached = contentCache.content(for: documentID)
-                try coordinator.enqueueReplica(
-                    adapter: adapter, title: cached?.title ?? listTitle,
-                    baseline: coordinator.storedDraft(documentID: documentID)?.baseline
-                        ?? cached.map {
-                            DraftBaseline(serverUpdatedAt: $0.serverUpdatedAt, markdown: $0.markdown, title: $0.title)
-                        })
-                return true
-            },
-            onFailure: { [weak session] error in
-                session?.freezeAuthoring()
-                coordinator.noteReplicaCaptureFailure(documentID: documentID, error: error)
-            })
+        let registry = self.registry
+        let scheduler = registry.scheduler(for: scope) {
+            NativeReplicaSaveScheduler(
+                interval: viewModel.autosaveInterval,
+                enqueue: {
+                    // The native view never edits the title. Send the server copy on
+                    // disk (refreshed at each online open) as title and baseline, so
+                    // replay keeps a web rename and checks the body like classic.
+                    // A stored draft keeps its own baseline. `enqueueReplica`
+                    // refuses another account's scope. An unknown account (a login
+                    // handing over its cookies) is not a refusal: the journal is
+                    // durable and the reopen under the known owner hands it over.
+                    guard signedInUser.userID != nil else { return false }
+                    let cached = contentCache.content(for: documentID)
+                    try coordinator.enqueueReplica(
+                        adapter: adapter, title: cached?.title ?? listTitle,
+                        baseline: coordinator.storedDraft(documentID: documentID)?.baseline
+                            ?? cached.map {
+                                DraftBaseline(
+                                    serverUpdatedAt: $0.serverUpdatedAt, markdown: $0.markdown, title: $0.title)
+                            })
+                    return true
+                },
+                onFailure: { [weak registry] error in
+                    for surface in registry?.surfaces(of: scope) ?? [] { surface.freezeAuthoring() }
+                    coordinator.noteReplicaCaptureFailure(documentID: documentID, error: error)
+                })
+        }
         // The append runs on the replica session; the save is scheduled only on
         // the journaled result (journal before publication).
-        session.enableTyping(persist: { try adapter.record($0, update: $1) }, scheduler: scheduler)
+        registry.setWritable({ try adapter.record($0, update: $1) }, for: scope)
+        session.enableTyping(persist: nil, scheduler: scheduler)
         // Edits an earlier process journaled but never handed over (it ended
         // inside the debounce) have no draft, so no replay pass knows them.
         if coordinator.pendingSave(documentID: documentID) == nil,

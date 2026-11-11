@@ -569,7 +569,8 @@ new code reads like the surrounding code.
     `CompositionCommitResult`, `InlineRun`, `ProjectedBlock`, `NativeBlockSnapshot`.
   - **The native replica lives on `actor DocumentReplicaSession`** (PR08b), which
     creates the `YDoc`, the `DocumentEngine` and the shared `ReplicaHistory` and is
-    the only code that touches them. Only `Sendable` values cross: `ReplicaMessage`
+    the only code that touches them; there is one per `ReplicaScope`, kept by the
+    main-actor `NativeSessionRegistry` (PR08c). Only `Sendable` values cross: `ReplicaMessage`
     in, `ReplicaDelivery` out. `DocumentReplicaSession.swift` has no `@unchecked
     Sendable` and no `nonisolated(unsafe)`, and no `@MainActor` file under
     `Features/Editor/Native/` names `YDoc`, `DocumentEngine`, `YUndoManager` or
@@ -2246,7 +2247,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   UIKit ever changed storage behind the command path. While text is marked the whole
   view belongs to the composition: remote patches still enter the replica (the engine
   defers the composing block), but the coordinator queues every delivery (PR08b's
-  composition rule), the surface defers theme/width restyles and offset commands and
+  composition rule; past 256 it asks for a `.reset` resync, PR08c), the surface defers theme/width restyles and offset commands and
   selection publication are refused, because document-wide UIKit offsets are stale until
   reconciliation. Commit (`unmarkText`, which writes what UIKit displays, or
   `insertText` replacing the marked text) resolves the anchors and writes the string
@@ -2847,8 +2848,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `baseRevision` (rebased the same way); a delivery's endpoints restore it only when
   they answer the latest `seq`, else the view's range follows the shown deltas. Bounds:
   32 pending predictions per surface (then keys are held), 64 held intents (then
-  `native_editor_input_busy`, English only), mailbox 256, ring 256; deliveries are
-  unbounded until PR08c's resync. **IME:** begin is posted (a target the session cannot
+  `native_editor_input_busy`, English only), mailbox 256, ring 256, deliveries 256 per
+  surface (then a `.reset` resync, PR08c bullet below). **IME:** begin is posted (a target the session cannot
   capture comes back as an orphaned commit), the surface defers restyles from begin to
   the answer, commit and cancel are barriers, `provisional.json` is written through
   `.writeProvisional`. **Undo:** one `ReplicaHistory` per replica session, grouping
@@ -2863,8 +2864,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `close()` returns a `Task` that ends after every message posted before it was
   journaled (a late append's save is handed over then), and `NativeEditorOpen` awaits
   the previous close before an open and rechecks its generation and account after the
-  off-main restore. Multi-window stays off; the registry and fan-out are PR08c, so one
-  surface per session; the collaboration-manager facade is PR09. Tests:
+  off-main restore. Multi-window stays off; the registry, fan-out and bounded delivery
+  are PR08c (bullet below); the collaboration-manager facade is PR09. Tests:
   `ReplicaSessionOrderingTests` (a latching disk gate on `ReplicaStore`'s interrupt hook,
   a mailbox gate on `Hooks.beforeMessage`, fixed client ids: ordering, rebase,
   invalidation, held keys, stale retry, append failure, publication, `onReplicaWork` off
@@ -2873,6 +2874,52 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `testRapidTypingUnderSlowDiskSurvivesRelaunch` (`--native-slow-disk`, 60 ms per
   append, with an in-flight readout). Native suites drive the session through
   `harness.settle()`/`run`/`engine`/`history`/`replicaDoc` (`NativeEditingTestCase`).
+
+- **PR08c `NativeSessionRegistry`, fan-out and bounded delivery.**
+  `NativeSessionRegistry` (`@MainActor`, `Features/Editor/Native/`) keeps one
+  `DocumentReplicaSession` per `ReplicaScope`. `AuthenticatedHomeContainer` (`RootView.swift`)
+  owns one and injects it into the environment; `EditorView` hands it to its
+  `NativeEditorOpen` before opening (a host without one keeps the open's private
+  registry). **Rules:** `open(store:scope:)` leases a new surface (`NativeEditorSession`,
+  whose `release` the registry sets) on the scope's replica, restoring it off main when
+  none is open; opens that arrive during a restore share it. Closing a leased surface
+  posts `.detach` (its stream ends after everything posted before it); the replica
+  closes after its last surface and its last pending open. A scope's next restore
+  waits for its previous replica's close, so two replica sessions never journal into
+  one scope. Each scope has one journal (`setWritable`, posted once; nil makes every
+  surface read-only, and a predicted key then rolls back into a recovery entry) and one
+  `NativeReplicaSaveScheduler` (`scheduler(for:make:)`; a capture failure freezes every
+  surface of the scope; a leased surface only flushes it when it ends). `drainAll()`
+  (scene `.background`, beside `EditorView`'s own flush) flushes every scheduler at
+  once, then again after each surface's drain marker; `closeAll(where:)` (sign-out, and
+  every `SessionStore.signInGeneration` change, when mounted native editors reopen
+  anyway) closes matching surfaces and replicas, and an open still waiting returns nil
+  (a replica closed before any attach starts its loop in `waitUntilClosed` to handle the close).
+  **Fan-out:** every surface gets every change; a result goes only to the surface whose
+  command it answers. Epochs, unseen rings and selection `seq`s are per surface. The one
+  engine selection belongs to the surface that set it last (a select or a command) and
+  only its deliveries carry it; other surfaces follow their shown deltas. The one engine
+  composition belongs to the surface whose begin was captured: another surface's begin
+  is not captured, its commit comes back invalidated (a recovery entry), its cancel
+  touches nothing, and detaching the owner cancels the composition. **Bounded
+  delivery:** each surface's stream holds `DocumentReplicaSession.deliveryBound` (256)
+  plus one slot for a `.requested` marker; once 256 wait, the session keeps only what
+  answers something (results, drain markers, payloads, availability:
+  `ReplicaDelivery.withoutPatches`) until the surface asks with `.resync`, then sends
+  those followed by one delivery whose `.reset` patch is the canonical projection, under
+  a new epoch (`Resync.reset(epoch:)`). Deliveries queued behind marked text count too:
+  256 there and the coordinator asks itself. **The resync rule, in one sentence:** from
+  the ask until its reset is applied, the surface applies nothing, drops the patches of
+  what arrives, holds every key (a commit included), and then applies the answers, the
+  reset and the held keys in that order, so every key posted before the ask is answered
+  before the reset and none is lost (a prediction still unanswered at the reset becomes
+  a recovery entry). Multi-window stays off (no new scene UI); in one window at most one
+  editor of a document is visible, so fan-out mostly covers a push that opens the same
+  document before the previous editor closed. Tests: `NativeSessionRegistryTests` (shared
+  replica and fan-out, racing opens, refcounted close, a reopen waiting for the previous
+  close under a slow disk, per-surface epochs, one composition, `drainAll` with the
+  shared scheduler, `closeAll(where:)` with an open in flight, sign-out during a pending
+  append then reopen, the stream bound and the marked-text bound).
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
