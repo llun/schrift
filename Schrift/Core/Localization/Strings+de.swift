@@ -377,6 +377,7 @@ enum Strings_de {
         .native_editor_table_align_right: "Rechtsbündig",
         .native_editor_table_format: "Format",
         .native_editor_columns: "Spalten, %d",
+        .native_editor_column: "Spalte %d von %d",
         .native_editor_math: "Formel",
         .native_editor_diagram: "Diagramm",
         .native_editor_input_unavailable: "Diese Eingabe wird im nativen Editor noch nicht unterstützt.",

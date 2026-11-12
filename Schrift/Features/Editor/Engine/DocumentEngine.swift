@@ -786,6 +786,9 @@ final class DocumentEngine {
         return ids.compactMap { builder.index.entries[$0].map { BlockSnapshot(builder.nativeSnapshot($0)) } }
     }
 
+    /// The open column `blockID` is a block of, if any.
+    func column(of blockID: String) -> String? { builder.index.columnOf[blockID] }
+
     /// Column group `blockID` as the replica holds it now.
     func columnGroup(_ blockID: String) -> ColumnGroup? {
         guard !isDetached, let entry = builder.index.entries[blockID], builder.index.isColumnGroup(blockID) else {

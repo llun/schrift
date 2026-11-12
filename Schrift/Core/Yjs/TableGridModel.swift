@@ -125,6 +125,10 @@ struct TableGrid: Equatable, Sendable {
         case .float64(let data) where data.count == 8:
             let number = Double(bitPattern: data.reduce(UInt64(0)) { $0 << 8 | UInt64($1) })
             return number.isFinite ? number : nil
+        // lib0 writes a number float32 exactly holds as float32 (a column's 1.5, PR12a).
+        case .float32(let data) where data.count == 4:
+            let number = Double(Float(bitPattern: data.reduce(UInt32(0)) { $0 << 8 | UInt32($1) }))
+            return number.isFinite ? number : nil
         default: return nil
         }
     }

@@ -369,6 +369,7 @@ enum Strings_th {
         .native_editor_table_align_right: "จัดชิดขวา",
         .native_editor_table_format: "รูปแบบ",
         .native_editor_columns: "คอลัมน์ %d",
+        .native_editor_column: "คอลัมน์ %d จาก %d",
         .native_editor_math: "สูตรคณิตศาสตร์",
         .native_editor_diagram: "แผนภาพ",
         .native_editor_input_unavailable: "ตัวแก้ไขเนทีฟยังไม่รองรับการป้อนข้อมูลแบบนี้",

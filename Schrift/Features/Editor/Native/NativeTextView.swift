@@ -131,6 +131,11 @@ final class NativeTextView: UITextView {
             // ⌘Return: Done (PR11c).
             commands.append(UIKeyCommand(input: "\r", modifierFlags: .command, action: #selector(nativeDone)))
         }
+        // A column (PR12a): Escape returns to the document.
+        if inputCoordinator?.tableMove == nil, inputCoordinator?.onExit != nil {
+            commands.append(
+                UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(nativeEscape)))
+        }
         for command in commands { command.wantsPriorityOverSystemBehavior = true }
         return (super.keyCommands ?? []) + commands
     }
@@ -194,7 +199,7 @@ final class NativeTextView: UITextView {
 
     @objc private func nativeEscape() {
         guard markedTextRange == nil else { return }
-        _ = inputCoordinator?.tableMove?(.exit)
+        if inputCoordinator?.tableMove?(.exit) == nil { inputCoordinator?.onExit?() }
     }
 
     @objc private func nativeOutdent() {

@@ -229,6 +229,11 @@ private struct NativeOpenFixture: View {
             if ProcessInfo.processInfo.arguments.contains("--native-table") {
                 checkpoint = try TableFixture.inserting(into: checkpoint, after: "owned-0")
             }
+            // `--native-columns` (PR12a): a web-shaped group of two columns
+            // after the first paragraph.
+            if ProcessInfo.processInfo.arguments.contains("--native-columns") {
+                checkpoint = try ColumnFixture.inserting(into: checkpoint, after: "owned-0")
+            }
             _ = try replicaStore.create(for: scope, checkpoint: checkpoint)
         }
         let content = DocumentContentCacheStore(directory: directory.appendingPathComponent("Content"))
@@ -575,6 +580,54 @@ private enum TableFixture {
                         try xmlText.insert(0, text, nil)
                     }
                 }
+            }
+        }
+        return try YStateEncoder.encodeStateAsUpdate(doc)
+    }
+}
+
+/// `--native-columns` (PR12a): `@blocknote/xl-multi-column`'s group shape, as
+/// the web writes one (`columnList` in the group, `column`s with `id` and
+/// `width`, each holding a paragraph).
+private enum ColumnFixture {
+    static func inserting(into state: Data, after blockID: String) throws -> Data {
+        let doc = YDoc(clientID: 3, gc: true)
+        defer { doc.destroy() }
+        try doc.applyUpdate(YUpdateDecoder.decode(state))
+        guard let root = doc.share[BlockNoteYjs.fragmentField],
+            case .type(let group)? = YBlockProjection.children(of: root, includeFormats: false).first?.content
+        else { return state }
+        let left = YBlockProjection.children(of: group, includeFormats: false).first { item in
+            guard case .type(let type) = item.content else { return false }
+            return BlockIndex.blockID(of: type) == blockID
+        }
+        try doc.transact { tx in
+            func element(_ name: String, into parent: YType, after: YItem?, _ props: [(String, YAnyValue)]) throws
+                -> (YItem?, YType)
+            {
+                let type = YType(typeRef: .xmlElement(nodeName: name))
+                let item = try YWrite.insertAfter(tx, into: parent, after: after, [.type(type)])
+                for (key, value) in props { try YWrite.mapSet(tx, on: type, key: key, .any([value])) }
+                return (item, type)
+            }
+            let (_, list) = try element("columnList", into: group, after: left, [("id", .string("owned-columns"))])
+            var lastColumn: YItem?
+            for (index, text) in ["Left", "Right"].enumerated() {
+                let (columnItem, column) = try element(
+                    "column", into: list, after: lastColumn,
+                    [("id", .string("owned-column-\(index)")), ("width", .int(1))])
+                lastColumn = columnItem
+                let (_, container) = try element(
+                    "blockContainer", into: column, after: nil, [("id", .string("owned-column-text-\(index)"))])
+                let (_, paragraph) = try element(
+                    "paragraph", into: container, after: nil,
+                    [
+                        ("backgroundColor", .string("default")), ("textAlignment", .string("left")),
+                        ("textColor", .string("default")),
+                    ])
+                let xmlText = YType(typeRef: .xmlText)
+                try YWrite.insertAfter(tx, into: paragraph, after: nil, [.type(xmlText)])
+                try xmlText.insert(0, text, nil)
             }
         }
         return try YStateEncoder.encodeStateAsUpdate(doc)

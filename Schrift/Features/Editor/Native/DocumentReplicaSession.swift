@@ -714,7 +714,10 @@ actor DocumentReplicaSession {
         openTables[table] = nil
         engine.closeTable(table)
         if let snapshot = engine.nativeSnapshot(for: table) {
-            sink.applyPatch(BlockPatch([.replaceBlock(blockID: table, block: snapshot)], origin: .other))
+            var patch = BlockPatch([.replaceBlock(blockID: table, block: snapshot)], origin: .other)
+            // A column's table (PR12a): the preview is that column's.
+            if let column = engine.column(of: table) { patch.columns[table] = column }
+            sink.applyPatch(patch)
             deliver(to: nil)
         }
     }

@@ -202,6 +202,50 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertEqual(app.textViews["nativeEditor.table.cell"].value as? String, "Name\n")
     }
 
+    /// PR12a: the group's card opens the column editor; typing in one column,
+    /// switching to the other with the picker (the keyboard stays) and typing
+    /// there are durable, and the document shows the group as one card.
+    func testTypingInBothColumnsSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-columns"]
+        app.launch()
+        let card = app.descendants(matching: .any)["nativeEditor.attachment.owned-columns"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["nativeEditor.preservedNotice"].exists, "the document types")
+        card.tap()
+        let first = app.textViews["nativeEditor.column.0"]
+        XCTAssertTrue(first.waitForExistence(timeout: 5), "the column editor opened")
+        first.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        app.typeKey(XCUIKeyboardKey.rightArrow, modifierFlags: .command)
+        app.typeText(" one")
+        let picker = app.segmentedControls["nativeEditor.columns.picker"]
+        XCTAssertTrue(picker.exists)
+        picker.buttons.element(boundBy: 1).tap()
+        let second = app.textViews["nativeEditor.column.1"]
+        XCTAssertTrue(second.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "switching columns keeps the keyboard")
+        app.typeKey(XCUIKeyboardKey.rightArrow, modifierFlags: .command)
+        app.typeText(" two")
+        let typed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value BEGINSWITH %@", "Right two"), object: second)
+        XCTAssertEqual(XCTWaiter.wait(for: [typed], timeout: 5), .completed, "the second column holds the text")
+        app.buttons["nativeEditor.columns.done"].tap()
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        app.terminate()
+
+        app.launchArguments = ["--native-open", "--native-columns"]
+        app.launch()
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        card.tap()
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        XCTAssertEqual((first.value as? String)?.hasPrefix("Left one"), true, "the journal restores column one")
+        app.segmentedControls["nativeEditor.columns.picker"].buttons.element(boundBy: 1).tap()
+        XCTAssertTrue(second.waitForExistence(timeout: 5))
+        XCTAssertEqual((second.value as? String)?.hasPrefix("Right two"), true, "and column two")
+    }
+
     /// PR11c: a long press and drag selects two cells, and the Cell menu
     /// merges them: one durable command that survives a relaunch.
     func testDraggingAcrossCellsSelectsThemAndTheCellMenuMergesThem() {
