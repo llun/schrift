@@ -176,6 +176,12 @@ final class NativeEditorSession {
         if input != nil, textView.isEditable { session.enableTyping(persist: nil, scheduler: saveScheduler) }
         // One clipboard for the document and its cells (tests use a private one).
         if let pasteboard = input?.pasteboard { session.input?.pasteboard = pasteboard }
+        // A cell composition's recovery entries are the document's (PR11c):
+        // written with its list, shown by it, restored with it.
+        if let document = input?.composition, let cell = session.input?.composition {
+            let source = UUID()
+            cell.forward = { [weak document] in document?.adopt($0, from: source) }
+        }
         return session
     }
 

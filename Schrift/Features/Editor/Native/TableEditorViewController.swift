@@ -944,7 +944,10 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     /// for the cell being edited, the label's padding otherwise.
     private func height(_ ref: TableGrid.CellRef, width: CGFloat) -> CGFloat {
         guard let grid else { return Self.minimumRowHeight }
-        let text = Self.text(paragraphs(ref), cell: grid.cell(ref), traits: traitCollection)
+        // A realised cell's label already holds its text (`configureText`).
+        let text =
+            cellViews[ref]?.label.attributedText
+            ?? Self.text(paragraphs(ref), cell: grid.cell(ref), traits: traitCollection)
         let key = text.string.hashValue ^ Int(width * 2) ^ (ref == active ? 1 : 0)
         if let cached = cellHeights[ref], cached.key == key { return cached.height }
         var insets = UIEdgeInsets(top: Self.padding, left: Self.padding, bottom: Self.padding, right: Self.padding)
@@ -999,7 +1002,8 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
             for row in rows where row < grid.slots.count {
                 for column in columns where column < grid.columnCount { wanted.insert(grid.slots[row][column]) }
             }
-            if let active { wanted.insert(active) }
+            // The text view's cell stays realised wherever it is; a viewer's highlight need not.
+            if let active, cellSession != nil { wanted.insert(active) }
             for (ref, view) in cellViews where !wanted.contains(ref) {
                 recycle(view)
                 cellViews[ref] = nil
