@@ -178,10 +178,16 @@ enum NativeExportMarkdown {
         }
     }
 
-    /// What JS `String.prototype.trim` removes: WhiteSpace (with U+FEFF) and
-    /// LineTerminator, but not U+0085.
-    private static let jsWhitespace = CharacterSet.whitespaces.union(
-        CharacterSet(charactersIn: "\n\u{B}\u{C}\r\u{2028}\u{2029}\u{FEFF}"))
+    /// What JS `String.prototype.trim` removes: ECMAScript WhiteSpace (tab,
+    /// VT, FF, U+FEFF and the Zs spaces) and LineTerminator, exactly. Not
+    /// Foundation's `.whitespaces`, which also holds U+200B (JS keeps it), nor
+    /// U+0085.
+    static let jsWhitespace: CharacterSet = {
+        var set = CharacterSet(charactersIn: "\u{9}\u{A}\u{B}\u{C}\u{D}\u{20}\u{A0}\u{1680}\u{2028}\u{2029}")
+        set.insert(charactersIn: "\u{202F}\u{205F}\u{3000}\u{FEFF}")
+        set.insert(charactersIn: Unicode.Scalar(0x2000)!...Unicode.Scalar(0x200A)!)
+        return set
+    }()
 
     // MARK: - External HTML
 

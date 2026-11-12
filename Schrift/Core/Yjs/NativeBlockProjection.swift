@@ -128,9 +128,12 @@ enum NativeBlockProjection {
                 needsExport(subtree) || subtree.contains(where: { hasEdgeWhitespace($0.block) })
             {
                 // Edge whitespace falls back to the classic rendering only for a block the port lacks.
+                // Edge whitespace never takes a shadow away: last, the classic
+                // rendering with it trimmed, as the conflict comparison reads it.
                 guard let before = classicSpelling(blocks[plain..<root]),
-                    let chunk = NativeExportMarkdown.body(exportNodes(subtree))
-                        ?? (needsExport(subtree) ? nil : classicSpelling(subtree))
+                    let chunk = exportNodes(subtree).flatMap(NativeExportMarkdown.body)
+                        ?? (needsExport(subtree)
+                            ? nil : classicSpelling(subtree) ?? classicSpelling(edgeTrimmed(subtree)))
                 else { return nil }
                 parts += [before, chunk]
                 plain = end
@@ -147,29 +150,61 @@ enum NativeBlockProjection {
     }
 
     /// Whether the classic rendering cannot spell `block` like the export:
-    /// text that starts or ends with whitespace (the classic re-parse trims it,
-    /// so its self-check refuses the block), or a marked run that does (the
-    /// export keeps that whitespace inside the delimiters, except the trailing
-    /// part of bold and italic). A code block keeps its text verbatim either way.
+    /// text that starts or ends with whitespace (the classic re-parse trims
+    /// `.whitespaces`, so its self-check refuses the block; the export's trim
+    /// takes `jsWhitespace` off the document's ends), or a marked run that does
+    /// (the export keeps that whitespace inside the delimiters, except the
+    /// trailing part of bold and italic). A code block is verbatim either way.
     private static func hasEdgeWhitespace(_ block: ProjectedBlock) -> Bool {
         guard block.node != "codeBlock" else { return false }
         func edges(_ text: String) -> Bool {
-            [text.unicodeScalars.first, text.unicodeScalars.last].contains {
-                $0.map(CharacterSet.whitespaces.contains) == true
-            }
+            [text.unicodeScalars.first, text.unicodeScalars.last].contains { $0.map(edgeWhitespace.contains) == true }
         }
         return edges(block.runs.map(\.text).joined()) || block.runs.contains { !$0.marks.isEmpty && edges($0.text) }
     }
 
-    /// The port's nodes for a root subtree; a root callout without children is
-    /// the paragraph `exportSpelling` makes of it (the port refuses callouts).
-    private static func exportNodes(_ subtree: ArraySlice<NativeBlockSnapshot>) -> [NativeExportMarkdown.Node] {
-        if subtree.count == 1, opaqueReason(subtree[subtree.startIndex].block) == "unknownNode:callout",
-            let spelled = exportSpelling(subtree)?.blocks.first
-        {
-            return [NativeExportMarkdown.Node(block: spelled, children: [])]
+    private static let edgeWhitespace = CharacterSet.whitespaces.union(NativeExportMarkdown.jsWhitespace)
+
+    /// The port's nodes for a root subtree. Outside the shapes `needsExport`
+    /// sends there (where the port refuses callouts), a callout is the
+    /// paragraph `exportSpelling` makes of it; `nil` for one it refuses.
+    private static func exportNodes(_ subtree: ArraySlice<NativeBlockSnapshot>) -> [NativeExportMarkdown.Node]? {
+        guard !needsExport(subtree) else { return NativeExportMarkdown.nodes(subtree) }
+        var snapshots = Array(subtree)
+        for index in snapshots.indices where opaqueReason(snapshots[index].block) == "unknownNode:callout" {
+            guard let spelled = exportSpelling(snapshots[index...index])?.blocks.first else { return nil }
+            snapshots[index].block = spelled
         }
-        return NativeExportMarkdown.nodes(subtree)
+        return NativeExportMarkdown.nodes(snapshots[...])
+    }
+
+    /// The subtree with each block's edge `.whitespaces` removed from its runs.
+    private static func edgeTrimmed(_ subtree: ArraySlice<NativeBlockSnapshot>) -> ArraySlice<NativeBlockSnapshot> {
+        func strip(_ text: String, leading: Bool) -> String {
+            var scalars = Array(text.unicodeScalars)
+            while let edge = leading ? scalars.first : scalars.last, CharacterSet.whitespaces.contains(edge) {
+                if leading { scalars.removeFirst() } else { scalars.removeLast() }
+            }
+            return String(String.UnicodeScalarView(scalars))
+        }
+        return ArraySlice(
+            subtree.map { snapshot in
+                guard snapshot.block.node != "codeBlock" else { return snapshot }
+                var snapshot = snapshot
+                var runs = snapshot.block.runs
+                while !runs.isEmpty {
+                    runs[0].text = strip(runs[0].text, leading: true)
+                    guard runs[0].text.isEmpty else { break }
+                    runs.removeFirst()
+                }
+                while !runs.isEmpty {
+                    runs[runs.count - 1].text = strip(runs[runs.count - 1].text, leading: false)
+                    guard runs[runs.count - 1].text.isEmpty else { break }
+                    runs.removeLast()
+                }
+                snapshot.block.runs = runs
+                return snapshot
+            })
     }
 
     /// The root group's containers by item id (a table's grid is read from its item).
