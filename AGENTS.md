@@ -3366,9 +3366,12 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   document's awareness (`showAwareness`: a caret in the active cell) and the editor badges a
   collaborator's cell; a cell composition's recovery entries are handed to the document's
   composition (`NativeCompositionSession.forward`/`adopt`: written with its list, shown by it,
-  restored with it); a peer's transaction typing in one cell and colouring another re-reads the
-  grid (pinned). **Known limits:** editing a table over 1,000 cells needs a table surface that
-  holds only the active cell (a later PR); typing over a CellSelection clears it and types into
+  restored with it); a peer's transaction typing in one cell and colouring another already
+  re-read the grid on main (the 11a limit was stale; a test now pins it). **Known limits:** editing a table over 1,000 cells needs a table surface that
+  holds only the active cell (a later PR); a paste whose rectangle cuts a rowspan cell at its top
+  or bottom edge splits that cell as intended, where prosemirror-tables 1.8.5's
+  `isolateHorizontal` inserts the split cell at a table-relative offset used as a document
+  position (no `+ start`) and garbles the web's grid (pinned structurally, not by XML); typing over a CellSelection clears it and types into
   the active cell (the web replaces the first cell's content and empties the rest); plain text
   is not read as Markdown (the web pastes `**x**` bold and a Markdown table as cells), a CSS
   colour other than a palette name is not read (the web keeps any CSS string, which it does not
@@ -3379,8 +3382,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   scrolled in from the side is realised; a collaborator's selection in another cell is a badge;
   table key commands have no discoverability titles; Dynamic Type/RTL grid layout and mentions
   or inline math in cells are not done. Tests: `BlockNoteTableClipboardOracleTests`
-  (`BlockNoteTableClipboardCaptures`, clip2.mjs: 10 copies' HTML and Markdown, 16 pastes —
-  the web's HTML into a selection and at a caret, growing, tiling, spans clipped and isolated,
+  (`BlockNoteTableClipboardCaptures`, clip2.mjs: 11 copies' HTML and Markdown, 21 pastes —
+  the web's HTML into a selection and at a caret, growing, tiling, ragged rows, spans clipped and
+  isolated at each edge,
   headers, breaks, marks, entities, whitespace, `data-*` props, Schrift's own copy as the web's
   `blocknote/html`, plain text — and 6 clears, cuts and merges, each the web's XML with the
   shadow its Markdown; hostile HTML and payloads; a paste past the bound), `TableSelectionTests`
