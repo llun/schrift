@@ -356,13 +356,19 @@ final class ColumnEditorTests: NativeEditingTestCase {
             walk(host.view)
             return found
         }
-        for _ in 0..<500 where !(model.isLoaded && columnViews().count == 2) { await Task.yield() }
+        for _ in 0..<100 where !(model.isLoaded && columnViews().count == 2) {
+            host.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(50))
+        }
         XCTAssertEqual(columnViews().count, 2)
         let sessions = model.columns.map(ObjectIdentifier.init)
         host.view.removeFromSuperview()
-        for _ in 0..<50 { await Task.yield() }
+        try await Task.sleep(for: .milliseconds(300))
         window.addSubview(host.view)
-        for _ in 0..<200 { await Task.yield() }
+        for _ in 0..<10 {
+            host.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(50))
+        }
         XCTAssertEqual(columnViews().count, 2, "one text view per column")
         XCTAssertEqual(model.columns.map(ObjectIdentifier.init), sessions, "the same surfaces")
         XCTAssertFalse(model.isClosed)
