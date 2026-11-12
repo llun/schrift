@@ -209,13 +209,17 @@ final class NativeCompositionRecoveryTests: DocumentEngineTestCase {
         await crashed.close().value
         var session = try await launch(replica)
         var input = try XCTUnwrap(session.input)
-        let pasteboard = UIPasteboard.general.items
-        defer { UIPasteboard.general.items = pasteboard }
+        // Never the general pasteboard: reading another app's content there (the
+        // simulator's host sync, another test app) shows the paste consent alert,
+        // and the read blocks until someone answers it (the test hung).
+        let pasteboard = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: pasteboard.name) }
+        input.pasteboard = pasteboard
 
         input.copyRecovery(try XCTUnwrap(input.composition.pendingRecoveries.first))
         await session.settle()
 
-        XCTAssertEqual(UIPasteboard.general.string, "かな")
+        XCTAssertEqual(pasteboard.string, "かな")
         XCTAssertTrue(input.composition.pendingRecoveries.isEmpty)
         XCTAssertTrue(replica.store.provisionalRecoveries(for: replica.scope).isEmpty)
         await session.close().value

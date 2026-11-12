@@ -206,8 +206,9 @@ final class NativeTextSurfaceTests: DocumentEngineTestCase {
         let original = surface.storage.string
         let count = "First paragraph.\nSecond".utf16.count
         view.selectedRange = NSRange(location: 0, length: count)
-        let previousClipboard = UIPasteboard.general.items
-        defer { UIPasteboard.general.items = previousClipboard }
+        // UIKit's own copy writes the general pasteboard; this test reads back
+        // only what it wrote. Reading what was there before (to restore it) is
+        // a read of another app's content: the paste consent alert blocks it.
         view.copy(nil)
         XCTAssertEqual(UIPasteboard.general.string, "First paragraph.\nSecond")
         XCTAssertEqual(surface.storage.string, original)

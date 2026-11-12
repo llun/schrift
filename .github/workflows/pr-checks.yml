@@ -175,6 +175,9 @@ jobs:
       # the tests that failed (up to -test-iterations total attempts); the job still
       # fails if one fails every attempt. Both runs always execute, so one report
       # shows unit and UI results. See docs/ci.md.
+      # A unit test that never returns (a system alert, a wait nobody resumes)
+      # is killed after its execution time allowance and fails by name, with a
+      # spindump in the result bundle, instead of silently using up the job.
       - name: Test
         env:
           SIM_UDID: ${{ steps.sim.outputs.udid }}
@@ -189,6 +192,9 @@ jobs:
             -destination "platform=iOS Simulator,id=${SIM_UDID}" \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -enableCodeCoverage NO \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 300 \
+            -maximum-test-execution-time-allowance 600 \
             -skip-testing:SchriftChecklistUITests \
             -skip-testing:SchriftNativeUITests \
             -resultBundlePath TestResults-unit.xcresult \
