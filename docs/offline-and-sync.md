@@ -240,7 +240,9 @@ continuation paragraphs), so documents holding them type and save without a spur
 conflict. Since PR11a a familiar root table is spelled as the export's own Markdown
 table (cell paragraphs and hard breaks as `\` + newline), so a document with one types too;
 an unfamiliar table, media, math, columns and diagrams still have no shadow and open
-read-only. Existing Markdown drafts retain their
+read-only. Since PR11b a styled merged cell is spelled as BlockNote reads it, and a table a
+concurrent structure change left uneven is spelled as the web's repair will leave it, so a save
+in between still has a shadow. Existing Markdown drafts retain their
 classic owner.
 
 > **Amendment (2026-07-03):** the document **lists** (Home, the editor's

@@ -124,7 +124,7 @@ struct NativeEditorView: View {
             TableEditorScreen(
                 document: session, tableID: request.id, labels: NativeEditorLabels(table: loc[.native_editor_table]),
                 doneTitle: loc[.editor_action_done],
-                cellLabel: { String(format: loc[.native_editor_table_cell], $0, $1) },
+                cellLabel: { String(format: loc[.native_editor_table_cell], $0, $1) }, text: { loc[$0] },
                 onClose: {
                     lastTable = request.id
                     openTable = nil

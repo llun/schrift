@@ -20,7 +20,15 @@ struct EditorSelection: Equatable, Sendable {
 struct RelativeEditorPosition {
     let blockID: String
     let relative: YRelativePosition
-    private let isElementAnchor: Bool
+    private enum Anchor {
+        /// In a text: the block's own, or one part of a cell paragraph.
+        case text
+        /// On an empty element, with no text yet.
+        case element
+        /// Between a cell paragraph's parts (next to a hard break).
+        case child
+    }
+    private let anchor: Anchor
 
     init(_ position: EditorPosition, index: BlockIndex) throws {
         guard index.isCanonical, let entry = index.entries[position.blockID],
@@ -36,7 +44,27 @@ struct RelativeEditorPosition {
                 throw DocumentEngineError.invalidPosition
             }
             relative = try YRelativePosition.fromTypeIndex(text, index: UInt(position.offset), assoc: position.assoc)
-            isElementAnchor = false
+            anchor = .text
+        } else if let element = entry.element, element.length > 0,
+            element.typeRef == .xmlElement(nodeName: "tableParagraph"), index.isTableParagraph(position.blockID)
+        {
+            // A cell paragraph with hard breaks (PR11b): in the text part that
+            // holds the offset, else between parts.
+            let parts = Self.parts(of: element)
+            guard position.offset <= parts.last.map({ $0.start + $0.width }) ?? 0 else {
+                throw DocumentEngineError.invalidPosition
+            }
+            if let part = parts.first(where: {
+                $0.type.typeRef == .xmlText && $0.start <= position.offset && position.offset <= $0.start + $0.width
+            }) {
+                relative = try YRelativePosition.fromTypeIndex(
+                    part.type, index: UInt(position.offset - part.start), assoc: position.assoc)
+                anchor = .text
+            } else {
+                let child = parts.filter { $0.start + $0.width <= position.offset }.count
+                relative = try YRelativePosition.fromTypeIndex(element, index: UInt(child), assoc: position.assoc)
+                anchor = .child
+            }
         } else {
             // An empty text-capable element has no XmlText yet. Anchor on the
             // element itself without authoring anything: the writer creates its
@@ -46,8 +74,22 @@ struct RelativeEditorPosition {
                 BlockNoteWriter.nativePropSchemas[node] != nil || node == "tableParagraph"
             else { throw DocumentEngineError.invalidPosition }
             relative = try YRelativePosition.fromTypeIndex(element, index: 0, assoc: position.assoc)
-            isElementAnchor = true
+            anchor = .element
         }
+    }
+
+    /// A cell paragraph's countable children with their UTF-16 starts (a
+    /// non-text part, a hard break, is one unit wide).
+    private static func parts(of element: YType) -> [(type: YType, start: Int, width: Int)] {
+        var parts: [(type: YType, start: Int, width: Int)] = []
+        var start = 0
+        for item in YBlockProjection.children(of: element, includeFormats: false) {
+            guard case .type(let type) = item.content else { continue }
+            let width = type.typeRef == .xmlText ? Int(type.length) : 1
+            parts.append((type, start, width))
+            start += width
+        }
+        return parts
     }
 
     /// Identity is essential: a type change, a new container under the same id,
@@ -57,7 +99,8 @@ struct RelativeEditorPosition {
             let absolute = try? relative.resolve(in: doc), !entry.containerItem.deleted
         else { return nil }
         let offset: Int
-        if isElementAnchor {
+        switch anchor {
+        case .element:
             guard let element = entry.element, absolute.type === element, !(element.item?.deleted ?? true) else {
                 return nil
             }
@@ -67,11 +110,23 @@ struct RelativeEditorPosition {
                 guard element.length == 0 else { return nil }
                 offset = 0
             }
-        } else {
-            guard let text = entry.textType, absolute.type === text, !(text.item?.deleted ?? true),
-                let index = Int(exactly: absolute.index)
+        case .text:
+            guard let inText = Int(exactly: absolute.index), !(absolute.type.item?.deleted ?? true) else { return nil }
+            if let text = entry.textType, absolute.type === text {
+                offset = inText
+            } else if index.isTableParagraph(blockID), let element = entry.element,
+                absolute.type.item?.parentType === element,
+                let part = Self.parts(of: element).first(where: { $0.type === absolute.type })
+            {
+                // A text part of a cell paragraph (a break came in since).
+                offset = part.start + inText
+            } else {
+                return nil
+            }
+        case .child:
+            guard let element = entry.element, absolute.type === element, let child = Int(exactly: absolute.index)
             else { return nil }
-            offset = index
+            offset = Self.parts(of: element).prefix(child).reduce(0) { $0 + $1.width }
         }
         return EditorPosition(blockID: blockID, offset: offset, assoc: absolute.assoc)
     }

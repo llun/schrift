@@ -49,7 +49,10 @@ struct TableGrid: Equatable, Sendable {
             guard case .array(let values)? = props.first(where: { $0.key == "colwidth" })?.value else {
                 return Array(repeating: nil, count: colspan)
             }
-            return values.map { if case .int(let width) = $0, width > 0 { width } else { nil } }
+            return values.map { value in
+                guard let width = TableGrid.number(value), width >= 1 else { return nil }
+                return Int(width.rounded())
+            }
         }
 
         /// What BlockNote reads as the cell's content: its paragraphs joined
@@ -82,6 +85,10 @@ struct TableGrid: Equatable, Sendable {
         var index: Int
     }
 
+    /// The unfamiliar reasons prosemirror-tables' `fixTables` repairs on the
+    /// web (PR11b): everything else in the table was read.
+    static let layoutReasons: Set<String> = ["overlapping cells", "ragged rows", "span past the last row"]
+
     /// BlockNote's `EMPTY_CELL_WIDTH`: a column with no `colwidth`.
     static let defaultColumnWidth = 120
     /// The largest table the native editor reads in full (PR11a).
@@ -103,6 +110,17 @@ struct TableGrid: Equatable, Sendable {
             }
         }
         return widths.map { $0 ?? Self.defaultColumnWidth }
+    }
+
+    /// A JS number as yjs stores it: a varint or a float64 (big-endian).
+    static func number(_ value: YAnyValue) -> Double? {
+        switch value {
+        case .int(let value): return Double(value)
+        case .float64(let data) where data.count == 8:
+            let number = Double(bitPattern: data.reduce(UInt64(0)) { $0 << 8 | UInt64($1) })
+            return number.isFinite ? number : nil
+        default: return nil
+        }
     }
 
     // MARK: - Navigation (prosemirror-tables `TableMap`)
@@ -222,7 +240,17 @@ struct TableGrid: Equatable, Sendable {
                 switch cellProps.first(where: { $0.key == "colwidth" })?.value {
                 case nil, .null?, .undefined?: break
                 case .array(let values)? where values.count == colspan:
-                    guard values.allSatisfy({ if case .int = $0 { true } else { $0 == .null } }) else {
+                    // Ints from a native or rounded resize, floats from a web
+                    // drag, null/undefined where BlockNote's JSON round trip left a
+                    // spanned column unset (`[undefined, undefined]`).
+                    guard
+                        values.allSatisfy({
+                            switch $0 {
+                            case .int, .float64, .null, .undefined: true
+                            default: false
+                            }
+                        })
+                    else {
                         return refuse("unreadable colwidth")
                     }
                 default: return refuse("unreadable colwidth")

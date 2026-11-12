@@ -70,7 +70,10 @@ final class TableGridTests: XCTestCase {
         XCTAssertEqual(grid.familiarity, .familiar)
         XCTAssertEqual(grid.columnCount, 3)
         XCTAssertEqual(grid.slots[1].map(\.index), [0, 1, 1])
-        XCTAssertEqual(NativeExportMarkdown.table(grid).map { $0.split(separator: "\n").count }, 3)
+        // A row with one header cell is not a header row in BlockNote's JSON
+        // (`nodeToBlock` counts only fully-header rows): the export adds an
+        // empty header line (PR11b).
+        XCTAssertEqual(NativeExportMarkdown.table(grid).map { $0.split(separator: "\n").count }, 4)
     }
 
     func testShapesTheWebWouldRewriteAreUnfamiliar() throws {
@@ -139,6 +142,19 @@ final class TableGridTests: XCTestCase {
         let grid = try grid([Self.row([Self.cell("\u{FEFF}x\u{85}", header: true)])])
         let first = try XCTUnwrap(NativeExportMarkdown.table(grid)?.split(separator: "\n").first)
         XCTAssertTrue(first.hasPrefix("| x\u{85} "), String(first))
+    }
+
+    /// Web widths (PR11b): a drag writes fractional pixels, BlockNote's JSON
+    /// round trip leaves `[undefined, undefined]` on a spanned cell; both read.
+    func testWebColumnWidthsAreFamiliar() throws {
+        var bits = (120.6).bitPattern.bigEndian
+        let float = YAnyValue.float64(Data(bytes: &bits, count: 8))
+        let grid = try grid([
+            Self.row([Self.cell("a", extra: [("colwidth", .array([float]))]), Self.cell("b")]),
+            Self.row([Self.cell("c", colspan: 2, extra: [("colwidth", .array([.undefined, .null]))])]),
+        ])
+        XCTAssertEqual(grid.familiarity, .familiar)
+        XCTAssertEqual(grid.columnWidths, [121, TableGrid.defaultColumnWidth])
     }
 
     func testParagraphIDsAreTheirTablesAndNeverABlockID() {

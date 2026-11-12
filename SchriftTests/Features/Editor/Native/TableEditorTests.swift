@@ -19,9 +19,13 @@ final class TableEditorTests: NativeEditingTestCase {
         try await super.tearDown()
     }
 
+    /// A web fixture's state (11a's captures, else PR11b's operation seeds).
     private func fixture(_ name: String) throws -> Data {
-        try XCTUnwrap(
-            Data(base64Encoded: try XCTUnwrap(BlockNoteTableCaptures.fixtures.first { $0.name == name }).update))
+        let base64 =
+            name.hasPrefix("ops:")
+            ? BlockNoteTableOperationCaptures.seeds[String(name.dropFirst(4))]
+            : BlockNoteTableCaptures.fixtures.first { $0.name == name }?.update
+        return try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(base64, name)))
     }
 
     /// The styled fixture (paragraph, table, paragraph) in a typing harness,
@@ -348,7 +352,9 @@ final class TableEditorTests: NativeEditingTestCase {
 
     // MARK: - Shapes 11a does not author
 
-    func testAHardBreakCellIsShownButNotTypedInto() async throws {
+    /// A hard-break cell is shown as one paragraph with a line separator and,
+    /// since PR11b, typed into (barrier by barrier: it is not the text fast path).
+    func testAHardBreakCellIsShownAndTypedInto() async throws {
         let capture = try XCTUnwrap(BlockNoteTableCaptures.edits.first { $0.name == "shiftEnter" })
         let seed = YDoc(clientID: 5, gc: true)
         try seed.applyUpdate(YUpdateDecoder.decode(try XCTUnwrap(Data(base64Encoded: capture.seed))))
@@ -364,12 +370,59 @@ final class TableEditorTests: NativeEditingTestCase {
         XCTAssertTrue(table.textView.textStorage.string.contains("Ada\u{2028}B"), "one paragraph, a line separator")
         let input = try XCTUnwrap(table.input)
         input.showCell([cell.id])
-        setSelection(table, NSRange(location: try location(table, cell.id, 1), length: 0))
+        setSelection(table, NSRange(location: try location(table, cell.id, 5), length: 0))
         table.textView.insertText("z")
         await table.settle()
-        XCTAssertEqual(harness.log.commands.count, 0)
-        XCTAssertEqual(input.noticeKey, .native_editor_input_unavailable)
-        XCTAssertTrue(input.composition.pendingRecoveries.isEmpty, "refused, never a recovery entry")
+        XCTAssertEqual(harness.log.commands.count, 1)
+        XCTAssertEqual(table.surface.blocks[2].runs.map(\.text).joined(), "Ada\nBz")
+        let written = await xml(harness)
+        XCTAssertTrue(written.contains("<tableparagraph>Ada<hardbreak></hardbreak>Bz</tableparagraph>"), written)
+        XCTAssertTrue(input.composition.pendingRecoveries.isEmpty, "a barrier, never a recovery entry")
+        XCTAssertEqual(table.textView.selectedRange.location, try location(table, cell.id, 6), "the caret follows")
+    }
+
+    /// Shift-Return (PR11b): one hard break at the caret, then typing after it.
+    func testShiftReturnInsertsAHardBreak() async throws {
+        let (harness, table) = try await open()
+        let input = try XCTUnwrap(table.input)
+        input.tableMove = { _ in true }  // in a table editor
+        input.showCell([ids(table)[6]])  // "Grace"
+        setSelection(table, NSRange(location: try location(table, ids(table)[6], 2), length: 0))
+        let broken = await table.run { input.insertLineBreak() }
+        XCTAssertTrue(broken)
+        table.textView.insertText("x")
+        await table.settle()
+        let written = await xml(harness)
+        XCTAssertTrue(written.contains("<tableparagraph>Gr<hardbreak></hardbreak>xace</tableparagraph>"), written)
+        XCTAssertEqual(table.surface.blocks[6].runs.map(\.text).joined(), "Gr\nxace")
+        let shadow = await harness.session.replicaDoc { NativeBlockProjection.markdownShadow($0) }
+        XCTAssertEqual(shadow??.contains("| Gr\\\nxace"), true)
+        // Outside a table Shift-Return is not a hard break.
+        XCTAssertFalse(harness.input.insertLineBreak())
+        XCTAssertEqual(
+            table.textView.keyCommands?.contains { $0.input == "\r" && $0.modifierFlags == .shift }, true,
+            "Shift-Return is the cell's key command")
+    }
+
+    /// IME after a hard break (PR11b): the composition anchors in the
+    /// paragraph's text part after the break and commits once there.
+    func testCompositionAfterAHardBreakCommitsInTheRightPart() async throws {
+        let (harness, table) = try await open()
+        let input = try XCTUnwrap(table.input)
+        input.tableMove = { _ in true }
+        input.showCell([ids(table)[6]])  // "Grace"
+        setSelection(table, NSRange(location: try location(table, ids(table)[6], 5), length: 0))
+        let broken = await table.run { input.insertLineBreak() }
+        XCTAssertTrue(broken)
+        XCTAssertEqual(table.textView.selectedRange.location, try location(table, ids(table)[6], 6))
+        table.textView.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+        XCTAssertTrue(input.composition.isActive, "the composition began after the break")
+        table.textView.setMarkedText("日本", selectedRange: NSRange(location: 2, length: 0))
+        table.textView.unmarkText()
+        await table.settle()
+        let written = await xml(harness)
+        XCTAssertTrue(written.contains("<tableparagraph>Grace<hardbreak></hardbreak>日本</tableparagraph>"), written)
+        XCTAssertEqual(table.surface.blocks[6].runs.map(\.text).joined(), "Grace\n日本")
     }
 
     func testAnUnfamiliarTableIsPreservedAndOpensReadOnly() async throws {
@@ -463,7 +516,9 @@ final class TableEditorTests: NativeEditingTestCase {
 
     /// T3a: a merged cell (several paragraphs) is spelled in the shadow only
     /// while unstyled, so it takes no marks, and the document stays savable.
-    func testAMergedCellTakesNoMarks() async throws {
+    /// PR11b lifts 11a's limit: a merged cell (several paragraphs) takes marks,
+    /// and the shadow spells it as BlockNote reads it (`BlockNoteTableCommandOracleTests`).
+    func testAMergedCellTakesMarksAndKeepsTheShadow() async throws {
         let harness = try await makeHarness(state: try fixture("merged"))
         addTeardownBlock { await harness.close() }
         let table = try await unwrapped(await harness.session.openTable("tbl"))
@@ -473,25 +528,14 @@ final class TableEditorTests: NativeEditingTestCase {
         XCTAssertEqual(de.map { try? block(table, $0).runs.map(\.text).joined() }, ["d", "e"])
         input.showCell(de)
         setSelection(table, NSRange(location: try location(table, de[0], 0), length: 1))
-        XCTAssertFalse(input.toggleMark("bold"), "no marks in a merged cell")
-        setSelection(table, NSRange(location: try location(table, de[0], 1), length: 0))
-        XCTAssertFalse(input.toggleMark("italic"), "no pending marks either")
-        let refused = await harness.engine { engine -> Bool in
-            let mark = NativeEditCommand(
-                id: UUID(), baseRevision: engine.revision, blockID: de[0],
-                kind: .marks(
-                    NativeMarkCommand(
-                        startOffset: 0, endBlockID: de[0], endOffset: 1,
-                        attributes: [TextMark(key: "bold", valueJSON: "{}")])))
-            let typed = NativeEditCommand(
-                id: UUID(), baseRevision: engine.revision, blockID: de[0], range: 1..<1, replacement: "x",
-                marks: [TextMark(key: "bold", valueJSON: "{}")])
-            return !engine.canApplyStructural(mark) && (try? engine.replaceText(typed, persist: { _ in })) == nil
-        }
-        XCTAssertEqual(refused, true, "the engine refuses both")
-        XCTAssertEqual(harness.log.commands.count, 0)
-        let shadow = await harness.session.replicaDoc { NativeBlockProjection.markdownShadow($0) != nil }
-        XCTAssertEqual(shadow, true)
+        let bolded = await table.run { input.toggleMark("bold") }
+        XCTAssertTrue(bolded, "a merged cell takes marks")
+        let written = await xml(harness)
+        XCTAssertTrue(
+            written.contains("<tableparagraph><bold>d</bold></tableparagraph><tableparagraph>e</tableparagraph>"))
+        let shadow = await harness.session.replicaDoc { NativeBlockProjection.markdownShadow($0) }
+        XCTAssertEqual(shadow??.contains("| **d**e "), true, "BlockNote concatenates differently styled paragraphs")
+        XCTAssertEqual(harness.log.commands.count, 1)
     }
 
     /// T3b and T3c: no command nests a table or gives one children (the
@@ -558,6 +602,162 @@ final class TableEditorTests: NativeEditingTestCase {
             BlockIndex(doc: doc).isCanonical
         }
         XCTAssertEqual(canonical, false)
+    }
+
+    // MARK: - Structure commands (PR11b)
+
+    private func seed(_ name: String) throws -> Data {
+        try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(BlockNoteTableOperationCaptures.seeds[name])))
+    }
+
+    private func capture(_ fixture: String, _ operation: String) throws -> BlockNoteTableOperationCaptures.Operation {
+        try XCTUnwrap(
+            BlockNoteTableOperationCaptures.operations.first { $0.fixture == fixture && $0.operation == operation })
+    }
+
+    /// The editor's menus run each command as one durable barrier: the web's
+    /// XML, one journal entry, the grid re-read, the active cell kept, the
+    /// shadow the export's, and the document typeable after a relaunch.
+    func testTheMenusRunStructureCommandsDurablyAsTheWebDoes() async throws {
+        let harness = try await makeHarness(state: try seed("plain"))
+        addTeardownBlock { await harness.close() }
+        let editor = try await editor(harness)
+        let table = try XCTUnwrap(editor.cellSession)
+        XCTAssertFalse(editor.controls.isHidden, "the Row, Column, Cell and Format menus show while editing")
+        editor.activate(TableGrid.CellRef(row: 2, index: 1))  // "h"
+        let kept = editor.grid?.cell(TableGrid.CellRef(row: 2, index: 1)).itemID
+        let ran = await table.run { editor.perform(.addRow(row: 1, after: false)) }
+        XCTAssertTrue(ran)
+        for _ in 0..<300 where editor.grid?.rows.count != 4 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(editor.grid?.rows.count, 4)
+        let written = await xml(harness)
+        XCTAssertEqual(written, try capture("plain", "rowAbove1").xml)
+        XCTAssertEqual(harness.log.commands.count, 1)
+        XCTAssertEqual(table.surface.blocks.count, 12, "the new row's paragraphs reached the table surface")
+        XCTAssertEqual(editor.active.flatMap { editor.grid?.cell($0).itemID }, kept, "the active cell stayed")
+        let shadow = await harness.session.replicaDoc { NativeBlockProjection.markdownShadow($0) }
+        XCTAssertEqual(shadow, try capture("plain", "rowAbove1").markdown)
+        // Merge and split through the cell menu's commands.
+        let merged = await table.run {
+            editor.perform(.merge(from: TableSlot(row: 2, column: 0), to: TableSlot(row: 2, column: 1)))
+        }
+        XCTAssertTrue(merged)
+        let split = await table.run { editor.perform(.split(TableSlot(row: 2, column: 0))) }
+        XCTAssertTrue(split)
+        let refused = await table.run { editor.perform(.split(TableSlot(row: 0, column: 0))) }
+        XCTAssertFalse(refused, "a single cell does not split, as on the web")
+        XCTAssertEqual(harness.log.commands.count, 3)
+        try await assertConsistentTable(harness)
+        // Relaunch: the structure is journaled.
+        await editor.cellSession?.close().value
+        await harness.session.close().value
+        let restored = try await unwrapped(
+            await NativeEditorSession.restore(store: harness.store, scope: harness.scope), "restored")
+        addTeardownBlock { await restored.close().value }
+        let rows = await restored.engine { $0.tableGrid("tbl")?.rows.count }
+        XCTAssertEqual(rows, 4)
+        XCTAssertTrue(restored.canType)
+    }
+
+    private func assertConsistentTable(_ harness: Harness, file: StaticString = #filePath, line: UInt = #line)
+        async throws
+    {
+        let grid = await harness.engine { $0.tableGrid("tbl")?.familiarity }
+        XCTAssertEqual(grid, .familiar, file: file, line: line)
+        let shadow = await harness.session.replicaDoc { NativeBlockProjection.markdownShadow($0) != nil }
+        XCTAssertEqual(shadow, true, "the document keeps its shadow", file: file, line: line)
+        let failed = await harness.engine { $0.nativeWriteFailed }
+        XCTAssertEqual(failed, false, file: file, line: line)
+    }
+
+    /// Undo of a structure command with a peer's edit in between: the row
+    /// goes, the peer's text stays; redo brings the row back.
+    func testUndoingAStructureCommandKeepsAPeersEdit() async throws {
+        let harness = try await makeHarness(state: try seed("plain"))
+        addTeardownBlock { await harness.close() }
+        let editor = try await editor(harness)
+        let table = try XCTUnwrap(editor.cellSession)
+        let input = try XCTUnwrap(table.input)
+        let added = await table.run { editor.perform(.addColumn(column: 2, after: true)) }
+        XCTAssertTrue(added)
+        let update = try peerUpdate("ops:plain") { _, _, table in
+            let g = try XCTUnwrap(self.element(table, [2, 0, 0, 0]))
+            try g.insert(1, "!", nil)
+        }
+        try await harness.session.integrateServerState(update)
+        await table.settle()
+        let undone = await table.run { input.undo() }
+        XCTAssertTrue(undone)
+        let grid = await harness.engine { $0.tableGrid("tbl") }
+        XCTAssertEqual(grid?.columnCount, 3, "the column is gone")
+        XCTAssertEqual(grid?.rows[2][0].runs.map(\.text).joined(), "g!", "the peer's text stayed")
+        let redone = await table.run { input.redo() }
+        XCTAssertTrue(redone)
+        let again = await harness.engine { $0.tableGrid("tbl")?.columnCount }
+        XCTAssertEqual(again, 4)
+        try await assertConsistentTable(harness)
+    }
+
+    /// The colour, alignment and header menus rewrite the table from JSON on
+    /// the web; natively a paragraph whose content does not change keeps its
+    /// item, so a peer's concurrent typing in it is not lost.
+    func testAColourChangeKeepsAPeersConcurrentTyping() async throws {
+        let harness = try await makeHarness(state: try seed("plain"))
+        addTeardownBlock { await harness.close() }
+        let editor = try await editor(harness)
+        let table = try XCTUnwrap(editor.cellSession)
+        let peer = try peerUpdate("ops:plain") { _, _, table in
+            let h = try XCTUnwrap(self.element(table, [2, 1, 0, 0]))
+            try h.insert(1, "ello", nil)
+        }
+        let ran = await table.run {
+            editor.perform(.setCellProp(key: "backgroundColor", value: "red", slots: [TableSlot(row: 2, column: 1)]))
+        }
+        XCTAssertTrue(ran)
+        try await harness.session.integrateServerState(peer)
+        await table.settle()
+        let grid = await harness.engine { $0.tableGrid("tbl") }
+        XCTAssertEqual(grid?.rows[2][1].string("backgroundColor"), "red")
+        XCTAssertEqual(grid?.rows[2][1].runs.map(\.text).joined(), "hello", "the peer's typing survived")
+        try await assertConsistentTable(harness)
+    }
+
+    /// A peer's concurrent structure change: our row insert and a web peer's
+    /// column insert (with the web's own repair) converge to a familiar grid;
+    /// a ragged grid in between (before any repair) keeps a shadow.
+    func testConcurrentStructureChangesConverge() async throws {
+        let harness = try await makeHarness(state: try seed("plain"))
+        addTeardownBlock { await harness.close() }
+        let editor = try await editor(harness)
+        let table = try XCTUnwrap(editor.cellSession)
+        // The peer adds a column (one cell per existing row), unaware of our row.
+        let peer = try peerUpdate("ops:plain") { _, tx, table in
+            for row in YBlockProjection.children(of: table, includeFormats: false) {
+                guard case .type(let rowType) = row.content else { continue }
+                let last = YBlockProjection.children(of: rowType, includeFormats: false).last
+                let cell = YType(typeRef: .xmlElement(nodeName: "tableCell"))
+                try YWrite.insertAfter(tx, into: rowType, after: last, [.type(cell)])
+                try YWrite.insertAfter(
+                    tx, into: cell, after: nil, [.type(YType(typeRef: .xmlElement(nodeName: "tableParagraph")))])
+                for (key, value) in [("colspan", YAnyValue.int(1)), ("rowspan", .int(1))] {
+                    try YWrite.mapSet(tx, on: cell, key: key, .any([value]))
+                }
+            }
+        }
+        let ran = await table.run { editor.perform(.addRow(row: 2, after: true)) }
+        XCTAssertTrue(ran)
+        try await harness.session.integrateServerState(peer)
+        await table.settle()
+        await harness.settle()
+        // Our new row has 3 cells, the others 4: ragged, so read-only until repaired,
+        // but the save still has a shadow (the repaired grid's).
+        let ragged = await harness.engine { $0.tableGrid("tbl")?.familiarity }
+        XCTAssertEqual(ragged, .unfamiliar("ragged rows"))
+        let shadow = await harness.session.replicaDoc { NativeBlockProjection.markdownShadow($0) != nil }
+        XCTAssertEqual(shadow, true, "no capture failure while the grid waits for its repair")
+        let frozen = await harness.engine { $0.nativeWriteFailed }
+        XCTAssertEqual(frozen, false)
+        XCTAssertTrue(table.surface.blocks.isEmpty, "no cell is a text target while the grid is ragged")
     }
 
     func testDuplicatingATableKeepsItsCells() async throws {

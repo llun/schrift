@@ -160,7 +160,8 @@ final class DocumentEngine {
             !builder.nativeSnapshot(entry).block.fidelity.isOpaque,
             entry.isSimpleContainer, let element = entry.element,
             case .xmlElement(let node)? = element.typeRef, writer.schemas[node] != nil || isCellText(entry),
-            entry.isSimpleText || element.length == 0,
+            // A cell paragraph may hold hard breaks between its texts (PR11b).
+            entry.isSimpleText || element.length == 0 || isCellText(entry),
             // A code block keeps "\n" as a source line break (BlockNote's Enter
             // there); in prose a newline is a block break, a range command.
             !replacement.unicodeScalars.contains(where: {
@@ -168,18 +169,15 @@ final class DocumentEngine {
             }),
             marks?.allSatisfy({ Self.isMarkValue($0) && $0.valueJSON != "null" }) != false
         else { throw DocumentEngineError.unsupportedNativeInput }
-        // The shadow spells a merged cell only while it is unstyled (PR11a).
-        if let marks, !marks.isEmpty, isCellText(entry), Self.holdsSeveralParagraphs(entry) {
-            throw DocumentEngineError.unsupportedNativeInput
-        }
         let target = try textTarget(entry)
-        let units = entry.runs.flatMap { Array($0.text.utf16) }
+        let units = textUnits(entry)
         func validBoundary(_ offset: Int) -> Bool {
             guard offset >= 0, offset <= units.count else { return false }
             return offset == 0 || offset == units.count
                 || !(0xd800...0xdbff).contains(units[offset - 1]) || !(0xdc00...0xdfff).contains(units[offset])
         }
-        guard entry.textType.map({ $0.length == UInt(units.count) }) ?? units.isEmpty,
+        guard !entry.isSimpleText || entry.textType?.length == UInt(units.count),
+            entry.isSimpleText || element.length == 0 || isCellText(entry) || units.isEmpty,
             validBoundary(range.lowerBound), validBoundary(range.upperBound)
         else { throw DocumentEngineError.unsupportedNativeInput }
         nativeCommand = command
@@ -359,7 +357,8 @@ final class DocumentEngine {
         // A table cell's paragraph (PR11a) takes text and marks only: every
         // structural command refuses it (`structuralTarget` knows no
         // `tableParagraph` schema), and a mark change stays in the paragraph.
-        if builder.index.isTableParagraph(command.blockID) { return try prepareCellMarks(command) }
+        if builder.index.isTableParagraph(command.blockID) { return try prepareCellCommand(command) }
+        if case .table(let table) = command.kind { return try prepareTableCommand(command, table) }
         // A prop edit (a code block's language) is the one command code accepts.
         let isPropEdit = if case .props = command.kind { true } else { false }
         let (node, units) = try structuralTarget(command.blockID, allowCode: isPropEdit)
@@ -586,6 +585,8 @@ final class DocumentEngine {
             throw DocumentEngineError.unsupportedNativeInput  // prepared above
         case .undo, .redo:
             throw DocumentEngineError.unsupportedNativeInput  // `applyHistoryStep`
+        case .lineBreak, .table:
+            throw DocumentEngineError.unsupportedNativeInput  // cells and tables only, prepared above
         }
         return (write, caret)
     }
@@ -595,34 +596,73 @@ final class DocumentEngine {
     /// BlockNote's `resetsTo` (Backspace at the start, Enter in an empty block
     /// that `emptyEnterResets`): a toggle heading becomes a regular heading
     /// (one prop), anything else a paragraph. Children stay.
-    /// `.marks` within one open table paragraph, the one structural command a
-    /// cell takes.
-    private func prepareCellMarks(_ command: NativeEditCommand) throws -> PreparedCommand {
-        guard case .marks(let marks) = command.kind, marks.endBlockID == command.blockID,
-            !marks.attributes.isEmpty, marks.attributes.allSatisfy({ Self.isMarkValue($0) }),
-            builder.index.isCanonical, let entry = builder.index.entries[command.blockID], isCellText(entry),
-            entry.isProjectable, entry.isSimpleText,
-            // A marked merged cell has no shadow (`NativeExportMarkdown.table`).
-            !Self.holdsSeveralParagraphs(entry)
+    /// A cell paragraph takes text, marks and hard breaks (PR11b): `.marks`
+    /// within the paragraph and `.lineBreak` (Shift-Return, BlockNote's
+    /// `setHardBreak`). Every other command refuses it.
+    private func prepareCellCommand(_ command: NativeEditCommand) throws -> PreparedCommand {
+        guard builder.index.isCanonical, let entry = builder.index.entries[command.blockID], isCellText(entry),
+            entry.isProjectable
         else { throw DocumentEngineError.unsupportedNativeInput }
-        let units = entry.runs.flatMap { Array($0.text.utf16) }
-        guard entry.textType?.length == UInt(units.count), marks.startOffset < marks.endOffset,
-            Self.isBoundary(marks.startOffset, in: units), Self.isBoundary(marks.endOffset, in: units)
-        else { throw DocumentEngineError.unsupportedNativeInput }
+        let units = textUnits(entry)
         let target = try textTarget(entry)
-        let attributes = YTextAttributes(marks.attributes.map { ($0.key, $0.valueJSON) })
+        switch command.kind {
+        case .marks(let marks):
+            guard marks.endBlockID == command.blockID, !marks.attributes.isEmpty,
+                marks.attributes.allSatisfy({ Self.isMarkValue($0) }), marks.startOffset < marks.endOffset,
+                Self.isBoundary(marks.startOffset, in: units), Self.isBoundary(marks.endOffset, in: units)
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            let attributes = YTextAttributes(marks.attributes.map { ($0.key, $0.valueJSON) })
+            return (
+                write: {
+                    try self.writer.formatRange(
+                        in: target, range: marks.startOffset..<marks.endOffset, attributes: attributes)
+                },
+                caret: { EditorPosition(blockID: command.blockID, offset: marks.startOffset, assoc: -1) }
+            )
+        case .lineBreak(let offset):
+            guard Self.isBoundary(offset, in: units) else { throw DocumentEngineError.unsupportedNativeInput }
+            return (
+                write: { try self.writer.insertHardBreak(in: target, at: offset) },
+                caret: { EditorPosition(blockID: command.blockID, offset: offset + 1, assoc: -1) }
+            )
+        default:
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+    }
+
+    /// A table structure command (PR11b) on a familiar table block, prepared
+    /// whole (every refusal before arming) and written in one transaction.
+    private func prepareTableCommand(_ command: NativeEditCommand, _ table: BlockNoteTableCommand) throws
+        -> PreparedCommand
+    {
+        guard builder.index.isCanonical, let entry = builder.index.entries[command.blockID],
+            !builder.index.isTableParagraph(command.blockID), let element = entry.element,
+            element.typeRef == .xmlElement(nodeName: "table")
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        var model: TableModel
+        do {
+            model = try writer.prepareTable(table, table: element, block: command.blockID)
+        } catch {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
         return (
             write: {
-                try self.writer.formatRange(
-                    in: target, range: marks.startOffset..<marks.endOffset, attributes: attributes)
+                try self.writer.transaction { tx in
+                    try model.write(tx, into: element, writer: self.writer, block: command.blockID)
+                }
             },
-            caret: { EditorPosition(blockID: command.blockID, offset: marks.startOffset, assoc: -1) }
+            caret: { EditorPosition(blockID: command.blockID, offset: 0, assoc: -1) }
         )
     }
 
-    /// A cell paragraph with siblings: a merged cell.
-    private static func holdsSeveralParagraphs(_ entry: BlockIndex.Entry) -> Bool {
-        YBlockProjection.children(of: entry.group, includeFormats: false).count > 1
+    /// A text entry's UTF-16 units as the surface shows them: a cell
+    /// paragraph's hard breaks are one "\n" each, as wide as the writer's
+    /// inline part.
+    private func textUnits(_ entry: BlockIndex.Entry) -> [UInt16] {
+        guard isCellText(entry), !entry.isSimpleText, let element = entry.element else {
+            return entry.runs.flatMap { Array($0.text.utf16) }
+        }
+        return (TableGrid.paragraphRuns(element) ?? []).flatMap { Array($0.text.utf16) }
     }
 
     /// A table block: the shadow spells one only as a root block without

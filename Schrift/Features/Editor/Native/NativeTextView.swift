@@ -124,6 +124,8 @@ final class NativeTextView: UITextView {
         if inputCoordinator?.tableMove != nil {
             commands.append(
                 UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(nativeEscape)))
+            // Shift-Return: a hard break in the cell (PR11b).
+            commands.append(UIKeyCommand(input: "\r", modifierFlags: .shift, action: #selector(nativeLineBreak)))
         }
         for command in commands { command.wantsPriorityOverSystemBehavior = true }
         return (super.keyCommands ?? []) + commands
@@ -132,6 +134,11 @@ final class NativeTextView: UITextView {
     @objc private func nativeIndent() {
         guard isEditable, markedTextRange == nil else { return }
         inputCoordinator?.insertTab()
+    }
+
+    @objc private func nativeLineBreak() {
+        guard markedTextRange == nil else { return }
+        inputCoordinator?.insertLineBreak()
     }
 
     @objc private func nativeEscape() {

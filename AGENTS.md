@@ -3162,11 +3162,11 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   callers and golden bytes are unchanged) and `markdownShadow` spells a root table without
   children with `NativeExportMarkdown.table`, a port of 0.56's `htmlToMarkdown.serializeTable`:
   covered slots empty, each cell `serializeInlineContent` + JS `trim()` + `|` → `\|`, columns
-  padded to `max(10, longest)` UTF-16 units, a header row only when row 0 has a header cell (else
-  an empty one). A cell's paragraphs (a merge) and a hard break export as `\` + newline; because
-  `nodeToBlock` joins equal-styled paragraphs with "\n" and concatenates the rest, only plain
-  multi-paragraph cells are spelled, and a marked cell must be one paragraph without a break (else
-  no shadow: the document reads only). A nested table has no shadow. A familiar table is moved and
+  padded to `max(10, longest)` UTF-16 units, a header line only when BlockNote's JSON has header
+  rows or columns (else an empty one; PR11b). A cell is spelled from BlockNote's reading of it
+  (`NativeExportMarkdown.blockNoteRuns`, PR11b): equal-styled paragraphs join with "\n", others
+  concatenate, a hard break is "\n" on the item before it, and marks close around each break. A
+  nested table has no shadow. A familiar table is moved and
   duplicated like any modeled block (the writer's snapshot copies every cell attribute).
   **Cell text is the document's own machinery.** `DocumentEngine.openTable/closeTable` index an
   open table's paragraphs in `BlockIndex` under **cell paragraph ids**
@@ -3214,8 +3214,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   childless root block and a merged cell unstyled**, because only those keep the shadow (the
   open-time `canType` is not re-checked after edits): Tab under a table or of a table, a move
   that would put a table in a sibling's children, and a paste that lands a table below the root
-  or with children are refused before arming; marks (a mark command, typed or link marks,
-  pending toggles: `canFormat`) are refused in a cell of several paragraphs. A block id holding
+  or with children are refused before arming (PR11b lifted the merged-cell mark refusal: the
+  shadow spells styled merged cells). A block id holding
   U+0001 makes the index non-canonical (input refused, every patch a `.reset`, no open table
   re-indexed), and paragraph-ness is decided by membership in the open table
   (`BlockIndex.isTableParagraph`), never by the spelling; the session's filter may read the
@@ -3227,8 +3227,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   unit-tested only), so Shift-Tab on an iOS 26 hardware keyboard is unconfirmed until a device
   check; the active cell edits left-aligned (the grid shows its alignment); peer cursors
   are not painted in the table editor; a mixed transaction (text and a cell colour at once) does
-  not re-read the grid; IME recovery entries are not written for a cell composition; Shift-Return
-  (a hard break) and typing into a hard-break cell are refused; a table over 1,000 cells, a nested
+  not re-read the grid; IME recovery entries are not written for a cell composition; a table
+  over 1,000 cells, a nested
   table and the 72ebe1bb test document (math, columns, media and a diagram have no shadow yet) stay
   read-only; pasting another unshadowable block (math, media, an unfamiliar table) still stops
   saves at the next capture (the pre-existing PR06d class: the capture failure freezes authoring
@@ -3245,6 +3245,56 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   change, no marks in a merged cell, no command nesting a table, a block id spelling a cell
   paragraph refused) and the host UI test `testTypingInATableCellSurvivesRelaunch`
   (`--native-open --native-table`: a web-shaped 2 × 2 table).
+
+- **PR11b Table structure, hard breaks and concurrency.** `Core/Yjs/BlockNoteTableCommands.swift`:
+  `BlockNoteTableCommand` (slot coordinates) is one `NativeEditCommand.Kind.table` on the table
+  block through `applyStructural`, prepared whole before arming (`BlockNoteWriter.prepareTable`,
+  so `canApplyStructural` is the menus' availability) and written in one transaction. Each is a
+  port of what BlockNote 0.56's menus run on the web: prosemirror-tables 1.8.5's `addRow`
+  (`addRowBefore/After` on the row of the cell at (row, 0): a cell spanning across grows, every
+  other slot a new cell of the reference row's type), `addColumn`, `removeRow` (a cell spanning
+  down moves, as a copy, to the next row) and `removeColumn` (refused when they would empty the
+  table), `mergeCells` on the two cells' rectangle (refused when a cell crosses its edge; the
+  others' non-empty paragraphs move in, the spans and `colwidth` grow), `splitCell` (new cells of
+  its type with its attributes and their column's width), `columnResizing`'s `updateColumnWidth`,
+  and the `updateBlock` round trip of the header, colour and alignment menus (`nodeToBlock` →
+  `tableContentToNodes`: header rows and columns counted from the cells, each cell's attributes
+  exactly its props and its column's width, its content one paragraph of BlockNote's reading, a
+  merged cell flattened as the web flattens it). After every command a row left empty takes a cell
+  (prosemirror's content fitting) and `fixTables` runs (`TableModel.fixTable`: overlong spans,
+  collisions, missing slots, column-width agreement), as the web's appendTransaction does. The
+  model (`TableModel`) keeps every row, cell and paragraph item it can, so a peer's concurrent text
+  in an untouched paragraph lands (a round trip keeps a paragraph whose shape does not change);
+  content a deleted or retyped cell held is copied before anything is deleted. **Hard breaks:**
+  `.lineBreak(offset:)` (Shift-Return in a cell, `NativeTextView`'s key command) is
+  `BlockNoteWriter.insertHardBreak`: the text split around one `hardBreak` element, as
+  y-prosemirror writes `a<hardBreak/>b`. A cell paragraph of several parts takes typing (barriers:
+  never predicted, its patches are `.replaceBlock`), marks and IME; `RelativeEditorPosition`
+  anchors in the text part holding the offset, else between parts, and resolves a position in a
+  text that a break split since. **The menus:** the table editor shows Row (insert above/below,
+  delete, header row, row colour), Column (insert left/right, delete, header column, wider/narrower
+  by 40 pt from BlockNote's 35 pt floor, column colour), Cell (merge right, merge down, split,
+  text and background colour, alignment) and Format (bold, italic, underline, strikethrough,
+  inline code), each built when it opens for the active cell (`UIDeferredMenuElement`), unavailable
+  items disabled; a command is `NativeInputCoordinator.applyTable`, a barrier keeping the caret's
+  paragraph offsets, and the grid is re-read when the table's own change arrives (the active cell
+  kept by item, its caret not re-selected). **Web widths** may be floats (a drag), `0` or
+  `undefined` (the round trip's spanned columns): all familiar. **Concurrency:** a peer's
+  structure change merges in Yjs; one that leaves the grid ragged (a row and a column added at
+  once) is unfamiliar, read-only and addresses no cell until a web client's `fixTables` writes the
+  repair, and meanwhile the shadow spells the repaired grid (`TableModel.fixedGrid`), so a save
+  does not fail. **Known limits:** two native clients changing structure at once wait for a web
+  client to repair a ragged grid; Shift-Return over a selection, or while another barrier is in
+  flight, does nothing; the row and column colour menus colour the cells starting in that row or
+  column (the web's handle may include a cell spanning into it); rectangular selection (merging
+  more than two cells at once) is PR11c; the repaired-grid shadow is not pinned against the server.
+  Tests: `BlockNoteTableCommandOracleTests` (`BlockNoteTableOperationCaptures`: 84 web operations
+  on four tables, the 76 the web applies equal to its XML with the shadow equal to its Markdown,
+  the 8 it refuses refused natively; styled merges and hard breaks), `TableEditorTests` (the menus
+  durably through a relaunch, undo and redo of a column with a peer's edit kept, a colour change
+  keeping a peer's concurrent typing, concurrent structure changes, merged-cell marks, a
+  hard-break cell typed into, Shift-Return, IME after a break), `TableGridTests` (web widths) and
+  the host UI test `testTheRowMenuInsertsARowThatSurvivesRelaunch`.
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves

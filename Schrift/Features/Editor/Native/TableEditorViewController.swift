@@ -38,6 +38,10 @@ final class TableEditorViewController: UIViewController {
     var doneTitle = "Done"
     /// The editor closed: the document takes focus back.
     var onClose: (() -> Void)?
+    /// Menu titles (the app's localized strings; English in tests).
+    var text: (L10nKey) -> String = { Strings_en.table[$0] ?? "" }
+    /// The Row, Column, Cell and Format menus (PR11b), shown while editing.
+    let controls = UIStackView()
 
     static let padding: CGFloat = 8
     static let minimumRowHeight: CGFloat = 44
@@ -63,10 +67,20 @@ final class TableEditorViewController: UIViewController {
         scrollView.accessibilityIdentifier = "nativeEditor.table.grid"
         view.addSubview(scrollView)
         scrollView.addSubview(gridView)
+        controls.axis = .horizontal
+        controls.spacing = 8
+        controls.distribution = .fillEqually
+        controls.translatesAutoresizingMaskIntoConstraints = false
+        controls.isHidden = true
+        view.addSubview(controls)
         NSLayoutConstraint.activate([
+            controls.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
+            controls.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
+            controls.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
+            controls.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.topAnchor.constraint(equalTo: controls.bottomAnchor, constant: 4),
             scrollView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
         ])
         Task { await load() }
@@ -92,6 +106,7 @@ final class TableEditorViewController: UIViewController {
             grid = await document.tableGrid(tableID)
         }
         title = grid.map { String(format: labels.table, $0.rows.count, $0.columnCount) }
+        if cellSession?.input != nil { buildControls() }
         rebuild()
         if let grid, let first = start ?? grid.order.first { activate(first) }
         isLoaded = true
@@ -172,6 +187,169 @@ final class TableEditorViewController: UIViewController {
         guard let target else { return false }
         return activate(target)
     }
+
+    // MARK: - Structure menus (PR11b)
+
+    /// One button per menu; each menu is built when it opens, for the active
+    /// cell and the grid as it is then.
+    private func buildControls() {
+        controls.isHidden = false
+        let menus: [(key: L10nKey, identifier: String, build: () -> [UIMenuElement])] = [
+            (.native_editor_table_row, "row", { [weak self] in self?.rowActions() ?? [] }),
+            (.native_editor_table_column, "column", { [weak self] in self?.columnActions() ?? [] }),
+            (.native_editor_table_cell_menu, "cell", { [weak self] in self?.cellActions() ?? [] }),
+            (.native_editor_table_format, "format", { [weak self] in self?.formatActions() ?? [] }),
+        ]
+        for menu in menus {
+            var configuration = UIButton.Configuration.bordered()
+            configuration.title = text(menu.key)
+            configuration.titleLineBreakMode = .byTruncatingTail
+            let button = UIButton(configuration: configuration)
+            button.showsMenuAsPrimaryAction = true
+            button.menu = UIMenu(children: [UIDeferredMenuElement.uncached { $0(menu.build()) }])
+            button.accessibilityIdentifier = "nativeEditor.table.menu.\(menu.identifier)"
+            controls.addArrangedSubview(button)
+        }
+    }
+
+    /// Runs `command` on the table through the table surface: one durable
+    /// barrier, refused before writing when the web would refuse it.
+    @discardableResult
+    func perform(_ command: BlockNoteTableCommand) -> Bool {
+        cellSession?.input?.applyTable(tableID, command) ?? false
+    }
+
+    private var activeCell: TableGrid.Cell? { active.flatMap { grid?.cell($0) } }
+
+    private func action(
+        _ key: L10nKey, _ identifier: String, state: Bool = false, enabled: Bool = true,
+        _ command: @autoclosure @escaping () -> BlockNoteTableCommand?
+    ) -> UIAction {
+        let action = UIAction(title: text(key), state: state ? .on : .off) { [weak self] _ in
+            if let command = command() { self?.perform(command) }
+        }
+        action.accessibilityIdentifier = "nativeEditor.table.\(identifier)"
+        if !enabled { action.attributes = .disabled }
+        return action
+    }
+
+    /// Every cell starting in the active cell's row (the row handle's cells).
+    private func rowSlots(_ cell: TableGrid.Cell) -> [TableSlot] {
+        (grid?.rows[cell.row] ?? []).map { TableSlot(row: $0.row, column: $0.column) }
+    }
+
+    /// Every cell starting in the active cell's column.
+    private func columnSlots(_ cell: TableGrid.Cell) -> [TableSlot] {
+        (grid?.rows ?? []).flatMap { $0 }.filter { $0.column == cell.column }.map {
+            TableSlot(row: $0.row, column: $0.column)
+        }
+    }
+
+    private var headerRow: Bool { grid?.rows.contains { $0.allSatisfy(\.isHeader) } ?? false }
+    private var headerColumn: Bool {
+        guard let rows = grid?.rows, let first = rows.first else { return false }
+        return first.indices.contains { index in rows.allSatisfy { $0.indices.contains(index) && $0[index].isHeader } }
+    }
+
+    private func colorMenu(_ key: String, title: L10nKey, identifier: String, slots: [TableSlot]) -> UIMenu {
+        let names = ["default"] + NativeMark.colors
+        let actions = names.map { name -> UIAction in
+            let action = UIAction(
+                title: text(L10nKey(rawValue: "native.editor.color_\(name)") ?? .native_editor_color_default)
+            ) { [weak self] _ in
+                self?.perform(.setCellProp(key: key, value: name, slots: slots))
+            }
+            action.accessibilityIdentifier = "nativeEditor.table.\(identifier).\(name)"
+            return action
+        }
+        return UIMenu(title: text(title), children: actions)
+    }
+
+    private func rowActions() -> [UIMenuElement] {
+        guard let cell = activeCell, let grid else { return [] }
+        return [
+            action(.native_editor_table_row_above, "rowAbove", .addRow(row: cell.row, after: false)),
+            action(.native_editor_table_row_below, "rowBelow", .addRow(row: cell.row, after: true)),
+            action(
+                .native_editor_table_row_delete, "rowDelete", enabled: cell.rowspan < grid.rows.count,
+                .deleteRow(row: cell.row)),
+            action(.native_editor_table_header_row, "headerRow", state: headerRow, .toggleHeaderRow),
+            colorMenu(
+                "backgroundColor", title: .native_editor_format_background_color, identifier: "rowBackground",
+                slots: rowSlots(cell)),
+        ]
+    }
+
+    private func columnActions() -> [UIMenuElement] {
+        guard let cell = activeCell, let grid else { return [] }
+        let column = cell.column + cell.colspan - 1
+        let width = grid.columnWidths[column]
+        return [
+            action(.native_editor_table_column_left, "columnLeft", .addColumn(column: cell.column, after: false)),
+            action(.native_editor_table_column_right, "columnRight", .addColumn(column: cell.column, after: true)),
+            action(
+                .native_editor_table_column_delete, "columnDelete", enabled: cell.colspan < grid.columnCount,
+                .deleteColumn(column: cell.column)),
+            action(.native_editor_table_header_column, "headerColumn", state: headerColumn, .toggleHeaderColumn),
+            action(.native_editor_table_wider, "wider", .setColumnWidth(column: column, width: width + Self.widthStep)),
+            action(
+                .native_editor_table_narrower, "narrower", enabled: width > Self.minimumWidth,
+                .setColumnWidth(column: column, width: max(Self.minimumWidth, width - Self.widthStep))),
+            colorMenu(
+                "backgroundColor", title: .native_editor_format_background_color, identifier: "columnBackground",
+                slots: columnSlots(cell)),
+        ]
+    }
+
+    private func cellActions() -> [UIMenuElement] {
+        guard let cell = activeCell, let grid else { return [] }
+        let slot = TableSlot(row: cell.row, column: cell.column)
+        let right = TableSlot(row: cell.row, column: cell.column + cell.colspan)
+        let below = TableSlot(row: cell.row + cell.rowspan, column: cell.column)
+        return [
+            action(
+                .native_editor_table_merge_right, "mergeRight", enabled: right.column < grid.columnCount,
+                .merge(from: slot, to: right)),
+            action(
+                .native_editor_table_merge_down, "mergeDown", enabled: below.row < grid.rows.count,
+                .merge(from: slot, to: below)),
+            action(.native_editor_table_split, "split", enabled: cell.colspan > 1 || cell.rowspan > 1, .split(slot)),
+            colorMenu("textColor", title: .native_editor_format_text_color, identifier: "cellText", slots: [slot]),
+            colorMenu(
+                "backgroundColor", title: .native_editor_format_background_color, identifier: "cellBackground",
+                slots: [slot]),
+            UIMenu(
+                options: .displayInline,
+                children: [
+                    ("left", L10nKey.native_editor_table_align_left), ("center", .native_editor_table_align_center),
+                    ("right", .native_editor_table_align_right),
+                ].map { value, key in
+                    action(
+                        key, "align.\(value)", state: (cell.string("textAlignment") ?? "left") == value,
+                        .setCellProp(key: "textAlignment", value: value, slots: [slot]))
+                }),
+        ]
+    }
+
+    private func formatActions() -> [UIMenuElement] {
+        guard let input = cellSession?.input else { return [] }
+        let marks: [(String, L10nKey)] = [
+            ("bold", .editor_format_bold), ("italic", .editor_format_italic),
+            ("underline", .native_editor_format_underline), ("strike", .native_editor_format_strike),
+            ("code", .native_editor_format_code),
+        ]
+        return marks.map { key, title in
+            let action = UIAction(
+                title: text(title), state: input.activeMarks.contains { $0.key == key } ? .on : .off
+            ) { [weak input] _ in input?.toggleMark(key) }
+            action.accessibilityIdentifier = "nativeEditor.table.format.\(key)"
+            return action
+        }
+    }
+
+    /// BlockNote's `columnResizing` floor and the menu's step.
+    static let minimumWidth = 35
+    static let widthStep = 40
 
     // MARK: - Deliveries
 
@@ -371,6 +549,7 @@ struct TableEditorScreen: UIViewControllerRepresentable {
     let labels: NativeEditorLabels
     let doneTitle: String
     let cellLabel: (Int, Int) -> String
+    let text: (L10nKey) -> String
     let onClose: () -> Void
 
     func makeUIViewController(context: Context) -> UINavigationController {
@@ -378,6 +557,7 @@ struct TableEditorScreen: UIViewControllerRepresentable {
         editor.labels = labels
         editor.doneTitle = doneTitle
         editor.cellLabel = cellLabel
+        editor.text = text
         editor.onClose = onClose
         return UINavigationController(rootViewController: editor)
     }

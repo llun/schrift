@@ -202,6 +202,42 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertEqual(app.textViews["nativeEditor.table.cell"].value as? String, "Name\n")
     }
 
+    /// PR11b: the table editor's Row menu inserts a row below the active cell's
+    /// row, one durable structure command that survives a relaunch.
+    func testTheRowMenuInsertsARowThatSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-table"]
+        app.launch()
+        let card = app.descendants(matching: .any)["nativeEditor.attachment.owned-table"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        card.tap()
+        let ada = app.staticTexts["nativeEditor.table.text.1.0"]
+        XCTAssertTrue(ada.waitForExistence(timeout: 5), "the table editor opened")
+        let rowMenu = app.buttons["nativeEditor.table.menu.row"]
+        XCTAssertTrue(rowMenu.waitForExistence(timeout: 5), "the Row menu shows while editing")
+        rowMenu.tap()
+        let insert = app.buttons["Insert row below"]
+        XCTAssertTrue(insert.waitForExistence(timeout: 5))
+        insert.tap()
+        // The first row's cell is active: the new row goes between it and Ada's.
+        let moved = app.staticTexts["nativeEditor.table.text.2.0"]
+        XCTAssertTrue(moved.waitForExistence(timeout: 5), "a third row")
+        XCTAssertEqual(moved.value as? String, "Ada")
+        XCTAssertFalse(app.staticTexts["nativeEditor.inputNotice"].exists)
+        app.buttons["nativeEditor.table.done"].tap()
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        app.terminate()
+
+        app.launchArguments = ["--native-open", "--native-table"]
+        app.launch()
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        XCTAssertEqual(card.label, "Table, 3 by 2", "the journal restores the row")
+        card.tap()
+        XCTAssertTrue(moved.waitForExistence(timeout: 5))
+        XCTAssertEqual(moved.value as? String, "Ada")
+    }
+
     /// The checklist checkbox is a real button in the production open route:
     /// a tap is one durable prop command the journal restores after a relaunch.
     func testCheckboxTapSurvivesRelaunch() {
