@@ -152,11 +152,17 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(bold.isSelected, "the journal restores the mark")
     }
 
-    /// The checklist checkbox is a real button in the production open route:
-    /// a tap is one durable prop command the journal restores after a relaunch.
     /// PR11a: a web-shaped table in the production open route keeps the
     /// document typeable; its card opens the table editor, a tapped cell takes
-    /// the keyboard, Tab moves on, and the typed cell text is durable.
+    /// the keyboard, Tab moves to the next cell, and the typed cell text is
+    /// durable. The active cell's label is hidden (its text view stands over
+    /// it), so a label reappearing is the sign the editor moved on.
+    ///
+    /// Only an unmodified Tab is synthesized: on CI's iOS 26.5 simulator
+    /// XCUITest's Shift-Tab never reached the cell (the editor, the active
+    /// cell and the typed text were all there; run 43116995469), while Tab is
+    /// delivered there (`testTabNestsTheSecondBulletAndSurvivesRelaunch`).
+    /// Shift-Tab's move is covered by `TableEditorTests`.
     func testTypingInATableCellSurvivesRelaunch() {
         let app = XCUIApplication()
         app.launchArguments = ["--native-open", "--reset", "--native-table"]
@@ -165,15 +171,22 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(card.waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts["nativeEditor.preservedNotice"].exists, "the document types")
         card.tap()
+        let ada = app.staticTexts["nativeEditor.table.text.1.0"]
         let empty = app.staticTexts["nativeEditor.table.text.1.1"]
-        XCTAssertTrue(empty.waitForExistence(timeout: 5), "the table editor opened")
-        empty.tap()
+        XCTAssertTrue(ada.waitForExistence(timeout: 5), "the table editor opened")
+        ada.tap()
+        XCTAssertTrue(ada.waitForNonExistence(timeout: 5), "the tapped cell is active")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        app.typeKey(XCUIKeyboardKey.tab, modifierFlags: [])
+        XCTAssertTrue(empty.waitForNonExistence(timeout: 5), "Tab moved to the next cell")
+        XCTAssertTrue(ada.waitForExistence(timeout: 5))
         app.typeText("Engineer")
-        // Tab moves to the next cell (none after the last: the key is kept).
-        app.typeKey(XCUIKeyboardKey.tab, modifierFlags: .shift)
+        // Tapping another cell moves the text view; the keyboard stays.
+        app.staticTexts["nativeEditor.table.text.0.0"].tap()
+        XCTAssertTrue(empty.waitForExistence(timeout: 5), "the typed cell is shown again")
         XCTAssertTrue(app.keyboards.firstMatch.exists, "moving between cells keeps the keyboard")
-        XCTAssertEqual(empty.value as? String, "Engineer")
+        let typed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Engineer"), object: empty)
+        XCTAssertEqual(XCTWaiter.wait(for: [typed], timeout: 5), .completed, "the cell holds the typed text")
         app.buttons["nativeEditor.table.done"].tap()
         XCTAssertTrue(card.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
@@ -189,6 +202,8 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertEqual(app.textViews["nativeEditor.table.cell"].value as? String, "Name\n")
     }
 
+    /// The checklist checkbox is a real button in the production open route:
+    /// a tap is one durable prop command the journal restores after a relaunch.
     func testCheckboxTapSurvivesRelaunch() {
         let app = XCUIApplication()
         app.launchArguments = ["--native-open", "--reset", "--native-blocks"]

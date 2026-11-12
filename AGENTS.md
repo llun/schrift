@@ -3222,7 +3222,10 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   spelling because only canonical indices deliver per-block changes. A cell is trimmed with JS
   `trim()`'s set (U+FEFF trimmed, U+0085 kept). Done before the table surface attached closes
   it at once.
-  **Known limits:** the active cell edits left-aligned (the grid shows its alignment); peer cursors
+  **Known limits:** on CI's iOS 26.5 simulator XCUITest's synthesized Shift-Tab never reached the
+  cell (run 43116995469; the host UI test therefore moves with Tab and a tap, and Shift-Tab is
+  unit-tested only), so Shift-Tab on an iOS 26 hardware keyboard is unconfirmed until a device
+  check; the active cell edits left-aligned (the grid shows its alignment); peer cursors
   are not painted in the table editor; a mixed transaction (text and a cell colour at once) does
   not re-read the grid; IME recovery entries are not written for a cell composition; Shift-Return
   (a hard break) and typing into a hard-break cell are refused; a table over 1,000 cells, a nested
