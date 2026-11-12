@@ -517,11 +517,13 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         // Repeated over the selection, the cells' text is bounded as one paste is.
         let rect = selectionRect()
         let size = TableClipboard.size(cells)
-        let repeats =
-            rect.map { rect in
-                ((rect.right - rect.left + size.width - 1) / max(1, size.width))
-                    * ((rect.bottom - rect.top + size.height - 1) / max(1, size.height))
-            } ?? 1
+        var repeats = 1
+        if let rect {
+            // Split up: the one-expression form times out CI's type checker.
+            let across: Int = (rect.right - rect.left + size.width - 1) / max(1, size.width)
+            let down: Int = (rect.bottom - rect.top + size.height - 1) / max(1, size.height)
+            repeats = across * down
+        }
         guard !TableClipboard.isTooLarge(cells, repeated: repeats) else {
             input.refuse(.native_editor_paste_too_large)
             return true
