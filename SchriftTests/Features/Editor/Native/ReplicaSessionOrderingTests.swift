@@ -336,6 +336,26 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
         mailbox.open()
     }
 
+    // 9b
+    /// A close posted while the mailbox is full still closes the session once
+    /// it drains. CI hung here in teardown: the `.close` was dropped and
+    /// nothing ever resumed the close waiter.
+    func testACloseMeetingAFullMailboxStillClosesTheSession() async throws {
+        let mailbox = Latch()
+        let harness = try await gated(Latch(open: true), mailbox: mailbox)
+        let replica = try XCTUnwrap(harness.session.replica)
+        while replica.mailbox.post(.writeProvisional([])) {}
+        XCTAssertTrue(replica.mailbox.post(.detach(surfaceID: UUID())), "a detach always fits")
+        let closing = harness.session.close()
+        let closed = Locked(false)
+        Task {
+            await closing.value
+            closed.value = true
+        }
+        mailbox.open()
+        await waitUntil(timeout: 30) { closed.value }
+    }
+
     // 10
     func testCompositionBeginIsPostedAndItsCommitIsABarrier() async throws {
         let harness = try await makeHarness()
