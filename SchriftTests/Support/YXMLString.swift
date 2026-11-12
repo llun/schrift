@@ -103,7 +103,11 @@ enum YXMLString {
         case .bool(let b): return b ? "true" : "false"
         case .null: return "null"
         case .undefined: return "undefined"
-        // Numbers, arrays and objects never appear in the captures; never match yjs's coercion.
+        // JS `Array.prototype.toString` (a table cell's `colwidth`): "," between
+        // elements, null and undefined empty.
+        case .array(let values):
+            return values.map { $0 == .null || $0 == .undefined ? "" : render($0) }.joined(separator: ",")
+        // Floats and objects never appear in the captures; never match yjs's coercion.
         default: return "<unsupported \(value)>"
         }
     }

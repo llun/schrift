@@ -263,6 +263,19 @@ extension YBlockProjection {
         if let propsFailure {
             return ProjectedBlock(id: id, node: node, props: [], runs: [], fidelity: .opaque(reason: propsFailure))
         }
+        // A familiar table (PR11a) is modeled by the native projection only:
+        // its cells are the native table editor's, and the save shadow spells
+        // it as the export does. The classic projection keeps it opaque.
+        if nativeMarks, node == "table" {
+            let grid = TableGrid.read(element)
+            let fidelity: ProjectionFidelity
+            if case .unfamiliar(let reason) = grid.familiarity {
+                fidelity = .opaque(reason: "table: \(reason)")
+            } else {
+                fidelity = .modeled
+            }
+            return ProjectedBlock(id: id, node: node, props: props, runs: [], fidelity: fidelity)
+        }
         let (rawRuns, runsFailure) = foldInline(element, interlinkingOrigin: interlinkingOrigin)
         if let runsFailure {
             return ProjectedBlock(id: id, node: node, props: props, runs: [], fidelity: .opaque(reason: runsFailure))

@@ -419,6 +419,17 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
 
     func isExpanded(_ blockID: String) -> Bool { expanded.contains(blockID) }
 
+    /// A table surface's active cell (PR11a): when set, every block not in it
+    /// is left out of layout exactly like folded content, so the table's one
+    /// text view shows one cell. View state only; nil shows every block.
+    private(set) var focus: Set<String>?
+
+    func setFocus(_ blockIDs: Set<String>?) {
+        guard blockIDs != focus else { return }
+        focus = blockIDs
+        if refreshFolding() { onFoldChange?() }
+    }
+
     /// Folds or unfolds a toggle: view state only. Storage, the projection and
     /// Yjs are untouched; the view re-lays out.
     func setExpanded(_ blockID: String, _ open: Bool) {
@@ -482,7 +493,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         var folded: Int?
         for block in blocks {
             if let depth = folded, block.depth <= depth { folded = nil }
-            next.append(folded != nil)
+            next.append(folded != nil || focus.map { !$0.contains(block.id) } == true)
             if folded == nil, AttributedDocumentProjection.isToggle(block), !expanded.contains(block.id) {
                 folded = block.depth
             }

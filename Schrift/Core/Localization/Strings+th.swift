@@ -341,6 +341,7 @@ enum Strings_th {
         .native_editor_pdf: "PDF",
         .native_editor_table: "ตาราง %d x %d",
         .native_editor_table_more: "… เพิ่มเติม",
+        .native_editor_table_cell: "แถว %d คอลัมน์ %d",
         .native_editor_columns: "คอลัมน์ %d",
         .native_editor_math: "สูตรคณิตศาสตร์",
         .native_editor_diagram: "แผนภาพ",

@@ -428,6 +428,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case native_editor_pdf = "native.editor.pdf"
     case native_editor_table = "native.editor.table"
     case native_editor_table_more = "native.editor.table_more"
+    case native_editor_table_cell = "native.editor.table_cell"
     case native_editor_columns = "native.editor.columns"
     case native_editor_math = "native.editor.math"
     case native_editor_diagram = "native.editor.diagram"

@@ -43,7 +43,7 @@ struct RelativeEditorPosition {
             // text on commit. Affinity then chooses start/end of that new text.
             guard position.offset == 0, entry.isSimpleContainer, let element = entry.element,
                 element.length == 0, case .xmlElement(let node)? = element.typeRef,
-                BlockNoteWriter.nativePropSchemas[node] != nil
+                BlockNoteWriter.nativePropSchemas[node] != nil || node == "tableParagraph"
             else { throw DocumentEngineError.invalidPosition }
             relative = try YRelativePosition.fromTypeIndex(element, index: 0, assoc: position.assoc)
             isElementAnchor = true

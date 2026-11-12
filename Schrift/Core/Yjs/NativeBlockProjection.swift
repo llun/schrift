@@ -97,7 +97,10 @@ enum NativeBlockProjection {
     static func markdownShadow(_ doc: YDoc) -> String? {
         let tree = project(doc, nativeMarks: false)
         // A flat document with no native-only block keeps exactly the classic shadow.
-        guard tree.blocks.contains(where: { $0.depth > 0 || nativeOnlyReasons.contains(opaqueReason($0.block)) })
+        guard
+            tree.blocks.contains(where: {
+                $0.depth > 0 || $0.block.node == "table" || nativeOnlyReasons.contains(opaqueReason($0.block))
+            })
         else {
             return YBlockProjection.projectedMarkdown(YBlockProjection.project(doc))
         }
@@ -105,10 +108,20 @@ enum NativeBlockProjection {
         var parts: [String] = []
         var plain = blocks.startIndex  // the first block not yet spelled
         var root = blocks.startIndex
+        var rootItems: [YID: YItem]?
         while root < blocks.endIndex {
             var end = root + 1
             while end < blocks.endIndex, blocks[end].depth > 0 { end += 1 }
-            if needsExport(blocks[root..<end]) {
+            if blocks[root].block.node == "table" {
+                // A root table without children: the export's own grid (PR11a).
+                rootItems = rootItems ?? Self.rootItems(doc)
+                guard end == root + 1, let item = rootItems?[blocks[root].handle.itemID],
+                    let grid = tableGrid(of: item), let before = classicSpelling(blocks[plain..<root]),
+                    let chunk = NativeExportMarkdown.table(grid)
+                else { return nil }
+                parts += [before, chunk]
+                plain = end
+            } else if needsExport(blocks[root..<end]) {
                 guard let before = classicSpelling(blocks[plain..<root]),
                     let chunk = NativeExportMarkdown.markdown(NativeExportMarkdown.nodes(blocks[root..<end]))
                 else { return nil }
@@ -123,6 +136,26 @@ enum NativeBlockProjection {
         // only turns loose, which `canonicalMarkdown` does not see.
         let spelled = (parts + [rest]).map { $0.trimmingCharacters(in: .newlines) }.filter { !$0.isEmpty }
         return spelled.joined(separator: "\n\n") + "\n"
+    }
+
+    /// The root group's containers by item id (a table's grid is read from its item).
+    private static func rootItems(_ doc: YDoc) -> [YID: YItem] {
+        guard let root = doc.share[BlockNoteYjs.fragmentField],
+            let groupItem = YBlockProjection.children(of: root, includeFormats: false).first,
+            case .type(let group) = groupItem.content
+        else { return [:] }
+        var items: [YID: YItem] = [:]
+        for item in YBlockProjection.children(of: group, includeFormats: false) { items[item.id] = item }
+        return items
+    }
+
+    /// The grid of a table block's container item: its content element's.
+    static func tableGrid(of container: YItem) -> TableGrid? {
+        guard case .type(let type) = container.content,
+            let first = YBlockProjection.children(of: type, includeFormats: false).first,
+            case .type(let table) = first.content, table.typeRef == .xmlElement(nodeName: "table")
+        else { return nil }
+        return TableGrid.read(table)
     }
 
     /// The classic rendering of a run of root subtrees, native-only blocks

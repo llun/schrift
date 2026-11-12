@@ -71,6 +71,14 @@ struct BlockIndex {
     /// Re-resolved on every rebuild: an engine created on an empty document
     /// must start patching once the owner seeds the root.
     private var root: YType?
+    /// Tables the native table editor opened (PR11a), by block id: their
+    /// paragraph ids in grid order (cell by cell, paragraph by paragraph).
+    /// Each is an entry (`entries`) addressed like a block's text, but never
+    /// in `order`: the document surface does not show them. Empty when the
+    /// table is gone or no longer familiar; re-read on every rebuild.
+    private(set) var openTables: [String: [String]] = [:]
+    /// A table paragraph's element → its id, for `blockID(for:)`.
+    private var paragraphIDs: [ObjectIdentifier: String] = [:]
 
     init(doc: YDoc) {
         self.doc = doc
@@ -109,6 +117,12 @@ struct BlockIndex {
     func blockID(for type: YType) -> String? {
         var current: YType? = type
         while let candidate = current {
+            // An open table's paragraph is its own text target (PR11a).
+            if candidate.typeRef == .xmlElement(nodeName: "tableParagraph"),
+                let id = paragraphIDs[ObjectIdentifier(candidate)], entries[id]?.element === candidate
+            {
+                return id
+            }
             if candidate.typeRef == .xmlElement(nodeName: "blockContainer"), let id = Self.blockID(of: candidate),
                 entries[id]?.container === candidate
             {
@@ -137,7 +151,95 @@ struct BlockIndex {
     /// Re-reads one block after a change. O(block), never O(document).
     mutating func refresh(_ id: String) {
         guard let entry = entries[id] else { return }
+        if isTableParagraph(id) {
+            entries[id] = Self.paragraphEntry(
+                id: id, item: entry.containerItem, group: entry.group, handle: entry.handle)
+            return
+        }
         entries[id] = makeEntry(id: id, item: entry.containerItem, depth: entry.depth, parentID: entry.parentID)
+    }
+
+    // MARK: - Open tables (PR11a)
+
+    /// Indexes every paragraph of table `id` as a text target. False (and
+    /// nothing indexed) unless it is a block of this index holding a
+    /// familiar table: an unfamiliar one is preserved, never addressed.
+    @discardableResult
+    mutating func openTable(_ id: String) -> Bool {
+        closeTable(id)
+        openTables[id] = []
+        return indexTable(id)
+    }
+
+    /// Whether `id` is an open table's paragraph: membership, never the
+    /// spelling (a block id could hold the same separator).
+    func isTableParagraph(_ id: String) -> Bool {
+        guard let table = TableGrid.tableID(ofParagraph: id) else { return false }
+        return openTables[table]?.contains(id) == true
+    }
+
+    mutating func closeTable(_ id: String) {
+        for paragraph in openTables.removeValue(forKey: id) ?? [] {
+            if let element = entries.removeValue(forKey: paragraph)?.element {
+                paragraphIDs.removeValue(forKey: ObjectIdentifier(element))
+            }
+        }
+    }
+
+    /// Re-reads an open table's paragraphs after a change inside it.
+    mutating func reindexTable(_ id: String) {
+        guard openTables[id] != nil else { return }
+        openTable(id)
+    }
+
+    @discardableResult
+    private mutating func indexTable(_ id: String) -> Bool {
+        guard let entry = entries[id], !isTableParagraph(id), let element = entry.element,
+            element.typeRef == .xmlElement(nodeName: "table")
+        else { return false }
+        let grid = TableGrid.read(element)
+        guard grid.isFamiliar else { return false }
+        var ids: [String] = []
+        for row in YBlockProjection.children(of: element, includeFormats: false) {
+            guard case .type(let rowType) = row.content else { continue }
+            for cell in YBlockProjection.children(of: rowType, includeFormats: false) {
+                guard case .type(let cellType) = cell.content else { continue }
+                for paragraph in YBlockProjection.children(of: cellType, includeFormats: false) {
+                    guard case .type(let paragraphType) = paragraph.content else { continue }
+                    let paragraphID = TableGrid.paragraphID(table: id, item: paragraph.id)
+                    let handle = NativeBlockHandle(generation: generation, itemID: paragraph.id, stringID: paragraphID)
+                    entries[paragraphID] = Self.paragraphEntry(
+                        id: paragraphID, item: paragraph, group: cellType, handle: handle)
+                    paragraphIDs[ObjectIdentifier(paragraphType)] = paragraphID
+                    ids.append(paragraphID)
+                }
+            }
+        }
+        openTables[id] = ids
+        return true
+    }
+
+    /// A table paragraph as a root-level text block: its element is its own
+    /// container, and it is projectable when it is one plain `XmlText` (or
+    /// empty), the shape typing addresses.
+    private static func paragraphEntry(id: String, item: YItem, group: YType, handle: NativeBlockHandle) -> Entry {
+        guard case .type(let paragraph) = item.content else {
+            return Entry(
+                id: id, containerItem: item, container: YType(), element: nil, textType: nil,
+                isSimpleContainer: false, isSimpleText: false, isProjectable: false, runs: [], depth: 0,
+                parentID: nil, group: group, nestedGroup: nil, handle: handle)
+        }
+        let children = countableChildren(of: paragraph)
+        var textType: YType?
+        if children.count == 1, case .type(let type) = children[0].content, type.typeRef == .xmlText {
+            textType = type
+        }
+        let isProjectable = YBlockProjection.props(of: paragraph) != nil && textType.map(projectsAsText) != false
+        return Entry(
+            id: id, containerItem: item, container: paragraph, element: paragraph, textType: textType,
+            isSimpleContainer: true, isSimpleText: textType != nil, isProjectable: isProjectable,
+            runs: isProjectable ? textType.flatMap(YBlockProjection.textRuns) ?? [] : [], depth: 0, parentID: nil,
+            group: group, nestedGroup: nil, handle: handle)
     }
 
     /// Re-reads the whole index, including each block's text for
@@ -151,6 +253,17 @@ struct BlockIndex {
         rootGroupItem = nil
         isCanonical = true
         root = doc.share[BlockNoteYjs.fragmentField]
+        let tables = Array(openTables.keys)
+        paragraphIDs = [:]
+        openTables = [:]
+        // Open tables survive a rebuild, re-read (or emptied) from the new tree.
+        defer {
+            for table in tables {
+                openTables[table] = []
+                // A shape the index cannot mirror addresses no cell.
+                if isCanonical { indexTable(table) }
+            }
+        }
         guard let root else { return }
         let rootChildren = Self.countableChildren(of: root)
         guard let group = Self.rootGroup(in: root) else {
@@ -189,7 +302,10 @@ struct BlockIndex {
         var seen: Set<String> = []
         for child in countableChildren(of: group) {
             guard case .type(let type) = child.content, type.typeRef == .xmlElement(nodeName: "blockContainer"),
-                let id = blockID(of: type), !id.isEmpty, seen.insert(id).inserted
+                let id = blockID(of: type), !id.isEmpty, seen.insert(id).inserted,
+                // U+0001 is the cell paragraph ids' separator (PR11a): a block
+                // spelling one could pose as a table paragraph.
+                !id.unicodeScalars.contains("\u{1}")
             else { return false }
         }
         return true

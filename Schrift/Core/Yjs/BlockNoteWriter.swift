@@ -603,6 +603,17 @@ struct BlockNoteWriter {
         return try resolve(item, group: group, id: id)
     }
 
+    /// A table cell's paragraph as a text target (PR11a): the native engine's
+    /// open table indexed it. Text and marks only; no block command takes it.
+    func tableParagraphTarget(_ item: YItem, id: String) throws -> Target {
+        guard !item.deleted, case .type(let paragraph) = item.content,
+            paragraph.typeRef == .xmlElement(nodeName: "tableParagraph"), let cell = item.parentType
+        else { throw Error.missingBlock(id) }
+        return Target(
+            id: id, item: item, container: paragraph, elementItem: item, element: paragraph, node: "tableParagraph",
+            nested: nil, group: cell)
+    }
+
     private struct Part {
         let item: YItem
         let type: YType

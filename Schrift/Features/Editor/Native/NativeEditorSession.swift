@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 
 /// The view session (PR08b): one surface over a `DocumentReplicaSession`,
 /// which solely owns the replica. This side holds no `YDoc` or engine: it
@@ -40,6 +41,13 @@ final class NativeEditorSession {
     /// Set by `NativeSessionRegistry` for a leased surface: closing detaches
     /// it, and the registry closes the replica after its last surface.
     @ObservationIgnored var release: (() -> Task<Void, Never>)?
+    /// A table surface's table (PR11a): its blocks are that table's
+    /// paragraphs, one cell shown at a time. Nil for the document.
+    private(set) var table: String?
+    /// The table's grid, as attached and refreshed after a structure change.
+    var grid: TableGrid?
+    /// After each delivery is applied (the table editor relays out its grid).
+    @ObservationIgnored var onApplied: ((ReplicaDelivery) -> Void)?
 
     private init(
         replica: DocumentReplicaSession?, surfaceID: UUID = UUID(), blocks: [BlockSnapshot], revision: UInt64,
@@ -71,9 +79,23 @@ final class NativeEditorSession {
     /// The read-only route (PR01): a one-shot projection, no replica session.
     static func inspect(state: Data) async throws -> NativeEditorSession {
         let inspected = try await Task.detached { try DocumentReplicaSession.inspect(state: state) }.value
-        return NativeEditorSession(
+        let session = NativeEditorSession(
             replica: nil, blocks: inspected.blocks, revision: 0, hasUnsupportedRoot: inspected.hasUnsupportedRoot,
             canType: inspected.canType, recoveries: [], state: ReplicaState())
+        session.inspectedTables = inspected.tables
+        return session
+    }
+
+    /// The reader's tables, read once with its projection (PR11a).
+    @ObservationIgnored private var inspectedTables: [String: TableGrid] = [:]
+
+    /// Table `blockID`'s grid now: asked of the replica session, or the
+    /// reader's own copy.
+    func tableGrid(_ blockID: String) async -> TableGrid? {
+        guard let replica else { return inspectedTables[blockID] }
+        return await withCheckedContinuation { done in
+            replica.mailbox.post(.tableGrid(blockID: blockID, reply: { done.resume(returning: $0) }))
+        }
     }
 
     /// An in-memory replica session over `state` (the isolated host and
@@ -111,6 +133,37 @@ final class NativeEditorSession {
         session.scope = scope
         session.hasRecoveryStore = scope != nil
         session.consume(attachment.deliveries)
+        return session
+    }
+
+    /// A table surface over this document's replica (PR11a): table
+    /// `blockID`'s paragraphs, typed through the same journal and save
+    /// scheduler while this document types. Nil when the table is not a
+    /// familiar one (the editor then shows it read-only). Closing it only
+    /// detaches it; the document keeps the replica.
+    func openTable(_ blockID: String) async -> NativeEditorSession? {
+        guard let replica, !isClosed, table == nil else { return nil }
+        let surfaceID = UUID()
+        guard let attachment = await replica.attach(surfaceID: surfaceID, table: blockID), !isClosed else {
+            return nil
+        }
+        // No recovery entries: those are the document's (`provisional.json` is
+        // written by one surface's list).
+        let session = NativeEditorSession(
+            replica: replica, surfaceID: surfaceID, blocks: attachment.blocks, revision: attachment.revision,
+            hasUnsupportedRoot: false, canType: attachment.canType, recoveries: [], state: attachment.state)
+        session.table = blockID
+        session.grid = attachment.grid
+        session.scope = scope
+        session.release = { Task {} }
+        session.surface.setFocus([])
+        session.textView.isScrollEnabled = false
+        session.textView.alwaysBounceVertical = false
+        session.textView.textContainerInset = UIEdgeInsets(top: 6, left: 4, bottom: 6, right: 4)
+        session.textView.accessibilityIdentifier = "nativeEditor.table.cell"
+        session.consume(attachment.deliveries)
+        // The table types while the document does (the replica's one journal).
+        if input != nil, textView.isEditable { session.enableTyping(persist: nil, scheduler: saveScheduler) }
         return session
     }
 
@@ -163,6 +216,7 @@ final class NativeEditorSession {
             navigation.documentChanged()
         }
         if let token = delivery.drained { drains.removeValue(forKey: token)?.resume() }
+        onApplied?(delivery)
     }
 
     /// The session closed: everything posted before the close was journaled

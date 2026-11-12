@@ -346,6 +346,7 @@ enum Strings_fr {
         .native_editor_pdf: "PDF",
         .native_editor_table: "Tableau, %d sur %d",
         .native_editor_table_more: "… plus",
+        .native_editor_table_cell: "Ligne %d, colonne %d",
         .native_editor_columns: "Colonnes, %d",
         .native_editor_math: "Formule",
         .native_editor_diagram: "Diagramme",

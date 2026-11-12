@@ -64,6 +64,8 @@ enum ReplicaMessage: Sendable {
     /// Navigation (PR10b): the block `handle` names if it is still that
     /// block in this replica (same generation and item), else nil.
     case locate(NativeBlockHandle, reply: @Sendable (String?) -> Void)
+    /// Tables (PR11a): the grid of table `blockID` now (nil when it is not a table).
+    case tableGrid(blockID: String, reply: @Sendable (TableGrid?) -> Void)
     case requestAvailability(surfaceID: UUID, blockID: String, candidates: [ReplicaAvailabilityCandidate])
     case copyPayload(surfaceID: UUID, requestID: UUID, blockIDs: [String])
     /// Installs the journal (nil makes the session read-only) and the shared
@@ -91,6 +93,7 @@ enum ReplicaMessage: Sendable {
         case .resolveCursors(_, let reply): reply([:])
         case .navigation(let reply): reply([])
         case .locate(_, let reply): reply(nil)
+        case .tableGrid(_, let reply): reply(nil)
         case .inspect(let body): body(nil, nil, nil)
         default: break
         }

@@ -35,8 +35,15 @@ struct PatchBuilder {
         self.index = index ?? BlockIndex(doc: doc)
     }
 
+    mutating func openTable(_ id: String) -> Bool { index.openTable(id) }
+
+    mutating func closeTable(_ id: String) { index.closeTable(id) }
+
     mutating func build(_ transaction: YTransaction) -> BlockPatch {
         let origin = BlockPatchOrigin(transaction.origin)
+        // Open tables (PR11a): their paragraph lists before this transaction.
+        let previousTables = index.openTables
+        var changedTables: Set<String> = []
         let rootAppeared = index.resolveRoot()
         var events: [ObjectIdentifier: YEvent] = [:]
         for entry in transaction.changedParentTypes {
@@ -67,6 +74,7 @@ struct PatchBuilder {
             if type.typeRef == .xmlText {
                 guard let id = index.blockID(for: type) else { continue }
                 touch(id)
+                if index.openTables[id] != nil { changedTables.insert(id) }
                 // The narrowed rule: only a simple container whose element is
                 // exactly this XmlText may take the fast path.
                 // `isProjectable` is the pre-transaction state (the entry was
@@ -105,6 +113,14 @@ struct PatchBuilder {
             }
             guard let id = index.blockID(for: type) else { continue }
             touch(id)
+            // A table paragraph's element changed (its first text, a break,
+            // an attribute): rebuild that paragraph. Anything else inside an
+            // open table re-reads its paragraph list below.
+            if index.isTableParagraph(id) {
+                structural.insert(id)
+                continue
+            }
+            if index.openTables[id] != nil { changedTables.insert(id) }
             if type.typeRef == .xmlElement(nodeName: "blockContainer") || entry.subs.contains(nil) {
                 // A container's child list (a nested group added or removed)
                 // is a tree change too; its own shape may also have changed.
@@ -204,12 +220,67 @@ struct PatchBuilder {
         if !removed.isEmpty { changes.insert(.remove(blockIDs: removed), at: 0) }
         for insert in inserts { changes.append(.insert(after: insert.after, blocks: insert.blocks)) }
 
+        // An open table whose structure changed (or any tree change, which
+        // re-read every open table) gets its paragraph list diffed: the table
+        // surface sees paragraphs come and go like blocks.
+        let tables = treeChanged ? Set(previousTables.keys) : changedTables
+        for table in tables.sorted() {
+            if !treeChanged { index.reindexTable(table) }
+            let (gone, added) = Self.diff(previousTables[table] ?? [], index.openTables[table] ?? [])
+            changes.removeAll { change in
+                switch change {
+                case .text(let id, _), .props(let id, _), .replaceBlock(let id, _): gone.contains(id)
+                default: false
+                }
+            }
+            if !gone.isEmpty { changes.insert(.remove(blockIDs: Array(gone)), at: 0) }
+            for insert in added {
+                changes.append(
+                    .insert(
+                        after: insert.after,
+                        blocks: insert.ids.compactMap { id in index.entries[id].map { snapshot($0) } }))
+            }
+        }
+
         // A tree change already rebuilt the index; anything else leaves its
         // entries valid, so it never pays for a rebuild.
         if !treeChanged {
             for id in touched { index.refresh(id) }
         }
         return BlockPatch(changes, origin: origin)
+    }
+
+    /// The paragraphs `new` lost and gained against `old`: survivors in the
+    /// same relative order stay; a reordered span is removed and reinserted
+    /// (as the block preorder diff does). Insertions are anchored after the
+    /// previous kept paragraph (nil: first).
+    static func diff(_ old: [String], _ new: [String]) -> (gone: Set<String>, added: [(after: String?, ids: [String])])
+    {
+        guard old != new else { return ([], []) }
+        var kept = Set(old).intersection(new)
+        let before = old.filter(kept.contains)
+        let after = new.filter(kept.contains)
+        if before != after {
+            var prefix = 0
+            while before[prefix] == after[prefix] { prefix += 1 }
+            var suffix = 0
+            while before[before.count - 1 - suffix] == after[after.count - 1 - suffix] { suffix += 1 }
+            kept.subtract(before[prefix..<(before.count - suffix)])
+        }
+        var added: [(after: String?, ids: [String])] = []
+        var anchor: String?
+        var pending: [String] = []
+        for id in new {
+            if kept.contains(id) {
+                if !pending.isEmpty { added.append((anchor, pending)) }
+                pending = []
+                anchor = id
+            } else {
+                pending.append(id)
+            }
+        }
+        if !pending.isEmpty { added.append((anchor, pending)) }
+        return (Set(old).subtracting(kept), added)
     }
 
     private mutating func reset(_ origin: BlockPatchOrigin) -> BlockPatch {
@@ -226,9 +297,21 @@ struct PatchBuilder {
     /// One block at its indexed depth and parent, as the tree projection
     /// reads it. O(block); not counted (the engine's own reads use it).
     func nativeSnapshot(_ entry: BlockIndex.Entry) -> NativeBlockSnapshot {
-        NativeBlockProjection.projectBlock(
+        if index.isTableParagraph(entry.id) { return Self.paragraphSnapshot(entry) }
+        return NativeBlockProjection.projectBlock(
             entry.containerItem, depth: entry.depth, parent: entry.parentID.flatMap { index.entries[$0]?.handle },
             generation: index.generation)
+    }
+
+    /// An open table's paragraph as the table surface shows it: a plain
+    /// root paragraph (no props) with the paragraph's runs, a `hardBreak` as
+    /// "\n" (shown, not typed into). Opaque when it holds anything else.
+    static func paragraphSnapshot(_ entry: BlockIndex.Entry) -> NativeBlockSnapshot {
+        let runs = entry.element.flatMap(TableGrid.paragraphRuns)
+        let block = ProjectedBlock(
+            id: entry.id, node: "paragraph", props: [], runs: runs ?? [],
+            fidelity: runs == nil ? .opaque(reason: "table paragraph") : .modeled)
+        return NativeBlockSnapshot(handle: entry.handle, block: block, depth: 0, parentHandle: nil)
     }
 
     // MARK: - Delta mapping
