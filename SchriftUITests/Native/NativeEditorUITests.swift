@@ -217,19 +217,21 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(first.waitForExistence(timeout: 5), "the column editor opened")
         first.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        app.typeKey(XCUIKeyboardKey.rightArrow, modifierFlags: .command)
-        // No space at either end mid-typing: a save captured then has no shadow (a known limit).
+        // Where the tap leaves the caret varies, so the checks look for the typed word. No space at
+        // either end of a paragraph mid-typing: a save captured then has no shadow (a known limit).
         app.typeText("ward")
+        let typedFirst = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", "ward"), object: first)
+        XCTAssertEqual(XCTWaiter.wait(for: [typedFirst], timeout: 5), .completed, "the first column holds the text")
         let picker = app.segmentedControls["nativeEditor.columns.picker"]
         XCTAssertTrue(picker.exists)
         picker.buttons.element(boundBy: 1).tap()
         let second = app.textViews["nativeEditor.column.1"]
         XCTAssertTrue(second.waitForExistence(timeout: 5))
         XCTAssertTrue(app.keyboards.firstMatch.exists, "switching columns keeps the keyboard")
-        app.typeKey(XCUIKeyboardKey.rightArrow, modifierFlags: .command)
         app.typeText("ful")
         let typed = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value BEGINSWITH %@", "Rightful"), object: second)
+            predicate: NSPredicate(format: "value CONTAINS %@", "ful"), object: second)
         XCTAssertEqual(XCTWaiter.wait(for: [typed], timeout: 5), .completed, "the second column holds the text")
         app.buttons["nativeEditor.columns.done"].tap()
         XCTAssertTrue(card.waitForExistence(timeout: 5))
@@ -241,10 +243,14 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(card.waitForExistence(timeout: 10))
         card.tap()
         XCTAssertTrue(first.waitForExistence(timeout: 5))
-        XCTAssertEqual((first.value as? String)?.hasPrefix("Leftward"), true, "the journal restores column one")
+        let restoredFirst = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", "ward"), object: first)
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [restoredFirst], timeout: 5), .completed,
+            "the journal restores column one: \(first.value ?? "nil")")
         app.segmentedControls["nativeEditor.columns.picker"].buttons.element(boundBy: 1).tap()
         XCTAssertTrue(second.waitForExistence(timeout: 5))
-        XCTAssertEqual((second.value as? String)?.hasPrefix("Rightful"), true, "and column two")
+        XCTAssertEqual((second.value as? String)?.contains("ful"), true, "and column two")
     }
 
     /// PR11c: a long press and drag selects two cells, and the Cell menu

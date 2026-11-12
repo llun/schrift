@@ -3472,7 +3472,14 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   math or a diagram (the 72ebe1bb test document), keeps the document read-only; Shift-Tab of a
   nested block with following siblings lifts it with them as their parent (the existing PR06a
   `liftToOuterList`), where this harness's web run leaves it nested and nests the siblings under
-  it, at the root as in a column. Tests: `BlockNoteColumnOracleTests` (`BlockNoteColumnCaptures`,
+  it, at the root as in a column; a frozen save (`freezeAuthoring`, below) now also stops the table
+  and column surfaces the document opened (they share its journal; before, a table surface kept
+  journaling). **Pre-existing, found here (not fixed):** a paragraph whose text starts or ends with
+  a space has no classic shadow (`markdownShadow` is nil for "Left " in a flat document too), so a
+  save captured at that moment (the 10-second debounce after a pause right after a space, or a
+  close right after typing one) fails as `unprojectableShadow` and freezes authoring with
+  "Couldn't save"; the host UI test types words without edge spaces for that reason.
+  Tests: `BlockNoteColumnOracleTests` (`BlockNoteColumnCaptures`,
   cols.mjs: seven web fixtures familiar with their export as the shadow, widths, column blocks;
   typing, Return, Return in an empty column block (`emptyChildEnter: "stay"`), an empty nested
   Return, list Return, join, Tab, Shift-Tab, bold, a type change, a range delete and a cell of a
@@ -3481,7 +3488,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   predicted and journaled and never shown to the document, the preview on close, Return/Backspace
   in the column, Tab, IME, undo and redo, relaunch, peers in two columns, a peer's new block, the
   picker keeping first responder, a column's table, the reader, an unfamiliar group, the document
-  typing around a group) and the host UI test `testTypingInBothColumnsSurvivesRelaunch`
+  typing around a group, a frozen document freezing its columns) and the host UI test
+  `testTypingInBothColumnsSurvivesRelaunch`
   (`--native-open --native-columns`).
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
