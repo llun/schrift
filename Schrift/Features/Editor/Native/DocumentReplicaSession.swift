@@ -298,6 +298,7 @@ actor DocumentReplicaSession {
 
     private func run() async {
         for await message in mailbox.stream {
+            mailbox.took()
             guard !isClosed else {
                 message.cancel()
                 continue

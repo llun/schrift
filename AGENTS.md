@@ -2764,8 +2764,11 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   native replica: `seed`/`restore` build it off main (restore replays checkpoint and
   journal into a fresh author), `inspect` is the read-only one-shot, `attach` returns
   the projection at revision R and the stream of everything after it in one turn.
-  Main → session is one `ReplicaCommandMailbox` (`AsyncStream`, `bufferingOldest(256)`;
-  a dropped message freezes authoring with the storage notice). Every
+  Main → session is one `ReplicaCommandMailbox` (`AsyncStream`, at most 256 queued, counted
+  in `post`; a dropped message freezes authoring with the storage notice). `.detach` and
+  `.close` always fit: a dropped close was never resumed, so the editor's close and the
+  scope's next restore hung (CI's teardown hang in
+  `testPendingTypingIntentsAndTheMailboxAreBounded`; `testACloseMeetingAFullMailboxStillClosesTheSession`). Every
   `ReplicaMessage` (command, select, composition begin/commit/cancel,
   `writeProvisional`, integrate, availability, copy payload, `setWritable`, drain,
   detach, close) is handled in one synchronous turn: **no await between the engine

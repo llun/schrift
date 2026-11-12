@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// One command a surface sends its replica session (PR08b).
 ///
@@ -196,32 +197,40 @@ struct ReplicaDelivery: Sendable {
 
 /// The main → session channel: one ordered, bounded stream. A full mailbox
 /// drops the message; the poster freezes authoring rather than lose input
-/// silently (`post` returns false).
+/// silently (`post` returns false). A `.detach` or `.close` always fits (at
+/// most one per surface and one per session): dropping one would strand
+/// whoever awaits the close, and the scope's next restore behind it.
 final class ReplicaCommandMailbox: Sendable {
     static let capacity = 256
 
     let stream: AsyncStream<ReplicaMessage>
     private let continuation: AsyncStream<ReplicaMessage>.Continuation
+    /// Posted and not yet taken by the session (`took`).
+    private let queued = Mutex(0)
 
     init() {
-        (stream, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingOldest(Self.capacity))
+        // Unbounded: `post` keeps the bound, so a detach or close can pass it.
+        (stream, continuation) = AsyncStream.makeStream()
     }
 
     @discardableResult
     func post(_ message: ReplicaMessage) -> Bool {
-        switch continuation.yield(message) {
-        case .enqueued: return true
-        case .dropped(let dropped):
-            dropped.cancel()
-            return false
-        case .terminated:
-            message.cancel()
-            return false
-        @unknown default:
-            message.cancel()
-            return false
+        let enqueued = queued.withLock { queued in
+            let fits =
+                switch message {
+                case .detach, .close: true
+                default: queued < Self.capacity
+                }
+            guard fits, case .enqueued = continuation.yield(message) else { return false }
+            queued += 1
+            return true
         }
+        if !enqueued { message.cancel() }
+        return enqueued
     }
+
+    /// The session took one message off `stream`.
+    func took() { queued.withLock { $0 -= 1 } }
 
     func finish() { continuation.finish() }
 }
