@@ -417,7 +417,34 @@ struct TableModel {
             })
         let rect = try self.rect(map, anchor, head ?? anchor)
         if head != nil { clip = try Self.clip(clip, width: rect.right - rect.left, height: rect.bottom - rect.top) }
+        // Untrusted text, repeated by the clip: bounded as one paste is.
+        let text = clip.rows.joined().flatMap(\.paragraphs).reduce(into: (units: 0, lines: 0)) { sum, paragraph in
+            guard case .copy(let copy) = paragraph else { return }
+            let size = Self.textSize(copy)
+            sum.units += size.units
+            sum.lines += size.lines
+        }
+        guard text.units <= NativeClipboard.maxPasteUTF16, text.lines < NativeClipboard.maxPasteLines else {
+            throw refuse
+        }
         try insert(&map, clip, top: rect.top, left: rect.left)
+    }
+
+    /// A copy's text: UTF-16 units and line breaks (hard breaks).
+    static func textSize(_ copy: BlockNoteWriter.Copy) -> (units: Int, lines: Int) {
+        switch copy {
+        case .text(let values):
+            return values.reduce(into: (0, 0)) { sum, value in
+                if case .run(let run) = value {
+                    sum.0 += run.text.utf16.count
+                    sum.1 += run.text.utf16.lazy.filter { $0 == 0x0A }.count
+                }
+            }
+        case .element(let node, _, let children):
+            return children.map(textSize).reduce((node == "hardBreak" ? 1 : 0, node == "hardBreak" ? 1 : 0)) {
+                ($0.0 + $1.units, $0.1 + $1.lines)
+            }
+        }
     }
 
     struct Clip {
@@ -442,6 +469,9 @@ struct TableModel {
             }
         }
         let width = widths.max() ?? 0
+        guard width * widths.count <= TableGrid.maxCells else {
+            throw BlockNoteWriter.Error.unsupportedBlockType("table")
+        }
         for row in widths.indices {
             if row >= rows.count { rows.append([]) }
             if widths[row] < width {

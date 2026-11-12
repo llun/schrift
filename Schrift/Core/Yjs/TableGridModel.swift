@@ -44,12 +44,13 @@ struct TableGrid: Equatable, Sendable {
             return nil
         }
 
-        /// `colwidth`: one entry per spanned column, nil where unset.
+        /// `colwidth`: one entry per spanned column, nil where unset (a longer
+        /// list, as a clipped paste leaves it, counts its first `colspan`).
         var widths: [Int?] {
             guard case .array(let values)? = props.first(where: { $0.key == "colwidth" })?.value else {
                 return Array(repeating: nil, count: colspan)
             }
-            return values.map { value in
+            return values.prefix(colspan).map { value in
                 guard let width = TableGrid.number(value), width >= 1 else { return nil }
                 return Int(width.rounded())
             }
@@ -246,7 +247,9 @@ struct TableGrid: Equatable, Sendable {
                 guard area <= limit else { return refuse("large table") }
                 switch cellProps.first(where: { $0.key == "colwidth" })?.value {
                 case nil, .null?, .undefined?: break
-                case .array(let values)? where values.count == colspan:
+                // prosemirror-tables' `clipCells` leaves a clipped cell's list
+                // longer than its span (the web reads the first `colspan`).
+                case .array(let values)? where values.count >= colspan:
                     // Ints from a native or rounded resize, floats from a web
                     // drag, null/undefined where BlockNote's JSON round trip left a
                     // spanned column unset (`[undefined, undefined]`).

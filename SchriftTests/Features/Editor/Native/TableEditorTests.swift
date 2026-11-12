@@ -836,6 +836,27 @@ extension TableEditorTests {
         try await assertConsistentTable(harness)
     }
 
+    /// Review R1: deleting the active cell's row (here the last one) re-reads
+    /// a grid that no longer has that row; the editor moves on, never traps.
+    func testDeletingTheActiveCellsLastRowMovesTheEditor() async throws {
+        let harness = try await makeHarness(state: try seed("plain"))
+        addTeardownBlock { await harness.close() }
+        let editor = try await editor(harness)
+        let table = try XCTUnwrap(editor.cellSession)
+        editor.activate(TableGrid.CellRef(row: 2, index: 2))  // "i", the last row's last cell
+        let ran = await table.run { editor.perform(.deleteRow(row: 2)) }
+        XCTAssertTrue(ran)
+        for _ in 0..<300 where editor.grid?.rows.count != 2 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(editor.grid?.rows.count, 2)
+        let active = try XCTUnwrap(editor.active)
+        XCTAssertTrue(editor.grid?.rows.indices.contains(active.row) == true, "the active cell is a cell of the grid")
+        let ranAgain = await table.run { editor.perform(.deleteColumn(column: 2)) }
+        XCTAssertTrue(ranAgain)
+        for _ in 0..<300 where editor.grid?.columnCount != 2 { try await Task.sleep(for: .milliseconds(10)) }
+        editor.layoutGrid()
+        XCTAssertNotNil(editor.active.flatMap { editor.frame(of: $0) })
+    }
+
     /// A peer's one transaction that types in a cell and colours another
     /// re-reads the grid (11a only did so for a structure-only change).
     func testAPeerTransactionChangingTextAndAColourReReadsTheGrid() async throws {

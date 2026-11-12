@@ -208,6 +208,19 @@ final class TableSelectionTests: NativeEditingTestCase {
         XCTAssertEqual(written, try paste("plainIntoSelection").xml)
     }
 
+    /// Review R3: plain text past the paste bound, or a clip that repeated over
+    /// the selection would pass it, is refused with the paste notice.
+    func testAnOversizedPasteIntoASelectionIsRefused() async throws {
+        let (harness, editor) = try await open()
+        let table = try XCTUnwrap(editor.cellSession)
+        editor.select(.init(anchor: TableSlot(row: 1, column: 0), head: TableSlot(row: 2, column: 2)))
+        harness.pasteboard.string = String(repeating: "y", count: 60_000)
+        XCTAssertTrue(editor.key(.paste), "taken, and refused")
+        await harness.settle()
+        XCTAssertEqual(table.input?.noticeKey, .native_editor_paste_too_large)
+        XCTAssertEqual(harness.log.commands.count, 0)
+    }
+
     func testMergeCellsMergesTheSelectionAndActivatesTheMergedCell() async throws {
         let (harness, editor) = try await open()
         let table = try XCTUnwrap(editor.cellSession)

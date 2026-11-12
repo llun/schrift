@@ -292,6 +292,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         refreshSelectionMarks()
     }
 
+    /// The table editor refused something before posting it (PR11c): its notice.
+    func refuse(_ notice: L10nKey) { noticeKey = notice }
+
     /// A table structure command from the table editor (PR11b): one barrier
     /// on the table block, journaled before it is shown; the caret keeps its
     /// offsets in its paragraph (remapped), and the editor re-reads the grid

@@ -119,6 +119,25 @@ enum TableClipboard {
         return rows.isEmpty ? nil : rows
     }
 
+    /// Whether `cells`, repeated `repeated` times over a selection, hold more
+    /// text than one paste may (`NativeClipboard`'s UTF-16 and line bounds).
+    static func isTooLarge(_ cells: [[TablePastedCell]], repeated: Int) -> Bool {
+        var units = 0
+        var lines = 0
+        for row in cells {
+            for cell in row {
+                for run in cell.runs {
+                    units += run.text.utf16.count
+                    lines += run.text.utf16.lazy.filter { $0 == 0x0A }.count
+                }
+            }
+        }
+        let times = max(1, repeated)
+        return units.multipliedReportingOverflow(by: times).partialValue > NativeClipboard.maxPasteUTF16
+            || units.multipliedReportingOverflow(by: times).overflow
+            || lines * times >= NativeClipboard.maxPasteLines
+    }
+
     /// The pasted cells' rectangle (`ensureRectangular`'s width and height).
     static func size(_ rows: [[TablePastedCell]]) -> (width: Int, height: Int) {
         var widths: [Int] = []

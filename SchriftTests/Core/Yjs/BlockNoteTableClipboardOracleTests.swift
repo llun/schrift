@@ -160,6 +160,24 @@ final class BlockNoteTableClipboardOracleTests: XCTestCase {
         XCTAssertNil(TableClipboard.cells(payload: payload))
     }
 
+    /// Review R3: a clip repeated over a selection is bounded as one paste
+    /// is (`NativeClipboard`'s UTF-16 bound), never tiled into gigabytes.
+    func testATiledPasteIsBoundedAsOnePaste() throws {
+        let (doc, engine) = try engine("grid")
+        defer { doc.destroy() }
+        let before = YXMLString.fragment(doc)
+        let long = TableClipboard.cell(text: String(repeating: "x", count: 60_000))
+        let selection = (anchor: TableSlot(row: 1, column: 0), head: TableSlot(row: 2, column: 2))
+        XCTAssertThrowsError(
+            try apply(engine, .paste(cells: [[long]], anchor: selection.anchor, head: selection.head)),
+            "six copies of 60,000 units")
+        XCTAssertEqual(YXMLString.fragment(doc), before)
+        XCTAssertTrue(TableClipboard.isTooLarge([[long]], repeated: 6))
+        XCTAssertFalse(TableClipboard.isTooLarge([[long]], repeated: 1))
+        try apply(engine, .paste(cells: [[long]], anchor: selection.anchor, head: selection.anchor))
+        XCTAssertEqual(engine.tableGrid("tbl")?.familiarity, .familiar, "one copy is a paste like any other")
+    }
+
     /// A paste that would grow the table past the bound is refused before
     /// anything is allocated or written.
     func testAPasteGrowingTheTablePastTheBoundIsRefused() throws {

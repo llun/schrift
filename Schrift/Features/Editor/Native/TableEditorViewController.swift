@@ -483,6 +483,7 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     /// Schrift's lossless payload, read in mailbox order after every earlier
     /// edit; a cut then empties the cells, as the web's cut does.
     private func copy(_ selection: CellSelection, cut: Bool) async {
+        let before = grid
         guard let input = cellSession?.input,
             let copied = await document.tableCopy(tableID, from: selection.anchor, to: selection.head)
         else { return }
@@ -490,7 +491,9 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         if let plain = copied.plain { item[UTType.utf8PlainText.identifier] = plain }
         if let payload = copied.payload { item[BlockNoteSubtreePayload.pasteboardType] = payload }
         input.pasteboard.setItems([item])
-        if cut { perform(.clear(from: selection.anchor, to: selection.head)) }
+        // A cut empties the cells it copied: if the grid changed meanwhile (a
+        // peer's row), the copy stays on the pasteboard and nothing is emptied.
+        if cut, grid == before { perform(.clear(from: selection.anchor, to: selection.head)) }
     }
 
     /// Paste as prosemirror-tables' `handlePaste`: cells (Schrift's payload,
@@ -504,9 +507,25 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
             TableClipboard.cells(payload:))
         if cells == nil, let html = Self.html(pasteboard) { cells = TableClipboard.cells(html: html) }
         if cells == nil, selection != nil, let text = pasteboard.string, !text.isEmpty {
+            guard !NativeClipboard.isTooLarge(NativeClipboard.normalizingLineBreaks(text)) else {
+                input.refuse(.native_editor_paste_too_large)
+                return true
+            }
             cells = [[TableClipboard.cell(text: text)]]
         }
         guard let cells else { return false }
+        // Repeated over the selection, the cells' text is bounded as one paste is.
+        let rect = selectionRect()
+        let size = TableClipboard.size(cells)
+        let repeats =
+            rect.map { rect in
+                ((rect.right - rect.left + size.width - 1) / max(1, size.width))
+                    * ((rect.bottom - rect.top + size.height - 1) / max(1, size.height))
+            } ?? 1
+        guard !TableClipboard.isTooLarge(cells, repeated: repeats) else {
+            input.refuse(.native_editor_paste_too_large)
+            return true
+        }
         let anchor = selection?.anchor ?? slot(active)
         let head = selection?.head
         if perform(.paste(cells: cells, anchor: anchor, head: head)) {
@@ -525,7 +544,8 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
 
     private static func html(_ pasteboard: UIPasteboard) -> String? {
         if let data = pasteboard.data(forPasteboardType: TableClipboard.htmlType) {
-            return String(data: data, encoding: .utf8)
+            // Bounded before it is decoded (an app can put anything there).
+            return data.count <= TableClipboard.maxHTMLBytes ? String(data: data, encoding: .utf8) : nil
         }
         return pasteboard.value(forPasteboardType: TableClipboard.htmlType) as? String
     }
@@ -791,6 +811,9 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         refreshTask = Task { [weak self] in
             guard let self, let grid = await self.document.tableGrid(self.tableID), !Task.isCancelled else { return }
             let keep = self.active.flatMap { self.grid?.cell($0).itemID }
+            // The old ref may name no cell of the new grid (its row or column
+            // went): nothing may lay it out before it is chosen again below.
+            self.active = nil
             self.grid = grid
             self.updateControls()
             self.cellSession?.grid = grid
@@ -1014,7 +1037,11 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
                 for column in columns where column < grid.columnCount { wanted.insert(grid.slots[row][column]) }
             }
             // The text view's cell stays realised wherever it is; a viewer's highlight need not.
-            if let active, cellSession != nil { wanted.insert(active) }
+            if let active, cellSession != nil, grid.rows.indices.contains(active.row),
+                grid.rows[active.row].indices.contains(active.index)
+            {
+                wanted.insert(active)
+            }
             for (ref, view) in cellViews where !wanted.contains(ref) {
                 recycle(view)
                 cellViews[ref] = nil
