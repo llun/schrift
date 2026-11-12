@@ -730,12 +730,25 @@ final class DocumentEngine {
         return ids.compactMap { builder.index.entries[$0].map { BlockSnapshot(builder.nativeSnapshot($0)) } }
     }
 
-    /// The grid of table `blockID` as the replica holds it now.
-    func tableGrid(_ blockID: String) -> TableGrid? {
+    /// The grid of table `blockID` as the replica holds it now; `full`
+    /// (PR11c, the viewer) reads one past the editing bound, still unfamiliar.
+    func tableGrid(_ blockID: String, full: Bool = false) -> TableGrid? {
         guard !isDetached, let element = builder.index.entries[blockID]?.element,
             element.typeRef == .xmlElement(nodeName: "table")
         else { return nil }
-        return TableGrid.read(element)
+        return TableGrid.read(element, limit: full ? TableGrid.maxViewerCells : TableGrid.maxCells)
+    }
+
+    /// The clipboard of familiar table `blockID`'s CellSelection
+    /// `from`...`to` (PR11c): BlockNote's HTML and Markdown and Schrift's
+    /// lossless payload. Never writes the replica.
+    func tableCopy(_ blockID: String, from: TableSlot, to: TableSlot) -> TableCopy? {
+        guard !isDetached, let element = builder.index.entries[blockID]?.element,
+            element.typeRef == .xmlElement(nodeName: "table"), TableGrid.read(element).isFamiliar,
+            let model = try? TableModel(table: element, block: blockID),
+            let grid = try? model.contentGrid(from: from, to: to)
+        else { return nil }
+        return TableClipboard.copy(grid, tableProps: YBlockProjection.props(of: element) ?? [])
     }
 
     private func resetOnBackspaceOrEnter(_ blockID: String, node: String) throws -> Data {

@@ -91,10 +91,20 @@ final class NativeEditorSession {
 
     /// Table `blockID`'s grid now: asked of the replica session, or the
     /// reader's own copy.
-    func tableGrid(_ blockID: String) async -> TableGrid? {
+    func tableGrid(_ blockID: String, full: Bool = false) async -> TableGrid? {
         guard let replica else { return inspectedTables[blockID] }
         return await withCheckedContinuation { done in
-            replica.mailbox.post(.tableGrid(blockID: blockID, reply: { done.resume(returning: $0) }))
+            // A refused post answers nil itself (`ReplicaMessage.cancel`).
+            replica.mailbox.post(.tableGrid(blockID: blockID, full: full, reply: { done.resume(returning: $0) }))
+        }
+    }
+
+    /// The clipboard of table `blockID`'s CellSelection (PR11c), read in
+    /// mailbox order (after every edit posted before it).
+    func tableCopy(_ blockID: String, from: TableSlot, to: TableSlot) async -> TableCopy? {
+        guard let replica else { return nil }
+        return await withCheckedContinuation { done in
+            replica.mailbox.post(.tableCopy(blockID: blockID, from: from, to: to, reply: { done.resume(returning: $0) }))
         }
     }
 

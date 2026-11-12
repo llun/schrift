@@ -91,8 +91,13 @@ struct TableGrid: Equatable, Sendable {
 
     /// BlockNote's `EMPTY_CELL_WIDTH`: a column with no `colwidth`.
     static let defaultColumnWidth = 120
-    /// The largest table the native editor reads in full (PR11a).
+    /// The largest table the native editor reads in full and edits (PR11a):
+    /// a larger one is unfamiliar (no shadow, read-only).
     static let maxCells = 1_000
+    /// The largest table the viewer reads (PR11c): past `maxCells` it is still
+    /// unfamiliar ("large table"), but whole, and the editor shows it read-only
+    /// with only its visible cells realised.
+    static let maxViewerCells = 50_000
 
     func cell(_ ref: CellRef) -> Cell { rows[ref.row][ref.index] }
 
@@ -199,7 +204,9 @@ struct TableGrid: Equatable, Sendable {
 
     /// The grid of a `table` element. Total: an unexpected shape is an
     /// `unfamiliar` grid (with whatever was read), never a trap.
-    static func read(_ table: YType) -> TableGrid {
+    /// `limit` bounds the cells and slots read (`maxCells`, or the viewer's
+    /// `maxViewerCells`); a table past `maxCells` is unfamiliar either way.
+    static func read(_ table: YType, limit: Int = maxCells) -> TableGrid {
         var grid = TableGrid()
         func refuse(_ reason: String) -> TableGrid {
             grid.familiarity = .unfamiliar(reason)
@@ -216,7 +223,7 @@ struct TableGrid: Equatable, Sendable {
             var cells: [Cell] = []
             for cellItem in YBlockProjection.children(of: row, includeFormats: false) {
                 count += 1
-                guard count <= maxCells else { return refuse("large table") }
+                guard count <= limit else { return refuse("large table") }
                 guard case .type(let element) = cellItem.content, case .xmlElement(let node)? = element.typeRef,
                     node == "tableCell" || node == "tableHeader"
                 else { return refuse("unexpected cell") }
@@ -224,7 +231,7 @@ struct TableGrid: Equatable, Sendable {
                 func span(_ key: String) -> Int? {
                     switch cellProps.first(where: { $0.key == key })?.value {
                     case nil: return 1
-                    case .int(let value)? where value >= 1 && value <= maxCells: return value
+                    case .int(let value)? where value >= 1 && value <= limit: return value
                     default: return nil
                     }
                 }
@@ -236,7 +243,7 @@ struct TableGrid: Equatable, Sendable {
                 // at most `maxCells` of them (spans are each ≤ `maxCells`, so the
                 // product cannot overflow).
                 area += colspan * rowspan
-                guard area <= maxCells else { return refuse("large table") }
+                guard area <= limit else { return refuse("large table") }
                 switch cellProps.first(where: { $0.key == "colwidth" })?.value {
                 case nil, .null?, .undefined?: break
                 case .array(let values)? where values.count == colspan:
@@ -280,6 +287,7 @@ struct TableGrid: Equatable, Sendable {
             grid.rows.append(cells)
         }
         guard !grid.rows.isEmpty else { return refuse("empty table") }
+        if area > maxCells, grid.familiarity == .familiar { grid.familiarity = .unfamiliar("large table") }
         let familiarity = grid.familiarity
         var laidOut = grid.layingOut()
         if laidOut.isFamiliar { laidOut.familiarity = familiarity }
@@ -297,7 +305,7 @@ struct TableGrid: Equatable, Sendable {
     }
 
     /// Places every cell at the first free slot of its row (`TableMap`).
-    private func layingOut() -> TableGrid {
+    func layingOut() -> TableGrid {
         var grid = self
         var slots: [[CellRef?]] = Array(repeating: [], count: rows.count)
         for row in rows.indices {

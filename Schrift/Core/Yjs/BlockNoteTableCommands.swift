@@ -28,6 +28,14 @@ enum BlockNoteTableCommand: Equatable, Sendable {
     case setCellProp(key: String, value: String, slots: [TableSlot])
     /// The width (points, BlockNote's px) of slot column `column`.
     case setColumnWidth(column: Int, width: Int)
+    /// prosemirror-tables' `deleteCellSelection` (PR11c): every cell of the
+    /// CellSelection `from`...`to` emptied, its attributes kept.
+    case clear(from: TableSlot, to: TableSlot)
+    /// prosemirror-tables' `handlePaste` (PR11c): `cells` (as BlockNote parsed
+    /// the clipboard, `TableClipboard`) clipped or repeated to fill the
+    /// CellSelection `anchor`...`head`, or, with no `head`, from the cell at
+    /// `anchor` on, growing the table to fit (`insertCells`).
+    case paste(cells: [[TablePastedCell]], anchor: TableSlot, head: TableSlot?)
 }
 
 struct TableSlot: Equatable, Hashable, Sendable {
@@ -268,6 +276,13 @@ struct TableModel {
         case .setColumnWidth(let column, let width):
             guard column >= 0, column < map.width, width > 0 else { throw refuse }
             setColumnWidth(map, column: column, width: width)
+        case .clear(let from, let to):
+            let rect = try self.rect(map, from, to)
+            for ref in Self.cells(map, in: rect) where !isEmpty(self[ref]) {
+                self[ref].paragraphs = [.copy(.element("tableParagraph", [], []))]
+            }
+        case .paste(let cells, let anchor, let head):
+            try paste(&map, cells, anchor: anchor, head: head)
         }
         // A row left without cells takes one (prosemirror's content fitting:
         // `tableRow` holds `(tableCell | tableHeader)+`), then the web's
@@ -275,6 +290,301 @@ struct TableModel {
         for row in rows.indices where rows[row].cells.isEmpty { rows[row].cells = [.empty("tableCell")] }
         for _ in 0..<4 where try fixTable() {}
         _ = try self.map()
+    }
+
+    // MARK: - CellSelection (PR11c)
+
+    struct Rect: Equatable {
+        var top: Int
+        var bottom: Int
+        var left: Int
+        var right: Int
+    }
+
+    /// `TableMap.rectBetween`: the two slots' cells' rectangles together.
+    func rect(_ map: Map, _ a: TableSlot, _ b: TableSlot) throws -> Rect {
+        func cellRect(_ slot: TableSlot) throws -> Rect {
+            guard map.slots.indices.contains(slot.row), map.slots[slot.row].indices.contains(slot.column) else {
+                throw BlockNoteWriter.Error.unsupportedBlockType("table")
+            }
+            let ref = map.cell(slot.row, slot.column)
+            let left = map.columns[ref.row][ref.index]
+            return Rect(top: ref.row, bottom: ref.row + self[ref].rowspan, left: left, right: left + self[ref].colspan)
+        }
+        let first = try cellRect(a)
+        let second = try cellRect(b)
+        return Rect(
+            top: min(first.top, second.top), bottom: max(first.bottom, second.bottom),
+            left: min(first.left, second.left), right: max(first.right, second.right))
+    }
+
+    /// `TableMap.cellsInRect`: each cell starting inside the rectangle once.
+    static func cells(_ map: Map, in rect: Rect) -> [TableGrid.CellRef] {
+        var seen: Set<TableGrid.CellRef> = []
+        var out: [TableGrid.CellRef] = []
+        for row in rect.top..<rect.bottom {
+            for column in rect.left..<rect.right {
+                let ref = map.cell(row, column)
+                guard seen.insert(ref).inserted else { continue }
+                if column == rect.left, column > 0, map.cell(row, column - 1) == ref { continue }
+                if row == rect.top, row > 0, map.cell(row - 1, column) == ref { continue }
+                out.append(ref)
+            }
+        }
+        return out
+    }
+
+    /// `CellSelection.content()`: the rectangle's cells, a cell crossing its
+    /// edge clipped (`removeColSpan`, a shorter `rowspan`) and emptied when
+    /// it starts outside it.
+    func content(from: TableSlot, to: TableSlot) throws -> [[Cell]] {
+        let map = try self.map()
+        let rect = try self.rect(map, from, to)
+        var seen: Set<TableGrid.CellRef> = []
+        var rows: [[Cell]] = []
+        for row in rect.top..<rect.bottom {
+            var content: [Cell] = []
+            for column in rect.left..<rect.right {
+                let ref = map.cell(row, column)
+                guard seen.insert(ref).inserted else { continue }
+                var cell = self[ref]
+                let left = map.columns[ref.row][ref.index]
+                let right = left + cell.colspan
+                let extraLeft = rect.left - left
+                let extraRight = right - rect.right
+                if extraLeft > 0 || extraRight > 0 {
+                    var attrs = cell.attrs
+                    if extraLeft > 0 { attrs = Self.removeColSpan(attrs, at: 0, count: extraLeft) }
+                    if extraRight > 0 {
+                        attrs = Self.removeColSpan(
+                            attrs, at: (Cell.int(attrs["colspan"]) ?? 1) - extraRight, count: extraRight)
+                    }
+                    if left < rect.left { cell = .empty(cell.node, attrs: attrs) } else { cell.attrs = attrs }
+                }
+                let top = ref.row
+                let bottom = top + cell.rowspan
+                if top < rect.top || bottom > rect.bottom {
+                    var attrs = cell.attrs
+                    attrs["rowspan"] = .int(min(bottom, rect.bottom) - max(top, rect.top))
+                    if top < rect.top { cell = .empty(cell.node, attrs: attrs) } else { cell.attrs = attrs }
+                }
+                content.append(cell)
+            }
+            rows.append(content)
+        }
+        return rows
+    }
+
+    /// `content()` as a grid (each cell's runs as the table reads them), for
+    /// the clipboard's HTML, Markdown and payload.
+    func contentGrid(from: TableSlot, to: TableSlot) throws -> TableGrid {
+        var grid = TableGrid()
+        grid.rows = try content(from: from, to: to).map { row in
+            row.map { cell in
+                TableGrid.Cell(
+                    itemID: cell.source?.id ?? YID(client: 0, clock: 0), isHeader: cell.node == "tableHeader",
+                    colspan: cell.colspan, rowspan: cell.rowspan,
+                    props: Self.ordered(cell.attrs).map { ProjectedProp(key: $0.key, value: $0.value) }.sorted {
+                        $0.key < $1.key
+                    },
+                    paragraphs: cell.paragraphs.map { paragraph in
+                        switch paragraph {
+                        case .keep(let item):
+                            TableGrid.Paragraph(itemID: item.id, runs: runs(of: item), isSimpleText: false)
+                        case .copy:
+                            TableGrid.Paragraph(itemID: YID(client: 0, clock: 0), runs: [], isSimpleText: true)
+                        }
+                    }, row: 0, column: 0)
+            }
+        }
+        return grid.layingOut()
+    }
+
+    /// `handlePaste`: into a CellSelection the cells are clipped or repeated
+    /// to its size (`clipCells`); at a caret they go in from its cell on.
+    private mutating func paste(
+        _ map: inout Map, _ pasted: [[TablePastedCell]], anchor: TableSlot, head: TableSlot?
+    ) throws {
+        let refuse = BlockNoteWriter.Error.unsupportedBlockType("table")
+        guard !pasted.isEmpty, pasted.allSatisfy({ !$0.isEmpty }) else { throw refuse }
+        var clip = try Self.rectangular(
+            pasted.map { row in
+                row.map { cell in
+                    Cell(
+                        source: nil, node: cell.node, attrs: cell.attrs,
+                        paragraphs: [.copy(Self.paragraph(cell.runs))])
+                }
+            })
+        let rect = try self.rect(map, anchor, head ?? anchor)
+        if head != nil { clip = try Self.clip(clip, width: rect.right - rect.left, height: rect.bottom - rect.top) }
+        try insert(&map, clip, top: rect.top, left: rect.left)
+    }
+
+    struct Clip {
+        var width: Int
+        var height: Int
+        var rows: [[Cell]]
+    }
+
+    /// `ensureRectangular`: short rows padded with empty cells.
+    static func rectangular(_ rows: [[Cell]]) throws -> Clip {
+        var rows = rows
+        var widths: [Int] = []
+        for (index, row) in rows.enumerated() {
+            for cell in row {
+                guard cell.colspan >= 1, cell.rowspan >= 1, cell.rowspan <= TableGrid.maxCells else {
+                    throw BlockNoteWriter.Error.unsupportedBlockType("table")
+                }
+                for spanned in index..<(index + cell.rowspan) {
+                    while widths.count <= spanned { widths.append(0) }
+                    widths[spanned] += cell.colspan
+                }
+            }
+        }
+        let width = widths.max() ?? 0
+        for row in widths.indices {
+            if row >= rows.count { rows.append([]) }
+            if widths[row] < width {
+                rows[row] += Array(repeating: .empty("tableCell"), count: width - widths[row])
+            }
+        }
+        return Clip(width: width, height: rows.count, rows: rows)
+    }
+
+    /// `clipCells`: cut or repeat the cells to `width` × `height` (a cell
+    /// sticking out loses its overhang, prosemirror's own arithmetic kept).
+    static func clip(_ clip: Clip, width newWidth: Int, height newHeight: Int) throws -> Clip {
+        var clip = clip
+        if clip.width != newWidth {
+            var added: [Int: Int] = [:]
+            var rows: [[Cell]] = []
+            for row in clip.rows.indices {
+                let fragment = clip.rows[row]
+                var cells: [Cell] = []
+                var column = added[row] ?? 0
+                var index = 0
+                while column < newWidth {
+                    guard !fragment.isEmpty else { throw BlockNoteWriter.Error.unsupportedBlockType("table") }
+                    var cell = fragment[index % fragment.count]
+                    if column + cell.colspan > newWidth {
+                        cell.attrs = removeColSpan(cell.attrs, at: cell.colspan, count: column + cell.colspan - newWidth)
+                    }
+                    cells.append(cell)
+                    column += cell.colspan
+                    for offset in stride(from: 1, to: cell.rowspan, by: 1) {
+                        added[row + offset, default: 0] += cell.colspan
+                    }
+                    index += 1
+                }
+                rows.append(cells)
+            }
+            clip.rows = rows
+            clip.width = newWidth
+        }
+        if clip.height != newHeight {
+            var rows: [[Cell]] = []
+            for row in 0..<newHeight {
+                rows.append(
+                    clip.rows[row % clip.height].map { cell in
+                        var cell = cell
+                        if row + cell.rowspan > newHeight { cell.attrs["rowspan"] = .int(max(1, newHeight - cell.rowspan)) }
+                        return cell
+                    })
+            }
+            clip.rows = rows
+            clip.height = newHeight
+        }
+        return clip
+    }
+
+    /// `insertCells`: grow the table, split the cells crossing the target's
+    /// edges (`isolateHorizontal`, `isolateVertical`), then replace each
+    /// row's cells in the target with the clip's.
+    private mutating func insert(_ map: inout Map, _ clip: Clip, top: Int, left: Int) throws {
+        let right = left + clip.width
+        let bottom = top + clip.height
+        // The grown table's slots are bounded before any cell is allocated.
+        guard max(right, map.width) * max(bottom, map.height) <= TableGrid.maxCells else {
+            throw BlockNoteWriter.Error.unsupportedBlockType("table")
+        }
+        if grow(map, width: right, height: bottom) { map = try self.map() }
+        if isolateHorizontal(map, left: left, right: right, at: top) { map = try self.map() }
+        if isolateHorizontal(map, left: left, right: right, at: bottom) { map = try self.map() }
+        if isolateVertical(map, top: top, bottom: bottom, at: left) { map = try self.map() }
+        if isolateVertical(map, top: top, bottom: bottom, at: right) { map = try self.map() }
+        let ranges = (top..<bottom).map { row in
+            (row, position(map, row: row, column: left)..<position(map, row: row, column: right))
+        }
+        for (row, range) in ranges { rows[row].cells.replaceSubrange(range, with: clip.rows[row - top]) }
+        map = try self.map()
+    }
+
+    /// `growTable`: empty cells (of the row's last cell's kind) and rows (of
+    /// the last row's kinds) to `width` × `height`.
+    private mutating func grow(_ map: Map, width: Int, height: Int) -> Bool {
+        let lastRow = (0..<map.width).map { self[map.cell(map.height - 1, $0)].node == "tableHeader" }
+        var grew = false
+        if width > map.width {
+            for row in 0..<map.height {
+                let node = rows[row].cells.last.map { $0.node == "tableCell" } != false ? "tableCell" : "tableHeader"
+                rows[row].cells += Array(repeating: .empty(node), count: width - map.width)
+            }
+            grew = true
+        }
+        if height > map.height {
+            let cells = (0..<max(map.width, width)).map { column in
+                Cell.empty(column < map.width && lastRow[column] ? "tableHeader" : "tableCell")
+            }
+            rows += Array(repeating: Row(source: nil, cells: cells), count: height - map.height)
+            grew = true
+        }
+        return grew
+    }
+
+    /// Splits every cell crossing row boundary `top` within the columns.
+    private mutating func isolateHorizontal(_ map: Map, left: Int, right: Int, at top: Int) -> Bool {
+        guard top > 0, top < map.height else { return false }
+        var inserts: [(row: Int, index: Int, cell: Cell)] = []
+        var column = left
+        while column < right {
+            let ref = map.cell(top, column)
+            if ref == map.cell(top - 1, column) {
+                let cell = self[ref]
+                var attrs = cell.attrs
+                attrs["rowspan"] = .int(ref.row + cell.rowspan - top)
+                self[ref].attrs["rowspan"] = .int(top - ref.row)
+                inserts.append(
+                    (top, position(map, row: top, column: map.columns[ref.row][ref.index]), .empty(cell.node, attrs: attrs)))
+                column += cell.colspan - 1
+            }
+            column += 1
+        }
+        for insert in inserts.reversed() { rows[insert.row].cells.insert(insert.cell, at: insert.index) }
+        return !inserts.isEmpty
+    }
+
+    /// Splits every cell crossing column boundary `left` within the rows.
+    private mutating func isolateVertical(_ map: Map, top: Int, bottom: Int, at left: Int) -> Bool {
+        guard left > 0, left < map.width else { return false }
+        var inserts: [(row: Int, index: Int, cell: Cell)] = []
+        var row = top
+        while row < bottom {
+            let ref = map.cell(row, left)
+            if ref == map.cell(row, left - 1) {
+                let cell = self[ref]
+                let cellLeft = map.columns[ref.row][ref.index]
+                self[ref].attrs = Self.removeColSpan(
+                    cell.attrs, at: left - cellLeft, count: cell.colspan - (left - cellLeft))
+                inserts.append(
+                    (ref.row, ref.index + 1, .empty(cell.node, attrs: Self.removeColSpan(cell.attrs, at: 0, count: left - cellLeft))))
+                row += cell.rowspan - 1
+            }
+            row += 1
+        }
+        for insert in inserts.sorted(by: { ($0.row, $0.index) > ($1.row, $1.index) }) {
+            rows[insert.row].cells.insert(insert.cell, at: insert.index)
+        }
+        return !inserts.isEmpty
     }
 
     // MARK: - `fixTables`
