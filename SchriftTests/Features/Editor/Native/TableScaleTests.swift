@@ -116,7 +116,9 @@ final class TableScaleTests: NativeEditingTestCase {
         XCTAssertEqual(editor.gridView.accessibilityElementCount(), 30_000)
         let element = try XCTUnwrap(editor.gridView.accessibilityDataTableCellElement(forRow: 9_999, column: 2))
         XCTAssertEqual((element as? NSObject)?.accessibilityValue, "r9999c2")
-        print("SCALE viewer open \(open), scroll p50 \(Self.percentile(steps, 0.5)) p99 \(Self.percentile(steps, 0.99)), jump \(jump)")
+        print(
+            "SCALE viewer open \(open), scroll p50 \(Self.percentile(steps, 0.5)) p99 \(Self.percentile(steps, 0.99)), jump \(jump)"
+        )
         // Generous for a debug build on the simulator; the provisional device
         // budget (scroll step p99 < 8.3 ms) is checked on TestFlight.
         XCTAssertLessThan(Self.percentile(steps, 0.99), .milliseconds(100))

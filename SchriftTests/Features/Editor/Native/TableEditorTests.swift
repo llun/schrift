@@ -811,7 +811,9 @@ extension TableEditorTests {
         editor.activate(ref)
         func alignment() throws -> NSTextAlignment? {
             let entry = try XCTUnwrap(table.surface.rangeIndex.entry(for: editor.paragraphIDs(ref)[0]))
-            return (table.textView.textStorage.attribute(.paragraphStyle, at: entry.textRange.location, effectiveRange: nil)
+            return
+                (table.textView.textStorage.attribute(
+                    .paragraphStyle, at: entry.textRange.location, effectiveRange: nil)
                 as? NSParagraphStyle)?.alignment
         }
         XCTAssertNotEqual(try alignment(), .center)
@@ -855,7 +857,8 @@ extension TableEditorTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(editor.grid?.cell(ref).string("backgroundColor"), "red", "the grid was read again")
-        XCTAssertEqual(editor.cellViews[ref]?.backgroundColor, AttributedDocumentProjection.backgroundColor(named: "red"))
+        XCTAssertEqual(
+            editor.cellViews[ref]?.backgroundColor, AttributedDocumentProjection.backgroundColor(named: "red"))
         XCTAssertEqual(editor.cellViews[ref]?.label.attributedText?.string, "Grace H")
     }
 

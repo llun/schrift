@@ -323,10 +323,13 @@ enum TableClipboard {
             for cell in row {
                 var attrs = ""
                 for (key, name, fallback) in [
-                    ("textColor", "data-text-color", "default"), ("backgroundColor", "data-background-color", "default"),
+                    ("textColor", "data-text-color", "default"),
+                    ("backgroundColor", "data-background-color", "default"),
                     ("textAlignment", "data-text-alignment", "left"),
                 ] {
-                    if let value = cell.string(key), value != fallback { attrs += " \(name)=\"\(escape(value, quote: true))\"" }
+                    if let value = cell.string(key), value != fallback {
+                        attrs += " \(name)=\"\(escape(value, quote: true))\""
+                    }
                 }
                 attrs += " colspan=\"\(cell.colspan)\" rowspan=\"\(cell.rowspan)\""
                 if cell.colspan > 1 {
@@ -413,9 +416,12 @@ enum TableClipboard {
                 + "classname=\"bn-inline-content-section\" data-inline-content-type=\"link\">"
         default:
             let name = NativeMark.colorName(from: mark.valueJSON) ?? ""
-            let css = palette[name].map { mark.key == "textColor" ? "color: \($0.text);" : "background-color: \($0.background);" }
+            let css = palette[name].map {
+                mark.key == "textColor" ? "color: \($0.text);" : "background-color: \($0.background);"
+            }
             let style = css.map { " style=\"\($0)\"" } ?? ""
-            return "<span\(style) data-style-type=\"\(mark.key)\" data-value=\"\(escape(name, quote: true))\" data-editable=\"\">"
+            return
+                "<span\(style) data-style-type=\"\(mark.key)\" data-value=\"\(escape(name, quote: true))\" data-editable=\"\">"
         }
     }
 
@@ -519,7 +525,8 @@ final class HTMLNode {
             let closing = index + 1 < scalars.count && scalars[index + 1] == "/"
             var cursor = index + (closing ? 2 : 1)
             var name = ""
-            while cursor < scalars.count, scalars[cursor].properties.isAlphabetic || ("0"..."9").contains(scalars[cursor])
+            while cursor < scalars.count,
+                scalars[cursor].properties.isAlphabetic || ("0"..."9").contains(scalars[cursor])
             {
                 name.unicodeScalars.append(scalars[cursor])
                 cursor += 1

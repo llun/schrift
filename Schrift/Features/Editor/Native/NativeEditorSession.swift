@@ -104,7 +104,8 @@ final class NativeEditorSession {
     func tableCopy(_ blockID: String, from: TableSlot, to: TableSlot) async -> TableCopy? {
         guard let replica else { return nil }
         return await withCheckedContinuation { done in
-            replica.mailbox.post(.tableCopy(blockID: blockID, from: from, to: to, reply: { done.resume(returning: $0) }))
+            replica.mailbox.post(
+                .tableCopy(blockID: blockID, from: from, to: to, reply: { done.resume(returning: $0) }))
         }
     }
 

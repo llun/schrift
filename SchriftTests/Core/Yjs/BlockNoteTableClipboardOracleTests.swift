@@ -45,7 +45,8 @@ final class BlockNoteTableClipboardOracleTests: XCTestCase {
             let copied = try copy(capture.seed, capture.name)
             XCTAssertEqual(copied.html, capture.html, context)
             XCTAssertEqual(copied.plain, capture.plain, context)
-            XCTAssertNotNil(copied.payload.flatMap(TableClipboard.cells(payload:)), "\(context): the payload reads back")
+            XCTAssertNotNil(
+                copied.payload.flatMap(TableClipboard.cells(payload:)), "\(context): the payload reads back")
         }
     }
 
@@ -107,13 +108,15 @@ final class BlockNoteTableClipboardOracleTests: XCTestCase {
             TableClipboard.cells(html: "<table>" + String(repeating: "<tr><td>x</td></tr>", count: 1_001) + "</table>"),
             "past the bound")
         XCTAssertNil(
-            TableClipboard.cells(html: "<table><tr><td>" + String(repeating: "<span>", count: 300) + "</td></tr></table>"),
+            TableClipboard.cells(
+                html: "<table><tr><td>" + String(repeating: "<span>", count: 300) + "</td></tr></table>"),
             "too deep")
         XCTAssertNil(TableClipboard.cells(html: String(repeating: "x", count: TableClipboard.maxHTMLBytes + 1)))
         // Malformed markup still parses to something or nothing, never a trap.
-        for html in ["<table", "<table><tr><td", "<<<>>>", "<table><tr><td>&#xFFFFFFFF;&#0;&bogus;</td></tr></table>",
-            "<table><tr><td><a href='javascript:alert(1)'>x</a></td></tr></table>", "</td></tr></table>"]
-        {
+        for html in [
+            "<table", "<table><tr><td", "<<<>>>", "<table><tr><td>&#xFFFFFFFF;&#0;&bogus;</td></tr></table>",
+            "<table><tr><td><a href='javascript:alert(1)'>x</a></td></tr></table>", "</td></tr></table>",
+        ] {
             _ = TableClipboard.cells(html: html)
         }
         let cells = TableClipboard.cells(

@@ -81,7 +81,8 @@ final class TableSelectionTests: NativeEditingTestCase {
         XCTAssertTrue(editor.key(.arrow(.right, extend: true)), "past the cell's edge Shift-Right selects cells")
         XCTAssertTrue(editor.key(.arrow(.down, extend: true)))
         XCTAssertEqual(
-            editor.selectedCells, [Ref(row: 1, index: 0), Ref(row: 1, index: 1), Ref(row: 2, index: 0), Ref(row: 2, index: 1)])
+            editor.selectedCells,
+            [Ref(row: 1, index: 0), Ref(row: 1, index: 1), Ref(row: 2, index: 0), Ref(row: 2, index: 1)])
         XCTAssertFalse(try XCTUnwrap(editor.cellViews[Ref(row: 2, index: 1)]).selectionView.isHidden, "drawn")
         XCTAssertTrue(try XCTUnwrap(editor.cellViews[Ref(row: 0, index: 0)]).selectionView.isHidden)
         let deleted = await table.run {
@@ -122,7 +123,8 @@ final class TableSelectionTests: NativeEditingTestCase {
         XCTAssertTrue(editor.key(.arrow(.left, extend: false)), "at the start, Left goes back")
         XCTAssertEqual(editor.active, Ref(row: 1, index: 0))
         let ab = try XCTUnwrap(table.surface.rangeIndex.entry(for: editor.paragraphIDs(Ref(row: 1, index: 0))[0]))
-        XCTAssertEqual(table.textView.selectedRange, NSRange(location: NSMaxRange(ab.textRange), length: 0), "at the end")
+        XCTAssertEqual(
+            table.textView.selectedRange, NSRange(location: NSMaxRange(ab.textRange), length: 0), "at the end")
         // Inside the text the arrow is the text view's.
         table.textView.selectedRange = NSRange(location: ab.textRange.location + 1, length: 0)
         XCTAssertFalse(editor.key(.arrow(.right, extend: false)))
@@ -187,7 +189,8 @@ final class TableSelectionTests: NativeEditingTestCase {
         let written = await xml(harness)
         XCTAssertEqual(written, capture.xml)
         try await waitForGrid(editor) { editor.grid?.columnCount == 4 && editor.selection != nil }
-        XCTAssertEqual(editor.selection, .init(anchor: TableSlot(row: 2, column: 2), head: TableSlot(row: 3, column: 3)))
+        XCTAssertEqual(
+            editor.selection, .init(anchor: TableSlot(row: 2, column: 2), head: TableSlot(row: 3, column: 3)))
         let shadow = await harness.session.replicaDoc { NativeBlockProjection.markdownShadow($0) }
         XCTAssertEqual(shadow, capture.markdown)
     }

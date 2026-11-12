@@ -96,7 +96,8 @@ final class TableGridView: UIView, UIAccessibilityContainerDataTable {
         return NSNotFound
     }
 
-    func accessibilityDataTableCellElement(forRow row: Int, column: Int) -> (any UIAccessibilityContainerDataTableCell)? {
+    func accessibilityDataTableCellElement(forRow row: Int, column: Int) -> (any UIAccessibilityContainerDataTableCell)?
+    {
         guard let grid = editor?.grid, grid.slots.indices.contains(row), grid.slots[row].indices.contains(column) else {
             return nil
         }

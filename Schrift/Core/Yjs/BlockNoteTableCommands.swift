@@ -467,7 +467,8 @@ struct TableModel {
                     guard !fragment.isEmpty else { throw BlockNoteWriter.Error.unsupportedBlockType("table") }
                     var cell = fragment[index % fragment.count]
                     if column + cell.colspan > newWidth {
-                        cell.attrs = removeColSpan(cell.attrs, at: cell.colspan, count: column + cell.colspan - newWidth)
+                        cell.attrs = removeColSpan(
+                            cell.attrs, at: cell.colspan, count: column + cell.colspan - newWidth)
                     }
                     cells.append(cell)
                     column += cell.colspan
@@ -487,7 +488,9 @@ struct TableModel {
                 rows.append(
                     clip.rows[row % clip.height].map { cell in
                         var cell = cell
-                        if row + cell.rowspan > newHeight { cell.attrs["rowspan"] = .int(max(1, newHeight - cell.rowspan)) }
+                        if row + cell.rowspan > newHeight {
+                            cell.attrs["rowspan"] = .int(max(1, newHeight - cell.rowspan))
+                        }
                         return cell
                     })
             }
@@ -554,7 +557,10 @@ struct TableModel {
                 attrs["rowspan"] = .int(ref.row + cell.rowspan - top)
                 self[ref].attrs["rowspan"] = .int(top - ref.row)
                 inserts.append(
-                    (top, position(map, row: top, column: map.columns[ref.row][ref.index]), .empty(cell.node, attrs: attrs)))
+                    (
+                        top, position(map, row: top, column: map.columns[ref.row][ref.index]),
+                        .empty(cell.node, attrs: attrs)
+                    ))
                 column += cell.colspan - 1
             }
             column += 1
@@ -576,7 +582,10 @@ struct TableModel {
                 self[ref].attrs = Self.removeColSpan(
                     cell.attrs, at: left - cellLeft, count: cell.colspan - (left - cellLeft))
                 inserts.append(
-                    (ref.row, ref.index + 1, .empty(cell.node, attrs: Self.removeColSpan(cell.attrs, at: 0, count: left - cellLeft))))
+                    (
+                        ref.row, ref.index + 1,
+                        .empty(cell.node, attrs: Self.removeColSpan(cell.attrs, at: 0, count: left - cellLeft))
+                    ))
                 row += cell.rowspan - 1
             }
             row += 1

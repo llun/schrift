@@ -113,7 +113,8 @@ struct PatchBuilder {
             }
             // A cell's attributes (PR11c): its paragraphs carry its alignment,
             // so they are projected again; the table's change follows below.
-            if type.typeRef == .xmlElement(nodeName: "tableCell") || type.typeRef == .xmlElement(nodeName: "tableHeader"),
+            if type.typeRef == .xmlElement(nodeName: "tableCell")
+                || type.typeRef == .xmlElement(nodeName: "tableHeader"),
                 entry.subs.contains(where: { $0 != nil })
             {
                 for child in YBlockProjection.children(of: type, includeFormats: false) {

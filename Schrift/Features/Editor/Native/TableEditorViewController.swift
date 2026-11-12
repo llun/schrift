@@ -297,7 +297,8 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     private func arrow(_ direction: NativeInputCoordinator.TableKey.Direction, extend: Bool) -> Bool {
         guard let grid, grid.isFamiliar, let active else { return false }
         if extend {
-            let current = selection ?? (atEdge(direction) ? CellSelection(anchor: slot(active), head: slot(active)) : nil)
+            let current =
+                selection ?? (atEdge(direction) ? CellSelection(anchor: slot(active), head: slot(active)) : nil)
             guard let current else { return false }
             guard let head = next(cell(at: current.head), direction) else { return selection != nil }
             select(CellSelection(anchor: current.anchor, head: slot(head)))
@@ -326,7 +327,8 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         guard let active, let session = cellSession else { return false }
         let ids = paragraphIDs(active)
         let index = session.surface.rangeIndex
-        guard let first = ids.first.flatMap({ index.entry(for: $0) }), let last = ids.last.flatMap({ index.entry(for: $0) })
+        guard let first = ids.first.flatMap({ index.entry(for: $0) }),
+            let last = ids.last.flatMap({ index.entry(for: $0) })
         else { return false }
         let lower = first.textRange.location
         let upper = NSMaxRange(last.textRange)
@@ -892,12 +894,14 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     }
 
     private func realise(_ ref: TableGrid.CellRef) -> TableCellView {
-        let view = pool.popLast() ?? {
-            let view = TableCellView()
-            view.layer.borderColor = UIColor.separator.cgColor
-            gridView.insertSubview(view, at: 0)
-            return view
-        }()
+        let view =
+            pool.popLast()
+            ?? {
+                let view = TableCellView()
+                view.layer.borderColor = UIColor.separator.cgColor
+                gridView.insertSubview(view, at: 0)
+                return view
+            }()
         guard let grid else { return view }
         let cell = grid.cell(ref)
         view.ref = ref
@@ -997,10 +1001,14 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
             let bounds = scrollView.bounds
             let margin = max(bounds.height, 300) / 2
             let visible = bounds.insetBy(dx: -margin, dy: -margin)
-            let rows = Self.index(in: rowTops, for: max(0, visible.minY))...Self.index(
-                in: rowTops, for: max(0, visible.maxY))
-            let columns = Self.index(in: columnOffsets, for: max(0, visible.minX))...Self.index(
-                in: columnOffsets, for: max(0, visible.maxX))
+            let rows =
+                Self.index(
+                    in: rowTops, for: max(0, visible.minY))...Self.index(
+                    in: rowTops, for: max(0, visible.maxY))
+            let columns =
+                Self.index(
+                    in: columnOffsets, for: max(0, visible.minX))...Self.index(
+                    in: columnOffsets, for: max(0, visible.maxX))
             var wanted: Set<TableGrid.CellRef> = []
             for row in rows where row < grid.slots.count {
                 for column in columns where column < grid.columnCount { wanted.insert(grid.slots[row][column]) }

@@ -209,7 +209,8 @@ final class NativeCompositionSession {
             return
         }
         guard hasRecoveryStore else { return }
-        port.writeRecoveries(recoveries + adopted.keys.sorted { $0.uuidString < $1.uuidString }.flatMap { adopted[$0] ?? [] })
+        port.writeRecoveries(
+            recoveries + adopted.keys.sorted { $0.uuidString < $1.uuidString }.flatMap { adopted[$0] ?? [] })
     }
 
     /// The block-relative replacement range of the current selection. Both
