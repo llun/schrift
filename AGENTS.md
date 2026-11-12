@@ -3423,8 +3423,10 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   blocks never meet another column's or the document's: Backspace at a column's first block, a
   range or mark command across columns, a move past a column's edge and Shift-Tab at a column's
   top are refused before arming. A column keeps a block (delete of its only block refused, the
-  existing `siblings.count > 1` rule). The group's own block commands (move, duplicate, delete,
-  copy, indent under it) are refused (`isColumnGroup`). **The writer** (`find`) descends into
+  existing `siblings.count > 1` rule). The group's own move and duplicate are refused
+  (`requireMovable`: `isColumnGroup`), its delete and copy have no lossless payload
+  (`BlockNoteSubtreePayload.validate` takes containers only), and nothing indents under it;
+  inserting a block above or below it works. **The writer** (`find`) descends into
   `columnList`/`column`, `resolve` accepts a `column` as the parent list
   (`BlockNoteWriter.isBlockList`), and `liftListItem` lifts into a column; split, join, marks,
   type changes and indent were already parent-agnostic. **Patches:** a change inside an open group
