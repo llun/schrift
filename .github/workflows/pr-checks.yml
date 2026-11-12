@@ -37,9 +37,9 @@ jobs:
     name: Build & Test
     runs-on: macos-latest
     # Unit/rendering tests and isolated checklist UI tests; the cap catches hangs.
-    # A healthy run takes about 25 minutes (the UI tests alone are ~10), so
-    # 30 cancelled green runs that hit a slow runner or a slow cleanup step.
-    timeout-minutes: 45
+    # With the native editor's UI tests a healthy run now takes 37-45 minutes,
+    # so 45 cancelled green runs (PR #280); 60 still turns a hang into a failure.
+    timeout-minutes: 60
 
     steps:
       # Actions are pinned to full commit SHAs (not mutable tags) so a moved or
