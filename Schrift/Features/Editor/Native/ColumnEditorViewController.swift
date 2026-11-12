@@ -127,7 +127,8 @@ struct ColumnEditorScreen: View {
             self.model = model
             await model.load()
         }
-        .onDisappear { model?.close() }
+        // A table editor over the column covers this screen: only a dismissal closes it.
+        .onDisappear { if model?.openTable == nil { model?.close() } }
     }
 
     @ViewBuilder private func content(_ model: ColumnEditorModel) -> some View {

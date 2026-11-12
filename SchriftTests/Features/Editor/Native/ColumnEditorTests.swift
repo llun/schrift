@@ -296,6 +296,7 @@ final class ColumnEditorTests: NativeEditingTestCase {
         window.makeKeyAndVisible()
         windows.append(window)
         let views = model.columns.map(\.textView)
+        guard views.count == 2 else { return XCTFail("both columns attached") }
         container.show(views, active: 0)
         XCTAssertFalse(views[0].isHidden)
         XCTAssertTrue(views[1].isHidden)

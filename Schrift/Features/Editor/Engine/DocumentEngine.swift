@@ -886,8 +886,9 @@ final class DocumentEngine {
         let index = builder.index
         let id = command.blockID
         let order = index.list(of: id)
-        // A column group's own commands (move, duplicate, delete, copy) are PR12b's.
-        guard index.isCanonical, !index.isColumnGroup(id), let entry = index.entries[id],
+        // A column group's own move and duplicate are PR12b's (`requireMovable`
+        // refuses it; delete and copy have no lossless payload for it).
+        guard index.isCanonical, let entry = index.entries[id],
             let position = index.listPosition(of: id),
             let siblings = index.groupOrder[ObjectIdentifier(entry.group)], let at = siblings.firstIndex(of: id)
         else { throw DocumentEngineError.unsupportedNativeInput }
