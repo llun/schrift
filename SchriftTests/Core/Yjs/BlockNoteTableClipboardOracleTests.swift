@@ -63,6 +63,12 @@ final class BlockNoteTableClipboardOracleTests: XCTestCase {
         return [[TableClipboard.cell(text: try XCTUnwrap(capture.plain))]]
     }
 
+    /// The pastes the web garbles (see below): the slots' texts as intended.
+    private static let intended: [String: [((Int, Int), String)]] = [
+        "isolatesTopEdge": [((2, 0), "g"), ((2, 1), "x"), ((2, 2), "y"), ((1, 2), "f\ni")],
+        "isolatesBottomEdge": [((0, 2), "x"), ((1, 2), "y"), ((2, 2), ""), ((2, 1), "h"), ((1, 0), "d\ne")],
+    ]
+
     func testPasteWritesTheWebsXMLAndKeepsTheShadow() throws {
         for capture in Captures.pastes {
             let context = "\(capture.seed)/\(capture.name)"
@@ -71,6 +77,24 @@ final class BlockNoteTableClipboardOracleTests: XCTestCase {
             let anchor = try slot(engine, capture.anchor)
             let head = try capture.head.map { try slot(engine, $0) }
             try apply(engine, .paste(cells: try pasted(capture), anchor: anchor, head: head))
+            if let expected = Self.intended[capture.name] {
+                // prosemirror-tables 1.8.5's `isolateHorizontal` inserts the split
+                // cell at a table-relative offset as a document position (no
+                // `+ start`), so the web's result depends on where the table sits
+                // and garbles the grid; the engine splits the cell as intended.
+                let grid = try XCTUnwrap(engine.tableGrid("tbl"), context)
+                XCTAssertEqual(grid.familiarity, .familiar, context)
+                for (slot, text) in expected {
+                    guard grid.slots.indices.contains(slot.0), grid.slots[slot.0].indices.contains(slot.1) else {
+                        XCTFail("\(context): no slot \(slot) in \(grid.slots.count) × \(grid.columnCount)")
+                        continue
+                    }
+                    let cell = grid.cell(grid.slots[slot.0][slot.1])
+                    XCTAssertEqual(cell.runs.map(\.text).joined(), text, "\(context) \(slot)")
+                }
+                XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc), "\(context): a shadow")
+                continue
+            }
             XCTAssertEqual(YXMLString.fragment(doc), capture.xml, context)
             XCTAssertEqual(NativeBlockProjection.markdownShadow(doc), capture.markdown, "\(context): the shadow")
             XCTAssertEqual(engine.tableGrid("tbl")?.familiarity, .familiar, context)
