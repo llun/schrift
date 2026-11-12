@@ -454,6 +454,9 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         switch recognizer.state {
         case .began:
             dragAnchor = ref
+            // The drag selects; the grid must not scroll under it.
+            scrollView.panGestureRecognizer.isEnabled = false
+            scrollView.panGestureRecognizer.isEnabled = true
             select(CellSelection(anchor: slot(ref), head: slot(ref)))
         case .changed:
             guard let anchor = dragAnchor else { return }

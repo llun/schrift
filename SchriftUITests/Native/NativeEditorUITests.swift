@@ -202,6 +202,40 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertEqual(app.textViews["nativeEditor.table.cell"].value as? String, "Name\n")
     }
 
+    /// PR11c: a long press and drag selects two cells, and the Cell menu
+    /// merges them: one durable command that survives a relaunch.
+    func testDraggingAcrossCellsSelectsThemAndTheCellMenuMergesThem() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-table"]
+        app.launch()
+        let card = app.descendants(matching: .any)["nativeEditor.attachment.owned-table"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        card.tap()
+        let ada = app.staticTexts["nativeEditor.table.text.1.0"]
+        let empty = app.staticTexts["nativeEditor.table.text.1.1"]
+        XCTAssertTrue(empty.waitForExistence(timeout: 5), "the table editor opened")
+        ada.press(forDuration: 0.8, thenDragTo: empty)
+        let cellMenu = app.buttons["nativeEditor.table.menu.cell"]
+        XCTAssertTrue(cellMenu.waitForExistence(timeout: 5))
+        cellMenu.tap()
+        let merge = app.buttons["Merge cells"]
+        XCTAssertTrue(merge.waitForExistence(timeout: 5), "two selected cells merge")
+        merge.tap()
+        XCTAssertTrue(empty.waitForNonExistence(timeout: 5), "one cell spans both")
+        XCTAssertFalse(app.staticTexts["nativeEditor.inputNotice"].exists)
+        app.buttons["nativeEditor.table.done"].tap()
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        app.terminate()
+
+        app.launchArguments = ["--native-open", "--native-table"]
+        app.launch()
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        card.tap()
+        XCTAssertTrue(app.staticTexts["nativeEditor.table.text.0.1"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["nativeEditor.table.text.1.1"].exists, "the merge was journaled")
+    }
+
     /// PR11b: the table editor's Row menu inserts a row below the active cell's
     /// row, one durable structure command that survives a relaunch.
     func testTheRowMenuInsertsARowThatSurvivesRelaunch() {

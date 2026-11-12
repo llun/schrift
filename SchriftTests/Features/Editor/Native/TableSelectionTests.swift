@@ -141,7 +141,7 @@ final class TableSelectionTests: NativeEditingTestCase {
         let (harness, editor) = try await open()
         let table = try XCTUnwrap(editor.cellSession)
         editor.select(.init(anchor: TableSlot(row: 1, column: 0), head: TableSlot(row: 2, column: 1)))
-        XCTAssertTrue(editor.key(.copy))
+        table.textView.copy(nil)  // ⌘C reaches the editor through the text view
         for _ in 0..<300 where harness.pasteboard.data(forPasteboardType: TableClipboard.htmlType) == nil {
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -155,7 +155,10 @@ final class TableSelectionTests: NativeEditingTestCase {
         XCTAssertEqual(harness.log.commands.count, 0, "copy writes nothing")
         // Into one cell: clipped to it, as the web pastes its own copy.
         editor.select(.init(anchor: TableSlot(row: 0, column: 1), head: TableSlot(row: 0, column: 1)))
-        let pasted = await table.run { editor.key(.paste) }
+        let pasted = await table.run {
+            table.textView.paste(nil)
+            return true
+        }
         XCTAssertTrue(pasted)
         let written = await xml(harness)
         XCTAssertEqual(written, try paste("ownCopyIntoOneCell").xml)
@@ -165,7 +168,7 @@ final class TableSelectionTests: NativeEditingTestCase {
     func testCutCopiesThenEmptiesTheCells() async throws {
         let (harness, editor) = try await open()
         editor.select(.init(anchor: TableSlot(row: 1, column: 0), head: TableSlot(row: 2, column: 1)))
-        XCTAssertTrue(editor.key(.cut))
+        try XCTUnwrap(editor.cellSession).textView.cut(nil)
         for _ in 0..<300 where harness.log.commands.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
         await harness.settle()
         let written = await xml(harness)
