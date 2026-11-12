@@ -2591,21 +2591,29 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   10-second debounce, or a close) threw `unprojectableShadow` and froze authoring with
   "Couldn't save", and a document holding such a block opened read-only. Now a root subtree
   with a block whose text, or one of whose marked runs, starts or ends with
-  `CharacterSet.whitespaces` (`hasEdgeWhitespace`; never a code block, which is verbatim)
-  is spelled by `NativeExportMarkdown.body`, untrimmed, and the whole shadow is trimmed like
-  `htmlToMarkdown` (`result.trim() + "\n"`, `NativeExportMarkdown.trimmed`). What BlockNote
-  0.56 exports: a block keeps its edge spaces, tabs and NBSP verbatim and only the
-  document's ends are trimmed; bold and italic move trailing whitespace out of their
-  delimiters and keep leading whitespace inside (`** b**x`), strike, code and links keep
-  both inside (`~~s ~~`, `` `c ` ``, `[ site ](url)`); a table cell is trimmed. A root
-  callout goes through as the paragraph `exportSpelling` makes of it (its whitespace export
-  is unconfirmed: the harness's callout is a stub). A subtree the port lacks a block for
-  falls back to the classic rendering (still `nil` when its edge is a block's). Known limit:
-  each flagged root is its own chunk, so a list it splits renumbers and turns loose, which
-  `syncCanonicalMarkdown` does not see. Tests: `BlockNoteWhitespaceOracleTests`
-  (`BlockNoteWhitespaceCaptures`, ws.mjs: 27 web fixtures, the shadow byte for byte the
-  export except the split list, equal under `syncCanonicalMarkdown`) and
-  `NativeShadowExportParityTests.testASaveRightAfterATrailingSpaceDoesNotFreeze`.
+  `.whitespaces` or JS whitespace (`hasEdgeWhitespace`; never a code block, which is
+  verbatim) is spelled by `NativeExportMarkdown.body`, untrimmed, and the whole shadow is
+  trimmed like `htmlToMarkdown` (`result.trim() + "\n"`, `NativeExportMarkdown.trimmed`).
+  `jsWhitespace` is exactly ECMAScript WhiteSpace and LineTerminator (U+0009–000D, U+0020,
+  U+00A0, U+1680, U+2000–200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF), never
+  Foundation's `.whitespaces`, which holds U+200B: JS keeps a leading U+200B, so
+  `"\u{200B}# Heading"` stays a paragraph. What BlockNote 0.56 exports: a block keeps its
+  edge spaces, tabs and NBSP verbatim and only the document's ends are trimmed; bold and
+  italic move trailing whitespace out of their delimiters and keep leading whitespace inside
+  (`** b**x`), strike, code and links keep both inside (`~~s ~~`, `` `c ` ``,
+  `[ site ](url)`); a table cell is trimmed the same way. In such a subtree a childless
+  callout outside a toggle (root or nested under a plain block or list, the shapes the
+  classic rendering spells) is the paragraph `exportSpelling` makes of it (`exportNodes`;
+  its whitespace export is unconfirmed: the harness's callout is a stub). **An edge space
+  never takes a shadow away:** a subtree the port cannot spell (a nested image) falls back
+  to the classic rendering, then to the classic rendering of the text with its edge
+  whitespace trimmed (`edgeTrimmed`, as `syncCanonicalMarkdown` reads it; a false conflict
+  at worst, never a freeze). Known limit: each flagged root is its own chunk, so a list it
+  splits renumbers and turns loose, which `syncCanonicalMarkdown` does not see. Tests:
+  `BlockNoteWhitespaceOracleTests` (`BlockNoteWhitespaceCaptures`, ws.mjs: 32 web
+  fixtures with U+200B and U+FEFF, the shadow byte for byte the export except the split
+  list, equal under `syncCanonicalMarkdown`) and `NativeShadowExportParityTests`
+  (`testASaveRightAfterATrailingSpaceDoesNotFreeze`, `testAnEdgeSpaceNeverTakesAShadowAway`).
 - **PR06e bounded previews and attachment sizing.** A block `AttributedDocumentProjection.isPlaceholder`
   (non-prose node or opaque) is **one U+FFFC attachment character** plus its separator:
   `displayText` is `attachmentCharacter`, so the range index, refusals and clipboard rules
