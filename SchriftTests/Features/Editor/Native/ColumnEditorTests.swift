@@ -198,6 +198,20 @@ final class ColumnEditorTests: NativeEditingTestCase {
         XCTAssertEqual(reopened.surface.blocks[2].runs.map(\.text).joined(), "nested!")
     }
 
+    /// A save the coordinator cannot capture freezes the document's authoring;
+    /// its columns share the journal, so they stop too.
+    func testAFrozenDocumentFreezesItsColumns() async throws {
+        let (harness, column) = try await open()
+        harness.session.freezeAuthoring()
+        setSelection(column, NSRange(location: try location(column, "a", 9), length: 0))
+        column.textView.insertText("x")
+        await column.settle()
+        await harness.settle()
+        XCTAssertTrue(harness.log.commands.isEmpty, "nothing more is journaled")
+        let written = await xml(harness)
+        XCTAssertTrue(written.contains(">Left text<"))
+    }
+
     // MARK: - Peers
 
     /// A peer's update from the same seed: `body` edits the peer's copy of the group.

@@ -169,6 +169,7 @@ final class NativeEditorSession {
             hasUnsupportedRoot: false, canType: attachment.canType, recoveries: [], state: attachment.state)
         session.table = blockID
         session.grid = attachment.grid
+        children.add(session)
         session.scope = scope
         session.release = { Task {} }
         session.surface.setFocus([])
@@ -230,6 +231,7 @@ final class NativeEditorSession {
         session.column = (groupID, columnID)
         session.scope = scope
         session.release = { Task {} }
+        children.add(session)
         session.textView.accessibilityIdentifier = "nativeEditor.column"
         session.consume(attachment.deliveries)
         // The column types while the document does (the replica's one journal).
@@ -341,7 +343,12 @@ final class NativeEditorSession {
     /// can send. Stop authoring rather than growing an unsendable journal.
     func freezeAuthoring() {
         input?.stopAfterStorageFailure()
+        // The table and column surfaces this document opened share its journal (PR12a).
+        for child in children.allObjects { child.freezeAuthoring() }
     }
+
+    /// The table and column surfaces this document opened, while they live.
+    @ObservationIgnored private let children = NSHashTable<NativeEditorSession>.weakObjects()
 
     /// Reconnect fetches merge into the same owner. The session journals the
     /// new server bytes before any resulting patch is delivered.
