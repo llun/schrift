@@ -69,6 +69,8 @@ enum ReplicaMessage: Sendable {
     case tableGrid(blockID: String, full: Bool = false, reply: @Sendable (TableGrid?) -> Void)
     /// Tables (PR11c): the clipboard of the CellSelection `from`...`to`.
     case tableCopy(blockID: String, from: TableSlot, to: TableSlot, reply: @Sendable (TableCopy?) -> Void)
+    /// Column groups (PR12a): group `blockID` as the replica holds it now.
+    case columnGroup(blockID: String, reply: @Sendable (ColumnGroup?) -> Void)
     case requestAvailability(surfaceID: UUID, blockID: String, candidates: [ReplicaAvailabilityCandidate])
     case copyPayload(surfaceID: UUID, requestID: UUID, blockIDs: [String])
     /// Installs the journal (nil makes the session read-only) and the shared
@@ -98,6 +100,7 @@ enum ReplicaMessage: Sendable {
         case .locate(_, let reply): reply(nil)
         case .tableGrid(_, _, let reply): reply(nil)
         case .tableCopy(_, _, _, let reply): reply(nil)
+        case .columnGroup(_, let reply): reply(nil)
         case .inspect(let body): body(nil, nil, nil)
         default: break
         }

@@ -71,6 +71,13 @@ struct BlockPatch: Equatable, Sendable {
     /// rebuilds are always `.other`, never `.localUser`, and must always be
     /// applied: they include discarded peer edits as well as committed text.
     var origin: BlockPatchOrigin
+    /// The column each column block in `changes` belongs to (PR12a): block
+    /// id → column id, for every change but a removal. Empty when the patch
+    /// touches no open column group. The session routes by it.
+    var columns: [String: String] = [:]
+    /// The column each removed column block was in (a block may leave one
+    /// column and enter another in one patch).
+    var removedColumns: [String: String] = [:]
 
     init(_ changes: [BlockChange] = [], origin: BlockPatchOrigin = .other, nativeCommand: NativePatchStamp? = nil) {
         self.changes = changes

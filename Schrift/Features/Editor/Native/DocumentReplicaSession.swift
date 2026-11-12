@@ -65,6 +65,8 @@ actor DocumentReplicaSession {
         let deliveries: AsyncStream<ReplicaDelivery>
         /// A table surface's grid when it attached (PR11a); nil otherwise.
         var grid: TableGrid? = nil
+        /// A column surface's group when it attached (PR12a); nil otherwise.
+        var columnGroup: ColumnGroup? = nil
     }
 
     /// Unseen changes a surface keeps for rebasing (the "remote ring").
@@ -112,6 +114,10 @@ actor DocumentReplicaSession {
         /// and nothing else. Nil for a document surface, which never sees a
         /// table paragraph.
         var table: String?
+        /// A column surface's column and its group (PR12a): it sees that
+        /// column's blocks and the group's own changes, nothing else. Nil for
+        /// a document surface, which never sees a column's blocks.
+        var column: (group: String, id: String)?
         var epoch: UInt64 = 0
         var selectionSeq: UInt64 = 0
         var unseen: [Unseen] = []
@@ -232,7 +238,8 @@ actor DocumentReplicaSession {
 
     /// The read-only route's one-shot projection: no session outlives it.
     static func inspect(state: Data) throws -> (
-        blocks: [BlockSnapshot], hasUnsupportedRoot: Bool, canType: Bool, tables: [String: TableGrid]
+        blocks: [BlockSnapshot], hasUnsupportedRoot: Bool, canType: Bool, tables: [String: TableGrid],
+        columns: [String: (group: ColumnGroup, blocks: [[BlockSnapshot]])]
     ) {
         let doc = YDoc(clientID: 1, gc: true)
         defer { doc.destroy() }
@@ -240,7 +247,8 @@ actor DocumentReplicaSession {
         let projected = NativeBlockProjection.project(doc)
         return (
             projected.blocks.map(BlockSnapshot.init), projected.blocks.isEmpty && !projected.isFullyRenderable,
-            projected.isFullyModeled && NativeBlockProjection.markdownShadow(doc) != nil, TableGrid.tables(in: doc)
+            projected.isFullyModeled && NativeBlockProjection.markdownShadow(doc) != nil, TableGrid.tables(in: doc),
+            ColumnGroup.groups(in: doc)
         )
     }
 
@@ -276,14 +284,43 @@ actor DocumentReplicaSession {
             canType: canType, recoveries: recoveries, state: state, deliveries: stream, grid: grid)
     }
 
-    /// A surface's whole projection: the document, or a table's paragraphs.
-    private func projection(for table: String?) -> [BlockSnapshot] {
+    /// A surface's whole projection: the document, a table's paragraphs or a column's blocks.
+    private func projection(for table: String?, column: String? = nil) -> [BlockSnapshot] {
+        if let column { return engine.columnBlocks(column) ?? [] }
         guard let table else { return NativeBlockProjection.project(doc).blocks.map(BlockSnapshot.init) }
         return engine.tableParagraphs(table) ?? []
     }
 
     /// Open tables by block id, with how many table surfaces show each.
     private var openTables: [String: Int] = [:]
+    /// Open column groups by block id, with how many column surfaces show each.
+    private var openGroups: [String: Int] = [:]
+
+    /// A column surface (PR12a): column `columnID` of group `groupID`, its
+    /// blocks opened as text targets, and only their deliveries after this.
+    /// Nil (nothing attached) when it is not a column of a familiar group of
+    /// this replica.
+    func attach(surfaceID: UUID, group groupID: String, column columnID: String) -> Attachment? {
+        hooks.onReplicaWork?()
+        if loop == nil { loop = Task { await self.run() } }
+        guard !isClosed, openGroups[groupID] != nil || engine.openColumns(groupID),
+            let group = engine.columnGroup(groupID), group.columns.contains(where: { $0.id == columnID })
+        else {
+            if openGroups[groupID] == nil { engine.closeColumns(groupID) }
+            return nil
+        }
+        openGroups[groupID, default: 0] += 1
+        let (stream, continuation) = AsyncStream<ReplicaDelivery>.makeStream(
+            bufferingPolicy: .bufferingOldest(Self.deliveryBound + 1))
+        var surface = SurfaceState(deliveries: continuation, table: nil)
+        surface.column = (groupID, columnID)
+        surfaces[surfaceID] = surface
+        if selectionOwner == nil { selectionOwner = surfaceID }
+        return Attachment(
+            blocks: projection(for: nil, column: columnID), revision: engine.revision,
+            hasUnsupportedRoot: hasUnsupportedRoot, canType: canType, recoveries: [], state: state,
+            deliveries: stream, columnGroup: group)
+    }
 
     /// Returns once the session closed (`.close` was handled).
     func waitUntilClosed() async {
@@ -382,6 +419,8 @@ actor DocumentReplicaSession {
             reply(engine.tableGrid(blockID, full: full))
         case .tableCopy(let blockID, let from, let to, let reply):
             reply(engine.tableCopy(blockID, from: from, to: to))
+        case .columnGroup(let blockID, let reply):
+            reply(engine.columnGroup(blockID))
         case .requestAvailability(let surfaceID, let blockID, let candidates):
             let actions = candidates.filter { candidate in
                 guard let kind = candidate.kind else { return engine.hasLosslessCopy(blockID) }
@@ -418,6 +457,7 @@ actor DocumentReplicaSession {
                 deliver(to: nil)
             }
             if let table = surface.table { closeTable(table) }
+            if let column = surface.column { closeColumns(column.group) }
         case .close:
             close()
         case .inspect(let body):
@@ -656,7 +696,8 @@ actor DocumentReplicaSession {
         engine = graph.engine
         sink = graph.sink
         history = journal == nil ? nil : ReplicaHistory(doc: doc, engine: engine)
-        // The new engine's index opens the tables surfaces show again.
+        // The new engine's index opens the groups and tables surfaces show again.
+        for group in openGroups.keys { engine.openColumns(group) }
         for table in openTables.keys { engine.openTable(table) }
         for id in surfaces.keys {
             surfaces[id]?.composing = nil
@@ -678,11 +719,30 @@ actor DocumentReplicaSession {
         }
     }
 
+    /// The last column surface of group `group` left: its blocks stop being
+    /// text targets, and the document surfaces, which saw no column's text
+    /// while it was open, get the group's preview once.
+    private func closeColumns(_ group: String) {
+        openGroups[group, default: 1] -= 1
+        guard openGroups[group] == 0 else { return }
+        openGroups[group] = nil
+        engine.closeColumns(group)
+        if let snapshot = engine.nativeSnapshot(for: group) {
+            sink.applyPatch(BlockPatch([.replaceBlock(blockID: group, block: snapshot)], origin: .other))
+            deliver(to: nil)
+        }
+    }
+
     /// `events` as surface `surfaceID` sees them (PR11a): a document surface
     /// never sees a table paragraph; a table surface sees only its table's
     /// paragraphs and the table's own changes (which it ignores, and its
     /// editor reads as a structure signal), and a reset as its table's.
+    /// PR12a: a document surface never sees a column's blocks (the patch names
+    /// them, `BlockPatch.columns`); a column surface sees only its column's
+    /// blocks and its group's own changes (a structure signal, which its
+    /// surface ignores), and a reset as its column's.
     private func events(_ events: [ReplicaDelivery.Event], for surface: SurfaceState) -> [ReplicaDelivery.Event] {
+        if let column = surface.column { return columnEvents(events, column: column) }
         // The spelling is sound here: a canonical index refuses a block id
         // holding U+0001, and a non-canonical one only ever delivers `.reset`.
         func shown(_ id: String) -> Bool {
@@ -693,6 +753,7 @@ actor DocumentReplicaSession {
             surface.table != nil
                 || events.contains(where: { event in
                     guard case .patch(let patch, _) = event else { return false }
+                    if !patch.columns.isEmpty || !patch.removedColumns.isEmpty { return true }
                     return patch.changes.contains { change in
                         switch change {
                         case .text(let id, _), .props(let id, _), .replaceBlock(let id, _): TableGrid.isParagraphID(id)
@@ -705,18 +766,53 @@ actor DocumentReplicaSession {
         else { return events }
         return events.compactMap { event in
             guard case .patch(var patch, let settled) = event else { return event }
+            // A table surface's table may be a column's block: its own changes still reach it.
+            let columns = surface.table == nil ? patch.columns : [:]
+            let removedColumns = surface.table == nil ? patch.removedColumns : [:]
+            patch.columns = [:]
+            patch.removedColumns = [:]
             patch.changes = patch.changes.compactMap { change in
                 switch change {
-                case .text(let id, _), .props(let id, _), .replaceBlock(let id, _): return shown(id) ? change : nil
+                case .text(let id, _), .props(let id, _), .replaceBlock(let id, _):
+                    return shown(id) && columns[id] == nil ? change : nil
                 case .remove(let ids):
-                    let kept = ids.filter(shown)
+                    let kept = ids.filter { shown($0) && removedColumns[$0] == nil }
                     return kept.isEmpty ? nil : .remove(blockIDs: kept)
                 case .insert(let after, let blocks):
-                    let kept = blocks.filter { shown($0.id) }
+                    let kept = blocks.filter { shown($0.id) && columns[$0.id] == nil }
                     return kept.isEmpty ? nil : .insert(after: after, blocks: kept)
                 case .reset:
                     guard let table = surface.table else { return change }
                     return .reset(engine.tableParagraphs(table) ?? [])
+                }
+            }
+            return patch.isEmpty ? nil : .patch(patch, settled: settled)
+        }
+    }
+
+    /// A column surface's events (PR12a): its column's blocks, by the patch's
+    /// own tags, and its group's changes.
+    private func columnEvents(_ events: [ReplicaDelivery.Event], column: (group: String, id: String))
+        -> [ReplicaDelivery.Event]
+    {
+        events.compactMap { event in
+            guard case .patch(var patch, let settled) = event else { return event }
+            let columns = patch.columns
+            let removedColumns = patch.removedColumns
+            patch.columns = [:]
+            patch.removedColumns = [:]
+            patch.changes = patch.changes.compactMap { change in
+                switch change {
+                case .text(let id, _), .props(let id, _), .replaceBlock(let id, _):
+                    return columns[id] == column.id || id == column.group ? change : nil
+                case .remove(let ids):
+                    let kept = ids.filter { removedColumns[$0] == column.id }
+                    return kept.isEmpty ? nil : .remove(blockIDs: kept)
+                case .insert(let after, let blocks):
+                    let kept = blocks.filter { columns[$0.id] == column.id }
+                    return kept.isEmpty ? nil : .insert(after: after, blocks: kept)
+                case .reset:
+                    return .reset(engine.columnBlocks(column.id) ?? [])
                 }
             }
             return patch.isEmpty ? nil : .patch(patch, settled: settled)
@@ -828,7 +924,7 @@ actor DocumentReplicaSession {
         surface.droppedThrough = engine.revision
         surfaces[surfaceID] = surface
         for delivery in held { send(delivery, to: surfaceID) }
-        let blocks = projection(for: surface.table)
+        let blocks = projection(for: surface.table, column: surface.column?.id)
         var reset = ReplicaDelivery(
             revision: engine.revision, events: [.patch(BlockPatch([.reset(blocks)], origin: .other), settled: [:])],
             state: state)

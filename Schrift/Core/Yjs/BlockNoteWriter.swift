@@ -561,9 +561,12 @@ struct BlockNoteWriter {
                     found = try resolve(item, group: type, id: id)
                 }
                 // Only block groups/containers participate in block lookup;
-                // inline elements and tables cannot masquerade as block ids.
+                // inline elements and tables cannot masquerade as block ids. A
+                // column group's columns hold containers too (PR12a).
                 if child.typeRef == .xmlElement(nodeName: "blockContainer")
                     || child.typeRef == .xmlElement(nodeName: "blockGroup")
+                    || child.typeRef == .xmlElement(nodeName: "columnList")
+                    || child.typeRef == .xmlElement(nodeName: "column")
                 {
                     stack.append(child)
                 }
@@ -574,7 +577,8 @@ struct BlockNoteWriter {
     }
 
     private func resolve(_ item: YItem, group: YType, id: String) throws -> Target {
-        guard group.typeRef == .xmlElement(nodeName: "blockGroup"),
+        // A column's blocks sit in the column itself (PR12a).
+        guard Self.isBlockList(group),
             case .type(let container) = item.content, container.typeRef == .xmlElement(nodeName: "blockContainer"),
             let first = children(container).first, case .type(let element) = first.content,
             case .xmlElement(let node)? = element.typeRef
@@ -594,6 +598,12 @@ struct BlockNoteWriter {
         return Target(
             id: id, item: item, container: container, elementItem: first, element: element, node: node,
             nested: nested, group: group)
+    }
+
+    /// A type whose children are a block list: a `blockGroup`, or a column
+    /// group's `column` (PR12a).
+    static func isBlockList(_ type: YType) -> Bool {
+        type.typeRef == .xmlElement(nodeName: "blockGroup") || type.typeRef == .xmlElement(nodeName: "column")
     }
 
     /// The engine's canonical index has already proved unique root-container

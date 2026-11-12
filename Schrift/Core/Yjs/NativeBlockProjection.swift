@@ -30,35 +30,59 @@ enum NativeBlockProjection {
         else { return ([], false, false) }
         var blocks: [NativeBlockSnapshot] = []
         var seen: Set<String> = []
-        func walk(_ group: YType, depth: Int, parent: NativeBlockHandle?) {
-            for item in YBlockProjection.children(of: group, includeFormats: false) {
-                var snapshot = projectBlock(
-                    item, depth: depth, parent: parent, generation: generation,
-                    interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks)
-                // Only the first of a repeated id is addressable; an id-less or
-                // repeated container stands for its subtree.
-                let unique = !snapshot.id.isEmpty && seen.insert(snapshot.id).inserted
-                if !unique, !snapshot.block.fidelity.isOpaque {
-                    snapshot.block = ProjectedBlock(
-                        id: snapshot.id, node: "", props: [], runs: [],
-                        fidelity: .opaque(reason: snapshot.id.isEmpty ? "missing block id" : "duplicate block id"))
-                    snapshot.preview = .preserved(node: "", summary: "")
-                }
-                blocks.append(snapshot)
-                guard unique, depth < maxDepth, case .type(let container) = item.content,
-                    let nested = nestedGroup(of: container)
-                else { continue }
-                walk(nested, depth: depth + 1, parent: snapshot.handle)
-            }
-        }
-        walk(group, depth: 0, parent: nil)
+        walk(
+            group, depth: 0, parent: nil, generation: generation, interlinkingOrigin: interlinkingOrigin,
+            nativeMarks: nativeMarks, seen: &seen, into: &blocks)
         let renderable = blocks.allSatisfy { !$0.block.fidelity.isOpaque }
         let modeled = renderable && blocks.allSatisfy { $0.block.fidelity == .modeled }
         return (blocks, renderable, modeled)
     }
 
+    /// The preorder walk of `group`'s blocks (a `blockGroup`, or a `column`,
+    /// whose children are containers too: PR12a).
+    private static func walk(
+        _ group: YType, depth: Int, parent: NativeBlockHandle?, generation: UUID, interlinkingOrigin: String?,
+        nativeMarks: Bool, seen: inout Set<String>, into blocks: inout [NativeBlockSnapshot]
+    ) {
+        for item in YBlockProjection.children(of: group, includeFormats: false) {
+            var snapshot = projectBlock(
+                item, depth: depth, parent: parent, generation: generation,
+                interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks)
+            // Only the first of a repeated id is addressable; an id-less or
+            // repeated container stands for its subtree.
+            let unique = !snapshot.id.isEmpty && seen.insert(snapshot.id).inserted
+            if !unique, !snapshot.block.fidelity.isOpaque {
+                snapshot.block = ProjectedBlock(
+                    id: snapshot.id, node: "", props: [], runs: [],
+                    fidelity: .opaque(reason: snapshot.id.isEmpty ? "missing block id" : "duplicate block id"))
+                snapshot.preview = .preserved(node: "", summary: "")
+            }
+            blocks.append(snapshot)
+            guard unique, depth < maxDepth, case .type(let container) = item.content,
+                let nested = nestedGroup(of: container)
+            else { continue }
+            walk(
+                nested, depth: depth + 1, parent: snapshot.handle, generation: generation,
+                interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks, seen: &seen, into: &blocks)
+        }
+    }
+
+    /// A column's blocks (PR12a), in preorder, each at its depth below the
+    /// column (its top-level blocks are depth 0, with no parent): what a
+    /// column surface shows and what the shadow spells per column.
+    static func columnBlocks(
+        _ column: YType, generation: UUID = UUID(), interlinkingOrigin: String? = nil, nativeMarks: Bool = true
+    ) -> [NativeBlockSnapshot] {
+        var blocks: [NativeBlockSnapshot] = []
+        var seen: Set<String> = []
+        walk(
+            column, depth: 0, parent: nil, generation: generation, interlinkingOrigin: interlinkingOrigin,
+            nativeMarks: nativeMarks, seen: &seen, into: &blocks)
+        return blocks
+    }
+
     /// One block, as `project` reads it at `depth` under `parent`: the
-    /// engine's per-block snapshot. O(block).
+    /// engine's per-block snapshot. O(block); a column group, O(group).
     static func projectBlock(
         _ item: YItem, depth: Int, parent: NativeBlockHandle?, generation: UUID,
         interlinkingOrigin: String? = nil, nativeMarks: Bool = true
@@ -67,6 +91,13 @@ enum NativeBlockProjection {
             item, interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks, nestedChildren: true)
         if depth >= maxDepth, case .type(let container) = item.content, nestedGroup(of: container) != nil {
             block = ProjectedBlock(id: block.id, node: "", props: [], runs: [], fidelity: .opaque(reason: "nesting"))
+        }
+        // A familiar column group (PR12a) whose every block the native
+        // projection models is modeled by it: its blocks are the column
+        // editor's, and the save shadow spells it as the export does. The
+        // classic projection keeps it opaque.
+        if nativeMarks, block.node == "columnList", case .type(let list) = item.content {
+            block.fidelity = columnFidelity(list, id: block.id, generation: generation)
         }
         return NativeBlockSnapshot(
             handle: NativeBlockHandle(generation: generation, itemID: item.id, stringID: block.id), block: block,
@@ -99,27 +130,60 @@ enum NativeBlockProjection {
         // A flat document with no native-only block keeps exactly the classic shadow.
         guard
             tree.blocks.contains(where: {
-                $0.depth > 0 || $0.block.node == "table" || nativeOnlyReasons.contains(opaqueReason($0.block))
+                $0.depth > 0 || $0.block.node == "table" || $0.block.node == "columnList"
+                    || nativeOnlyReasons.contains(opaqueReason($0.block))
             })
         else {
             return YBlockProjection.projectedMarkdown(YBlockProjection.project(doc))
         }
-        let blocks = tree.blocks
+        return spell(tree.blocks[...], items: rootItems(doc), allowsColumns: true)
+    }
+
+    /// The shadow of a run of root subtrees (the document's, or one column's,
+    /// PR12a): classic segments, each table and export-only subtree as the
+    /// export's own chunk, joined as the export joins root blocks. `items`
+    /// holds the run's top-level containers by item id (a table's grid and a
+    /// group's columns are read from them).
+    private static func spell(
+        _ blocks: ArraySlice<NativeBlockSnapshot>, items: [YID: YItem], allowsColumns: Bool
+    ) -> String? {
         var parts: [String] = []
         var plain = blocks.startIndex  // the first block not yet spelled
         var root = blocks.startIndex
-        var rootItems: [YID: YItem]?
         while root < blocks.endIndex {
             var end = root + 1
             while end < blocks.endIndex, blocks[end].depth > 0 { end += 1 }
             if blocks[root].block.node == "table" {
                 // A root table without children: the export's own grid (PR11a).
-                rootItems = rootItems ?? Self.rootItems(doc)
-                guard end == root + 1, let item = rootItems?[blocks[root].handle.itemID],
+                guard end == root + 1, let item = items[blocks[root].handle.itemID],
                     let grid = tableGrid(of: item), let before = classicSpelling(blocks[plain..<root]),
                     let chunk = NativeExportMarkdown.table(grid)
                 else { return nil }
                 parts += [before, chunk]
+                plain = end
+            } else if blocks[root].block.node == "columnList" {
+                // A root column group (PR12a): the export prints its column
+                // frames transparently, so it is each column's blocks spelled
+                // as root blocks, column after column, lists restarting at
+                // each column. No group inside a column.
+                guard allowsColumns, end == root + 1, let item = items[blocks[root].handle.itemID],
+                    case .type(let list) = item.content,
+                    ColumnGroup.read(list, id: blocks[root].id).isFamiliar,
+                    let before = classicSpelling(blocks[plain..<root])
+                else { return nil }
+                var columns: [String] = []
+                for column in ColumnGroup.columnTypes(of: list) {
+                    var columnItems: [YID: YItem] = [:]
+                    for child in YBlockProjection.children(of: column, includeFormats: false) {
+                        columnItems[child.id] = child
+                    }
+                    let snapshots = columnBlocks(column, nativeMarks: false)
+                    guard let spelled = spell(snapshots[...], items: columnItems, allowsColumns: false) else {
+                        return nil
+                    }
+                    columns.append(spelled)
+                }
+                parts += [before] + columns
                 plain = end
             } else if needsExport(blocks[root..<end]) {
                 guard let before = classicSpelling(blocks[plain..<root]),
@@ -136,6 +200,18 @@ enum NativeBlockProjection {
         // only turns loose, which `canonicalMarkdown` does not see.
         let spelled = (parts + [rest]).map { $0.trimmingCharacters(in: .newlines) }.filter { !$0.isEmpty }
         return spelled.joined(separator: "\n\n") + "\n"
+    }
+
+    /// A column group's native fidelity (PR12a): modeled when the group is
+    /// familiar and the native projection models every block in it.
+    private static func columnFidelity(_ list: YType, id: String, generation: UUID) -> ProjectionFidelity {
+        let group = ColumnGroup.read(list, id: id)
+        if case .unfamiliar(let reason) = group.familiarity { return .opaque(reason: "columnList: \(reason)") }
+        for column in ColumnGroup.columnTypes(of: list)
+        where !columnBlocks(column, generation: generation).allSatisfy({ $0.block.fidelity == .modeled }) {
+            return .opaque(reason: "columnList: unmodeled block")
+        }
+        return .modeled
     }
 
     /// The root group's containers by item id (a table's grid is read from its item).
