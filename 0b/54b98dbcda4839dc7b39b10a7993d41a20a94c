@@ -1,0 +1,54 @@
+Schrift/Core/Yjs/ColumnGroupModel.swift
+  s_dc239db0cc1c9d::t_b2cf68394d98fa 114-136
+  s_dc239db0cc1c9d::t_cac48fe3337d75 1-113,137-146
+Schrift/Core/Yjs/BlockNoteWriter.swift
+  s_dc239db0cc1c9d::t_0f6dcb5060a3be 564-565,568-569,580-581,603-606
+  s_dc239db0cc1c9d::t_179ba40ba35754 607-608
+Schrift/Features/Editor/Engine/EditorSurface.swift
+  s_dc239db0cc1c9d::t_ad21ff193affd6 74-80
+SchriftTests/Core/Yjs/BlockNoteColumnCaptures.swift
+  s_dc239db0cc1c9d::t_3de74815a4545c 1-162
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_dc239db0cc1c9d::t_b2cf68394d98fa 51-53,89,193-238,242,244
+  s_dc239db0cc1c9d::t_67839d78c06cec 239-241,243,245
+Schrift/Features/Editor/Engine/PatchBuilder.swift
+  s_dc239db0cc1c9d::t_ad21ff193affd6 42-45,51-52,112-128,184-187,233-252,259-262,284,286,315-335
+  s_dc239db0cc1c9d::t_c0b029a1462f6a 336
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_dc239db0cc1c9d::t_d7872977db1f8f 764-796
+  s_dc239db0cc1c9d::t_5a525b082c35a9 475-476,528-529
+  s_dc239db0cc1c9d::t_cf5e3d6958cff1 409-411,413-414,417,474,477-478,486,489-491,527,530,535,687-688,690,692,851-852,858-860,866,885-888,895,952,954-955,1162-1164,1166
+Schrift/Features/Editor/Native/DocumentReplicaSession.swift
+  s_dc239db0cc1c9d::t_a1710efae526fe 68-69,117-120,287-289,296-323,422-423,460,699-700,722-735,740-743,745,756,772-773,776-777,779,782,793-821,927
+  s_dc239db0cc1c9d::t_b2cf68394d98fa 241-242,250-251
+  s_dc239db0cc1c9d::t_508b47a78b2176 769-771
+Schrift/Core/Yjs/NativeBlockProjection.swift
+  s_dc239db0cc1c9d::t_61c169a4c4058d 101,133-134,139-149,158,164-187,205-215
+  s_dc239db0cc1c9d::t_777f5e52644ba6 33-35,41-83,85,95-100
+  s_dc239db0cc1c9d::t_663b171a9d55a1 216
+Schrift/Core/Yjs/BlockNoteTreeCommands.swift
+  s_dc239db0cc1c9d::t_0f6dcb5060a3be 65
+Schrift/Features/Editor/Engine/BlockIndex.swift
+  s_dc239db0cc1c9d::t_468b9ab03592cc 82-93,138-140,149-150,157-158,177-217,221-227,230-268,366-373,375-378,422-425,454-457,460
+  s_dc239db0cc1c9d::t_cf5e3d6958cff1 218-220
+  s_dc239db0cc1c9d::t_5a525b082c35a9 228-229
+  s_dc239db0cc1c9d::t_a9dcbe84326586 458-459
+Schrift/Features/Editor/Native/ReplicaCommandMailbox.swift
+  s_dc239db0cc1c9d::t_a1710efae526fe 72-73,103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b54b98dbcda4839dc7b39b10a7993d41a20a94c",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
