@@ -272,10 +272,19 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(done.waitForExistence(timeout: 5), "the table editor opened over the column")
         done.tap()
         XCTAssertTrue(first.waitForExistence(timeout: 5))
+        // A hidden column is not in the tree: count each while it is shown.
+        let picker = app.segmentedControls["nativeEditor.columns.picker"]
         XCTAssertEqual(
             app.textViews.matching(identifier: "nativeEditor.column.0").count, 1, "one surface per column")
+        picker.buttons.element(boundBy: 1).tap()
+        XCTAssertTrue(app.textViews["nativeEditor.column.1"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.textViews.matching(identifier: "nativeEditor.column.1").count, 1)
-        first.tap()
+        XCTAssertEqual(app.textViews.matching(identifier: "nativeEditor.column.0").count, 0, "the other column hides")
+        picker.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        // On the paragraph: below the column's last block (the table) the caret is the table's,
+        // which takes no text.
+        first.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 30, dy: 22)).tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         app.typeText("ward")
         let typed = XCTNSPredicateExpectation(

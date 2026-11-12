@@ -330,6 +330,43 @@ final class ColumnEditorTests: NativeEditingTestCase {
         XCTAssertTrue(model.columns.isEmpty)
     }
 
+    /// The screen's `.task` running again (a table editor's cover dismissed over
+    /// it, here a remove and re-add) never attaches the columns twice: the
+    /// presenter's model loads once.
+    func testTheScreenAttachesEachColumnOnceWhenItReappears() async throws {
+        let harness = try await makeHarness(state: try fixture("two"))
+        addTeardownBlock { await harness.close() }
+        let model = ColumnEditorModel(document: harness.session, groupID: "cl")
+        addTeardownBlock { model.close() }
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let host = UIHostingController(
+            rootView: ColumnEditorScreen(model: model, serverOrigin: "https://example.invalid")
+                .environment(LocalizationStore(userDefaults: defaults)))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        window.rootViewController = host
+        window.isHidden = false
+        windows.append(window)
+        func columnViews() -> [UIView] {
+            var found: [UIView] = []
+            func walk(_ view: UIView) {
+                if view.accessibilityIdentifier?.hasPrefix("nativeEditor.column.") == true { found.append(view) }
+                view.subviews.forEach(walk)
+            }
+            walk(host.view)
+            return found
+        }
+        for _ in 0..<500 where !(model.isLoaded && columnViews().count == 2) { await Task.yield() }
+        XCTAssertEqual(columnViews().count, 2)
+        let sessions = model.columns.map(ObjectIdentifier.init)
+        host.view.removeFromSuperview()
+        for _ in 0..<50 { await Task.yield() }
+        window.addSubview(host.view)
+        for _ in 0..<200 { await Task.yield() }
+        XCTAssertEqual(columnViews().count, 2, "one text view per column")
+        XCTAssertEqual(model.columns.map(ObjectIdentifier.init), sessions, "the same surfaces")
+        XCTAssertFalse(model.isClosed)
+    }
+
     func testATableInAColumnOpensTheTableEditorAndTypes() async throws {
         let (harness, column) = try await open("table")
         XCTAssertEqual(column.surface.blocks.map(\.id), ["x", "tbl"])

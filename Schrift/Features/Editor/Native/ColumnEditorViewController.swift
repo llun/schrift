@@ -14,7 +14,7 @@ import UIKit
 /// that column's surface. A reader or a read-only document gets the same
 /// columns without input.
 @MainActor @Observable
-final class ColumnEditorModel {
+final class ColumnEditorModel: Identifiable {
     let groupID: String
     @ObservationIgnored let document: NativeEditorSession
     private(set) var group: ColumnGroup?
@@ -43,7 +43,9 @@ final class ColumnEditorModel {
     var activeSession: NativeEditorSession? { columns.indices.contains(active) ? columns[active] : nil }
 
     /// Attaches every column of the group; nothing when the group is not
-    /// familiar (the card stays the only view of it).
+    /// familiar (the card stays the only view of it). Once per model: the
+    /// presenter owns the model, so a screen's `.task` running again (a table
+    /// editor's cover dismissed over it) never attaches the columns twice.
     func load() async {
         guard !loadStarted else { return }
         loadStarted = true
@@ -90,12 +92,10 @@ final class ColumnEditorModel {
 /// text, and the document's formatting bar, slash menu and link editor over
 /// the shown column's input.
 struct ColumnEditorScreen: View {
-    let document: NativeEditorSession
-    let groupID: String
+    /// Owned by the presenter, made when the card is tapped.
+    let model: ColumnEditorModel
     let serverOrigin: String
     var isOffline = false
-    let onClose: () -> Void
-    @State private var model: ColumnEditorModel?
     @State private var linkTarget: NativeLinkTarget?
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.docsTheme) private var theme
@@ -104,34 +104,19 @@ struct ColumnEditorScreen: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if let model {
-                    content(model)
-                } else {
-                    Color.clear
+            content(model)
+                .background(theme.colors.surfacePage)
+                .navigationTitle(String(format: loc[.native_editor_columns], model.columns.count))
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(loc[.editor_action_done]) { model.close() }
+                            .accessibilityIdentifier("nativeEditor.columns.done")
+                    }
                 }
-            }
-            .background(theme.colors.surfacePage)
-            .navigationTitle(String(format: loc[.native_editor_columns], model?.columns.count ?? 0))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(loc[.editor_action_done]) { model?.close() }
-                        .accessibilityIdentifier("nativeEditor.columns.done")
-                }
-            }
         }
-        .task {
-            // Once: a table editor's cover over the column re-runs this task on dismissal,
-            // and a second model would attach every column again.
-            guard model == nil else { return }
-            let model = ColumnEditorModel(document: document, groupID: groupID)
-            model.onClose = onClose
-            self.model = model
-            await model.load()
-        }
-        // A table editor over the column covers this screen: only a dismissal closes it.
-        .onDisappear { if model?.openTable == nil { model?.close() } }
+        // Done and Escape close the model; the screen never makes or closes one itself.
+        .task { await model.load() }
     }
 
     @ViewBuilder private func content(_ model: ColumnEditorModel) -> some View {

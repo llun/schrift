@@ -36,7 +36,7 @@ struct NativeEditorView: View {
     @State private var openTable: NativeTableRequest?
     @State private var lastTable: String?
     /// The column group whose editor is open (PR12a).
-    @State private var openColumns: NativeTableRequest?
+    @State private var openColumns: ColumnEditorModel?
     @State private var lastColumns: String?
 
     var body: some View {
@@ -55,7 +55,7 @@ struct NativeEditorView: View {
                     labels: .document(loc),
                     theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline,
                     onOpenTable: { openTable = NativeTableRequest(id: $0) },
-                    onOpenColumns: { openColumns = NativeTableRequest(id: $0) }
+                    onOpenColumns: { openColumns = columnEditor($0) }
                 )
                 .id(ObjectIdentifier(session))
             }
@@ -123,13 +123,8 @@ struct NativeEditorView: View {
                 // Back to the document, after the group (the keyboard stays up).
                 if let id = lastColumns { session.input?.focus(after: id) }
             }
-        ) { request in
-            ColumnEditorScreen(
-                document: session, groupID: request.id, serverOrigin: serverOrigin, isOffline: isOffline,
-                onClose: {
-                    lastColumns = request.id
-                    openColumns = nil
-                })
+        ) { model in
+            ColumnEditorScreen(model: model, serverOrigin: serverOrigin, isOffline: isOffline)
         }
         .nativeLinkEditing($linkTarget, input: session.input)
         .modifier(
@@ -189,6 +184,16 @@ struct NativeEditorView: View {
 }
 
 extension NativeEditorView {
+    /// The column editor's model for group `groupID`, owned by this view while presented (PR12a).
+    fileprivate func columnEditor(_ groupID: String) -> ColumnEditorModel {
+        let model = ColumnEditorModel(document: session, groupID: groupID)
+        model.onClose = {
+            lastColumns = groupID
+            openColumns = nil
+        }
+        return model
+    }
+
     fileprivate func presentOutline(focusingFind: Bool) {
         outlineFocusesFind = focusingFind
         session.navigation.isOutlinePresented = true
