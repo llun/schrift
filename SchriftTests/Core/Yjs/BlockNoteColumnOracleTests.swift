@@ -233,7 +233,7 @@ final class BlockNoteColumnOracleTests: XCTestCase {
         XCTAssertTrue(try group(doc).isFamiliar)
         let root = try XCTUnwrap(doc.share[BlockNoteYjs.fragmentField])
         guard case .type(let rootGroup)? = YBlockProjection.children(of: root, includeFormats: false).first?.content,
-            case .type(let list)? = YBlockProjection.children(of: rootGroup, includeFormats: false)[1].content
+            case .type(let list) = YBlockProjection.children(of: rootGroup, includeFormats: false)[1].content
         else { return XCTFail("no group") }
         let columns = ColumnGroup.columnTypes(of: list)
         try doc.transact { tx in try YWrite.mapSet(tx, on: columns[1], key: "id", .any([.string("c1")])) }

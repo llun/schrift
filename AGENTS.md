@@ -3426,7 +3426,12 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   existing `siblings.count > 1` rule). The group's own move and duplicate are refused
   (`requireMovable`: `isColumnGroup`), its delete and copy have no lossless payload
   (`BlockNoteSubtreePayload.validate` takes containers only), and nothing indents under it;
-  inserting a block above or below it works. **The writer** (`find`) descends into
+  inserting a block above or below it works. **Review fixes (PR #281):** Move up/down of a block
+  whose neighbour is a group is refused (the web's `getMovePlacement`/`getInsertionPos` moves it
+  into the group's first or last column: PR12b), two columns sharing an id make the group
+  unfamiliar (`duplicate column id`), and `ColumnEditorScreen` builds its model once (a table
+  editor's cover over a column re-ran its `.task` on dismissal and attached every column again,
+  leaving stale text views that could take first responder and drop typing). **The writer** (`find`) descends into
   `columnList`/`column`, `resolve` accepts a `column` as the parent list
   (`BlockNoteWriter.isBlockList`), and `liftListItem` lifts into a column; split, join, marks,
   type changes and indent were already parent-agnostic. **Patches:** a change inside an open group
@@ -3483,13 +3488,14 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   cols.mjs: seven web fixtures familiar with their export as the shadow, widths, column blocks;
   typing, Return, Return in an empty column block (`emptyChildEnter: "stay"`), an empty nested
   Return, list Return, join, Tab, Shift-Tab, bold, a type change, a range delete and a cell of a
-  column's table equal to the web's XML and Markdown; the web's boundary moves refused; a closed
+  column's table equal to the web's XML and Markdown; the web's boundary moves refused, moves past the group included; duplicate column ids; a closed
   group's blocks not targets; the real `.review/` group preserved), `ColumnEditorTests` (typing
   predicted and journaled and never shown to the document, the preview on close, Return/Backspace
   in the column, Tab, IME, undo and redo, relaunch, peers in two columns, a peer's new block, the
   picker keeping first responder, a column's table, the reader, an unfamiliar group, the document
-  typing around a group, a frozen document freezing its columns) and the host UI test
-  `testTypingInBothColumnsSurvivesRelaunch`
+  typing around a group, a frozen document freezing its columns) and the host UI tests
+  `testTypingInBothColumnsSurvivesRelaunch` and `testTypingAfterAColumnsTableSurvivesRelaunch`
+  (`--native-column-table`)
   (`--native-open --native-columns`).
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
