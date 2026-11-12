@@ -193,7 +193,7 @@ final class TableEditorViewController: UIViewController {
     /// One button per menu; each menu is built when it opens, for the active
     /// cell and the grid as it is then.
     private func buildControls() {
-        controls.isHidden = false
+        updateControls()
         let menus: [(key: L10nKey, identifier: String, build: () -> [UIMenuElement])] = [
             (.native_editor_table_row, "row", { [weak self] in self?.rowActions() ?? [] }),
             (.native_editor_table_column, "column", { [weak self] in self?.columnActions() ?? [] }),
@@ -212,6 +212,23 @@ final class TableEditorViewController: UIViewController {
         }
     }
 
+    /// A menu's items as it would open now (tests; the buttons build them so).
+    func menuElements(_ identifier: String) -> [UIMenuElement] {
+        switch identifier {
+        case "row": rowActions()
+        case "column": columnActions()
+        case "cell": cellActions()
+        default: formatActions()
+        }
+    }
+
+    /// The menus show only while the table surface types and the grid is
+    /// familiar: an uneven grid (a concurrent change awaiting its repair) has
+    /// no structure commands.
+    private func updateControls() {
+        controls.isHidden = cellSession?.input == nil || grid?.isFamiliar != true
+    }
+
     /// Runs `command` on the table through the table surface: one durable
     /// barrier, refused before writing when the web would refuse it.
     @discardableResult
@@ -219,7 +236,10 @@ final class TableEditorViewController: UIViewController {
         cellSession?.input?.applyTable(tableID, command) ?? false
     }
 
-    private var activeCell: TableGrid.Cell? { active.flatMap { grid?.cell($0) } }
+    private var activeCell: TableGrid.Cell? {
+        guard let grid, grid.isFamiliar else { return nil }
+        return active.flatMap { grid.cell($0) }
+    }
 
     private func action(
         _ key: L10nKey, _ identifier: String, state: Bool = false, enabled: Bool = true,
@@ -283,6 +303,7 @@ final class TableEditorViewController: UIViewController {
     private func columnActions() -> [UIMenuElement] {
         guard let cell = activeCell, let grid else { return [] }
         let column = cell.column + cell.colspan - 1
+        guard grid.isFamiliar, grid.columnWidths.indices.contains(column) else { return [] }
         let width = grid.columnWidths[column]
         return [
             action(.native_editor_table_column_left, "columnLeft", .addColumn(column: cell.column, after: false)),
@@ -380,6 +401,7 @@ final class TableEditorViewController: UIViewController {
             guard let self, let grid = await self.document.tableGrid(self.tableID), !Task.isCancelled else { return }
             let keep = self.active.flatMap { self.grid?.cell($0).itemID }
             self.grid = grid
+            self.updateControls()
             self.cellSession?.grid = grid
             self.rebuild()
             // The active cell survives by identity; a deleted one gives way to the first.

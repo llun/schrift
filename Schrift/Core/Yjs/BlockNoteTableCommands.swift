@@ -55,6 +55,11 @@ extension BlockNoteWriter {
         guard grid.isFamiliar else { throw Error.malformedBlock(block) }
         var model = try TableModel(table: table, block: block)
         try model.apply(command, grid: grid)
+        // A table grown past the bound would be unfamiliar ("large table"):
+        // no shadow, so the next save would fail. Refused before writing.
+        let map = try model.map()
+        // Every cell covers a slot, so the slot area bounds the cell count too.
+        guard map.width * map.height <= TableGrid.maxCells else { throw Error.unsupportedBlockType("table") }
         return model
     }
 
@@ -191,7 +196,9 @@ struct TableModel {
                 while slots[row].indices.contains(column), slots[row][column] != nil { column += 1 }
                 let cell = rows[row].cells[index]
                 map.columns[row][index] = column
-                guard row + cell.rowspan <= rows.count else { throw BlockNoteWriter.Error.malformedBlock("table") }
+                guard cell.colspan >= 1, cell.rowspan >= 1, row + cell.rowspan <= rows.count else {
+                    throw BlockNoteWriter.Error.malformedBlock("table")
+                }
                 for spanned in row..<(row + cell.rowspan) {
                     while slots[spanned].count < column + cell.colspan { slots[spanned].append(nil) }
                     for slot in column..<(column + cell.colspan) {
@@ -310,6 +317,13 @@ struct TableModel {
     /// short rows), and a column whose cells disagree on its width takes the
     /// width most of them have. True when something was fixed.
     mutating func fixTable() throws -> Bool {
+        // A span below 1 has no fix (prosemirror would leave it broken): refuse.
+        guard rows.allSatisfy({ $0.cells.allSatisfy { $0.colspan >= 1 && $0.rowspan >= 1 } }) else {
+            throw BlockNoteWriter.Error.unsupportedBlockType("table")
+        }
+        // Every fix is built from the cell as the pass found it
+        // (`table.nodeAt(prob.pos)`): several on one cell do not pile up.
+        let original = rows
         // `findWidth`.
         var width = -1
         var hasRowSpan = false
@@ -402,11 +416,18 @@ struct TableModel {
         for problem in problems {
             switch problem {
             case .collision(let row, let ref, let n):
-                for j in 0..<self[ref].rowspan where row + j < height { mustAdd[row + j] += n }
-                self[ref].attrs = Self.removeColSpan(self[ref].attrs, at: self[ref].colspan - n, count: n)
+                let cell = original[ref.row].cells[ref.index]
+                for j in 0..<cell.rowspan where row + j < height { mustAdd[row + j] += n }
+                self[ref].attrs = Self.removeColSpan(cell.attrs, at: cell.colspan - n, count: n)
             case .missing(let row, let n): mustAdd[row] += n
-            case .overlong(let ref, let n): self[ref].attrs["rowspan"] = .int(self[ref].rowspan - n)
-            case .colwidth(let ref, let widths): self[ref].attrs["colwidth"] = .array(widths)
+            case .overlong(let ref, let n):
+                var attrs = original[ref.row].cells[ref.index].attrs
+                attrs["rowspan"] = .int(original[ref.row].cells[ref.index].rowspan - n)
+                self[ref].attrs = attrs
+            case .colwidth(let ref, let widths):
+                var attrs = original[ref.row].cells[ref.index].attrs
+                attrs["colwidth"] = .array(widths)
+                self[ref].attrs = attrs
             }
         }
         let first = mustAdd.firstIndex { $0 > 0 }

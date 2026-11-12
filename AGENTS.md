@@ -3283,8 +3283,23 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   structure change merges in Yjs; one that leaves the grid ragged (a row and a column added at
   once) is unfamiliar, read-only and addresses no cell until a web client's `fixTables` writes the
   repair, and meanwhile the shadow spells the repaired grid (`TableModel.fixedGrid`), so a save
-  does not fail. **Known limits:** two native clients changing structure at once wait for a web
-  client to repair a ragged grid; Shift-Return over a selection, or while another barrier is in
+  does not fail. **Review fixes (PR #279).** `fixTable` builds every fix from the cell as its
+  pass found it (prosemirror's `table.nodeAt(prob.pos)`, the last write wins), so several
+  collisions on one spanning cell no longer pile up into a span below 1; a span below 1 is
+  refused by `map()` and `fixTable` (no repaired grid, so no shadow, never a trap). Pinned against
+  prosemirror's own `fixTables` (`BlockNoteTableFixCaptures`: piled collisions, a collision, an
+  overlong rowspan, missing cells, disagreeing widths). `prepareTable` refuses a command whose
+  result exceeds `TableGrid.maxCells` cells or slots (the menu item shows disabled), so no native
+  add makes a table unfamiliar. The table editor hides its menus while the grid is uneven, and the
+  Column menu never indexes past the widths. **A native repair is not written** (owner question
+  in the review): the web writes `fixTables`' repair only when someone next edits the document
+  (its ProseMirror view holds the repaired table meanwhile), so a native client that repaired on
+  receipt would repair alongside a web client in the common web-and-native case, and two
+  repairs of missing cells insert twice (Yjs keeps both inserts), which no rule makes idempotent.
+  **Known limits:** an uneven grid stays read-only (with a shadow of the repaired grid, so saves
+  continue) until a web client edits the document: after any offline window with structure
+  changes on two devices, overlapping merges, or deleting a row while a merge-down lands, two
+  native devices with no web client leave it read-only; Shift-Return over a selection, or while another barrier is in
   flight, does nothing; the row and column colour menus colour the cells starting in that row or
   column (the web's handle may include a cell spanning into it); rectangular selection (merging
   more than two cells at once) is PR11c; the repaired-grid shadow is not pinned against the server.

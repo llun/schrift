@@ -109,6 +109,123 @@ final class BlockNoteTableCommandOracleTests: XCTestCase {
         XCTAssertEqual(YXMLString.fragment(doc), before)
     }
 
+    /// The repaired grid the shadow spells for an uneven table
+    /// (`TableModel.fixedGrid`) is the one prosemirror's `fixTables` leaves on
+    /// the web, for collisions, overlong spans, missing cells and widths
+    /// (review: several fixes on one cell are each built from the original).
+    func testTheRepairedGridIsTheWebsFixTables() throws {
+        func signature(_ grid: TableGrid) -> [[String]] {
+            grid.rows.map { row in
+                row.map { cell in
+                    "\(cell.isHeader ? "th" : "td") \(cell.colspan)x\(cell.rowspan) \(cell.widths) "
+                        + cell.runs.map(\.text).joined()
+                }
+            }
+        }
+        func table(_ doc: YDoc) throws -> YType {
+            let root = try XCTUnwrap(doc.share[BlockNoteYjs.fragmentField])
+            guard case .type(let group)? = YBlockProjection.children(of: root, includeFormats: false).first?.content,
+                case .type(let container)? = YBlockProjection.children(of: group, includeFormats: false).first?.content,
+                case .type(let table)? = YBlockProjection.children(of: container, includeFormats: false).first?.content
+            else { throw XCTSkip("no table") }
+            return table
+        }
+        for (name, seed, fixed) in BlockNoteTableFixCaptures.cases {
+            let broken = try doc(seed)
+            let web = try doc(fixed)
+            defer {
+                broken.destroy()
+                web.destroy()
+            }
+            // Disagreeing widths are familiar (the shadow ignores widths); the rest are uneven.
+            if name != "colwidth" {
+                XCTAssertNotEqual(TableGrid.read(try table(broken)).familiarity, .familiar, name)
+            }
+            let webGrid = TableGrid.read(try table(web))
+            XCTAssertEqual(webGrid.familiarity, .familiar, name)
+            let native = try XCTUnwrap(TableModel.fixedGrid(try table(broken)), name)
+            XCTAssertEqual(signature(native), signature(webGrid), name)
+        }
+    }
+
+    /// A span below 1 has no repair: no grid (so no shadow), never a trap.
+    /// Here a colspan-0 cell covers no slot, so the rest of the map is even
+    /// and only the span check stops the export reading past the row.
+    func testASpanBelowOneHasNoRepairedGrid() throws {
+        let doc = YDoc(clientID: 2, gc: false)
+        defer { doc.destroy() }
+        let root = doc.get(BlockNoteYjs.fragmentField)
+        var tableType: YType?
+        try doc.transact { tx in
+            let group = YType(typeRef: .xmlElement(nodeName: "blockGroup"))
+            try YWrite.insertAfter(tx, into: root, after: nil, [.type(group)])
+            let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            try YWrite.insertAfter(tx, into: group, after: nil, [.type(container)])
+            try YWrite.mapSet(tx, on: container, key: "id", .any([.string("tbl")]))
+            let table = YType(typeRef: .xmlElement(nodeName: "table"))
+            try YWrite.insertAfter(tx, into: container, after: nil, [.type(table)])
+            tableType = table
+            var lastRow: YItem?
+            for cells in [3, 2] {
+                let row = YType(typeRef: .xmlElement(nodeName: "tableRow"))
+                lastRow = try YWrite.insertAfter(tx, into: table, after: lastRow, [.type(row)])
+                var lastCell: YItem?
+                for index in 0..<cells {
+                    let cell = YType(typeRef: .xmlElement(nodeName: "tableCell"))
+                    lastCell = try YWrite.insertAfter(tx, into: row, after: lastCell, [.type(cell)])
+                    try YWrite.insertAfter(
+                        tx, into: cell, after: nil, [.type(YType(typeRef: .xmlElement(nodeName: "tableParagraph")))])
+                    if index == 2 { try YWrite.mapSet(tx, on: cell, key: "colspan", .any([.int(0)])) }
+                }
+            }
+        }
+        let table = try XCTUnwrap(tableType)
+        XCTAssertNotEqual(TableGrid.read(table).familiarity, .familiar)
+        XCTAssertNil(TableModel.fixedGrid(table))
+        XCTAssertNil(NativeBlockProjection.markdownShadow(doc), "no shadow, no crash")
+    }
+
+    /// Review: a command that would grow a table past `TableGrid.maxCells`
+    /// is refused (the grown table would have no shadow and stop saves).
+    func testACommandGrowingATablePastTheBoundIsRefused() throws {
+        let doc = YDoc(clientID: 2, gc: false)
+        defer { doc.destroy() }
+        let root = doc.get(BlockNoteYjs.fragmentField)
+        try doc.transact { tx in
+            let group = YType(typeRef: .xmlElement(nodeName: "blockGroup"))
+            try YWrite.insertAfter(tx, into: root, after: nil, [.type(group)])
+            let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            try YWrite.insertAfter(tx, into: group, after: nil, [.type(container)])
+            try YWrite.mapSet(tx, on: container, key: "id", .any([.string("tbl")]))
+            let table = YType(typeRef: .xmlElement(nodeName: "table"))
+            try YWrite.insertAfter(tx, into: container, after: nil, [.type(table)])
+            var lastRow: YItem?
+            for _ in 0..<100 {
+                let row = YType(typeRef: .xmlElement(nodeName: "tableRow"))
+                lastRow = try YWrite.insertAfter(tx, into: table, after: lastRow, [.type(row)])
+                var lastCell: YItem?
+                for _ in 0..<10 {
+                    let cell = YType(typeRef: .xmlElement(nodeName: "tableCell"))
+                    lastCell = try YWrite.insertAfter(tx, into: row, after: lastCell, [.type(cell)])
+                    try YWrite.insertAfter(
+                        tx, into: cell, after: nil, [.type(YType(typeRef: .xmlElement(nodeName: "tableParagraph")))])
+                }
+            }
+        }
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        XCTAssertEqual(engine.tableGrid("tbl")?.familiarity, .familiar, "exactly 1,000 cells")
+        for command in [BlockNoteTableCommand.addRow(row: 99, after: true), .addColumn(column: 9, after: true)] {
+            XCTAssertFalse(
+                engine.canApplyStructural(
+                    NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: "tbl", kind: .table(command))),
+                "\(command)")
+        }
+        XCTAssertTrue(
+            engine.canApplyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "tbl", kind: .table(.deleteRow(row: 0)))))
+    }
+
     /// The shadow of styled merged cells and hard breaks (11a had none):
     /// BlockNote joins equal-styled paragraphs with a break, concatenates the
     /// rest, and closes marks around a break.

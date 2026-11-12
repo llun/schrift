@@ -758,6 +758,14 @@ final class TableEditorTests: NativeEditingTestCase {
         let frozen = await harness.engine { $0.nativeWriteFailed }
         XCTAssertEqual(frozen, false)
         XCTAssertTrue(table.surface.blocks.isEmpty, "no cell is a text target while the grid is ragged")
+        // Review: the editor's menus go with the familiar grid, and building
+        // one on the uneven grid never indexes past its (empty) widths.
+        for _ in 0..<300 where editor.grid?.isFamiliar != false { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(editor.grid?.isFamiliar, false)
+        XCTAssertTrue(editor.controls.isHidden, "no structure menus on an uneven grid")
+        for menu in ["row", "column", "cell", "format"] {
+            XCTAssertTrue(editor.menuElements(menu).isEmpty || menu == "format", menu)
+        }
     }
 
     func testDuplicatingATableKeepsItsCells() async throws {
