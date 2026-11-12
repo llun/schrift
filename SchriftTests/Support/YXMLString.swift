@@ -107,7 +107,19 @@ enum YXMLString {
         // elements, null and undefined empty.
         case .array(let values):
             return values.map { $0 == .null || $0 == .undefined ? "" : render($0) }.joined(separator: ",")
-        // Floats and objects never appear in the captures; never match yjs's coercion.
+        // A float as JS's `String(number)` for the values the captures hold
+        // (a web drag's width, a pasted width's `NaN`).
+        case .float64:
+            guard let number = TableGrid.number(value) else {
+                if case .float64(let data) = value, data.count == 8,
+                    Double(bitPattern: data.reduce(UInt64(0)) { $0 << 8 | UInt64($1) }).isNaN
+                {
+                    return "NaN"
+                }
+                return "<unsupported \(value)>"
+            }
+            return number == number.rounded() && abs(number) < 1e21 ? String(Int(number)) : String(number)
+        // Objects never appear in the captures; never match yjs's coercion.
         default: return "<unsupported \(value)>"
         }
     }

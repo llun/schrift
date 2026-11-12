@@ -1078,8 +1078,8 @@ exactly as in a paragraph; each cell paragraph is a text target of the replica s
 while its table is open, and the document's own view never sees it. Anything the editor does not
 understand (a mention or inline math in a cell, a malformed grid the web would rewrite, a table
 over 1,000 cells) keeps the table, and the document, read-only and untouched. Adding or removing
-rows and columns, merging, header and colour changes are the next slice (PR11b); rectangular
-selection, copy and paste, VoiceOver grid navigation and very large tables follow (PR11c).
+rows and columns, merging, header and colour changes came in PR11b; rectangular
+selection, copy and paste, VoiceOver grid navigation and very large tables in PR11c.
 
 **PR11b Table structure.** The table editor has Row, Column, Cell and Format menus: insert
 and delete rows and columns, header row and column, merge with the cell to the right or below,
@@ -1089,6 +1089,21 @@ checked against the web for every operation on four tables, one durable command 
 offline saves and live collaboration treat like any other. Shift-Return inserts a hard break in a
 cell. A peer's structure change merges; if two changes at once leave the grid uneven, the table
 waits read-only for the web editor's repair while saves keep working.
+
+**PR11c Selecting, copying and pasting cells; very large tables.** A long press and drag (or a
+trackpad drag, Shift-click, or Shift-arrows past a cell's edge) selects a rectangle of cells, as
+on the web. Copy, cut, paste, Backspace, merge, colours and alignment act on the selected cells
+with the web editor's own clipboard rules: a copy writes the same HTML and Markdown the web
+writes (and Schrift's lossless copy, which pastes as a new table outside the editor); a pasted
+web or spreadsheet table fills the selection (repeating to fill it, cut to fit) or goes in from
+the active cell, growing the table; plain text fills every selected cell. Pasted content is
+untrusted and bounded before anything is written. Arrows at a cell's edge move to the next cell
+and ⌘Return is Done. The grid only builds the cells on screen, and VoiceOver reads it as a data
+table (rows, columns, headers, spans; a collaborator's cell is announced). A table over 1,000
+cells opens read-only but whole (up to 50,000 cells) and scrolls smoothly; editing one is a
+later change (the typing surface still holds every cell). The cell being edited shows its
+alignment, collaborators show on their cells (a caret in the active one), and a composition
+lost in a cell becomes the document's recovery entry.
 
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom

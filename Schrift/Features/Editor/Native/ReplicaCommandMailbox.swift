@@ -65,7 +65,10 @@ enum ReplicaMessage: Sendable {
     /// block in this replica (same generation and item), else nil.
     case locate(NativeBlockHandle, reply: @Sendable (String?) -> Void)
     /// Tables (PR11a): the grid of table `blockID` now (nil when it is not a table).
-    case tableGrid(blockID: String, reply: @Sendable (TableGrid?) -> Void)
+    /// `full` (PR11c) reads a table past the editing bound, for the viewer.
+    case tableGrid(blockID: String, full: Bool = false, reply: @Sendable (TableGrid?) -> Void)
+    /// Tables (PR11c): the clipboard of the CellSelection `from`...`to`.
+    case tableCopy(blockID: String, from: TableSlot, to: TableSlot, reply: @Sendable (TableCopy?) -> Void)
     case requestAvailability(surfaceID: UUID, blockID: String, candidates: [ReplicaAvailabilityCandidate])
     case copyPayload(surfaceID: UUID, requestID: UUID, blockIDs: [String])
     /// Installs the journal (nil makes the session read-only) and the shared
@@ -93,7 +96,8 @@ enum ReplicaMessage: Sendable {
         case .resolveCursors(_, let reply): reply([:])
         case .navigation(let reply): reply([])
         case .locate(_, let reply): reply(nil)
-        case .tableGrid(_, let reply): reply(nil)
+        case .tableGrid(_, _, let reply): reply(nil)
+        case .tableCopy(_, _, _, let reply): reply(nil)
         case .inspect(let body): body(nil, nil, nil)
         default: break
         }

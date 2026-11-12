@@ -235,7 +235,7 @@ final class NativeCursorOverlay: UIView {
 
 extension UIColor {
     /// A `0xRRGGBB` palette value (never peer-supplied text).
-    fileprivate convenience init(rgb: UInt32) {
+    convenience init(rgb: UInt32) {
         self.init(
             red: CGFloat((rgb >> 16) & 0xFF) / 255, green: CGFloat((rgb >> 8) & 0xFF) / 255,
             blue: CGFloat(rgb & 0xFF) / 255, alpha: 1)

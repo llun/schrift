@@ -58,9 +58,26 @@ final class NativeCompositionSession {
     /// Commits posted and not answered: their entries stay on disk until then.
     private var committing: Set<UUID> = []
 
-    /// Recovery the user still has to resolve, oldest first.
+    /// Recovery the user still has to resolve, oldest first (a table
+    /// surface's adopted entries after the document's own).
     var pendingRecoveries: [ProvisionalRecovery] {
         recoveries.filter { !(isActive && $0.commandID == commandID) && !committing.contains($0.commandID) }
+            + adopted.keys.sorted { $0.uuidString < $1.uuidString }.flatMap { adopted[$0] ?? [] }
+    }
+
+    /// A table surface's entries (PR11c), by surface: the document writes them
+    /// beside its own (`provisional.json` is one list), shows them, and a
+    /// relaunch restores them as the document's.
+    private var adopted: [UUID: [ProvisionalRecovery]] = [:]
+
+    /// A table surface's composition hands its entries here instead of
+    /// writing the recovery file itself.
+    @ObservationIgnored var forward: (([ProvisionalRecovery]) -> Void)?
+
+    func adopt(_ entries: [ProvisionalRecovery], from source: UUID) {
+        guard adopted[source] ?? [] != entries else { return }
+        adopted[source] = entries.isEmpty ? nil : entries
+        save()
     }
 
     init(
@@ -174,16 +191,26 @@ final class NativeCompositionSession {
     }
 
     private func remove(_ id: UUID) {
-        guard recoveries.contains(where: { $0.commandID == id }) else { return }
+        let isAdopted = adopted.values.contains { $0.contains { $0.commandID == id } }
+        guard recoveries.contains(where: { $0.commandID == id }) || isAdopted else { return }
         recoveries.removeAll { $0.commandID == id }
+        for (source, entries) in adopted {
+            let kept = entries.filter { $0.commandID != id }
+            adopted[source] = kept.isEmpty ? nil : kept
+        }
         save()
     }
 
     /// Recovery text is a convenience copy, never committed content: a failed
     /// write must not block typing, and the journal path reports disk failures.
     private func save() {
+        if let forward {
+            forward(recoveries)
+            return
+        }
         guard hasRecoveryStore else { return }
-        port.writeRecoveries(recoveries)
+        port.writeRecoveries(
+            recoveries + adopted.keys.sorted { $0.uuidString < $1.uuidString }.flatMap { adopted[$0] ?? [] })
     }
 
     /// The block-relative replacement range of the current selection. Both

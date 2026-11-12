@@ -104,6 +104,8 @@ final class NativeTextView: UITextView {
         }
         // Return and Tab (a hardware Tab without the key command below) are
         // structural; while a barrier is in flight every key is held (PR08b).
+        // Typing over a CellSelection clears it (PR11c); the text goes into the active cell.
+        if !inputCoordinator.composition.isActive { _ = inputCoordinator.tableKey?(.typing) }
         if inputCoordinator.composition.isActive, text != "\n", text != "\r", text != "\t" {
             dropMarkedText()
             inputCoordinator.commitComposition(text: text)
@@ -126,6 +128,8 @@ final class NativeTextView: UITextView {
                 UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(nativeEscape)))
             // Shift-Return: a hard break in the cell (PR11b).
             commands.append(UIKeyCommand(input: "\r", modifierFlags: .shift, action: #selector(nativeLineBreak)))
+            // ⌘Return: Done (PR11c).
+            commands.append(UIKeyCommand(input: "\r", modifierFlags: .command, action: #selector(nativeDone)))
         }
         for command in commands { command.wantsPriorityOverSystemBehavior = true }
         return (super.keyCommands ?? []) + commands
@@ -139,6 +143,53 @@ final class NativeTextView: UITextView {
     @objc private func nativeLineBreak() {
         guard markedTextRange == nil else { return }
         inputCoordinator?.insertLineBreak()
+    }
+
+    @objc private func nativeDone() {
+        guard markedTextRange == nil else { return }
+        _ = inputCoordinator?.tableMove?(.done)
+    }
+
+    /// A table cell's hardware arrows (PR11c) go to the table editor first:
+    /// Shift-arrows grow a CellSelection past the cell's edge, and an arrow at
+    /// the edge moves to the next cell (prosemirror-tables' `arrow` and
+    /// `shiftArrow`). Anything it does not take is the text view's.
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if let handler = inputCoordinator?.tableKey, markedTextRange == nil, presses.count == 1,
+            let key = presses.first?.key, key.modifierFlags.subtracting([.shift, .numericPad]).isEmpty
+        {
+            let direction: NativeInputCoordinator.TableKey.Direction? =
+                switch key.keyCode {
+                case .keyboardLeftArrow: .left
+                case .keyboardRightArrow: .right
+                case .keyboardUpArrow: .up
+                case .keyboardDownArrow: .down
+                default: nil
+                }
+            if let direction, handler(.arrow(direction, extend: key.modifierFlags.contains(.shift))) {
+                handledPresses.formUnion(presses.map(ObjectIdentifier.init))
+                return
+            }
+        }
+        super.pressesBegan(presses, with: event)
+    }
+
+    /// The cell this text view edits, as VoiceOver's data table reads it (PR11c).
+    var tableCellRanges: (row: NSRange, column: NSRange)?
+
+    /// The presses `pressesBegan` took: their end is not the text view's either.
+    private var handledPresses: Set<ObjectIdentifier> = []
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let taken = presses.filter { handledPresses.remove(ObjectIdentifier($0)) != nil }
+        let rest = presses.subtracting(taken)
+        if !rest.isEmpty { super.pressesEnded(rest, with: event) }
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let taken = presses.filter { handledPresses.remove(ObjectIdentifier($0)) != nil }
+        let rest = presses.subtracting(taken)
+        if !rest.isEmpty { super.pressesCancelled(rest, with: event) }
     }
 
     @objc private func nativeEscape() {
@@ -166,6 +217,8 @@ final class NativeTextView: UITextView {
             setMarkedText(shorter, selectedRange: NSRange(location: shorter.utf16.count, length: 0))
             return
         }
+        // A CellSelection's Backspace or Delete empties its cells (PR11c).
+        if inputCoordinator.tableKey?(.delete) == true { return }
         // A block start is structural (PR04a); held while a barrier is in flight.
         inputCoordinator.deleteKey()
     }
@@ -183,6 +236,7 @@ final class NativeTextView: UITextView {
     override func copy(_ sender: Any?) {
         guard let inputCoordinator else { return super.copy(sender) }
         guard markedTextRange == nil else { return }
+        if inputCoordinator.tableKey?(.copy) == true { return }
         inputCoordinator.copySelection()
     }
 
@@ -190,6 +244,7 @@ final class NativeTextView: UITextView {
     /// as copy plus one range delete instead.
     override func cut(_ sender: Any?) {
         guard let inputCoordinator, isEditable, markedTextRange == nil else { return }
+        if inputCoordinator.tableKey?(.cut) == true { return }
         inputCoordinator.cutSelection()
     }
 
@@ -197,6 +252,7 @@ final class NativeTextView: UITextView {
     /// over the selection (PR06d).
     override func paste(_ sender: Any?) {
         guard let inputCoordinator, isEditable, markedTextRange == nil else { return }
+        if inputCoordinator.tableKey?(.paste) == true { return }
         inputCoordinator.pasteFromPasteboard()
     }
 

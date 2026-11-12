@@ -3225,10 +3225,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   **Known limits:** on CI's iOS 26.5 simulator XCUITest's synthesized Shift-Tab never reached the
   cell (run 43116995469; the host UI test therefore moves with Tab and a tap, and Shift-Tab is
   unit-tested only), so Shift-Tab on an iOS 26 hardware keyboard is unconfirmed until a device
-  check; the active cell edits left-aligned (the grid shows its alignment); peer cursors
-  are not painted in the table editor; a mixed transaction (text and a cell colour at once) does
-  not re-read the grid; IME recovery entries are not written for a cell composition; a table
-  over 1,000 cells, a nested
+  check; (PR11c lifted: the active cell's alignment, peer cursors in the table editor, a mixed
+  text-and-colour transaction, IME recovery for a cell); a table
+  over 1,000 cells (PR11c: viewable, not editable), a nested
   table and the 72ebe1bb test document (math, columns, media and a diagram have no shadow yet) stay
   read-only; pasting another unshadowable block (math, media, an unfamiliar table) still stops
   saves at the next capture (the pre-existing PR06d class: the capture failure freezes authoring
@@ -3301,8 +3300,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   changes on two devices, overlapping merges, or deleting a row while a merge-down lands, two
   native devices with no web client leave it read-only; Shift-Return over a selection, or while another barrier is in
   flight, does nothing; the row and column colour menus colour the cells starting in that row or
-  column (the web's handle may include a cell spanning into it); rectangular selection (merging
-  more than two cells at once) is PR11c; the repaired-grid shadow is not pinned against the server.
+  column (the web's handle may include a cell spanning into it); the repaired-grid shadow is not
+  pinned against the server (rectangular selection came in PR11c).
   Tests: `BlockNoteTableCommandOracleTests` (`BlockNoteTableOperationCaptures`: 84 web operations
   on four tables, the 76 the web applies equal to its XML with the shadow equal to its Markdown,
   the 8 it refuses refused natively; styled merges and hard breaks), `TableEditorTests` (the menus
@@ -3310,6 +3309,92 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   keeping a peer's concurrent typing, concurrent structure changes, merged-cell marks, a
   hard-break cell typed into, Shift-Return, IME after a break), `TableGridTests` (web widths) and
   the host UI test `testTheRowMenuInsertsARowThatSurvivesRelaunch`.
+
+- **PR11c CellSelection, clipboard, VoiceOver, scale.** **Commands** (`BlockNoteTableCommands`):
+  `.clear(from:to:)` is prosemirror-tables 1.8.5's `deleteCellSelection` (each cell of
+  `cellsInRect` emptied to one paragraph, attributes kept; also cut's delete) and
+  `.paste(cells:anchor:head:)` its `handlePaste`: `ensureRectangular`, then into a CellSelection
+  `clipCells` (repeat or cut to its size, prosemirror's own `removeColSpan(attrs, colspan, n)`
+  and `max(1, newHeight - rowspan)` arithmetic kept), else from the active cell; `insertCells`
+  (`growTable` with the last row's/cell's kinds, `isolateHorizontal`/`isolateVertical` at the
+  four edges, each row's target cells replaced), then `fixTables`. Growth is bounded
+  (`maxCells` slots) before any cell is allocated. Merging a selection is the existing `.merge`
+  on its corners. `TableModel.content(from:to:)` is `CellSelection.content()` (edge cells
+  clipped, emptied when they start outside). **Clipboard** (`Core/Yjs/BlockNoteTableClipboard
+  .swift`): a copy (`DocumentEngine.tableCopy`, mailbox `.tableCopy`, read in mailbox order)
+  writes `public.html` as BlockNote's external HTML (every cell a `td`, props as `data-*`,
+  `colwidth` only on spanning cells from the first row's widths, marks in schema rank through
+  prosemirror's `DOMSerializer` rule, closed around a break, BlockNote's palette for colour
+  spans), plain text as its Markdown (`NativeExportMarkdown.table`, every cell a `td`, so an
+  empty header line), and a one-table `BlockNoteSubtreePayload` (a paste outside the editor
+  inserts a table). Paste reads, like the web, the payload as BlockNote reads its own
+  `blocknote/html` (nodes and spans kept, content flattened by `parseTableContent`, `colwidth`
+  through `parseInt`, an unset width `NaN`), else `public.html` through BlockNote's parse
+  (`tryParseHTMLToBlocks` + `blocksToFullHTML`: header rows/columns counted, widths from the
+  first row, `data-*` props or a palette colour name in `style`), else (only into a
+  CellSelection) plain text as one cell, a line break a hard break. **Untrusted:** `HTMLNode` is
+  a bounded tolerant parser (2 MiB, 200,000 nodes, depth 256, raw-text elements skipped, implied
+  end tags), anything but one table is not cells, spans and cells are bounded, a link
+  `sanitizedLinkURL` would not write unchanged loses its mark. **Editor**
+  (`TableEditorViewController`, `TableGridView`): the CellSelection is two slots (kept across a
+  structure change where they still fit; a paste selects what it pasted; a merge activates the
+  merged cell); a long press and drag (the grid's pan is cancelled), a pointer drag, Shift-click
+  and Shift-arrows past the cell's edge (`shiftArrow`: `atEndOfCell` by offsets, caret-line
+  geometry for up/down) select; plain arrows at the edge move (`arrow`: Left/Right to the
+  neighbour in row order with the caret at its end/start, Up/Down `TableMap.nextCell`);
+  Backspace/Delete clear, ⌘C/⌘X/⌘V and the Cell menu (Merge cells, Copy cells, Cut cells, Paste
+  into cells, Clear cells, colours and alignment on every selected cell) act on it, Escape
+  drops it first, typing drops it and types in the active cell, ⌘Return is Done. Keys reach the
+  editor through `NativeInputCoordinator.tableKey` (`NativeTextView.pressesBegan` for arrows,
+  `deleteBackward`, `insertText`, `copy`/`cut`/`paste`); the table surface shares the document's
+  pasteboard. **Virtualised grid:** only the cells in the scroll view's bounds plus half a screen
+  are realised (`TableCellView`, recycled); rows start at 44 pt and are measured (cached per
+  text and width) as their cells are realised, a spanning cell growing its last row, the content
+  offset kept when a row above grows; the active cell is measured with the text view's insets,
+  not its layout. **VoiceOver:** `TableGridView` is a `UIAccessibilityContainerDataTable` with
+  elements made on demand (row/column ranges with spans, header row/column cells as headers,
+  `.selected`, a collaborator in the value), the active cell's element being the table surface's
+  text view (`NativeTextView.tableCellRanges`); focusing an element scrolls to it. **Large
+  tables:** the editing bound stays `TableGrid.maxCells` (1,000): measured in a debug simulator,
+  the table surface lays out its hidden paragraphs on each key (~40 µs each: 999 cells ≈ 50 ms a
+  key, 30,000 cells ≈ 24 s to open and 1.2 s a key), so a larger table is read whole for the
+  viewer (`TableGrid.read(limit: maxViewerCells)`, 50,000, still unfamiliar "large table": no
+  shadow, the document read-only); 10,000 × 3 opens in ~0.5 s with scroll steps p99 ~1.4 ms
+  (debug simulator). **The 11a limits:** a table paragraph's snapshot carries its cell's
+  `textAlignment` (`PatchBuilder.paragraphSnapshot`), and a cell's attribute change re-projects
+  its paragraphs, so the active cell edits in its alignment; the table surface paints the
+  document's awareness (`showAwareness`: a caret in the active cell) and the editor badges a
+  collaborator's cell; a cell composition's recovery entries are handed to the document's
+  composition (`NativeCompositionSession.forward`/`adopt`: written with its list, shown by it,
+  restored with it); a peer's transaction typing in one cell and colouring another already
+  re-read the grid on main (the 11a limit was stale; a test now pins it). **Known limits:** editing a table over 1,000 cells needs a table surface that
+  holds only the active cell (a later PR); a paste whose rectangle cuts a rowspan cell at its top
+  or bottom edge splits that cell as intended, where prosemirror-tables 1.8.5's
+  `isolateHorizontal` inserts the split cell at a table-relative offset used as a document
+  position (no `+ start`) and garbles the web's grid (pinned structurally, not by XML); typing over a CellSelection clears it and types into
+  the active cell (the web replaces the first cell's content and empties the rest); plain text
+  is not read as Markdown (the web pastes `**x**` bold and a Markdown table as cells), a CSS
+  colour other than a palette name is not read (the web keeps any CSS string, which it does not
+  show), HTML with anything beside one table pastes as text, uncommon named entities stay
+  literal; a colour span outside the palette and link-inside-colour nesting in copied HTML are
+  not pinned; the Row and Column menus act on the active cell, not the selection; a drag cannot
+  start in the active cell (its text view takes the touch); a row grows when a taller cell
+  scrolled in from the side is realised; a collaborator's selection in another cell is a badge;
+  table key commands have no discoverability titles; Dynamic Type/RTL grid layout and mentions
+  or inline math in cells are not done. Tests: `BlockNoteTableClipboardOracleTests`
+  (`BlockNoteTableClipboardCaptures`, clip2.mjs: 11 copies' HTML and Markdown, 21 pastes —
+  the web's HTML into a selection and at a caret, growing, tiling, ragged rows, spans clipped and
+  isolated at each edge,
+  headers, breaks, marks, entities, whitespace, `data-*` props, Schrift's own copy as the web's
+  `blocknote/html`, plain text — and 6 clears, cuts and merges, each the web's XML with the
+  shadow its Markdown; hostile HTML and payloads; a paste past the bound), `TableSelectionTests`
+  (Shift-arrows and Backspace, typing over a selection, arrows across edges and ⌘Return, copy
+  through the text view and the paste of it, cut, web HTML at a caret, plain text, merging a
+  selection, a merge across a span disabled, a hostile paste, the data table),
+  `TableScaleTests` (the fixture gate: 10,000 × 3 viewer realises < 150 cells, scrolls, a jump
+  recycles, VoiceOver reaches row 9,999; 999 editable cells realise only the screen),
+  `TableEditorTests` (alignment, a mixed transaction, a collaborator, a dropped cell
+  composition) and the host UI test `testDraggingAcrossCellsSelectsThemAndTheCellMenuMergesThem`.
 
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves

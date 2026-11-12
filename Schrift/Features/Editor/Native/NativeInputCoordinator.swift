@@ -230,8 +230,35 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         case previous
         /// Return: the cell below.
         case below
-        /// Escape: back to the document.
+        /// Escape: back to the document (a CellSelection is cleared first).
         case exit
+        /// ⌘Return (PR11c): back to the document, as Done.
+        case done
+    }
+
+    /// What the table editor reads before the text view does (PR11c): a
+    /// hardware arrow (with Shift, `extend`), Backspace/Delete, typing, and
+    /// the clipboard. Returns whether the editor handled it (a CellSelection,
+    /// a move across a cell edge, cells to paste); false lets the text view go on.
+    enum TableKey: Equatable {
+        enum Direction: Equatable {
+            case left, right, up, down
+        }
+        case arrow(Direction, extend: Bool)
+        case delete
+        case typing
+        case copy, cut, paste
+    }
+
+    @ObservationIgnored var tableKey: ((TableKey) -> Bool)?
+
+    /// Where `showCell` leaves the caret.
+    enum CellCaret {
+        /// The cell's text selected (`goToNextCell`); a caret at the end of a
+        /// multi-paragraph cell.
+        case selectAll
+        case start
+        case end
     }
 
     /// Set on a table surface's coordinator: Tab, Shift-Tab, Return and Escape
@@ -243,7 +270,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// Shows the cell made of `blockIDs` (a table surface) and selects its
     /// text, as prosemirror-tables' `goToNextCell` does; a cell of several
     /// paragraphs gets a caret at its end. View state only.
-    func showCell(_ blockIDs: [String]) {
+    func showCell(_ blockIDs: [String], caret: CellCaret = .selectAll) {
         guard let view, let first = blockIDs.first, let last = blockIDs.last,
             let start = surface.rangeIndex.position(for: first), let end = surface.rangeIndex.position(for: last)
         else { return }
@@ -251,13 +278,22 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             surface.setFocus(Set(blockIDs))
             let lower = surface.rangeIndex.entries[start].textRange.location
             let upper = NSMaxRange(surface.rangeIndex.entries[end].textRange)
-            let range =
-                start == end ? NSRange(location: lower, length: upper - lower) : NSRange(location: upper, length: 0)
+            let range: NSRange =
+                switch caret {
+                case .start: NSRange(location: lower, length: 0)
+                case .end: NSRange(location: upper, length: 0)
+                case .selectAll:
+                    start == end
+                        ? NSRange(location: lower, length: upper - lower) : NSRange(location: upper, length: 0)
+                }
             lastCaret = range.location
             if view.selectedRange != range { selection.place(range) }
         }
         refreshSelectionMarks()
     }
+
+    /// The table editor refused something before posting it (PR11c): its notice.
+    func refuse(_ notice: L10nKey) { noticeKey = notice }
 
     /// A table structure command from the table editor (PR11b): one barrier
     /// on the table block, journaled before it is shown; the caret keeps its

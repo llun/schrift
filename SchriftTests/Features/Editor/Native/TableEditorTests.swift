@@ -458,6 +458,10 @@ final class TableEditorTests: NativeEditingTestCase {
         let grid = await reader.tableGrid("tbl")
         XCTAssertEqual(grid?.columnCount, 3)
         let editor = TableEditorViewController(document: reader, tableID: "tbl")
+        // The grid realises the cells on screen (PR11c): give it one.
+        editor.loadViewIfNeeded()
+        editor.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        editor.view.layoutIfNeeded()
         await editor.load()
         for _ in 0..<300 where !editor.isLoaded { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertNil(editor.cellSession)
@@ -792,6 +796,149 @@ extension TableEditorTests {
         session.input?.textViewDidChangeSelection(session.textView)
     }
 
+}
+
+// MARK: - PR11c: the 11a limits
+
+extension TableEditorTests {
+    /// The active cell's text view shows the cell's alignment, and follows a change to it.
+    func testTheActiveCellEditsInItsAlignment() async throws {
+        let harness = try await makeHarness(state: try seed("plain"))
+        addTeardownBlock { await harness.close() }
+        let editor = try await editor(harness)
+        let table = try XCTUnwrap(editor.cellSession)
+        let ref = TableGrid.CellRef(row: 1, index: 1)  // "e"
+        editor.activate(ref)
+        func alignment() throws -> NSTextAlignment? {
+            let entry = try XCTUnwrap(table.surface.rangeIndex.entry(for: editor.paragraphIDs(ref)[0]))
+            return
+                (table.textView.textStorage.attribute(
+                    .paragraphStyle, at: entry.textRange.location, effectiveRange: nil)
+                as? NSParagraphStyle)?.alignment
+        }
+        XCTAssertNotEqual(try alignment(), .center)
+        let ran = await table.run {
+            editor.perform(.setCellProp(key: "textAlignment", value: "center", slots: [TableSlot(row: 1, column: 1)]))
+        }
+        XCTAssertTrue(ran)
+        for _ in 0..<300 where editor.grid?.cell(ref).string("textAlignment") != "center" {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(try alignment(), .center, "the text view edits in the cell's alignment")
+        let shown = await table.run {
+            editor.perform(.setCellProp(key: "textAlignment", value: "right", slots: [TableSlot(row: 1, column: 1)]))
+        }
+        XCTAssertTrue(shown)
+        XCTAssertEqual(try alignment(), .right)
+        table.textView.insertText("!")
+        await harness.settle()
+        XCTAssertEqual(try alignment(), .right, "typing keeps it")
+        try await assertConsistentTable(harness)
+    }
+
+    /// Review R1: deleting the active cell's row (here the last one) re-reads
+    /// a grid that no longer has that row; the editor moves on, never traps.
+    func testDeletingTheActiveCellsLastRowMovesTheEditor() async throws {
+        let harness = try await makeHarness(state: try seed("plain"))
+        addTeardownBlock { await harness.close() }
+        let editor = try await editor(harness)
+        let table = try XCTUnwrap(editor.cellSession)
+        editor.activate(TableGrid.CellRef(row: 2, index: 2))  // "i", the last row's last cell
+        let ran = await table.run { editor.perform(.deleteRow(row: 2)) }
+        XCTAssertTrue(ran)
+        for _ in 0..<300 where editor.grid?.rows.count != 2 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(editor.grid?.rows.count, 2)
+        let active = try XCTUnwrap(editor.active)
+        XCTAssertTrue(editor.grid?.rows.indices.contains(active.row) == true, "the active cell is a cell of the grid")
+        let ranAgain = await table.run { editor.perform(.deleteColumn(column: 2)) }
+        XCTAssertTrue(ranAgain)
+        for _ in 0..<300 where editor.grid?.columnCount != 2 { try await Task.sleep(for: .milliseconds(10)) }
+        editor.layoutGrid()
+        XCTAssertNotNil(editor.active.flatMap { editor.frame(of: $0) })
+    }
+
+    /// A peer's one transaction that types in a cell and colours another
+    /// re-reads the grid (11a only did so for a structure-only change).
+    func testAPeerTransactionChangingTextAndAColourReReadsTheGrid() async throws {
+        let harness = try await makeHarness(state: try fixture("styled"))
+        addTeardownBlock { await harness.close() }
+        let editor = try await editor(harness)
+        let table = try XCTUnwrap(editor.cellSession)
+        let update = try peerUpdate("styled") { _, tx, table in
+            let grace = try XCTUnwrap(self.element(table, [2, 0, 0, 0]))
+            try grace.insert(5, " H", nil)
+            let cell = try XCTUnwrap(self.element(table, [2, 0]))
+            try YWrite.mapSet(tx, on: cell, key: "backgroundColor", .any([.string("red")]))
+        }
+        try await harness.session.integrateServerState(update)
+        await table.settle()
+        await harness.settle()
+        let ref = TableGrid.CellRef(row: 2, index: 0)
+        for _ in 0..<300 where editor.grid?.cell(ref).string("backgroundColor") != "red" {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(editor.grid?.cell(ref).string("backgroundColor"), "red", "the grid was read again")
+        XCTAssertEqual(
+            editor.cellViews[ref]?.backgroundColor, AttributedDocumentProjection.backgroundColor(named: "red"))
+        XCTAssertEqual(editor.cellViews[ref]?.label.attributedText?.string, "Grace H")
+    }
+
+    /// A collaborator in another cell shows as a badge there (and to
+    /// VoiceOver); in the cell being edited, as a caret in its text.
+    func testACollaboratorsCursorShowsInTheTableEditor() async throws {
+        let harness = try await makeHarness(state: try fixture("styled"))
+        addTeardownBlock { await harness.close() }
+        let awareness = NativeAwarenessController(replica: try XCTUnwrap(harness.session.replica))
+        harness.session.showAwareness(awareness)
+        let editor = try await editor(harness)
+        let table = try XCTUnwrap(editor.cellSession)
+        let ref = TableGrid.CellRef(row: 2, index: 0)  // "Grace"
+        let id = editor.paragraphIDs(ref)[0]
+        let position = try await unwrapped(
+            harness.engine { $0.awarenessPosition(EditorPosition(blockID: id, offset: 2)) })
+        awareness.receive([
+            AwarenessEntry(
+                clientID: 9, clock: 1,
+                stateJSON: LocalAwarenessState(
+                    name: "Web Peer", color: "#123456", cursor: AwarenessCursor(anchor: position, head: position)
+                ).json(wireProtocol: .yWebSocket))
+        ])
+        for _ in 0..<300 where editor.peerMarks[ref] == nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(editor.peerMarks[ref]?.map(\.name), ["Web Peer"])
+        XCTAssertEqual(editor.cellViews[ref]?.peerLabel.isHidden, false, "a badge on their cell")
+        let element = try XCTUnwrap(editor.gridView.element(ref))
+        XCTAssertTrue((element.accessibilityValue ?? "").contains("Web Peer"), element.accessibilityValue ?? "")
+        // In the active cell the overlay draws their caret instead.
+        editor.activate(ref)
+        XCTAssertNil(editor.peerMarks[ref])
+        table.textView.setNeedsLayout()
+        table.textView.layoutIfNeeded()
+        XCTAssertFalse(table.textView.cursorOverlay.subviews.isEmpty, "their caret in the cell's text")
+    }
+
+    /// A composition dropped in a cell (its row deleted by a peer) becomes the
+    /// document's recovery entry: shown by it, written to its recovery file.
+    func testADroppedCellCompositionIsTheDocumentsRecoveryEntry() async throws {
+        let (harness, table) = try await open()
+        let input = try XCTUnwrap(table.input)
+        input.showCell([ids(table)[3]])  // "Ada"
+        setSelection(table, NSRange(location: try location(table, ids(table)[3], 3), length: 0))
+        table.textView.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0))
+        XCTAssertTrue(input.composition.isActive)
+        let update = try peerUpdate("styled") { _, tx, table in
+            let row = try XCTUnwrap(YBlockProjection.children(of: table, includeFormats: false)[safe: 1])
+            row.delete(tx)
+        }
+        try await harness.session.integrateServerState(update)
+        table.textView.unmarkText()
+        await table.settle()
+        await harness.settle()
+        XCTAssertEqual(harness.log.commands.count, 0, "never redirected")
+        let pending = harness.session.input?.composition.pendingRecoveries.map(\.text) ?? []
+        XCTAssertTrue(pending.contains("にほん"), "the document lists it: \(pending)")
+        let stored = harness.store.provisionalRecoveries(for: harness.scope).map(\.text)
+        XCTAssertTrue(stored.contains("にほん"), "written to the recovery file: \(stored)")
+    }
 }
 
 extension Array {

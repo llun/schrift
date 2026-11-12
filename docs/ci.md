@@ -115,10 +115,11 @@ the newest `main` state gets verified — the post-merge check is cumulative,
 not per-commit. It is also observe-only: a red push run does **not** gate
 `testflight.yml`, which ships the same commit independently (coupling the two
 would tie the secret-free workflow to the secret-bearing one). The job also
-has a 45-minute timeout to convert hangs into failures. A healthy run takes
+has a 60-minute timeout to convert hangs into failures. A healthy run took
 about 25 minutes, so the earlier 30-minute cap cancelled green runs whenever a
 runner was slow or post-job cleanup dragged (a PR #182 run was cancelled this
-way in cleanup).
+way in cleanup). With the native editor's UI tests a healthy run now takes
+37-45 minutes, so the 45-minute cap cancelled a green run too (PR #280).
 
 ### Where the time goes
 

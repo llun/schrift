@@ -87,7 +87,11 @@ final class TableGridTests: XCTestCase {
             ),
             ("ragged rows", [Self.row([Self.cell("a"), Self.cell("b")]), Self.row([Self.cell("c")])]),
             ("span past the last row", [Self.row([Self.cell("a", rowspan: 3)])]),
-            ("unreadable colwidth", [Self.row([Self.cell("a", extra: [("colwidth", .array([.int(1), .int(2)]))])])]),
+            // Shorter than the span (a longer list is a clipped paste's, PR11c: familiar).
+            (
+                "unreadable colwidth",
+                [Self.row([Self.cell("a", colspan: 2, extra: [("colwidth", .array([.int(1)]))])])]
+            ),
             ("unreadable span", [Self.row([Self.cell("a", colspan: 0)])]),
             ("empty cell", [Self.row([.element("tableCell", [], [])])]),
             ("unexpected cell", [Self.row([.element("paragraph", [], [])])]),

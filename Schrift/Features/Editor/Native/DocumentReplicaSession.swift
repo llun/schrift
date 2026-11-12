@@ -378,8 +378,10 @@ actor DocumentReplicaSession {
             reply(engine.navigationEntries())
         case .locate(let handle, let reply):
             reply(engine.locate(handle))
-        case .tableGrid(let blockID, let reply):
-            reply(engine.tableGrid(blockID))
+        case .tableGrid(let blockID, let full, let reply):
+            reply(engine.tableGrid(blockID, full: full))
+        case .tableCopy(let blockID, let from, let to, let reply):
+            reply(engine.tableCopy(blockID, from: from, to: to))
         case .requestAvailability(let surfaceID, let blockID, let candidates):
             let actions = candidates.filter { candidate in
                 guard let kind = candidate.kind else { return engine.hasLosslessCopy(blockID) }

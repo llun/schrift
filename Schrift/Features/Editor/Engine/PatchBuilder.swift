@@ -111,6 +111,20 @@ struct PatchBuilder {
                 resync = true
                 continue
             }
+            // A cell's attributes (PR11c): its paragraphs carry its alignment,
+            // so they are projected again; the table's change follows below.
+            if type.typeRef == .xmlElement(nodeName: "tableCell")
+                || type.typeRef == .xmlElement(nodeName: "tableHeader"),
+                entry.subs.contains(where: { $0 != nil })
+            {
+                for child in YBlockProjection.children(of: type, includeFormats: false) {
+                    guard case .type(let paragraph) = child.content, let id = index.blockID(for: paragraph),
+                        index.isTableParagraph(id)
+                    else { continue }
+                    touch(id)
+                    structural.insert(id)
+                }
+            }
             guard let id = index.blockID(for: type) else { continue }
             touch(id)
             // A table paragraph's element changed (its first text, a break,
@@ -308,8 +322,16 @@ struct PatchBuilder {
     /// "\n" (shown, not typed into). Opaque when it holds anything else.
     static func paragraphSnapshot(_ entry: BlockIndex.Entry) -> NativeBlockSnapshot {
         let runs = entry.element.flatMap(TableGrid.paragraphRuns)
+        // The cell's alignment (PR11c), so the active cell edits as it shows.
+        var props: [ProjectedProp] = []
+        if let cell = entry.element?.item?.parentType,
+            let alignment = YBlockProjection.props(of: cell)?.first(where: { $0.key == "textAlignment" }),
+            case .string(let value) = alignment.value, value != "left"
+        {
+            props = [alignment]
+        }
         let block = ProjectedBlock(
-            id: entry.id, node: "paragraph", props: [], runs: runs ?? [],
+            id: entry.id, node: "paragraph", props: props, runs: runs ?? [],
             fidelity: runs == nil ? .opaque(reason: "table paragraph") : .modeled)
         return NativeBlockSnapshot(handle: entry.handle, block: block, depth: 0, parentHandle: nil)
     }
