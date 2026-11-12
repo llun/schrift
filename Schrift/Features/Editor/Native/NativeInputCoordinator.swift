@@ -259,6 +259,41 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         refreshSelectionMarks()
     }
 
+    /// A table structure command from the table editor (PR11b): one barrier
+    /// on the table block, journaled before it is shown; the caret keeps its
+    /// offsets in its paragraph (remapped), and the editor re-reads the grid
+    /// when the result shows.
+    @discardableResult
+    func applyTable(_ tableID: String, _ command: BlockNoteTableCommand) -> Bool {
+        guard let view, view.isEditable, !isFrozen, !isDetached, !compositionOwnsView else { return false }
+        let selection = view.selectedRange
+        let remapping = surface.rangeIndex.entry(atUTF16: selection.location).map {
+            (blockID: $0.blockID, offset: max(0, selection.location - $0.textRange.location), length: selection.length)
+        }
+        return applyStructural(
+            tableID, .table(command), refusal: .native_editor_input_unavailable, remapping: remapping)
+    }
+
+    /// Shift-Return in a table cell (PR11b): one hard break at the caret
+    /// (BlockNote's `setHardBreak`), a barrier like Return in prose.
+    @discardableResult
+    func insertLineBreak() -> Bool {
+        guard tableMove != nil, let view, view.isEditable, !isFrozen, !isDetached, !compositionOwnsView else {
+            return false
+        }
+        let selection = view.selectedRange
+        guard selection.length == 0, let entry = surface.rangeIndex.entry(atUTF16: selection.location),
+            selection.location <= NSMaxRange(entry.textRange)
+        else {
+            noticeKey = .native_editor_input_unavailable
+            return false
+        }
+        return applyStructural(
+            entry.blockID, .lineBreak(offset: selection.location - entry.textRange.location),
+            refusal: .native_editor_input_unavailable,
+            retry: again { [weak self] in self?.insertLineBreak() ?? false }, readsSelection: true)
+    }
+
     /// Back from a table (PR11a): the caret at the start of the block after
     /// it (the table itself is one atomic character), and the keyboard up.
     func focus(after blockID: String) {
@@ -1328,10 +1363,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     private var canFormat: Bool {
         guard let view else { return false }
-        // A merged table cell (several paragraphs) is spelled in the shadow
-        // only while it is unstyled (PR11a): it takes no marks.
         return view.isEditable && !isFrozen && !isDetached && !compositionOwnsView
-            && (surface.focus?.count ?? 0) <= 1
     }
 
     /// Republishes `activeMarks` and the caret's typing attributes (what UIKit

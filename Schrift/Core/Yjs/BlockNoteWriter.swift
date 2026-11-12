@@ -844,6 +844,42 @@ struct BlockNoteWriter {
         return try buildElement(tx, into: parent, after: left, node: node, props: props, children: nested)
     }
 
+    /// Copied text as a new `XmlText` after `left` (PR11b: the tail a hard
+    /// break splits off).
+    func insertText(_ tx: YTransaction, _ copy: Copy, into element: YType, after left: YItem?) throws {
+        guard case .text(let values) = copy else { throw Error.malformedBlock("#text") }
+        let text = YType(typeRef: .xmlText)
+        try YWrite.insertAfter(tx, into: element, after: left, [.type(text)])
+        try write(values, into: text)
+    }
+
+    /// Appends copied text values to `text`.
+    private func write(_ values: [TextValue], into text: YType) throws {
+        // The single shared inline builder defines mark open/carry/close
+        // shape; public YText ops own all string/embed/format mutations.
+        var runs: [InlineRun] = []
+        func flush() throws {
+            var attrs = YTextAttributes()
+            for piece in InlineContent.pieces(for: runs) {
+                switch piece {
+                case .format(let key, let json):
+                    attrs[key] = json == "null" ? nil : YTextAttributeValue(json: json, identity: YAttributeIdentity())
+                case .string(let string): try text.insert(text.length, string, attrs)
+                }
+            }
+            runs.removeAll()
+        }
+        for value in values {
+            switch value {
+            case .run(let run): runs.append(run)
+            case .embed(let json, let attrs):
+                try flush()
+                try text.insertEmbed(text.length, json, attrs)
+            }
+        }
+        try flush()
+    }
+
     private func append(_ tx: YTransaction, _ copies: [Copy], into element: YType) throws {
         for copy in copies {
             let last = children(element).last
@@ -856,30 +892,7 @@ struct BlockNoteWriter {
                     text = YType(typeRef: .xmlText)
                     try YWrite.insertAfter(tx, into: element, after: last, [.type(text)])
                 }
-                // The single shared inline builder defines mark open/carry/close
-                // shape; public YText ops own all string/embed/format mutations.
-                var runs: [InlineRun] = []
-                func flush() throws {
-                    var attrs = YTextAttributes()
-                    for piece in InlineContent.pieces(for: runs) {
-                        switch piece {
-                        case .format(let key, let json):
-                            attrs[key] =
-                                json == "null" ? nil : YTextAttributeValue(json: json, identity: YAttributeIdentity())
-                        case .string(let string): try text.insert(text.length, string, attrs)
-                        }
-                    }
-                    runs.removeAll()
-                }
-                for value in values {
-                    switch value {
-                    case .run(let run): runs.append(run)
-                    case .embed(let json, let attrs):
-                        try flush()
-                        try text.insertEmbed(text.length, json, attrs)
-                    }
-                }
-                try flush()
+                try write(values, into: text)
             case .element(let node, let props, let nested):
                 try buildElement(tx, into: element, after: last, node: node, props: props, children: nested)
             }

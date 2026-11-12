@@ -76,25 +76,96 @@ enum NativeExportMarkdown {
             return "|" + parts.joined(separator: "|") + "|"
         }
         let separator = "|" + widths.map { " " + String(repeating: "-", count: $0) + " " }.joined(separator: "|") + "|"
+        // The export renders BlockNote's JSON: the first `headerRows` rows and
+        // `headerCols` cell indices are `th`, where `nodeToBlock` counts every
+        // fully-header row (anywhere) and every cell index that is header in
+        // all rows. Row 0 has a `th`, and so a header line, when either is set.
+        let headerRows = grid.rows.filter { $0.allSatisfy(\.isHeader) }.count
+        let headerCols = grid.rows[0].indices.filter { index in
+            grid.rows.allSatisfy { $0.indices.contains(index) && $0[index].isHeader }
+        }.count
         let lines =
-            grid.rows[0].contains(where: \.isHeader)
+            headerRows > 0 || headerCols > 0
             ? [line(cells[0]), separator] + cells.dropFirst().map(line)
             : [line(Array(repeating: "", count: grid.columnCount)), separator] + cells.map(line)
         return lines.joined(separator: "\n")
     }
 
     private static func cellContent(_ cell: TableGrid.Cell) -> String? {
-        let runs: [InlineRun]
-        if cell.paragraphs.allSatisfy({ $0.runs.allSatisfy { $0.marks.isEmpty } }) {
-            // Unstyled text: paragraphs join with a hard break, empty ones vanish.
-            let texts = cell.paragraphs.map { $0.runs.map(\.text).joined() }.filter { !$0.isEmpty }
-            runs = [InlineRun(texts.joined(separator: "\n"))]
-        } else {
-            guard cell.paragraphs.count == 1, !cell.paragraphs[0].runs.contains(where: { $0.text.contains("\n") })
-            else { return nil }
-            runs = cell.paragraphs[0].runs
+        inline(blockNoteRuns(cell)).trimmingCharacters(in: jsWhitespace).replacingOccurrences(of: "|", with: "\\|")
+    }
+
+    /// BlockNote 0.56's reading of a cell (`nodeToBlock`), as runs: in each
+    /// paragraph, text with equal styles is one item (a link groups its own
+    /// texts) and a hard break is "\n" appended to the item before it (else a
+    /// plain "\n"); paragraphs then join with "\n" when the last item of one
+    /// and the first of the next are text with equal styles, and are
+    /// concatenated otherwise. Pinned against the exporter
+    /// (`BlockNoteTableOracleTests`).
+    static func blockNoteRuns(_ cell: TableGrid.Cell) -> [InlineRun] {
+        enum Item {
+            case text(String, Set<String>, [TextMark])
+            case link(TextMark, [(text: String, styles: Set<String>, marks: [TextMark])])
         }
-        return inline(runs).trimmingCharacters(in: jsWhitespace).replacingOccurrences(of: "|", with: "\\|")
+        func style(_ marks: [TextMark]) -> Set<String> { Set(marks.map { $0.key + "=" + $0.valueJSON }) }
+        func items(_ runs: [InlineRun]) -> [Item] {
+            var items: [Item] = []
+            func newline() {
+                switch items.last {
+                case .text(let text, let styles, let marks)?: items[items.count - 1] = .text(text + "\n", styles, marks)
+                case .link(let link, var texts)?:
+                    texts[texts.count - 1].text += "\n"
+                    items[items.count - 1] = .link(link, texts)
+                case nil: items.append(.text("\n", [], []))
+                }
+            }
+            for run in runs {
+                let marks = run.marks.map { TextMark(key: $0.key, valueJSON: $0.valueJSON) }
+                let link = marks.first { $0.key == "link" }
+                let styles = marks.filter { $0.key != "link" }
+                let pieces = run.text.components(separatedBy: "\n")
+                for (index, piece) in pieces.enumerated() {
+                    if index > 0 { newline() }
+                    guard !piece.isEmpty else { continue }
+                    switch (items.last, link) {
+                    case (.text(let text, let current, let currentMarks)?, nil) where current == style(styles):
+                        items[items.count - 1] = .text(text + piece, current, currentMarks)
+                    case (.link(let currentLink, var texts)?, let link?) where currentLink == link:
+                        if texts[texts.count - 1].styles == style(styles) {
+                            texts[texts.count - 1].text += piece
+                        } else {
+                            texts.append((piece, style(styles), styles))
+                        }
+                        items[items.count - 1] = .link(currentLink, texts)
+                    case (_, let link?): items.append(.link(link, [(piece, style(styles), styles)]))
+                    case (_, nil): items.append(.text(piece, style(styles), styles))
+                    }
+                }
+            }
+            return items
+        }
+        var joined: [Item] = []
+        for paragraph in cell.paragraphs {
+            var next = items(paragraph.runs)
+            guard !joined.isEmpty else {
+                joined = next
+                continue
+            }
+            if case .text(let last, let lastStyles, let marks)? = joined.last,
+                case .text(let first, let firstStyles, _)? = next.first, lastStyles == firstStyles
+            {
+                joined[joined.count - 1] = .text(last + "\n" + first, lastStyles, marks)
+                next.removeFirst()
+            }
+            joined += next
+        }
+        return joined.flatMap { item -> [InlineRun] in
+            switch item {
+            case .text(let text, _, let marks): [InlineRun(text, marks: marks.map { ($0.key, $0.valueJSON) })]
+            case .link(let link, let texts):
+                texts.map { InlineRun($0.text, marks: ($0.marks + [link]).map { ($0.key, $0.valueJSON) }) }
+            }
+        }
     }
 
     /// What JS `String.prototype.trim` removes: WhiteSpace (with U+FEFF) and
@@ -272,13 +343,20 @@ enum NativeExportMarkdown {
 
     private static func styled(_ run: InlineRun) -> String {
         let keys = Set(run.marks.map(\.key))
+        // A hard break inside marks: the exporter closes and reopens them
+        // around it (`**a**\\` newline `**b**`).
+        if !keys.contains("code"), run.text.contains("\n") {
+            return run.text.components(separatedBy: "\n").map {
+                $0.isEmpty ? "" : styled(InlineRun($0, marks: run.marks))
+            }.joined(separator: "\\\n")
+        }
         var text: String
         if keys.contains("code") {
             // `<code>` prints its text content: the link inside it is dropped.
             let fence = String(repeating: "`", count: longestRun(of: "`", in: run.text) + 1)
             text = fence + (run.text.hasPrefix("`") || run.text.hasSuffix("`") ? " \(run.text) " : run.text) + fence
         } else {
-            text = run.text.replacingOccurrences(of: "\n", with: "\\\n")  // a hard break
+            text = run.text
             if let href = run.marks.first(where: { $0.key == "link" }).flatMap({
                 YBlockProjection.linkHref(from: $0.valueJSON)
             }) {

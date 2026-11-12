@@ -1081,6 +1081,15 @@ over 1,000 cells) keeps the table, and the document, read-only and untouched. Ad
 rows and columns, merging, header and colour changes are the next slice (PR11b); rectangular
 selection, copy and paste, VoiceOver grid navigation and very large tables follow (PR11c).
 
+**PR11b Table structure.** The table editor has Row, Column, Cell and Format menus: insert
+and delete rows and columns, header row and column, merge with the cell to the right or below,
+split, column widths, cell and row colours, alignment and inline marks. Each command is the same
+edit the web editor makes (its table commands, including the repair it runs after each one),
+checked against the web for every operation on four tables, one durable command that undo,
+offline saves and live collaboration treat like any other. Shift-Return inserts a hard break in a
+cell. A peer's structure change merges; if two changes at once leave the grid uneven, the table
+waits read-only for the web editor's repair while saves keep working.
+
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom
 actions on the text view) acts on the caret's block and its whole subtree: Move up, Move

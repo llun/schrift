@@ -58,6 +58,11 @@ struct NativeEditCommand: Equatable, Sendable {
         case insertSubtrees(payload: Data)
         /// One step of the session's collaborative history (PR07b,
         /// `NativeUndoManager`). `blockID` is unused (empty).
+        /// Shift-Return in a table cell paragraph: one BlockNote `hardBreak`
+        /// at `offset` (PR11b).
+        case lineBreak(offset: Int)
+        /// A structure command on a table block (PR11b).
+        case table(BlockNoteTableCommand)
         case undo
         case redo
     }
@@ -91,7 +96,7 @@ struct NativeEditCommand: Equatable, Sendable {
         case .replace(_, let replacement, _): return replacement
         case .range(let range): return range.replacement
         case .split, .join, .marks, .props, .blockType, .indent, .outdent, .moveUp, .moveDown, .duplicate,
-            .deleteBlock, .insertBlock, .insertSubtrees, .undo, .redo:
+            .deleteBlock, .insertBlock, .insertSubtrees, .lineBreak, .table, .undo, .redo:
             return ""
         }
     }

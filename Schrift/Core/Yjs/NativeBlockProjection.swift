@@ -149,13 +149,20 @@ enum NativeBlockProjection {
         return items
     }
 
-    /// The grid of a table block's container item: its content element's.
+    /// The grid a table block's shadow spells: its own when familiar; for a
+    /// layout the web's `fixTables` would repair (a ragged row after a
+    /// concurrent row and column change), the repaired one (PR11b), so a save
+    /// meanwhile still has a shadow.
     static func tableGrid(of container: YItem) -> TableGrid? {
         guard case .type(let type) = container.content,
             let first = YBlockProjection.children(of: type, includeFormats: false).first,
             case .type(let table) = first.content, table.typeRef == .xmlElement(nodeName: "table")
         else { return nil }
-        return TableGrid.read(table)
+        let grid = TableGrid.read(table)
+        if case .unfamiliar(let reason) = grid.familiarity, TableGrid.layoutReasons.contains(reason) {
+            return TableModel.fixedGrid(table)
+        }
+        return grid
     }
 
     /// The classic rendering of a run of root subtrees, native-only blocks
