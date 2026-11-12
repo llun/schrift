@@ -3429,9 +3429,14 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   inserting a block above or below it works. **Review fixes (PR #281):** Move up/down of a block
   whose neighbour is a group is refused (the web's `getMovePlacement`/`getInsertionPos` moves it
   into the group's first or last column: PR12b), two columns sharing an id make the group
-  unfamiliar (`duplicate column id`), and `ColumnEditorScreen` builds its model once (a table
-  editor's cover over a column re-ran its `.task` on dismissal and attached every column again,
-  leaving stale text views that could take first responder and drop typing). **The writer** (`find`) descends into
+  unfamiliar (`duplicate column id`), and the presenter (`NativeEditorView`) owns the
+  `ColumnEditorModel` (made when the card is tapped; `ColumnEditorScreen` only loads it, once,
+  and never closes it on disappear), so a screen `.task` that runs again (a table editor's cover
+  dismissed over it) cannot attach every column a second time. On the iOS 26 simulator the
+  cover's dismissal did not re-run the task (the host UI test passed without the fix);
+  `testTheScreenAttachesEachColumnOnceWhenItReappears` forces a re-run by removing and re-adding
+  the hosted screen. A caret placed below a table that ends a column is the table's, which takes no
+  text (as after a trailing table in the document). **The writer** (`find`) descends into
   `columnList`/`column`, `resolve` accepts a `column` as the parent list
   (`BlockNoteWriter.isBlockList`), and `liftListItem` lifts into a column; split, join, marks,
   type changes and indent were already parent-agnostic. **Patches:** a change inside an open group
