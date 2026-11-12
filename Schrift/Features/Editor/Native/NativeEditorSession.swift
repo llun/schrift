@@ -174,6 +174,8 @@ final class NativeEditorSession {
         session.consume(attachment.deliveries)
         // The table types while the document does (the replica's one journal).
         if input != nil, textView.isEditable { session.enableTyping(persist: nil, scheduler: saveScheduler) }
+        // One clipboard for the document and its cells (tests use a private one).
+        if let pasteboard = input?.pasteboard { session.input?.pasteboard = pasteboard }
         return session
     }
 

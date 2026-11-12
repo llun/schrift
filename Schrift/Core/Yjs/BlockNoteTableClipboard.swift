@@ -119,6 +119,20 @@ enum TableClipboard {
         return rows.isEmpty ? nil : rows
     }
 
+    /// The pasted cells' rectangle (`ensureRectangular`'s width and height).
+    static func size(_ rows: [[TablePastedCell]]) -> (width: Int, height: Int) {
+        var widths: [Int] = []
+        for (index, row) in rows.enumerated() {
+            for cell in row {
+                for spanned in index..<(index + max(1, cell.rowspan)) {
+                    while widths.count <= spanned { widths.append(0) }
+                    widths[spanned] += max(1, cell.colspan)
+                }
+            }
+        }
+        return (widths.max() ?? 0, max(rows.count, widths.count))
+    }
+
     /// Plain text into a CellSelection (`fitSlice` of the pasted paragraph):
     /// one default cell, a line break a hard break.
     static func cell(text: String) -> TablePastedCell {

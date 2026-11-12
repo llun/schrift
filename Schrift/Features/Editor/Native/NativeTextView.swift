@@ -174,6 +174,9 @@ final class NativeTextView: UITextView {
         super.pressesBegan(presses, with: event)
     }
 
+    /// The cell this text view edits, as VoiceOver's data table reads it (PR11c).
+    var tableCellRanges: (row: NSRange, column: NSRange)?
+
     /// The presses `pressesBegan` took: their end is not the text view's either.
     private var handledPresses: Set<ObjectIdentifier> = []
 

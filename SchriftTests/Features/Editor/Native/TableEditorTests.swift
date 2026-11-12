@@ -458,6 +458,10 @@ final class TableEditorTests: NativeEditingTestCase {
         let grid = await reader.tableGrid("tbl")
         XCTAssertEqual(grid?.columnCount, 3)
         let editor = TableEditorViewController(document: reader, tableID: "tbl")
+        // The grid realises the cells on screen (PR11c): give it one.
+        editor.loadViewIfNeeded()
+        editor.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        editor.view.layoutIfNeeded()
         await editor.load()
         for _ in 0..<300 where !editor.isLoaded { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertNil(editor.cellSession)
