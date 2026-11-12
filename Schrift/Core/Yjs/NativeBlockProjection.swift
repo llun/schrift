@@ -92,14 +92,17 @@ enum NativeBlockProjection {
     /// classic shadow scrubs them. Blocks only the native editor models take
     /// the server export's spelling (`exportSpelling`), and a root subtree the
     /// classic rendering cannot spell like the export (`needsExport`) is the
-    /// export's own Markdown (`NativeExportMarkdown`). `nil` when the document
-    /// has no total shadow.
+    /// export's own Markdown (`NativeExportMarkdown`), as is one holding edge
+    /// whitespace the classic rendering would trim (`hasEdgeWhitespace`), so
+    /// a trailing space just typed always has a shadow. `nil` when the
+    /// document has no total shadow.
     static func markdownShadow(_ doc: YDoc) -> String? {
         let tree = project(doc, nativeMarks: false)
         // A flat document with no native-only block keeps exactly the classic shadow.
         guard
             tree.blocks.contains(where: {
                 $0.depth > 0 || $0.block.node == "table" || nativeOnlyReasons.contains(opaqueReason($0.block))
+                    || hasEdgeWhitespace($0.block)
             })
         else {
             return YBlockProjection.projectedMarkdown(YBlockProjection.project(doc))
@@ -121,9 +124,13 @@ enum NativeBlockProjection {
                 else { return nil }
                 parts += [before, chunk]
                 plain = end
-            } else if needsExport(blocks[root..<end]) {
+            } else if case let subtree = blocks[root..<end],
+                needsExport(subtree) || subtree.contains(where: { hasEdgeWhitespace($0.block) })
+            {
+                // Edge whitespace falls back to the classic rendering only for a block the port lacks.
                 guard let before = classicSpelling(blocks[plain..<root]),
-                    let chunk = NativeExportMarkdown.markdown(NativeExportMarkdown.nodes(blocks[root..<end]))
+                    let chunk = NativeExportMarkdown.body(exportNodes(subtree))
+                        ?? (needsExport(subtree) ? nil : classicSpelling(subtree))
                 else { return nil }
                 parts += [before, chunk]
                 plain = end
@@ -132,10 +139,37 @@ enum NativeBlockProjection {
         }
         guard let rest = classicSpelling(blocks[plain...]) else { return nil }
         guard !parts.isEmpty else { return rest }
-        // The export separates root blocks by a blank line; a list split here
-        // only turns loose, which `canonicalMarkdown` does not see.
+        // The export separates root blocks by a blank line and trims only the
+        // document's ends; a list split here only turns loose, which
+        // `canonicalMarkdown` does not see.
         let spelled = (parts + [rest]).map { $0.trimmingCharacters(in: .newlines) }.filter { !$0.isEmpty }
-        return spelled.joined(separator: "\n\n") + "\n"
+        return NativeExportMarkdown.trimmed(spelled.joined(separator: "\n\n"))
+    }
+
+    /// Whether the classic rendering cannot spell `block` like the export:
+    /// text that starts or ends with whitespace (the classic re-parse trims it,
+    /// so its self-check refuses the block), or a marked run that does (the
+    /// export keeps that whitespace inside the delimiters, except the trailing
+    /// part of bold and italic). A code block keeps its text verbatim either way.
+    private static func hasEdgeWhitespace(_ block: ProjectedBlock) -> Bool {
+        guard block.node != "codeBlock" else { return false }
+        func edges(_ text: String) -> Bool {
+            [text.unicodeScalars.first, text.unicodeScalars.last].contains {
+                $0.map(CharacterSet.whitespaces.contains) == true
+            }
+        }
+        return edges(block.runs.map(\.text).joined()) || block.runs.contains { !$0.marks.isEmpty && edges($0.text) }
+    }
+
+    /// The port's nodes for a root subtree; a root callout without children is
+    /// the paragraph `exportSpelling` makes of it (the port refuses callouts).
+    private static func exportNodes(_ subtree: ArraySlice<NativeBlockSnapshot>) -> [NativeExportMarkdown.Node] {
+        if subtree.count == 1, opaqueReason(subtree[subtree.startIndex].block) == "unknownNode:callout",
+            let spelled = exportSpelling(subtree)?.blocks.first
+        {
+            return [NativeExportMarkdown.Node(block: spelled, children: [])]
+        }
+        return NativeExportMarkdown.nodes(subtree)
     }
 
     /// The root group's containers by item id (a table's grid is read from its item).

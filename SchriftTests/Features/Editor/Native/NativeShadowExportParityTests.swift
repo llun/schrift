@@ -454,6 +454,37 @@ final class NativeShadowExportParityTests: NativeEditingTestCase {
         XCTAssertTrue(restored.canType, "a toggle with a paragraph child stays typeable")
     }
 
+    /// A save captured right after typing a trailing space (the debounce after
+    /// a pause, or a close) has a shadow, the export's, and the scheduler does
+    /// not freeze. Before, `markdownShadow` was nil for "Left " and the capture
+    /// threw `unprojectableShadow`, freezing authoring with "Couldn't save".
+    func testASaveRightAfterATrailingSpaceDoesNotFreeze() async throws {
+        let harness = try await makeHarness([paragraph("p", "Left"), paragraph("q", "Next")])
+        addTeardownBlock { await harness.close() }
+        let session = harness.session
+        setSelection(harness, NSRange(location: try location(session, "p", 4), length: 0))
+        session.textView.insertText(" ")
+        try await assertConsistent(harness, localCommands: 1)
+        let adapter = ReplicaSaveAdapter(store: harness.store, scope: harness.scope)
+        var captured: String?
+        let scheduler = NativeReplicaSaveScheduler(
+            enqueue: {
+                captured = try adapter.prepare().markdown
+                return true
+            }, onFailure: { XCTFail("the capture failed: \($0)") })
+        scheduler.schedule()
+        scheduler.flush()
+        XCTAssertFalse(scheduler.isFrozen)
+        XCTAssertEqual(captured, "Left \n\nNext\n", "BlockNote 0.56 `blocksToMarkdownLossy`")
+        let reopened = try await makeHarness([paragraph("p", "Left "), paragraph("q", " Next")])
+        addTeardownBlock { await reopened.close() }
+        XCTAssertTrue(reopened.session.canType, "a document with edge spaces opens typeable")
+        // A root callout is spelled as its paragraph, edge space and all.
+        let doc = try makeDoc([callout("c", "Note "), paragraph("z", "After")], clientID: 1)
+        defer { doc.destroy() }
+        XCTAssertEqual(NativeBlockProjection.markdownShadow(doc), "💡 Note \n\nAfter\n")
+    }
+
     /// Typing in such a document and saving: the save's shadow is what the
     /// server exports for the saved body, so `draftSyncDecision` sees our own
     /// last push, not a conflict, after the save bumped `updated_at`.

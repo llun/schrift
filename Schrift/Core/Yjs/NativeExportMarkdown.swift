@@ -37,9 +37,19 @@ enum NativeExportMarkdown {
 
     /// The export's Markdown for `nodes`, trimmed as `htmlToMarkdown` trims it.
     static func markdown(_ nodes: [Node]) -> String? {
+        body(nodes).map(trimmed)
+    }
+
+    /// The export's Markdown for `nodes` before that trim: a block's edge
+    /// whitespace stays, as it does between other blocks of the document.
+    static func body(_ nodes: [Node]) -> String? {
         guard let fragment = fragment(nodes) else { return nil }
-        let text = fragment.map { serialize($0, indent: "", inListItem: false) }.joined()
-        return text.trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
+        return fragment.map { serialize($0, indent: "", inListItem: false) }.joined()
+    }
+
+    /// `htmlToMarkdown`'s `result.trim() + "\n"`.
+    static func trimmed(_ text: String) -> String {
+        text.trimmingCharacters(in: jsWhitespace) + "\n"
     }
 
     // MARK: - Tables (PR11a)
