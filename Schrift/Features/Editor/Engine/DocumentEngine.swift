@@ -909,6 +909,11 @@ final class DocumentEngine {
             let deepest = try requireMovable(id, including: { $0 > entry.depth }) - 1
             let destination: (group: YType, left: YItem?, depth: Int)
             let neighbour = up ? (at > 0 ? siblings[at - 1] : nil) : (at + 1 < siblings.count ? siblings[at + 1] : nil)
+            // Past a column group the web moves the block into its first or last
+            // column (`getInsertionPos`): PR12b's, so nothing is written yet.
+            guard neighbour.map({ !index.isColumnGroup($0) }) ?? true else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
             if let neighbour, let next = index.entries[neighbour] {
                 if let nested = next.nestedGroup, let kids = index.groupOrder[ObjectIdentifier(nested)],
                     let last = kids.last.flatMap({ index.entries[$0] }), !kids.isEmpty

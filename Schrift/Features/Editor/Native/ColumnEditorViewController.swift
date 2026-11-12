@@ -122,6 +122,9 @@ struct ColumnEditorScreen: View {
             }
         }
         .task {
+            // Once: a table editor's cover over the column re-runs this task on dismissal,
+            // and a second model would attach every column again.
+            guard model == nil else { return }
             let model = ColumnEditorModel(document: document, groupID: groupID)
             model.onClose = onClose
             self.model = model

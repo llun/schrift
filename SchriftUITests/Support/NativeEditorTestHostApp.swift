@@ -628,6 +628,27 @@ private enum ColumnFixture {
                 let xmlText = YType(typeRef: .xmlText)
                 try YWrite.insertAfter(tx, into: paragraph, after: nil, [.type(xmlText)])
                 try xmlText.insert(0, text, nil)
+                // `--native-column-table`: a one-row table under the first column's paragraph.
+                guard index == 0, ProcessInfo.processInfo.arguments.contains("--native-column-table") else { continue }
+                let (_, tableContainer) = try element(
+                    "blockContainer", into: column, after: column.start, [("id", .string("owned-column-table"))])
+                let (_, table) = try element(
+                    "table", into: tableContainer, after: nil, [("textColor", .string("default"))])
+                let (_, row) = try element("tableRow", into: table, after: nil, [])
+                var lastCell: YItem?
+                for cellText in ["A", "B"] {
+                    let (cellItem, cell) = try element(
+                        "tableCell", into: row, after: lastCell,
+                        [
+                            ("backgroundColor", .string("default")), ("colspan", .int(1)), ("rowspan", .int(1)),
+                            ("textAlignment", .string("left")), ("textColor", .string("default")),
+                        ])
+                    lastCell = cellItem
+                    let (_, cellParagraph) = try element("tableParagraph", into: cell, after: nil, [])
+                    let cellXML = YType(typeRef: .xmlText)
+                    try YWrite.insertAfter(tx, into: cellParagraph, after: nil, [.type(cellXML)])
+                    try cellXML.insert(0, cellText, nil)
+                }
             }
         }
         return try YStateEncoder.encodeStateAsUpdate(doc)

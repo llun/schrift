@@ -60,12 +60,14 @@ struct ColumnGroup: Equatable, Sendable {
         guard list.typeRef == .xmlElement(nodeName: "columnList") else { return refuse("not a column group") }
         guard YBlockProjection.props(of: list) != nil else { return refuse("unreadable group attribute") }
         var seen: Set<String> = []
+        var seenColumns: Set<String> = []
         for columnItem in YBlockProjection.children(of: list, includeFormats: false) {
             guard group.columns.count < maxColumns else { return refuse("too many columns") }
             guard case .type(let column) = columnItem.content, column.typeRef == .xmlElement(nodeName: "column"),
                 let columnID = BlockIndex.blockID(of: column), !columnID.isEmpty,
                 let props = YBlockProjection.props(of: column)
             else { return refuse("unreadable column") }
+            guard seenColumns.insert(columnID).inserted else { return refuse("duplicate column id") }
             var width: Double?
             if let value = props.first(where: { $0.key == "width" })?.value {
                 guard let number = TableGrid.number(value), number > 0 else { return refuse("unreadable width") }

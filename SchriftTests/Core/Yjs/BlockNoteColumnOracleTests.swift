@@ -182,6 +182,8 @@ final class BlockNoteColumnOracleTests: XCTestCase {
             ("b", .outdent),
             // A column keeps a block; moves stop at its edges.
             ("a", .moveUp), ("b", .moveDown), ("c", .moveUp), ("d", .moveDown),
+            // Past the group the web moves into its first or last column (PR12b).
+            ("lead", .moveDown), ("tail", .moveUp),
             // A range or a mark change never crosses into another column or the document.
             (
                 "b",
@@ -220,6 +222,23 @@ final class BlockNoteColumnOracleTests: XCTestCase {
         XCTAssertTrue(second.openColumns("cl"))
         XCTAssertFalse(second.canApplyStructural(command(second, "a", .deleteBlock)))
         XCTAssertTrue(second.canApplyStructural(command(second, "d2", .deleteBlock)), "a column of two may lose one")
+    }
+
+    /// Two columns sharing an id are unfamiliar: nothing could tell their
+    /// surfaces apart.
+    func testDuplicateColumnIdsAreUnfamiliar() throws {
+        let fixture = try XCTUnwrap(BlockNoteColumnCaptures.fixtures.first { $0.name == "two" })
+        let doc = try doc(fixture.update, clientID: 3)
+        defer { doc.destroy() }
+        XCTAssertTrue(try group(doc).isFamiliar)
+        let root = try XCTUnwrap(doc.share[BlockNoteYjs.fragmentField])
+        guard case .type(let rootGroup)? = YBlockProjection.children(of: root, includeFormats: false).first?.content,
+            case .type(let list)? = YBlockProjection.children(of: rootGroup, includeFormats: false)[1].content
+        else { return XCTFail("no group") }
+        let columns = ColumnGroup.columnTypes(of: list)
+        try doc.transact { tx in try YWrite.mapSet(tx, on: columns[1], key: "id", .any([.string("c1")])) }
+        XCTAssertEqual(try group(doc).familiarity, .unfamiliar("duplicate column id"))
+        XCTAssertNil(NativeBlockProjection.markdownShadow(doc), "the document is read-only")
     }
 
     /// Closed, a group's blocks address nothing; its text is preserved.
