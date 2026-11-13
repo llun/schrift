@@ -1478,9 +1478,41 @@ final class DocumentEngine {
     /// gives it. Reads only.
     func navigationEntries() -> [NativeNavigationEntry] {
         guard !isDetached else { return [] }
-        return NativeBlockProjection.project(doc, generation: builder.index.generation).blocks.map {
-            NativeNavigationEntry(BlockSnapshot($0), handle: $0.handle)
+        let generation = builder.index.generation
+        var entries: [NativeNavigationEntry] = []
+        for snapshot in NativeBlockProjection.project(doc, generation: generation).blocks {
+            entries.append(NativeNavigationEntry(BlockSnapshot(snapshot), handle: snapshot.handle))
+            // A familiar group's blocks follow its card (PR12c): find and the
+            // outline reach into its columns, column after column.
+            guard snapshot.block.node == "columnList", let list = builder.index.entries[snapshot.id]?.container,
+                ColumnGroup.read(list, id: snapshot.id).isFamiliar
+            else { continue }
+            for column in ColumnGroup.columnTypes(of: list) {
+                for block in NativeBlockProjection.columnBlocks(column, generation: generation) {
+                    var entry = NativeNavigationEntry(BlockSnapshot(block), handle: block.handle)
+                    entry.group = snapshot.handle
+                    entries.append(entry)
+                }
+            }
         }
+        return entries
+    }
+
+    /// The column of group `group` holding the block `handle` names, while
+    /// the group and the block are still those (PR12c). O(group).
+    func locateColumn(_ handle: NativeBlockHandle, group: NativeBlockHandle) -> String? {
+        guard locate(group) != nil, handle.generation == builder.index.generation,
+            let list = builder.index.entries[group.stringID]?.container
+        else { return nil }
+        let read = ColumnGroup.read(list, id: group.stringID)
+        guard read.isFamiliar else { return nil }
+        for (column, type) in zip(read.columns, ColumnGroup.columnTypes(of: list))
+        where NativeBlockProjection.columnBlocks(type, generation: handle.generation).contains(where: {
+            $0.handle == handle
+        }) {
+            return column.id
+        }
+        return nil
     }
 
     /// The block `handle` names, while it is still that block: same index

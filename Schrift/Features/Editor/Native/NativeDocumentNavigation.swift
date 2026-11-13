@@ -10,6 +10,8 @@ struct NativeNavigationEntry: Equatable, Sendable {
     var blockID: String
     var level: Int?
     var text: String
+    /// The column group this block is in (PR12c); nil for a document block.
+    var group: NativeBlockHandle?
 
     init(_ block: BlockSnapshot, handle: NativeBlockHandle?) {
         self.handle = handle
@@ -31,8 +33,15 @@ struct NativeNavigationEntry: Equatable, Sendable {
 /// and scrolls; it never writes the replica or moves the selection.
 @MainActor @Observable
 final class NativeDocumentNavigation {
-    /// The blocks the outline, find and reading position read.
+    /// The blocks the outline and find read: the document's, each familiar
+    /// column group's blocks after its card (PR12c).
     private(set) var blocks: [EditorBlock] = []
+    /// The document's own blocks: what the reading position reads (a column
+    /// block is never a place to restore).
+    @ObservationIgnored private var documentBlocks: [EditorBlock] = []
+    /// A find or outline result in a column (PR12c): the presenter opens the
+    /// column editor on group `group`, column `column`, at block `block`.
+    @ObservationIgnored var onOpenColumn: ((_ group: String, _ column: String, _ block: String) -> Void)?
     @ObservationIgnored private(set) var entries: [UUID: NativeNavigationEntry] = [:]
     /// Block id → its id for this open, so a refresh keeps the sheet's state.
     @ObservationIgnored private var ids: [String: UUID] = [:]
@@ -71,6 +80,7 @@ final class NativeDocumentNavigation {
         refreshCount += 1
         let (next, built) = build(read)
         entries = next
+        documentBlocks = built.filter { next[$0.id]?.group == nil }
         if built != blocks { blocks = built }
     }
 
@@ -138,6 +148,11 @@ final class NativeDocumentNavigation {
             guard let entry = entries[id], let blockID = await locate(entry), self.surface === surface else {
                 return false
             }
+            if let group = entry.group {
+                // `locate` answered the block's column: the column editor opens there.
+                onOpenColumn?(group.stringID, blockID, entry.blockID)
+                return true
+            }
             surface.reveal(blockID)
             return textView.scroll(toBlock: blockID, surface: surface)
         }
@@ -146,7 +161,7 @@ final class NativeDocumentNavigation {
     private func locate(_ entry: NativeNavigationEntry) async -> String? {
         guard let replica, let handle = entry.handle else { return entry.blockID }
         return await withCheckedContinuation { done in
-            replica.mailbox.post(.locate(handle, reply: { done.resume(returning: $0) }))
+            replica.mailbox.post(.locate(handle, group: entry.group, reply: { done.resume(returning: $0) }))
         }
     }
 
@@ -165,7 +180,7 @@ final class NativeDocumentNavigation {
         guard let reading, let textView else { return }
         // A reader who already scrolled, or tapped to type, keeps their place.
         let scrolled = textView.contentOffset.y + textView.adjustedContentInset.top > 8 || textView.isFirstResponder
-        if reading.beginRestore(blocks: blocks, userHasScrolled: scrolled) != nil { restorePending = true }
+        if reading.beginRestore(blocks: documentBlocks, userHasScrolled: scrolled) != nil { restorePending = true }
         layoutPassed()
     }
 
@@ -181,7 +196,7 @@ final class NativeDocumentNavigation {
         restorePending = false
         // TextKit lays out any block on demand: every block counts as laid out,
         // and one in a folded toggle is unfolded by the jump.
-        let all = Set(blocks.map(\.id))
+        let all = Set(documentBlocks.map(\.id))
         guard
             let target = reading.takeRestoreScroll(
                 presentedBlockIDs: all, laidOutBlockIDs: all, voiceOverEnabled: voiceOverEnabled())
@@ -190,7 +205,7 @@ final class NativeDocumentNavigation {
     }
 
     /// The outline jumped: the reader chose where to be.
-    func noteDeliberateJump() { reading?.noteDeliberateJump(blocks: blocks) }
+    func noteDeliberateJump() { reading?.noteDeliberateJump(blocks: documentBlocks) }
 
     func backToTop() {
         reading?.dismissBackToTop()

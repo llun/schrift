@@ -184,6 +184,13 @@ final class NativeAttachmentView: UIView {
         isAccessibilityElement = true
         accessibilityLabel = content.label
         accessibilityIdentifier = "nativeEditor.attachment.\(content.blockID)"
+        if case .columns(let columns, let count) = content.preview {
+            // After the card's name VoiceOver hears each column and its first lines (PR12c).
+            accessibilityValue = columns.enumerated().map { index, lines in
+                ([String(format: labels.column, index + 1, count)]
+                    + lines.map { $0.text.isEmpty ? labels.kind($0.node) : $0.text }).joined(separator: ", ")
+            }.joined(separator: "; ")
+        }
         build()
         applyTheme()
         if content.preview.isTable || content.preview.isColumns {

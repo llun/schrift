@@ -297,7 +297,9 @@ final class ColumnEditorTests: NativeEditingTestCase {
 
     // MARK: - The editor
 
-    func testSwitchingColumnsKeepsTheKeyboardAndHidesTheOtherColumn() async throws {
+    /// Every column is shown (PR12c: stacked or side by side); switching the
+    /// active column moves first responder with it.
+    func testSwitchingColumnsKeepsTheKeyboard() async throws {
         let harness = try await makeHarness(state: try fixture("two"))
         addTeardownBlock { await harness.close() }
         let model = ColumnEditorModel(document: harness.session, groupID: "cl")
@@ -315,13 +317,12 @@ final class ColumnEditorTests: NativeEditingTestCase {
         let views = model.columns.map(\.textView)
         guard views.count == 2 else { return XCTFail("both columns attached") }
         container.show(views, active: 0)
-        XCTAssertFalse(views[0].isHidden)
-        XCTAssertTrue(views[1].isHidden)
+        container.layoutIfNeeded()
+        XCTAssertTrue(views.allSatisfy { !$0.isHidden && $0.window != nil }, "both columns show")
         let focused = views[0].isFirstResponder
         model.active = 1
         container.show(views, active: model.active)
-        XCTAssertFalse(views[1].isHidden)
-        XCTAssertTrue(views[0].isHidden)
+        XCTAssertTrue(container.shown === views[1])
         if focused { XCTAssertTrue(views[1].isFirstResponder, "first responder moved with the column") }
         model.active = 5
         XCTAssertEqual(model.active, 1, "no column past the group's")

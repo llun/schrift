@@ -38,6 +38,8 @@ struct NativeEditorView: View {
     /// The column group whose editor is open (PR12a).
     @State private var openColumns: ColumnEditorModel?
     @State private var lastColumns: String?
+    /// A find or outline result in a column, opened once the outline has gone (PR12c).
+    @State private var pendingColumnJump: ColumnJump?
 
     var body: some View {
         Group {
@@ -134,10 +136,26 @@ struct NativeEditorView: View {
                 findShortcutEnabled: !session.hasUnsupportedRoot, closesOutline: false,
                 onFindShortcut: { presentOutline(focusingFind: true) },
                 onScroll: { target in jump(target) }, onAppear: { session.navigation.isOutlinePresented = true },
-                onDismiss: { session.navigation.isOutlinePresented = false },
+                onDismiss: {
+                    session.navigation.isOutlinePresented = false
+                    if let jump = pendingColumnJump {
+                        pendingColumnJump = nil
+                        openColumns = columnEditor(jump.group, target: (jump.column, jump.block))
+                    }
+                },
                 onSelectHeading: { jump(.block($0)) })
         )
         .task(id: ObjectIdentifier(session)) {
+            // A result in a column opens the column editor at it; the sheet goes first.
+            session.navigation.onOpenColumn = { group, column, block in
+                let jump = ColumnJump(group: group, column: column, block: block)
+                if isPresentingOutline {
+                    pendingColumnJump = jump
+                    isPresentingOutline = false
+                } else {
+                    openColumns = columnEditor(group, target: (column, block))
+                }
+            }
             if let documentID {
                 session.navigation.enableReadingPosition(
                     store: readingPositions ?? ReadingPositionStore(), serverOrigin: serverOrigin,
@@ -185,8 +203,10 @@ struct NativeEditorView: View {
 
 extension NativeEditorView {
     /// The column editor's model for group `groupID`, owned by this view while presented (PR12a).
-    fileprivate func columnEditor(_ groupID: String) -> ColumnEditorModel {
-        let model = ColumnEditorModel(document: session, groupID: groupID)
+    fileprivate func columnEditor(
+        _ groupID: String, target: (column: String, block: String)? = nil
+    ) -> ColumnEditorModel {
+        let model = ColumnEditorModel(document: session, groupID: groupID, target: target)
         model.onClose = {
             lastColumns = groupID
             openColumns = nil
@@ -254,6 +274,13 @@ extension NativeEditorView {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("nativeEditor.recovery")
     }
+}
+
+/// Where a find or outline result in a column opens the column editor (PR12c).
+private struct ColumnJump {
+    var group: String
+    var column: String
+    var block: String
 }
 
 /// The native editor's formatting bar: the classic bar's tokens and labels
@@ -417,7 +444,8 @@ extension NativeEditorLabels {
             image: loc[.editor_image_a11y], video: loc[.native_editor_video],
             audio: loc[.native_editor_audio], file: loc[.native_editor_file], pdf: loc[.native_editor_pdf],
             table: loc[.native_editor_table], tableMore: loc[.native_editor_table_more],
-            columns: loc[.native_editor_columns], math: loc[.native_editor_math],
+            columns: loc[.native_editor_columns], column: loc[.native_editor_column],
+            columnsRotor: loc[.native_editor_columns_rotor], math: loc[.native_editor_math],
             diagram: loc[.native_editor_diagram], imageExternal: loc[.editor_image_external],
             imageExternalA11y: loc[.editor_image_external_a11y], imageOffline: loc[.editor_image_offline],
             imageFailed: loc[.editor_image_failed], blockMenu: loc[.native_editor_block_actions],

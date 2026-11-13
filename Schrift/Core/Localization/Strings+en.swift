@@ -385,6 +385,7 @@ enum Strings_en {
         .native_editor_table_format: "Format",
         .native_editor_columns: "Columns, %d",
         .native_editor_column: "Column %d of %d",
+        .native_editor_columns_rotor: "Columns",
         .native_editor_column_move_left: "Move column left",
         .native_editor_column_move_right: "Move column right",
         .native_editor_math: "Math",

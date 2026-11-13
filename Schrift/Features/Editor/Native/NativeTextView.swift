@@ -335,10 +335,21 @@ final class NativeTextView: UITextView {
         // After the viewport settled: collaborators' cursors on screen (PR10).
         cursorOverlay.layout(in: self)
         onLayout?()
+        onGeometry?()
     }
 
     /// After every layout pass: scrolling, size changes (PR10b's reading position).
     var onLayout: (() -> Void)?
+    /// After every layout pass too: the column editor's layout (PR12c).
+    var onGeometry: (() -> Void)?
+    /// The text view became first responder: the column editor's active column (PR12c).
+    var onFocus: (() -> Void)?
+
+    override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        if became { onFocus?() }
+        return became
+    }
 
     /// Collaborators' cursors (PR10), painted over the text, never touched.
     let cursorOverlay = NativeCursorOverlay()

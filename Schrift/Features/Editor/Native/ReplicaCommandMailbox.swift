@@ -63,8 +63,9 @@ enum ReplicaMessage: Sendable {
     /// Navigation (PR10b): every block with its handle, in document order.
     case navigation(reply: @Sendable ([NativeNavigationEntry]) -> Void)
     /// Navigation (PR10b): the block `handle` names if it is still that
-    /// block in this replica (same generation and item), else nil.
-    case locate(NativeBlockHandle, reply: @Sendable (String?) -> Void)
+    /// block in this replica (same generation and item), else nil. A block
+    /// in column group `group` (PR12c) answers its column's id instead.
+    case locate(NativeBlockHandle, group: NativeBlockHandle? = nil, reply: @Sendable (String?) -> Void)
     /// Tables (PR11a): the grid of table `blockID` now (nil when it is not a table).
     /// `full` (PR11c) reads a table past the editing bound, for the viewer.
     case tableGrid(blockID: String, full: Bool = false, reply: @Sendable (TableGrid?) -> Void)
@@ -98,7 +99,7 @@ enum ReplicaMessage: Sendable {
         case .liveSync(_, let reply): reply(nil, nil)
         case .resolveCursors(_, let reply): reply([:])
         case .navigation(let reply): reply([])
-        case .locate(_, let reply): reply(nil)
+        case .locate(_, _, let reply): reply(nil)
         case .tableGrid(_, _, let reply): reply(nil)
         case .tableCopy(_, _, _, let reply): reply(nil)
         case .columnGroup(_, let reply): reply(nil)

@@ -370,6 +370,7 @@ enum Strings_zhHans {
         .native_editor_table_format: "格式",
         .native_editor_columns: "分栏，%d",
         .native_editor_column: "第 %d 列，共 %d 列",
+        .native_editor_columns_rotor: "分栏",
         .native_editor_column_move_left: "列左移",
         .native_editor_column_move_right: "列右移",
         .native_editor_math: "公式",

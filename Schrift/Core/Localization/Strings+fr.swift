@@ -377,6 +377,7 @@ enum Strings_fr {
         .native_editor_table_format: "Format",
         .native_editor_columns: "Colonnes, %d",
         .native_editor_column: "Colonne %d sur %d",
+        .native_editor_columns_rotor: "Colonnes",
         .native_editor_column_move_left: "Déplacer la colonne à gauche",
         .native_editor_column_move_right: "Déplacer la colonne à droite",
         .native_editor_math: "Formule",

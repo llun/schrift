@@ -372,6 +372,7 @@ enum Strings_th {
         .native_editor_table_format: "รูปแบบ",
         .native_editor_columns: "คอลัมน์ %d",
         .native_editor_column: "คอลัมน์ %d จาก %d",
+        .native_editor_columns_rotor: "คอลัมน์",
         .native_editor_column_move_left: "ย้ายคอลัมน์ไปทางซ้าย",
         .native_editor_column_move_right: "ย้ายคอลัมน์ไปทางขวา",
         .native_editor_math: "สูตรคณิตศาสตร์",

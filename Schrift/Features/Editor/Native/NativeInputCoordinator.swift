@@ -359,6 +359,21 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         view.becomeFirstResponder()
     }
 
+    /// The caret (or a selection) in `blockID` at `offset` (PR12c: a jump
+    /// into a column, a block that moved into this column). The selection
+    /// only: nothing is written.
+    func focus(at blockID: String, offset: Int = 0, length: Int = 0) {
+        guard let entry = surface.rangeIndex.entry(for: blockID) else { return }
+        let text = entry.textRange
+        let location = text.location + min(max(0, offset), text.length)
+        let range = NSRange(location: location, length: max(0, min(length, NSMaxRange(text) - location)))
+        asOneKeyboardChange { selection.place(range) }
+    }
+
+    /// A block this surface moved left it (Move up/down across a column's
+    /// edge, PR12c): its id and the selection's offset and length in it.
+    @ObservationIgnored var onBlockLeft: ((String, Int, Int) -> Void)?
+
     /// A delivered patch that was not this surface's own command: the selection
     /// is restored from the session's endpoints after the delivery.
     @ObservationIgnored private var needsRestore = false
@@ -650,6 +665,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                     let text = entry.textRange
                     let location = text.location + min(max(0, offset), text.length)
                     selection.place(NSRange(location: location, length: min(length, NSMaxRange(text) - location)))
+                } else {
+                    onBlockLeft?(blockID, offset, length)
                 }
             case .at(let location):
                 typingCaret = NSRange(location: location, length: 0)

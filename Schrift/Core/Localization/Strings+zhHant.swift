@@ -370,6 +370,7 @@ enum Strings_zhHant {
         .native_editor_table_format: "格式",
         .native_editor_columns: "分欄，%d",
         .native_editor_column: "第 %d 欄，共 %d 欄",
+        .native_editor_columns_rotor: "分欄",
         .native_editor_column_move_left: "欄左移",
         .native_editor_column_move_right: "欄右移",
         .native_editor_math: "公式",

@@ -47,6 +47,9 @@ struct NativeEditorLabels: Equatable {
     var table = Strings_en.table[.native_editor_table]!
     var tableMore = Strings_en.table[.native_editor_table_more]!
     var columns = Strings_en.table[.native_editor_columns]!
+    /// "Column 2 of 3": a column's VoiceOver container and the group card's value (PR12c).
+    var column = Strings_en.table[.native_editor_column]!
+    var columnsRotor = Strings_en.table[.native_editor_columns_rotor]!
     var math = Strings_en.table[.native_editor_math]!
     var diagram = Strings_en.table[.native_editor_diagram]!
     var imageExternal = Strings_en.table[.editor_image_external]!
