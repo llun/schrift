@@ -251,6 +251,8 @@ enum Strings_de {
         .editor_slash_code_block: "Codeblock",
         .editor_slash_toggle_list: "Aufklappbare Liste",
         .editor_slash_toggle_heading: "Aufklappbare Überschrift",
+        .editor_slash_two_columns: "Zwei Spalten",
+        .editor_slash_three_columns: "Drei Spalten",
         .editor_slash_divider: "Trennlinie",
         .editor_slash_photo: "Foto",
 
@@ -378,6 +380,8 @@ enum Strings_de {
         .native_editor_table_format: "Format",
         .native_editor_columns: "Spalten, %d",
         .native_editor_column: "Spalte %d von %d",
+        .native_editor_column_move_left: "Spalte nach links",
+        .native_editor_column_move_right: "Spalte nach rechts",
         .native_editor_math: "Formel",
         .native_editor_diagram: "Diagramm",
         .native_editor_input_unavailable: "Diese Eingabe wird im nativen Editor noch nicht unterstützt.",

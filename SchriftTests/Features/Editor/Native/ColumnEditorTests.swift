@@ -126,16 +126,18 @@ final class ColumnEditorTests: NativeEditingTestCase {
         await harness.settle()
         XCTAssertEqual(column.surface.blocks.map(\.id), ["a", "b", "b2"])
         XCTAssertEqual(column.surface.blocks[0].runs.map(\.text).joined(), "Left textx")
-        // Backspace at the column's first block writes nothing (PR12b moves it).
+        // Backspace at the column's first block moves it above the group, as the web does (PR12b).
         let commands = harness.log.commands.count
         setSelection(column, NSRange(location: try location(column, "a", 0), length: 0))
         column.textView.deleteBackward()
         await column.settle()
         await harness.settle()
-        XCTAssertEqual(harness.log.commands.count, commands)
+        XCTAssertEqual(harness.log.commands.count, commands + 1)
+        XCTAssertEqual(column.surface.blocks.map(\.id), ["b", "b2"], "it left the column")
+        XCTAssertEqual(harness.session.surface.blocks.map(\.id), ["lead", "a", "cl", "tail"], "and is the document's")
         written = await xml(harness)
         XCTAssertTrue(written.contains("<columnlist id=\"cl\"><column id=\"c1\""), "the group is where it was")
-        try await assertConsistent(harness, localCommands: commands)
+        try await assertConsistent(harness, localCommands: commands + 1)
     }
 
     func testTabNestsInsideTheColumn() async throws {
@@ -448,18 +450,19 @@ final class ColumnEditorTests: NativeEditingTestCase {
         setSelection(harness, NSRange(location: try location(harness.session, "lead", 6), length: 0))
         harness.view.insertText("!")
         await harness.settle()
-        // Backspace at the start of the block after the group writes nothing
-        // (the web moves it into the last column: PR12b).
+        // Backspace at the start of the block after the group moves it into
+        // the group's last column, as the web does (PR12b).
         setSelection(harness, NSRange(location: try location(harness.session, "tail", 0), length: 0))
         harness.view.deleteBackward()
         await harness.settle()
-        try await assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 2)
+        XCTAssertEqual(harness.session.surface.blocks.map(\.id), ["lead", "cl"])
         let written = await xml(harness)
         XCTAssertTrue(written.contains(">Before!<"))
         XCTAssertTrue(
             written.hasSuffix(
-                "<blockcontainer id=\"tail\"><paragraph backgroundColor=\"default\" textAlignment=\"left\" textColor=\"default\">After</paragraph></blockcontainer></blockgroup>"
-            ))
+                "<blockcontainer id=\"tail\"><paragraph backgroundColor=\"default\" textAlignment=\"left\" textColor=\"default\">After</paragraph></blockcontainer></column></columnlist></blockgroup>"
+            ), written)
     }
 }
 

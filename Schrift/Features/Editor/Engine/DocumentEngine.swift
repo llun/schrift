@@ -359,6 +359,10 @@ final class DocumentEngine {
         // `tableParagraph` schema), and a mark change stays in the paragraph.
         if builder.index.isTableParagraph(command.blockID) { return try prepareCellCommand(command) }
         if case .table(let table) = command.kind { return try prepareTableCommand(command, table) }
+        if case .columns(let columns) = command.kind { return try prepareColumnCommand(command, columns) }
+        if case .insertColumns(let count, let ids, let removing) = command.kind {
+            return try prepareInsertColumns(command, count: count, ids: ids, removing: removing)
+        }
         // A prop edit (a code block's language) is the one command code accepts.
         let isPropEdit = if case .props = command.kind { true } else { false }
         let (node, units) = try structuralTarget(command.blockID, allowCode: isPropEdit)
@@ -406,9 +410,14 @@ final class DocumentEngine {
             // BlockNote's `mergeBlocksCommand`: into the block above (the
             // previous sibling's last descendant, or a first child's parent).
             // A nested block outdents only when that merge cannot happen.
-            // A column's first block has nothing above it in its column: the
-            // web's move into the previous column or out of the group is
-            // PR12b's, so nothing is written (PR12a).
+            // Across a column group's edge (PR12b) the web moves the block:
+            // a column's first block to the end of the previous column or
+            // above the group, the block after a group into its last column.
+            if let move = try crossing(command.blockID, up: true) {
+                write = move
+                caret = { start(command.blockID) }
+                break
+            }
             let index = builder.index
             let list = index.list(of: command.blockID)
             guard let entry = index.entries[command.blockID], let position = index.listPosition(of: command.blockID),
@@ -467,6 +476,16 @@ final class DocumentEngine {
             write = try lift(command.blockID)
             caret = { EditorPosition(blockID: command.blockID, offset: offset, assoc: -1) }
         case .range(let range):
+            // Delete at the end of the block before a group (PR12b): the web
+            // pulls the group's first block out to after it.
+            if range.replacement.isEmpty, range.endOffset == 0, range.startOffset == units.count,
+                builder.index.isColumnGroup(range.endBlockID),
+                let move = try pullFirstBlock(of: range.endBlockID, after: command.blockID)
+            {
+                write = move
+                caret = { EditorPosition(blockID: command.blockID, offset: range.startOffset, assoc: -1) }
+                break
+            }
             // Every block the range touches is validated before arming: an
             // opaque block, a placeholder, code, nested children, inline nodes
             // or a toggle heading anywhere refuses the whole command.
@@ -594,8 +613,8 @@ final class DocumentEngine {
             throw DocumentEngineError.unsupportedNativeInput  // prepared above
         case .undo, .redo:
             throw DocumentEngineError.unsupportedNativeInput  // `applyHistoryStep`
-        case .lineBreak, .table:
-            throw DocumentEngineError.unsupportedNativeInput  // cells and tables only, prepared above
+        case .lineBreak, .table, .columns, .insertColumns:
+            throw DocumentEngineError.unsupportedNativeInput  // cells, tables and groups, prepared above
         }
         return (write, caret)
     }
@@ -797,6 +816,191 @@ final class DocumentEngine {
         return ColumnGroup.read(entry.container, id: blockID)
     }
 
+    // MARK: - Column group structure (PR12b)
+
+    /// Fresh block ids for blocks the engine adds itself (a column a move
+    /// empties keeps an empty paragraph). Tests fix it.
+    var newBlockID: () -> String = { UUID().uuidString }
+
+    /// The web's move of `blockID` across a column group's edge, as Move up
+    /// (`up`) or Move down and Backspace write it (`getInsertionPos`):
+    /// - a block next to a group goes into it: Move down to the top of its
+    ///   first column, Move up (and Backspace) to the end of its last column;
+    /// - a column's first block, moving up, goes to the end of the previous
+    ///   column, or above the group from the first column; a column's last
+    ///   block, moving down, to the top of the next column, or below the
+    ///   group from the last column.
+    /// Nil when the move does not cross an edge. Throws when it would but
+    /// cannot (a group moving into a group, a locked or unreadable block).
+    private func crossing(_ blockID: String, up: Bool) throws -> (() throws -> Data)? {
+        let index = builder.index
+        guard index.isCanonical, let entry = index.entries[blockID],
+            let siblings = index.groupOrder[ObjectIdentifier(entry.group)],
+            let at = siblings.firstIndex(of: blockID)
+        else { return nil }
+        let destination: (type: YType, left: YItem?)
+        let neighbour = up ? (at > 0 ? siblings[at - 1] : nil) : (at + 1 < siblings.count ? siblings[at + 1] : nil)
+        if let neighbour, index.isColumnGroup(neighbour), let list = index.entries[neighbour]?.container {
+            let columns = writer.children(list)
+            guard let column = up ? columns.last : columns.first, case .type(let type) = column.content else {
+                return nil
+            }
+            destination = (type, up ? writer.children(type).last : nil)
+        } else if neighbour == nil, entry.parentID == nil, index.columnOf[blockID] != nil,
+            let listItem = entry.group.item?.parentType?.item, case .type(let list) = listItem.content,
+            let outer = listItem.parentType
+        {
+            let columns = writer.children(list)
+            guard let column = columns.firstIndex(where: { $0 === entry.group.item }) else { return nil }
+            if up {
+                if column > 0, case .type(let previous) = columns[column - 1].content {
+                    destination = (previous, writer.children(previous).last)
+                } else {
+                    destination = (outer, listItem.left)
+                }
+            } else if column + 1 < columns.count, case .type(let next) = columns[column + 1].content {
+                destination = (next, nil)
+            } else {
+                destination = (outer, listItem)
+            }
+        } else {
+            return nil
+        }
+        // A group never goes into a column.
+        guard !index.isColumnGroup(blockID) else { throw DocumentEngineError.unsupportedNativeInput }
+        _ = try requireMovable(blockID, including: { $0 > entry.depth })
+        let item = entry.containerItem
+        let pad = newBlockID()
+        return {
+            try self.writer.moveAcross(item, id: blockID, into: destination.type, after: destination.left, padID: pad)
+        }
+    }
+
+    /// Delete at the end of `blockID`, the root block before group `groupID`:
+    /// the web pulls the group's first column's first block out to after it.
+    private func pullFirstBlock(of groupID: String, after blockID: String) throws -> (() throws -> Data)? {
+        let index = builder.index
+        guard let entry = index.entries[blockID], entry.depth == 0, index.columnOf[blockID] == nil,
+            let siblings = index.groupOrder[ObjectIdentifier(entry.group)], let at = siblings.firstIndex(of: blockID),
+            at + 1 < siblings.count, siblings[at + 1] == groupID, let list = index.entries[groupID]?.container,
+            ColumnGroup.read(list, id: groupID).isFamiliar,
+            case .type(let column)? = writer.children(list).first?.content,
+            let first = writer.children(column).first, case .type(let pulled) = first.content,
+            let pulledID = BlockIndex.blockID(of: pulled)
+        else { return nil }
+        // Every block it takes along must be readable: a copy that drops nothing.
+        let copy = try writer.snapshot(pulled, block: pulledID, depth: 0)
+        _ = try BlockNoteSubtreePayload.validate([copy])
+        let left = entry.containerItem
+        let pad = newBlockID()
+        return { try self.writer.moveAcross(first, id: pulledID, into: entry.group, after: left, padID: pad) }
+    }
+
+    /// A column structure command on familiar, modeled group `command.blockID`,
+    /// validated whole before arming.
+    private func prepareColumnCommand(_ command: NativeEditCommand, _ columns: BlockNoteColumnCommand) throws
+        -> PreparedCommand
+    {
+        let index = builder.index
+        guard index.isCanonical, index.isColumnGroup(command.blockID), let entry = index.entries[command.blockID],
+            !builder.nativeSnapshot(entry).block.fidelity.isOpaque
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let group = ColumnGroup.read(entry.container, id: command.blockID)
+        let count = group.columns.count
+        switch columns {
+        case .add(let at, let columnID, let paragraphID):
+            guard (0...count).contains(at), count < ColumnGroup.maxColumns, columnID != paragraphID,
+                isUnused(columnID), isUnused(paragraphID)
+            else { throw DocumentEngineError.unsupportedNativeInput }
+        case .remove(let at):
+            guard group.columns.indices.contains(at) else { throw DocumentEngineError.unsupportedNativeInput }
+            // Its blocks go (and a dissolve moves the other column's): none may be locked.
+            for column in count == 2 ? group.columns : [group.columns[at]] {
+                for id in column.blockIDs { try requireEditableBlock(id) }
+            }
+        case .move(let from, let to):
+            guard group.columns.indices.contains(from), group.columns.indices.contains(to), from != to else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            for id in group.columns[from].blockIDs { try requireEditableBlock(id) }
+        case .resize(let left, let leftWidth, let rightWidth):
+            guard group.columns.indices.contains(left), group.columns.indices.contains(left + 1),
+                leftWidth.isFinite, rightWidth.isFinite, leftWidth >= BlockNoteColumnCommand.minimumWidth,
+                rightWidth >= BlockNoteColumnCommand.minimumWidth
+            else { throw DocumentEngineError.unsupportedNativeInput }
+        }
+        let item = entry.containerItem
+        return (
+            write: { try self.writer.applyColumns(columns, list: item, block: command.blockID) },
+            caret: { EditorPosition(blockID: command.blockID, offset: 0, assoc: -1) }
+        )
+    }
+
+    /// The slash menu's Columns items (PR12b, `insertColumnList`): the
+    /// "/query" removed, then a group of `count` columns of one empty
+    /// paragraph each: replacing the paragraph (taking its id) when nothing
+    /// else is left in a root paragraph without children, else after it; from
+    /// a column, after its group.
+    private func prepareInsertColumns(_ command: NativeEditCommand, count: Int, ids: [String], removing: Range<Int>)
+        throws -> PreparedCommand
+    {
+        let index = builder.index
+        let (node, units) = try structuralTarget(command.blockID)
+        guard node == "paragraph", let entry = index.entries[command.blockID], (2...3).contains(count),
+            Self.isBoundary(removing.lowerBound, in: units), Self.isBoundary(removing.upperBound, in: units),
+            Set(ids).count == ids.count, ids.allSatisfy(isUnused)
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let anchor: (item: YItem, group: YType)
+        let replacing: Bool
+        if index.columnOf[command.blockID] != nil {
+            // From a column: after its group, at the root.
+            var group: YType? = entry.group
+            while let current = group, current.typeRef != .xmlElement(nodeName: "column") {
+                group = current.item?.parentType?.item?.parentType
+            }
+            guard let listItem = group?.item?.parentType?.item, let outer = listItem.parentType else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            anchor = (listItem, outer)
+            replacing = false
+        } else {
+            // A group below the root has no shadow: root blocks only.
+            guard entry.depth == 0 else { throw DocumentEngineError.unsupportedNativeInput }
+            anchor = (entry.containerItem, entry.group)
+            replacing = units.count == removing.count && entry.nestedGroup == nil
+        }
+        // One id spare: the group's, unused when it takes the paragraph's.
+        guard ids.count == 2 * count + 1 else { throw DocumentEngineError.unsupportedNativeInput }
+        let groupIDs = replacing ? Array(ids.dropFirst()) : ids
+        let item = entry.containerItem
+        return (
+            write: {
+                try self.writer.transaction { _ in
+                    if !removing.isEmpty, !replacing {
+                        try self.writer.replaceText(
+                            in: try self.writer.indexedTarget(item, id: command.blockID), range: removing, with: "")
+                    }
+                    try self.writer.insertColumnList(
+                        after: anchor.item, in: anchor.group, replacing: replacing, ids: groupIDs, columns: count)
+                }
+            },
+            caret: { EditorPosition(blockID: command.blockID, offset: 0, assoc: -1) }
+        )
+    }
+
+    /// An id no block, column or group of the replica uses.
+    private func isUnused(_ id: String) -> Bool {
+        guard !id.isEmpty, builder.index.entries[id] == nil else { return false }
+        do {
+            _ = try writer.find(id)
+            return false
+        } catch BlockNoteWriter.Error.missingBlock {
+            return !ColumnGroup.columnIDs(in: doc).contains(id)
+        } catch {
+            return false
+        }
+    }
+
     private func resetOnBackspaceOrEnter(_ blockID: String, node: String) throws -> Data {
         guard node == "heading", isToggle(blockID) else {
             return try writer.setBlockType(block: blockID, to: "paragraph")
@@ -906,14 +1110,24 @@ final class DocumentEngine {
             // BlockNote's `getMovePlacement`: past a sibling with children
             // into its nearest child, past the group's end out beside the parent.
             let up = command.kind == .moveUp
+            // Next to or out of a column group (PR12b): the web's `getInsertionPos`.
+            if let move = try crossing(id, up: up) {
+                let offset = try caretOffset(in: id)
+                return (move, { EditorPosition(blockID: id, offset: offset, assoc: -1) })
+            }
+            let neighbour = up ? (at > 0 ? siblings[at - 1] : nil) : (at + 1 < siblings.count ? siblings[at + 1] : nil)
+            // The group itself moves among plain root blocks only (a group
+            // never nests: no shadow, and never inside a column).
+            if index.isColumnGroup(id) {
+                guard entry.depth == 0, let neighbour, let next = index.entries[neighbour],
+                    !index.isColumnGroup(neighbour),
+                    next.nestedGroup == nil
+                else { throw DocumentEngineError.unsupportedNativeInput }
+                let left = up ? next.containerItem.left : next.containerItem
+                return ({ try writer.moveBlock(item, id: id, into: entry.group, after: left) }, { start(id) })
+            }
             let deepest = try requireMovable(id, including: { $0 > entry.depth }) - 1
             let destination: (group: YType, left: YItem?, depth: Int)
-            let neighbour = up ? (at > 0 ? siblings[at - 1] : nil) : (at + 1 < siblings.count ? siblings[at + 1] : nil)
-            // Past a column group the web moves the block into its first or last
-            // column (`getInsertionPos`): PR12b's, so nothing is written yet.
-            guard neighbour.map({ !index.isColumnGroup($0) }) ?? true else {
-                throw DocumentEngineError.unsupportedNativeInput
-            }
             if let neighbour, let next = index.entries[neighbour] {
                 if let nested = next.nestedGroup, let kids = index.groupOrder[ObjectIdentifier(nested)],
                     let last = kids.last.flatMap({ index.entries[$0] }), !kids.isEmpty
@@ -941,11 +1155,20 @@ final class DocumentEngine {
                 { try writer.moveBlock(item, id: id, into: destination.group, after: destination.left) },
                 { EditorPosition(blockID: id, offset: offset, assoc: -1) }
             )
-        case .duplicate(let newIDs):
-            _ = try requireMovable(id, including: { $0 > entry.depth })
+        case .duplicate(var newIDs):
+            let isGroup = index.isColumnGroup(id)
+            if isGroup {
+                // A whole familiar, modeled group (PR12b); its ids are the engine's own.
+                guard !builder.nativeSnapshot(entry).block.fidelity.isOpaque else {
+                    throw DocumentEngineError.unsupportedNativeInput
+                }
+            } else {
+                _ = try requireMovable(id, including: { $0 > entry.depth })
+            }
             let copy = try writer.snapshot(entry.container, block: id, depth: 0)
             _ = try BlockNoteSubtreePayload.validate([copy])
-            guard newIDs.count == copy.containerCount, isFresh(newIDs) else {
+            if isGroup { newIDs = (0..<copy.idCount).map { _ in newBlockID() } }
+            guard newIDs.count == copy.idCount, isFresh(newIDs), newIDs.allSatisfy(isUnused) else {
                 throw DocumentEngineError.unsupportedNativeInput
             }
             var ids = newIDs[...]
@@ -982,9 +1205,12 @@ final class DocumentEngine {
             let copies = try BlockNoteSubtreePayload.decode(payload)
             let shape = try BlockNoteSubtreePayload.validate(copies)
             let newIDs = (0..<shape.blocks).map { _ in UUID().uuidString }
+            // A pasted group (PR12b) lands at the root only: never in a column or a block's children.
+            let pastesGroup = copies.contains { if case .element("columnList", _, _) = $0 { true } else { false } }
             guard let last = newIDs.last, isFresh(newIDs),
                 entry.depth + shape.depth <= BlockNoteWriter.maxNestingDepth,
-                !Self.nestsTable(copies, depth: entry.depth)
+                !Self.nestsTable(copies, depth: entry.depth),
+                !pastesGroup || (entry.depth == 0 && index.columnOf[id] == nil)
             else { throw DocumentEngineError.unsupportedNativeInput }
             var ids = newIDs[...]
             let fresh = try copies.map { try $0.replacingIDs(&ids) }

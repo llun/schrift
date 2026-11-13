@@ -248,6 +248,8 @@ enum Strings_nl {
         .editor_slash_code_block: "Codeblok",
         .editor_slash_toggle_list: "Uitklapbare lijst",
         .editor_slash_toggle_heading: "Uitklapbare kop",
+        .editor_slash_two_columns: "Twee kolommen",
+        .editor_slash_three_columns: "Drie kolommen",
         .editor_slash_divider: "Scheidingslijn",
         .editor_slash_photo: "Foto",
 
@@ -375,6 +377,8 @@ enum Strings_nl {
         .native_editor_table_format: "Opmaak",
         .native_editor_columns: "Kolommen, %d",
         .native_editor_column: "Kolom %d van %d",
+        .native_editor_column_move_left: "Kolom naar links",
+        .native_editor_column_move_right: "Kolom naar rechts",
         .native_editor_math: "Formule",
         .native_editor_diagram: "Diagram",
         .native_editor_input_unavailable: "Deze invoer wordt nog niet ondersteund in de native editor.",

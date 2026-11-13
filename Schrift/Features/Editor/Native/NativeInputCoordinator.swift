@@ -312,6 +312,21 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             tableID, .table(command), refusal: .native_editor_input_unavailable, remapping: remapping)
     }
 
+    /// A column group structure command from the column editor (PR12b): one
+    /// barrier on the group, journaled before it is shown; the caret keeps
+    /// its offsets in its block. The editor re-reads the group when the
+    /// result shows.
+    @discardableResult
+    func applyColumns(_ groupID: String, _ command: BlockNoteColumnCommand) -> Bool {
+        guard let view, view.isEditable, !isFrozen, !isDetached, !compositionOwnsView else { return false }
+        let selection = view.selectedRange
+        let remapping = surface.rangeIndex.entry(atUTF16: selection.location).map {
+            (blockID: $0.blockID, offset: max(0, selection.location - $0.textRange.location), length: selection.length)
+        }
+        return applyStructural(
+            groupID, .columns(command), refusal: .native_editor_input_unavailable, remapping: remapping)
+    }
+
     /// Shift-Return in a table cell (PR11b): one hard break at the caret
     /// (BlockNote's `setHardBreak`), a barrier like Return in prose.
     @discardableResult
@@ -1587,6 +1602,17 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// editor cannot author yet (divider, photo, file) are not offered.
     @discardableResult
     func applySlashItem(_ item: SlashMenuItem) -> Bool {
+        // A column group (PR12b): the engine decides replace or insert after; one id spare either way.
+        if case .columns(let count) = item.action {
+            guard let view, canFormat, view.selectedRange.length == 0, let token = slashToken,
+                let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location)
+            else { return false }
+            let ids = (0...(2 * count)).map { _ in UUID().uuidString }
+            return applyStructural(
+                entry.blockID, .insertColumns(count: count, ids: ids, removing: token),
+                refusal: .native_editor_input_unavailable,
+                retry: again { [weak self] in self?.applySlashItem(item) ?? false }, readsSelection: true)
+        }
         guard let view, canFormat, view.selectedRange.length == 0, let token = slashToken,
             let type = Self.slashType(item.action),
             let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location)
@@ -1611,13 +1637,14 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     /// The slash items this editor can apply, in the classic menu's order,
     /// with the native-only toggles after Heading 3 and the checklist.
-    static let slashItems = allSlashMenuItems.filter { slashType($0.action) != nil }.flatMap { item in
-        switch item.id {
-        case "heading3": [item, toggleHeadingSlashItem]
-        case "checklist": [item, toggleListSlashItem]
-        default: [item]
-        }
-    }
+    static let slashItems =
+        allSlashMenuItems.filter { slashType($0.action) != nil }.flatMap { item in
+            switch item.id {
+            case "heading3": [item, toggleHeadingSlashItem]
+            case "checklist": [item, toggleListSlashItem]
+            default: [item]
+            }
+        } + [twoColumnsSlashItem, threeColumnsSlashItem]
 
     private static func slashType(_ action: SlashMenuAction) -> (node: String, props: [ProjectedProp])? {
         if case .toggle(let heading) = action {

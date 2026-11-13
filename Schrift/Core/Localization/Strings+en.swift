@@ -243,6 +243,8 @@ enum Strings_en {
         .editor_slash_code_block: "Code block",
         .editor_slash_toggle_list: "Toggle list",
         .editor_slash_toggle_heading: "Toggle heading",
+        .editor_slash_two_columns: "Two columns",
+        .editor_slash_three_columns: "Three columns",
         .editor_slash_divider: "Divider",
         .editor_slash_photo: "Photo",
 
@@ -383,6 +385,8 @@ enum Strings_en {
         .native_editor_table_format: "Format",
         .native_editor_columns: "Columns, %d",
         .native_editor_column: "Column %d of %d",
+        .native_editor_column_move_left: "Move column left",
+        .native_editor_column_move_right: "Move column right",
         .native_editor_math: "Math",
         .native_editor_diagram: "Diagram",
         .native_editor_input_unavailable: "This input isn't supported in the native editor yet.",

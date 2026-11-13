@@ -248,6 +248,8 @@ enum Strings_fr {
         .editor_slash_code_block: "Bloc de code",
         .editor_slash_toggle_list: "Liste repliable",
         .editor_slash_toggle_heading: "Titre repliable",
+        .editor_slash_two_columns: "Deux colonnes",
+        .editor_slash_three_columns: "Trois colonnes",
         .editor_slash_divider: "Séparateur",
         .editor_slash_photo: "Photo",
 
@@ -375,6 +377,8 @@ enum Strings_fr {
         .native_editor_table_format: "Format",
         .native_editor_columns: "Colonnes, %d",
         .native_editor_column: "Colonne %d sur %d",
+        .native_editor_column_move_left: "Déplacer la colonne à gauche",
+        .native_editor_column_move_right: "Déplacer la colonne à droite",
         .native_editor_math: "Formule",
         .native_editor_diagram: "Diagramme",
         .native_editor_input_unavailable: "Cette saisie n’est pas encore prise en charge dans l’éditeur natif.",

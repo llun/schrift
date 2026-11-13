@@ -173,17 +173,10 @@ final class BlockNoteColumnOracleTests: XCTestCase {
         defer { engine.detach() }
         XCTAssertTrue(engine.openColumns("cl"))
         let before = YXMLString.fragment(doc)
+        // The moves across a column's edge are PR12b's (`BlockNoteColumnStructureOracleTests`).
         let refused: [(String, NativeEditCommand.Kind)] = [
-            // backspaceAtSecondColumnStart, backspaceAtFirstColumnStart, deleteAtColumnEnd (joins "c").
-            ("c", .join), ("a", .join),
-            // backspaceAfterGroup: the block above is the group.
-            ("tail", .join),
-            // shiftTabAtColumnTop: the web does nothing either.
+            // Shift-Tab at a column's top: the web does nothing either.
             ("b", .outdent),
-            // A column keeps a block; moves stop at its edges.
-            ("a", .moveUp), ("b", .moveDown), ("c", .moveUp), ("d", .moveDown),
-            // Past the group the web moves into its first or last column (PR12b).
-            ("lead", .moveDown), ("tail", .moveUp),
             // A range or a mark change never crosses into another column or the document.
             (
                 "b",
@@ -202,8 +195,7 @@ final class BlockNoteColumnOracleTests: XCTestCase {
                         startOffset: 0, endBlockID: "c", endOffset: 2,
                         attributes: [TextMark(key: "bold", valueJSON: "{}")]))
             ),
-            // The group itself is not moved, duplicated or deleted (PR12b).
-            ("cl", .moveUp), ("cl", .moveDown), ("cl", .deleteBlock), ("cl", .duplicate(newIDs: ["x"])),
+            // Nothing nests under a group.
             ("cl", .indent),
         ]
         for (id, kind) in refused {

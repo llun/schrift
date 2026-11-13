@@ -243,6 +243,8 @@ enum Strings_th {
         .editor_slash_code_block: "บล็อกโค้ด",
         .editor_slash_toggle_list: "รายการแบบย่อ/ขยายได้",
         .editor_slash_toggle_heading: "หัวข้อแบบย่อ/ขยายได้",
+        .editor_slash_two_columns: "สองคอลัมน์",
+        .editor_slash_three_columns: "สามคอลัมน์",
         .editor_slash_divider: "เส้นแบ่ง",
         .editor_slash_photo: "รูปภาพ",
 
@@ -370,6 +372,8 @@ enum Strings_th {
         .native_editor_table_format: "รูปแบบ",
         .native_editor_columns: "คอลัมน์ %d",
         .native_editor_column: "คอลัมน์ %d จาก %d",
+        .native_editor_column_move_left: "ย้ายคอลัมน์ไปทางซ้าย",
+        .native_editor_column_move_right: "ย้ายคอลัมน์ไปทางขวา",
         .native_editor_math: "สูตรคณิตศาสตร์",
         .native_editor_diagram: "แผนภาพ",
         .native_editor_input_unavailable: "ตัวแก้ไขเนทีฟยังไม่รองรับการป้อนข้อมูลแบบนี้",

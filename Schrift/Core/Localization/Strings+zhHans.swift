@@ -241,6 +241,8 @@ enum Strings_zhHans {
         .editor_slash_code_block: "代码块",
         .editor_slash_toggle_list: "可折叠列表",
         .editor_slash_toggle_heading: "可折叠标题",
+        .editor_slash_two_columns: "两列",
+        .editor_slash_three_columns: "三列",
         .editor_slash_divider: "分隔线",
         .editor_slash_photo: "照片",
 
@@ -368,6 +370,8 @@ enum Strings_zhHans {
         .native_editor_table_format: "格式",
         .native_editor_columns: "分栏，%d",
         .native_editor_column: "第 %d 列，共 %d 列",
+        .native_editor_column_move_left: "列左移",
+        .native_editor_column_move_right: "列右移",
         .native_editor_math: "公式",
         .native_editor_diagram: "图表",
         .native_editor_input_unavailable: "原生编辑器暂不支持此输入。",
