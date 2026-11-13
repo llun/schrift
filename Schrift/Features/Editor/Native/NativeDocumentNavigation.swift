@@ -73,7 +73,7 @@ final class NativeDocumentNavigation {
     @ObservationIgnored private var restorePending = false
     @ObservationIgnored var voiceOverEnabled: () -> Bool = { UIAccessibility.isVoiceOverRunning }
     /// Cached title resolver for linked documents referenced by interlink chips.
-    @ObservationIgnored var documentTitle: ((UUID) -> String?)?
+    @ObservationIgnored var documentTitle: (@MainActor (UUID) -> String?)?
 
     init(
         replica: DocumentReplicaSession?, surface: NativeTextSurface, textView: NativeTextView,

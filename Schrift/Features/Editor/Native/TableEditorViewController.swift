@@ -55,7 +55,7 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     /// Menu titles (the app's localized strings; English in tests).
     var text: (L10nKey) -> String = { Strings_en.table[$0] ?? "" }
     /// Cached title resolver for linked document chips (read-only display).
-    var documentTitle: ((UUID) -> String?)?
+    var documentTitle: (@MainActor (UUID) -> String?)?
     /// The Row, Column, Cell and Format menus (PR11b), shown while editing.
     let controls = UIStackView()
 
@@ -1227,7 +1227,7 @@ struct TableEditorScreen: UIViewControllerRepresentable {
     let doneTitle: String
     let cellLabel: (Int, Int) -> String
     let text: (L10nKey) -> String
-    var documentTitle: ((UUID) -> String?)? = nil
+    var documentTitle: (@MainActor (UUID) -> String?)? = nil
     let onClose: () -> Void
 
     func makeUIViewController(context: Context) -> UINavigationController {

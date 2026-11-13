@@ -327,7 +327,7 @@ struct ColumnEditorScreen: View {
     var isOffline = false
     /// The document's uploads (PR13a): a column's media block uploads into its column.
     var uploads: NativeMediaUploads? = nil
-    var documentTitle: ((UUID) -> String?)? = nil
+    var documentTitle: (@MainActor (UUID) -> String?)? = nil
     @State private var linkTarget: NativeLinkTarget?
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.docsTheme) private var theme
@@ -460,7 +460,7 @@ private struct ColumnTextHost: UIViewRepresentable {
     let images: ImageLoader?
     let serverOrigin: String
     let isOffline: Bool
-    let documentTitle: ((UUID) -> String?)?
+    let documentTitle: (@MainActor (UUID) -> String?)?
 
     func makeUIView(context: Context) -> ColumnTextContainer {
         let container = ColumnTextContainer()

@@ -58,7 +58,7 @@ final class NativeInlineChipAttachment: NSTextAttachment {
     }
 
     override func image(
-        forBounds bounds: CGRect, attributes: [NSAttributedString.Key: Any], location: any NSTextLocation,
+        for bounds: CGRect, attributes: [NSAttributedString.Key: Any], location: any NSTextLocation,
         textContainer: NSTextContainer?
     ) -> UIImage? {
         guard Thread.isMainThread else { return image }
@@ -67,7 +67,7 @@ final class NativeInlineChipAttachment: NSTextAttachment {
         return MainActor.assumeIsolated {
             let controls = container?.textLayoutManager?.delegate as? NativeBlockControls
             let theme = controls?.theme ?? .white
-            let traits = controls?.traits ?? container?.textView?.traitCollection ?? .current
+            let traits = controls?.traits ?? .current
             let scale = NativeInlineChipImageCache.resolvedScale(for: traits)
             return NativeInlineChipImageCache.image(
                 content: attachment.content, font: attachment.font, theme: theme,
@@ -95,7 +95,8 @@ final class NativeInlineChipAttachment: NSTextAttachment {
                 kind = .disabledInterlink
                 let raw = (title?.isEmpty == false ? title : nil) ?? (docID.isEmpty ? nil : docID)
                 displayLabel = raw ?? labels.chipUntitled
-                accessibilityLabel = raw.map { String(format: labels.named, labels.chipPage, $0) } ?? labels.chipUntitled
+                accessibilityLabel =
+                    raw.map { String(format: labels.named, labels.chipPage, $0) } ?? labels.chipUntitled
             }
         case .mention:
             hasIcon = false
@@ -175,10 +176,8 @@ enum NativeInlineChipImageCache {
         let dark = image(content: content, font: font, theme: .white, isDark: true, scale: scale)
         let asset = UIImageAsset()
         let scaleTraits = UITraitCollection(displayScale: scale)
-        asset.register(
-            light, with: UITraitCollection(traitsFrom: [scaleTraits, UITraitCollection(userInterfaceStyle: .light)]))
-        asset.register(
-            dark, with: UITraitCollection(traitsFrom: [scaleTraits, UITraitCollection(userInterfaceStyle: .dark)]))
+        asset.register(light, with: scaleTraits.modifyingTraits { $0.userInterfaceStyle = .light })
+        asset.register(dark, with: scaleTraits.modifyingTraits { $0.userInterfaceStyle = .dark })
         let resolved = asset.image(with: traits)
         assets[key] = resolved
         return resolved

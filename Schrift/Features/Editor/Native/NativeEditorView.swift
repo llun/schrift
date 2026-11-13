@@ -28,7 +28,7 @@ struct NativeEditorView: View {
     var uploadDocumentID: UUID? = nil
     var mediaQueue: DocumentSaveCoordinator? = nil
     /// Cached title resolver for linked document chips (read-only display).
-    var documentTitle: ((UUID) -> String?)? = nil
+    var documentTitle: (@MainActor (UUID) -> String?)? = nil
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -522,7 +522,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
     var uploadingBlocks: Set<String> = []
     var waitingUploads: Set<String> = []
     var failedUploads: Set<String> = []
-    var documentTitle: ((UUID) -> String?)? = nil
+    var documentTitle: (@MainActor (UUID) -> String?)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
