@@ -1,0 +1,32 @@
+SchriftTests/Features/Editor/Native/NativeMediaTests.swift
+  s_dc239db0cc1c9d::t_d13218ef0a2fc1 1-301,305
+  s_dc239db0cc1c9d::t_20e4339fe7bc34 302-304,306-310
+Schrift/Features/Editor/Native/ColumnEditorViewController.swift
+  s_dc239db0cc1c9d::t_9faf567620bfb2 32-33,128,328-329,433-445
+Schrift/Features/Editor/Native/NativeEditorView.swift
+  s_dc239db0cc1c9d::t_3c3e1bb56ce19e 144,161
+Schrift/Features/Editor/Native/NativeMediaInspector.swift
+  s_dc239db0cc1c9d::t_66e971436145d8 76-77,81-82
+Schrift/Features/Editor/Native/NativeMediaUploads.swift
+  s_dc239db0cc1c9d::t_42fc0d43df9a22 48,60-62,64-66,74-75,77,81-83,123,133-135,137-140,147-150
+SchriftUITests/Native/NativeEditorUITests.swift
+  s_dc239db0cc1c9d::t_23631bb14f4ff3 209-244
+SchriftUITests/Support/NativeEditorTestHostApp.swift
+  s_dc239db0cc1c9d::t_76c016c40a9267 237-241,544-575
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "70bf50936353e435f02d209790739522e52d8c83",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
