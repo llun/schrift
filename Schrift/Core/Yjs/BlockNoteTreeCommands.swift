@@ -62,7 +62,7 @@ extension BlockNoteWriter {
     func liftListItem(in target: Target) throws -> Data {
         guard let groupItem = target.group.item, let parent = groupItem.parentType,
             parent.typeRef == .xmlElement(nodeName: "blockContainer"), let parentItem = parent.item,
-            let outer = parentItem.parentType, outer.typeRef == .xmlElement(nodeName: "blockGroup")
+            let outer = parentItem.parentType, Self.isBlockList(outer)
         else { throw Error.unsupportedBlockType(target.node) }
         let siblings = children(target.group)
         guard let index = siblings.firstIndex(where: { $0 === target.item }) else {

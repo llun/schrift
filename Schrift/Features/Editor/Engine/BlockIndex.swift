@@ -79,6 +79,18 @@ struct BlockIndex {
     private(set) var openTables: [String: [String]] = [:]
     /// A table paragraph's element → its id, for `blockID(for:)`.
     private var paragraphIDs: [ObjectIdentifier: String] = [:]
+    /// Column groups the native column editor opened (PR12a), by group id:
+    /// their column ids in order. Every block of every column is an entry
+    /// (`entries`), addressed like any block, but never in `order`: the
+    /// document surface shows the group as one block. Empty when the group is
+    /// gone or no longer familiar; re-read on every rebuild.
+    private(set) var openGroups: [String: [String]] = [:]
+    /// An open column's blocks, by column id, in preorder.
+    private(set) var columnOrders: [String: [String]] = [:]
+    /// An open column's block → its column id.
+    private(set) var columnOf: [String: String] = [:]
+    /// An open column's block → its place in its column's order.
+    private var columnPosition: [String: Int] = [:]
 
     init(doc: YDoc) {
         self.doc = doc
@@ -123,8 +135,9 @@ struct BlockIndex {
             {
                 return id
             }
-            if candidate.typeRef == .xmlElement(nodeName: "blockContainer"), let id = Self.blockID(of: candidate),
-                entries[id]?.container === candidate
+            if candidate.typeRef == .xmlElement(nodeName: "blockContainer")
+                || candidate.typeRef == .xmlElement(nodeName: "columnList"),
+                let id = Self.blockID(of: candidate), entries[id]?.container === candidate
             {
                 return id
             }
@@ -133,14 +146,16 @@ struct BlockIndex {
         return nil
     }
 
-    /// The containers of a group, in list order, with their readable ids.
+    /// The containers of a group, in list order, with their readable ids. A
+    /// column group (PR12a) is one of them: an atomic block of its group.
     func containers(in group: YType) -> [(id: String, item: YItem)] {
         var out: [(id: String, item: YItem)] = []
         var item = group.start
         while let current = item {
             defer { item = current.right }
             guard !current.deleted, case .type(let type) = current.content,
-                type.typeRef == .xmlElement(nodeName: "blockContainer"),
+                type.typeRef == .xmlElement(nodeName: "blockContainer")
+                    || type.typeRef == .xmlElement(nodeName: "columnList"),
                 let id = Self.blockID(of: type)
             else { continue }
             out.append((id, current))
@@ -157,6 +172,98 @@ struct BlockIndex {
             return
         }
         entries[id] = makeEntry(id: id, item: entry.containerItem, depth: entry.depth, parentID: entry.parentID)
+    }
+
+    // MARK: - Open column groups (PR12a)
+
+    /// Whether `id` is a column group of this index.
+    func isColumnGroup(_ id: String) -> Bool {
+        entries[id]?.container.typeRef == .xmlElement(nodeName: "columnList")
+    }
+
+    /// Indexes every block of every column of group `id`. False (and nothing
+    /// indexed) unless it is a block of this index holding a familiar group
+    /// none of whose block ids the document already uses.
+    @discardableResult
+    mutating func openColumns(_ id: String) -> Bool {
+        closeColumns(id)
+        openGroups[id] = []
+        return indexColumns(id)
+    }
+
+    mutating func closeColumns(_ id: String) {
+        for column in openGroups.removeValue(forKey: id) ?? [] {
+            for block in columnOrders.removeValue(forKey: column) ?? [] {
+                entries.removeValue(forKey: block)
+                columnOf.removeValue(forKey: block)
+                columnPosition.removeValue(forKey: block)
+            }
+        }
+    }
+
+    /// Re-reads an open group's blocks after a change inside it.
+    mutating func reindexColumns(_ id: String) {
+        guard openGroups[id] != nil else { return }
+        openColumns(id)
+    }
+
+    /// The ordered block list `id` belongs to: its open column's, else the
+    /// document's. The engine's order rules (join, range, marks, moves) use
+    /// it, so a column's blocks never meet another column's or the document's.
+    func list(of id: String) -> [String] {
+        guard let column = columnOf[id] else { return order }
+        return columnOrders[column] ?? []
+    }
+
+    /// Whether `a` and `b` are in one list (the document's, or one column's).
+    func sameList(_ a: String, _ b: String) -> Bool { columnOf[a] == columnOf[b] }
+
+    /// `id`'s place in `list(of: id)`.
+    func listPosition(of id: String) -> Int? {
+        columnOf[id] == nil ? position[id] : columnPosition[id]
+    }
+
+    @discardableResult
+    private mutating func indexColumns(_ id: String) -> Bool {
+        guard let entry = entries[id], columnOf[id] == nil,
+            entry.container.typeRef == .xmlElement(nodeName: "columnList"),
+            ColumnGroup.read(entry.container, id: id).isFamiliar
+        else { return false }
+        var columns: [String] = []
+        var indexed: [String] = []
+        var collides = false
+        for column in ColumnGroup.columnTypes(of: entry.container) {
+            guard let columnID = Self.blockID(of: column) else { continue }
+            var ids: [String] = []
+            func index(_ group: YType, depth: Int, parentID: String?) {
+                let containers = containers(in: group)
+                groupOrder[ObjectIdentifier(group)] = containers.map(\.id)
+                for container in containers {
+                    guard entries[container.id] == nil else {
+                        collides = true
+                        continue
+                    }
+                    let entry = makeEntry(id: container.id, item: container.item, depth: depth, parentID: parentID)
+                    entries[container.id] = entry
+                    indexed.append(container.id)
+                    columnOf[container.id] = columnID
+                    columnPosition[container.id] = ids.count
+                    ids.append(container.id)
+                    if let nested = entry.nestedGroup { index(nested, depth: depth + 1, parentID: container.id) }
+                }
+            }
+            index(column, depth: 0, parentID: nil)
+            columns.append(columnID)
+            columnOrders[columnID] = ids
+        }
+        openGroups[id] = columns
+        // A block id the document already uses addresses no column block.
+        if collides {
+            closeColumns(id)
+            openGroups[id] = []
+            return false
+        }
+        return true
     }
 
     // MARK: - Open tables (PR11a)
@@ -256,8 +363,19 @@ struct BlockIndex {
         let tables = Array(openTables.keys)
         paragraphIDs = [:]
         openTables = [:]
-        // Open tables survive a rebuild, re-read (or emptied) from the new tree.
+        let groups = Array(openGroups.keys)
+        openGroups = [:]
+        columnOrders = [:]
+        columnOf = [:]
+        columnPosition = [:]
+        // Open tables and column groups survive a rebuild, re-read (or
+        // emptied) from the new tree. Groups first: a column's table is one
+        // of their blocks.
         defer {
+            for group in groups {
+                openGroups[group] = []
+                if isCanonical { indexColumns(group) }
+            }
             for table in tables {
                 openTables[table] = []
                 // A shape the index cannot mirror addresses no cell.
@@ -301,7 +419,10 @@ struct BlockIndex {
     static func isCanonical(group: YType) -> Bool {
         var seen: Set<String> = []
         for child in countableChildren(of: group) {
-            guard case .type(let type) = child.content, type.typeRef == .xmlElement(nodeName: "blockContainer"),
+            // A column group (PR12a) is an atomic block of its group, by its own id.
+            guard case .type(let type) = child.content,
+                type.typeRef == .xmlElement(nodeName: "blockContainer")
+                    || type.typeRef == .xmlElement(nodeName: "columnList"),
                 let id = blockID(of: type), !id.isEmpty, seen.insert(id).inserted,
                 // U+0001 is the cell paragraph ids' separator (PR11a): a block
                 // spelling one could pose as a table paragraph.
@@ -327,6 +448,13 @@ struct BlockIndex {
         guard case .type(let container) = item.content else {
             return Entry(
                 id: id, containerItem: item, container: YType(), element: nil, textType: nil,
+                isSimpleContainer: false, isSimpleText: false, isProjectable: false, runs: [], depth: depth,
+                parentID: parentID, group: group, nestedGroup: nil, handle: handle)
+        }
+        // A column group (PR12a): its own element, atomic, no text of its own.
+        if container.typeRef == .xmlElement(nodeName: "columnList") {
+            return Entry(
+                id: id, containerItem: item, container: container, element: container, textType: nil,
                 isSimpleContainer: false, isSimpleText: false, isProjectable: false, runs: [], depth: depth,
                 parentID: parentID, group: group, nestedGroup: nil, handle: handle)
         }

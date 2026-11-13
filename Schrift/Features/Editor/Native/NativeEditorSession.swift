@@ -48,6 +48,9 @@ final class NativeEditorSession {
     var grid: TableGrid?
     /// After each delivery is applied (the table editor relays out its grid).
     @ObservationIgnored var onApplied: ((ReplicaDelivery) -> Void)?
+    /// A column surface's column and group (PR12a): its blocks are that
+    /// column's. Nil for the document.
+    private(set) var column: (group: String, id: String)?
 
     private init(
         replica: DocumentReplicaSession?, surfaceID: UUID = UUID(), blocks: [BlockSnapshot], revision: UInt64,
@@ -83,6 +86,7 @@ final class NativeEditorSession {
             replica: nil, blocks: inspected.blocks, revision: 0, hasUnsupportedRoot: inspected.hasUnsupportedRoot,
             canType: inspected.canType, recoveries: [], state: ReplicaState())
         session.inspectedTables = inspected.tables
+        session.inspectedColumns = inspected.columns
         return session
     }
 
@@ -165,6 +169,7 @@ final class NativeEditorSession {
             hasUnsupportedRoot: false, canType: attachment.canType, recoveries: [], state: attachment.state)
         session.table = blockID
         session.grid = attachment.grid
+        children.add(session)
         session.scope = scope
         session.release = { Task {} }
         session.surface.setFocus([])
@@ -179,6 +184,60 @@ final class NativeEditorSession {
         if let pasteboard = input?.pasteboard { session.input?.pasteboard = pasteboard }
         // A cell composition's recovery entries are the document's (PR11c):
         // written with its list, shown by it, restored with it.
+        if let document = input?.composition, let cell = session.input?.composition {
+            let source = UUID()
+            cell.forward = { [weak document] in document?.adopt($0, from: source) }
+        }
+        return session
+    }
+
+    /// Column group `blockID` now: asked of the replica session, or the
+    /// reader's own copy (PR12a).
+    func columnGroup(_ blockID: String) async -> ColumnGroup? {
+        guard let replica else { return inspectedColumns[blockID]?.group }
+        return await withCheckedContinuation { done in
+            replica.mailbox.post(.columnGroup(blockID: blockID, reply: { done.resume(returning: $0) }))
+        }
+    }
+
+    /// The reader's column groups with each column's blocks, read once with
+    /// its projection (PR12a).
+    @ObservationIgnored private var inspectedColumns: [String: (group: ColumnGroup, blocks: [[BlockSnapshot]])] = [:]
+
+    /// A column surface over this document's replica (PR12a): column
+    /// `columnID` of group `groupID`, typed through the same journal and save
+    /// scheduler while this document types. Nil when it is not a column of a
+    /// familiar group. A reader gets a read-only surface over its own copy.
+    /// Closing it only detaches it; the document keeps the replica.
+    func openColumn(group groupID: String, column columnID: String) async -> NativeEditorSession? {
+        guard !isClosed, table == nil, column == nil else { return nil }
+        guard let replica else {
+            guard let inspected = inspectedColumns[groupID],
+                let index = inspected.group.columns.firstIndex(where: { $0.id == columnID })
+            else { return nil }
+            let session = NativeEditorSession(
+                replica: nil, blocks: inspected.blocks[index], revision: 0, hasUnsupportedRoot: false, canType: false,
+                recoveries: [], state: ReplicaState())
+            session.column = (groupID, columnID)
+            return session
+        }
+        let surfaceID = UUID()
+        guard let attachment = await replica.attach(surfaceID: surfaceID, group: groupID, column: columnID), !isClosed
+        else { return nil }
+        // No recovery entries: those are the document's.
+        let session = NativeEditorSession(
+            replica: replica, surfaceID: surfaceID, blocks: attachment.blocks, revision: attachment.revision,
+            hasUnsupportedRoot: false, canType: attachment.canType, recoveries: [], state: attachment.state)
+        session.column = (groupID, columnID)
+        session.scope = scope
+        session.release = { Task {} }
+        children.add(session)
+        session.textView.accessibilityIdentifier = "nativeEditor.column"
+        session.consume(attachment.deliveries)
+        // The column types while the document does (the replica's one journal).
+        if input != nil, textView.isEditable { session.enableTyping(persist: nil, scheduler: saveScheduler) }
+        if let pasteboard = input?.pasteboard { session.input?.pasteboard = pasteboard }
+        // A column composition's recovery entries are the document's, as a cell's are (PR11c).
         if let document = input?.composition, let cell = session.input?.composition {
             let source = UUID()
             cell.forward = { [weak document] in document?.adopt($0, from: source) }
@@ -284,7 +343,12 @@ final class NativeEditorSession {
     /// can send. Stop authoring rather than growing an unsendable journal.
     func freezeAuthoring() {
         input?.stopAfterStorageFailure()
+        // The table and column surfaces this document opened share its journal (PR12a).
+        for child in children.allObjects { child.freezeAuthoring() }
     }
+
+    /// The table and column surfaces this document opened, while they live.
+    @ObservationIgnored private let children = NSHashTable<NativeEditorSession>.weakObjects()
 
     /// Reconnect fetches merge into the same owner. The session journals the
     /// new server bytes before any resulting patch is delivered.

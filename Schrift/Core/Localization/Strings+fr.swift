@@ -374,6 +374,7 @@ enum Strings_fr {
         .native_editor_table_align_right: "Aligner à droite",
         .native_editor_table_format: "Format",
         .native_editor_columns: "Colonnes, %d",
+        .native_editor_column: "Colonne %d sur %d",
         .native_editor_math: "Formule",
         .native_editor_diagram: "Diagramme",
         .native_editor_input_unavailable: "Cette saisie n’est pas encore prise en charge dans l’éditeur natif.",

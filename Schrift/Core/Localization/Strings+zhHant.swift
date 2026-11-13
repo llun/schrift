@@ -367,6 +367,7 @@ enum Strings_zhHant {
         .native_editor_table_align_right: "靠右對齊",
         .native_editor_table_format: "格式",
         .native_editor_columns: "分欄，%d",
+        .native_editor_column: "第 %d 欄，共 %d 欄",
         .native_editor_math: "公式",
         .native_editor_diagram: "圖表",
         .native_editor_input_unavailable: "原生編輯器暫不支援此輸入。",

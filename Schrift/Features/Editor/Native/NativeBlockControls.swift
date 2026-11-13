@@ -72,6 +72,9 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     /// A tap (or VoiceOver activation) on a table's card opens the table
     /// editor (PR11a), with the block id.
     var onOpenTable: ((String) -> Void)?
+    /// A tap (or VoiceOver activation) on a column group's card opens the
+    /// column editor (PR12a), with the group's block id.
+    var onOpenColumns: ((String) -> Void)?
     /// Every preview view TextKit realised: the bounded-realisation seam.
     private(set) var attachmentViewLoads = 0
     let attachmentViews = NSHashTable<NativeAttachmentView>.weakObjects()

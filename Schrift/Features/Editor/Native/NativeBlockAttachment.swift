@@ -186,15 +186,19 @@ final class NativeAttachmentView: UIView {
         accessibilityIdentifier = "nativeEditor.attachment.\(content.blockID)"
         build()
         applyTheme()
-        if content.preview.isTable {
-            // The card opens the table editor (PR11a).
+        if content.preview.isTable || content.preview.isColumns {
+            // The card opens the table editor (PR11a) or the column editor (PR12a).
             accessibilityTraits = [.button]
             addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(openTable)))
         }
     }
 
     @objc private func openTable() {
-        controls?.onOpenTable?(content.blockID)
+        if content.preview.isColumns {
+            controls?.onOpenColumns?(content.blockID)
+        } else {
+            controls?.onOpenTable?(content.blockID)
+        }
     }
 
     required init?(coder: NSCoder) { nil }
@@ -462,6 +466,10 @@ final class NativeAttachmentView: UIView {
             openTable()
             return true
         }
+        if content.preview.isColumns, controls?.onOpenColumns != nil {
+            openTable()
+            return true
+        }
         guard loadButton != nil else { return false }
         approveAndLoad()
         return true
@@ -471,6 +479,11 @@ final class NativeAttachmentView: UIView {
 extension NativeBlockPreview {
     fileprivate var isTable: Bool {
         if case .table = self { return true }
+        return false
+    }
+
+    fileprivate var isColumns: Bool {
+        if case .columns = self { return true }
         return false
     }
 }

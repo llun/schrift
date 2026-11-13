@@ -367,6 +367,7 @@ enum Strings_zhHans {
         .native_editor_table_align_right: "右对齐",
         .native_editor_table_format: "格式",
         .native_editor_columns: "分栏，%d",
+        .native_editor_column: "第 %d 列，共 %d 列",
         .native_editor_math: "公式",
         .native_editor_diagram: "图表",
         .native_editor_input_unavailable: "原生编辑器暂不支持此输入。",

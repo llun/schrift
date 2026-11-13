@@ -387,6 +387,7 @@ enum Strings_sl {
         .native_editor_table_align_right: "Poravnaj desno",
         .native_editor_table_format: "Oblika",
         .native_editor_columns: "Stolpci, %d",
+        .native_editor_column: "Stolpec %d od %d",
         .native_editor_math: "Formula",
         .native_editor_diagram: "Diagram",
         .native_editor_input_unavailable: "Ta vnos v izvornem urejevalniku še ni podprt.",

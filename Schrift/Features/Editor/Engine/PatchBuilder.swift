@@ -39,11 +39,17 @@ struct PatchBuilder {
 
     mutating func closeTable(_ id: String) { index.closeTable(id) }
 
+    mutating func openColumns(_ id: String) -> Bool { index.openColumns(id) }
+
+    mutating func closeColumns(_ id: String) { index.closeColumns(id) }
+
     mutating func build(_ transaction: YTransaction) -> BlockPatch {
         let origin = BlockPatchOrigin(transaction.origin)
         // Open tables (PR11a): their paragraph lists before this transaction.
         let previousTables = index.openTables
         var changedTables: Set<String> = []
+        // Open column groups (PR12a): which column each block was in.
+        let previousColumnOf = index.columnOf
         let rootAppeared = index.resolveRoot()
         var events: [ObjectIdentifier: YEvent] = [:]
         for entry in transaction.changedParentTypes {
@@ -103,6 +109,23 @@ struct PatchBuilder {
                 // Membership of any group, root or nested: the preorder diff
                 // below says which blocks came, went or moved.
                 treeChanged = true
+                // A group inside a closed column group: that group's preview (PR12a).
+                if let id = index.blockID(for: type), index.isColumnGroup(id) {
+                    touch(id)
+                    structural.insert(id)
+                }
+                continue
+            }
+            // A column's or a column group's child list (PR12a): the group's
+            // preview; an open group also re-reads its columns' lists, below.
+            if type.typeRef == .xmlElement(nodeName: "column") || type.typeRef == .xmlElement(nodeName: "columnList"),
+                entry.subs.contains(nil)
+            {
+                if let id = index.blockID(for: type) {
+                    touch(id)
+                    structural.insert(id)
+                    if index.openGroups[id] != nil { treeChanged = true }
+                }
                 continue
             }
             // A container's `id` changed in place (possibly to an unreadable
@@ -158,6 +181,10 @@ struct PatchBuilder {
         var removed: [String] = []
         var inserted: Set<String> = []
         var inserts: [(after: String?, blocks: [BlockSnapshot])] = []
+        // An open group's columns, diffed like the document (PR12a).
+        var columnRemoved: [String] = []
+        var columnInserted: Set<String> = []
+        var columnInserts: [(after: String?, blocks: [BlockSnapshot])] = []
 
         if treeChanged {
             let previous = index
@@ -203,14 +230,36 @@ struct PatchBuilder {
                 }
             }
             if !pending.isEmpty { inserts.append((anchor, pending)) }
+            // Each open column's list, against its list before (a block a
+            // peer moved to another column leaves one and enters the other).
+            for column in Set(previous.columnOrders.keys).union(index.columnOrders.keys).sorted() {
+                let (gone, added) = Self.diff(previous.columnOrders[column] ?? [], index.columnOrders[column] ?? [])
+                columnRemoved += (previous.columnOrders[column] ?? []).filter(gone.contains)
+                for insert in added {
+                    columnInserted.formUnion(insert.ids)
+                    columnInserts.append(
+                        (insert.after, insert.ids.compactMap { id in index.entries[id].map { snapshot($0) } }))
+                }
+                for id in index.columnOrders[column] ?? [] where !columnInserted.contains(id) {
+                    guard let old = previous.entries[id], let entry = index.entries[id] else { continue }
+                    if old.containerItem !== entry.containerItem || old.depth != entry.depth
+                        || old.parentID != entry.parentID
+                    {
+                        touch(id)
+                        structural.insert(id)
+                    }
+                }
+            }
         }
 
         // Iterate the touched ids only, in document order — never `index.order`.
         // A removed id (a reorder removes them all) is re-inserted, if at all,
         // as a fresh snapshot: a per-block change for it would address a block
         // the same patch just took away.
-        let removedSet = Set(removed)
-        let ordered = touched.filter { !removedSet.contains($0) && !inserted.contains($0) }.sorted {
+        let removedSet = Set(removed).union(columnRemoved)
+        let ordered = touched.filter {
+            !removedSet.contains($0) && !inserted.contains($0) && !columnInserted.contains($0)
+        }.sorted {
             (index.position[$0] ?? Int.max) < (index.position[$1] ?? Int.max)
         }
         for id in ordered {
@@ -232,7 +281,9 @@ struct PatchBuilder {
         }
 
         if !removed.isEmpty { changes.insert(.remove(blockIDs: removed), at: 0) }
+        if !columnRemoved.isEmpty { changes.insert(.remove(blockIDs: columnRemoved), at: 0) }
         for insert in inserts { changes.append(.insert(after: insert.after, blocks: insert.blocks)) }
+        for insert in columnInserts { changes.append(.insert(after: insert.after, blocks: insert.blocks)) }
 
         // An open table whose structure changed (or any tree change, which
         // re-read every open table) gets its paragraph list diffed: the table
@@ -261,7 +312,28 @@ struct PatchBuilder {
         if !treeChanged {
             for id in touched { index.refresh(id) }
         }
-        return BlockPatch(changes, origin: origin)
+        var patch = BlockPatch(changes, origin: origin)
+        if !previousColumnOf.isEmpty || !index.columnOf.isEmpty { tagColumns(&patch, previous: previousColumnOf) }
+        return patch
+    }
+
+    /// Names the column of every column block a patch mentions (PR12a), so
+    /// the session routes it to that column's surface and never to the
+    /// document's: a removal by the column the block was in, anything else
+    /// by the column it is in now.
+    private func tagColumns(_ patch: inout BlockPatch, previous: [String: String]) {
+        for change in patch.changes {
+            switch change {
+            case .text(let id, _), .props(let id, _), .replaceBlock(let id, _):
+                if let column = index.columnOf[id] { patch.columns[id] = column }
+            case .insert(_, let blocks):
+                for block in blocks { if let column = index.columnOf[block.id] { patch.columns[block.id] = column } }
+            case .remove(let ids):
+                for id in ids { if let column = previous[id] { patch.removedColumns[id] = column } }
+            case .reset:
+                break
+            }
+        }
     }
 
     /// The paragraphs `new` lost and gained against `old`: survivors in the

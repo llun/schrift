@@ -202,6 +202,110 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertEqual(app.textViews["nativeEditor.table.cell"].value as? String, "Name\n")
     }
 
+    /// PR12a: the group's card opens the column editor; typing in one column,
+    /// switching to the other with the picker (the keyboard stays) and typing
+    /// there are durable, and the document shows the group as one card.
+    func testTypingInBothColumnsSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-columns"]
+        app.launch()
+        let card = app.descendants(matching: .any)["nativeEditor.attachment.owned-columns"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["nativeEditor.preservedNotice"].exists, "the document types")
+        card.tap()
+        let first = app.textViews["nativeEditor.column.0"]
+        XCTAssertTrue(first.waitForExistence(timeout: 5), "the column editor opened")
+        first.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        // Where the tap leaves the caret varies, so the checks look for the typed word. No space at
+        // either end of a paragraph mid-typing: a save captured then has no shadow (a known limit).
+        app.typeText("ward")
+        let typedFirst = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", "ward"), object: first)
+        XCTAssertEqual(XCTWaiter.wait(for: [typedFirst], timeout: 5), .completed, "the first column holds the text")
+        let picker = app.segmentedControls["nativeEditor.columns.picker"]
+        XCTAssertTrue(picker.exists)
+        picker.buttons.element(boundBy: 1).tap()
+        let second = app.textViews["nativeEditor.column.1"]
+        XCTAssertTrue(second.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "switching columns keeps the keyboard")
+        app.typeText("ful")
+        let typed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", "ful"), object: second)
+        XCTAssertEqual(XCTWaiter.wait(for: [typed], timeout: 5), .completed, "the second column holds the text")
+        app.buttons["nativeEditor.columns.done"].tap()
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        app.terminate()
+
+        app.launchArguments = ["--native-open", "--native-columns"]
+        app.launch()
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        card.tap()
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        let restoredFirst = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", "ward"), object: first)
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [restoredFirst], timeout: 5), .completed,
+            "the journal restores column one: \(first.value ?? "nil")")
+        app.segmentedControls["nativeEditor.columns.picker"].buttons.element(boundBy: 1).tap()
+        XCTAssertTrue(second.waitForExistence(timeout: 5))
+        XCTAssertEqual((second.value as? String)?.contains("ful"), true, "and column two")
+    }
+
+    /// PR12a review: returning from a column's table editor keeps one surface per
+    /// column, and typing in the column afterwards is durable.
+    func testTypingAfterAColumnsTableSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-columns", "--native-column-table"]
+        app.launch()
+        let card = app.descendants(matching: .any)["nativeEditor.attachment.owned-columns"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["nativeEditor.preservedNotice"].exists, "the document types")
+        card.tap()
+        let first = app.textViews["nativeEditor.column.0"]
+        XCTAssertTrue(first.waitForExistence(timeout: 5), "the column editor opened")
+        let tableCard = app.descendants(matching: .any)["nativeEditor.attachment.owned-column-table"]
+        XCTAssertTrue(tableCard.waitForExistence(timeout: 5))
+        tableCard.tap()
+        let done = app.buttons["nativeEditor.table.done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5), "the table editor opened over the column")
+        done.tap()
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        // A hidden column is not in the tree: count each while it is shown.
+        let picker = app.segmentedControls["nativeEditor.columns.picker"]
+        XCTAssertEqual(
+            app.textViews.matching(identifier: "nativeEditor.column.0").count, 1, "one surface per column")
+        picker.buttons.element(boundBy: 1).tap()
+        XCTAssertTrue(app.textViews["nativeEditor.column.1"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.textViews.matching(identifier: "nativeEditor.column.1").count, 1)
+        XCTAssertEqual(app.textViews.matching(identifier: "nativeEditor.column.0").count, 0, "the other column hides")
+        picker.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        // On the paragraph: below the column's last block (the table) the caret is the table's,
+        // which takes no text.
+        first.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 30, dy: 22)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        app.typeText("ward")
+        let typed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", "ward"), object: first)
+        XCTAssertEqual(XCTWaiter.wait(for: [typed], timeout: 5), .completed, "the column holds the text")
+        app.buttons["nativeEditor.columns.done"].tap()
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        app.terminate()
+
+        app.launchArguments = ["--native-open", "--native-columns", "--native-column-table"]
+        app.launch()
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        card.tap()
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        let restored = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", "ward"), object: first)
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [restored], timeout: 5), .completed, "the journal keeps it: \(first.value ?? "nil")")
+    }
+
     /// PR11c: a long press and drag selects two cells, and the Cell menu
     /// merges them: one durable command that survives a relaunch.
     func testDraggingAcrossCellsSelectsThemAndTheCellMenuMergesThem() {
