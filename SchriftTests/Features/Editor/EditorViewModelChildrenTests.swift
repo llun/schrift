@@ -339,11 +339,10 @@ final class EditorViewModelChildrenTests: XCTestCase {
         let viewModel = makeViewModel()
         let staleChildren = Self.childrenFixture(id: "abababab-2222-4aba-8aba-abababababab", title: "Existing child")
         let recorder = RequestRecorder()
-        let gate = DispatchSemaphore(value: 0)
+        let gate = MockURLProtocol.ResponseGate()  // holds the snapshot until after the purge
         MockURLProtocol.stubHandler = { request in
             recorder.record(request)
-            gate.wait()  // hold the snapshot until after the purge
-            return .init(statusCode: 200, headers: [:], body: staleChildren, error: nil)
+            return .init(statusCode: 200, headers: [:], body: staleChildren, error: nil, releasedBy: gate)
         }
 
         let staleFetch = Task { await viewModel.loadChildren() }
@@ -352,7 +351,7 @@ final class EditorViewModelChildrenTests: XCTestCase {
         viewModel.handleDidDelete()
         XCTAssertNil(childrenCache.children(for: documentID))
 
-        gate.signal()
+        gate.open()
         await staleFetch.value
 
         XCTAssertNil(

@@ -410,7 +410,7 @@ final class NativeSessionRegistryTests: NativeEditingTestCase {
         let mailbox = Latch(open: true)
         let harness = try await makeHarness(
             hooks: DocumentReplicaSession.Hooks(beforeMessage: {
-                mailbox.pass()
+                await mailbox.passing()
                 handled.update { $0 += 1 }
             }))
         addTeardownBlock {

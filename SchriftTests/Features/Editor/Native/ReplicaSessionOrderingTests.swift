@@ -6,12 +6,18 @@ import XCTest
 
 /// A gate a background thread waits at until the test opens it; once open it
 /// stays open (it latches), so nothing can strand behind it.
+///
+/// `passing()` suspends: use it from an async hook (`Hooks.beforeMessage`), so
+/// a held session never parks a cooperative-pool thread. `pass()` blocks, and
+/// is only for a synchronous hook standing in for synchronous work (the
+/// journal's disk write, `Hooks.onReplicaWork`).
 final class Latch: @unchecked Sendable {
     private let condition = NSCondition()
     private var isOpen = false
     private var waiters = 0
     /// How many threads passed the gate (or wait at it).
     private var arrivals = 0
+    private var suspended: [CheckedContinuation<Void, Never>] = []
 
     init(open: Bool = false) { isOpen = open }
 
@@ -24,11 +30,30 @@ final class Latch: @unchecked Sendable {
         condition.unlock()
     }
 
+    func passing() async {
+        await withCheckedContinuation { continuation in
+            condition.lock()
+            arrivals += 1
+            if isOpen {
+                condition.unlock()
+                continuation.resume()
+                return
+            }
+            waiters += 1
+            suspended.append(continuation)
+            condition.unlock()
+        }
+    }
+
     func open() {
         condition.lock()
         isOpen = true
         condition.broadcast()
+        let resumed = suspended
+        suspended = []
+        waiters -= resumed.count
         condition.unlock()
+        for continuation in resumed { continuation.resume() }
     }
 
     func close() {
@@ -69,8 +94,8 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
             operation, boundary in
             if operation == .append, boundary == .payloadWritten { disk.pass() }
         }
-        var before: (@Sendable () -> Void)?
-        if let mailbox { before = { mailbox.pass() } }
+        var before: (@Sendable () async -> Void)?
+        if let mailbox { before = { await mailbox.passing() } }
         let hooks = DocumentReplicaSession.Hooks(beforeMessage: before, onReplicaWork: work)
         let harness = try await makeHarness(interrupt: interrupt, hooks: hooks)
         addTeardownBlock {
@@ -336,6 +361,26 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
         mailbox.open()
     }
 
+    // 9b
+    /// A close posted while the mailbox is full still closes the session once
+    /// it drains. CI hung here in teardown: the `.close` was dropped and
+    /// nothing ever resumed the close waiter.
+    func testACloseMeetingAFullMailboxStillClosesTheSession() async throws {
+        let mailbox = Latch()
+        let harness = try await gated(Latch(open: true), mailbox: mailbox)
+        let replica = try XCTUnwrap(harness.session.replica)
+        while replica.mailbox.post(.writeProvisional([])) {}
+        XCTAssertTrue(replica.mailbox.post(.detach(surfaceID: UUID())), "a detach always fits")
+        let closing = harness.session.close()
+        let closed = Locked(false)
+        Task {
+            await closing.value
+            closed.value = true
+        }
+        mailbox.open()
+        await waitUntil(timeout: 30) { closed.value }
+    }
+
     // 10
     func testCompositionBeginIsPostedAndItsCommitIsABarrier() async throws {
         let harness = try await makeHarness()
@@ -573,6 +618,9 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
         XCTAssertEqual(
             text(of: try block(harness.session, Self.firstID)), "aFirst paragraph.", "the journaled key stays")
         XCTAssertEqual(harness.input.composition.pendingRecoveries.map(\.text), ["b"])
+        // Before the test returns: the held append parks a pool thread, and
+        // finishing an async test needs one.
+        disk.open()
     }
 
     /// F9: undo restores the selection its step stored even after the user's
