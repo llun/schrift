@@ -117,6 +117,11 @@ final class NativeSessionRegistry {
     /// The surfaces open on `scope`.
     func surfaces(of scope: ReplicaScope) -> [NativeEditorSession] { entries[scope]?.surfaces ?? [] }
 
+    /// Whether the scope's replica currently takes writes (its journal is installed). A denial
+    /// removes it (`setWritable(nil)`), and a surface that stays read-only never dials live
+    /// (review Z2d).
+    func isWritable(_ scope: ReplicaScope) -> Bool { entries[scope]?.isWritable == true }
+
     /// The scope's journal (`NativeEditorOpen.installTyping` and the headless
     /// lease, PR13b): every append recorded by `adapter`, then published to the
     /// scope's live outbox (journal before publication).

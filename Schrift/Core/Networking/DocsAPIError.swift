@@ -17,6 +17,46 @@ enum DocsAPIError: Error, Equatable {
     case server(statusCode: Int)
 }
 
+/// How the native write gate reads a `documents/{id}/` answer (PR13b review R1), shared by the
+/// editor open (`NativeEditorOpen.serverAbility`) and the headless media gate
+/// (`DocumentSaveCoordinator.nativeMayWrite`).
+///
+/// Only the server's own answer about the document is evidence: a 403, an API 404, and a decoded
+/// body that says `abilities.update == false` or names another document. Everything else — a
+/// missing route (an HTML 404 from a proxy during a rollout), an unreadable body, a timeout, a
+/// 408, a 5xx, offline, an expired session — is **no answer**: the row and any earlier answer
+/// stand, and nothing is remembered as a denial.
+enum DocumentAbilityAnswer: Equatable {
+    case writer
+    case reader
+    case noAnswer
+
+    /// `true` writer, `false` reader, nil no answer.
+    var writer: Bool? {
+        switch self {
+        case .writer: return true
+        case .reader: return false
+        case .noAnswer: return nil
+        }
+    }
+
+    /// The decoded answer for `documentID`: another document's answer says nothing about this
+    /// one, so it is a denial (review Z3).
+    static func classify(_ document: Document, asked documentID: UUID) -> DocumentAbilityAnswer {
+        guard document.id == documentID else { return .reader }
+        return document.abilities.update ? .writer : .reader
+    }
+
+    /// A failed fetch: only a 403 and an API 404 are the server's answer about the document.
+    static func classify(_ error: Error) -> DocumentAbilityAnswer {
+        guard let error = error as? DocsAPIError else { return .noAnswer }
+        switch error {
+        case .forbidden, .notFound: return .reader
+        case .sessionExpired, .routeNotFound, .rateLimited, .network, .decoding, .server: return .noAnswer
+        }
+    }
+}
+
 enum DocsAPIErrorMapper {
     static func map(statusCode: Int, headers: [String: String]) -> DocsAPIError {
         switch statusCode {

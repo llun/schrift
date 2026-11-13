@@ -53,6 +53,16 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
         let documentStatus = Locked(200)
         let answeredID = Locked(NativeMediaQueueTests.documentID)
         let documentGate = Locked<MockURLProtocol.ResponseGate?>(nil)
+        /// A failure that is not the server's answer about the document (review R1).
+        enum DocumentFailure: String {
+            /// An HTML 404: no view for the route (a proxy during a rollout).
+            case routeNotFound
+            /// A 200 whose body does not decode.
+            case decoding
+            /// A transport timeout.
+            case timeout
+        }
+        let documentFailure = Locked<DocumentFailure?>(nil)
         var uploads: Int { log.count(ofMethod: "POST", urlContaining: "attachment-upload") }
     }
 
@@ -144,6 +154,19 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
             case "GET" where url.hasSuffix("documents/\(Self.documentID.uuidString.lowercased())/"):
                 if server.documentStatus.value != 200 {
                     return .init(statusCode: server.documentStatus.value, headers: [:], body: Data(), error: nil)
+                }
+                switch server.documentFailure.value {
+                case .routeNotFound:
+                    return .init(
+                        statusCode: 404, headers: ["Content-Type": "text/html"],
+                        body: Data("<html><body>Not Found</body></html>".utf8), error: nil)
+                case .decoding:
+                    return .init(
+                        statusCode: 200, headers: [:], body: Data(#"{"id": "not-a-uuid"}"#.utf8), error: nil)
+                case .timeout:
+                    return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.timedOut))
+                case nil:
+                    break
                 }
                 guard let update = server.canUpdate.value else {
                     return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
@@ -469,6 +492,23 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
             await waitUntil { app.registry.openScopes.isEmpty }
             XCTAssertNotNil(app.coordinator.pendingAttachment(localID: localID), "\(status)")
             XCTAssertEqual(try localCommits(device), 0, "\(status)")
+        }
+    }
+
+    /// Review R1: a missing route (an HTML 404 from a proxy during a rollout), an unreadable
+    /// body and a timeout are not the server's answer about the document. No denial is
+    /// remembered, and the account's own Home list still allows the commit.
+    func testAMissingRouteOrUnreadableAnswerIsNotADenial() async throws {
+        for failure in [Server.DocumentFailure.routeNotFound, .decoding, .timeout] {
+            let device = try makeDevice()
+            let server = Server()
+            server.documentFailure.value = failure
+            let localID = leftBehind(device, checkpoint: Self.mediaURL)
+            let app = launch(device, server: server)
+            await app.coordinator.syncPendingDrafts()
+            await waitUntil { app.coordinator.pendingAttachment(localID: localID) == nil }
+            XCTAssertFalse(app.coordinator.isNativeReader(device.scope), "\(failure)")
+            XCTAssertEqual(try localCommits(device), 1, "\(failure)")
         }
     }
 

@@ -1485,9 +1485,10 @@ final class DocumentSaveCoordinator {
     ///   answer) is refused offline, whatever a cache says, until the server says otherwise;
     /// - online, the server is asked once (`documents/{id}/`, bound to the run's sign-in
     ///   generation), so a document outside the Home lists (a folder, a deep link) commits too;
-    /// - a 403, a 404 or any other answer about the document is a denial, remembered the same way;
-    /// - with no answer (offline, a 5xx, an expired session), the account's own Home lists decide;
-    ///   unknown is no, and the record waits.
+    /// - a 403, an API 404 or an answer naming another document is a denial, remembered the same
+    ///   way; a missing route, an unreadable body, a timeout, a 5xx, offline or an expired session
+    ///   is no answer (review R1), so a writer is never made a reader by a rollout's HTML 404;
+    /// - with no answer, the account's own Home lists decide; unknown is no, and the record waits.
     /// The session's `canType` is the lease's.
     private func nativeMayWrite(_ scope: ReplicaScope, isCurrent: (@Sendable () -> Bool)?) async -> Bool {
         let documentID = scope.documentID
@@ -1504,13 +1505,12 @@ final class DocumentSaveCoordinator {
                 try await client.document(documentID: documentID)
             }
             // Another document's answer says nothing about this one: a denial (review Z3).
-            answer = document.id == documentID && document.abilities.update
-        } catch let error as DocsAPIError where !retryableSaveFailure(error) && error != .sessionExpired {
-            // An answer about the document (403, 404, an unreadable body) is a denial (review Z1).
-            answer = false
+            answer = DocumentAbilityAnswer.classify(document, asked: documentID).writer
         } catch {
-            // Transport (offline, 5xx), an expired session or a sign-in switch: no answer.
-            answer = nil
+            // A 403 or an API 404 is the server's answer about the document (review Z1); a
+            // missing route, an unreadable body, a timeout, a 5xx, offline or an expired
+            // session is no answer at all (review R1).
+            answer = DocumentAbilityAnswer.classify(error).writer
         }
         // Re-read after the await: a sign-out, a delete or a reader answer may have come between.
         guard holds(), isCurrent?() != false else { return false }

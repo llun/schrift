@@ -267,9 +267,13 @@ the block anywhere in the document (a block moved into a column group after it w
 nested under a column's paragraph, included; it walks block structure only, and a block it finds
 but cannot address, or a search cut by depth, waits rather than drops), writes a closed document only through the editor open's typing gate (the native
 switch, no pending create or delete, no live owner, no classic draft, and `abilities.update` asked
-of the server once; a reader answer, the editor's included, a 403 or 404, or an answer naming
-another document is a denial remembered per scope, and offline only the account's own Home lists
-can allow it; the gate runs before every commit, and a denial makes an open editor read-only too and keeps it off the live socket),
+of the server once; a reader answer, the editor's included, a 403, an API 404, or an answer naming
+another document is a denial remembered per scope, while a missing route — an HTML 404 from a
+proxy during a rollout — or an unreadable body, a timeout, a 5xx, offline or an expired session is
+no answer at all (`DocumentAbilityAnswer`, shared with the editor open) and never makes a writer a
+reader; offline only the account's own Home lists can allow it; the gate runs before every commit,
+and a denial makes an open editor read-only too and keeps it off the live socket, and lifting it
+never dials a socket for a surface that stays read-only (it recovers on reopen)),
 never leaves its scheduler as the editor's, and re-checks every URL, a
 checkpoint read back from disk included, right before the commit; stored bytes over the picker's
 limit fail unread. Every save (native and classic, body and title) runs bound to the sign-in

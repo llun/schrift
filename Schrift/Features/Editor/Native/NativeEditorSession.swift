@@ -511,8 +511,8 @@ final class NativeEditorOpen {
     private var generation = 0
     private enum OpenResult: Sendable {
         case classic
-        /// `isReader`: the server answered `abilities.update` false.
-        case state(Data, config: ServerConfig, isReader: Bool)
+        /// `ability`: the server's `abilities.update` (nil: not asked, or no answer).
+        case state(Data, config: ServerConfig, ability: Bool?)
     }
     private var pendingOpen: AsyncStream<OpenResult>.Continuation?
     /// The reopen and reconnect work `EditorView` starts outside its `.task`;
@@ -654,10 +654,10 @@ final class NativeEditorOpen {
                     return
                 }
                 // Asked beside the state, inside the same deadline.
-                async let isReader = Self.serverSaysReader(viewModel, asking: canUpdate)
+                async let ability = Self.serverAbility(viewModel, asking: canUpdate)
                 let state = try await viewModel.client.collaborationYDocState(
                     documentID: viewModel.documentID, org: config.collaborationOrg)
-                let reader = await isReader
+                let answer = await ability
                 guard !Task.isCancelled else { return }
                 guard
                     self?.canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account)
@@ -671,7 +671,7 @@ final class NativeEditorOpen {
                     continuation.yield(.classic)
                     return
                 }
-                continuation.yield(.state(state, config: config, isReader: reader))
+                continuation.yield(.state(state, config: config, ability: answer))
             } catch {
                 continuation.yield(.classic)
             }
@@ -697,7 +697,7 @@ final class NativeEditorOpen {
         var iterator = results.makeAsyncIterator()
         guard let result = await iterator.next(), !Task.isCancelled, generation == request else { return }
         guard canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account),
-            case .state(let state, let config, let isReader) = result
+            case .state(let state, let config, let ability) = result
         else {
             route = .classic
             return
@@ -713,16 +713,23 @@ final class NativeEditorOpen {
         else { return }
         // A document that is not fully projectable, or a reader, stays in PR01's
         // in-memory read-only view and never gains a replica or marker.
-        let verified = canUpdate && !isReader
+        let scope = account.map {
+            ReplicaScope(
+                serverOrigin: viewModel.client.serverOrigin, ownerUserID: $0, org: config.collaborationOrg,
+                documentID: viewModel.documentID)
+        }
+        // A writer answer lifts a remembered denial on every route (review R2), the unowned one
+        // included: the next headless commit and the live gate may trust the server again.
+        if ability == true, let scope { viewModel.saveCoordinator.clearNativeReader(scope) }
+        // A denial a headless media commit learned (review Z2d) is a reader answer here too.
+        let denied = scope.map { viewModel.saveCoordinator.isNativeReader($0) } ?? false
+        let verified = canUpdate && ability != false && !denied
         self.canUpdate = verified
-        guard enabled, verified, session.canType, let account, mayType(viewModel) else {
+        guard enabled, verified, session.canType, let account, let scope, mayType(viewModel) else {
             route = .native(session)
             return
         }
         session.close()
-        let scope = ReplicaScope(
-            serverOrigin: viewModel.client.serverOrigin, ownerUserID: account, org: config.collaborationOrg,
-            documentID: viewModel.documentID)
         let seeded = await seedReplica(
             state: state, scope: scope, viewModel: viewModel, request: request, account: account)
         guard let seeded else { return }
@@ -885,6 +892,10 @@ final class NativeEditorOpen {
             } else if ability == true {
                 // The server says writer: an earlier remembered denial no longer holds.
                 viewModel.saveCoordinator.clearNativeReader(scope)
+            } else if viewModel.saveCoordinator.isNativeReader(scope) {
+                // No answer and a headless media commit's denial stands (review Z2d): this open
+                // is a reader too, so nothing dials a socket for it. It recovers on reopen.
+                becomeReader(scope, coordinator: viewModel.saveCoordinator)
             }
             startLive(session, scope: scope, config: config, viewModel: viewModel)
             // Refreshes the server title native saves send.
@@ -898,26 +909,30 @@ final class NativeEditorOpen {
     /// Whether the server says this account may only read the document. The
     /// navigation row can be stale (an account switch reuses the screen; a
     /// cached row predates a permission change), so online opens ask. Only an
-    /// explicit `update: false` answer counts: a failed request (offline, a
-    /// 5xx, a timeout, a captive portal) keeps the row, and the server still
+    /// explicit reader answer counts: a failed request (offline, a 5xx, a
+    /// timeout, a captive portal) keeps the row, and the server still
     /// refuses a real reader's save. A row that says reader is never asked.
     private static func serverSaysReader(_ viewModel: EditorViewModel, asking: Bool) async -> Bool {
-        guard asking else { return false }
-        return await serverAbility(viewModel) == false
+        await serverAbility(viewModel, asking: asking) == false
+    }
+
+    /// `serverAbility`, asked only when the row says writer: nil when it was not asked.
+    private static func serverAbility(_ viewModel: EditorViewModel, asking: Bool) async -> Bool? {
+        guard asking else { return nil }
+        return await serverAbility(viewModel)
     }
 
     /// The server's `abilities.update` for the document: nil when it did not
-    /// answer (offline, a 5xx, an expired session). A 403, a 404, any other
-    /// answer about the document and an answer naming another document are a
-    /// reader answer (review Z2c, as the headless gate reads them).
+    /// answer (offline, a 5xx, a timeout, a missing route, an unreadable body,
+    /// an expired session). A 403, an API 404, any other answer about the
+    /// document and an answer naming another document are a reader answer
+    /// (review Z2c, R1, as the headless gate reads them).
     private static func serverAbility(_ viewModel: EditorViewModel) async -> Bool? {
         do {
             let document = try await viewModel.client.document(documentID: viewModel.documentID)
-            return document.id == viewModel.documentID && document.abilities.update
-        } catch let error as DocsAPIError where !retryableSaveFailure(error) && error != .sessionExpired {
-            return false
+            return DocumentAbilityAnswer.classify(document, asked: viewModel.documentID).writer
         } catch {
-            return nil
+            return DocumentAbilityAnswer.classify(error).writer
         }
     }
 
@@ -933,8 +948,11 @@ final class NativeEditorOpen {
                 nativeEnabled: enabled, liveEnabled: livePreference(),
                 serverSupports: config.supportsNativeLiveCollaboration && config.collaborationOrg == scope.org,
                 canUpdate: canUpdate),
-            // A denial a headless media commit learned (review Z2c) keeps a reader off the socket.
+            // A denial a headless media commit learned (review Z2c) keeps a reader off the socket,
+            // and a surface that is not writable (its journal removed by that denial, review Z2d)
+            // never dials one, even after the denial is lifted: it recovers on reopen.
             !viewModel.saveCoordinator.isNativeReader(scope),
+            registry.isWritable(scope),
             let binding = registry.liveBinding(for: scope), let collaboration
         else { return }
         let signedInUser = viewModel.signedInUser

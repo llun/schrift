@@ -3858,16 +3858,21 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   (persisted, `nativeMediaReaderScopes`) and only the server saying update again lifts it; with no
   answer (offline, a 5xx, an expired session) a remembered reader is no, else only the account's
   own Home lists decide (unknown is no: the record waits; the subpage cache is neither account- nor
-  origin-scoped and never decides); a 403, a 404 or any other answer about the document, and an
-  answer naming another document id, are denials remembered like a reader answer; a no is final
-  even if an editor made the scope writable during the question; the gate runs before **every**
+  origin-scoped and never decides); a 403, an API 404 and an answer naming another document id are
+  denials remembered like a reader answer, while a missing route (an HTML 404 from a proxy during a
+  rollout), an unreadable body, a timeout, a 408, a 5xx, offline and an expired session are no
+  answer at all (`DocumentAbilityAnswer`, one classifier shared with the editor open), so a rollout
+  never makes a writer a reader; a no is final even if an editor made the scope writable during the
+  question; the gate runs before **every**
   commit, an editor's writable entry or not (an editor writable on its row's ability never carries
   a commit the gate refuses), and a denial (`noteNativeReader`) also ends the scope's shared
   writability (`setWritable(nil)`, live disconnected), as an editor's own reader answer does, and
   `NativeEditorOpen.startLive` refuses a scope the coordinator remembers as a reader
-  (`isNativeReader`); the editor's own ability check (`serverAbility`) reads a 403, a 404, any other
-  answer about the document and another document's id as reader too, and its writer answer clears a
-  remembered denial (`clearNativeReader`); the
+  (`isNativeReader`) and a surface that is not writable (`NativeSessionRegistry.isWritable`), so
+  lifting a denial never dials a socket for a read-only surface (it recovers on reopen); the
+  editor's own ability check (`serverAbility`) reads the same answers as reader, and its writer
+  answer clears a remembered denial (`clearNativeReader`) on every route, the unowned one included;
+  the
   registry re-reads the entry after that await — else
   `.unavailable` and the record waits (an open editor that does not write stays so); the save goes
   through the scope's scheduler when an editor installed one, else a private one that is never
@@ -3905,12 +3910,15 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   typing gate (reader, unknown, switch off), a restored checkpoint re-checked, bytes over the limit,
   the headless scheduler never the editor's, a headless post after a resync, a reader answer
   winning over the cache and remembered across a relaunch, an editor's reader answer, a document
-  outside the caches asking the server (waiting meanwhile), a 403/404 as a denial, the subpage
+  outside the caches asking the server (waiting meanwhile), a 403/404 as a denial, a missing route
+  or unreadable answer not a denial, the subpage
   cache never deciding, another document's answer, a reader answer through an editor opened
   meanwhile (and a second replay before it closes), a remembered denial through a writable editor,
   a nested image in a closed column (and `DocumentEngineMediaLocationTests`: a crafted 2,000-level nesting undecided, block-level depth, a cut
   branch, found-but-unaddressable, absent; `NativeEditorActivationTests`: 403/404/mismatch as reader,
-  a remembered denial keeping the open off the socket), a delete keeping another account's
+  a missing route, an unreadable body and a timeout as no answer, a writer answer on the unowned
+  route lifting a remembered denial, a lifted denial never dialing for a read-only open, a
+  remembered denial keeping the open off the socket), a delete keeping another account's
   records, a deleted block (nothing sent), a
   block filled during the upload, a rejection then Retry and Discard, another document's URL,
   another account's record, a sign-in switch, the classic pass, document delete, JPEG preparation,
