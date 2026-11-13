@@ -1485,8 +1485,9 @@ final class DocumentSaveCoordinator {
     ///   answer) is refused offline, whatever a cache says, until the server says otherwise;
     /// - online, the server is asked once (`documents/{id}/`, bound to the run's sign-in
     ///   generation), so a document outside the Home lists (a folder, a deep link) commits too;
-    /// - with no answer, the account's cached rows decide (Home lists, then subpage lists, which
-    ///   hold only documents this device listed); unknown is no.
+    /// - a 403, a 404 or any other answer about the document is a denial, remembered the same way;
+    /// - with no answer (offline, a 5xx, an expired session), the account's own Home lists decide;
+    ///   unknown is no, and the record waits.
     /// The session's `canType` is the lease's.
     private func nativeMayWrite(_ scope: ReplicaScope, isCurrent: (@Sendable () -> Bool)?) async -> Bool {
         let documentID = scope.documentID
@@ -1497,8 +1498,19 @@ final class DocumentSaveCoordinator {
                 && (draftStore.draft(for: documentID).map { $0.replica != nil } ?? true)
         }
         guard holds() else { return false }
-        let answer = try? await DocsAPIClient.$saveIsCurrent.withValue(isCurrent) {
-            try await client.document(documentID: documentID).abilities.update
+        let answer: Bool?
+        do {
+            let document = try await DocsAPIClient.$saveIsCurrent.withValue(isCurrent) {
+                try await client.document(documentID: documentID)
+            }
+            // Another document's answer says nothing about this one: a denial (review Z3).
+            answer = document.id == documentID && document.abilities.update
+        } catch let error as DocsAPIError where !retryableSaveFailure(error) && error != .sessionExpired {
+            // An answer about the document (403, 404, an unreadable body) is a denial (review Z1).
+            answer = false
+        } catch {
+            // Transport (offline, 5xx), an expired session or a sign-in switch: no answer.
+            answer = nil
         }
         // Re-read after the await: a sign-out, a delete or a reader answer may have come between.
         guard holds(), isCurrent?() != false else { return false }
@@ -1506,11 +1518,11 @@ final class DocumentSaveCoordinator {
             if answer { clearNativeReader(scope) } else { noteNativeReader(scope) }
             return answer
         }
+        // Offline: a remembered reader is no; only the account's own Home lists may say yes
+        // (review Z1: the subpage cache is neither account- nor origin-scoped).
         guard !isNativeReader(scope) else { return false }
-        let cached =
-            listCache.documents(fetchedFor: scope.ownerUserID).first { $0.id == documentID }
-            ?? childrenCache.document(for: documentID)
-        return cached?.abilities.update == true
+        return listCache.documents(fetchedFor: scope.ownerUserID).first { $0.id == documentID }?.abilities.update
+            == true
     }
 
     private static let nativeReadersKey = "dev.llun.Schrift.nativeMediaReaderScopes"

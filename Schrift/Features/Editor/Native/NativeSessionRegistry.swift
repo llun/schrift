@@ -185,12 +185,13 @@ final class NativeSessionRegistry {
         let session = columnSurface ?? root
         guard root.canType, !root.hasUnsupportedRoot else { return .unavailable }
         if entries[scope]?.isWritable != true {
-            let allowed = await mayWrite()
+            // A no is final, whatever an editor opened meanwhile decided from its row (review Z2).
+            guard await mayWrite() else { return .unavailable }
             // Re-read after the await: an editor may have opened (and decided) meanwhile.
             let entry = entries[scope]
             if entry?.isWritable != true {
                 // Another surface (an editor) decides whether the scope writes.
-                guard allowed, entry?.surfaces.count == 1, !session.isClosed else { return .unavailable }
+                guard entry?.surfaces.count == 1, !session.isClosed else { return .unavailable }
                 installJournal(ReplicaSaveAdapter(store: store, scope: scope), for: scope)
             }
         }

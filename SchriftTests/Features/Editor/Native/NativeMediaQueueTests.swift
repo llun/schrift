@@ -46,8 +46,13 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
         let mediaPath = Locked(NativeMediaQueueTests.mediaPath)
         let offline = Locked(false)
         let gate = Locked<MockURLProtocol.ResponseGate?>(nil)
-        /// `documents/{id}/`'s `abilities.update`; nil answers 404 (the gate falls back to caches).
+        /// `documents/{id}/`'s `abilities.update`; nil fails as a transport error (the gate falls
+        /// back to the Home lists). `documentStatus` other than 200 answers that status instead;
+        /// `answeredID` is the id the answer names; `documentGate` holds it.
         let canUpdate = Locked<Bool?>(nil)
+        let documentStatus = Locked(200)
+        let answeredID = Locked(NativeMediaQueueTests.documentID)
+        let documentGate = Locked<MockURLProtocol.ResponseGate?>(nil)
         var uploads: Int { log.count(ofMethod: "POST", urlContaining: "attachment-upload") }
     }
 
@@ -137,10 +142,15 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
                     body: Data(#"{"file": "/api/v1.0/documents/x/media-check/?key=k.png"}"#.utf8), error: nil,
                     releasedBy: server.gate.value)
             case "GET" where url.hasSuffix("documents/\(Self.documentID.uuidString.lowercased())/"):
-                guard let update = server.canUpdate.value else {
-                    return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+                if server.documentStatus.value != 200 {
+                    return .init(statusCode: server.documentStatus.value, headers: [:], body: Data(), error: nil)
                 }
-                return .init(statusCode: 200, headers: [:], body: Self.documentJSON(update: update), error: nil)
+                guard let update = server.canUpdate.value else {
+                    return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+                }
+                return .init(
+                    statusCode: 200, headers: [:], body: Self.documentJSON(update: update, id: server.answeredID.value),
+                    error: nil, releasedBy: server.documentGate.value)
             case "GET" where url.contains("media-check"):
                 let body = #"{"status":"ready","file":"\#(server.mediaPath.value)"}"#
                 return .init(statusCode: 200, headers: [:], body: Data(body.utf8), error: nil)
@@ -150,10 +160,10 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
         }
     }
 
-    private nonisolated static func documentJSON(update: Bool) -> Data {
+    private nonisolated static func documentJSON(update: Bool, id: UUID) -> Data {
         Data(
             """
-            {"id": "\(documentID.uuidString.lowercased())", "title": "Doc", "excerpt": null,
+            {"id": "\(id.uuidString.lowercased())", "title": "Doc", "excerpt": null,
              "abilities": {"update": \(update)}, "computed_link_reach": "restricted", "computed_link_role": null,
              "created_at": "2026-01-15T10:30:00Z", "creator": null, "depth": 1, "link_role": "reader",
              "link_reach": "restricted", "numchild": 0, "path": "0001", "updated_at": "2026-01-15T10:30:00Z",
@@ -440,6 +450,82 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
         await relaunched.coordinator.syncPendingDrafts()
         await waitUntil { relaunched.coordinator.pendingAttachment(localID: localID) == nil }
         XCTAssertEqual(try localCommits(device), 1)
+    }
+
+    /// Review Z1: a 403 or 404 about the document is a denial, remembered like
+    /// a reader answer (an offline pass afterwards still trusts no cache).
+    func testAForbiddenOrMissingAnswerIsADenial() async throws {
+        for status in [403, 404] {
+            let device = try makeDevice()
+            let server = Server()
+            server.documentStatus.value = status
+            let localID = leftBehind(device, checkpoint: Self.mediaURL)
+            let app = launch(device, server: server)
+            await app.coordinator.syncPendingDrafts()
+            await waitUntil { app.registry.openScopes.isEmpty }
+            server.documentStatus.value = 200
+            await app.coordinator.syncPendingDrafts()
+            await waitUntil { app.registry.openScopes.isEmpty }
+            XCTAssertNotNil(app.coordinator.pendingAttachment(localID: localID), "\(status)")
+            XCTAssertEqual(try localCommits(device), 0, "\(status)")
+        }
+    }
+
+    /// Review Z1: offline, only the account's own Home lists may allow a
+    /// headless commit: a subpage cache row (any account's) never does.
+    func testTheSubpageCacheNeverAllowsAHeadlessCommit() async throws {
+        let device = try makeDevice()
+        let localID = leftBehind(device, checkpoint: Self.mediaURL)
+        var abilities = DocumentAbilities()
+        abilities.update = true
+        let row = Document(
+            id: Self.documentID, title: "Doc", excerpt: nil, abilities: abilities, linkReach: .restricted,
+            linkRole: .reader, isFavorite: false, depth: 2, numchild: 0, path: "00010001", createdAt: Date(),
+            updatedAt: Date(), userRole: nil, creator: nil)
+        DocumentChildrenCacheStore(userDefaults: device.defaults).save([row], for: UUID())
+        let app = launch(device, server: Server(), writable: false)
+        await app.coordinator.syncPendingDrafts()
+        await waitUntil { app.registry.openScopes.isEmpty }
+        XCTAssertNotNil(app.coordinator.pendingAttachment(localID: localID))
+        XCTAssertEqual(try localCommits(device), 0)
+    }
+
+    /// Review Z3: an answer naming another document is no answer for this one.
+    func testAnAnswerForAnotherDocumentIsNotTrusted() async throws {
+        let device = try makeDevice()
+        let server = Server()
+        server.canUpdate.value = true
+        server.answeredID.value = UUID()
+        let localID = leftBehind(device, checkpoint: Self.mediaURL)
+        let app = launch(device, server: server, writable: false)
+        await app.coordinator.syncPendingDrafts()
+        await waitUntil { app.registry.openScopes.isEmpty }
+        XCTAssertNotNil(app.coordinator.pendingAttachment(localID: localID))
+        XCTAssertEqual(try localCommits(device), 0)
+    }
+
+    /// Review Z2: a reader answer never commits, even when an editor made the
+    /// scope writable while the question was out (it may be on a stale row).
+    func testAReaderAnswerNeverCommitsThroughAnEditorThatOpenedMeanwhile() async throws {
+        let device = try makeDevice()
+        let server = Server()
+        server.canUpdate.value = false
+        let gate = MockURLProtocol.ResponseGate()
+        server.documentGate.value = gate
+        let localID = leftBehind(device, checkpoint: Self.mediaURL)
+        let app = launch(device, server: server)
+        let pass = Task { await app.coordinator.syncPendingDrafts() }
+        await waitUntil {
+            server.log.count(ofMethod: "GET", urlContaining: "documents/\(Self.documentID.uuidString.lowercased())/")
+                == 1
+        }
+        let editor = try await openEditor(app)
+        gate.open()
+        await pass.value
+        await waitUntil { app.registry.surfaces(of: device.scope).count == 1 }
+        XCTAssertNotNil(app.coordinator.pendingAttachment(localID: localID))
+        XCTAssertEqual(try localCommits(device), 0)
+        await editor.close().value
     }
 
     /// Review Y1: an editor's reader answer is remembered for the scope.
