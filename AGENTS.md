@@ -3839,7 +3839,10 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `DocumentEngine.mediaLocation`: the index first (an indexed container with no content element is
   undecided), then a walk of the whole document's **block structure** only (`blockGroup`,
   `blockContainer`, `columnList`, `column`, never inline content), counting block levels up to
-  `NativeBlockProjection.maxDepth`; a branch cut there marks the search but never stops it, and a
+  `NativeBlockProjection.maxDepth`, and every structural step (a group in a group, a column group in
+  a column, crafted or not) counting toward `MediaSearch.maxLevel` (4 × maxDepth), so a crafted
+  nesting is cut, never walked without bound on the replica actor; a cut branch marks the search
+  but never stops it, and a
   block found but not addressable (outside a column, a column or group without an id, past the
   depth, no content element) is undecided; only an id absent from the whole document is nil, and
   undecided means `.unavailable` (the record waits). So a block moved into a column or another
@@ -3905,7 +3908,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   outside the caches asking the server (waiting meanwhile), a 403/404 as a denial, the subpage
   cache never deciding, another document's answer, a reader answer through an editor opened
   meanwhile (and a second replay before it closes), a remembered denial through a writable editor,
-  a nested image in a closed column (and `DocumentEngineMediaLocationTests`: block-level depth, a cut
+  a nested image in a closed column (and `DocumentEngineMediaLocationTests`: a crafted 2,000-level nesting undecided, block-level depth, a cut
   branch, found-but-unaddressable, absent; `NativeEditorActivationTests`: 403/404/mismatch as reader,
   a remembered denial keeping the open off the socket), a delete keeping another account's
   records, a deleted block (nothing sent), a
