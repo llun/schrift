@@ -641,10 +641,13 @@ final class ColumnTextContainer: UIScrollView {
             let offset = CGPoint(x: 0, y: viewport.minY - region.minY)
             offsets[id] = offset.y
             if frame.textView.contentOffset != offset { frame.textView.contentOffset = offset }
-            frame.divider.isHidden = layout != .stacked || region.minY == 0
-            frame.divider.frame = CGRect(
-                x: 0, y: -offset.y - Self.spacing / 2, width: region.width,
-                height: 1 / max(1, traitCollection.displayScale))
+            // A hairline between columns: above a stacked one, left of one side by side.
+            let hairline = 1 / max(1, traitCollection.displayScale)
+            frame.divider.isHidden = region.minX == 0 && region.minY == 0
+            frame.divider.frame =
+                layout == .stacked
+                ? CGRect(x: 0, y: -offset.y - Self.spacing / 2, width: region.width, height: hairline)
+                : CGRect(x: -Self.spacing / 2, y: 0, width: hairline, height: viewport.height)
             frame.divider.backgroundColor = frame.textView.blockControls.color(\.borderDefault)
         }
     }
@@ -722,7 +725,7 @@ final class ColumnTextContainer: UIScrollView {
 /// around the column's text view, framed by `ColumnTextContainer`.
 final class ColumnFrameView: UIView {
     let textView: NativeTextView
-    /// A hairline above a stacked column after the first.
+    /// A hairline before every column but the first.
     let divider = UIView()
 
     init(_ textView: NativeTextView) {
