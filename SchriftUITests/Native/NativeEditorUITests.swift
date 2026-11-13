@@ -339,9 +339,9 @@ final class NativeEditorUITests: XCTestCase {
             XCTWaiter.wait(for: [restored], timeout: 5), .completed, "the journal keeps it: \(first.value ?? "nil")")
     }
 
-    /// PR12c: a find match inside a column closes the outline and opens the
-    /// column editor at that block, the caret at its start; the document's
-    /// text is unchanged.
+    /// PR12c: typing a query whose match is inside a column keeps typing in
+    /// the find field; Next then closes the outline and opens the column
+    /// editor at that block without taking the keyboard (PR #285 F1).
     func testAFindMatchInAColumnOpensTheColumnEditorThere() {
         let app = XCUIApplication()
         app.launchArguments = ["--native-open", "--reset", "--native-columns"]
@@ -355,16 +355,17 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
         field.typeText("Right")
+        // Typing the query only follows it in the document: the whole word is in the field.
         let second = app.textViews["nativeEditor.column.1"]
+        XCTAssertFalse(second.waitForExistence(timeout: 2), "no column editor while the query is typed")
+        XCTAssertEqual(field.value as? String, "Right")
+        XCTAssertTrue(app.staticTexts["1 of 1"].exists)
+        // A deliberate step opens it at the match, without the keyboard.
+        app.buttons["Next match"].tap()
         XCTAssertTrue(second.waitForExistence(timeout: 10), "the column editor opened")
         XCTAssertTrue(field.waitForNonExistence(timeout: 5), "the outline closed")
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        app.typeText("Far")
-        let typed = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value BEGINSWITH %@", "FarRight"), object: second)
-        XCTAssertEqual(
-            XCTWaiter.wait(for: [typed], timeout: 5), .completed, "the caret was at the match: \(second.value ?? "nil")"
-        )
+        XCTAssertFalse(app.keyboards.firstMatch.waitForExistence(timeout: 2), "it did not take the keyboard")
+        XCTAssertEqual(second.value as? String, "Right", "nothing typed")
         app.buttons["nativeEditor.columns.done"].tap()
         XCTAssertTrue(card.waitForExistence(timeout: 5))
     }

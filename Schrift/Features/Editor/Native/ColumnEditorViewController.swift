@@ -40,8 +40,7 @@ final class ColumnEditorModel: Identifiable {
     /// A block a column moved or joined into another column, until that
     /// column shows it: the caret and the keys held meanwhile follow it
     /// there (PR12c). `source` is the column it left.
-    @ObservationIgnored private var following:
-        (left: NativeInputCoordinator.BlockLeft, source: NativeEditorSession)?
+    @ObservationIgnored private var following: (left: NativeInputCoordinator.BlockLeft, source: NativeEditorSession)?
 
     init(document: NativeEditorSession, groupID: String, target: (column: String, block: String)? = nil) {
         self.document = document

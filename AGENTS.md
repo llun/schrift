@@ -3648,14 +3648,34 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   followed (the document is behind the editor) and the column editor still does not open by itself
   after the slash menu makes a group; the one-shot reader's find does not search inside columns;
   layout follows the size class, so a compact-width window wide enough for the columns (iPhone
-  landscape) still stacks; the outline stays open for a match in the document but closes for one in
-  a column, so stepping through matches stops at the first column match. Tests: `ColumnLayoutTests` (side by side at the widths, stacked, a change of layout keeping
+  landscape) still stacks; Next/Previous onto a match in a column closes the outline (the editor
+  opens there), so stepping through matches stops at it. Tests: `ColumnLayoutTests` (side by side at the widths, stacked, a change of layout keeping
   first responder, selection, marked text and a pending key, Dynamic Type without clipping, the
   2,000-block gate, typing scrolling to the caret, the containers and rotor, the card's value, find
   and outline into columns with an unchanged document, a stale column handle, the caret following a
   moved block), the updated `ColumnEditorTests`/`ColumnStructureTests` (every column shown) and the
   host UI tests `testAFindMatchInAColumnOpensTheColumnEditorThere` and (iPad only)
   `testColumnsSitSideBySideOnIPadAndKeepTypingThroughRotation`.
+  **Review fixes (PR #285).** F1: the find field's query-following jump (`DocumentOutlineSheet
+  .onQueryMatch`, `jump(to:deliberate: false)`) only scrolls the document to the group's card; only
+  a tap, Next or Previous opens the column editor, once until it closes
+  (`NativeDocumentNavigation.isOpeningColumn`/`columnEditorClosed`, and the view drops a reply while
+  an editor is up or pending), and an editor opened at a result does not take first responder
+  (`ColumnTextContainer.takesFocusOnOpen`), so the rest of a query is never typed into a column.
+  F2: keys held while a move is in flight go with the block (`BlockLeft.keys`, adopted by the
+  column that shows it, `NativeInputCoordinator.adopt`), never replayed in the column it left; when
+  no column shows it (it left the group, or another column's delivery came first) they become the
+  document's recovery entry. F3: Backspace at a column's first block (a `.join` whose `.caret` block
+  is no longer on the surface) reports the block too. F4: only moves and joins report
+  (`Barrier.movesBlock`; a column or table command's `.remapping` never does), and a wait ends at
+  another column's delivery or at close. F5: a target or followed block inside a collapsed toggle is
+  revealed (`surface.reveal`) before the caret goes there, the reader too. Tests (each fails without
+  its fix): `testTypingAQueryNeverOpensTheColumnEditorAndADeliberateJumpOpensItOnce`,
+  `testAnEditorOpenedAtAResultDoesNotTakeTheKeyboard`, `testAKeyHeldDuringAMoveIsTypedWhereTheBlockWent`,
+  `testBackspaceAcrossAColumnEdgeTakesTheCaretWithTheBlock`,
+  `testDeletingAndRestoringAColumnDoesNotPullTheCaretLater` (fails only with both F4 guards removed)
+  and `testAResultInsideACollapsedToggleIsRevealed`; the host UI test now types the whole query, sees
+  no editor, and opens it with Next.
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below
