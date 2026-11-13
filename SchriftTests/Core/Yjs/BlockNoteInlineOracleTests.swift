@@ -971,10 +971,12 @@ final class BlockNoteInlineOracleTests: XCTestCase {
             let c10Item = try YWrite.insertAfter(tx, into: row1, after: nil, [.type(c10)])
             try YWrite.mapSet(tx, on: c10, key: "colspan", .any([.int(1)]))
             try YWrite.mapSet(tx, on: c10, key: "rowspan", .any([.int(1)]))
+            try appendParagraph(to: c10) { _ in }
             let c11 = YType(typeRef: .xmlElement(nodeName: "tableCell"))
             _ = try YWrite.insertAfter(tx, into: row1, after: c10Item, [.type(c11)])
             try YWrite.mapSet(tx, on: c11, key: "colspan", .any([.int(1)]))
             try YWrite.mapSet(tx, on: c11, key: "rowspan", .any([.int(1)]))
+            try appendParagraph(to: c11) { _ in }
         }
 
         let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
