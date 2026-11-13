@@ -6485,6 +6485,28 @@ markdown write endpoint**. Understand this before touching the save path:
   ever becomes true. A short `Task.sleep` is allowed only for the one case
   neither expresses: advancing real time inside a debounce window. Simulate a
   slow response with `Stub(delay:)`, not in the test body.
+- **Never block a thread in an async test or on an actor**: no `NSCondition`,
+  `DispatchSemaphore`/`DispatchGroup.wait()`, `Thread.sleep`/`usleep` or spin on a lock
+  where async code or an actor runs. Swift concurrency's cooperative pool has one thread
+  per CPU (three on the CI runner, one under `LIBDISPATCH_COOPERATIVE_POOL_STRICT=1`), so
+  each parked thread is one fewer to run the work that would release it, and a park inside
+  an actor also holds the actor. Instead: wait for state with `await waitUntil { }`; hold
+  an actor at a point with a gate that suspends, `Latch.passing()` from an async hook
+  (`DocumentReplicaSession.Hooks.beforeMessage`); hold an HTTP response with
+  `Stub(..., releasedBy:)`; inject an async `sleep`/clock rather than sleeping. Two
+  exceptions, each named in the test: `Latch.pass()` (blocking) inside a synchronous
+  product hook that stands in for synchronous work (`ReplicaStore`'s interrupt in the
+  journal's disk write, `Hooks.onReplicaWork`), with at most one such gate closed at a time
+  and opened from the main actor; and holding the main thread on purpose when a busy main
+  thread is the subject (`postHolding`). While a blocking gate holds a pool thread, the
+  test resumes from an `await` only on another one: under a one-thread pool
+  (`TEST_RUNNER_LIBDISPATCH_COOPERATIVE_POOL_STRICT=1` on `xcodebuild test-without-building`)
+  the tests that await with such a gate closed (`NativeSessionRegistryTests`' disk and attach
+  gates, `NativeEditorActivationTests`' attach gate) deadlock by construction; every other
+  gated test passes there, and checking a new one that way is cheap. A hang with
+  every thread idle is a lost resume, not starvation: read the spindump before blaming a
+  gate (the 2026-11 CI hang in `testPendingTypingIntentsAndTheMailboxAreBounded` was a
+  dropped `.close`, and no thread was blocked).
 - Assert thrown errors with a **typed do/catch** (`XCTFail` on the success path,
   match the concrete `DocsAPIError` case) — not `XCTAssertThrowsError`.
 - Fixtures are **inline** JSON string literals; use deterministic repeating-digit

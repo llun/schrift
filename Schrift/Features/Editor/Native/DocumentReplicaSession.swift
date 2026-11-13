@@ -41,13 +41,14 @@ actor DocumentReplicaSession {
 
     /// Test seams, called on the session.
     struct Hooks: Sendable {
-        /// Before each message: a test holds the mailbox with a latch.
-        var beforeMessage: (@Sendable () -> Void)?
+        /// Before each message: a test holds the mailbox with a gate that
+        /// suspends, so the hold never parks a cooperative-pool thread.
+        var beforeMessage: (@Sendable () async -> Void)?
         /// Every unit of replica work (a message, an attach, a close): a test
         /// checks it never runs on the main thread.
         var onReplicaWork: (@Sendable () -> Void)?
 
-        init(beforeMessage: (@Sendable () -> Void)? = nil, onReplicaWork: (@Sendable () -> Void)? = nil) {
+        init(beforeMessage: (@Sendable () async -> Void)? = nil, onReplicaWork: (@Sendable () -> Void)? = nil) {
             self.beforeMessage = beforeMessage
             self.onReplicaWork = onReplicaWork
         }
@@ -303,7 +304,7 @@ actor DocumentReplicaSession {
                 message.cancel()
                 continue
             }
-            hooks.beforeMessage?()
+            await hooks.beforeMessage?()
             hooks.onReplicaWork?()
             handle(message)
             reportCursor()

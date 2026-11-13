@@ -316,7 +316,7 @@ final class NativeLiveSyncTests: NativeEditingTestCase {
         let gate = Latch(open: true)
         let server = try FakeYServer(state: seedState())
         defer { server.doc.destroy() }
-        let a = try await makeClient(hooks: .init(beforeMessage: { gate.pass() }))
+        let a = try await makeClient(hooks: .init(beforeMessage: { await gate.passing() }))
         let socket = try await connect(a, to: server)
         try await server.settle { self.step1Count(socket) == 1 && self.a(isLive: a) }
         let web = try peer(of: server)
@@ -537,7 +537,7 @@ final class NativeLiveSyncTests: NativeEditingTestCase {
         let gate = Latch(open: true)
         let server = try FakeYServer(state: seedState())
         defer { server.doc.destroy() }
-        let a = try await makeClient(hooks: .init(beforeMessage: { gate.pass() }))
+        let a = try await makeClient(hooks: .init(beforeMessage: { await gate.passing() }))
         let socket = try await connect(a, to: server)
         try await server.settle { self.step1Count(socket) == 1 && self.a(isLive: a) }
         gate.close()
@@ -632,7 +632,7 @@ final class NativeLiveSyncTests: NativeEditingTestCase {
         let gate = Latch(open: true)
         let server = try FakeYServer(state: seedState())
         defer { server.doc.destroy() }
-        let a = try await makeClient(hooks: .init(beforeMessage: { gate.pass() }))
+        let a = try await makeClient(hooks: .init(beforeMessage: { await gate.passing() }))
         let replica = try XCTUnwrap(a.session.replica)
         gate.close()
         replica.mailbox.post(.writeProvisional([]))
