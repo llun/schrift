@@ -92,6 +92,7 @@ final class ColumnEditorModel: Identifiable {
             return patch.changes.contains { change in
                 switch change {
                 case .replaceBlock(let id, _): id == groupID
+                case .remove(let ids): ids.contains(groupID)
                 case .reset: true
                 default: false
                 }
