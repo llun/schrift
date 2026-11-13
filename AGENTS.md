@@ -3847,8 +3847,12 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   sign-in generation, so a document opened from a folder or a deep link commits too); a reader
   answer, or an editor's (`becomeReader` → `noteNativeReader`), is remembered per scope
   (persisted, `nativeMediaReaderScopes`) and only the server saying update again lifts it; with no
-  answer (offline, a failure) a remembered reader is no, else the account's Home lists then the
-  subpage cache decide (unknown is no); the registry re-reads the entry after that await — else
+  answer (offline, a 5xx, an expired session) a remembered reader is no, else only the account's
+  own Home lists decide (unknown is no: the record waits; the subpage cache is neither account- nor
+  origin-scoped and never decides); a 403, a 404 or any other answer about the document, and an
+  answer naming another document id, are denials remembered like a reader answer; a no is final
+  even if an editor made the scope writable during the question, and the registry re-reads the
+  entry after that await — else
   `.unavailable` and the record waits (an open editor that does not write stays so); the save goes
   through the scope's scheduler when an editor installed one, else a private one that is never
   registered, so an editor opened later keeps its own save rules (review X7);
@@ -3885,7 +3889,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   typing gate (reader, unknown, switch off), a restored checkpoint re-checked, bytes over the limit,
   the headless scheduler never the editor's, a headless post after a resync, a reader answer
   winning over the cache and remembered across a relaunch, an editor's reader answer, a document
-  outside the caches asking the server (waiting meanwhile), a delete keeping another account's
+  outside the caches asking the server (waiting meanwhile), a 403/404 as a denial, the subpage
+  cache never deciding, another document's answer, a reader answer through an editor opened
+  meanwhile, a delete keeping another account's
   records, a deleted block (nothing sent), a
   block filled during the upload, a rejection then Retry and Discard, another document's URL,
   another account's record, a sign-in switch, the classic pass, document delete, JPEG preparation,

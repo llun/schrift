@@ -266,8 +266,9 @@ records (no Markdown names them) and runs native ones after every classic one. T
 the block anywhere in the document (a block moved into a column group after it was picked
 included), writes a closed document only through the editor open's typing gate (the native
 switch, no pending create or delete, no live owner, no classic draft, and `abilities.update` asked
-of the server once; a reader answer, the editor's included, is remembered per scope, and offline
-only an unremembered cached row can allow it), never leaves its scheduler as the editor's, and re-checks every URL, a
+of the server once; a reader answer, the editor's included, a 403 or 404, or an answer naming
+another document is a denial remembered per scope, and offline only the account's own Home lists
+can allow it), never leaves its scheduler as the editor's, and re-checks every URL, a
 checkpoint read back from disk included, right before the commit; stored bytes over the picker's
 limit fail unread. Every save (native and classic, body and title) runs bound to the sign-in
 generation it started in: a cookie handover meanwhile sends nothing more and leaves the save
