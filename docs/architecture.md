@@ -1172,6 +1172,21 @@ Uploads need a connection and a document the server knows; the native offline qu
 that finish after the editor closed, and drag and drop are PR13b. A media block stays a root
 (or column-root) block without children, like a table, because only that has a confirmed shadow.
 
+**PR13c1 Native inline objects: mentions and page links.** BlockNote's `interlinkingLinkInline`,
+`userMentionInline`, and `mentionSearchInline` Yjs elements are modeled on `InlineRun.inlineObject`
+via `NativeInlineObject` (failing closed on malformed elements), projected into TextKit 2 as
+`\u{FFFC}` (`NativeInlineChipAttachment`) with `NativeInlineChipImageCache` and read-only cached
+document title lookups without writing to Yjs. `NativeExportMarkdown` and `NativeBlockProjection`
+export enabled interlinks with the document's `interlinkingOrigin` as markdown links, mentions as
+`@fullName`, and `mentionSearch` as its trigger, matching the server's shadow byte-for-byte.
+Typing uses boundary mark barriers, cursor and deletion treat each chip as one atomic unit,
+`NativeClipboard` preserves inline slices across native pastes and degrades cleanly to visible plain
+text for code blocks and external pasteboards (while turning pasted same-origin `/docs/<uuid>` URLs
+into interlink chips), and tapping or VoiceOver-activating enabled `.interlink` chips across
+document, column, and table cell surfaces resolves the target document, dismisses any open sheet or
+cover, and pushes without writing to the document (`@mention` taps are no-ops; autocomplete pickers
+and `blockID` scroll targets arrive in PR13c2).
+
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom
 actions on the text view) acts on the caret's block and its whole subtree: Move up, Move

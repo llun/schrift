@@ -325,7 +325,9 @@ struct EditorView: View {
                     documentID: viewModel.documentID,
                     uploadDocumentID: viewModel.isLocalDocument ? nil : viewModel.documentID,
                     mediaQueue: viewModel.saveCoordinator,
-                    documentTitle: { [viewModel] id in viewModel.cachedDocumentTitle(for: id) })
+                    documentTitle: { [viewModel] id in viewModel.cachedDocumentTitle(for: id) },
+                    resolveLinkedDocument: { [viewModel] id in await viewModel.openLinkedDocument(id) },
+                    onOpenDocument: onOpenDocument)
             case .preservedUnavailable:
                 ContentUnavailableView(
                     loc[.native_editor_owned_unavailable_title], systemImage: "doc.richtext",

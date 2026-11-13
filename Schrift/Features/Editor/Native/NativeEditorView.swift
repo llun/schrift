@@ -29,6 +29,10 @@ struct NativeEditorView: View {
     var mediaQueue: DocumentSaveCoordinator? = nil
     /// Cached title resolver for linked document chips (read-only display).
     var documentTitle: (@MainActor (UUID) -> String?)? = nil
+    /// Resolves a linked document by ID before pushing onto navigation (PR13c1).
+    var resolveLinkedDocument: (@MainActor (UUID) async -> Document?)? = nil
+    /// Opens a resolved linked document onto the caller's navigation stack (PR13c1).
+    var onOpenDocument: ((Document) -> Void)? = nil
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -50,6 +54,7 @@ struct NativeEditorView: View {
     /// The media block whose inspector is open, and the document's uploads (PR13a).
     @State private var openMedia: NativeMediaRequest?
     @State private var uploads: NativeMediaUploads?
+    @State private var linkCoordinator = NativeDocumentLinkCoordinator()
 
     var body: some View {
         Group {
@@ -71,7 +76,8 @@ struct NativeEditorView: View {
                     onOpenMedia: { openMedia = NativeMediaRequest(id: $0) },
                     uploadingBlocks: uploads?.uploadingBlocks ?? [], waitingUploads: uploads?.waitingBlocks ?? [],
                     failedUploads: uploads?.failedBlocks ?? [],
-                    documentTitle: documentTitle
+                    documentTitle: documentTitle,
+                    onOpenDocument: { id, _ in openInlineDocument(id) }
                 )
                 .id(ObjectIdentifier(session))
             }
@@ -126,6 +132,7 @@ struct NativeEditorView: View {
             onDismiss: { [session] in
                 // Back to the document, after the table (the keyboard stays up).
                 if let id = lastTable { session.input?.focus(after: id) }
+                flushPendingLinkedDocument()
             }
         ) { request in
             TableEditorScreen(
@@ -133,6 +140,8 @@ struct NativeEditorView: View {
                 doneTitle: loc[.editor_action_done],
                 cellLabel: { String(format: loc[.native_editor_table_cell], $0, $1) }, text: { loc[$0] },
                 documentTitle: documentTitle,
+                serverOrigin: serverOrigin,
+                onOpenDocument: { id, _ in openInlineDocument(id) },
                 onClose: {
                     lastTable = request.id
                     openTable = nil
@@ -145,13 +154,17 @@ struct NativeEditorView: View {
             onDismiss: { [session] in
                 // Back to the document, after the group (the keyboard stays up).
                 if let id = lastColumns { session.input?.focus(after: id) }
+                flushPendingLinkedDocument()
             }
         ) { model in
             ColumnEditorScreen(
                 model: model, serverOrigin: serverOrigin, isOffline: isOffline, uploads: uploads,
-                documentTitle: documentTitle)
+                documentTitle: documentTitle, onOpenDocument: { id, _ in openInlineDocument(id) })
         }
-        .sheet(item: $openMedia) { request in
+        .sheet(
+            item: $openMedia,
+            onDismiss: { flushPendingLinkedDocument() }
+        ) { request in
             NativeMediaInspector(
                 session: session, blockID: request.id, uploads: uploads, serverOrigin: serverOrigin,
                 isOffline: isOffline, onClose: { openMedia = nil })
@@ -182,6 +195,8 @@ struct NativeEditorView: View {
                     if let jump = pendingColumnJump {
                         pendingColumnJump = nil
                         openColumns = columnEditor(jump.group, target: (jump.column, jump.block))
+                    } else {
+                        flushPendingLinkedDocument()
                     }
                 },
                 onSelectHeading: { jump(.block($0)) },
@@ -209,7 +224,10 @@ struct NativeEditorView: View {
             await session.navigation.refresh()
             session.navigation.restore()
         }
-        .onDisappear { session.navigation.persist() }
+        .onDisappear {
+            linkCoordinator.cancel()
+            session.navigation.persist()
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { session.navigation.persist() }
         }
@@ -252,12 +270,47 @@ extension NativeEditorView {
         _ groupID: String, target: (column: String, block: String)? = nil
     ) -> ColumnEditorModel {
         let model = ColumnEditorModel(document: session, groupID: groupID, target: target)
+        model.onOpenDocument = { id, _ in openInlineDocument(id) }
         model.onClose = { [navigation = session.navigation] in
             navigation.columnEditorClosed()
             lastColumns = groupID
             openColumns = nil
         }
         return model
+    }
+
+    private func openInlineDocument(_ linkedID: UUID) {
+        linkCoordinator.open(
+            documentID: linkedID,
+            currentDocumentID: documentID,
+            resolve: resolveLinkedDocument,
+            hasPresentedCover: hasPresentedNavigationCover,
+            dismissCovers: dismissNavigationCovers,
+            push: { document in onOpenDocument?(document) }
+        )
+    }
+
+    private func flushPendingLinkedDocument() {
+        linkCoordinator.flushPendingIfReady(
+            hasPresentedCover: hasPresentedNavigationCover,
+            push: { document in onOpenDocument?(document) }
+        )
+    }
+
+    private func hasPresentedNavigationCover() -> Bool {
+        openTable != nil || openColumns != nil || openMedia != nil || isPresentingOutline
+    }
+
+    private func dismissNavigationCovers() {
+        pendingColumnJump = nil
+        lastTable = nil
+        openTable = nil
+        openMedia = nil
+        isPresentingOutline = false
+        if let columns = openColumns {
+            columns.close()
+        }
+        lastColumns = nil
     }
 
     fileprivate func presentOutline(focusingFind: Bool) {
@@ -523,6 +576,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
     var waitingUploads: Set<String> = []
     var failedUploads: Set<String> = []
     var documentTitle: (@MainActor (UUID) -> String?)? = nil
+    var onOpenDocument: ((UUID, String) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -546,6 +600,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
         session.textView.blockControls.onOpenTable = onOpenTable
         session.textView.blockControls.onOpenColumns = onOpenColumns
         session.textView.blockControls.onOpenMedia = onOpenMedia
+        session.textView.blockControls.onOpenDocument = onOpenDocument
         session.textView.blockControls.uploadingBlocks = uploadingBlocks
         session.textView.blockControls.waitingUploads = waitingUploads
         session.textView.blockControls.failedUploads = failedUploads
@@ -601,4 +656,53 @@ extension View {
 /// The table editor's subject (PR11a).
 struct NativeTableRequest: Identifiable {
     let id: String
+}
+
+/// Coordinates async page-link resolution and dismiss-before-push cover gating (PR13c1).
+@MainActor
+final class NativeDocumentLinkCoordinator {
+    private(set) var pendingDocument: Document?
+    private var resolveTask: Task<Void, Never>?
+
+    func open(
+        documentID linkedID: UUID,
+        currentDocumentID: UUID?,
+        resolve: (@MainActor (UUID) async -> Document?)?,
+        hasPresentedCover: @escaping @MainActor () -> Bool,
+        dismissCovers: @escaping @MainActor () -> Void,
+        push: @escaping @MainActor (Document) -> Void
+    ) {
+        guard
+            case .openInApp(let targetID) = documentLinkAction(
+                forDocumentID: linkedID, currentDocumentID: currentDocumentID),
+            let resolve
+        else { return }
+        resolveTask?.cancel()
+        pendingDocument = nil
+        resolveTask = Task { @MainActor [weak self] in
+            let document = await resolve(targetID)
+            guard let self, !Task.isCancelled, let document else { return }
+            if hasPresentedCover() {
+                pendingDocument = document
+                dismissCovers()
+            } else {
+                push(document)
+            }
+        }
+    }
+
+    func flushPendingIfReady(
+        hasPresentedCover: () -> Bool,
+        push: (Document) -> Void
+    ) {
+        guard !hasPresentedCover(), let document = pendingDocument else { return }
+        pendingDocument = nil
+        push(document)
+    }
+
+    func cancel() {
+        resolveTask?.cancel()
+        resolveTask = nil
+        pendingDocument = nil
+    }
 }

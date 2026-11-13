@@ -1,3 +1,4 @@
+import SwiftUI
 import UIKit
 import XCTest
 
@@ -195,8 +196,8 @@ final class NativeInlineObjectTests: NativeEditingTestCase {
         return (viewModel, signedInUser, listCache, childrenCache)
     }
 
-    private func makeDocument(id: UUID = UUID(), title: String?) -> Document {
-        Document(
+    private func makeDocument(id: UUID = UUID(), title: String?) -> Schrift.Document {
+        Schrift.Document(
             id: id, title: title, excerpt: nil, abilities: DocumentAbilities(),
             linkReach: .restricted, linkRole: .reader, isFavorite: false,
             depth: 1, numchild: 0, path: "0001",
@@ -1169,5 +1170,362 @@ final class NativeInlineObjectTests: NativeEditingTestCase {
             tableSession.surface.blocks[0].runs.compactMap(\.inlineObject).contains(
                 .interlink(
                     docID: targetUUID.uuidString.lowercased(), blockID: "", title: nil, disabled: false, trigger: "/")))
+    }
+
+    private func ensureInlineChipFrame(in textView: NativeTextView, utf16Offset: Int) async throws -> CGRect {
+        textView.setNeedsLayout()
+        textView.layoutIfNeeded()
+        if let manager = textView.textLayoutManager {
+            manager.ensureLayout(for: manager.documentRange)
+        }
+        for _ in 0..<20 {
+            if let frame = textView.inlineChipFrame(atUTF16: utf16Offset), !frame.isEmpty {
+                return frame
+            }
+            textView.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        return try XCTUnwrap(textView.inlineChipFrame(atUTF16: utf16Offset))
+    }
+
+    private func inlineChipOffset(
+        in storage: NSAttributedString,
+        matching predicate: (NativeInlineObject) -> Bool
+    ) throws -> Int {
+        var matched: Int?
+        let full = NSRange(location: 0, length: storage.length)
+        storage.enumerateAttribute(.nativeInlineObject, in: full) { value, range, stop in
+            guard let inline = value as? NativeInlineObject, predicate(inline) else { return }
+            matched = range.location
+            stop.pointee = true
+        }
+        return try XCTUnwrap(matched)
+    }
+
+    func testChipTapNavigationHitTestingAndSideOffsets() async throws {
+        let targetID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            try insertContainer(
+                tx, into: group, after: &after, id: "p1", node: "paragraph",
+                children: [
+                    .text("Alpha "),
+                    .inline(
+                        .interlink(
+                            docID: targetID.uuidString.lowercased(), blockID: "b42", title: "Spec", disabled: false,
+                            trigger: "/")),
+                    .text(" "),
+                    .inline(
+                        .interlink(
+                            docID: targetID.uuidString.lowercased(), blockID: nil, title: "Off", disabled: true,
+                            trigger: "/")),
+                    .text(" "),
+                    .inline(.interlink(docID: "", blockID: nil, title: "Empty", disabled: false, trigger: "/")),
+                    .text(" "),
+                    .inline(.mention(userID: "u1", fullName: "Ada")),
+                    .text(" "),
+                    .inline(.mentionSearch(disabled: false, trigger: "@")),
+                    .text(" Beta"),
+                ])
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+        _ = host(harness.view)
+
+        let xmlBefore = await harness.session.replicaDoc { YXMLString.fragment($0) } ?? ""
+        var opened: [(UUID, String)] = []
+        harness.view.blockControls.onOpenDocument = { id, blockID in opened.append((id, blockID)) }
+
+        let enabledOffset = try inlineChipOffset(in: harness.view.textStorage) {
+            $0
+                == .interlink(
+                    docID: targetID.uuidString.lowercased(), blockID: "b42", title: "Spec", disabled: false,
+                    trigger: "/")
+        }
+        let disabledOffset = try inlineChipOffset(in: harness.view.textStorage) {
+            if case .interlink(_, _, _, let disabled, _) = $0 { return disabled }
+            return false
+        }
+        let emptyOffset = try inlineChipOffset(in: harness.view.textStorage) {
+            $0 == .interlink(docID: "", blockID: nil, title: "Empty", disabled: false, trigger: "/")
+        }
+        let mentionOffset = try inlineChipOffset(in: harness.view.textStorage) {
+            if case .mention = $0 { return true }
+            return false
+        }
+        let mentionSearchOffset = try inlineChipOffset(in: harness.view.textStorage) {
+            if case .mentionSearch = $0 { return true }
+            return false
+        }
+
+        for editable in [false, true] {
+            harness.view.isEditable = editable
+            let chipFrame = try await ensureInlineChipFrame(in: harness.view, utf16Offset: enabledOffset)
+            let center = CGPoint(x: chipFrame.midX, y: chipFrame.midY)
+
+            XCTAssertTrue(harness.view.chipTapShouldBegin(at: center), "editable=\(editable)")
+            XCTAssertTrue(harness.view.handleChipTap(at: center), "editable=\(editable)")
+            XCTAssertEqual(opened.last?.0, targetID)
+            XCTAssertEqual(opened.last?.1, "b42")
+
+            // Tapping outside left/right chip bounds never navigates and preserves side caret placement.
+            let leftPoint = CGPoint(x: chipFrame.minX - 2, y: chipFrame.midY)
+            let rightPoint = CGPoint(x: chipFrame.maxX + 2, y: chipFrame.midY)
+            XCTAssertFalse(harness.view.chipTapShouldBegin(at: leftPoint))
+            XCTAssertFalse(harness.view.handleChipTap(at: leftPoint))
+            XCTAssertFalse(harness.view.chipTapShouldBegin(at: rightPoint))
+            XCTAssertFalse(harness.view.handleChipTap(at: rightPoint))
+            let leftPos = try XCTUnwrap(harness.view.closestPosition(to: leftPoint))
+            let rightPos = try XCTUnwrap(harness.view.closestPosition(to: rightPoint))
+            XCTAssertEqual(harness.view.offset(from: harness.view.beginningOfDocument, to: leftPos), enabledOffset)
+            XCTAssertEqual(harness.view.offset(from: harness.view.beginningOfDocument, to: rightPos), enabledOffset + 1)
+
+            // Mentions, mentionSearch, disabled interlinks, and empty interlinks never navigate on tap.
+            for nonNavOffset in [disabledOffset, emptyOffset, mentionOffset, mentionSearchOffset] {
+                let frame = try await ensureInlineChipFrame(in: harness.view, utf16Offset: nonNavOffset)
+                let pt = CGPoint(x: frame.midX, y: frame.midY)
+                XCTAssertFalse(harness.view.chipTapShouldBegin(at: pt))
+                XCTAssertFalse(harness.view.handleChipTap(at: pt))
+            }
+        }
+
+        // Simultaneous recognition allows internal non-pan/long-press recognizers on textView,
+        // while refusing pans, long presses, and superview recognizers.
+        let externalTap = UITapGestureRecognizer()
+        let internalTap = UITapGestureRecognizer()
+        harness.view.addGestureRecognizer(internalTap)
+        XCTAssertFalse(
+            harness.view.blockControls.gestureRecognizer(
+                harness.view.chipTapRecognizer, shouldRecognizeSimultaneouslyWith: externalTap))
+        XCTAssertFalse(
+            harness.view.blockControls.gestureRecognizer(
+                harness.view.chipTapRecognizer, shouldRecognizeSimultaneouslyWith: harness.view.panGestureRecognizer))
+        XCTAssertTrue(
+            harness.view.blockControls.gestureRecognizer(
+                harness.view.chipTapRecognizer, shouldRecognizeSimultaneouslyWith: internalTap))
+
+        XCTAssertEqual(opened.count, 2)
+        XCTAssertEqual(harness.log.commands, [])
+        let xmlAfter = await harness.session.replicaDoc { YXMLString.fragment($0) } ?? ""
+        XCTAssertEqual(xmlAfter, xmlBefore)
+
+        // IME composition suppresses chip tap initiation.
+        let enabledFrame = try await ensureInlineChipFrame(in: harness.view, utf16Offset: enabledOffset)
+        harness.view.selectedRange = NSRange(location: 0, length: 0)
+        harness.view.setMarkedText("a", selectedRange: NSRange(location: 1, length: 0))
+        XCTAssertFalse(harness.view.chipTapShouldBegin(at: CGPoint(x: enabledFrame.midX, y: enabledFrame.midY)))
+        harness.view.unmarkText()
+        XCTAssertEqual(opened.count, 2)
+    }
+
+    func testVoiceOverOpenLinkCustomActionOnlyOnNavigableInterlink() async throws {
+        let targetID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            try insertContainer(
+                tx, into: group, after: &after, id: "p1", node: "paragraph",
+                children: [
+                    .text("Plain "),
+                    .inline(
+                        .interlink(
+                            docID: targetID.uuidString.lowercased(), blockID: "b9", title: "Spec", disabled: false,
+                            trigger: "/")),
+                    .text(" "),
+                    .inline(
+                        .interlink(
+                            docID: targetID.uuidString.lowercased(), blockID: nil, title: "Off", disabled: true,
+                            trigger: "/")),
+                    .text(" "),
+                    .inline(.mention(userID: "u1", fullName: "Ada")),
+                ])
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+        var opened: [(UUID, String)] = []
+        harness.view.blockControls.onOpenDocument = { id, blockID in opened.append((id, blockID)) }
+
+        let enabledOffset = try inlineChipOffset(in: harness.view.textStorage) {
+            if case .interlink(_, _, _, let disabled, _) = $0 { return !disabled }
+            return false
+        }
+        let disabledOffset = try inlineChipOffset(in: harness.view.textStorage) {
+            if case .interlink(_, _, _, let disabled, _) = $0 { return disabled }
+            return false
+        }
+        let mentionOffset = try inlineChipOffset(in: harness.view.textStorage) {
+            if case .mention = $0 { return true }
+            return false
+        }
+
+        for editable in [false, true] {
+            harness.view.isEditable = editable
+
+            harness.view.selectedRange = NSRange(location: 0, length: 0)
+            XCTAssertFalse((harness.view.accessibilityCustomActions ?? []).contains { $0.name == "Open link" })
+
+            for range in [
+                NSRange(location: enabledOffset, length: 0),
+                NSRange(location: enabledOffset + 1, length: 0),
+                NSRange(location: enabledOffset, length: 1),
+            ] {
+                harness.view.selectedRange = range
+                let openAction = try XCTUnwrap(
+                    harness.view.accessibilityCustomActions?.first { $0.name == "Open link" },
+                    "editable=\(editable) range=\(range)")
+                XCTAssertTrue(openAction.actionHandler?(openAction) ?? false)
+            }
+
+            for nonNavOffset in [disabledOffset, mentionOffset] {
+                harness.view.selectedRange = NSRange(location: nonNavOffset, length: 1)
+                XCTAssertFalse((harness.view.accessibilityCustomActions ?? []).contains { $0.name == "Open link" })
+            }
+        }
+
+        XCTAssertEqual(opened.count, 6)
+        XCTAssertTrue(opened.allSatisfy { $0.0 == targetID && $0.1 == "b9" })
+        XCTAssertEqual(harness.log.commands, [])
+    }
+
+    func testPageLinkCoordinatorIgnoresSelfLinkAndDismissesCoversBeforePush() async throws {
+        let currentID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let otherID = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        XCTAssertEqual(documentLinkAction(forDocumentID: currentID, currentDocumentID: currentID), .alreadyOpen)
+        XCTAssertEqual(documentLinkAction(forDocumentID: otherID, currentDocumentID: currentID), .openInApp(otherID))
+
+        let coordinator = NativeDocumentLinkCoordinator()
+        var resolveCalls: [UUID] = []
+        var coverOpen = true
+        var dismissCount = 0
+        var pushed: [Schrift.Document] = []
+
+        // Self-link is a silent no-op: no resolution, no cover dismissal, no push.
+        coordinator.open(
+            documentID: currentID,
+            currentDocumentID: currentID,
+            resolve: { id in
+                resolveCalls.append(id)
+                return self.makeDocument(id: id, title: "Self")
+            },
+            hasPresentedCover: { coverOpen },
+            dismissCovers: {
+                dismissCount += 1
+                coverOpen = false
+            },
+            push: { pushed.append($0) })
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(resolveCalls.isEmpty)
+        XCTAssertEqual(dismissCount, 0)
+        XCTAssertTrue(pushed.isEmpty)
+
+        // With an open cover, resolution requests dismissal first and pushes only after dismissal completes.
+        coordinator.open(
+            documentID: otherID,
+            currentDocumentID: currentID,
+            resolve: { id in
+                resolveCalls.append(id)
+                return self.makeDocument(id: id, title: "Target")
+            },
+            hasPresentedCover: { coverOpen },
+            dismissCovers: { dismissCount += 1 },
+            push: { pushed.append($0) })
+        for _ in 0..<20 where dismissCount == 0 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(resolveCalls, [otherID])
+        XCTAssertEqual(dismissCount, 1)
+        XCTAssertTrue(pushed.isEmpty)
+        XCTAssertEqual(coordinator.pendingDocument?.id, otherID)
+
+        coverOpen = false
+        coordinator.flushPendingIfReady(hasPresentedCover: { coverOpen }, push: { pushed.append($0) })
+        XCTAssertEqual(pushed.map(\.id), [otherID])
+        XCTAssertNil(coordinator.pendingDocument)
+
+        // Without an open cover, resolution pushes immediately.
+        let thirdID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        coordinator.open(
+            documentID: thirdID,
+            currentDocumentID: currentID,
+            resolve: { id in self.makeDocument(id: id, title: "Third") },
+            hasPresentedCover: { false },
+            dismissCovers: { dismissCount += 1 },
+            push: { pushed.append($0) })
+        for _ in 0..<20 where pushed.count < 2 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(pushed.map(\.id), [otherID, thirdID])
+        XCTAssertEqual(dismissCount, 1)
+    }
+
+    func testTableAndColumnChipTapForwardsOnOpenDocument() async throws {
+        let targetID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+
+        // Table surface: active cell opens with selectAll (length > 0); chip tap still fires navigation.
+        let tableHarness = try await makeHarness(state: try fixtureUpdate("chipsInTable"))
+        addTeardownBlock { await tableHarness.close() }
+        var tableOpened: [(UUID, String)] = []
+        let tableEditor = TableEditorViewController(document: tableHarness.session, tableID: "tbl")
+        tableEditor.onOpenDocument = { id, blockID in tableOpened.append((id, blockID)) }
+        _ = hostController(tableEditor)
+        await tableEditor.load()
+        for _ in 0..<300 where !tableEditor.isLoaded { try await Task.sleep(for: .milliseconds(10)) }
+        let cellSession = try XCTUnwrap(tableEditor.cellSession)
+        addTeardownBlock { await cellSession.close().value }
+        let cellChipOffset = try inlineChipOffset(in: cellSession.textView.textStorage) {
+            if case .interlink(let id, _, _, let disabled, _) = $0 {
+                return id == targetID.uuidString.lowercased() && !disabled
+            }
+            return false
+        }
+        let cellChipFrame = try await ensureInlineChipFrame(in: cellSession.textView, utf16Offset: cellChipOffset)
+        let cellCenter = CGPoint(x: cellChipFrame.midX, y: cellChipFrame.midY)
+        XCTAssertTrue(cellSession.textView.chipTapShouldBegin(at: cellCenter))
+        XCTAssertTrue(cellSession.textView.handleChipTap(at: cellCenter))
+        XCTAssertEqual(tableOpened.first?.0, targetID)
+        XCTAssertEqual(tableOpened.first?.1, "")
+
+        // Column surface: ColumnEditorScreen forwards onOpenDocument to column text hosts.
+        let columnHarness = try await makeHarness(state: try fixtureUpdate("chipsInColumns"))
+        addTeardownBlock { await columnHarness.close() }
+        var columnOpened: [(UUID, String)] = []
+        let columnModel = ColumnEditorModel(document: columnHarness.session, groupID: "cl")
+        addTeardownBlock { columnModel.close() }
+        let hosting = UIHostingController(
+            rootView: ColumnEditorScreen(
+                model: columnModel,
+                serverOrigin: "https://example.test",
+                onOpenDocument: { id, blockID in columnOpened.append((id, blockID)) }
+            ).environment(LocalizationStore()))
+        _ = hostController(hosting)
+        for _ in 0..<300 where columnModel.columns.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let colSession = try XCTUnwrap(columnModel.columns.first)
+        let colChipOffset = try inlineChipOffset(in: colSession.textView.textStorage) {
+            if case .interlink(let id, _, _, let disabled, _) = $0 {
+                return id == targetID.uuidString.lowercased() && !disabled
+            }
+            return false
+        }
+        let colChipFrame = try await ensureInlineChipFrame(in: colSession.textView, utf16Offset: colChipOffset)
+        let colCenter = CGPoint(x: colChipFrame.midX, y: colChipFrame.midY)
+        XCTAssertTrue(colSession.textView.chipTapShouldBegin(at: colCenter))
+        XCTAssertTrue(colSession.textView.handleChipTap(at: colCenter))
+        XCTAssertEqual(columnOpened.first?.0, targetID)
+        XCTAssertEqual(columnOpened.first?.1, "")
+
+        // Column 2 only has mentions/mentionSearch; tapping them never navigates.
+        if columnModel.columns.count > 1 {
+            let rightSession = columnModel.columns[1]
+            let mentionOffset = try inlineChipOffset(in: rightSession.textView.textStorage) {
+                if case .mention = $0 { return true }
+                return false
+            }
+            let mentionFrame = try await ensureInlineChipFrame(in: rightSession.textView, utf16Offset: mentionOffset)
+            let mentionPoint = CGPoint(x: mentionFrame.midX, y: mentionFrame.midY)
+            XCTAssertFalse(rightSession.textView.chipTapShouldBegin(at: mentionPoint))
+            XCTAssertFalse(rightSession.textView.handleChipTap(at: mentionPoint))
+        }
+        XCTAssertEqual(columnOpened.count, 1)
     }
 }

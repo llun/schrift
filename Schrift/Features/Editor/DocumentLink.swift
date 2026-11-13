@@ -40,6 +40,14 @@ enum DocumentLinkAction: Equatable {
 /// link that belongs to somebody else's site.
 func documentLinkAction(for url: URL, serverHost: String, currentDocumentID: UUID) -> DocumentLinkAction {
     guard let linkedID = linkedDocumentID(from: url, serverHost: serverHost) else { return .openInBrowser }
+    return documentLinkAction(forDocumentID: linkedID, currentDocumentID: currentDocumentID)
+}
+
+/// Classifies a native interlink chip (`interlinkingLinkInline`) tapped in
+/// document content: a self-link is swallowed (`.alreadyOpen`) and any other
+/// document UUID opens in the app.
+func documentLinkAction(forDocumentID linkedID: UUID, currentDocumentID: UUID?) -> DocumentLinkAction {
+    guard let currentDocumentID else { return .openInApp(linkedID) }
     return linkedID == currentDocumentID ? .alreadyOpen : .openInApp(linkedID)
 }
 

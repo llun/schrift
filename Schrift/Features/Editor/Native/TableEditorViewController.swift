@@ -56,6 +56,10 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     var text: (L10nKey) -> String = { Strings_en.table[$0] ?? "" }
     /// Cached title resolver for linked document chips (read-only display).
     var documentTitle: (@MainActor (UUID) -> String?)?
+    /// Server origin for same-origin URL paste-interlink and clipboard serialization.
+    var serverOrigin: String?
+    /// A tap (or VoiceOver action) on an inline page link chip navigates to that document.
+    var onOpenDocument: ((UUID, String) -> Void)?
     /// The Row, Column, Cell and Format menus (PR11b), shown while editing.
     let controls = UIStackView()
 
@@ -168,8 +172,12 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
             session.textView.isScrollEnabled = false
             session.textView.blockControls.labels = labels
             session.textView.blockControls.documentTitle = documentTitle
+            session.textView.blockControls.onOpenDocument = { [weak self] id, blockID in
+                self?.onOpenDocument?(id, blockID)
+            }
             let origin =
-                (document.input?.serverOrigin).flatMap { $0.isEmpty ? nil : $0 }
+                serverOrigin.flatMap { $0.isEmpty ? nil : $0 }
+                ?? (document.input?.serverOrigin).flatMap { $0.isEmpty ? nil : $0 }
                 ?? document.textView.blockControls.serverOrigin
             session.textView.blockControls.serverOrigin = origin
             session.input?.serverOrigin = origin
@@ -1237,6 +1245,8 @@ struct TableEditorScreen: UIViewControllerRepresentable {
     let cellLabel: (Int, Int) -> String
     let text: (L10nKey) -> String
     var documentTitle: (@MainActor (UUID) -> String?)? = nil
+    var serverOrigin: String? = nil
+    var onOpenDocument: ((UUID, String) -> Void)? = nil
     let onClose: () -> Void
 
     func makeUIViewController(context: Context) -> UINavigationController {
@@ -1246,9 +1256,16 @@ struct TableEditorScreen: UIViewControllerRepresentable {
         editor.cellLabel = cellLabel
         editor.text = text
         editor.documentTitle = documentTitle
+        editor.serverOrigin = serverOrigin
+        editor.onOpenDocument = onOpenDocument
         editor.onClose = onClose
         return UINavigationController(rootViewController: editor)
     }
 
-    func updateUIViewController(_ controller: UINavigationController, context: Context) {}
+    func updateUIViewController(_ controller: UINavigationController, context: Context) {
+        guard let editor = controller.topViewController as? TableEditorViewController else { return }
+        editor.documentTitle = documentTitle
+        editor.serverOrigin = serverOrigin
+        editor.onOpenDocument = onOpenDocument
+    }
 }

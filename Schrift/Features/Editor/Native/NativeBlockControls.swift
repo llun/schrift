@@ -14,7 +14,7 @@ import UIKit
 /// storage delegate that leaves a folded toggle's children out of layout.
 @MainActor
 final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDelegate,
-    @preconcurrency NSTextContentStorageDelegate
+    @preconcurrency NSTextContentStorageDelegate, UIGestureRecognizerDelegate
 {
     private weak var textView: NativeTextView?
     /// The surface whose fold state decides which paragraphs are laid out.
@@ -93,6 +93,9 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     /// A tap (or VoiceOver activation) on a media block's card opens its
     /// inspector (PR13a), with the block id.
     var onOpenMedia: ((String) -> Void)?
+    /// A tap (or VoiceOver action) on an enabled inline page link chip opens
+    /// that document (PR13c1), with the target UUID and optional `blockId`.
+    var onOpenDocument: ((UUID, String) -> Void)?
     /// The media blocks whose upload is queued or runs (PR13a, PR13b), and
     /// those whose upload failed: their realised cards say so.
     var uploadingBlocks: Set<String> = [] {
@@ -421,5 +424,24 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
             let range = textView.textRange(from: start, to: end)
         else { return nil }
         return UIAccessibilityCustomRotorItemResult(targetElement: textView, targetRange: range)
+    }
+
+    // MARK: - UIGestureRecognizerDelegate (inline chip taps)
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let textView, gestureRecognizer === textView.chipTapRecognizer else { return true }
+        return textView.chipTapShouldBegin(at: gestureRecognizer.location(in: textView))
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        guard let textView, gestureRecognizer === textView.chipTapRecognizer else { return false }
+        if otherGestureRecognizer is UIPanGestureRecognizer || otherGestureRecognizer is UILongPressGestureRecognizer {
+            return false
+        }
+        return otherGestureRecognizer.view === textView
+            || (otherGestureRecognizer.view?.isDescendant(of: textView) == true)
     }
 }

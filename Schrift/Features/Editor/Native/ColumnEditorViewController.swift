@@ -35,6 +35,8 @@ final class ColumnEditorModel: Identifiable {
     @ObservationIgnored var lastTable: String?
     /// The editor closed: the document takes focus back after the group.
     @ObservationIgnored var onClose: (() -> Void)?
+    /// A tap (or VoiceOver action) on an inline page link chip navigates to that document.
+    @ObservationIgnored var onOpenDocument: ((UUID, String) -> Void)?
     @ObservationIgnored private var loadStarted = false
     /// Where the editor opens (PR12c: a find or outline result in a column):
     /// that column is active with the caret at the block's start.
@@ -126,6 +128,9 @@ final class ColumnEditorModel: Identifiable {
         session.input?.onExit = { [weak self] in self?.close() }
         session.textView.blockControls.onOpenTable = { [weak self] in self?.openTable = NativeTableRequest(id: $0) }
         session.textView.blockControls.onOpenMedia = { [weak self] in self?.openMedia = NativeMediaRequest(id: $0) }
+        session.textView.blockControls.onOpenDocument = { [weak self] id, blockID in
+            self?.onOpenDocument?(id, blockID)
+        }
         // The group's own change reaches every column: its structure may have changed (PR12b).
         session.onApplied = { [weak self] delivery in
             guard let self else { return }
@@ -294,6 +299,8 @@ final class ColumnEditorModel: Identifiable {
         guard !isClosed else { return }
         dropFollowing()
         isClosed = true
+        openTable = nil
+        openMedia = nil
         for session in columns {
             session.textView.resignFirstResponder()
             session.close()
@@ -328,6 +335,7 @@ struct ColumnEditorScreen: View {
     /// The document's uploads (PR13a): a column's media block uploads into its column.
     var uploads: NativeMediaUploads? = nil
     var documentTitle: (@MainActor (UUID) -> String?)? = nil
+    var onOpenDocument: ((UUID, String) -> Void)? = nil
     @State private var linkTarget: NativeLinkTarget?
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.docsTheme) private var theme
@@ -390,7 +398,7 @@ struct ColumnEditorScreen: View {
             ColumnTextHost(
                 model: model, contentSize: uiContentSizeCategory(for: dynamicTypeSize), labels: .document(loc),
                 theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline,
-                documentTitle: documentTitle)
+                documentTitle: documentTitle, onOpenDocument: onOpenDocument ?? model.onOpenDocument)
         }
         .safeAreaInset(edge: .bottom) {
             if let input = model.activeSession?.input {
@@ -424,7 +432,8 @@ struct ColumnEditorScreen: View {
                     document: session, tableID: request.id,
                     labels: .document(loc), doneTitle: loc[.editor_action_done],
                     cellLabel: { String(format: loc[.native_editor_table_cell], $0, $1) }, text: { loc[$0] },
-                    documentTitle: documentTitle,
+                    documentTitle: documentTitle, serverOrigin: serverOrigin,
+                    onOpenDocument: onOpenDocument ?? model.onOpenDocument,
                     onClose: {
                         model.lastTable = request.id
                         model.openTable = nil
@@ -461,6 +470,7 @@ private struct ColumnTextHost: UIViewRepresentable {
     let serverOrigin: String
     let isOffline: Bool
     let documentTitle: (@MainActor (UUID) -> String?)?
+    var onOpenDocument: ((UUID, String) -> Void)? = nil
 
     func makeUIView(context: Context) -> ColumnTextContainer {
         let container = ColumnTextContainer()
@@ -482,6 +492,7 @@ private struct ColumnTextHost: UIViewRepresentable {
             session.input?.serverOrigin = serverOrigin
             session.textView.blockControls.isOffline = isOffline
             session.textView.blockControls.documentTitle = documentTitle
+            session.textView.blockControls.onOpenDocument = onOpenDocument
             let presentation = NativeTextPresentation(contentSize: contentSize, labels: labels)
             if container.presentations[ObjectIdentifier(session)] != presentation {
                 container.presentations[ObjectIdentifier(session)] = presentation
