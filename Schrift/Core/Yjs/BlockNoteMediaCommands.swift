@@ -114,15 +114,56 @@ enum MediaBlock {
     /// only what a native edit may store (never `javascript:`, a local path
     /// or a placeholder).
     static func isAuthoredURL(_ url: String) -> Bool {
-        guard url.utf16.count <= maxURL,
-            !url.unicodeScalars.contains(where: {
-                CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0)
-            }),
+        // Only RFC 3986 characters, each `%` a hex escape: Foundation's parser
+        // may percent-encode anything else, and the string stored is the raw
+        // one, so what is checked must be what is written (a non-ASCII host
+        // must be typed as punycode).
+        guard url.utf16.count <= maxURL, url.unicodeScalars.allSatisfy(uriCharacters.contains),
+            !url.contains(/%(?![0-9A-Fa-f]{2})/),
             let components = URLComponents(string: url), let scheme = components.scheme?.lowercased(),
             scheme == "http" || scheme == "https", let host = components.host, !host.isEmpty,
             components.user == nil, components.password == nil
         else { return false }
         return true
+    }
+
+    /// RFC 3986's unreserved and reserved characters and `%`.
+    private static let uriCharacters = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?#[]@!$&'()*+,;=%")
+
+    /// `previewWidth` as the inspector shows it: a whole number of points
+    /// when the stored number is one a native edit could write, else nil
+    /// (a peer's 1e20 or -1e19 is preserved, never converted).
+    static func displayWidth(_ props: [ProjectedProp]) -> Int? {
+        guard let width = number(props.last(where: { $0.key == "previewWidth" })?.value), widths.contains(width)
+        else { return nil }
+        return Int(width.rounded())
+    }
+
+    /// Whether a pasted media block (an untrusted payload) may be inserted:
+    /// familiar, and every prop a native edit would also write (an http(s) or
+    /// empty url, bounded name and caption, a width in range), so a paste can
+    /// neither store what the inspector refuses nor leave a block without a
+    /// shadow (a pdf with a non-http(s) url).
+    static func isPastable(node: String, props: [ProjectedProp], hasContent: Bool) -> Bool {
+        guard nodes.contains(node), unfamiliarReason(node: node, props: props, hasContent: hasContent) == nil else {
+            return false
+        }
+        return props.allSatisfy { prop in
+            switch prop.key {
+            case _ where editableKeys.contains(prop.key): isValidEdit(prop, on: node)
+            case "backgroundColor": prop.value.isPlainString
+            default: true
+            }
+        }
+    }
+
+    /// `text` for display: at most `limit` scalars, with an ellipsis when
+    /// cut (a peer may store megabytes, or one character of a million
+    /// combining marks, so this never counts characters).
+    static func clipped(_ text: String, limit: Int = 300) -> String {
+        guard text.unicodeScalars.count > limit else { return text }
+        return String(String.UnicodeScalarView(text.unicodeScalars.prefix(limit))) + "…"
     }
 
     /// A name or caption: bounded, no control characters (a line break
@@ -134,6 +175,13 @@ enum MediaBlock {
     /// Blocks without editable content (BlockNote's `content: "none"`): the
     /// slash menu's cursor walks past them (`setSelectionToNextContentEditableBlock`).
     static let contentless: Set<String> = nodes.union([uploadLoader, "divider", "pageBreak", "columnList"])
+}
+
+extension YAnyValue {
+    fileprivate var isPlainString: Bool {
+        if case .string(let value) = self { return value.utf16.count <= MediaBlock.maxName }
+        return false
+    }
 }
 
 // MARK: - Writes

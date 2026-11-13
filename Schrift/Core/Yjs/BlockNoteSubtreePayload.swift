@@ -237,6 +237,27 @@ enum BlockNoteSubtreePayload {
     }
 }
 
+extension BlockNoteSubtreePayload {
+    /// A paste's media blocks (PR13a): each must be one a native edit could
+    /// write (`MediaBlock.isPastable`), so a payload never stores a
+    /// `javascript:`/`data:` url, an unbounded name or a pdf the shadow cannot
+    /// spell. Only pasting asks this: copy and delete keep any block as it is.
+    static func validateMedia(_ copies: [BlockNoteWriter.Copy]) throws {
+        for copy in copies {
+            guard case .element(let node, let props, let children) = copy else { continue }
+            if MediaBlock.isMediaLike(node) {
+                guard
+                    MediaBlock.isPastable(
+                        node: node, props: props.map { ProjectedProp(key: $0.key, value: $0.value) },
+                        hasContent: !children.isEmpty)
+                else { throw Error.malformed }
+                continue
+            }
+            try validateMedia(children)
+        }
+    }
+}
+
 extension BlockNoteWriter.Copy {
     /// The `blockContainer`s in this copy, in preorder.
     var containerCount: Int {

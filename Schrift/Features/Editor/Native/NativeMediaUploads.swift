@@ -98,12 +98,29 @@ final class NativeMediaUploads {
                 (fileName, contentType, data) = ("photo.jpg", "image/jpeg", jpeg)
             case .file(let load):
                 guard let file = try await load() else { return }
-                (fileName, contentType, data) = (file.fileName, file.contentType, file.data)
+                if slot.node == "image" {
+                    // An image block's file is re-encoded like a photo: its
+                    // EXIF (GPS included) never leaves the device.
+                    guard
+                        let jpeg = await Task.detached(
+                            priority: .userInitiated, operation: { preparedJPEGData(from: file.data) }
+                        ).value
+                    else { return fail(blockID, .native_editor_media_upload_failed) }
+                    let stem = (file.fileName as NSString).deletingPathExtension
+                    (fileName, contentType, data) = ((stem.isEmpty ? "photo" : stem) + ".jpg", "image/jpeg", jpeg)
+                } else {
+                    (fileName, contentType, data) = (file.fileName, file.contentType, file.data)
+                }
             }
         } catch AttachmentImportError.tooLarge {
             return fail(blockID, .editor_error_file_too_large)
         } catch {
             return fail(blockID, .native_editor_media_upload_failed)
+        }
+        // Preparation awaited: the editor that started this may have closed
+        // (Done, a sign-out or another account's reopen). Nothing is sent then.
+        guard target.session.map({ !$0.isClosed }) == true else {
+            return fail(blockID, .native_editor_media_upload_dropped)
         }
         let url: String
         do {

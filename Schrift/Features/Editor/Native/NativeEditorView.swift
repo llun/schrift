@@ -156,7 +156,10 @@ struct NativeEditorView: View {
         }
         .onChange(of: isOffline) { _, _ in uploads?.isOffline = { [isOffline] in isOffline } }
         .task(id: ObjectIdentifier(session)) {
-            guard let mediaUpload, uploads == nil else { return }
+            // One uploads object per session: a reopened session (another
+            // account) never inherits the previous one's.
+            uploads = nil
+            guard let mediaUpload else { return }
             uploads = NativeMediaUploads(
                 documentID: uploadDocumentID, serverOrigin: serverOrigin,
                 isOffline: { [isOffline] in isOffline }, upload: mediaUpload)

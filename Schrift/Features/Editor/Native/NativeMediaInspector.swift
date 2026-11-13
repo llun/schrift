@@ -25,13 +25,11 @@ struct NativeMediaInspector: View {
     /// The app's attachment loader: a same-origin attachment opens through it
     /// (download, cache, QuickLook); a host without one offers no preview.
     @Environment(AttachmentLoader.self) private var attachments: AttachmentLoader?
-    @State private var name = ""
-    @State private var caption = ""
+    @State private var draft = NativeMediaTextDraft()
     @State private var link = ""
     @State private var linkRefused = false
     @State private var photo: PhotosPickerItem?
     @State private var isImporting = false
-    @State private var loaded = false
 
     /// The widths offered (BlockNote stores any: a web resize keeps its own).
     static let widths: [Int] = [240, 360, 480, 640]
@@ -71,7 +69,9 @@ struct NativeMediaInspector: View {
                 }
             }
         }
-        .onAppear(perform: load)
+        .onAppear { draft.follow(block?.props ?? []) }
+        // A peer's or an upload's name or caption reaches every field the user has not touched.
+        .onChange(of: session.revision) { _, _ in draft.follow(block?.props ?? []) }
         .onChange(of: photo) { _, item in
             guard let item, let block else { return }
             photo = nil
@@ -95,12 +95,22 @@ struct NativeMediaInspector: View {
         }
         if isEditable {
             Section {
-                TextField(loc[.native_media_name], text: $name)
-                    .onSubmit(commitText)
-                    .accessibilityIdentifier("nativeMedia.name")
-                TextField(loc[.native_media_caption], text: $caption)
-                    .onSubmit(commitText)
-                    .accessibilityIdentifier("nativeMedia.caption")
+                // A value longer than a native edit may write (a peer's megabytes) is shown clipped, read-only.
+                if draft.canEditName {
+                    TextField(loc[.native_media_name], text: $draft.name)
+                        .onSubmit(commitText)
+                        .accessibilityIdentifier("nativeMedia.name")
+                } else {
+                    Text(MediaBlock.clipped(draft.name)).lineLimit(3).accessibilityIdentifier("nativeMedia.name")
+                }
+                if draft.canEditCaption {
+                    TextField(loc[.native_media_caption], text: $draft.caption)
+                        .onSubmit(commitText)
+                        .accessibilityIdentifier("nativeMedia.caption")
+                } else {
+                    Text(MediaBlock.clipped(draft.caption)).lineLimit(3)
+                        .accessibilityIdentifier("nativeMedia.caption")
+                }
             }
             if keys.contains("previewWidth") || keys.contains("textAlignment") || keys.contains("showPreview") {
                 Section {
@@ -118,7 +128,7 @@ struct NativeMediaInspector: View {
                             loc[.native_media_width],
                             selection: Binding(
                                 get: {
-                                    MediaBlock.number(props.last { $0.key == "previewWidth" }?.value).map(Int.init)
+                                    MediaBlock.displayWidth(props)
                                 },
                                 set: { width in
                                     set([
@@ -198,10 +208,12 @@ struct NativeMediaInspector: View {
         let labels = NativeEditorLabels.document(loc)
         VStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
             Text(
-                MediaBlock.string(block.node == MediaBlock.uploadLoader ? "blockUploadName" : "name", in: block.props)
-                    .nonEmpty ?? labels.kind(block.node)
+                MediaBlock.clipped(
+                    MediaBlock.string(block.node == MediaBlock.uploadLoader ? "blockUploadName" : "name", in: block.props)
+                ).nonEmpty ?? labels.kind(block.node)
             )
             .font(.headline)
+            .lineLimit(2)
             if uploads?.uploading == blockID {
                 Label(labels.mediaUploading, systemImage: "arrow.up.circle")
                     .accessibilityIdentifier("nativeMedia.uploading")
@@ -213,7 +225,7 @@ struct NativeMediaInspector: View {
             } else if url.isEmpty {
                 Text(labels.mediaEmpty)
             } else {
-                Text(url).font(.footnote).foregroundStyle(theme.colors.textSecondary).lineLimit(2)
+                Text(MediaBlock.clipped(url)).font(.footnote).foregroundStyle(theme.colors.textSecondary).lineLimit(2)
                     .textSelection(.enabled)
             }
             if isEditable, isOffline || uploads?.documentID == nil {
@@ -231,11 +243,16 @@ struct NativeMediaInspector: View {
     @ViewBuilder private func open(_ url: String) -> some View {
         if attachments != nil, let display = parseAttachmentLink("[file](\(url))", serverOrigin: serverOrigin) {
             AttachmentCardView(display: display, isOffline: isOffline)
-        } else if let target = URL(string: url), ["http", "https"].contains(target.scheme?.lowercased() ?? "") {
+        } else if let target = Self.openTarget(url) {
             Button {
-                openURL(target)
+                openURL(target.url)
             } label: {
-                Label(loc[.native_media_open], systemImage: "arrow.up.forward.app")
+                VStack(alignment: .leading) {
+                    Label(loc[.native_media_open], systemImage: "arrow.up.forward.app")
+                    // The host on its own line: what the tap really opens.
+                    Text(target.host).font(.footnote).foregroundStyle(theme.colors.textSecondary)
+                        .accessibilityIdentifier("nativeMedia.openHost")
+                }
             }
             .accessibilityIdentifier("nativeMedia.open")
         }
@@ -252,7 +269,7 @@ struct NativeMediaInspector: View {
     }
 
     private func widths(current props: [ProjectedProp]) -> [Int] {
-        let current = MediaBlock.number(props.last { $0.key == "previewWidth" }?.value).map(Int.init)
+        let current = MediaBlock.displayWidth(props)
         return (Self.widths + [current].compactMap { $0 }).reduce(into: [Int]()) {
             if !$0.contains($1) { $0.append($1) }
         }
@@ -263,11 +280,12 @@ struct NativeMediaInspector: View {
         MediaBlock.Slot(node: block.node, url: MediaBlock.string("url", in: block.props))
     }
 
-    private func load() {
-        guard !loaded, let block else { return }
-        loaded = true
-        name = MediaBlock.string("name", in: block.props)
-        caption = MediaBlock.string("caption", in: block.props)
+    /// What Open may open: only a URL a native edit could write (http(s),
+    /// a host, no userinfo to disguise it), with its host to show.
+    static func openTarget(_ url: String) -> (url: URL, host: String)? {
+        guard MediaBlock.isAuthoredURL(url), let parsed = URL(string: url), let host = parsed.host(), !host.isEmpty
+        else { return nil }
+        return (parsed, host)
     }
 
     private func set(_ props: [ProjectedProp]) {
@@ -277,13 +295,7 @@ struct NativeMediaInspector: View {
     /// Name and caption, as one command when either changed.
     private func commitText() {
         guard isEditable, let block else { return }
-        var props: [ProjectedProp] = []
-        if name != MediaBlock.string("name", in: block.props) {
-            props.append(ProjectedProp(key: "name", value: .string(name)))
-        }
-        if caption != MediaBlock.string("caption", in: block.props) {
-            props.append(ProjectedProp(key: "caption", value: .string(caption)))
-        }
+        let props = draft.edits(block.props)
         guard !props.isEmpty else { return }
         set(props)
     }
@@ -301,13 +313,48 @@ struct NativeMediaInspector: View {
         let fileName = ProjectedProp(
             key: "name", value: .string(String(url.split(separator: "/", omittingEmptySubsequences: false).last ?? "")))
         if MediaBlock.isValidEdit(fileName, on: block.node) { props.append(fileName) }
-        if session.input?.setMediaProps(blockID, props) == true {
-            link = ""
-            if case .string(let value) = fileName.value { name = value }
-        }
+        // The name field follows the block once the command is delivered (`draft.follow`).
+        if session.input?.setMediaProps(blockID, props) == true { link = "" }
     }
 }
 
 extension String {
     fileprivate var nonEmpty: String? { isEmpty ? nil : self }
+}
+
+/// The inspector's name and caption fields (PR13a review F1): each keeps the
+/// stored value it was last synced to. A field the user has not touched
+/// follows the block (an upload's name, a peer's caption); Done writes only the
+/// fields the user changed, so it never writes a stale value back.
+struct NativeMediaTextDraft: Equatable {
+    var name = ""
+    var caption = ""
+    private(set) var baseName = ""
+    private(set) var baseCaption = ""
+
+    /// Whether the stored value fits a native edit (a longer one is read-only).
+    var canEditName: Bool { baseName.utf16.count <= MediaBlock.maxName }
+    var canEditCaption: Bool { baseCaption.utf16.count <= MediaBlock.maxCaption }
+
+    /// Takes the block's stored values for every untouched field.
+    mutating func follow(_ props: [ProjectedProp]) {
+        let storedName = MediaBlock.string("name", in: props)
+        let storedCaption = MediaBlock.string("caption", in: props)
+        if name == baseName { name = storedName }
+        if caption == baseCaption { caption = storedCaption }
+        baseName = storedName
+        baseCaption = storedCaption
+    }
+
+    /// The fields the user changed and the block does not already hold.
+    func edits(_ props: [ProjectedProp]) -> [ProjectedProp] {
+        var edits: [ProjectedProp] = []
+        if name != baseName, canEditName, name != MediaBlock.string("name", in: props) {
+            edits.append(ProjectedProp(key: "name", value: .string(name)))
+        }
+        if caption != baseCaption, canEditCaption, caption != MediaBlock.string("caption", in: props) {
+            edits.append(ProjectedProp(key: "caption", value: .string(caption)))
+        }
+        return edits
+    }
 }

@@ -1326,6 +1326,7 @@ final class DocumentEngine {
             // and validated here, and every container gets a fresh id.
             let copies = try BlockNoteSubtreePayload.decode(payload)
             let shape = try BlockNoteSubtreePayload.validate(copies)
+            try BlockNoteSubtreePayload.validateMedia(copies)
             let newIDs = (0..<shape.blocks).map { _ in UUID().uuidString }
             // A pasted group (PR12b) lands at the root only: never in a column or a block's children.
             let pastesGroup = copies.contains { if case .element("columnList", _, _) = $0 { true } else { false } }
