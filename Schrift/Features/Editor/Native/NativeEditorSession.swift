@@ -256,6 +256,37 @@ final class NativeEditorSession {
         }
     }
 
+    /// Where block `blockID` is, read in mailbox order anywhere in the
+    /// document (PR13b): `.some(nil)` when no block has that id, nil when
+    /// nothing answered (no replica, closed, a full mailbox).
+    func mediaLocation(_ blockID: String) async -> MediaLocation?? {
+        guard let replica, !isClosed else { return nil }
+        return await withCheckedContinuation { done in
+            replica.mailbox.post(.mediaLocation(blockID: blockID, reply: { done.resume(returning: $0) }))
+        }
+    }
+
+    /// A headless surface's command (PR13b, no input coordinator): posted as a
+    /// barrier at the revision shown, answered by its result; nil when it could
+    /// not be posted or the session ended first.
+    func post(_ kind: NativeEditCommand.Kind, blockID: String) async -> ReplicaResult? {
+        guard let replica, !isClosed, input == nil else { return nil }
+        let command = NativeEditCommand(id: UUID(), baseRevision: revision, blockID: blockID, kind: kind)
+        return await withCheckedContinuation { done in
+            results[command.id] = done
+            let posted = replica.mailbox.post(
+                .command(
+                    ReplicaCommand(
+                        surfaceID: surfaceID, epoch: headlessEpoch, predicted: false, command: command,
+                        undoBefore: true, undoAfter: true)))
+            if !posted { results.removeValue(forKey: command.id)?.resume(returning: nil) }
+        }
+    }
+
+    @ObservationIgnored private var results: [UUID: CheckedContinuation<ReplicaResult?, Never>] = [:]
+    /// A surface without input's epoch (review X8): a resync's reset moves it.
+    @ObservationIgnored private var headlessEpoch: UInt64 = 0
+
     /// Paints `awareness`'s peers over this surface (PR10).
     func showAwareness(_ awareness: NativeAwarenessController) {
         self.awareness = awareness
@@ -281,6 +312,8 @@ final class NativeEditorSession {
             // taking input, so nothing typed looks accepted.
             if wasWritable, !state.writable { textView.isEditable = false }
         } else {
+            if case .reset(let epoch) = delivery.resync { headlessEpoch = epoch }
+            if case .invalidated(let epoch, _)? = delivery.result { headlessEpoch = epoch }
             for event in delivery.events {
                 switch event {
                 case .patch(let patch, let settled): surface.applyPatch(patch, settled: settled)
@@ -294,6 +327,9 @@ final class NativeEditorSession {
             navigation.documentChanged()
         }
         if let token = delivery.drained { drains.removeValue(forKey: token)?.resume() }
+        if let result = delivery.result, let id = result.commandID {
+            results.removeValue(forKey: id)?.resume(returning: result)
+        }
         onApplied?(delivery)
     }
 
@@ -302,6 +338,8 @@ final class NativeEditorSession {
     private func didFinishDeliveries() {
         for drain in drains.values { drain.resume() }
         drains = [:]
+        for result in results.values { result.resume(returning: nil) }
+        results = [:]
         input?.detach()
         input = nil
         saveScheduler?.flush()
@@ -473,8 +511,8 @@ final class NativeEditorOpen {
     private var generation = 0
     private enum OpenResult: Sendable {
         case classic
-        /// `isReader`: the server answered `abilities.update` false.
-        case state(Data, config: ServerConfig, isReader: Bool)
+        /// `ability`: the server's `abilities.update` (nil: not asked, or no answer).
+        case state(Data, config: ServerConfig, ability: Bool?)
     }
     private var pendingOpen: AsyncStream<OpenResult>.Continuation?
     /// The reopen and reconnect work `EditorView` starts outside its `.task`;
@@ -616,10 +654,10 @@ final class NativeEditorOpen {
                     return
                 }
                 // Asked beside the state, inside the same deadline.
-                async let isReader = Self.serverSaysReader(viewModel, asking: canUpdate)
+                async let ability = Self.serverAbility(viewModel, asking: canUpdate)
                 let state = try await viewModel.client.collaborationYDocState(
                     documentID: viewModel.documentID, org: config.collaborationOrg)
-                let reader = await isReader
+                let answer = await ability
                 guard !Task.isCancelled else { return }
                 guard
                     self?.canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account)
@@ -633,7 +671,7 @@ final class NativeEditorOpen {
                     continuation.yield(.classic)
                     return
                 }
-                continuation.yield(.state(state, config: config, isReader: reader))
+                continuation.yield(.state(state, config: config, ability: answer))
             } catch {
                 continuation.yield(.classic)
             }
@@ -659,7 +697,7 @@ final class NativeEditorOpen {
         var iterator = results.makeAsyncIterator()
         guard let result = await iterator.next(), !Task.isCancelled, generation == request else { return }
         guard canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account),
-            case .state(let state, let config, let isReader) = result
+            case .state(let state, let config, let ability) = result
         else {
             route = .classic
             return
@@ -675,16 +713,23 @@ final class NativeEditorOpen {
         else { return }
         // A document that is not fully projectable, or a reader, stays in PR01's
         // in-memory read-only view and never gains a replica or marker.
-        let verified = canUpdate && !isReader
+        let scope = account.map {
+            ReplicaScope(
+                serverOrigin: viewModel.client.serverOrigin, ownerUserID: $0, org: config.collaborationOrg,
+                documentID: viewModel.documentID)
+        }
+        // A writer answer lifts a remembered denial on every route (review R2), the unowned one
+        // included: the next headless commit and the live gate may trust the server again.
+        if ability == true, let scope { viewModel.saveCoordinator.clearNativeReader(scope) }
+        // A denial a headless media commit learned (review Z2d) is a reader answer here too.
+        let denied = scope.map { viewModel.saveCoordinator.isNativeReader($0) } ?? false
+        let verified = canUpdate && ability != false && !denied
         self.canUpdate = verified
-        guard enabled, verified, session.canType, let account, mayType(viewModel) else {
+        guard enabled, verified, session.canType, let account, let scope, mayType(viewModel) else {
             route = .native(session)
             return
         }
         session.close()
-        let scope = ReplicaScope(
-            serverOrigin: viewModel.client.serverOrigin, ownerUserID: account, org: config.collaborationOrg,
-            documentID: viewModel.documentID)
         let seeded = await seedReplica(
             state: state, scope: scope, viewModel: viewModel, request: request, account: account)
         guard let seeded else { return }
@@ -806,12 +851,7 @@ final class NativeEditorOpen {
         // The append runs on the replica session; the save is scheduled only on
         // the journaled result, and the live socket gets the bytes only after
         // the append succeeded (journal before publication).
-        let outbox = registry.liveBinding(for: scope)?.outbox
-        registry.setWritable(
-            { command, update in
-                try adapter.record(command, update: update)
-                outbox?.publish(update)
-            }, for: scope)
+        registry.installJournal(adapter, for: scope)
         session.enableTyping(persist: nil, scheduler: scheduler)
         // Edits an earlier process journaled but never handed over (it ended
         // inside the debounce) have no draft, so no replay pass knows them.
@@ -820,6 +860,8 @@ final class NativeEditorOpen {
         {
             scheduler.schedule()
         }
+        // A native upload held back while nothing could write the document may land now.
+        coordinator.replayNativeAttachments(scope: scope)
     }
 
     /// Reconnect and open both merge the server's raw state into the same
@@ -841,11 +883,19 @@ final class NativeEditorOpen {
             guard isCurrent() else { return }
             try await session.integrateServerState(state)
             guard isCurrent() else { return }
-            if canUpdate, await Self.serverSaysReader(viewModel, asking: true) {
-                guard isCurrent() else { return }
+            let ability = canUpdate ? await Self.serverAbility(viewModel) : nil
+            guard isCurrent() else { return }
+            if ability == false {
                 // The row was stale: every surface of the scope stops writing
                 // (a key typed meanwhile becomes a recovery entry) and no socket opens.
-                becomeReader(scope)
+                becomeReader(scope, coordinator: viewModel.saveCoordinator)
+            } else if ability == true {
+                // The server says writer: an earlier remembered denial no longer holds.
+                viewModel.saveCoordinator.clearNativeReader(scope)
+            } else if viewModel.saveCoordinator.isNativeReader(scope) {
+                // No answer and a headless media commit's denial stands (review Z2d): this open
+                // is a reader too, so nothing dials a socket for it. It recovers on reopen.
+                becomeReader(scope, coordinator: viewModel.saveCoordinator)
             }
             startLive(session, scope: scope, config: config, viewModel: viewModel)
             // Refreshes the server title native saves send.
@@ -859,13 +909,31 @@ final class NativeEditorOpen {
     /// Whether the server says this account may only read the document. The
     /// navigation row can be stale (an account switch reuses the screen; a
     /// cached row predates a permission change), so online opens ask. Only an
-    /// explicit `update: false` answer counts: a failed request (offline, a
-    /// 5xx, a timeout, a captive portal) keeps the row, and the server still
+    /// explicit reader answer counts: a failed request (offline, a 5xx, a
+    /// timeout, a captive portal) keeps the row, and the server still
     /// refuses a real reader's save. A row that says reader is never asked.
     private static func serverSaysReader(_ viewModel: EditorViewModel, asking: Bool) async -> Bool {
-        guard asking, let document = try? await viewModel.client.document(documentID: viewModel.documentID)
-        else { return false }
-        return !document.abilities.update
+        await serverAbility(viewModel, asking: asking) == false
+    }
+
+    /// `serverAbility`, asked only when the row says writer: nil when it was not asked.
+    private static func serverAbility(_ viewModel: EditorViewModel, asking: Bool) async -> Bool? {
+        guard asking else { return nil }
+        return await serverAbility(viewModel)
+    }
+
+    /// The server's `abilities.update` for the document: nil when it did not
+    /// answer (offline, a 5xx, a timeout, a missing route, an unreadable body,
+    /// an expired session). A 403, an API 404, any other answer about the
+    /// document and an answer naming another document are a reader answer
+    /// (review Z2c, R1, as the headless gate reads them).
+    private static func serverAbility(_ viewModel: EditorViewModel) async -> Bool? {
+        do {
+            let document = try await viewModel.client.document(documentID: viewModel.documentID)
+            return DocumentAbilityAnswer.classify(document, asked: viewModel.documentID).writer
+        } catch {
+            return DocumentAbilityAnswer.classify(error).writer
+        }
     }
 
     /// Joins the scope's live room when the native live gate holds, unless its
@@ -880,6 +948,11 @@ final class NativeEditorOpen {
                 nativeEnabled: enabled, liveEnabled: livePreference(),
                 serverSupports: config.supportsNativeLiveCollaboration && config.collaborationOrg == scope.org,
                 canUpdate: canUpdate),
+            // A denial a headless media commit learned (review Z2c) keeps a reader off the socket,
+            // and a surface that is not writable (its journal removed by that denial, review Z2d)
+            // never dials one, even after the denial is lifted: it recovers on reopen.
+            !viewModel.saveCoordinator.isNativeReader(scope),
+            registry.isWritable(scope),
             let binding = registry.liveBinding(for: scope), let collaboration
         else { return }
         let signedInUser = viewModel.signedInUser
@@ -899,7 +972,10 @@ final class NativeEditorOpen {
                 guard let viewModel else { return false }
                 return await Self.serverSaysReader(viewModel, asking: true)
             },
-            becameReader: { [weak self] in self?.becomeReader(scope) },
+            becameReader: { [weak self, weak coordinator = viewModel.saveCoordinator] in
+                guard let coordinator else { return }
+                self?.becomeReader(scope, coordinator: coordinator)
+            },
             localState: { [weak collaboration] in collaboration?.localAwarenessState })
         session.showAwareness(binding.awareness)
     }
@@ -907,8 +983,10 @@ final class NativeEditorOpen {
     /// The server says this account may only read now: every surface of the
     /// scope stops writing (a key typed meanwhile becomes a recovery entry,
     /// what is journaled stays for HTTP) and no socket stays open.
-    private func becomeReader(_ scope: ReplicaScope) {
+    private func becomeReader(_ scope: ReplicaScope, coordinator: DocumentSaveCoordinator) {
         canUpdate = false
+        // No headless media commit trusts a cached `update: true` for this scope again (review Y1).
+        coordinator.noteNativeReader(scope)
         registry.setWritable(nil, for: scope)
         registry.liveBinding(for: scope, create: false)?.disconnect()
     }

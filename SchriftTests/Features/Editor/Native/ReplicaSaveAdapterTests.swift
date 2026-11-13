@@ -58,7 +58,8 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
     private func stub(
         log: RequestRecorder, bodyStatus: Int = 204, titleStatus: Int = 204, bodyError: URLError? = nil,
         bodyGate: MockURLProtocol.ResponseGate? = nil, titleGate: MockURLProtocol.ResponseGate? = nil,
-        responseOwner: UUID? = nil, onBody: (@Sendable (URLRequest) -> Void)? = nil
+        responseOwner: UUID? = nil, meGate: MockURLProtocol.ResponseGate? = nil,
+        onBody: (@Sendable (URLRequest) -> Void)? = nil
     ) {
         let ownerID = (responseOwner ?? owner).uuidString
         let formatted = Data(
@@ -74,7 +75,9 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
                     statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
             }
             if path.hasSuffix("/users/me/") {
-                return .init(statusCode: 200, headers: [:], body: Data("{\"id\":\"\(ownerID)\"}".utf8), error: nil)
+                return .init(
+                    statusCode: 200, headers: [:], body: Data("{\"id\":\"\(ownerID)\"}".utf8), error: nil,
+                    releasedBy: meGate)
             }
             if request.httpMethod == "PATCH", path.contains("/collaboration/ydoc/") {
                 onBody?(request)
@@ -134,6 +137,61 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         XCTAssertNil(f.drafts.draft(for: documentID))
         XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/content/"), 0)
         XCTAssertEqual(log.count(ofMethod: "PATCH"), 2)
+    }
+
+    /// Review X1: a cookie handover after `/users/me/` answered, before the
+    /// body PATCH: nothing is sent under the new cookies, the save stays
+    /// pending with its bytes, and the right account's next attempt sends them.
+    func testASignInSwitchAfterTheIdentityCheckSendsNoPatch() async throws {
+        let f = try fixture()
+        let clock = SignInGenerationClock()
+        f.coordinator.signInIsCurrent = { clock.isCurrent() }
+        let log = RequestRecorder()
+        let me = MockURLProtocol.ResponseGate()
+        stub(log: log, meGate: me)
+        try enqueue(f)
+        await waitUntil { log.count(ofMethod: "GET", urlContaining: "/users/me/") == 1 }
+        clock.beginSwitch()
+        me.open()
+        await waitUntil { f.coordinator.state(for: self.documentID) == .pendingSync }
+        XCTAssertEqual(log.count(ofMethod: "PATCH"), 0, "nothing under another account's cookies")
+        XCTAssertEqual(try f.store.outbox(for: f.scope)?.updates, [f.update], "the bytes wait")
+        clock.advance()
+        f.coordinator.retryReplicaDraft(documentID: documentID)
+        await waitUntil { self.isSaved(f.coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/"), 1)
+    }
+
+    /// Review X1: a handover while the body PATCH is answered: the title
+    /// PATCH is not sent, and the save stays pending.
+    func testASignInSwitchDuringTheBodySendsNoTitle() async throws {
+        let f = try fixture()
+        let clock = SignInGenerationClock()
+        f.coordinator.signInIsCurrent = { clock.isCurrent() }
+        let log = RequestRecorder()
+        let body = MockURLProtocol.ResponseGate()
+        stub(log: log, bodyGate: body)
+        try enqueue(f)
+        await waitUntil { log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/") == 1 }
+        clock.beginSwitch()
+        body.open()
+        await waitUntil { f.coordinator.state(for: self.documentID) == .pendingSync }
+        XCTAssertEqual(log.count(ofMethod: "PATCH"), 1, "no title PATCH")
+    }
+
+    /// Review X1, the classic routes too: a save started while a handover is
+    /// under way sends nothing and stays pending.
+    func testAClassicSaveDuringASignInSwitchSendsNothing() async throws {
+        let f = try fixture()
+        let clock = SignInGenerationClock()
+        f.coordinator.signInIsCurrent = { clock.isCurrent() }
+        let log = RequestRecorder()
+        stub(log: log)
+        clock.beginSwitch()
+        let other = UUID()
+        f.coordinator.enqueueLiveSnapshot(documentID: other, snapshot: Data([0]), projectedMarkdown: "x", title: "t")
+        await waitUntil { f.coordinator.state(for: other) == .pendingSync }
+        XCTAssertEqual(log.count(ofMethod: "PATCH"), 0)
     }
 
     func testOfflineFailureThenReconnectReplaysRawBytes() async throws {

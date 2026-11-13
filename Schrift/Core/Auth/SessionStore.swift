@@ -395,8 +395,3 @@ final class SignInGenerationClock: Sendable {
         return { [self] in state.withLock { $0.tick == start && !$0.switching } }
     }
 }
-
-extension EnvironmentValues {
-    /// The app's `SessionStore.generationClock` (RootView); nil in hosts without an account.
-    @Entry var signInGenerationClock: SignInGenerationClock?
-}

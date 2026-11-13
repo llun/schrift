@@ -152,6 +152,12 @@ actor DocsAPIClient {
         _ = try await performRequest(path: path, method: method, body: body, contentType: contentType)
     }
 
+    /// The sign-in generation a whole save is bound to (PR13b review X1): the
+    /// coordinator runs each save under it, so every request the save makes —
+    /// body and title, every route — is checked like an explicit `isCurrent`.
+    /// A task-local, so it reaches every nested call without a parameter.
+    @TaskLocal static var saveIsCurrent: (@Sendable () -> Bool)?
+
     /// `isCurrent` (PR13a review V1) is asked synchronously once the request
     /// is built, right before it is sent: false sends nothing and throws
     /// `CancellationError` (the session changed under a request that waited).
@@ -193,6 +199,7 @@ actor DocsAPIClient {
 
         // Built; nothing after this suspends before the request is handed to the session.
         if let isCurrent, !isCurrent() { throw CancellationError() }
+        if let saveIsCurrent = Self.saveIsCurrent, !saveIsCurrent() { throw CancellationError() }
         let data: Data
         let response: URLResponse
         // Captured before the await: a request issued on a dead link reports only when its

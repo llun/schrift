@@ -117,6 +117,111 @@ final class NativeSessionRegistry {
     /// The surfaces open on `scope`.
     func surfaces(of scope: ReplicaScope) -> [NativeEditorSession] { entries[scope]?.surfaces ?? [] }
 
+    /// Whether the scope's replica currently takes writes (its journal is installed). A denial
+    /// removes it (`setWritable(nil)`), and a surface that stays read-only never dials live
+    /// (review Z2d).
+    func isWritable(_ scope: ReplicaScope) -> Bool { entries[scope]?.isWritable == true }
+
+    /// The scope's journal (`NativeEditorOpen.installTyping` and the headless
+    /// lease, PR13b): every append recorded by `adapter`, then published to the
+    /// scope's live outbox (journal before publication).
+    @discardableResult
+    func installJournal(_ adapter: ReplicaSaveAdapter, for scope: ReplicaScope) -> Bool {
+        let outbox = liveBinding(for: scope)?.outbox
+        return setWritable(
+            { command, update in
+                try adapter.record(command, update: update)
+                outbox?.publish(update)
+            }, for: scope)
+    }
+
+    /// What a headless media commit did (PR13b).
+    enum MediaCommit: Equatable {
+        /// `.mediaProps` was journaled and its save handed over.
+        case committed
+        /// Check only (no props): the block still holds the slot.
+        case matches
+        /// The block is gone, retyped or filled, or the replica no longer exists: drop the upload.
+        case gone
+        /// Nothing decided (closed, read-only, busy, a disk failure): try again later.
+        case unavailable
+    }
+
+    /// The headless lease (PR13b): a surface on `scope`'s replica (an open
+    /// editor's, else restored for this), the block found in mailbox order
+    /// wherever it sits (a block of a column group that is not open is reached
+    /// by opening that column first, review X6), then, with `props`, one
+    /// `.mediaProps(props, expecting: slot)` barrier and its save.
+    /// - The scope's journal is installed only when no other surface is open
+    ///   and `mayWrite` (the editor open's typing gate) holds; an open editor
+    ///   that does not write stays so (review X2). A document the session
+    ///   cannot type is never written.
+    /// - The save goes through the scope's scheduler when an editor installed
+    ///   one, else through a private `make()` that never becomes the editor's
+    ///   (review X7).
+    /// Visible editors get the change by fan-out. Retried while stale or busy,
+    /// `attempts` times `interval` apart.
+    func commitMedia(
+        _ props: [ProjectedProp]?, into blockID: String, expecting slot: MediaBlock.Slot, scope: ReplicaScope,
+        store: ReplicaStore, attempts: Int = 50, interval: Duration = .milliseconds(100),
+        mayWrite: () async -> Bool = { false }, scheduler make: () -> NativeReplicaSaveScheduler
+    ) async -> MediaCommit {
+        switch Result(catching: { try store.manifest(for: scope) }) {
+        case .success(nil): return .gone
+        case .failure: return .unavailable
+        case .success: break
+        }
+        guard let root = try? await open(store: store, scope: scope) else { return .unavailable }
+        defer { root.close() }
+        guard let found = await root.mediaLocation(blockID) else { return .unavailable }
+        guard var location = found else { return .gone }
+        guard !location.isUndecided else { return .unavailable }
+        var columnSurface: NativeEditorSession?
+        defer { columnSurface?.close() }
+        if let column = location.column {
+            columnSurface = await root.openColumn(group: column.group, column: column.id)
+            guard let columnSurface, let reread = await columnSurface.mediaLocation(blockID) else {
+                return .unavailable
+            }
+            guard let reread else { return .gone }
+            guard !reread.isUndecided else { return .unavailable }
+            location = reread
+        }
+        guard location.slot == slot else { return .gone }
+        guard let props else { return .matches }
+        let session = columnSurface ?? root
+        guard root.canType, !root.hasUnsupportedRoot else { return .unavailable }
+        // Before every commit, whatever the entry's state: an editor left writable (on its row's
+        // ability) never carries a commit the gate refuses (review Z2, Z2b).
+        guard await mayWrite() else { return .unavailable }
+        // Re-read after the await: an editor may have opened (and decided) meanwhile.
+        let entry = entries[scope]
+        if entry?.isWritable != true {
+            // Another surface (an editor) decides whether the scope writes.
+            guard entry?.surfaces.count == 1, !session.isClosed else { return .unavailable }
+            installJournal(ReplicaSaveAdapter(store: store, scope: scope), for: scope)
+        }
+        let scheduler = entries[scope]?.scheduler ?? make()
+        for attempt in 0..<attempts {
+            if attempt > 0 { try? await Task.sleep(for: interval) }
+            await session.settle()
+            guard !session.isClosed else { return .unavailable }
+            switch await session.post(.mediaProps(props, expecting: slot), blockID: blockID) {
+            case .applied:
+                scheduler.schedule()
+                scheduler.flush()
+                return .committed
+            case .refused:
+                // The engine refuses a changed slot; the same slot is busy (a composition) or read-only.
+                guard let current = await session.mediaLocation(blockID) else { return .unavailable }
+                if current?.slot != slot { return .gone }
+            case .stale: continue
+            case nil, .failed, .invalidated, .composition: return .unavailable
+            }
+        }
+        return .unavailable
+    }
+
     /// Background: every debounced save is handed over now, then again once
     /// every message already posted was journaled.
     @discardableResult

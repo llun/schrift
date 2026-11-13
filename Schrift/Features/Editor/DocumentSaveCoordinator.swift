@@ -1287,8 +1287,14 @@ final class DocumentSaveCoordinator {
 
     /// Drop every queued photo for a document, bytes included. Used where the body that named
     /// them is being thrown away, so nothing would ever collect them.
+    /// Only this session's account's records on this server (review Y2): another account's copy of
+    /// the same document keeps its photos, as `isAttachmentReplayable` keeps them dormant.
     func discardPendingAttachments(documentID: UUID) {
-        let localIDs = pendingAttachments.values.filter { $0.documentID == documentID }.map(\.localID)
+        let owner = signedInUser.userID
+        let localIDs = pendingAttachments.values.filter {
+            $0.documentID == documentID && owner != nil && $0.ownerUserID == owner
+                && ($0.serverOrigin == serverOrigin || $0.serverOrigin == client.serverOrigin)
+        }.map(\.localID)
         guard !localIDs.isEmpty else { return }
         attachmentStore.remove(localIDs: localIDs)
         for localID in localIDs { pendingAttachments[localID] = nil }
@@ -1299,6 +1305,270 @@ final class DocumentSaveCoordinator {
     /// affordances key off.
     func hasPendingAttachments(documentID: UUID) -> Bool {
         pendingAttachments.values.contains { $0.documentID == documentID }
+    }
+
+    // MARK: - Native media queue (PR13b)
+
+    /// The app's replica registry: a native upload commits through a headless lease of it, so it
+    /// lands whether or not its editor is still open. Nil (tests, previews): native records wait.
+    weak var nativeSessions: NativeSessionRegistry?
+    /// `SignInGenerationClock.isCurrent` (RootView): a native upload is bound to the sign-in
+    /// generation its run started in, checked when each request is built (PR13a review V1/W1).
+    var signInIsCurrent: (() -> @Sendable () -> Bool)?
+    /// The headless commit's retry budget while the block is busy (tests shorten it).
+    var nativeCommitAttempts = 50
+    var nativeCommitInterval: Duration = .milliseconds(100)
+    /// The native editor switch, one input of the headless typing gate (review X2; tests set it).
+    var nativeEditorEnabled: @MainActor () -> Bool = { NativeEditorPreference.isEnabled() }
+    /// The largest replayed file (review X4): the picker's own limit, so bytes on disk are never
+    /// read past what a pick could have stored (tests shorten it).
+    var nativeAttachmentByteLimit = attachmentImportByteLimit
+    /// Native records whose run is under way: one runner per record, so a pass and a queue kick
+    /// never upload the same bytes twice.
+    private var nativeRuns: Set<UUID> = []
+    /// Native records a run left behind for a later pass (offline, a gate, a busy block): their
+    /// cards say they wait rather than upload (review Y3). In memory: a relaunch runs them anyway.
+    private(set) var nativeWaiting: Set<UUID> = []
+
+    /// Queues a native media upload (PR13b), online or offline alike: bytes, then the record, then
+    /// the run starts at once. Nil when nothing was queued (the store is unreadable, the bytes did
+    /// not write, or the scope is not this session's).
+    @discardableResult
+    func queueNativeAttachment(scope: ReplicaScope, target: NativeMediaTarget, data: Data) -> UUID? {
+        guard !attachmentStore.holdsUnreadableData, scope.serverOrigin == client.serverOrigin,
+            scope.ownerUserID == signedInUser.userID, scope.org == target.org
+        else { return nil }
+        let localID = UUID()
+        guard attachmentStore.saveData(data, for: localID) else { return nil }
+        updatePendingAttachment(
+            PendingAttachment(
+                localID: localID, documentID: scope.documentID, createdAt: Date(), serverOrigin: scope.serverOrigin,
+                ownerUserID: scope.ownerUserID, native: target))
+        let isCurrent = signInIsCurrent?()
+        Task { await runNativeAttachment(localID, isCurrent: isCurrent) }
+        return localID
+    }
+
+    /// The newest native record for media block `blockID` of `scope`'s document: what its card
+    /// and inspector show (waiting or failed). Only `scope`'s account's records (review X5).
+    func nativeAttachment(scope: ReplicaScope, blockID: String) -> PendingAttachment? {
+        nativeAttachments(scope: scope).last { $0.native?.blockID == blockID }
+    }
+
+    /// Every native record of `scope`'s account for its document, oldest first.
+    func nativeAttachments(scope: ReplicaScope) -> [PendingAttachment] {
+        pendingAttachments.values.filter { $0.native != nil && $0.nativeScope == scope }
+            .sorted(by: orderedByAttachmentCreation)
+    }
+
+    /// Runs `scope`'s waiting native records now: an editor began typing into the document, so a
+    /// record held back because nothing could write it may land.
+    func replayNativeAttachments(scope: ReplicaScope) {
+        let isCurrent = signInIsCurrent?()
+        for record in nativeAttachments(scope: scope) where record.failedAt == nil {
+            Task { await runNativeAttachment(record.localID, isCurrent: isCurrent) }
+        }
+    }
+
+    /// May this native record be sent or committed now? Its server and the remembered account.
+    private func isNativeReplayable(_ record: PendingAttachment) -> Bool {
+        record.native != nil && record.serverOrigin == client.serverOrigin && record.ownerUserID != nil
+            && record.ownerUserID == signedInUser.userID
+    }
+
+    /// One native record's replay, two-phase like the classic one: the slot checked headlessly
+    /// (a block deleted, retyped or filled meanwhile drops the record before anything is sent),
+    /// the upload, the URL **checkpointed** before any commit, then the headless commit, whose slot
+    /// check decides commit or drop. A death anywhere resumes from the record: before the
+    /// checkpoint it uploads again (no idempotency key exists), after it only commits, and a commit
+    /// that landed before the record went is refused by its own slot (the url changed), so a block
+    /// never gets a second photo.
+    private func runNativeAttachment(_ localID: UUID, isCurrent: (@Sendable () -> Bool)?) async {
+        guard !nativeRuns.contains(localID) else { return }
+        nativeRuns.insert(localID)
+        nativeWaiting.remove(localID)
+        defer {
+            nativeRuns.remove(localID)
+            if let left = pendingAttachments[localID], left.failedAt == nil { nativeWaiting.insert(localID) }
+        }
+        guard let record = pendingAttachments[localID], let target = record.native, record.failedAt == nil,
+            isNativeReplayable(record), isCurrent?() != false
+        else { return }
+        var resolved = record.uploadedURLString
+        if resolved == nil {
+            switch await nativeLease(nil, record, isCurrent: isCurrent) {
+            case .gone: return removeNativeAttachment(localID)
+            case .matches: break
+            case .committed, .unavailable: return
+            }
+            // Never read past the picker's limit (review X4): a file grown or planted on disk fails.
+            guard let size = attachmentStore.byteCount(for: localID), size <= nativeAttachmentByteLimit,
+                let bytes = attachmentStore.data(for: localID), bytes.count <= nativeAttachmentByteLimit
+            else { return markAttachmentFailed(localID: localID) }
+            // Re-read after the await: a delete, a discard or a sign-out may have come between.
+            guard pendingAttachments[localID] != nil, isNativeReplayable(record) else { return }
+            let upload = client.mediaUploader(
+                maxAttempts: mediaCheckMaxAttempts, retryInterval: mediaCheckRetryInterval, isCurrent: isCurrent)
+            let answered: String?
+            do {
+                answered = try await upload(record.documentID, target.fileName, target.contentType, bytes)
+            } catch let error as DocsAPIError {
+                // Transient (offline, a 5xx, an expired session): the next pass carries it.
+                if retryableSaveFailure(error) || error == .sessionExpired { return }
+                return markAttachmentFailed(localID: localID)
+            } catch {
+                // A sign-in switch refused the request: nothing was sent.
+                return
+            }
+            guard let url = answered, isDocumentMediaURL(url, documentID: record.documentID) else {
+                return markAttachmentFailed(localID: localID)
+            }
+            guard var checkpointed = pendingAttachments[localID] else { return }
+            checkpointed.uploadedURLString = url
+            updatePendingAttachment(checkpointed)
+            resolved = url
+        }
+        guard let url = resolved, pendingAttachments[localID] != nil, isNativeReplayable(record), isCurrent?() != false
+        else { return }
+        // Checked again right before the commit (review X3): a checkpoint restored from disk is
+        // only as trustworthy as the disk.
+        guard isDocumentMediaURL(url, documentID: record.documentID) else {
+            return markAttachmentFailed(localID: localID)
+        }
+        let props = [
+            ProjectedProp(key: "name", value: .string(target.fileName)), ProjectedProp(key: "url", value: .string(url)),
+        ]
+        switch await nativeLease(props, record, isCurrent: isCurrent) {
+        case .committed, .gone: removeNativeAttachment(localID)
+        case .matches, .unavailable: break
+        }
+    }
+
+    private func removeNativeAttachment(_ localID: UUID) {
+        guard pendingAttachments[localID] != nil else { return }
+        removePendingAttachment(localID: localID)
+    }
+
+    /// The headless lease for `record`'s block; without a registry nothing is decided.
+    private func nativeLease(
+        _ props: [ProjectedProp]?, _ record: PendingAttachment, isCurrent: (@Sendable () -> Bool)?
+    ) async -> NativeSessionRegistry.MediaCommit {
+        guard let registry = nativeSessions, let target = record.native, let scope = record.nativeScope else {
+            return .unavailable
+        }
+        return await registry.commitMedia(
+            props, into: target.blockID, expecting: target.slot, scope: scope, store: replicaStore,
+            attempts: nativeCommitAttempts, interval: nativeCommitInterval,
+            mayWrite: { [weak self] in await self?.nativeMayWrite(scope, isCurrent: isCurrent) ?? false }
+        ) { [weak self, weak registry] in
+            NativeReplicaSaveScheduler(
+                enqueue: { try self?.enqueueNativeReplica(scope) ?? false },
+                onFailure: { error in
+                    for surface in registry?.surfaces(of: scope) ?? [] { surface.freezeAuthoring() }
+                    self?.noteReplicaCaptureFailure(documentID: scope.documentID, error: error)
+                })
+        }
+    }
+
+    /// Only this server's media URL for this very document is ever written.
+    private func isDocumentMediaURL(_ url: String, documentID: UUID) -> Bool {
+        guard let display = parseAttachmentLink("[file](\(url))", serverOrigin: client.serverOrigin) else {
+            return false
+        }
+        return display.documentUUID.lowercased() == documentID.uuidString.lowercased() && MediaBlock.isAuthoredURL(url)
+    }
+
+    /// The editor open's typing gate, for a headless journal (review X2, Y1, Y3): the native
+    /// switch, `mayType`'s holds (no pending create or delete, no live owner, no classic draft),
+    /// and `abilities.update`:
+    /// - a scope the server said this account only reads (`noteNativeReader`, or this check's own
+    ///   answer) is refused offline, whatever a cache says, until the server says otherwise;
+    /// - online, the server is asked once (`documents/{id}/`, bound to the run's sign-in
+    ///   generation), so a document outside the Home lists (a folder, a deep link) commits too;
+    /// - a 403, an API 404 or an answer naming another document is a denial, remembered the same
+    ///   way; a missing route, an unreadable body, a timeout, a 5xx, offline or an expired session
+    ///   is no answer (review R1), so a writer is never made a reader by a rollout's HTML 404;
+    /// - with no answer, the account's own Home lists decide; unknown is no, and the record waits.
+    /// The session's `canType` is the lease's.
+    private func nativeMayWrite(_ scope: ReplicaScope, isCurrent: (@Sendable () -> Bool)?) async -> Bool {
+        let documentID = scope.documentID
+        func holds() -> Bool {
+            nativeEditorEnabled() && signedInUser.userID == scope.ownerUserID
+                && !isPendingCreate(documentID: documentID)
+                && !isPendingDelete(documentID: documentID) && !isLiveHeld(documentID: documentID)
+                && (draftStore.draft(for: documentID).map { $0.replica != nil } ?? true)
+        }
+        guard holds() else { return false }
+        let answer: Bool?
+        do {
+            let document = try await DocsAPIClient.$saveIsCurrent.withValue(isCurrent) {
+                try await client.document(documentID: documentID)
+            }
+            // Another document's answer says nothing about this one: a denial (review Z3).
+            answer = DocumentAbilityAnswer.classify(document, asked: documentID).writer
+        } catch {
+            // A 403 or an API 404 is the server's answer about the document (review Z1); a
+            // missing route, an unreadable body, a timeout, a 5xx, offline or an expired
+            // session is no answer at all (review R1).
+            answer = DocumentAbilityAnswer.classify(error).writer
+        }
+        // Re-read after the await: a sign-out, a delete or a reader answer may have come between.
+        guard holds(), isCurrent?() != false else { return false }
+        if let answer {
+            if answer { clearNativeReader(scope) } else { noteNativeReader(scope) }
+            return answer
+        }
+        // Offline: a remembered reader is no; only the account's own Home lists may say yes
+        // (review Z1: the subpage cache is neither account- nor origin-scoped).
+        guard !isNativeReader(scope) else { return false }
+        return listCache.documents(fetchedFor: scope.ownerUserID).first { $0.id == documentID }?.abilities.update
+            == true
+    }
+
+    private static let nativeReadersKey = "dev.llun.Schrift.nativeMediaReaderScopes"
+
+    /// The server said this account may only read `scope`'s document (an editor's reader answer,
+    /// or the headless gate's): no headless media commit writes it until the server says it may.
+    /// Persisted, so an offline relaunch never trusts a stale cached `update: true`.
+    func noteNativeReader(_ scope: ReplicaScope) {
+        // An authoritative denial ends the scope's shared writability too (review Z2b): every
+        // surface stops writing, as an editor's own reader answer makes it (`becomeReader`).
+        nativeSessions?.setWritable(nil, for: scope)
+        nativeSessions?.liveBinding(for: scope, create: false)?.disconnect()
+        guard let key = try? scope.directoryName() else { return }
+        var readers = Set(listCache.userDefaults.stringArray(forKey: Self.nativeReadersKey) ?? [])
+        guard readers.insert(key).inserted else { return }
+        listCache.userDefaults.set(Array(readers), forKey: Self.nativeReadersKey)
+    }
+
+    func clearNativeReader(_ scope: ReplicaScope) {
+        guard let key = try? scope.directoryName(),
+            let readers = listCache.userDefaults.stringArray(forKey: Self.nativeReadersKey), readers.contains(key)
+        else { return }
+        listCache.userDefaults.set(readers.filter { $0 != key }, forKey: Self.nativeReadersKey)
+    }
+
+    func isNativeReader(_ scope: ReplicaScope) -> Bool {
+        // An unreadable scope digest is treated as a reader: fail closed.
+        guard let key = try? scope.directoryName() else { return true }
+        return listCache.userDefaults.stringArray(forKey: Self.nativeReadersKey)?.contains(key) == true
+    }
+
+    /// The headless save: what `NativeEditorOpen.installTyping`'s scheduler hands over, without an
+    /// editor. The title is the server copy on disk (the save PATCHes it, so it is never guessed):
+    /// with none known the journal stays on the device and the next editor open hands it over.
+    private func enqueueNativeReplica(_ scope: ReplicaScope) throws -> Bool {
+        guard signedInUser.userID == scope.ownerUserID else { return false }
+        let cached = contentCache.content(for: scope.documentID)
+        let draft = draftStore.draft(for: scope.documentID)
+        guard let title = cached?.title ?? draft?.title else { return false }
+        try enqueueReplica(
+            adapter: ReplicaSaveAdapter(store: replicaStore, scope: scope), title: title,
+            baseline: draft?.baseline
+                ?? cached.map {
+                    DraftBaseline(serverUpdatedAt: $0.serverUpdatedAt, markdown: $0.markdown, title: $0.title)
+                })
+        return true
     }
 
     private func updatePendingAttachment(_ record: PendingAttachment) {
@@ -3261,8 +3531,11 @@ final class DocumentSaveCoordinator {
         let records = attachmentStore.allAttachments()
         // Cheap pre-gate before any request at all, mirroring the create pass: a device with
         // nothing sendable must not cost a `/users/me/` round trip.
-        guard records.contains(where: { $0.serverOrigin == serverOrigin && $0.ownerUserID != nil })
+        guard
+            records.contains(where: { ($0.serverOrigin == serverOrigin || $0.native != nil) && $0.ownerUserID != nil })
         else { return }
+        // Captured before the identity request: a sign-in switch from here on sends nothing.
+        let isCurrent = signInIsCurrent?()
         // With the *drafts* unreadable every reference check answers "no document names this
         // photo", and the collection branch would delete every queued photo's bytes.
         guard !draftStore.holdsUnreadableData else { return }
@@ -3272,10 +3545,18 @@ final class DocumentSaveCoordinator {
         guard !attachmentStore.holdsUnreadableData else { return }
         guard let currentUserID = try? await client.currentUser().id else { return }
 
+        // Native records run after the classic ones: a blocked commit's retries never delay them.
+        var native: [UUID] = []
         for snapshot in records {
             // Re-read after every await: the user can delete the document or discard the photo
             // while an upload is in flight, and acting on a stale copy would resurrect it.
             guard let record = pendingAttachments[snapshot.localID] else { continue }
+            // A native record (PR13b) names no Markdown, so the collection below would delete it:
+            // its own run commits or drops it by the block's slot.
+            if record.native != nil {
+                if record.ownerUserID == currentUserID { native.append(record.localID) }
+                continue
+            }
             guard isAttachmentReplayable(record, currentUserID: currentUserID) else { continue }
 
             // **Collection runs before the failure skip**, or a terminally-failed record whose
@@ -3297,6 +3578,7 @@ final class DocumentSaveCoordinator {
 
             await replayAttachment(record)
         }
+        for localID in native { await runNativeAttachment(localID, isCurrent: isCurrent) }
     }
 
     /// Two-phase: upload, **checkpoint the resolved URL onto the record**, then rewrite. A death
@@ -4053,46 +4335,58 @@ final class DocumentSaveCoordinator {
         // user left alone (`BlockNotePreservation`). A baseline that is the user's own body
         // (`markdownIsLocal`) is no base at all.
         let baseMarkdown = draftStore.draft(for: documentID)?.baseline?.serverMarkdown
+        // Every request of this save (body and title, any route) is bound to the sign-in
+        // generation it started in (review X1): a cookie handover meanwhile sends nothing more.
+        let isCurrent = signInIsCurrent?()
         inFlight[documentID] = Task {
-            do {
-                // A non-nil return means the CONTENT PATCH landed and only the title failed:
-                // the save still counts as failed (retryability is classified from the same
-                // error) but the server holds our body, so `finish` must record the push.
-                let titleFailure: DocsAPIError?
-                if let request = save.replicaRequest {
-                    try await request.adapter.saveBody(request, client: client)
-                    do {
-                        try await client.updateTitle(documentID: documentID, title: save.title)
-                        titleFailure = nil
-                    } catch let error as DocsAPIError {
-                        titleFailure = error
-                    } catch {
-                        titleFailure = .network(String(describing: error))
-                    }
-                } else if let snapshot = save.liveSnapshot {
-                    // Live-collaboration snapshot: write the CRDT bytes verbatim, through the same route as
-                    // the classic body (`saveContentViaRoute`).
-                    titleFailure = try await client.saveLiveSnapshot(
-                        documentID: documentID, title: save.title, yjsUpdate: snapshot)
-                } else {
-                    // Classic full-overwrite: re-derive Yjs bytes from the markdown.
-                    titleFailure = try await client.saveDocumentContent(
-                        documentID: documentID, title: save.title, markdown: save.markdown,
-                        baseMarkdown: baseMarkdown)
-                }
-                finish(
-                    documentID: documentID, save: save, error: titleFailure, contentLanded: true,
-                    diagnosticsMarker: diagnosticsMarker)
-            } catch {
-                // A throw means the content PATCH was not **confirmed** — NOT that nothing
-                // reached the server: a dropped or timed-out response can hide a PATCH the
-                // server applied. All we know is that we cannot *record* the push, which is
-                // exactly what `draftSyncDecision`'s rule 0 backstops.
-                finish(
-                    documentID: documentID, save: save, error: error, contentLanded: false,
-                    diagnosticsMarker: diagnosticsMarker)
+            await DocsAPIClient.$saveIsCurrent.withValue(isCurrent) {
+                await self.runSave(
+                    documentID: documentID, save: save, baseMarkdown: baseMarkdown, marker: diagnosticsMarker)
             }
             backgroundTasks.end(taskToken)
+        }
+    }
+
+    private func runSave(documentID: UUID, save: PendingSave, baseMarkdown: String?, marker diagnosticsMarker: Int?)
+        async
+    {
+        do {
+            // A non-nil return means the CONTENT PATCH landed and only the title failed:
+            // the save still counts as failed (retryability is classified from the same
+            // error) but the server holds our body, so `finish` must record the push.
+            let titleFailure: DocsAPIError?
+            if let request = save.replicaRequest {
+                try await request.adapter.saveBody(request, client: client)
+                do {
+                    try await client.updateTitle(documentID: documentID, title: save.title)
+                    titleFailure = nil
+                } catch let error as DocsAPIError {
+                    titleFailure = error
+                } catch {
+                    titleFailure = .network(String(describing: error))
+                }
+            } else if let snapshot = save.liveSnapshot {
+                // Live-collaboration snapshot: write the CRDT bytes verbatim, through the same route as
+                // the classic body (`saveContentViaRoute`).
+                titleFailure = try await client.saveLiveSnapshot(
+                    documentID: documentID, title: save.title, yjsUpdate: snapshot)
+            } else {
+                // Classic full-overwrite: re-derive Yjs bytes from the markdown.
+                titleFailure = try await client.saveDocumentContent(
+                    documentID: documentID, title: save.title, markdown: save.markdown,
+                    baseMarkdown: baseMarkdown)
+            }
+            finish(
+                documentID: documentID, save: save, error: titleFailure, contentLanded: true,
+                diagnosticsMarker: diagnosticsMarker)
+        } catch {
+            // A throw means the content PATCH was not **confirmed** — NOT that nothing
+            // reached the server: a dropped or timed-out response can hide a PATCH the
+            // server applied. All we know is that we cannot *record* the push, which is
+            // exactly what `draftSyncDecision`'s rule 0 backstops.
+            finish(
+                documentID: documentID, save: save, error: error, contentLanded: false,
+                diagnosticsMarker: diagnosticsMarker)
         }
     }
 
@@ -4206,6 +4500,10 @@ final class DocumentSaveCoordinator {
             // safely on-device as a draft; mark it queued for sync rather than a
             // scary failure. `.sessionExpired` is NOT retryable — the shared client's
             // hook already raised the re-login sheet — so it lands in `.failed`.
+            states[documentID] = .pendingSync
+        } else if error is CancellationError {
+            // A sign-in switch refused the request (review X1): nothing was sent under the new
+            // cookies, and the draft and journal wait for the next pass of the right account.
             states[documentID] = .pendingSync
         } else {
             markFailed(

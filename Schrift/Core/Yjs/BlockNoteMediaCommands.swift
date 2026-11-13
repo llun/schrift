@@ -85,10 +85,41 @@ enum MediaBlock {
 
     /// What an upload started from (PR13a): the block's kind and url then.
     /// A block deleted, retyped or given another url since refuses the commit.
-    struct Slot: Equatable, Sendable {
+    struct Slot: Codable, Equatable, Sendable {
         var node: String
         var url: String
     }
+}
+
+/// Where a media block sits (PR13b): its slot and, when it is a block of a
+/// column group that is not open, that group and column.
+struct MediaLocation: Equatable, Sendable {
+    struct Column: Equatable, Sendable {
+        let group: String
+        let id: String
+    }
+    var slot: MediaBlock.Slot
+    var column: Column?
+    /// The search could not decide (too deep): nothing may be concluded, the upload waits.
+    var isUndecided = false
+
+    static let undecided: MediaLocation = {
+        var location = MediaLocation(slot: MediaBlock.Slot(node: "", url: ""))
+        location.isUndecided = true
+        return location
+    }()
+
+    init(slot: MediaBlock.Slot) { self.slot = slot }
+
+    /// A content element's node and stored url.
+    init(element: YType) {
+        let node = if case .xmlElement(let name)? = element.typeRef { name } else { "" }
+        slot = MediaBlock.Slot(
+            node: node, url: YBlockProjection.props(of: element).map { MediaBlock.string("url", in: $0) } ?? "")
+    }
+}
+
+extension MediaBlock {
 
     /// Whether a native edit may write `prop` to a `node` block: a key of its
     /// schema the editor edits, with a value it can safely store.

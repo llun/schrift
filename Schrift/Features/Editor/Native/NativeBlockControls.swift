@@ -78,10 +78,23 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     /// A tap (or VoiceOver activation) on a media block's card opens its
     /// inspector (PR13a), with the block id.
     var onOpenMedia: ((String) -> Void)?
-    /// The media block whose upload runs (PR13a): its realised card says so.
-    var uploadingBlock: String? {
+    /// The media blocks whose upload is queued or runs (PR13a, PR13b), and
+    /// those whose upload failed: their realised cards say so.
+    var uploadingBlocks: Set<String> = [] {
         didSet {
-            guard uploadingBlock != oldValue else { return }
+            guard uploadingBlocks != oldValue else { return }
+            for view in attachmentViews.allObjects { view.applyUploadState() }
+        }
+    }
+    var waitingUploads: Set<String> = [] {
+        didSet {
+            guard waitingUploads != oldValue else { return }
+            for view in attachmentViews.allObjects { view.applyUploadState() }
+        }
+    }
+    var failedUploads: Set<String> = [] {
+        didSet {
+            guard failedUploads != oldValue else { return }
             for view in attachmentViews.allObjects { view.applyUploadState() }
         }
     }

@@ -377,6 +377,8 @@ final class DocumentSaveCoordinatorAttachmentReplayTests: XCTestCase {
 
     func testDeletingADocumentDropsItsQueuedPhotos() async {
         let defaults = makeDefaults()
+        // Only the signed-in account's photos go with it (PR13b review Y2).
+        SignedInUserStore(userDefaults: defaults).remember(owner)
         let placeholder = seedPhoto(defaults)
         let env = makeEnvironment(sharing: defaults)
         let localID = pendingAttachmentID(fromPlaceholderURL: placeholder)!
@@ -389,6 +391,8 @@ final class DocumentSaveCoordinatorAttachmentReplayTests: XCTestCase {
 
     func testKeepingTheServerVersionDropsQueuedPhotos() async {
         let defaults = makeDefaults()
+        // Only the signed-in account's photos go with it (PR13b review Y2).
+        SignedInUserStore(userDefaults: defaults).remember(owner)
         let placeholder = seedPhoto(defaults)
         let env = makeEnvironment(sharing: defaults)
         let localID = pendingAttachmentID(fromPlaceholderURL: placeholder)!

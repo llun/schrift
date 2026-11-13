@@ -34,7 +34,7 @@ private struct AuthenticatedHomeContainer: View {
     @State private var attachments: AttachmentLoader
     @State private var images: ImageLoader
     /// Every native replica open in this server session, one per scope (PR08c).
-    @State private var nativeSessions = NativeSessionRegistry()
+    @State private var nativeSessions: NativeSessionRegistry
     let serverURL: URL
     let serverHost: String
     /// `siteOrigin(for: serverURL)` — the origin document images are gated
@@ -85,6 +85,12 @@ private struct AuthenticatedHomeContainer: View {
                 collaborationManager?.hasHeldLiveReplica(for: documentID) ?? false
             },
             diagnostics: diagnostics)
+        // Native media uploads commit through a headless lease of the app's replicas (PR13b),
+        // bound to the sign-in generation they started in.
+        let nativeSessions = NativeSessionRegistry()
+        saveCoordinator.nativeSessions = nativeSessions
+        saveCoordinator.signInIsCurrent = { sessionStore.generationClock.isCurrent() }
+        _nativeSessions = State(initialValue: nativeSessions)
         // A draft skipped while its replica was held replays once that replica is gone.
         collaborationManager.onHeldReplicaReleased = { [weak saveCoordinator] in
             Task { await saveCoordinator?.syncPendingDrafts() }
@@ -221,7 +227,6 @@ private struct AuthenticatedHomeContainer: View {
         .environment(nativeSessions)
         .environment(attachments)
         .environment(images)
-        .environment(\.signInGenerationClock, sessionStore.generationClock)
         .task {
             // Learn whether this deployment runs the collaboration server, so the
             // availability gate can open once the toggle is on, and our own

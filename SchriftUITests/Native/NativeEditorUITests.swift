@@ -208,7 +208,8 @@ final class NativeEditorUITests: XCTestCase {
     /// there are durable, and the document shows the group as one card.
     /// PR13a: a document holding a captioned image and a file types; the
     /// image's inspector edits its caption (one durable command, which
-    /// survives a relaunch), and offers no upload offline.
+    /// survives a relaunch); offline it still offers an upload, which queues
+    /// (PR13b).
     func testAMediaCaptionEditedInTheInspectorSurvivesRelaunch() {
         let app = XCUIApplication()
         app.launchArguments = ["--native-open", "--reset", "--native-media-edit"]
@@ -221,7 +222,7 @@ final class NativeEditorUITests: XCTestCase {
         let caption = app.textFields["nativeMedia.caption"]
         XCTAssertTrue(caption.waitForExistence(timeout: 5), "the inspector opened")
         XCTAssertEqual(caption.value as? String, "Old caption")
-        XCTAssertFalse(app.buttons["nativeMedia.uploadFile"].isEnabled, "offline: no upload")
+        XCTAssertTrue(app.buttons["nativeMedia.uploadFile"].isEnabled, "offline: an upload queues (PR13b)")
         // The inspector follows the document: hiding the preview flips the switch it reads back.
         let preview = app.switches["nativeMedia.preview"]
         XCTAssertEqual(preview.value as? String, "1")

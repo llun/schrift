@@ -213,12 +213,21 @@ final class NativeAttachmentView: UIView {
     /// A file card's detail line and its text, which an upload replaces (PR13a).
     private var detail: (label: UILabel, text: String)?
 
-    /// "Uploading…" while this block's upload runs; presentation only.
+    /// "Uploading…" while this block's upload is queued or runs, "Upload
+    /// failed" once it failed; presentation only.
     func applyUploadState() {
         guard let detail else { return }
+        let id = content.blockID
         detail.label.text =
-            controls?.uploadingBlock == content.blockID && controls?.uploadingBlock != nil
-            ? labels.mediaUploading : detail.text
+            if controls?.failedUploads.contains(id) == true {
+                labels.mediaUploadFailed
+            } else if controls?.waitingUploads.contains(id) == true {
+                labels.mediaUploadWaiting
+            } else if controls?.uploadingBlocks.contains(id) == true {
+                labels.mediaUploading
+            } else {
+                detail.text
+            }
     }
 
     @objc private func openTable() {

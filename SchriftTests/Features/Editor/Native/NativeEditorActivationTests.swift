@@ -710,6 +710,133 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         }
     }
 
+    /// PR13b review Z2c: a 403, a 404 or an answer naming another document is
+    /// a reader answer: the owned route stops writing and dials no socket.
+    func testAForbiddenMissingOrMismatchedAbilitiesAnswerIsAReader() async throws {
+        for answer in ["403", "404", "mismatch"] {
+            let env = makeEnvironment()
+            let server = ServerStub(owner: owner, state: seedState())
+            server.collaborationWsUrl = "wss://docs.example.org/collaboration/ws/"
+            if answer == "mismatch" { server.detailID = UUID() } else { server.detailStatus = Int(answer)! }
+            server.install()
+            try seedReplica(env, typed: nil)
+            let spy = ManagerSocketFactorySpy()
+            let open = NativeEditorOpen(preference: { true }, livePreference: { true })
+            open.collaboration = DocumentCollaborationManager(
+                serverBaseURL: URL(string: "https://docs.example.org/api/v1.0/")!, cookieProvider: { [] },
+                featureEnabled: { true }, isOffline: { false }, serverConfigProvider: { nil },
+                socketFactory: spy.factory)
+            await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+            guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+            await session.settle()
+            XCTAssertFalse(session.state.writable, answer)
+            await waitAndConfirmNever { !spy.sockets.isEmpty }
+            open.close()
+            env.clean()
+        }
+    }
+
+    /// PR13b review R1: a missing route (an HTML 404 from a proxy during a rollout), an
+    /// unreadable body and a timeout are not the server's answer about the document. The writer
+    /// stays writable and nothing is remembered as a denial, on both routes.
+    func testAnUnansweredAbilitiesRequestIsNotAReaderAnswer() async throws {
+        for failure in [ServerStub.DetailFailure.routeNotFound, .decoding, .timeout] {
+            for owned in [false, true] {
+                let env = makeEnvironment()
+                let server = ServerStub(owner: owner, state: seedState())
+                server.detailFailure = failure
+                server.install()
+                if owned { try seedReplica(env, typed: nil) }
+                let open = NativeEditorOpen(preference: { true })
+                await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+                guard case .native(let session) = open.route else {
+                    return XCTFail("expected a native session (\(failure), owned: \(owned))")
+                }
+                XCTAssertNotNil(session.input, "typing stays on (\(failure), owned: \(owned))")
+                await session.settle()
+                XCTAssertTrue(session.state.writable, "the replica stays writable (\(failure), owned: \(owned))")
+                let scope = try XCTUnwrap(session.scope)
+                XCTAssertFalse(
+                    env.model.saveCoordinator.isNativeReader(scope), "no denial (\(failure), owned: \(owned))")
+                open.close()
+                env.clean()
+            }
+        }
+    }
+
+    /// PR13b review R2: a writer answer on the unowned route lifts a remembered denial, so the
+    /// open types and dials live again.
+    func testAWriterAnswerOnTheUnownedRouteClearsARememberedDenial() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.collaborationWsUrl = "wss://docs.example.org/collaboration/ws/"
+        server.install()
+        let scope = ReplicaScope(
+            serverOrigin: env.model.client.serverOrigin, ownerUserID: owner, org: "docs",
+            documentID: env.model.documentID)
+        env.model.saveCoordinator.noteNativeReader(scope)
+        XCTAssertTrue(env.model.saveCoordinator.isNativeReader(scope))
+        let spy = ManagerSocketFactorySpy()
+        let open = NativeEditorOpen(preference: { true }, livePreference: { true })
+        open.collaboration = DocumentCollaborationManager(
+            serverBaseURL: URL(string: "https://docs.example.org/api/v1.0/")!, cookieProvider: { [] },
+            featureEnabled: { true }, isOffline: { false }, serverConfigProvider: { nil },
+            socketFactory: spy.factory)
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+        XCTAssertNotNil(session.input, "the writer answer types again")
+        XCTAssertFalse(env.model.saveCoordinator.isNativeReader(scope), "the writer answer lifts the denial")
+        await waitUntil { spy.sockets.count == 1 }
+        open.close()
+    }
+
+    /// PR13b review Z2d: a headless denial makes the open a reader; lifting it later never dials
+    /// a socket for a surface that stays read-only (it recovers on reopen).
+    func testALiftedDenialNeverDialsLiveForAReadOnlyOpen() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        let spy = ManagerSocketFactorySpy()
+        let (open, session) = try await liveOpen(env, server: server, live: Locked(true), spy: spy)
+        defer { open.close() }
+        XCTAssertTrue(session.state.writable)
+        let scope = try XCTUnwrap(session.scope)
+        // The coordinator is the one RootView hands the registry to.
+        env.model.saveCoordinator.nativeSessions = open.registry
+        env.model.saveCoordinator.noteNativeReader(scope)
+        await waitUntil { !session.state.writable }
+        await waitUntil { spy.sockets.first?.cancelCloseCode == .goingAway }
+        // The server says writer again: the denial is lifted, the surface stays read-only.
+        env.model.saveCoordinator.clearNativeReader(scope)
+        XCTAssertFalse(env.model.saveCoordinator.isNativeReader(scope))
+        await open.refresh(viewModel: env.model, isOffline: false)
+        XCTAssertFalse(session.state.writable, "a lifted denial never makes the surface writable")
+        await waitAndConfirmNever(timeout: 1.5) { spy.sockets.count > 1 }
+    }
+
+    /// PR13b review Z2c: a denial a headless media commit learned keeps the
+    /// editor off the live socket while the server does not answer.
+    func testARememberedMediaDenialKeepsTheOpenOffTheSocket() async throws {
+        let env = makeEnvironment()
+        let server = ServerStub(owner: owner, state: seedState())
+        server.collaborationWsUrl = "wss://docs.example.org/collaboration/ws/"
+        server.detailFails = true
+        server.install()
+        env.model.saveCoordinator.noteNativeReader(try seedReplica(env, typed: nil))
+        let spy = ManagerSocketFactorySpy()
+        let open = NativeEditorOpen(preference: { true }, livePreference: { true })
+        open.collaboration = DocumentCollaborationManager(
+            serverBaseURL: URL(string: "https://docs.example.org/api/v1.0/")!, cookieProvider: { [] },
+            featureEnabled: { true }, isOffline: { false }, serverConfigProvider: { nil },
+            socketFactory: spy.factory)
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native = open.route else { return XCTFail("expected a native session") }
+        await waitAndConfirmNever { !spy.sockets.isEmpty }
+        open.close()
+        env.clean()
+    }
+
     // MARK: - Mid-session changes (PR09b)
 
     private func liveOpen(
@@ -931,6 +1058,9 @@ private final class ServerStub: @unchecked Sendable {
     private var _collaborationWsUrl: String?
     private var _canUpdate = true
     private var _detailFails = false
+    private var _detailStatus = 200
+    private var _detailID: UUID?
+    private var _detailFailure: DetailFailure?
     private var _patched: [Data] = []
     private var _titles: [String] = []
     var stateGate: MockURLProtocol.ResponseGate?
@@ -954,6 +1084,29 @@ private final class ServerStub: @unchecked Sendable {
     var detailFails: Bool {
         get { locked { _detailFails } }
         set { locked { _detailFails = newValue } }
+    }
+    /// The detail route answers this status instead (403, 404: an answer about the document).
+    var detailStatus: Int {
+        get { locked { _detailStatus } }
+        set { locked { _detailStatus = newValue } }
+    }
+    /// The id the detail route's answer names (nil: the one asked for).
+    var detailID: UUID? {
+        get { locked { _detailID } }
+        set { locked { _detailID = newValue } }
+    }
+    /// A failure that is not the server's answer about the document (review R1).
+    enum DetailFailure: String {
+        /// An HTML 404: no view for the route (a proxy during a rollout).
+        case routeNotFound
+        /// A 200 whose body does not decode.
+        case decoding
+        /// A transport timeout.
+        case timeout
+    }
+    var detailFailure: DetailFailure? {
+        get { locked { _detailFailure } }
+        set { locked { _detailFailure = newValue } }
     }
     var collaborationWsUrl: String? {
         get { locked { _collaborationWsUrl } }
@@ -1013,8 +1166,24 @@ private final class ServerStub: @unchecked Sendable {
                 let id = url.split(separator: "/").last.flatMap({ UUID(uuidString: String($0)) })
             {
                 if detailFails { return .init(statusCode: 503, headers: [:], body: Data(), error: nil) }
+                if detailStatus != 200 {
+                    return .init(statusCode: detailStatus, headers: [:], body: Data(), error: nil)
+                }
+                switch detailFailure {
+                case .routeNotFound:
+                    return .init(
+                        statusCode: 404, headers: ["Content-Type": "text/html"],
+                        body: Data("<html><body>Not Found</body></html>".utf8), error: nil)
+                case .decoding:
+                    return .init(
+                        statusCode: 200, headers: json, body: Data(#"{"id": "not-a-uuid"}"#.utf8), error: nil)
+                case .timeout:
+                    return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.timedOut))
+                case nil:
+                    break
+                }
                 let detail: [String: Any] = [
-                    "id": id.uuidString.lowercased(), "title": "Fresh server title", "excerpt": NSNull(),
+                    "id": (detailID ?? id).uuidString.lowercased(), "title": "Fresh server title", "excerpt": NSNull(),
                     "abilities": ["update": canUpdate], "computed_link_reach": "restricted",
                     "computed_link_role": NSNull(), "created_at": "2026-11-07T10:00:00Z", "creator": NSNull(),
                     "depth": 1, "link_role": "reader", "link_reach": "restricted", "numchild": 0, "path": "0001",

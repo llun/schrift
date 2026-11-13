@@ -162,7 +162,7 @@ struct NativeMediaInspector: View {
                     PhotosPicker(selection: $photo, matching: .images) {
                         Label(loc[.native_media_upload_photo], systemImage: "photo")
                     }
-                    .disabled(uploads?.canUpload != true)
+                    .disabled(uploads?.canUpload(blockID) != true)
                     .accessibilityIdentifier("nativeMedia.uploadPhoto")
                 }
                 Button {
@@ -170,7 +170,7 @@ struct NativeMediaInspector: View {
                 } label: {
                     Label(loc[.native_media_upload_file], systemImage: "doc")
                 }
-                .disabled(uploads?.canUpload != true)
+                .disabled(uploads?.canUpload(blockID) != true)
                 .accessibilityIdentifier("nativeMedia.uploadFile")
                 HStack {
                     TextField(loc[.native_media_link], text: $link)
@@ -196,7 +196,8 @@ struct NativeMediaInspector: View {
         if isEditable {
             Section {
                 Button(loc[.native_editor_block_delete], role: .destructive) {
-                    session.input?.deleteMedia(blockID)
+                    // The block's queued upload goes with it.
+                    if session.input?.deleteMedia(blockID) == true { uploads?.discard(blockID) }
                     onClose()
                 }
                 .accessibilityIdentifier("nativeMedia.delete")
@@ -215,9 +216,24 @@ struct NativeMediaInspector: View {
             )
             .font(.headline)
             .lineLimit(2)
-            if uploads?.uploading == blockID {
+            let record = uploads?.record(blockID)
+            if let record, record.failedAt != nil {
+                Text(labels.mediaUploadFailed).foregroundStyle(theme.colors.danger)
+                    .accessibilityIdentifier("nativeMedia.uploadFailed")
+            } else if let record, uploads?.state(of: record) == .waiting {
+                Label(labels.mediaUploadWaiting, systemImage: "clock")
+                    .accessibilityIdentifier("nativeMedia.uploadWaiting")
+                if isOffline {
+                    Text(loc[.native_editor_media_upload_waiting]).font(.footnote)
+                        .foregroundStyle(theme.colors.textSecondary)
+                }
+            } else if record != nil || uploads?.preparing == blockID {
                 Label(labels.mediaUploading, systemImage: "arrow.up.circle")
                     .accessibilityIdentifier("nativeMedia.uploading")
+                if isOffline {
+                    Text(loc[.native_editor_media_upload_waiting]).font(.footnote)
+                        .foregroundStyle(theme.colors.textSecondary)
+                }
             } else if let failure = uploads?.failure, failure.blockID == blockID {
                 Text(loc[failure.key]).foregroundStyle(theme.colors.danger)
                     .accessibilityIdentifier("nativeMedia.failure")
@@ -229,13 +245,20 @@ struct NativeMediaInspector: View {
                 Text(MediaBlock.clipped(url)).font(.footnote).foregroundStyle(theme.colors.textSecondary).lineLimit(2)
                     .textSelection(.enabled)
             }
-            if isEditable, isOffline || uploads?.documentID == nil {
+            if isEditable, uploads?.documentID == nil {
                 Text(loc[.native_editor_media_upload_offline]).font(.footnote)
                     .foregroundStyle(theme.colors.textSecondary)
             }
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("nativeMedia.status")
+        // A failed upload's answer (PR13b): again, or let it go (the block stays empty).
+        if let record = uploads?.record(blockID), record.failedAt != nil {
+            Button(loc[.native_media_retry_upload]) { uploads?.retry(blockID) }
+                .accessibilityIdentifier("nativeMedia.retryUpload")
+            Button(loc[.native_media_discard_upload], role: .destructive) { uploads?.discard(blockID) }
+                .accessibilityIdentifier("nativeMedia.discardUpload")
+        }
     }
 
     /// A same-origin attachment opens through the attachment loader (its own
