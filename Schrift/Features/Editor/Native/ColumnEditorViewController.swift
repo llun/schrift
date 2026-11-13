@@ -37,9 +37,11 @@ final class ColumnEditorModel: Identifiable {
     /// Where the editor opens (PR12c: a find or outline result in a column):
     /// that column is active with the caret at the block's start.
     let target: (column: String, block: String)?
-    /// A block the active column moved into another column, until that
-    /// column shows it: the caret follows it there (PR12c).
-    @ObservationIgnored private var following: (block: String, offset: Int, length: Int)?
+    /// A block a column moved or joined into another column, until that
+    /// column shows it: the caret and the keys held meanwhile follow it
+    /// there (PR12c). `source` is the column it left.
+    @ObservationIgnored private var following:
+        (left: NativeInputCoordinator.BlockLeft, source: NativeEditorSession)?
 
     init(document: NativeEditorSession, groupID: String, target: (column: String, block: String)? = nil) {
         self.document = document
@@ -83,8 +85,10 @@ final class ColumnEditorModel: Identifiable {
         isLoaded = true
     }
 
-    /// The selection in `block` of `session`; a reader's text view has no input.
+    /// The selection in `block` of `session`, a folded toggle above it
+    /// opened first (view state); a reader's text view has no input.
     private func place(_ session: NativeEditorSession, at block: String, offset: Int = 0, length: Int = 0) {
+        session.surface.reveal(block)
         if let input = session.input {
             input.focus(at: block, offset: offset, length: length)
         } else if let entry = session.surface.rangeIndex.entry(for: block) {
@@ -92,15 +96,27 @@ final class ColumnEditorModel: Identifiable {
         }
     }
 
-    /// The column showing the block the active column moved out, now that
-    /// one does, takes the caret in it.
-    private func follow() {
-        guard let moved = following,
-            let index = columns.firstIndex(where: { $0.surface.rangeIndex.entry(for: moved.block) != nil })
-        else { return }
+    /// The column showing the block a column moved out, now that one does,
+    /// takes the caret in it and types the held keys there. A delivery to
+    /// another column that does not show it ends the wait (the block left
+    /// the group, or a peer changed it first): the keys become the
+    /// document's recovery entry, never typed where the block was.
+    private func follow(after delivered: NativeEditorSession? = nil) {
+        guard let (left, source) = following else { return }
+        guard let index = columns.firstIndex(where: { $0.surface.rangeIndex.entry(for: left.blockID) != nil }) else {
+            if let delivered, delivered !== source { dropFollowing() }
+            return
+        }
         following = nil
         active = index
-        place(columns[index], at: moved.block, offset: moved.offset, length: moved.length)
+        place(columns[index], at: left.blockID, offset: left.offset, length: left.length)
+        columns[index].input?.adopt(left.keys)
+    }
+
+    private func dropFollowing() {
+        guard let (left, source) = following else { return }
+        following = nil
+        source.input?.composition.recover(NativeInputCoordinator.text(of: left.keys), blockID: left.blockID)
     }
 
     /// One column's surface, wired to this editor.
@@ -111,15 +127,17 @@ final class ColumnEditorModel: Identifiable {
         // The group's own change reaches every column: its structure may have changed (PR12b).
         session.onApplied = { [weak self] delivery in
             guard let self else { return }
-            self.follow()
+            self.follow(after: session)
             if self.touchesGroup(delivery) { self.scheduleReconcile() }
         }
         // shortcut: a block moved out of the group (into the document) is not
-        // followed and the wait ends only at the next move or close; follow it
-        // when the document can show a column's caret beside the group.
-        session.input?.onBlockLeft = { [weak self] block, offset, length in
-            self?.following = (block, offset, length)
-            self?.follow()
+        // followed: the document is behind the editor; follow it when the
+        // document can show a caret beside the group.
+        session.input?.onBlockLeft = { [weak self, weak session] left in
+            guard let self, let session else { return }
+            self.dropFollowing()
+            self.following = (left, session)
+            self.follow()
         }
         if let awareness = document.awareness { session.showAwareness(awareness) }
         onAttached?(session)
@@ -272,6 +290,7 @@ final class ColumnEditorModel: Identifiable {
     /// Ends every column surface and hands focus back to the document.
     func close() {
         guard !isClosed else { return }
+        dropFollowing()
         isClosed = true
         for session in columns {
             session.textView.resignFirstResponder()
@@ -447,6 +466,7 @@ private struct ColumnTextHost: UIViewRepresentable {
                     traits: UITraitCollection(preferredContentSizeCategory: contentSize), labels: labels)
             }
         }
+        container.takesFocusOnOpen = model.target == nil
         container.contentSizeCategory = contentSize
         if container.labels != labels { container.labels = labels }
         container.onActivate = { [model] index in
@@ -500,6 +520,9 @@ final class ColumnTextContainer: UIScrollView {
             relabel()
         }
     }
+    /// The first column shown takes first responder (the keyboard comes up);
+    /// not when the editor opened at a find result (PR12c review).
+    var takesFocusOnOpen = true
     /// A column's text view became first responder (a tap): it is the active column.
     var onActivate: ((Int) -> Void)?
 
@@ -549,7 +572,9 @@ final class ColumnTextContainer: UIScrollView {
         let previous = shown
         shown = target
         // First responder moves with the column: the keyboard stays.
-        if previous?.isFirstResponder == true || previous == nil, target.isEditable, !target.isFirstResponder {
+        if previous?.isFirstResponder == true || (previous == nil && takesFocusOnOpen), target.isEditable,
+            !target.isFirstResponder
+        {
             _ = target.becomeFirstResponder()
         }
         layoutIfNeeded()

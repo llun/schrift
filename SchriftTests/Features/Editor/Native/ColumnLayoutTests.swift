@@ -178,7 +178,8 @@ final class ColumnLayoutTests: NativeEditingTestCase {
 
     /// A document with one column group of `columns` columns of `perColumn`
     /// paragraphs each ("c<column>p<index>"), between two paragraphs.
-    nonisolated static func groupState(columns: Int, perColumn: Int) throws -> Data {
+    /// `toggle` puts a collapsed toggle heading "c0t" first in column 0, holding paragraph "c0inside".
+    nonisolated static func groupState(columns: Int, perColumn: Int, toggle: Bool = false) throws -> Data {
         let doc = YDoc(clientID: 1, gc: true)
         defer { doc.destroy() }
         let root = doc.get(BlockNoteYjs.fragmentField)
@@ -212,6 +213,22 @@ final class ColumnLayoutTests: NativeEditingTestCase {
                 try YWrite.mapSet(tx, on: columnType, key: "width", .any([.int(1)]))
                 lastColumn = item
                 var last: YItem?
+                if toggle, column == 0 {
+                    let (item, container) = try element("blockContainer", into: columnType, after: nil, id: "c0t")
+                    let (headingItem, heading) = try element("heading", into: container, after: nil)
+                    for (key, value): (String, YAnyValue) in [
+                        ("backgroundColor", .string("default")), ("textColor", .string("default")),
+                        ("textAlignment", .string("left")), ("level", .int(2)), ("isToggleable", .bool(true)),
+                    ] {
+                        try YWrite.mapSet(tx, on: heading, key: key, .any([value]))
+                    }
+                    let xmlText = YType(typeRef: .xmlText)
+                    try YWrite.insertAfter(tx, into: heading, after: nil, [.type(xmlText)])
+                    try xmlText.insert(0, "Toggle", YTextAttributes())
+                    let (_, nested) = try element("blockGroup", into: container, after: headingItem)
+                    _ = try paragraph("c0inside", "Hidden words", into: nested, after: nil)
+                    last = item
+                }
                 for index in 0..<perColumn {
                     last = try paragraph(
                         "c\(column)p\(index)", "Column \(column) paragraph \(index) with words enough to wrap.",
@@ -464,4 +481,139 @@ final class ColumnLayoutTests: NativeEditingTestCase {
         XCTAssertEqual(model.active, 1, "the next column is active")
         XCTAssertEqual(second.textView.selectedRange, NSRange(location: try location(second, "b", 2), length: 0))
     }
+
+    // MARK: - PR #285 review
+
+    private func structureSeed(_ name: String) throws -> Data {
+        let seed = try XCTUnwrap(BlockNoteColumnStructureCaptures.edits.first { $0.name == name }?.seed, name)
+        return try XCTUnwrap(Data(base64Encoded: seed))
+    }
+
+    /// F1: following a query as it is typed never opens the column editor
+    /// (the rest of the query would be typed there): it scrolls the document
+    /// to the group's card. A deliberate jump opens it once, however many
+    /// replies are in flight, until it closes.
+    func testTypingAQueryNeverOpensTheColumnEditorAndADeliberateJumpOpensItOnce() async throws {
+        let harness = try await makeHarness(state: try Self.groupState(columns: 2, perColumn: 40))
+        addTeardownBlock { await harness.close() }
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 300))
+        harness.view.frame = window.bounds
+        window.addSubview(harness.view)
+        window.isHidden = false
+        windows.append(window)
+        harness.view.layoutIfNeeded()
+        let navigation = harness.session.navigation
+        await navigation.refresh()
+        var opened = 0
+        navigation.onOpenColumn = { _, _, _ in opened += 1 }
+        let match = try XCTUnwrap(navigation.entries.first { $0.value.blockID == "c1p3" }?.key)
+        let followed = await navigation.jump(to: .block(match), deliberate: false)
+        XCTAssertTrue(followed)
+        XCTAssertEqual(opened, 0, "typing a query never opens the editor")
+        // Two deliberate jumps in flight: one editor.
+        async let first = navigation.jump(to: .block(match))
+        async let second = navigation.jump(to: .block(match))
+        _ = await (first, second)
+        XCTAssertEqual(opened, 1)
+        navigation.columnEditorClosed()
+        await navigation.jump(to: .block(match))
+        XCTAssertEqual(opened, 2, "once closed, the next result opens it")
+    }
+
+    /// F1: an editor opened at a find result does not take first responder;
+    /// one opened from the card does.
+    func testAnEditorOpenedAtAResultDoesNotTakeTheKeyboard() async throws {
+        let (_, model) = try await editor(try fixture("two"), target: ("c2", "c"))
+        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+        let window = scene.map { UIWindow(windowScene: $0) } ?? UIWindow()
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 600)
+        let container = ColumnTextContainer(frame: window.bounds)
+        container.takesFocusOnOpen = false
+        window.addSubview(container)
+        window.makeKeyAndVisible()
+        windows.append(window)
+        show(model, in: container)
+        XCTAssertTrue(container.shown === model.columns[1].textView)
+        XCTAssertFalse(model.columns.contains { $0.textView.isFirstResponder }, "no keyboard")
+    }
+
+    /// F2: a key typed while Move down takes the caret's block into the next
+    /// column is typed there, in the moved block, never in the column it left.
+    func testAKeyHeldDuringAMoveIsTypedWhereTheBlockWent() async throws {
+        let (harness, model) = try await editor(try structureSeed("moveDownFromColumnEnd"))
+        let first = model.columns[0]
+        let second = model.columns[1]
+        let before = first.surface.blocks.filter { $0.id != "b" }.map { text(of: $0) }
+        setSelection(first, NSRange(location: try location(first, "b", 2), length: 0))
+        XCTAssertTrue(first.input?.performBlockAction(.moveDown) ?? false)
+        first.textView.insertText("z")
+        await first.settle()
+        await second.settle()
+        await harness.settle()
+        await waitUntil { model.active == 1 && (try? self.text(of: self.block(second, "b")))?.contains("z") == true }
+        await second.settle()
+        await harness.settle()
+        let moved = text(of: try block(second, "b"))
+        XCTAssertEqual(moved.firstIndex(of: "z").map { moved.distance(from: moved.startIndex, to: $0) }, 2, moved)
+        XCTAssertEqual(first.surface.blocks.map { text(of: $0) }, before, "nothing typed in the column it left")
+        XCTAssertTrue(harness.session.input?.composition.pendingRecoveries.isEmpty ?? true)
+    }
+
+    /// F3: Backspace at a column's first block moves it to the end of the
+    /// previous column, and the caret goes with it.
+    func testBackspaceAcrossAColumnEdgeTakesTheCaretWithTheBlock() async throws {
+        let (harness, model) = try await editor(try fixture("two"))
+        model.active = 1
+        let first = model.columns[0]
+        let second = model.columns[1]
+        setSelection(second, NSRange(location: try location(second, "c", 0), length: 0))
+        second.textView.deleteBackward()
+        await second.settle()
+        await first.settle()
+        await harness.settle()
+        await waitUntil { model.active == 0 }
+        XCTAssertEqual(first.surface.blocks.last?.id, "c")
+        XCTAssertEqual(model.active, 0, "the previous column is active")
+        XCTAssertEqual(first.textView.selectedRange, NSRange(location: try location(first, "c", 0), length: 0))
+    }
+
+    /// F4: a column command never reports its block as moved: deleting the
+    /// shown column and undoing it does not later pull the caret into it.
+    func testDeletingAndRestoringAColumnDoesNotPullTheCaretLater() async throws {
+        let (harness, model) = try await editor(try structureSeed("removeColumnOfThree"))
+        model.active = 2
+        let shown = model.columns[2]
+        let id = try XCTUnwrap(shown.surface.blocks.first?.id)
+        setSelection(shown, NSRange(location: try location(shown, id, 0), length: 0))
+        XCTAssertTrue(model.perform(.delete))
+        await waitUntil { model.columns.count == 2 }
+        model.active = 0
+        let first = model.columns[0]
+        _ = first.input?.undo()
+        await waitUntil { model.columns.count == 3 }
+        await harness.settle()
+        let firstID = try XCTUnwrap(first.surface.blocks.first?.id)
+        setSelection(first, NSRange(location: try location(first, firstID, 0), length: 0))
+        first.textView.insertText("k")
+        for session in model.columns { await session.settle() }
+        await harness.settle()
+        XCTAssertEqual(model.active, 0, "typing stays in its column")
+        XCTAssertTrue(text(of: try block(first, firstID)).hasPrefix("k"))
+    }
+
+    /// F5: a result inside a collapsed toggle in a column opens it (view
+    /// state) before the caret goes there.
+    func testAResultInsideACollapsedToggleIsRevealed() async throws {
+        let state = try Self.groupState(columns: 2, perColumn: 2, toggle: true)
+        let (_, model) = try await editor(state, target: ("c0", "c0inside"))
+        let column = try XCTUnwrap(model.activeSession)
+        XCTAssertEqual(model.active, 0)
+        XCTAssertFalse(column.surface.isHidden(blockID: "c0inside"), "the toggle opened")
+        XCTAssertEqual(
+            column.textView.selectedRange, NSRange(location: try location(column, "c0inside", 0), length: 0))
+        // Without a target the toggle starts collapsed, as BlockNote's does.
+        let (_, plain) = try await editor(state)
+        XCTAssertTrue(try XCTUnwrap(plain.columns.first).surface.isHidden(blockID: "c0inside"))
+    }
+
 }

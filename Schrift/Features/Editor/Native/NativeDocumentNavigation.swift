@@ -42,6 +42,11 @@ final class NativeDocumentNavigation {
     /// A find or outline result in a column (PR12c): the presenter opens the
     /// column editor on group `group`, column `column`, at block `block`.
     @ObservationIgnored var onOpenColumn: ((_ group: String, _ column: String, _ block: String) -> Void)?
+    /// A column editor opened from a jump is up (or about to be).
+    @ObservationIgnored private(set) var isOpeningColumn = false
+
+    /// The column editor closed: the next result in a column may open one.
+    func columnEditorClosed() { isOpeningColumn = false }
     @ObservationIgnored private(set) var entries: [UUID: NativeNavigationEntry] = [:]
     /// Block id → its id for this open, so a refresh keeps the sheet's state.
     @ObservationIgnored private var ids: [String: UUID] = [:]
@@ -135,8 +140,11 @@ final class NativeDocumentNavigation {
 
     /// Scrolls to `target` (the outline's title, a heading or a find match).
     /// False when the target is gone or was replaced since it was read.
+    /// A match in a column opens the column editor only when `deliberate`
+    /// (a tap, Next or Previous), once until it closes; following a query
+    /// as it is typed only scrolls to the group's card (PR12c review).
     @discardableResult
-    func jump(to target: EditorScrollTarget) async -> Bool {
+    func jump(to target: EditorScrollTarget, deliberate: Bool = true) async -> Bool {
         guard let textView, let surface else { return false }
         switch target {
         case .header:
@@ -149,7 +157,11 @@ final class NativeDocumentNavigation {
                 return false
             }
             if let group = entry.group {
-                // `locate` answered the block's column: the column editor opens there.
+                guard deliberate else { return textView.scroll(toBlock: group.stringID, surface: surface) }
+                // `locate` answered the block's column: the column editor opens there,
+                // once (a second reply in flight is dropped).
+                guard !isOpeningColumn else { return false }
+                isOpeningColumn = true
                 onOpenColumn?(group.stringID, blockID, entry.blockID)
                 return true
             }

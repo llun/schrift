@@ -143,11 +143,14 @@ struct NativeEditorView: View {
                         openColumns = columnEditor(jump.group, target: (jump.column, jump.block))
                     }
                 },
-                onSelectHeading: { jump(.block($0)) })
+                onSelectHeading: { jump(.block($0)) },
+                onQueryMatch: { target in jump(target, deliberate: false) })
         )
         .task(id: ObjectIdentifier(session)) {
             // A result in a column opens the column editor at it; the sheet goes first.
-            session.navigation.onOpenColumn = { group, column, block in
+            session.navigation.onOpenColumn = { [navigation = session.navigation] group, column, block in
+                // One editor at a time: a reply arriving while one is up (a card tap) is dropped.
+                guard openColumns == nil, pendingColumnJump == nil else { return navigation.columnEditorClosed() }
                 let jump = ColumnJump(group: group, column: column, block: block)
                 if isPresentingOutline {
                     pendingColumnJump = jump
@@ -207,7 +210,8 @@ extension NativeEditorView {
         _ groupID: String, target: (column: String, block: String)? = nil
     ) -> ColumnEditorModel {
         let model = ColumnEditorModel(document: session, groupID: groupID, target: target)
-        model.onClose = {
+        model.onClose = { [navigation = session.navigation] in
+            navigation.columnEditorClosed()
             lastColumns = groupID
             openColumns = nil
         }
@@ -222,9 +226,9 @@ extension NativeEditorView {
     }
 
     /// A heading, a find match or the title: the reader chose where to be.
-    fileprivate func jump(_ target: EditorScrollTarget) {
+    fileprivate func jump(_ target: EditorScrollTarget, deliberate: Bool = true) {
         session.navigation.noteDeliberateJump()
-        Task { await session.navigation.jump(to: target) }
+        Task { await session.navigation.jump(to: target, deliberate: deliberate) }
     }
 
     /// The classic offer after a restore, over the native text.
