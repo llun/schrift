@@ -1991,12 +1991,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             noticeKey = .native_editor_range_unavailable
             return false
         }
-        let lineCount = (try? BlockNoteInlinePayload.decode(payload).count) ?? 1
         let startBlockID = index.entries[start.position].blockID
-        let newIDs = isCode(startBlockID) ? [] : (1..<max(1, lineCount)).map { _ in UUID().uuidString.lowercased() }
         let command = NativeRangeCommand(
             startOffset: start.offset, endBlockID: index.entries[end.position].blockID, endOffset: end.offset,
-            replacement: "", newBlockIDs: newIDs)
+            replacement: "", newBlockIDs: [])
         return applyStructural(
             startBlockID, .pasteInline(payload: payload, range: command),
             refusal: .native_editor_paste_unavailable,

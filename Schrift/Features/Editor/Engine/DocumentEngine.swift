@@ -713,6 +713,10 @@ final class DocumentEngine {
         } catch {
             throw DocumentEngineError.unsupportedNativeInput
         }
+        let totalUTF16 = lines.reduce(0) { $0 + Self.utf16Count(of: $1) }
+        guard totalUTF16 <= NativeClipboard.maxPasteUTF16, lines.count <= NativeClipboard.maxPasteLines else {
+            throw DocumentEngineError.payloadTooLarge
+        }
         let index = builder.index
         guard index.isCanonical, let entry = index.entries[command.blockID] else {
             throw DocumentEngineError.unsupportedNativeInput
@@ -747,7 +751,11 @@ final class DocumentEngine {
                 range.startOffset < range.endOffset || !lines.allSatisfy(\.isEmpty)
             else { throw DocumentEngineError.unsupportedNativeInput }
             let target = try textTarget(entry)
-            let insertedCount = BlockNoteWriter.plainText(of: lines).utf16.count
+            let plainText = BlockNoteWriter.plainText(of: lines)
+            guard plainText.utf16.count <= NativeClipboard.maxPasteUTF16 else {
+                throw DocumentEngineError.payloadTooLarge
+            }
+            let insertedCount = plainText.utf16.count
             return (
                 write: {
                     try self.writer.insertInlineSlice(
@@ -776,12 +784,16 @@ final class DocumentEngine {
             endUnits = try structuralTarget(list[position]).units
             guard !isToggle(list[position]) else { throw DocumentEngineError.unsupportedNativeInput }
         }
-        let ids = range.newBlockIDs
+        let ids =
+            range.newBlockIDs.isEmpty && lines.count > 1
+            ? (1..<lines.count).map { _ in UUID().uuidString.lowercased() }
+            : range.newBlockIDs
+        let used = ids.isEmpty ? [] : usedIDs()
         guard Self.isBoundary(range.startOffset, in: startUnits), Self.isBoundary(range.endOffset, in: endUnits),
             lower < upper || range.startOffset < range.endOffset
                 || (range.startOffset == range.endOffset && !lines.allSatisfy(\.isEmpty)),
             ids.count == lines.count - 1, Set(ids).count == ids.count,
-            ids.allSatisfy({ !$0.isEmpty && index.entries[$0] == nil }),
+            ids.allSatisfy({ isUnused($0, in: used) }),
             let first = index.entries[command.blockID]?.containerItem,
             let last = index.entries[range.endBlockID]?.containerItem
         else { throw DocumentEngineError.unsupportedNativeInput }
@@ -951,13 +963,16 @@ final class DocumentEngine {
     /// The clipboard of familiar table `blockID`'s CellSelection
     /// `from`...`to` (PR11c): BlockNote's HTML and Markdown and Schrift's
     /// lossless payload. Never writes the replica.
-    func tableCopy(_ blockID: String, from: TableSlot, to: TableSlot) -> TableCopy? {
+    func tableCopy(
+        _ blockID: String, from: TableSlot, to: TableSlot, interlinkingOrigin: String? = nil
+    ) -> TableCopy? {
         guard !isDetached, let element = builder.index.entries[blockID]?.element,
             element.typeRef == .xmlElement(nodeName: "table"), TableGrid.read(element).isFamiliar,
             let model = try? TableModel(table: element, block: blockID),
             let grid = try? model.contentGrid(from: from, to: to)
         else { return nil }
-        return TableClipboard.copy(grid, tableProps: YBlockProjection.props(of: element) ?? [])
+        return TableClipboard.copy(
+            grid, tableProps: YBlockProjection.props(of: element) ?? [], serverOrigin: interlinkingOrigin)
     }
 
     // MARK: - Open column groups (PR12a)
@@ -1602,7 +1617,7 @@ final class DocumentEngine {
         case .insertSubtrees(let payload):
             // The payload is untrusted (any app's pasteboard): decoded, bounded
             // and validated here, and every container gets a fresh id.
-            let copies = try BlockNoteSubtreePayload.validatingMedia(BlockNoteSubtreePayload.decode(payload))
+            let copies = try BlockNoteSubtreePayload.validatingPastable(BlockNoteSubtreePayload.decode(payload))
             let shape = try BlockNoteSubtreePayload.validate(copies)
             let newIDs = (0..<shape.blocks).map { _ in UUID().uuidString }
             // A pasted group (PR12b) lands at the root only: never in a column or a block's children.

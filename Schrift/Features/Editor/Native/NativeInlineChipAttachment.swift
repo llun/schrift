@@ -89,24 +89,26 @@ final class NativeInlineChipAttachment: NSTextAttachment {
             hasIcon = true
             if !disabled, !docID.isEmpty {
                 kind = .interlink
-                displayLabel = object.visibleText { geometry.documentTitles[$0] }
+                displayLabel = object.clippedVisibleText { geometry.documentTitles[$0] }
                 accessibilityLabel = String(format: labels.named, labels.chipPage, displayLabel)
             } else {
                 kind = .disabledInterlink
                 let raw = (title?.isEmpty == false ? title : nil) ?? (docID.isEmpty ? nil : docID)
-                displayLabel = raw ?? labels.chipUntitled
+                let cleaned = raw.map { NativeInlineObject.clippedDisplayText($0) }.flatMap { $0.isEmpty ? nil : $0 }
+                displayLabel = cleaned ?? labels.chipUntitled
                 accessibilityLabel =
-                    raw.map { String(format: labels.named, labels.chipPage, $0) } ?? labels.chipUntitled
+                    cleaned.map { String(format: labels.named, labels.chipPage, $0) } ?? labels.chipUntitled
             }
         case .mention:
             hasIcon = false
             kind = .mention
-            displayLabel = object.visibleText
+            displayLabel = object.clippedVisibleText()
             accessibilityLabel = String(format: labels.named, labels.chipMention, displayLabel)
         case .mentionSearch(_, let trigger):
             hasIcon = false
             kind = .mentionSearch
-            displayLabel = (trigger?.isEmpty == false ? trigger! : "@")
+            let cleaned = trigger.map { NativeInlineObject.clippedDisplayText($0) }.flatMap { $0.isEmpty ? nil : $0 }
+            displayLabel = cleaned ?? "@"
             accessibilityLabel = String(format: labels.named, labels.chipMention, displayLabel)
         }
 
@@ -146,15 +148,37 @@ final class NativeInlineChipAttachment: NSTextAttachment {
 /// theme, appearance, and scale.
 @MainActor
 enum NativeInlineChipImageCache {
+    /// Visual-only cache key so static `images`/`assets` dictionaries never
+    /// retain raw unbounded `NativeInlineObject` prop strings.
+    private struct RenderKey: Hashable {
+        let kind: NativeInlineChipContent.Kind
+        let displayLabel: String
+        let hasIcon: Bool
+        let fontSize: CGFloat
+        let fontDescriptorTraits: UInt32
+        let band: DocumentLinkChipIconBand
+        let size: CGSize
+
+        init(_ content: NativeInlineChipContent) {
+            kind = content.kind
+            displayLabel = content.displayLabel
+            hasIcon = content.hasIcon
+            fontSize = content.fontSize
+            fontDescriptorTraits = content.fontDescriptorTraits
+            band = content.band
+            size = content.size
+        }
+    }
+
     private struct Key: Hashable {
-        let content: NativeInlineChipContent
+        let render: RenderKey
         let theme: AppTheme
         let isDark: Bool
         let scale: CGFloat
     }
 
     private struct AssetKey: Hashable {
-        let content: NativeInlineChipContent
+        let render: RenderKey
         let scale: CGFloat
     }
 
@@ -168,7 +192,7 @@ enum NativeInlineChipImageCache {
 
     static func assetImage(content: NativeInlineChipContent, font: UIFont, traits: UITraitCollection) -> UIImage {
         let scale = resolvedScale(for: traits)
-        let key = AssetKey(content: content, scale: scale)
+        let key = AssetKey(render: RenderKey(content), scale: scale)
         if let existing = assets[key] { return existing }
         if assets.count >= capacity { assets.removeAll() }
 
@@ -186,7 +210,7 @@ enum NativeInlineChipImageCache {
     static func image(
         content: NativeInlineChipContent, font: UIFont, theme: AppTheme, isDark: Bool, scale: CGFloat
     ) -> UIImage {
-        let key = Key(content: content, theme: theme, isDark: isDark, scale: scale)
+        let key = Key(render: RenderKey(content), theme: theme, isDark: isDark, scale: scale)
         if let existing = images[key] { return existing }
         if images.count >= capacity { images.removeAll() }
         let rendered = render(content: content, font: font, theme: theme, isDark: isDark, scale: scale)

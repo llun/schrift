@@ -75,7 +75,9 @@ enum ReplicaMessage: Sendable {
     /// `full` (PR11c) reads a table past the editing bound, for the viewer.
     case tableGrid(blockID: String, full: Bool = false, reply: @Sendable (TableGrid?) -> Void)
     /// Tables (PR11c): the clipboard of the CellSelection `from`...`to`.
-    case tableCopy(blockID: String, from: TableSlot, to: TableSlot, reply: @Sendable (TableCopy?) -> Void)
+    case tableCopy(
+        blockID: String, from: TableSlot, to: TableSlot, serverOrigin: String? = nil,
+        reply: @Sendable (TableCopy?) -> Void)
     /// Column groups (PR12a): group `blockID` as the replica holds it now.
     case columnGroup(blockID: String, reply: @Sendable (ColumnGroup?) -> Void)
     /// Media (PR13b): where block `blockID` is now, anywhere in the document
@@ -111,7 +113,7 @@ enum ReplicaMessage: Sendable {
         case .navigation(let reply): reply([])
         case .locate(_, _, let reply): reply(nil)
         case .tableGrid(_, _, let reply): reply(nil)
-        case .tableCopy(_, _, _, let reply): reply(nil)
+        case .tableCopy(_, _, _, _, let reply): reply(nil)
         case .columnGroup(_, let reply): reply(nil)
         case .mediaLocation(_, let reply): reply(nil)
         case .inspect(let body): body(nil, nil, nil)

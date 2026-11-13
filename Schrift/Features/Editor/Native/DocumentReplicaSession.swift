@@ -86,6 +86,7 @@ actor DocumentReplicaSession {
     private var history: ReplicaHistory?
     private let store: ReplicaStore?
     private let scope: ReplicaScope?
+    private let interlinkingOrigin: String?
     private var journal: Journal?
     private let hooks: Hooks
     private let hasUnsupportedRoot: Bool
@@ -140,9 +141,10 @@ actor DocumentReplicaSession {
         state: Data, updates: [Data], revision: UInt64, store: ReplicaStore?, scope: ReplicaScope?,
         freshClientID: Bool, interlinkingOrigin: String? = nil, makeReplica: @Sendable () -> YDoc, hooks: Hooks
     ) throws {
+        let resolvedOrigin = interlinkingOrigin ?? scope?.serverOrigin
         let graph = try Self.build(
             state: state, updates: updates, revision: revision, durable: store != nil, freshClientID: freshClientID,
-            interlinkingOrigin: interlinkingOrigin ?? scope?.serverOrigin, makeReplica: makeReplica)
+            interlinkingOrigin: resolvedOrigin, makeReplica: makeReplica)
         hasUnsupportedRoot = graph.hasUnsupportedRoot
         canType = graph.canType
         self.doc = graph.doc
@@ -150,6 +152,7 @@ actor DocumentReplicaSession {
         self.engine = graph.engine
         self.store = store
         self.scope = scope
+        self.interlinkingOrigin = resolvedOrigin
         self.hooks = hooks
     }
 
@@ -424,8 +427,8 @@ actor DocumentReplicaSession {
             reply(group.map { engine.locateColumn(handle, group: $0) } ?? engine.locate(handle))
         case .tableGrid(let blockID, let full, let reply):
             reply(engine.tableGrid(blockID, full: full))
-        case .tableCopy(let blockID, let from, let to, let reply):
-            reply(engine.tableCopy(blockID, from: from, to: to))
+        case .tableCopy(let blockID, let from, let to, let serverOrigin, let reply):
+            reply(engine.tableCopy(blockID, from: from, to: to, interlinkingOrigin: serverOrigin ?? interlinkingOrigin))
         case .columnGroup(let blockID, let reply):
             reply(engine.columnGroup(blockID))
         case .mediaLocation(let blockID, let reply):

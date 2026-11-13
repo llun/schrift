@@ -153,8 +153,7 @@ enum NativeBlockPreview: Equatable, Sendable {
                     if child.typeRef == .xmlText {
                         walk(child, depth: depth + 1)
                     } else if let inline = NativeInlineObject.read(child) {
-                        let visible = Array(inline.visibleText.utf16)
-                        units += visible.prefix(limit - units.count)
+                        units += inline.clippedVisibleText().utf16.prefix(limit - units.count)
                     } else {
                         let before = units.count
                         walk(child, depth: depth + 1)

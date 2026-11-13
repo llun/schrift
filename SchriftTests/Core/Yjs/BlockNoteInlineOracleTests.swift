@@ -741,6 +741,277 @@ final class BlockNoteInlineOracleTests: XCTestCase {
         )
     }
 
+    // MARK: - Review Round 1 (S2 & S3)
+
+    func testPastedInlineObjectsRequireIsPastableAndBoundsAndStripFFFC() throws {
+        let validUUID = "11111111-1111-4111-8111-111111111111"
+
+        // Exact schema keys, bounds, UUID docId (when enabled), no controls, no active mentionSearch.
+        XCTAssertTrue(
+            NativeInlineObject.isPastable(
+                node: "interlinkingLinkInline",
+                props: [
+                    ProjectedProp(key: "docId", value: .string(validUUID)),
+                    ProjectedProp(key: "blockId", value: .string("sec-1")),
+                    ProjectedProp(key: "title", value: .string("Spec")),
+                    ProjectedProp(key: "disabled", value: .bool(false)),
+                    ProjectedProp(key: "trigger", value: .string("/")),
+                ]))
+        XCTAssertTrue(
+            NativeInlineObject.isPastable(
+                node: "interlinkingLinkInline",
+                props: [
+                    ProjectedProp(key: "docId", value: .string("missing")),
+                    ProjectedProp(key: "disabled", value: .bool(true)),
+                ]))
+        XCTAssertTrue(
+            NativeInlineObject.isPastable(
+                node: "mentionSearchInline",
+                props: [
+                    ProjectedProp(key: "disabled", value: .bool(true)),
+                    ProjectedProp(key: "trigger", value: .string("@")),
+                ]))
+
+        // Reject arbitrary extra keys, binary uint8Array, non-UUID enabled docId, active mentionSearch, controls, and overlong strings.
+        XCTAssertFalse(
+            NativeInlineObject.isPastable(
+                node: "interlinkingLinkInline",
+                props: [
+                    ProjectedProp(key: "docId", value: .string(validUUID)),
+                    ProjectedProp(key: "disabled", value: .bool(false)),
+                    ProjectedProp(key: "extra", value: .string("javascript:alert(1)")),
+                ]))
+        XCTAssertFalse(
+            NativeInlineObject.isPastable(
+                node: "userMentionInline",
+                props: [
+                    ProjectedProp(key: "userId", value: .string("u1")),
+                    ProjectedProp(key: "fullName", value: .string("Ada")),
+                    ProjectedProp(key: "blob", value: .uint8Array(Data([1, 2, 3]))),
+                ]))
+        XCTAssertFalse(
+            NativeInlineObject.isPastable(
+                node: "interlinkingLinkInline",
+                props: [
+                    ProjectedProp(key: "docId", value: .string("not-a-uuid")),
+                    ProjectedProp(key: "disabled", value: .bool(false)),
+                ]))
+        XCTAssertFalse(
+            NativeInlineObject.isPastable(
+                node: "mentionSearchInline",
+                props: [
+                    ProjectedProp(key: "disabled", value: .bool(false)),
+                    ProjectedProp(key: "trigger", value: .string("@")),
+                ]))
+        XCTAssertFalse(
+            NativeInlineObject.isPastable(
+                node: "userMentionInline",
+                props: [
+                    ProjectedProp(key: "userId", value: .string("u1")),
+                    ProjectedProp(key: "fullName", value: .string("Ada\nLovelace")),
+                ]))
+        XCTAssertFalse(
+            NativeInlineObject.isPastable(
+                node: "interlinkingLinkInline",
+                props: [
+                    ProjectedProp(key: "docId", value: .string(validUUID)),
+                    ProjectedProp(key: "disabled", value: .bool(false)),
+                    ProjectedProp(key: "title", value: .string(String(repeating: "a", count: 1_001))),
+                ]))
+        XCTAssertFalse(
+            NativeInlineObject.isPastable(
+                node: "interlinkingLinkInline",
+                props: [
+                    ProjectedProp(key: "docId", value: .string(validUUID)),
+                    ProjectedProp(key: "disabled", value: .bool(false)),
+                    ProjectedProp(key: "trigger", value: .string("!")),
+                ]))
+
+        // Subtree & inline payloads reject unpastable chips and strip literal U+FFFC from text runs.
+        let craftedSubtree = BlockNoteWriter.Copy.element(
+            "blockContainer", [("id", .string("c1"))],
+            [
+                .element(
+                    "paragraph", [],
+                    [
+                        .text([.run(InlineRun("a\u{FFFC}b")), .run(InlineRun("\u{FFFC}"))]),
+                        .element(
+                            "userMentionInline",
+                            [
+                                ("userId", .string("u1")), ("fullName", .string("Ada")),
+                                ("evil", .string("javascript:1")),
+                            ],
+                            []),
+                    ])
+            ])
+        let subtreeData = try BlockNoteSubtreePayload.encode([craftedSubtree])
+        XCTAssertThrowsError(
+            try BlockNoteSubtreePayload.validatingPastable(BlockNoteSubtreePayload.decode(subtreeData)))
+
+        let fffcSubtree = BlockNoteWriter.Copy.element(
+            "blockContainer", [("id", .string("c2"))],
+            [.element("paragraph", [], [.text([.run(InlineRun("x\u{FFFC}y")), .run(InlineRun("\u{FFFC}"))])])])
+        let decodedSubtree = try BlockNoteSubtreePayload.decode(try BlockNoteSubtreePayload.encode([fffcSubtree]))
+        if case .element(_, _, let kids) = decodedSubtree[0], case .element(_, _, let para) = kids[0],
+            case .text(let values) = para[0]
+        {
+            XCTAssertEqual(values.count, 1)
+            if case .run(let run) = values[0] {
+                XCTAssertEqual(run.text, "xy")
+            } else {
+                XCTFail("expected text run")
+            }
+        } else {
+            XCTFail("expected decoded paragraph")
+        }
+
+        // Table HTML strips U+FFFC entity (&#xfffc;).
+        let htmlCells = try XCTUnwrap(TableClipboard.cells(html: "<table><tr><td>a&#xfffc;b</td></tr></table>"))
+        XCTAssertEqual(htmlCells[0][0].runs.map(\.text).joined(), "ab")
+
+        // BlockNoteInlinePayload.decode rejects unpastable chips and enforces maxPasteUTF16 + ID minting in DocumentEngine.
+        let badInlineData = try BlockNoteInlinePayload.encode([
+            [
+                .element(
+                    "interlinkingLinkInline",
+                    [("docId", .string("not-a-uuid")), ("disabled", .bool(false)), ("trigger", .string("/"))], [])
+            ]
+        ])
+        XCTAssertThrowsError(try BlockNoteInlinePayload.decode(badInlineData))
+
+        let doc = YDoc(clientID: 1, gc: true)
+        defer { doc.destroy() }
+        try populateBlock(doc, node: "paragraph") { element, tx in
+            let t = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: element, after: nil, [.type(t)])
+            try t.insert(0, "ab", nil)
+        }
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        defer { engine.detach() }
+
+        let multiLineData = try BlockNoteInlinePayload.encode([
+            [.text([.run(InlineRun("one"))])],
+            [.text([.run(InlineRun("two"))])],
+        ])
+        _ = try engine.applyStructural(
+            NativeEditCommand(
+                id: UUID(), baseRevision: engine.revision, blockID: "b1",
+                kind: .pasteInline(
+                    payload: multiLineData,
+                    range: NativeRangeCommand(
+                        startOffset: 1, endBlockID: "b1", endOffset: 1, replacement: "", newBlockIDs: [])))
+        ) { _ in }
+        XCTAssertEqual(engine.nativeSnapshot(for: "b1")?.runs.map(\.text).joined(), "aone")
+
+        let oversizedData = try BlockNoteInlinePayload.encode([
+            [.text([.run(InlineRun(String(repeating: "z", count: NativeClipboard.maxPasteUTF16 + 1)))])]
+        ])
+        do {
+            _ = try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "b1",
+                    kind: .pasteInline(
+                        payload: oversizedData,
+                        range: NativeRangeCommand(
+                            startOffset: 0, endBlockID: "b1", endOffset: 0, replacement: "", newBlockIDs: [])))
+            ) { _ in }
+            XCTFail("expected payloadTooLarge")
+        } catch DocumentEngineError.payloadTooLarge {
+        }
+    }
+
+    func testTableCommandsAndClipboardPreserveInlineObjectsWithoutFFFC() throws {
+        let docID = "11111111-1111-4111-8111-111111111111"
+        let doc = YDoc(clientID: 1, gc: false)
+        defer { doc.destroy() }
+        try populateBlock(doc, node: "table", props: ["textColor": .string("default")]) { table, tx in
+            func appendParagraph(to cell: YType, build: (YType) throws -> Void) throws {
+                let p = YType(typeRef: .xmlElement(nodeName: "tableParagraph"))
+                let after = YBlockProjection.children(of: cell, includeFormats: false).last
+                try YWrite.insertAfter(tx, into: cell, after: after, [.type(p)])
+                try build(p)
+            }
+            let row0 = YType(typeRef: .xmlElement(nodeName: "tableRow"))
+            let r0Item = try YWrite.insertAfter(tx, into: table, after: nil, [.type(row0)])
+
+            // Cell (0,0) has 2 tableParagraphs so roundTrip must rewrite via Self.paragraph(content).
+            let c00 = YType(typeRef: .xmlElement(nodeName: "tableCell"))
+            let c00Item = try YWrite.insertAfter(tx, into: row0, after: nil, [.type(c00)])
+            try YWrite.mapSet(tx, on: c00, key: "colspan", .any([.int(1)]))
+            try YWrite.mapSet(tx, on: c00, key: "rowspan", .any([.int(1)]))
+            try appendParagraph(to: c00) { p in
+                let link = YType(typeRef: .xmlElement(nodeName: "interlinkingLinkInline"))
+                try YWrite.insertAfter(tx, into: p, after: nil, [.type(link)])
+                try YWrite.mapSet(tx, on: link, key: "docId", .any([.string(docID)]))
+                try YWrite.mapSet(tx, on: link, key: "blockId", .any([.string("")]))
+                try YWrite.mapSet(tx, on: link, key: "disabled", .any([.bool(false)]))
+                try YWrite.mapSet(tx, on: link, key: "trigger", .any([.string("/")]))
+                try YWrite.mapSet(tx, on: link, key: "title", .any([.string("Roadmap")]))
+            }
+            try appendParagraph(to: c00) { p in
+                let mention = YType(typeRef: .xmlElement(nodeName: "userMentionInline"))
+                try YWrite.insertAfter(tx, into: p, after: nil, [.type(mention)])
+                try YWrite.mapSet(tx, on: mention, key: "userId", .any([.string("u1")]))
+                try YWrite.mapSet(tx, on: mention, key: "fullName", .any([.string("Ada")]))
+            }
+
+            let c01 = YType(typeRef: .xmlElement(nodeName: "tableCell"))
+            _ = try YWrite.insertAfter(tx, into: row0, after: c00Item, [.type(c01)])
+            try YWrite.mapSet(tx, on: c01, key: "colspan", .any([.int(1)]))
+            try YWrite.mapSet(tx, on: c01, key: "rowspan", .any([.int(1)]))
+            try appendParagraph(to: c01) { p in
+                let t = YType(typeRef: .xmlText)
+                try YWrite.insertAfter(tx, into: p, after: nil, [.type(t)])
+                try t.insert(0, "Plain", nil)
+            }
+
+            let row1 = YType(typeRef: .xmlElement(nodeName: "tableRow"))
+            _ = try YWrite.insertAfter(tx, into: table, after: r0Item, [.type(row1)])
+            let c10 = YType(typeRef: .xmlElement(nodeName: "tableCell"))
+            let c10Item = try YWrite.insertAfter(tx, into: row1, after: nil, [.type(c10)])
+            try YWrite.mapSet(tx, on: c10, key: "colspan", .any([.int(1)]))
+            try YWrite.mapSet(tx, on: c10, key: "rowspan", .any([.int(1)]))
+            let c11 = YType(typeRef: .xmlElement(nodeName: "tableCell"))
+            _ = try YWrite.insertAfter(tx, into: row1, after: c10Item, [.type(c11)])
+            try YWrite.mapSet(tx, on: c11, key: "colspan", .any([.int(1)]))
+            try YWrite.mapSet(tx, on: c11, key: "rowspan", .any([.int(1)]))
+        }
+
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        defer { engine.detach() }
+
+        // Toggle header row: multi-paragraph cell round-trips without corrupting chips to U+FFFC.
+        _ = try engine.applyStructural(
+            NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: "b1", kind: .table(.toggleHeaderRow)),
+            persist: { _ in })
+        let xml = YXMLString.fragment(doc)
+        XCTAssertFalse(xml.contains("\u{FFFC}"))
+        XCTAssertTrue(xml.contains("<interlinkinglinkinline"))
+        XCTAssertTrue(xml.contains("<usermentioninline"))
+
+        let shadow = try XCTUnwrap(
+            NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: "https://docs.example"))
+        XCTAssertFalse(shadow.contains("\u{FFFC}"))
+        XCTAssertTrue(shadow.contains("[Roadmap](https://docs.example/docs/\(docID)/)"))
+
+        // Table clipboard copy with serverOrigin emits <a> and <span> (no U+FFFC), valid Markdown, and lossless payload.
+        let copied = try XCTUnwrap(
+            engine.tableCopy(
+                "b1", from: TableSlot(row: 0, column: 0), to: TableSlot(row: 0, column: 1),
+                interlinkingOrigin: "https://docs.example"))
+        XCTAssertFalse(copied.html.contains("\u{FFFC}"))
+        XCTAssertTrue(copied.html.contains("<a href=\"https://docs.example/docs/\(docID)/\""))
+        XCTAssertTrue(copied.html.contains("<span data-inline-content-type=\"userMentionInline\""))
+        let plain = try XCTUnwrap(copied.plain)
+        XCTAssertFalse(plain.contains("\u{FFFC}"))
+        XCTAssertTrue(plain.contains("[Roadmap](https://docs.example/docs/\(docID)/)"))
+
+        let payload = try XCTUnwrap(copied.payload)
+        let pastedCells = try XCTUnwrap(TableClipboard.cells(payload: payload))
+        let objects = pastedCells[0][0].runs.compactMap(\.inlineObject)
+        XCTAssertEqual(objects.count, 2)
+    }
+
     // MARK: - Helpers
 
     private func decodeDoc(_ base64: String) throws -> YDoc {

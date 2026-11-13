@@ -1177,8 +1177,9 @@ that finish after the editor closed, and drag and drop are PR13b. A media block 
 via `NativeInlineObject` (failing closed on malformed elements), projected into TextKit 2 as
 `\u{FFFC}` (`NativeInlineChipAttachment`) with `NativeInlineChipImageCache` and read-only cached
 document title lookups without writing to Yjs. `NativeExportMarkdown` and `NativeBlockProjection`
-export enabled interlinks with the document's `interlinkingOrigin` as markdown links, mentions as
-`@fullName`, and `mentionSearch` as its trigger, matching the server's shadow byte-for-byte.
+export enabled interlinks with a non-empty `docId` and the document's `interlinkingOrigin` as
+markdown links (and disabled/empty interlinks, mentions, and `mentionSearch` as empty strings),
+matching the server's shadow byte-for-byte.
 Typing uses boundary mark barriers, cursor and deletion treat each chip as one atomic unit,
 `NativeClipboard` preserves inline slices across native pastes and degrades cleanly to visible plain
 text for code blocks and external pasteboards (while turning pasted same-origin `/docs/<uuid>` URLs

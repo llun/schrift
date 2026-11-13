@@ -441,7 +441,9 @@ struct TableModel {
                 }
             }
         case .element(let node, _, let children):
-            return children.map(textSize).reduce((node == "hardBreak" ? 1 : 0, node == "hardBreak" ? 1 : 0)) {
+            let selfUnits = (node == "hardBreak" || NativeInlineObject.nodeNames.contains(node)) ? 1 : 0
+            let selfLines = node == "hardBreak" ? 1 : 0
+            return children.map(textSize).reduce((selfUnits, selfLines)) {
                 ($0.0 + $1.units, $0.1 + $1.lines)
             }
         }
@@ -1143,10 +1145,14 @@ struct TableModel {
     }
 
     /// `inlineContentToNodes` into one `tableParagraph`: text runs, a
-    /// `hardBreak` for each "\n".
+    /// `hardBreak` for each "\n", and inline object elements.
     static func paragraph(_ runs: [InlineRun]) -> BlockNoteWriter.Copy {
         var children: [BlockNoteWriter.Copy] = []
         for run in runs {
+            if let object = run.inlineObject {
+                children.append(.element(object.nodeName, object.canonicalProps, []))
+                continue
+            }
             for (index, piece) in run.text.components(separatedBy: "\n").enumerated() {
                 if index > 0 { children.append(.element("hardBreak", [], [])) }
                 guard !piece.isEmpty else { continue }
@@ -1170,8 +1176,10 @@ struct TableModel {
                 guard case .run(let run) = value else { return "embed" }
                 return run.text + "|" + run.marks.map { $0.key + "=" + $0.valueJSON }.sorted().joined(separator: ",")
             }.joined(separator: "·")
-        case .element(let node, _, let children):
-            return "<\(node)>" + children.map(signature).joined(separator: "/")
+        case .element(let node, let props, let children):
+            let propList = props.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ",")
+            let header = propList.isEmpty ? "<\(node)>" : "<\(node) \(propList)>"
+            return header + children.map(signature).joined(separator: "/")
         }
     }
 

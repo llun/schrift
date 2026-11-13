@@ -19,8 +19,13 @@ struct NativeNavigationEntry: Equatable, Sendable {
     init(_ block: BlockSnapshot, handle: NativeBlockHandle?) {
         self.handle = handle
         blockID = block.id
-        text = block.visibleText
-        runs = block.hasInlineObjects ? block.runs : []
+        text = block.clippedVisibleText()
+        runs =
+            block.hasInlineObjects
+            ? block.runs.map { run in
+                guard let inline = run.inlineObject else { return run }
+                return InlineRun(inlineObject: inline.clippedForDisplay())
+            } : []
         if block.node == "heading", case .int(let level)? = block.props.first(where: { $0.key == "level" })?.value {
             self.level = level
         }
@@ -30,7 +35,7 @@ struct NativeNavigationEntry: Equatable, Sendable {
         guard !runs.isEmpty else { return text }
         return runs.map { run in
             if let inline = run.inlineObject {
-                return inline.visibleText(titleForDocument: titleForDocument)
+                return inline.clippedVisibleText(titleForDocument: titleForDocument)
             }
             return run.text
         }.joined()

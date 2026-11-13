@@ -501,8 +501,14 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     /// edit; a cut then empties the cells, as the web's cut does.
     private func copy(_ selection: CellSelection, cut: Bool) async {
         let before = grid
+        let resolvedOrigin =
+            serverOrigin.flatMap { $0.isEmpty ? nil : $0 }
+            ?? (document.input?.serverOrigin).flatMap { $0.isEmpty ? nil : $0 }
+            ?? document.textView.blockControls.serverOrigin
+        let origin = resolvedOrigin.isEmpty ? nil : resolvedOrigin
         guard let input = cellSession?.input,
-            let copied = await document.tableCopy(tableID, from: selection.anchor, to: selection.head)
+            let copied = await document.tableCopy(
+                tableID, from: selection.anchor, to: selection.head, serverOrigin: origin)
         else { return }
         var item: [String: Any] = [TableClipboard.htmlType: copied.html]
         if let plain = copied.plain { item[UTType.utf8PlainText.identifier] = plain }
@@ -910,12 +916,18 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         }
     }
 
+    private func contentWidth(for cell: TableGrid.Cell) -> CGFloat {
+        guard cell.column + cell.colspan < columnOffsets.count else { return 0 }
+        return max(1, columnOffsets[cell.column + cell.colspan] - columnOffsets[cell.column] - Self.padding * 2)
+    }
+
     private func configureText(_ view: TableCellView, _ ref: TableGrid.CellRef) {
         guard let grid else { return }
+        let cell = grid.cell(ref)
         let blocks = paragraphs(ref)
         let text = Self.text(
-            blocks, cell: grid.cell(ref), traits: traitCollection, labels: labels,
-            geometry: cellGeometry(for: blocks))
+            blocks, cell: cell, traits: traitCollection, labels: labels,
+            geometry: cellGeometry(for: blocks, width: contentWidth(for: cell)))
         if view.label.attributedText != text { view.label.attributedText = text }
     }
 
@@ -946,7 +958,7 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         let cell = grid.cell(ref)
         element.accessibilityLabel = cellLabel(cell.row + 1, cell.column + 1)
         let resolver = documentTitle ?? { _ in nil }
-        let value = paragraphs(ref).map { $0.visibleText(titleForDocument: resolver) }.joined(separator: "\n")
+        let value = paragraphs(ref).map { $0.clippedVisibleText(titleForDocument: resolver) }.joined(separator: "\n")
         let peers = (peerMarks[ref] ?? []).map { String(format: labels.peerCursor, $0.name) }
         element.accessibilityValue = ([value] + peers).filter { !$0.isEmpty }.joined(separator: ", ")
         var traits: UIAccessibilityTraits = .staticText
@@ -1025,7 +1037,7 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
             cellViews[ref]?.label.attributedText
             ?? Self.text(
                 cellBlocks, cell: grid.cell(ref), traits: traitCollection, labels: labels,
-                geometry: cellGeometry(for: cellBlocks, width: width))
+                geometry: cellGeometry(for: cellBlocks, width: max(1, width - Self.padding * 2)))
         let key = text.string.hashValue ^ Int(width * 2) ^ (ref == active ? 1 : 0)
         if let cached = cellHeights[ref], cached.key == key { return cached.height }
         var insets = UIEdgeInsets(top: Self.padding, left: Self.padding, bottom: Self.padding, right: Self.padding)

@@ -3937,11 +3937,12 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   read-only cached title lookup (`NativeEditorView.documentTitle` ->
   `EditorViewModel.cachedDocumentTitle(for:)`) without touching Yjs.
   **Shadow:** `NativeBlockProjection.markdownShadow(_:interlinkingOrigin:)` and
-  `NativeExportMarkdown` export enabled interlinks with non-empty `docId` to
-  `[encodeURIComponent(visibleText)](<origin>/docs/<docId>[#<blockId>])` when `interlinkingOrigin`
-  (`ReplicaScope.origin`) is set, or `encodeURIComponent(visibleText)` otherwise; mentions export
-  as `@fullName`, and `mentionSearch` as `trigger` (`""` when disabled). `TableGrid.read` marks
-  cells holding inline objects `.familiar` (`isSimpleCell == false`).
+  `NativeExportMarkdown` export enabled interlinks with non-empty `docId` via
+  `formatLink(label, "<origin>/docs/<encodeURIComponent(docId)>/")` (where `label` is `title` if
+  non-empty else `docId`) when `interlinkingOrigin` (`ReplicaScope.serverOrigin`) is set, or `nil`
+  otherwise; disabled/empty-`docId` interlinks, `.mention`, and `.mentionSearch` all export as `""`.
+  `TableGrid.read` keeps tables holding inline objects `.familiar` while marking those paragraphs
+  `TableGrid.Paragraph.isSimpleText == false` (disabling only the `.text` fast path in `PatchBuilder`).
   **Editing rules:** `AttributedDocumentProjection` inserts mark barriers around each `\u{FFFC}`
   so adjacent typing never bleeds marks; `NativeInputCoordinator` and `BlockNoteWriter` move/delete
   each chip as one atomic unit (`insertInlineObject`, `joinBlocks`, `mergeIntoParent` coalesce

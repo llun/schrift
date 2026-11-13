@@ -83,7 +83,9 @@ enum TableClipboard {
     /// the web reads its `blocknote/html` (spans and nodes kept, content one
     /// paragraph). Nil for any payload that is not exactly one table.
     static func cells(payload: Data) -> [[TablePastedCell]]? {
-        guard let copies = try? BlockNoteSubtreePayload.decode(payload), copies.count == 1,
+        guard let rawCopies = try? BlockNoteSubtreePayload.decode(payload),
+            let copies = try? BlockNoteSubtreePayload.validatingPastable(rawCopies),
+            copies.count == 1,
             case .element("blockContainer", _, let children) = copies[0],
             case .element("table", _, let rowCopies)? = children.first
         else { return nil }
@@ -100,7 +102,13 @@ enum TableClipboard {
                         case .text(let values):
                             for case .run(let run) in values { runs.append(run) }
                         case .element("hardBreak", _, _): runs.append(InlineRun("\n"))
-                        case .element: break
+                        case .element(let inlineNode, let inlineProps, let inlineChildren):
+                            let projected = inlineProps.map { ProjectedProp(key: $0.key, value: $0.value) }
+                            if let object = NativeInlineObject.read(
+                                node: inlineNode, props: projected, hasChildren: !inlineChildren.isEmpty)
+                            {
+                                runs.append(InlineRun(inlineObject: object))
+                            }
                         }
                     }
                 }
@@ -296,7 +304,9 @@ enum TableClipboard {
     // MARK: - Copy
 
     /// The clipboard of a copied rectangle (`TableModel.contentGrid`).
-    static func copy(_ grid: TableGrid, tableProps: [ProjectedProp]) -> TableCopy {
+    static func copy(
+        _ grid: TableGrid, tableProps: [ProjectedProp], serverOrigin: String? = nil
+    ) -> TableCopy {
         let rows = grid.rows.map { row -> BlockNoteWriter.Copy in
             .element(
                 "tableRow", [],
@@ -311,7 +321,10 @@ enum TableClipboard {
             "table", tableProps.map { ($0.key, $0.value) }, rows)
         let payload = try? BlockNoteSubtreePayload.encode(
             [.element("blockContainer", [("id", .string("table"))], [table])])
-        return TableCopy(payload: payload, html: html(grid), plain: markdown(grid))
+        return TableCopy(
+            payload: payload,
+            html: html(grid, serverOrigin: serverOrigin),
+            plain: markdown(grid, serverOrigin: serverOrigin))
     }
 
     /// BlockNote's mark order (schema rank), outermost first.
@@ -327,7 +340,7 @@ enum TableClipboard {
     ]
 
     /// The copied cells as BlockNote's external HTML (`text/html`).
-    static func html(_ grid: TableGrid) -> String {
+    static func html(_ grid: TableGrid, serverOrigin: String? = nil) -> String {
         var columnWidths: [YAnyValue] = []
         for cell in grid.rows.first ?? [] {
             if case .array(let widths)? = cell.props.first(where: { $0.key == "colwidth" })?.value {
@@ -358,7 +371,8 @@ enum TableClipboard {
                     }
                     attrs += " colwidth=\"\(widths.joined(separator: ","))\""
                 }
-                out += "<td\(attrs)><p>\(inlineHTML(NativeExportMarkdown.blockNoteRuns(cell)))</p></td>"
+                out +=
+                    "<td\(attrs)><p>\(inlineHTML(NativeExportMarkdown.blockNoteRuns(cell), serverOrigin: serverOrigin))</p></td>"
             }
             out += "</tr>"
         }
@@ -367,12 +381,12 @@ enum TableClipboard {
 
     /// The copied cells' Markdown (`text/plain`): every cell is a `td`, so the
     /// header line is empty.
-    static func markdown(_ grid: TableGrid) -> String? {
+    static func markdown(_ grid: TableGrid, serverOrigin: String? = nil) -> String? {
         var plain = grid
         for row in plain.rows.indices {
             for index in plain.rows[row].indices { plain.rows[row][index].isHeader = false }
         }
-        return NativeExportMarkdown.table(plain).map { $0 + "\n" }
+        return NativeExportMarkdown.table(plain, interlinkingOrigin: serverOrigin).map { $0 + "\n" }
     }
 
     /// A JS number's `toString`, an unset entry as "" (`Array.join`).
@@ -392,13 +406,18 @@ enum TableClipboard {
 
     /// prosemirror's `DOMSerializer` over the runs: marks in rank order, kept
     /// open across neighbours that share them, closed around a hard break.
-    static func inlineHTML(_ runs: [InlineRun]) -> String {
+    static func inlineHTML(_ runs: [InlineRun], serverOrigin: String? = nil) -> String {
         var out = ""
         var active: [TextMark] = []
         func close(to count: Int) {
             while active.count > count { out += closing(active.removeLast()) }
         }
         for run in runs {
+            if let inline = run.inlineObject {
+                close(to: 0)
+                out += inlineObjectHTML(inline, serverOrigin: serverOrigin)
+                continue
+            }
             let marks = run.marks.compactMap { mark -> TextMark? in
                 markRank.contains(mark.key) ? TextMark(key: mark.key, valueJSON: mark.valueJSON) : nil
             }.sorted { markRank.firstIndex(of: $0.key)! < markRank.firstIndex(of: $1.key)! }
@@ -420,6 +439,29 @@ enum TableClipboard {
         }
         close(to: 0)
         return out
+    }
+
+    private static func inlineObjectHTML(_ inline: NativeInlineObject, serverOrigin: String?) -> String {
+        switch inline {
+        case .interlink(let docID, _, let title, let disabled, _):
+            let label = (title?.isEmpty == false ? title! : docID)
+            if !disabled, !docID.isEmpty,
+                let origin = serverOrigin.map(NativeInlineObject.trimmingTrailingSlashes), !origin.isEmpty,
+                let encodedDocID = NativeInlineObject.encodeURIComponent(docID)
+            {
+                let href = escape("\(origin)/docs/\(encodedDocID)/", quote: true)
+                return "<a href=\"\(href)\" target=\"_blank\" rel=\"noopener noreferrer nofollow\" "
+                    + "classname=\"bn-inline-content-section\" data-inline-content-type=\"link\">"
+                    + "\(escape(label, quote: false))</a>"
+            }
+            return "<span data-inline-content-type=\"interlinkingLinkInline\">\(escape(label, quote: false))</span>"
+        case .mention(let userID, _):
+            return
+                "<span data-inline-content-type=\"userMentionInline\" data-user-id=\"\(escape(userID, quote: true))\">"
+                + "\(escape(inline.visibleText, quote: false))</span>"
+        case .mentionSearch:
+            return "<span data-inline-content-type=\"mentionSearchInline\"></span>"
+        }
     }
 
     private static func opening(_ mark: TextMark) -> String {
@@ -791,6 +833,7 @@ enum InlineFlattener {
                     var text = ""
                     var inSpace = false
                     for character in child.text {
+                        if character == "\u{FFFC}" { continue }
                         if collapsible.contains(character) {
                             inSpace = true
                         } else {

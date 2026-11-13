@@ -1528,4 +1528,228 @@ final class NativeInlineObjectTests: NativeEditingTestCase {
         }
         XCTAssertEqual(columnOpened.count, 1)
     }
+
+    // MARK: - Review Round 1 (S1, S2, C3)
+
+    func testUnboundedInlineChipStringsAreClippedAndScrubbedAcrossSurfaces() async throws {
+        let combiningBurst = "A" + String(repeating: "\u{0301}", count: 600)
+        let dirtyTitle = "\u{202E}Alpha\n\r\t\u{0007}Beta\u{2066}" + String(repeating: "x", count: 400)
+        let cachedID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            try insertContainer(
+                tx, into: group, after: &after, id: "h1", node: "heading",
+                props: [("level", .int(2))],
+                children: [
+                    .inline(
+                        .interlink(
+                            docID: "11111111-1111-4111-8111-111111111111", blockID: nil, title: dirtyTitle,
+                            disabled: false, trigger: "/")),
+                    .text(" "),
+                    .inline(.mention(userID: "u1", fullName: combiningBurst)),
+                    .text(" "),
+                    .inline(
+                        .interlink(
+                            docID: cachedID.uuidString.lowercased(), blockID: nil, title: nil, disabled: false,
+                            trigger: "/")),
+                    .text(" "),
+                    .inline(.mentionSearch(disabled: true, trigger: "\u{202E}/\n")),
+                ])
+            try insertContainer(
+                tx, into: group, after: &after, id: "custom", node: "customWidget",
+                children: [
+                    .inline(
+                        .interlink(
+                            docID: "22222222-2222-4222-8222-222222222222", blockID: nil, title: combiningBurst,
+                            disabled: false, trigger: "/"))
+                ])
+        }
+
+        // Raw Yjs values remain intact on NativeInlineObject for Yjs/shadow parity.
+        let doc = try decodeDoc(state)
+        defer { doc.destroy() }
+        let proj = NativeBlockProjection.project(doc)
+        let h1 = try XCTUnwrap(proj.blocks.first { $0.block.id == "h1" })
+        if case .interlink(_, _, let rawTitle, _, _)? = h1.block.runs.first?.inlineObject {
+            XCTAssertEqual(rawTitle, dirtyTitle)
+        } else {
+            XCTFail("expected raw interlink")
+        }
+        let customBlock = try XCTUnwrap(proj.blocks.first { $0.block.id == "custom" })
+        if case .preserved(_, let summary) = customBlock.preview {
+            XCTAssertLessThanOrEqual(summary.utf16.count, NativeBlockPreview.Limits.maxText)
+            XCTAssertFalse(summary.contains("\u{FFFC}"))
+        } else {
+            XCTFail("expected preserved preview")
+        }
+
+        let engine = DocumentEngine(doc: doc, surface: nil)
+        defer { engine.detach() }
+        let navEntries = engine.navigationEntries()
+        let navEntry = try XCTUnwrap(navEntries.first { $0.blockID == "h1" })
+        let navText = navEntry.resolvedText { id in id == cachedID ? "\u{202E}Cached\nTitle" : nil }
+        XCTAssertFalse(navText.contains("\u{202E}"))
+        XCTAssertFalse(navText.contains("\u{2066}"))
+        XCTAssertTrue(navText.contains("Alpha Beta"))
+        XCTAssertTrue(navText.contains("Cached Title"))
+        XCTAssertLessThan(navText.unicodeScalars.count, 1_000)
+
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+        harness.view.blockControls.documentTitle = { id in
+            id == cachedID ? "\u{202A}Cached\nTitle\u{202E}" + String(repeating: "z", count: 400) : nil
+        }
+
+        let chips = inlineAttachments(in: harness.view.textStorage).map(\.1)
+        XCTAssertEqual(chips.count, 4)
+        for chip in chips {
+            XCTAssertLessThanOrEqual(
+                chip.content.displayLabel.unicodeScalars.count, NativeInlineObject.defaultDisplayLimit + 1)
+            XCTAssertFalse(chip.content.displayLabel.contains("\n"))
+            XCTAssertFalse(chip.content.displayLabel.contains("\r"))
+            XCTAssertFalse(chip.content.displayLabel.contains("\t"))
+            XCTAssertFalse(chip.content.displayLabel.contains("\u{0007}"))
+            XCTAssertFalse(chip.content.displayLabel.contains("\u{202A}"))
+            XCTAssertFalse(chip.content.displayLabel.contains("\u{202E}"))
+            XCTAssertFalse(chip.content.displayLabel.contains("\u{2066}"))
+            XCTAssertFalse(chip.content.displayLabel.contains("\u{FFFC}"))
+            XCTAssertFalse(chip.content.accessibilityLabel.contains("\n"))
+            XCTAssertFalse(chip.content.accessibilityLabel.contains("\u{202E}"))
+        }
+        XCTAssertTrue(chips[0].content.displayLabel.hasPrefix("Alpha Beta"))
+        XCTAssertTrue(chips[0].content.displayLabel.hasSuffix("…"))
+        XCTAssertEqual(chips[3].content.displayLabel, "/")
+
+        let axValue = try XCTUnwrap(harness.view.accessibilityValue)
+        XCTAssertFalse(axValue.contains("\u{202E}"))
+        XCTAssertFalse(axValue.contains("\u{0007}"))
+        XCTAssertLessThan(axValue.unicodeScalars.count, 1_500)
+    }
+
+    func testPasteInlineMultiLineMintsIDsAndRefusesOversizedOrUnpastablePayloads() async throws {
+        let validID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            try insertContainer(tx, into: group, after: &after, id: "p1", node: "paragraph", children: [.text("AB")])
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+
+        let p1 = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "p1"))
+        harness.view.selectedRange = NSRange(location: p1.textRange.location + 1, length: 0)
+
+        // Multi-line BlockNoteInlinePayload pastes via NativeInputCoordinator (newBlockIDs minted by engine).
+        let multiPayload = try BlockNoteInlinePayload.encode([
+            [
+                .text([.run(InlineRun("1"))]),
+                .element("userMentionInline", [("userId", .string("u1")), ("fullName", .string("Ada"))], []),
+            ],
+            [
+                .element(
+                    "interlinkingLinkInline",
+                    [
+                        ("docId", .string(validID.uuidString.lowercased())),
+                        ("blockId", .string("")),
+                        ("disabled", .bool(false)),
+                        ("trigger", .string("/")),
+                    ], []),
+                .text([.run(InlineRun("2"))]),
+            ],
+        ])
+        harness.pasteboard.setItems([[BlockNoteInlinePayload.pasteboardType: multiPayload]])
+        let ok = await harness.session.run { harness.input.pasteFromPasteboard() }
+        XCTAssertTrue(ok)
+        XCTAssertEqual(harness.session.surface.blocks.count, 2)
+        XCTAssertEqual(harness.session.surface.blocks[0].runs.compactMap(\.inlineObject).count, 1)
+        XCTAssertEqual(harness.session.surface.blocks[1].runs.compactMap(\.inlineObject).count, 1)
+
+        // Unpastable inline payload (non-UUID enabled interlink) is refused without writes.
+        let beforeCount = harness.log.commands.count
+        let badPayload = try BlockNoteInlinePayload.encode([
+            [
+                .element(
+                    "interlinkingLinkInline",
+                    [
+                        ("docId", .string("not-a-uuid")),
+                        ("blockId", .string("")),
+                        ("disabled", .bool(false)),
+                        ("trigger", .string("/")),
+                    ], [])
+            ]
+        ])
+        harness.pasteboard.setItems([[BlockNoteInlinePayload.pasteboardType: badPayload]])
+        _ = await harness.session.run { harness.input.pasteFromPasteboard() }
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_paste_unavailable)
+        XCTAssertEqual(harness.log.commands.count, beforeCount)
+
+        // Oversized inline payload (> maxPasteUTF16) refuses with native_editor_paste_too_large.
+        let hugeText = String(repeating: "x", count: NativeClipboard.maxPasteUTF16 + 10)
+        let hugePayload = try BlockNoteInlinePayload.encode([[.text([.run(InlineRun(hugeText))])]])
+        harness.pasteboard.setItems([[BlockNoteInlinePayload.pasteboardType: hugePayload]])
+        _ = await harness.session.run { harness.input.pasteFromPasteboard() }
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_paste_too_large)
+        XCTAssertEqual(harness.log.commands.count, beforeCount)
+    }
+
+    func testInactiveTableCellChipsSizeToColumnWidth() async throws {
+        let docID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let longTitle = String(repeating: "Very Long Linked Document Title ", count: 8)
+        let state = try makeYDocState { tx, group in
+            let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            let table = YType(typeRef: .xmlElement(nodeName: "table"))
+            try YWrite.insertAfter(tx, into: group, after: nil, [.type(container)])
+            try YWrite.mapSet(tx, on: container, key: "id", .any([.string("tbl")]))
+            try YWrite.insertAfter(tx, into: container, after: nil, [.type(table)])
+            var rowCursor: YItem?
+            for r in 0..<2 {
+                let row = YType(typeRef: .xmlElement(nodeName: "tableRow"))
+                rowCursor = try YWrite.insertAfter(tx, into: table, after: rowCursor, [.type(row)])
+                var cellCursor: YItem?
+                for c in 0..<2 {
+                    let cell = YType(typeRef: .xmlElement(nodeName: "tableCell"))
+                    cellCursor = try YWrite.insertAfter(tx, into: row, after: cellCursor, [.type(cell)])
+                    try YWrite.mapSet(tx, on: cell, key: "colspan", .any([.int(1)]))
+                    try YWrite.mapSet(tx, on: cell, key: "rowspan", .any([.int(1)]))
+                    try YWrite.mapSet(tx, on: cell, key: "colwidth", .any([.array([.int(120)])]))
+                    let para = YType(typeRef: .xmlElement(nodeName: "tableParagraph"))
+                    try YWrite.insertAfter(tx, into: cell, after: nil, [.type(para)])
+                    if r == 0 && c == 0 {
+                        let chip = YType(typeRef: .xmlElement(nodeName: "interlinkingLinkInline"))
+                        try YWrite.insertAfter(tx, into: para, after: nil, [.type(chip)])
+                        try YWrite.mapSet(tx, on: chip, key: "docId", .any([.string(docID.uuidString.lowercased())]))
+                        try YWrite.mapSet(tx, on: chip, key: "blockId", .any([.string("")]))
+                        try YWrite.mapSet(tx, on: chip, key: "disabled", .any([.bool(false)]))
+                        try YWrite.mapSet(tx, on: chip, key: "trigger", .any([.string("/")]))
+                        try YWrite.mapSet(tx, on: chip, key: "title", .any([.string(longTitle)]))
+                    } else {
+                        let xmlText = YType(typeRef: .xmlText)
+                        try YWrite.insertAfter(tx, into: para, after: nil, [.type(xmlText)])
+                        try YWrite.insertAfter(tx, into: xmlText, after: nil, [.string(Array("ok".utf16))])
+                    }
+                }
+            }
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+        let editor = TableEditorViewController(document: harness.session, tableID: "tbl")
+        hostController(editor)
+        editor.loadViewIfNeeded()
+        await editor.load()
+        for _ in 0..<300 where !editor.isLoaded { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(editor.isLoaded)
+        if let session = editor.cellSession { addTeardownBlock { await session.close().value } }
+
+        // Activate a different cell so (0, 0) is rendered via an inactive TableCellView.
+        XCTAssertTrue(editor.activate(TableGrid.CellRef(row: 1, index: 1)))
+        editor.view.layoutIfNeeded()
+
+        let cellView = try XCTUnwrap(editor.cellViews[TableGrid.CellRef(row: 0, index: 0)])
+        let labelText = try XCTUnwrap(cellView.label.attributedText)
+        let chips = inlineAttachments(in: labelText).map(\.1)
+        XCTAssertEqual(chips.count, 1)
+        let maxContentWidth = 120 - TableEditorViewController.padding * 2
+        XCTAssertLessThanOrEqual(
+            chips[0].content.size.width, maxContentWidth + 0.5,
+            "inactive cell chip must clamp to column width (\(maxContentWidth)pt), not 320pt fallback")
+    }
 }

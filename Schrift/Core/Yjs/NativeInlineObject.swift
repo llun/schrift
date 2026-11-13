@@ -17,11 +17,38 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
         mentionSearchNodeName,
     ]
 
+    static let defaultDisplayLimit = 300
+    static let maxIdentifierUTF16 = 256
+    static let maxLabelUTF16 = 1_000
+
+    private static let interlinkSchemaKeys: Set<String> = ["docId", "blockId", "title", "disabled", "trigger"]
+    private static let mentionSchemaKeys: Set<String> = ["userId", "fullName"]
+    private static let mentionSearchSchemaKeys: Set<String> = ["disabled", "trigger"]
+
     var nodeName: String {
         switch self {
         case .interlink: Self.interlinkingLinkNodeName
         case .mention: Self.userMentionNodeName
         case .mentionSearch: Self.mentionSearchNodeName
+        }
+    }
+
+    /// Canonical Yjs element attributes matching BlockNote 0.56 and `BlockNoteWriter.buildInlineObject`.
+    var canonicalProps: [(key: String, value: YAnyValue)] {
+        switch self {
+        case .interlink(let docID, let blockID, let title, let disabled, let trigger):
+            var entries: [(key: String, value: YAnyValue)] = [
+                ("docId", .string(docID)),
+                ("blockId", .string(blockID ?? "")),
+                ("disabled", .bool(disabled)),
+                ("trigger", .string(trigger ?? "/")),
+            ]
+            if let title, !title.isEmpty { entries.append(("title", .string(title))) }
+            return entries
+        case .mention(let userID, let fullName):
+            return [("userId", .string(userID)), ("fullName", .string(fullName))]
+        case .mentionSearch(let disabled, let trigger):
+            return [("disabled", .bool(disabled)), ("trigger", .string(trigger ?? "@"))]
         }
     }
 
@@ -98,6 +125,56 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
         }
     }
 
+    /// Validates that an untrusted pasted inline node uses only its exact
+    /// schema keys, stays within UTF-16 length bounds, carries no control or
+    /// newline characters, uses valid UUIDs on enabled non-empty interlinks,
+    /// and is not an active `mentionSearchInline`.
+    static func isPastable(node: String, props: [ProjectedProp], hasChildren: Bool = false) -> Bool {
+        pastable(node: node, props: props, hasChildren: hasChildren) != nil
+    }
+
+    /// Returns the validated `NativeInlineObject` for a pastable inline node,
+    /// or `nil` when any schema, bound, character, or active-search check fails.
+    static func pastable(node: String, props: [ProjectedProp], hasChildren: Bool = false) -> NativeInlineObject? {
+        let allowedKeys: Set<String>
+        switch node {
+        case interlinkingLinkNodeName: allowedKeys = interlinkSchemaKeys
+        case userMentionNodeName: allowedKeys = mentionSchemaKeys
+        case mentionSearchNodeName: allowedKeys = mentionSearchSchemaKeys
+        default: return nil
+        }
+        guard props.allSatisfy({ allowedKeys.contains($0.key) }),
+            let object = read(node: node, props: props, hasChildren: hasChildren)
+        else { return nil }
+
+        switch object {
+        case .interlink(let docID, let blockID, let title, let disabled, let trigger):
+            guard isPastableText(docID, limit: maxIdentifierUTF16) else { return nil }
+            if !disabled, !docID.isEmpty, UUID(uuidString: docID) == nil { return nil }
+            if let blockID, !isPastableText(blockID, limit: maxIdentifierUTF16) { return nil }
+            if let title, !isPastableText(title, limit: maxLabelUTF16) { return nil }
+            if let trigger, trigger != "/" && trigger != "@" { return nil }
+            return object
+        case .mention(let userID, let fullName):
+            guard isPastableText(userID, limit: maxIdentifierUTF16),
+                isPastableText(fullName, limit: maxLabelUTF16)
+            else { return nil }
+            return object
+        case .mentionSearch(let disabled, let trigger):
+            guard disabled else { return nil }
+            if let trigger, trigger != "/" && trigger != "@" { return nil }
+            return object
+        }
+    }
+
+    private static func isPastableText(_ text: String, limit: Int) -> Bool {
+        text.utf16.count <= limit
+            && !text.unicodeScalars.contains {
+                CharacterSet.controlCharacters.contains($0) || CharacterSet.newlines.contains($0)
+                    || $0.value == 0xFFFC
+            }
+    }
+
     /// Plain display text used for non-editing summaries (outline, find,
     /// accessibility, chips), never written back to Yjs.
     var visibleText: String {
@@ -123,6 +200,93 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
             guard let trigger, !trigger.isEmpty else { return "@" }
             return trigger
         }
+    }
+
+    /// Single-line display-safe text bounded in `unicodeScalars`, stripping
+    /// bidi overrides (`U+202A...U+202E`, `U+2066...U+2069`) and `U+FFFC`, and
+    /// collapsing newlines/control characters to single spaces.
+    static func clippedDisplayText(_ text: String, prefix: String = "", limit: Int = defaultDisplayLimit) -> String {
+        guard limit > 0 else { return "" }
+        var scalars = String.UnicodeScalarView()
+        var pendingSpace = false
+        var truncated = false
+
+        func appendScalar(_ scalar: UnicodeScalar) -> Bool {
+            if pendingSpace {
+                guard scalars.count < limit else {
+                    truncated = true
+                    return false
+                }
+                scalars.append(" ")
+                pendingSpace = false
+            }
+            guard scalars.count < limit else {
+                truncated = true
+                return false
+            }
+            scalars.append(scalar)
+            return true
+        }
+
+        for scalar in prefix.unicodeScalars {
+            if !appendScalar(scalar) { break }
+        }
+        if !truncated {
+            for scalar in text.unicodeScalars {
+                if isStrippedDisplayScalar(scalar) { continue }
+                if CharacterSet.newlines.contains(scalar) || CharacterSet.controlCharacters.contains(scalar) {
+                    if !scalars.isEmpty { pendingSpace = true }
+                    continue
+                }
+                if !appendScalar(scalar) { break }
+            }
+        }
+        return truncated ? String(scalars) + "…" : String(scalars)
+    }
+
+    /// Display-safe `visibleText`, bounded by `limit` Unicode scalars and
+    /// scrubbed of newlines, controls, `U+FFFC`, and bidi overrides.
+    func clippedVisibleText(limit: Int = defaultDisplayLimit, titleForDocument: (UUID) -> String? = { _ in nil })
+        -> String
+    {
+        switch self {
+        case .interlink:
+            return Self.clippedDisplayText(visibleText(titleForDocument: titleForDocument), limit: limit)
+        case .mention(let userID, let fullName):
+            let label = fullName.isEmpty ? (userID.isEmpty ? "?" : userID) : fullName
+            return Self.clippedDisplayText(label, prefix: "@", limit: limit)
+        case .mentionSearch:
+            return Self.clippedDisplayText(visibleText(), limit: limit)
+        }
+    }
+
+    /// Returns a display-bounded copy so navigation entries do not retain
+    /// multi-megabyte raw Yjs strings while keeping valid UUID `docID`s intact.
+    func clippedForDisplay(limit: Int = defaultDisplayLimit) -> NativeInlineObject {
+        switch self {
+        case .interlink(let docID, let blockID, let title, let disabled, let trigger):
+            let safeDocID = UUID(uuidString: docID) != nil ? docID : Self.clippedDisplayText(docID, limit: limit)
+            return .interlink(
+                docID: safeDocID,
+                blockID: blockID.map { Self.clippedDisplayText($0, limit: limit) },
+                title: title.map { Self.clippedDisplayText($0, limit: limit) },
+                disabled: disabled,
+                trigger: trigger.map { Self.clippedDisplayText($0, limit: 16) })
+        case .mention(let userID, let fullName):
+            return .mention(
+                userID: Self.clippedDisplayText(userID, limit: limit),
+                fullName: Self.clippedDisplayText(fullName, limit: limit))
+        case .mentionSearch(let disabled, let trigger):
+            return .mentionSearch(
+                disabled: disabled,
+                trigger: trigger.map { Self.clippedDisplayText($0, limit: 16) })
+        }
+    }
+
+    private static func isStrippedDisplayScalar(_ scalar: UnicodeScalar) -> Bool {
+        (0x202A...0x202E).contains(scalar.value)
+            || (0x2066...0x2069).contains(scalar.value)
+            || scalar.value == 0xFFFC
     }
 
     /// Removes trailing `/` characters from an origin string, matching

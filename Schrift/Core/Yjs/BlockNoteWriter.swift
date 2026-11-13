@@ -897,23 +897,8 @@ struct BlockNoteWriter {
     private func buildInlineObject(
         _ tx: YTransaction, _ object: NativeInlineObject, into parent: YType, after left: YItem?
     ) throws -> YItem {
-        let props: [(key: String, value: YAnyValue)]
-        switch object {
-        case .interlink(let docID, let blockID, let title, let disabled, let trigger):
-            var entries: [(key: String, value: YAnyValue)] = [
-                ("docId", .string(docID)),
-                ("blockId", .string(blockID ?? "")),
-                ("disabled", .bool(disabled)),
-                ("trigger", .string(trigger ?? "/")),
-            ]
-            if let title, !title.isEmpty { entries.append(("title", .string(title))) }
-            props = entries
-        case .mention(let userID, let fullName):
-            props = [("userId", .string(userID)), ("fullName", .string(fullName))]
-        case .mentionSearch(let disabled, let trigger):
-            props = [("disabled", .bool(disabled)), ("trigger", .string(trigger ?? "@"))]
-        }
-        return try buildElement(tx, into: parent, after: left, node: object.nodeName, props: props, children: [])
+        try buildElement(
+            tx, into: parent, after: left, node: object.nodeName, props: object.canonicalProps, children: [])
     }
 
     private func insertCopies(

@@ -110,11 +110,15 @@ final class NativeEditorSession {
 
     /// The clipboard of table `blockID`'s CellSelection (PR11c), read in
     /// mailbox order (after every edit posted before it).
-    func tableCopy(_ blockID: String, from: TableSlot, to: TableSlot) async -> TableCopy? {
+    func tableCopy(
+        _ blockID: String, from: TableSlot, to: TableSlot, serverOrigin: String? = nil
+    ) async -> TableCopy? {
         guard let replica else { return nil }
         return await withCheckedContinuation { done in
             replica.mailbox.post(
-                .tableCopy(blockID: blockID, from: from, to: to, reply: { done.resume(returning: $0) }))
+                .tableCopy(
+                    blockID: blockID, from: from, to: to, serverOrigin: serverOrigin,
+                    reply: { done.resume(returning: $0) }))
         }
     }
 

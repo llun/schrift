@@ -131,6 +131,8 @@ enum BlockNoteSubtreePayload {
             return .text(
                 values.compactMap { value in
                     guard case .run(var run) = value else { return nil }
+                    run.text = NativeClipboard.strippingObjectReplacementCharacters(run.text)
+                    guard !run.text.isEmpty else { return nil }
                     run.marks = run.marks.filter(isSafeMark)
                     return .run(run)
                 })
@@ -248,29 +250,43 @@ enum BlockNoteSubtreePayload {
 }
 
 extension BlockNoteSubtreePayload {
-    /// A paste's media blocks (PR13a): each url canonicalised to what a native
-    /// edit stores (`MediaBlock.pastedURL`: a web IRI percent-encoded and
-    /// punycoded, review V3), then each block must be one a native edit could
-    /// write (`MediaBlock.isPastable`), so a payload never stores a
-    /// `javascript:`/`data:` url, an unbounded name or a block the shadow cannot
-    /// spell. Only pasting asks this: copy and delete keep any block as it is.
-    static func validatingMedia(_ copies: [BlockNoteWriter.Copy]) throws -> [BlockNoteWriter.Copy] {
+    /// A paste's media blocks (PR13a) and inline objects (PR13c1): media URLs
+    /// are canonicalised to what a native edit stores and checked via
+    /// `MediaBlock.isPastable`, and inline objects must satisfy
+    /// `NativeInlineObject.isPastable` and are canonicalised to their exact
+    /// schema attributes. Only pasting asks this: copy and delete keep any
+    /// block as it is.
+    static func validatingPastable(_ copies: [BlockNoteWriter.Copy]) throws -> [BlockNoteWriter.Copy] {
         try copies.map { copy in
             guard case .element(let node, var props, let children) = copy else { return copy }
-            guard MediaBlock.isMediaLike(node) else { return .element(node, props, try validatingMedia(children)) }
-            for index in props.indices where props[index].key == "url" {
-                guard case .string(let url) = props[index].value, let pasted = MediaBlock.pastedURL(url) else {
-                    throw Error.malformed
+            if MediaBlock.isMediaLike(node) {
+                for index in props.indices where props[index].key == "url" {
+                    guard case .string(let url) = props[index].value, let pasted = MediaBlock.pastedURL(url) else {
+                        throw Error.malformed
+                    }
+                    props[index].value = .string(pasted)
                 }
-                props[index].value = .string(pasted)
+                guard
+                    MediaBlock.isPastable(
+                        node: node, props: props.map { ProjectedProp(key: $0.key, value: $0.value) },
+                        hasContent: !children.isEmpty)
+                else { throw Error.malformed }
+                return .element(node, props, children)
             }
-            guard
-                MediaBlock.isPastable(
-                    node: node, props: props.map { ProjectedProp(key: $0.key, value: $0.value) },
-                    hasContent: !children.isEmpty)
-            else { throw Error.malformed }
-            return .element(node, props, children)
+            if NativeInlineObject.nodeNames.contains(node) {
+                let projected = props.map { ProjectedProp(key: $0.key, value: $0.value) }
+                guard
+                    let inline = NativeInlineObject.pastable(
+                        node: node, props: projected, hasChildren: !children.isEmpty)
+                else { throw Error.malformed }
+                return .element(node, inline.canonicalProps, [])
+            }
+            return .element(node, props, try validatingPastable(children))
         }
+    }
+
+    static func validatingMedia(_ copies: [BlockNoteWriter.Copy]) throws -> [BlockNoteWriter.Copy] {
+        try validatingPastable(copies)
     }
 }
 
@@ -333,8 +349,24 @@ enum BlockNoteInlinePayload {
             guard case .element("blockContainer", _, let children) = block, children.count == 1,
                 case .element("paragraph", _, let content) = children[0]
             else { throw BlockNoteSubtreePayload.Error.malformed }
-            try validateInline(content)
-            return content
+            return try validatingPastableInline(content)
+        }
+    }
+
+    private static func validatingPastableInline(_ copies: [BlockNoteWriter.Copy]) throws -> [BlockNoteWriter.Copy] {
+        try copies.map { copy in
+            switch copy {
+            case .text: return copy
+            case .element(let node, let props, let children):
+                let projected = props.map { ProjectedProp(key: $0.key, value: $0.value) }
+                guard
+                    let inline = NativeInlineObject.pastable(
+                        node: node, props: projected, hasChildren: !children.isEmpty)
+                else {
+                    throw BlockNoteSubtreePayload.Error.malformed
+                }
+                return .element(node, inline.canonicalProps, [])
+            }
         }
     }
 
