@@ -1093,20 +1093,31 @@ final class DocumentEngine {
         // structure of the whole document (never inline content), so nil means absent.
         guard let root = doc.share[BlockNoteYjs.fragmentField] else { return nil }
         var search = MediaSearch(blockID: blockID)
-        search.visit(root, column: nil, depth: 0)
+        search.visit(root, column: nil, depth: 0, level: 0)
         return search.found ?? (search.wasCut ? .undecided : nil)
     }
 
     /// The fallback search of `mediaLocation` (review F1b): block structure only
     /// (`blockGroup`, `blockContainer`, `columnList`, `column`), block depth
     /// capped like the projection, a cut branch never stopping the rest.
+    /// `level` counts every structural recursion (a crafted group in a group, or
+    /// a column group in a column, included), capped by `maxLevel`: past it the
+    /// branch is cut, so the answer is undecided, never a stack overflow on the
+    /// replica actor and never absent.
     private struct MediaSearch {
+        /// Every structural step a real document needs for `maxDepth` block
+        /// levels (container, group, column group, column) and room to spare.
+        static let maxLevel = NativeBlockProjection.maxDepth * 4
         let blockID: String
         var found: MediaLocation?
         var wasCut = false
 
         /// `type`'s structural children: groups and containers (and column groups and columns).
-        mutating func visit(_ type: YType, column: MediaLocation.Column?, depth: Int) {
+        mutating func visit(_ type: YType, column: MediaLocation.Column?, depth: Int, level: Int) {
+            guard level < Self.maxLevel else {
+                wasCut = true
+                return
+            }
             for item in YBlockProjection.children(of: type, includeFormats: false) {
                 guard found == nil else { return }
                 guard case .type(let child) = item.content, case .xmlElement(let name)? = child.typeRef else {
@@ -1114,18 +1125,22 @@ final class DocumentEngine {
                 }
                 switch name {
                 case "blockGroup":
-                    visit(child, column: column, depth: depth)
+                    visit(child, column: column, depth: depth, level: level + 1)
                 case "blockContainer":
-                    container(child, column: column, depth: depth)
+                    container(child, column: column, depth: depth, level: level + 1)
                 case "columnList":
-                    columns(child, depth: depth)
+                    columns(child, depth: depth, level: level + 1)
                 default:
                     continue
                 }
             }
         }
 
-        private mutating func columns(_ list: YType, depth: Int) {
+        private mutating func columns(_ list: YType, depth: Int, level: Int) {
+            guard level < Self.maxLevel else {
+                wasCut = true
+                return
+            }
             for columnItem in YBlockProjection.children(of: list, includeFormats: false) {
                 guard found == nil, case .type(let columnType) = columnItem.content,
                     columnType.typeRef == .xmlElement(nodeName: "column")
@@ -1134,11 +1149,13 @@ final class DocumentEngine {
                 let place = BlockIndex.blockID(of: list).flatMap { group in
                     BlockIndex.blockID(of: columnType).map { MediaLocation.Column(group: group, id: $0) }
                 }
-                visit(columnType, column: place ?? MediaLocation.Column(group: "", id: ""), depth: depth)
+                visit(
+                    columnType, column: place ?? MediaLocation.Column(group: "", id: ""), depth: depth, level: level + 1
+                )
             }
         }
 
-        private mutating func container(_ container: YType, column: MediaLocation.Column?, depth: Int) {
+        private mutating func container(_ container: YType, column: MediaLocation.Column?, depth: Int, level: Int) {
             if BlockIndex.blockID(of: container) == blockID {
                 // Found: addressable only as a simple container inside a column with ids, within the
                 // projection's depth; anything else is undecided, never gone.
@@ -1165,9 +1182,9 @@ final class DocumentEngine {
                     continue
                 }
                 if child.typeRef == .xmlElement(nodeName: "columnList") {
-                    columns(child, depth: depth + 1)
+                    columns(child, depth: depth + 1, level: level + 1)
                 } else {
-                    visit(child, column: column, depth: depth + 1)
+                    visit(child, column: column, depth: depth + 1, level: level + 1)
                 }
             }
         }

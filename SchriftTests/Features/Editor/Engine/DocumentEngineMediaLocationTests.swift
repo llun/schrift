@@ -83,6 +83,42 @@ final class DocumentEngineMediaLocationTests: DocumentEngineTestCase {
 
     private let image = Block(id: "m", element: "image")
 
+    /// A crafted payload: `levels` groups nested straight inside one another
+    /// (no container between, `columnList`s in columns), after the lead block.
+    private func craftedLocation(_ id: String, levels: Int, columns: Bool) throws -> MediaLocation? {
+        let doc = YDoc(clientID: 1, gc: true)
+        defer { doc.destroy() }
+        let fragment = doc.get(BlockNoteYjs.fragmentField)
+        try doc.transact { tx in
+            func element(_ name: String, into parent: YType, id: String? = nil) throws -> YType {
+                let type = YType(typeRef: .xmlElement(nodeName: name))
+                try YWrite.insertAfter(tx, into: parent, after: nil, [.type(type)])
+                if let id { try YWrite.mapSet(tx, on: type, key: "id", .any([.string(id)])) }
+                return type
+            }
+            var parent = try element("blockGroup", into: fragment)
+            for level in 0..<levels {
+                if columns {
+                    let list = try element("columnList", into: parent, id: "l\(level)")
+                    parent = try element("column", into: list, id: "c\(level)")
+                } else {
+                    parent = try element("blockGroup", into: parent)
+                }
+            }
+        }
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface(blocks: projection(doc)))
+        return engine.mediaLocation(id)
+    }
+
+    /// A crafted nesting of groups, or of column groups in columns, far past
+    /// any real document is cut, never walked without bound: undecided.
+    func testACraftedDeepNestingIsUndecidedWithoutUnboundedRecursion() throws {
+        for columns in [false, true] {
+            let found = try XCTUnwrap(craftedLocation("m", levels: 2_000, columns: columns), "\(columns)")
+            XCTAssertTrue(found.isUndecided, "\(columns)")
+        }
+    }
+
     func testAnIdAbsentFromTheDocumentIsNil() throws {
         XCTAssertNil(try location("absent", group: Group(columns: [("c1", [Block(id: "a")])])))
     }
