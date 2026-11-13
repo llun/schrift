@@ -253,8 +253,9 @@ final class BlockNoteColumnOracleTests: XCTestCase {
     }
 
     /// The real test document (`.review/state.bin`, git-ignored) when present:
-    /// its web group (one column holds an image) is preserved and read-only,
-    /// so the document has no shadow until media are authored (PR13).
+    /// its web group (one column holds a captioned image) is preserved and,
+    /// since PR13a, modeled; the document's interlink, math and diagram keep
+    /// it without a shadow.
     func testTheRealCaptureGroupIsPreserved() throws {
         let review = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".review")
@@ -271,7 +272,7 @@ final class BlockNoteColumnOracleTests: XCTestCase {
         XCTAssertEqual(group.blocks.map { $0.map(\.node) }, [["paragraph"], ["paragraph", "image"]])
         let native = NativeBlockProjection.project(doc)
         let card = try XCTUnwrap(native.blocks.first { $0.block.node == "columnList" })
-        XCTAssertEqual(card.block.fidelity, .opaque(reason: "columnList: unmodeled block"))
+        XCTAssertEqual(card.block.fidelity, .modeled)
         XCTAssertNil(NativeBlockProjection.markdownShadow(doc))
         // The index is canonical: the document's other blocks are addressable.
         let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())

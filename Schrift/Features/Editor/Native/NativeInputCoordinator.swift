@@ -1660,6 +1660,22 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// editor cannot author yet (divider, photo, file) are not offered.
     @discardableResult
     func applySlashItem(_ item: SlashMenuItem) -> Bool {
+        // A media block (PR13a): in place of the emptied paragraph or after
+        // it, then its inspector (`requestedMedia`) uploads or links the file.
+        if case .media(let node) = item.action {
+            guard let view, canFormat, view.selectedRange.length == 0, let token = slashToken,
+                let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location),
+                let position = surface.rangeIndex.position(for: entry.blockID)
+            else { return false }
+            let ids = [UUID().uuidString, UUID().uuidString]
+            let replaces = text(of: surface.blocks[position]).utf16.count == token.count
+            let posted = applyStructural(
+                entry.blockID, .insertMedia(node: node, ids: ids, removing: token),
+                refusal: .native_editor_input_unavailable,
+                retry: again { [weak self] in self?.applySlashItem(item) ?? false }, readsSelection: true)
+            if posted { requestedMedia = replaces ? entry.blockID : ids[0] }
+            return posted
+        }
         // A column group (PR12b): the engine decides replace or insert after; one id spare either way.
         if case .columns(let count) = item.action {
             guard let view, canFormat, view.selectedRange.length == 0, let token = slashToken,
@@ -1702,7 +1718,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             case "checklist": [item, toggleListSlashItem]
             default: [item]
             }
-        } + [twoColumnsSlashItem, threeColumnsSlashItem]
+        } + [twoColumnsSlashItem, threeColumnsSlashItem] + mediaSlashItems
 
     private static func slashType(_ action: SlashMenuAction) -> (node: String, props: [ProjectedProp])? {
         if case .toggle(let heading) = action {
@@ -1728,6 +1744,48 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         case .codeBlock: return ("codeBlock", [])
         default: return nil
         }
+    }
+
+    // MARK: - Media (PR13a)
+
+    /// The media block the slash menu just made, for its inspector; the view
+    /// clears it once presented.
+    var requestedMedia: String?
+
+    /// Media block `blockID` as the surface shows it (a preview card), or nil.
+    func mediaBlock(_ blockID: String) -> BlockSnapshot? {
+        surface.rangeIndex.position(for: blockID).map { surface.blocks[$0] }.flatMap {
+            MediaBlock.isMediaLike($0.node) ? $0 : nil
+        }
+    }
+
+    /// A media block's props as one command (BlockNote's `updateBlock`);
+    /// `expecting`, an upload's slot, makes it a commit the engine refuses for
+    /// a block whose kind or url changed. Unchanged values write nothing.
+    @discardableResult
+    func setMediaProps(_ blockID: String, _ props: [ProjectedProp], expecting: MediaBlock.Slot? = nil) -> Bool {
+        guard let view, canFormat, let block = mediaBlock(blockID), MediaBlock.nodes.contains(block.node) else {
+            return false
+        }
+        let defaults = MediaBlock.schemas[block.node] ?? []
+        func current(_ key: String) -> YAnyValue? {
+            block.props.last { $0.key == key }?.value ?? defaults.first { $0.key == key }?.value
+        }
+        if expecting == nil, !props.contains(where: { current($0.key) != $0.value }) { return true }
+        return applyStructural(
+            blockID, .mediaProps(props, expecting: expecting),
+            refusal: expecting == nil ? .native_editor_input_unavailable : .native_editor_media_upload_dropped,
+            keeping: view.selectedRange,
+            retry: again { [weak self] in self?.setMediaProps(blockID, props, expecting: expecting) ?? false })
+    }
+
+    /// Deletes media block `blockID` with its subtree (the inspector's Delete).
+    @discardableResult
+    func deleteMedia(_ blockID: String) -> Bool {
+        guard canFormat, mediaBlock(blockID) != nil else { return false }
+        return applyStructural(
+            blockID, .deleteBlock, refusal: .native_editor_input_unavailable,
+            retry: again { [weak self] in self?.deleteMedia(blockID) ?? false })
     }
 
     /// Unchanged values write nothing; anything else is one validated command.

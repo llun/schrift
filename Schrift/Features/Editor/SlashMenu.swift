@@ -12,6 +12,10 @@ enum SlashMenuAction: Equatable, Sendable {
     /// A column group of this many columns: native editor only (PR12b,
     /// BlockNote's "Two Columns" / "Three Columns").
     case columns(Int)
+    /// An empty media block of this kind (`image`, `video`, `audio`, `file`,
+    /// `pdf`): native editor only (PR13a, BlockNote's media items); its
+    /// inspector then uploads or links the file.
+    case media(String)
 
     /// True for the actions that must reach the server **now** — the only items withheld
     /// offline or on a document that has no server id yet.
@@ -25,7 +29,7 @@ enum SlashMenuAction: Equatable, Sendable {
     var requiresImmediateUpload: Bool {
         switch self {
         case .insertAttachment: return true
-        case .insertPhoto, .convert, .toggle, .columns: return false
+        case .insertPhoto, .convert, .toggle, .columns, .media: return false
         }
     }
 }
@@ -107,6 +111,25 @@ let twoColumnsSlashItem = SlashMenuItem(
 let threeColumnsSlashItem = SlashMenuItem(
     id: "threeColumns", title: "Three columns", titleKey: .editor_slash_three_columns, icon: .content_copy,
     action: .columns(3), keywords: ["columns", "row", "split", "layout", "three"])
+/// The web's media items (PR13a, native editor only): BlockNote's Image,
+/// Video, Audio and File, and Docs' PDF.
+let mediaSlashItems: [SlashMenuItem] = [
+    SlashMenuItem(
+        id: "mediaImage", title: "Image", titleKey: .editor_slash_image, icon: .image, action: .media("image"),
+        keywords: ["image", "photo", "picture", "img", "upload", "media"]),
+    SlashMenuItem(
+        id: "mediaVideo", title: "Video", titleKey: .editor_slash_video, icon: .photo_camera, action: .media("video"),
+        keywords: ["video", "movie", "film", "upload", "media"]),
+    SlashMenuItem(
+        id: "mediaAudio", title: "Audio", titleKey: .editor_slash_audio, icon: .attach_file, action: .media("audio"),
+        keywords: ["audio", "sound", "music", "recording", "upload", "media"]),
+    SlashMenuItem(
+        id: "mediaFile", title: "File", titleKey: .editor_slash_file, icon: .attach_file, action: .media("file"),
+        keywords: ["file", "attachment", "doc", "document", "upload"]),
+    SlashMenuItem(
+        id: "mediaPDF", title: "PDF", titleKey: .editor_slash_pdf, icon: .description, action: .media("pdf"),
+        keywords: ["pdf", "document", "embed", "file"]),
+]
 let toggleHeadingSlashItem = SlashMenuItem(
     id: "toggleHeading", title: "Toggle heading", titleKey: .editor_slash_toggle_heading, icon: .expand_more,
     action: .toggle(heading: true), keywords: ["toggle", "collapsible", "heading", "details"])

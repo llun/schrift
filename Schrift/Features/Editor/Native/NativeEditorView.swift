@@ -22,6 +22,11 @@ struct NativeEditorView: View {
     var documentID: UUID? = nil
     /// A host's own store (tests); the app's by default.
     var readingPositions: ReadingPositionStore? = nil
+    /// Uploads a media block's file (PR13a): the server's id for the document
+    /// (nil for one only this device knows, which cannot upload) and the
+    /// upload itself; no upload offers none.
+    var uploadDocumentID: UUID? = nil
+    var mediaUpload: NativeMediaUploads.Upload? = nil
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -40,6 +45,9 @@ struct NativeEditorView: View {
     @State private var lastColumns: String?
     /// A find or outline result in a column, opened once the outline has gone (PR12c).
     @State private var pendingColumnJump: ColumnJump?
+    /// The media block whose inspector is open, and the document's uploads (PR13a).
+    @State private var openMedia: NativeMediaRequest?
+    @State private var uploads: NativeMediaUploads?
 
     var body: some View {
         Group {
@@ -57,7 +65,8 @@ struct NativeEditorView: View {
                     labels: .document(loc),
                     theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline,
                     onOpenTable: { openTable = NativeTableRequest(id: $0) },
-                    onOpenColumns: { openColumns = columnEditor($0) }
+                    onOpenColumns: { openColumns = columnEditor($0) },
+                    onOpenMedia: { openMedia = NativeMediaRequest(id: $0) }, uploadingBlock: uploads?.uploading
                 )
                 .id(ObjectIdentifier(session))
             }
@@ -80,6 +89,12 @@ struct NativeEditorView: View {
             VStack(spacing: 0) {
                 if let input = session.input, let recovery = input.composition.pendingRecoveries.first {
                     recoveryBanner(recovery, input: input)
+                }
+                if openMedia == nil, let failure = uploads?.failure {
+                    Text(loc[failure.key])
+                        .font(.footnote)
+                        .padding()
+                        .accessibilityIdentifier("nativeEditor.mediaNotice")
                 }
                 if let key = session.input?.noticeKey {
                     Text(loc[key])
@@ -127,6 +142,24 @@ struct NativeEditorView: View {
             }
         ) { model in
             ColumnEditorScreen(model: model, serverOrigin: serverOrigin, isOffline: isOffline)
+        }
+        .sheet(item: $openMedia) { request in
+            NativeMediaInspector(
+                session: session, blockID: request.id, uploads: uploads, serverOrigin: serverOrigin,
+                isOffline: isOffline, onClose: { openMedia = nil })
+        }
+        .onChange(of: session.input?.requestedMedia) { _, id in
+            // The slash menu's new media block: its inspector uploads or links the file.
+            guard let id else { return }
+            session.input?.requestedMedia = nil
+            openMedia = NativeMediaRequest(id: id)
+        }
+        .onChange(of: isOffline) { _, _ in uploads?.isOffline = { [isOffline] in isOffline } }
+        .task(id: ObjectIdentifier(session)) {
+            guard let mediaUpload, uploads == nil else { return }
+            uploads = NativeMediaUploads(
+                session: session, documentID: uploadDocumentID, serverOrigin: serverOrigin,
+                isOffline: { [isOffline] in isOffline }, upload: mediaUpload)
         }
         .nativeLinkEditing($linkTarget, input: session.input)
         .modifier(
@@ -452,7 +485,9 @@ extension NativeEditorLabels {
             columnsRotor: loc[.native_editor_columns_rotor], math: loc[.native_editor_math],
             diagram: loc[.native_editor_diagram], imageExternal: loc[.editor_image_external],
             imageExternalA11y: loc[.editor_image_external_a11y], imageOffline: loc[.editor_image_offline],
-            imageFailed: loc[.editor_image_failed], blockMenu: loc[.native_editor_block_actions],
+            imageFailed: loc[.editor_image_failed], mediaEmpty: loc[.native_editor_media_empty],
+            mediaUploading: loc[.native_editor_media_uploading], uploadElsewhere: loc[.native_editor_upload_elsewhere],
+            blockMenu: loc[.native_editor_block_actions],
             blockActions: Dictionary(
                 uniqueKeysWithValues: NativeBlockAction.allCases.map { ($0, loc[$0.labelKey]) }))
     }
@@ -468,6 +503,8 @@ private struct NativeTextCanvas: UIViewRepresentable {
     let isOffline: Bool
     let onOpenTable: (String) -> Void
     let onOpenColumns: (String) -> Void
+    var onOpenMedia: ((String) -> Void)? = nil
+    var uploadingBlock: String? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -489,6 +526,8 @@ private struct NativeTextCanvas: UIViewRepresentable {
         session.textView.blockControls.isOffline = isOffline
         session.textView.blockControls.onOpenTable = onOpenTable
         session.textView.blockControls.onOpenColumns = onOpenColumns
+        session.textView.blockControls.onOpenMedia = onOpenMedia
+        session.textView.blockControls.uploadingBlock = uploadingBlock
         coordinator.update(
             surface: session.surface, presentation: NativeTextPresentation(contentSize: contentSize, labels: labels))
     }

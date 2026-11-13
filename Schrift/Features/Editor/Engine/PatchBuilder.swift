@@ -264,7 +264,7 @@ struct PatchBuilder {
         }
         for id in ordered {
             visitedEntries += 1
-            if structural.contains(id) || (props.contains(id) && textDeltas[id] != nil) {
+            if structural.contains(id) || (props.contains(id) && (textDeltas[id] != nil || isPreviewed(id))) {
                 guard let entry = index.entries[id] else { continue }
                 changes.append(.replaceBlock(blockID: id, block: snapshot(entry)))
             } else if props.contains(id), let entry = index.entries[id] {
@@ -382,6 +382,13 @@ struct PatchBuilder {
 
     /// One block at its indexed depth and parent, as the tree projection
     /// reads it. O(block); not counted (the engine's own reads use it).
+    /// A block shown as a preview card (media, PR13a): its props are its
+    /// preview, so a prop change re-sends the whole block.
+    private func isPreviewed(_ id: String) -> Bool {
+        guard case .xmlElement(let node)? = index.entries[id]?.element?.typeRef else { return false }
+        return !NativeBlockPreview.proseNodes.contains(node)
+    }
+
     func nativeSnapshot(_ entry: BlockIndex.Entry) -> NativeBlockSnapshot {
         if index.isTableParagraph(entry.id) { return Self.paragraphSnapshot(entry) }
         return NativeBlockProjection.projectBlock(

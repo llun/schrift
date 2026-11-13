@@ -322,7 +322,10 @@ struct EditorView: View {
                     saveFailureDetail: viewModel.saveFailureDetail,
                     saveFailureOffersRetry: viewModel.saveFailureOffersRetry,
                     onSave: { nativeOpen.saveNow(viewModel: viewModel) }, isOffline: showsOffline,
-                    documentID: viewModel.documentID)
+                    documentID: viewModel.documentID,
+                    uploadDocumentID: viewModel.isLocalDocument ? nil : viewModel.documentID,
+                    mediaUpload: viewModel.client.mediaUploader(
+                        retryInterval: viewModel.mediaCheckRetryInterval))
             case .preservedUnavailable:
                 ContentUnavailableView(
                     loc[.native_editor_owned_unavailable_title], systemImage: "doc.richtext",

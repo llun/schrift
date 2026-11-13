@@ -52,6 +52,87 @@ enum NativeExportMarkdown {
         text.trimmingCharacters(in: jsWhitespace) + "\n"
     }
 
+    // MARK: - Media (PR13a)
+
+    /// The export of a root media block (`toExternalHTML` then `htmlToMarkdown`,
+    /// media.mjs): a shown image or video without a caption is
+    /// `![name](url)` (nothing escaped); with a caption a raw `<figure>`
+    /// (attributes and text HTML-escaped, the caption JS-trimmed, the image's
+    /// alt dropped when empty or equal to the caption; a video figure carries
+    /// no name); audio is raw `<audio>` HTML, in a figure with a caption; a
+    /// hidden preview, and a file always, is `formatLink(name || url)` with
+    /// the caption as its own untrimmed paragraph; Docs' pdf preview is an
+    /// iframe, which prints nothing (its caption paragraph stays); an empty url
+    /// prints an empty block, and `uploadLoader` nothing. Without the trailing
+    /// blank line, which the shadow's join adds. `nil` for a pdf whose url the
+    /// server would print as a span glued to the next block (not http(s)).
+    static func media(node: String, props: [ProjectedProp]) -> String? {
+        guard node != MediaBlock.uploadLoader else { return "" }
+        let url = MediaBlock.string("url", in: props)
+        let name = MediaBlock.string("name", in: props)
+        let caption = MediaBlock.string("caption", in: props)
+        let preview = MediaBlock.showsPreview(props)
+        func link() -> String {
+            formatLink((name.isEmpty ? url : name).trimmingCharacters(in: jsWhitespace), url)
+        }
+        func linked() -> String { caption.isEmpty ? link() : link() + "\n\n" + caption }
+        if node == "pdf" {
+            var parts: [String] = []
+            if !url.isEmpty {
+                guard isSafePDFURL(url) else { return nil }
+                if !preview { parts.append(link()) }
+            }
+            if !caption.isEmpty { parts.append(caption) }
+            return parts.joined(separator: "\n\n")
+        }
+        guard !url.isEmpty else { return "" }
+        if node == "file" || !preview { return linked() }
+        let captionText = caption.trimmingCharacters(in: jsWhitespace)
+        let src = escapeAttribute(url)
+        let figcaption = captionText.isEmpty ? "" : "<figcaption>\(escapeText(captionText))</figcaption>"
+        switch node {
+        case "audio" where caption.isEmpty:
+            return "<audio src=\"\(src)\" controls></audio>"
+        case "audio":
+            return "<figure><audio src=\"\(src)\" controls></audio>\(figcaption)</figure>"
+        case "video":
+            if caption.isEmpty { return "![\(name)](\(url))" }
+            return captionText.isEmpty
+                ? "![](\(url))" : "<figure><video src=\"\(src)\" controls></video>\(figcaption)</figure>"
+        default:  // image
+            if caption.isEmpty || captionText.isEmpty { return "![\(name)](\(url))" }
+            let alt = name.isEmpty || name == captionText ? "" : " alt=\"\(escapeAttribute(name))\""
+            return "<figure><img\(alt) src=\"\(src)\">\(figcaption)</figure>"
+        }
+    }
+
+    /// Docs' `isSafePdfUrl` (`new URL(url, "http://_")` is http or https),
+    /// conservatively: a relative reference or an http(s) URL with a plain
+    /// host, invalid path characters percent-encoded as the URL parser does;
+    /// anything doubtful (edge whitespace or controls, which that parser
+    /// strips, an encoded host) is unsafe (no shadow).
+    private static func isSafePDFURL(_ url: String) -> Bool {
+        let edges = [url.unicodeScalars.first, url.unicodeScalars.last].compactMap { $0 }
+        guard !edges.contains(where: { $0.value <= 0x20 }),
+            !url.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }),
+            let parsed = URL(string: url, encodingInvalidCharacters: true)
+        else { return false }
+        guard let scheme = parsed.scheme?.lowercased() else { return !url.hasPrefix("//") }
+        guard scheme == "http" || scheme == "https", let host = parsed.host(percentEncoded: true) else { return false }
+        return !host.isEmpty && !host.contains("%")
+    }
+
+    /// `escapeHtmlAttr`.
+    private static func escapeAttribute(_ value: String) -> String {
+        escapeText(value).replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    /// `escapeHtmlText`.
+    private static func escapeText(_ value: String) -> String {
+        value.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
+
     // MARK: - Tables (PR11a)
 
     /// `serializeTable` over a familiar grid: the span-expanded grid (a

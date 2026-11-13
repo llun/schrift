@@ -3130,6 +3130,7 @@ final class EditorViewModel {
         // The classic editor has no toggle block (the native menu's item only).
         if case .toggle = item.action { return }
         if case .columns = item.action { return }
+        if case .media = item.action { return }
         let text = blocks[index].text
         let tokenEnd =
             slashTokenLength(text: text, kind: blocks[index].kind, caret: selection?.location)
@@ -3163,7 +3164,7 @@ final class EditorViewModel {
             // Same contract as photo: `insertAttachmentBlock` acts on success only.
             focusBlock(focusedBlockID, cursorAt: 0)
             requestAttachmentInsertion()
-        case .toggle, .columns:
+        case .toggle, .columns, .media:
             break
         }
         markDirty()

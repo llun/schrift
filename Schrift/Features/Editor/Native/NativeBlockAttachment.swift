@@ -193,16 +193,39 @@ final class NativeAttachmentView: UIView {
         }
         build()
         applyTheme()
-        if content.preview.isTable || content.preview.isColumns {
-            // The card opens the table editor (PR11a) or the column editor (PR12a).
+        if content.preview.isTable || content.preview.isColumns || isMedia {
+            // The card opens the table editor (PR11a), the column editor
+            // (PR12a) or the media inspector (PR13a).
             accessibilityTraits = [.button]
             addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(openTable)))
         }
     }
 
+    /// A media block's card (PR13a): its node is the attachment's own.
+    private var isMedia: Bool {
+        switch content.preview {
+        case .image: true
+        case .file(let node, _, _): MediaBlock.isMediaLike(node)
+        default: false
+        }
+    }
+
+    /// A file card's detail line and its text, which an upload replaces (PR13a).
+    private var detail: (label: UILabel, text: String)?
+
+    /// "Uploading…" while this block's upload runs; presentation only.
+    func applyUploadState() {
+        guard let detail else { return }
+        detail.label.text =
+            controls?.uploadingBlock == content.blockID && controls?.uploadingBlock != nil
+            ? labels.mediaUploading : detail.text
+    }
+
     @objc private func openTable() {
         if content.preview.isColumns {
             controls?.onOpenColumns?(content.blockID)
+        } else if isMedia {
+            controls?.onOpenMedia?(content.blockID)
         } else {
             controls?.onOpenTable?(content.blockID)
         }
@@ -273,7 +296,14 @@ final class NativeAttachmentView: UIView {
                 label(
                     name.isEmpty ? (URL(string: url)?.lastPathComponent ?? kind) : name, primary: true,
                     font: NativeAttachmentLayout.titleFont(traits)))
-            stack.addArrangedSubview(label(kind, primary: false, font: NativeAttachmentLayout.detailFont(traits)))
+            // A media block without a url yet, or a peer's upload (PR13a).
+            let detail =
+                node == MediaBlock.uploadLoader
+                ? labels.uploadElsewhere : url.isEmpty && MediaBlock.nodes.contains(node) ? labels.mediaEmpty : kind
+            let detailLabel = label(detail, primary: false, font: NativeAttachmentLayout.detailFont(traits))
+            stack.addArrangedSubview(detailLabel)
+            self.detail = (detailLabel, detail)
+            applyUploadState()
         case .table(let cells, let rowCount, let columnCount):
             pin(0)
             stack.spacing = 0
@@ -477,6 +507,10 @@ final class NativeAttachmentView: UIView {
             openTable()
             return true
         }
+        if isMedia, loadButton == nil, controls?.onOpenMedia != nil {
+            openTable()
+            return true
+        }
         guard loadButton != nil else { return false }
         approveAndLoad()
         return true
@@ -510,6 +544,7 @@ extension NativeEditorLabels {
         case "audio": audio
         case "file": file
         case "pdf": pdf
+        case MediaBlock.uploadLoader: uploadElsewhere
         case "mathBlock": math
         case "diagram": diagram
         case "": unknownBlock
