@@ -1,0 +1,57 @@
+AGENTS.md
+  s_dc239db0cc1c9d::t_99914ae3ae0356 3940-3945
+Schrift/Core/Yjs/BlockNoteSubtreePayload.swift
+  s_dc239db0cc1c9d::t_1be231387d0fb1 134-135,253-259,262-267,269-274,276-284,287-290,352-369
+Schrift/Core/Yjs/BlockNoteTableClipboard.swift
+  s_dc239db0cc1c9d::t_68f7c72795dec2 86-88,105-111,307-309,324-327,343,374-375,384,389,409,416-420,444-466,836
+Schrift/Core/Yjs/BlockNoteTableCommands.swift
+  s_dc239db0cc1c9d::t_7d633bee22ca47 444-446,1148,1152-1155,1179-1182
+Schrift/Core/Yjs/BlockNoteWriter.swift
+  s_dc239db0cc1c9d::t_fcccc630a068a6 900-901
+Schrift/Core/Yjs/NativeBlockPreview.swift
+  s_dc239db0cc1c9d::t_a91052fc81b188 156
+Schrift/Core/Yjs/NativeInlineObject.swift
+  s_dc239db0cc1c9d::t_f5f666ced3c7e5 20-27,36-54,128-177,204-290
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_dc239db0cc1c9d::t_23113224428b9a 716-719,754-758,787-791,796,966-968,974-975,1620
+Schrift/Features/Editor/Engine/EditorSurface.swift
+  s_dc239db0cc1c9d::t_85ffe4e39df875 319-330
+Schrift/Features/Editor/Native/DocumentReplicaSession.swift
+  s_dc239db0cc1c9d::t_fb9784dd108d97 89,144,147,155,430-431
+Schrift/Features/Editor/Native/NativeDocumentNavigation.swift
+  s_dc239db0cc1c9d::t_b35906606cc6da 22-28,38
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_dc239db0cc1c9d::t_b59360aed1ccd8 113-115,119-121
+Schrift/Features/Editor/Native/NativeInlineChipAttachment.swift
+  s_dc239db0cc1c9d::t_515ca977b777f6 92,97-98,100,105,110-111,151-172,174,181,195,213
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  s_dc239db0cc1c9d::t_05a5c92a35bedb 1997
+Schrift/Features/Editor/Native/ReplicaCommandMailbox.swift
+  s_dc239db0cc1c9d::t_c1eaf9e653f3e6 78-80,116
+Schrift/Features/Editor/Native/TableEditorViewController.swift
+  s_dc239db0cc1c9d::t_fed51ddf7ba439 504-508,510-511,919-923,926,929-930,961,1040
+SchriftTests/Core/Yjs/BlockNoteInlineOracleTests.swift
+  s_dc239db0cc1c9d::t_eef3eb0e3bbf38 744-1014
+SchriftTests/Features/Editor/Native/NativeInlineObjectTests.swift
+  s_dc239db0cc1c9d::t_b9e9d2b3522b61 1531-1754
+SchriftTests/Features/Editor/Native/TableSelectionTests.swift
+  s_dc239db0cc1c9d::t_7c5645d10e7dd6 294-346
+docs/architecture.md
+  s_dc239db0cc1c9d::t_3e7d6cc2abd60d 1180-1182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1e46667a2c3c4145401e635be6f2f181df49a728",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
