@@ -449,7 +449,8 @@ final class ColumnLayoutTests: NativeEditingTestCase {
     /// The 12b limit: Move down of a column's last block takes it to the next
     /// column's top, and the caret goes with it (that column is active).
     func testTheCaretFollowsABlockMovedToTheNextColumn() async throws {
-        let seed = try XCTUnwrap(BlockNoteColumnStructureCaptures.edits.first { $0.name == "moveDownFromColumnEnd" }?.seed)
+        let seed = try XCTUnwrap(
+            BlockNoteColumnStructureCaptures.edits.first { $0.name == "moveDownFromColumnEnd" }?.seed)
         let (harness, model) = try await editor(try XCTUnwrap(Data(base64Encoded: seed)))
         let first = model.columns[0]
         let second = model.columns[1]

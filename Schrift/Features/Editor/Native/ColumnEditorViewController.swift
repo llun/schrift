@@ -567,7 +567,9 @@ final class ColumnTextContainer: UIScrollView {
             self.textViewLaidOut(view)
         }
         view.onFocus = { [weak self, weak view] in
-            guard let self, let view, let index = self.frames.firstIndex(where: { $0.textView === view }) else { return }
+            guard let self, let view, let index = self.frames.firstIndex(where: { $0.textView === view }) else {
+                return
+            }
             self.onActivate?(index)
         }
         addSubview(frame)

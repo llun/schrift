@@ -358,13 +358,13 @@ final class NativeEditorUITests: XCTestCase {
         let second = app.textViews["nativeEditor.column.1"]
         XCTAssertTrue(second.waitForExistence(timeout: 10), "the column editor opened")
         XCTAssertTrue(field.waitForNonExistence(timeout: 5), "the outline closed")
-        snap(app, "find")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         app.typeText("Far")
         let typed = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value BEGINSWITH %@", "FarRight"), object: second)
         XCTAssertEqual(
-            XCTWaiter.wait(for: [typed], timeout: 5), .completed, "the caret was at the match: \(second.value ?? "nil")")
+            XCTWaiter.wait(for: [typed], timeout: 5), .completed, "the caret was at the match: \(second.value ?? "nil")"
+        )
         app.buttons["nativeEditor.columns.done"].tap()
         XCTAssertTrue(card.waitForExistence(timeout: 5))
     }
@@ -392,7 +392,6 @@ final class NativeEditorUITests: XCTestCase {
         second.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         app.typeText("ward")
-        snap(app, "portrait")
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(second.waitForStableFrame())
         XCTAssertTrue(app.keyboards.firstMatch.exists, "rotation keeps the keyboard")
@@ -402,7 +401,6 @@ final class NativeEditorUITests: XCTestCase {
             predicate: NSPredicate(format: "value CONTAINS %@", "wardly"), object: second)
         XCTAssertEqual(
             XCTWaiter.wait(for: [typed], timeout: 5), .completed, "typing went on in place: \(second.value ?? "nil")")
-        snap(app, "landscape")
         XCUIDevice.shared.orientation = .portrait
         XCTAssertTrue(second.waitForStableFrame())
         XCTAssertTrue(app.keyboards.firstMatch.exists)
@@ -1019,13 +1017,6 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertLessThan(
             endHeight - startHeight, 0.15 * endHeight,
             "revealed cards were estimated at their final height: \(startHeight) -> \(endHeight)")
-    }
-
-    private func snap(_ app: XCUIApplication, _ name: String) {
-        let shot = XCTAttachment(screenshot: app.screenshot())
-        shot.name = name
-        shot.lifetime = .keepAlways
-        add(shot)
     }
 
     private func text(of element: XCUIElement) -> String { element.value as? String ?? "" }
