@@ -1,0 +1,43 @@
+Schrift/Core/Yjs/BlockNoteSubtreePayload.swift
+  s_dc239db0cc1c9d::t_f23ebb44783287 197-201
+Schrift/Core/Yjs/BlockNoteWriter.swift
+  s_dc239db0cc1c9d::t_49b0dac6f04fcd 209,220,230-232,1054-1058
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_dc239db0cc1c9d::t_059bf70310de22 1658-1680
+Schrift/Features/Editor/Native/ColumnEditorViewController.swift
+  s_dc239db0cc1c9d::t_5d9b1d050f9dfc 482
+Schrift/Features/Editor/Native/DocumentReplicaSession.swift
+  s_dc239db0cc1c9d::t_dc073a49a1aa53 446-449,613
+Schrift/Features/Editor/Native/NativeClipboard.swift
+  s_dc239db0cc1c9d::t_420ea3ffca6440 40,52,54-55,61-149
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_dc239db0cc1c9d::t_ef42557af9892d 54-56,128,131-132,159,185,245,380-382
+Schrift/Features/Editor/Native/NativeEditorView.swift
+  s_dc239db0cc1c9d::t_826151d3ddd7be 544
+Schrift/Features/Editor/Native/NativeFormattingCommands.swift
+  s_dc239db0cc1c9d::t_acb72b499a7b76 116-118
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  s_dc239db0cc1c9d::t_0678e1818de079 135-140,535-539,578-581,800-808,810-812,816-821,839-843,858,864,1273,1582,1586-1610,1637,1640,1652,1885-1893,1906-1913,1916,1926-1929,1938-1959,1980-2015,2017-2020,2022-2023,2025-2039,2046,2063,2077,2080-2086,2187-2189,2272-2274,2278-2301
+Schrift/Features/Editor/Native/ReplicaCommandMailbox.swift
+  s_dc239db0cc1c9d::t_c6e445d834eb5f 4-8,87,207,218-220
+Schrift/Features/Editor/Native/TableEditorViewController.swift
+  s_dc239db0cc1c9d::t_27bb6e747f0f14 171-175,518-522
+SchriftTests/Features/Editor/Native/NativeInlineObjectTests.swift
+  s_dc239db0cc1c9d::t_013f85907cf13f 655-1163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fe06bf3015535412efc84970c4d95eb6b52b4034",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
