@@ -1134,6 +1134,21 @@ and deletes a whole group. A column a collaborator adds or removes, or a group t
 shows in the open editor at once; a group that can no longer be edited closes it. Each change is
 the web's own, checked against the web for every operation.
 
+**PR12c Column presentation, VoiceOver and find.** The column editor shows every column at once
+in one scroll: side by side at the group's relative widths in regular width (iPad, wide windows)
+when every column gets at least 220 points at the current text size, stacked one after another
+otherwise (iPhone, narrow split view, large Dynamic Type). The picker and the Column menu act on
+the active column, which is the one you tap into. Each column's text view only ever covers the
+part of its column on screen and is scrolled to match, so a column of a thousand blocks lays out
+a screenful; rotating, resizing a split view or a Stage Manager window only moves those frames,
+so the keyboard, the caret, marked IME text and a key not yet confirmed all stay. VoiceOver reads
+each column as a group named "Column 2 of 3", in column order, with a Columns rotor, and the
+group's card in the document names its columns and their first lines. Find and the outline read
+the blocks inside familiar groups; choosing a result there closes the outline and opens the column
+editor on that column with the caret at the block, through a handle that refuses a block the
+group re-created since it was read. Move up/down that takes a block into the next or previous
+column now takes the caret with it.
+
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom
 actions on the text view) acts on the caret's block and its whole subtree: Move up, Move

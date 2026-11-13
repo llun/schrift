@@ -449,7 +449,10 @@ private struct ColumnTextHost: UIViewRepresentable {
         }
         container.contentSizeCategory = contentSize
         if container.labels != labels { container.labels = labels }
-        container.onActivate = { [model] in model.active = $0 }
+        container.onActivate = { [model] index in
+            // Focus moved during a SwiftUI update too (the picker's column): change only what changed.
+            if model.active != index { model.active = index }
+        }
         container.show(
             model.columns.map(\.textView), widths: model.group?.columns.map { $0.width ?? 1 } ?? [],
             active: model.active)
