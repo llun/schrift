@@ -1,0 +1,21 @@
+Schrift/Features/Editor/Engine/BlockIndex.swift
+  s_dc239db0cc1c9d::t_8b24eef738dfa7 525-528
+Schrift/Features/Editor/Engine/EngineSelection.swift
+  s_dc239db0cc1c9d::t_17b69f4cf99638 119-121,131-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28c57054d9440a27870d48b0e8cf6b0b45fb0b00",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
