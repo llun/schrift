@@ -160,8 +160,9 @@ final class DocumentEngine {
             !builder.nativeSnapshot(entry).block.fidelity.isOpaque,
             entry.isSimpleContainer, let element = entry.element,
             case .xmlElement(let node)? = element.typeRef, writer.schemas[node] != nil || isCellText(entry),
-            // A cell paragraph may hold hard breaks between its texts (PR11b).
-            entry.isSimpleText || element.length == 0 || isCellText(entry),
+            // A cell paragraph may hold hard breaks or inline objects, and prose
+            // blocks may hold familiar inline objects (PR13c).
+            entry.isSimpleText || entry.hasInlineObjects || element.length == 0 || isCellText(entry),
             // A code block keeps "\n" as a source line break (BlockNote's Enter
             // there); in prose a newline is a block break, a range command.
             !replacement.unicodeScalars.contains(where: {
@@ -177,7 +178,7 @@ final class DocumentEngine {
                 || !(0xd800...0xdbff).contains(units[offset - 1]) || !(0xdc00...0xdfff).contains(units[offset])
         }
         guard !entry.isSimpleText || entry.textType?.length == UInt(units.count),
-            entry.isSimpleText || element.length == 0 || isCellText(entry) || units.isEmpty,
+            entry.isSimpleText || entry.hasInlineObjects || element.length == 0 || isCellText(entry) || units.isEmpty,
             validBoundary(range.lowerBound), validBoundary(range.upperBound)
         else { throw DocumentEngineError.unsupportedNativeInput }
         nativeCommand = command
@@ -370,6 +371,12 @@ final class DocumentEngine {
         }
         if case .mediaProps(let props, let expecting) = command.kind {
             return try prepareMediaProps(command, props: props, expecting: expecting)
+        }
+        if case .insertInlineObject(let object, let range) = command.kind {
+            return try prepareInsertInlineObject(command, object, replacing: range)
+        }
+        if case .pasteInline(let payload, let range) = command.kind {
+            return try preparePasteInline(command, payload: payload, range: range)
         }
         // A prop edit (a code block's language) is the one command code accepts.
         let isPropEdit = if case .props = command.kind { true } else { false }
@@ -621,8 +628,9 @@ final class DocumentEngine {
             throw DocumentEngineError.unsupportedNativeInput  // prepared above
         case .undo, .redo:
             throw DocumentEngineError.unsupportedNativeInput  // `applyHistoryStep`
-        case .lineBreak, .table, .columns, .insertColumns, .insertMedia, .mediaProps:
-            throw DocumentEngineError.unsupportedNativeInput  // cells, tables, groups and media, prepared above
+        case .lineBreak, .table, .columns, .insertColumns, .insertMedia, .mediaProps, .insertInlineObject,
+            .pasteInline:
+            throw DocumentEngineError.unsupportedNativeInput  // cells, tables, groups, media and inline atoms, prepared above
         }
         return (write, caret)
     }
@@ -661,9 +669,157 @@ final class DocumentEngine {
                 write: { try self.writer.insertHardBreak(in: target, at: offset) },
                 caret: { EditorPosition(blockID: command.blockID, offset: offset + 1, assoc: -1) }
             )
+        case .insertInlineObject(let object, let range):
+            return try prepareInsertInlineObject(command, object, replacing: range)
+        case .pasteInline(let payload, let range):
+            return try preparePasteInline(command, payload: payload, range: range)
         default:
             throw DocumentEngineError.unsupportedNativeInput
         }
+    }
+
+    private func prepareInsertInlineObject(
+        _ command: NativeEditCommand, _ object: NativeInlineObject, replacing range: Range<Int>
+    ) throws -> PreparedCommand {
+        guard builder.index.isCanonical, let entry = builder.index.entries[command.blockID] else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        let units: [UInt16]
+        if isCellText(entry) {
+            guard entry.isProjectable else { throw DocumentEngineError.unsupportedNativeInput }
+            units = textUnits(entry)
+        } else {
+            units = try structuralTarget(command.blockID).units
+        }
+        guard range.lowerBound <= range.upperBound,
+            Self.isBoundary(range.lowerBound, in: units),
+            Self.isBoundary(range.upperBound, in: units)
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let target = try textTarget(entry)
+        return (
+            write: { try self.writer.insertInlineObject(object, in: target, replacing: range) },
+            caret: { EditorPosition(blockID: command.blockID, offset: range.lowerBound + 1, assoc: -1) }
+        )
+    }
+
+    private func preparePasteInline(
+        _ command: NativeEditCommand, payload: Data, range: NativeRangeCommand
+    ) throws -> PreparedCommand {
+        let lines: [[BlockNoteWriter.Copy]]
+        do {
+            lines = try BlockNoteInlinePayload.decode(payload)
+        } catch BlockNoteSubtreePayload.Error.tooLarge {
+            throw DocumentEngineError.payloadTooLarge
+        } catch {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        let index = builder.index
+        guard index.isCanonical, let entry = index.entries[command.blockID] else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        if isCellText(entry) {
+            guard entry.isProjectable, lines.count == 1, range.endBlockID == command.blockID,
+                range.newBlockIDs.isEmpty
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            let units = textUnits(entry)
+            guard Self.isBoundary(range.startOffset, in: units), Self.isBoundary(range.endOffset, in: units),
+                range.startOffset < range.endOffset || !lines[0].isEmpty
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            let target = try textTarget(entry)
+            let insertedCount = Self.utf16Count(of: lines[0])
+            return (
+                write: {
+                    try self.writer.insertInlineSlice(
+                        from: target, at: range.startOffset, to: target, at: range.endOffset, lines: lines,
+                        newIDs: [])
+                },
+                caret: {
+                    EditorPosition(blockID: command.blockID, offset: range.startOffset + insertedCount, assoc: -1)
+                }
+            )
+        }
+        if entry.element?.typeRef == .xmlElement(nodeName: "codeBlock"), range.endBlockID == command.blockID,
+            range.newBlockIDs.isEmpty
+        {
+            let (_, units) = try structuralTarget(command.blockID, allowCode: true)
+            guard Self.isBoundary(range.startOffset, in: units), Self.isBoundary(range.endOffset, in: units),
+                range.startOffset <= range.endOffset,
+                range.startOffset < range.endOffset || !lines.allSatisfy(\.isEmpty)
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            let target = try textTarget(entry)
+            let insertedCount = BlockNoteWriter.plainText(of: lines).utf16.count
+            return (
+                write: {
+                    try self.writer.insertInlineSlice(
+                        from: target, at: range.startOffset, to: target, at: range.endOffset, lines: lines,
+                        newIDs: [])
+                },
+                caret: {
+                    EditorPosition(blockID: command.blockID, offset: range.startOffset + insertedCount, assoc: -1)
+                }
+            )
+        }
+        let (_, startUnits) = try structuralTarget(command.blockID)
+        let list = index.list(of: command.blockID)
+        guard index.sameList(command.blockID, range.endBlockID),
+            let lower = index.listPosition(of: command.blockID),
+            let upper = index.listPosition(of: range.endBlockID), lower <= upper,
+            !isToggle(command.blockID)
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let group = entry.group
+        var endUnits = startUnits
+        for position in stride(from: lower + 1, through: upper, by: 1) {
+            guard index.entries[list[position]]?.group === group else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            try requireEditableBlock(list[position])
+            endUnits = try structuralTarget(list[position]).units
+            guard !isToggle(list[position]) else { throw DocumentEngineError.unsupportedNativeInput }
+        }
+        let ids = range.newBlockIDs
+        guard Self.isBoundary(range.startOffset, in: startUnits), Self.isBoundary(range.endOffset, in: endUnits),
+            lower < upper || range.startOffset < range.endOffset
+                || (range.startOffset == range.endOffset && !lines.allSatisfy(\.isEmpty)),
+            ids.count == lines.count - 1, Set(ids).count == ids.count,
+            ids.allSatisfy({ !$0.isEmpty && index.entries[$0] == nil }),
+            let first = index.entries[command.blockID]?.containerItem,
+            let last = index.entries[range.endBlockID]?.containerItem
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let singleInsertedCount = Self.utf16Count(of: lines[0])
+        let lastLineCount = lines.last.map(Self.utf16Count(of:)) ?? 0
+        return (
+            write: {
+                try self.writer.insertInlineSlice(
+                    from: try self.writer.indexedTarget(first, id: command.blockID), at: range.startOffset,
+                    to: try self.writer.indexedTarget(last, id: range.endBlockID), at: range.endOffset,
+                    lines: lines, newIDs: ids)
+            },
+            caret: {
+                guard let id = ids.last else {
+                    return EditorPosition(
+                        blockID: command.blockID, offset: range.startOffset + singleInsertedCount, assoc: -1)
+                }
+                return EditorPosition(blockID: id, offset: lastLineCount, assoc: -1)
+            }
+        )
+    }
+
+    private static func utf16Count(of copies: [BlockNoteWriter.Copy]) -> Int {
+        var total = 0
+        for copy in copies {
+            switch copy {
+            case .text(let values):
+                for value in values {
+                    switch value {
+                    case .run(let run): total += run.text.utf16.count
+                    case .embed: total += 1
+                    }
+                }
+            case .element:
+                total += 1
+            }
+        }
+        return total
     }
 
     /// A table structure command (PR11b) on a familiar table block, prepared
@@ -1564,10 +1720,13 @@ final class DocumentEngine {
             entry.isSimpleContainer, let element = entry.element,
             case .xmlElement(let node)? = element.typeRef,
             writer.schemas[node] != nil, allowCode || node != "codeBlock",
-            entry.isSimpleText || element.length == 0
+            entry.isSimpleText || entry.hasInlineObjects || element.length == 0
         else { throw DocumentEngineError.unsupportedNativeInput }
         let units = entry.runs.flatMap { Array($0.text.utf16) }
-        guard entry.textType.map({ $0.length == UInt(units.count) }) ?? units.isEmpty else {
+        guard
+            entry.textType.map({ $0.length == UInt(units.count) })
+                ?? (entry.hasInlineObjects ? !units.isEmpty : units.isEmpty)
+        else {
             throw DocumentEngineError.unsupportedNativeInput
         }
         return (node, units)
@@ -1773,12 +1932,22 @@ final class DocumentEngine {
         if entry.isProjectable, let text = entry.textType, absolute.type === text {
             return .text(EditorPosition(blockID: blockID, offset: min(index, length), assoc: absolute.assoc))
         }
-        // Between the content element's children (y-prosemirror's position in
-        // an empty paragraph, or before/after its text).
-        if entry.isProjectable, entry.isSimpleContainer, let element = entry.element, absolute.type === element,
-            entry.textType != nil || element.length == 0
+        if entry.isProjectable, entry.isSimpleContainer, let element = entry.element,
+            entry.textType != nil || entry.hasInlineObjects || isCellText(entry) || element.length == 0
         {
-            return .text(EditorPosition(blockID: blockID, offset: index == 0 ? 0 : length, assoc: absolute.assoc))
+            if absolute.type === element {
+                let parts = RelativeEditorPosition.parts(of: element)
+                let offset = parts.prefix(min(index, parts.count)).reduce(0) { $0 + $1.width }
+                return .text(EditorPosition(blockID: blockID, offset: offset, assoc: absolute.assoc))
+            }
+            if entry.hasInlineObjects || isCellText(entry), absolute.type.typeRef == .xmlText,
+                absolute.type.item?.parentType === element,
+                let part = RelativeEditorPosition.parts(of: element).first(where: { $0.type === absolute.type })
+            {
+                return .text(
+                    EditorPosition(
+                        blockID: blockID, offset: part.start + min(index, part.width), assoc: absolute.assoc))
+            }
         }
         return .block(blockID)
     }

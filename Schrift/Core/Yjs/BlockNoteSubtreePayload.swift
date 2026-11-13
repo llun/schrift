@@ -47,7 +47,7 @@ enum BlockNoteSubtreePayload {
     /// Nodes inside a content element: table structure and inline nodes.
     static let inlineNodes: Set<String> = [
         "tableRow", "tableCell", "tableHeader", "tableParagraph", "hardBreak", "userMentionInline",
-        "interlinkingLinkInline", "math",
+        "interlinkingLinkInline", "mentionSearchInline", "math",
     ]
 
     /// The update bytes for `copies`, each a whole `blockContainer`.
@@ -204,8 +204,13 @@ enum BlockNoteSubtreePayload {
         }
         func inline(_ copies: [BlockNoteWriter.Copy]) throws {
             for copy in copies {
-                guard case .element(let node, _, let children) = copy else { continue }
+                guard case .element(let node, let props, let children) = copy else { continue }
                 guard inlineNodes.contains(node) else { throw Error.malformed }
+                if NativeInlineObject.nodeNames.contains(node) {
+                    let projected = props.map { ProjectedProp(key: $0.key, value: $0.value) }
+                    guard NativeInlineObject.read(node: node, props: projected, hasChildren: !children.isEmpty) != nil
+                    else { throw Error.malformed }
+                }
                 try inline(children)
             }
         }
@@ -294,5 +299,51 @@ extension BlockNoteWriter.Copy {
             props[at].value = .string(id)
         }
         return .element(node, props, try children.map { try $0.replacingIDs(&ids) })
+    }
+}
+
+/// The native editor's lossless inline-slice payload for partial selections
+/// containing inline objects (`NativeInlineObject`), encoded as one `blockGroup`
+/// of `paragraph` containers under the same Yjs trust bounds as
+/// `BlockNoteSubtreePayload`.
+enum BlockNoteInlinePayload {
+    static let pasteboardType = "dev.llun.schrift.blocknote-inline"
+
+    static func encode(_ lines: [[BlockNoteWriter.Copy]]) throws -> Data {
+        guard !lines.isEmpty, lines.count <= BlockNoteSubtreePayload.maxBlocks else {
+            throw BlockNoteSubtreePayload.Error.malformed
+        }
+        let blocks = try lines.enumerated().map { index, copies in
+            try validateInline(copies)
+            return BlockNoteWriter.Copy.element(
+                "blockContainer", [("id", .string("inline-\(index)"))],
+                [.element("paragraph", [], copies)])
+        }
+        return try BlockNoteSubtreePayload.encode(blocks)
+    }
+
+    static func decode(_ data: Data) throws -> [[BlockNoteWriter.Copy]] {
+        let blocks = try BlockNoteSubtreePayload.decode(data)
+        return try blocks.map { block in
+            guard case .element("blockContainer", _, let children) = block, children.count == 1,
+                case .element("paragraph", _, let content) = children[0]
+            else { throw BlockNoteSubtreePayload.Error.malformed }
+            try validateInline(content)
+            return content
+        }
+    }
+
+    private static func validateInline(_ copies: [BlockNoteWriter.Copy]) throws {
+        for copy in copies {
+            switch copy {
+            case .text: continue
+            case .element(let node, let props, let children):
+                let projected = props.map { ProjectedProp(key: $0.key, value: $0.value) }
+                guard NativeInlineObject.read(node: node, props: projected, hasChildren: !children.isEmpty) != nil
+                else {
+                    throw BlockNoteSubtreePayload.Error.malformed
+                }
+            }
+        }
     }
 }

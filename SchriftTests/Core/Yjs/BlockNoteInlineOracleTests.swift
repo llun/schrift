@@ -302,7 +302,8 @@ final class BlockNoteInlineOracleTests: XCTestCase {
         XCTAssertEqual(prepared.markdown, interlink.markdown)
     }
 
-    func testCapturedStateBinIsModeledWhenPresent() throws {
+    @MainActor
+    func testCapturedStateBinIsModeledWhenPresent() async throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -317,8 +318,427 @@ final class BlockNoteInlineOracleTests: XCTestCase {
         defer { doc.destroy() }
         try doc.applyUpdate(YUpdateDecoder.decode(data), origin: .remote)
         let projected = NativeBlockProjection.project(doc)
-        XCTAssertTrue(projected.isFullyModeled)
-        XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: Self.testOrigin))
+        let interlinkBlocks = projected.blocks.filter { snapshot in
+            snapshot.block.runs.contains { run in
+                if case .interlink? = run.inlineObject { return true }
+                return false
+            }
+        }
+        XCTAssertFalse(interlinkBlocks.isEmpty, "state.bin must contain at least one interlink block")
+        for snapshot in interlinkBlocks {
+            XCTAssertEqual(snapshot.block.fidelity, .modeled, "\(snapshot.id): interlink block must be modeled")
+        }
+        XCTAssertFalse(projected.isFullyModeled, "math/diagram blocks stay opaque until PR14")
+        XCTAssertNil(NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: Self.testOrigin))
+
+        let inspected = try await NativeEditorSession.inspect(state: data, interlinkingOrigin: Self.testOrigin)
+        XCTAssertFalse(inspected.canType, "whole document with opaque math/diagram stays canType == false")
+        await inspected.close().value
+    }
+
+    // MARK: - Step 3: BlockNoteWriter coalescing, DocumentEngine, Selection & Awareness
+
+    func testAllWebInlineEditsMatchXMLAndShadowWhenPerformedNatively() throws {
+        var covered: Set<String> = []
+        let interlink = NativeInlineObject.interlink(
+            docID: "11111111-1111-4111-8111-111111111111", blockID: nil, title: nil, disabled: false, trigger: "/")
+
+        func runEdit(
+            _ name: String, allowCanonicalMarkdownFallback: Bool = false,
+            perform: (DocumentEngine, HeadlessSurface) throws -> Void
+        ) throws {
+            let capture = try XCTUnwrap(BlockNoteInlineCaptures.edits.first { $0.name == name }, "missing \(name)")
+            covered.insert(name)
+            let doc = try decodeDoc(capture.seed)
+            defer { doc.destroy() }
+            let surface = HeadlessSurface()
+            let engine = DocumentEngine(doc: doc, surface: surface)
+            defer { engine.detach() }
+
+            do {
+                try perform(engine, surface)
+            } catch {
+                XCTFail("\(name): failed with \(error)")
+                return
+            }
+
+            XCTAssertEqual(YXMLString.fragment(doc), capture.xml, "\(name): xml mismatch")
+            let shadow = try XCTUnwrap(
+                NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: Self.testOrigin),
+                "\(name): expected shadow")
+            if allowCanonicalMarkdownFallback {
+                XCTAssertEqual(
+                    syncCanonicalMarkdown(shadow), syncCanonicalMarkdown(capture.markdown),
+                    "\(name): syncCanonicalMarkdown mismatch")
+            } else if shadow != capture.markdown {
+                XCTAssertEqual(
+                    syncCanonicalMarkdown(shadow), syncCanonicalMarkdown(capture.markdown),
+                    "\(name): syncCanonicalMarkdown mismatch")
+            }
+        }
+
+        func replace(
+            _ engine: DocumentEngine, _ blockID: String, _ range: Range<Int>, _ text: String, marks: [TextMark]? = nil
+        )
+            throws
+        {
+            let cmd = NativeEditCommand(
+                id: UUID(), baseRevision: engine.revision, blockID: blockID, range: range, replacement: text,
+                marks: marks)
+            try engine.replaceText(cmd) { _ in }
+        }
+
+        func apply(_ engine: DocumentEngine, _ blockID: String, _ kind: NativeEditCommand.Kind) throws -> EditorPosition
+        {
+            let cmd = NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: blockID, kind: kind)
+            return try engine.applyStructural(cmd) { _ in }
+        }
+
+        try runEdit("typeBeforeChipAtStart") { engine, _ in
+            try replace(engine, "p", 0..<0, "hi ")
+            XCTAssertEqual(engine.nativeSnapshot(for: "p")?.runs.first?.text, "hi ")
+        }
+        try runEdit("typeAfterChipAtEnd") { engine, _ in
+            try replace(engine, "p", 1..<1, " end")
+        }
+        try runEdit("typeLeftOfMiddleChip") { engine, _ in
+            try replace(engine, "p", 2..<2, "X")
+        }
+        try runEdit("typeRightOfMiddleChip") { engine, _ in
+            try replace(engine, "p", 3..<3, "Y")
+        }
+        try runEdit("typeBetweenAdjacentChips") { engine, _ in
+            try replace(engine, "p", 1..<1, "mid")
+        }
+        try runEdit("typeAfterChipDoesNotInheritBold") { engine, _ in
+            try replace(engine, "p", 5..<5, "tail", marks: [])
+        }
+        try runEdit("deleteMiddleChip") { engine, _ in
+            try replace(engine, "p", 7..<8, "")
+        }
+        try runEdit("deleteMiddleChipMarked") { engine, _ in
+            try replace(engine, "p", 4..<5, "")
+        }
+        try runEdit("deleteLeadAndChip") { engine, _ in
+            try replace(engine, "p", 0..<4, "")
+        }
+        try runEdit("deleteChipAndTail") { engine, _ in
+            try replace(engine, "p", 3..<7, "")
+        }
+        try runEdit("deleteOnlyChip", allowCanonicalMarkdownFallback: true) { engine, _ in
+            try replace(engine, "p", 0..<1, "")
+        }
+        try runEdit("deleteTextBetweenTwoChips", allowCanonicalMarkdownFallback: true) { engine, _ in
+            try replace(engine, "p", 1..<2, "")
+        }
+        try runEdit("deleteFirstOfTwoChips") { engine, _ in
+            try replace(engine, "p", 0..<1, "")
+        }
+        try runEdit("deleteZombieSearch") { engine, _ in
+            try replace(engine, "p", 3..<4, "")
+        }
+        try runEdit("replaceAcrossChip") { engine, _ in
+            try replace(engine, "p", 1..<4, "X")
+        }
+        try runEdit("boldAcrossChip") { engine, _ in
+            _ = try apply(
+                engine, "p",
+                .marks(
+                    NativeMarkCommand(
+                        startOffset: 0, endBlockID: "p", endOffset: 14,
+                        attributes: [TextMark(key: "bold", valueJSON: "{}")])))
+        }
+        try runEdit("linkAcrossChip") { engine, _ in
+            _ = try apply(
+                engine, "p",
+                .marks(
+                    NativeMarkCommand(
+                        startOffset: 0, endBlockID: "p", endOffset: 14,
+                        attributes: [TextMark(key: "link", valueJSON: #"{"href":"https://example.com"}"#)])))
+        }
+        try runEdit("clearBoldAcrossChip") { engine, _ in
+            _ = try apply(
+                engine, "p",
+                .marks(
+                    NativeMarkCommand(
+                        startOffset: 0, endBlockID: "p", endOffset: 14,
+                        attributes: [TextMark(key: "bold", valueJSON: "null")])))
+        }
+        try runEdit("splitBeforeChip") { engine, _ in
+            let caret = try apply(engine, "p", .split(offset: 7, newID: "1", open: []))
+            XCTAssertEqual(caret, EditorPosition(blockID: "1", offset: 0, assoc: -1))
+        }
+        try runEdit("splitAfterChip") { engine, _ in
+            let caret = try apply(engine, "p", .split(offset: 8, newID: "1", open: []))
+            XCTAssertEqual(caret, EditorPosition(blockID: "1", offset: 0, assoc: -1))
+        }
+        try runEdit("splitBetweenChips", allowCanonicalMarkdownFallback: true) { engine, _ in
+            let caret = try apply(engine, "p", .split(offset: 1, newID: "1", open: []))
+            XCTAssertEqual(caret, EditorPosition(blockID: "1", offset: 0, assoc: -1))
+        }
+        try runEdit("joinParagraphWithChipIntoChipParagraph") { engine, _ in
+            let caret = try apply(engine, "p2", .join)
+            XCTAssertEqual(caret, EditorPosition(blockID: "p1", offset: 3, assoc: -1))
+        }
+        try runEdit("turnChipParagraphIntoHeading") { engine, _ in
+            _ = try apply(
+                engine, "p",
+                .blockType(
+                    node: "heading", props: [ProjectedProp(key: "level", value: .int(2))], removing: 0..<0))
+        }
+        try runEdit("sinkBulletWithChip") { engine, _ in
+            _ = try apply(engine, "b2", .indent)
+        }
+        try runEdit("liftBulletWithChip") { engine, _ in
+            _ = try apply(engine, "b2", .outdent)
+        }
+        try runEdit("deleteChipInTableCell") { engine, _ in
+            XCTAssertTrue(engine.openTable("tbl"))
+            let cells = try XCTUnwrap(engine.tableParagraphs("tbl"))
+            XCTAssertGreaterThan(cells.count, 0)
+            try replace(engine, cells[0].id, 2..<3, "")
+        }
+        try runEdit("insertInterlinkInMiddle") { engine, _ in
+            let caret = try apply(engine, "p", .insertInlineObject(interlink, replacing: 6..<6))
+            XCTAssertEqual(caret, EditorPosition(blockID: "p", offset: 7, assoc: -1))
+        }
+        try runEdit("insertInterlinkAtStart") { engine, _ in
+            let caret = try apply(engine, "p", .insertInlineObject(interlink, replacing: 0..<0))
+            XCTAssertEqual(caret, EditorPosition(blockID: "p", offset: 1, assoc: -1))
+        }
+        try runEdit("insertInterlinkAtEnd") { engine, _ in
+            let caret = try apply(engine, "p", .insertInlineObject(interlink, replacing: 6..<6))
+            XCTAssertEqual(caret, EditorPosition(blockID: "p", offset: 7, assoc: -1))
+        }
+        try runEdit("insertInterlinkInEmptyParagraph") { engine, _ in
+            let caret = try apply(engine, "p", .insertInlineObject(interlink, replacing: 0..<0))
+            XCTAssertEqual(caret, EditorPosition(blockID: "p", offset: 1, assoc: -1))
+        }
+        try runEdit("insertInterlinkWithBlockId") { engine, _ in
+            let withBlockID = NativeInlineObject.interlink(
+                docID: "11111111-1111-4111-8111-111111111111", blockID: "sec-1", title: nil, disabled: false,
+                trigger: "/")
+            let caret = try apply(engine, "p", .insertInlineObject(withBlockID, replacing: 4..<4))
+            XCTAssertEqual(caret, EditorPosition(blockID: "p", offset: 5, assoc: -1))
+        }
+
+        XCTAssertEqual(Set(BlockNoteInlineCaptures.edits.map(\.name)), covered, "every web edit must be covered")
+    }
+
+    func testSelectionAndPeerPlaceAtEveryChipBoundary() throws {
+        // Adjacent chips: [mention, interlink] -> length 2; plus prefix/suffix on peers.
+        let adjacent = try XCTUnwrap(BlockNoteInlineCaptures.fixtures.first { $0.name == "twoAdjacentChips" })
+        let doc = try decodeDoc(adjacent.update)
+        defer { doc.destroy() }
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        defer { engine.detach() }
+
+        for offset in 0...2 {
+            let pos = EditorPosition(blockID: "p", offset: offset, assoc: offset == 1 ? -1 : 0)
+            try engine.setSelection(EditorSelection(anchor: pos, head: pos))
+            XCTAssertEqual(try engine.currentSelection()?.head.offset, offset)
+            let relJSON = try XCTUnwrap(engine.awarenessPosition(pos))
+            XCTAssertEqual(
+                engine.peerPlace(relJSON), .text(EditorPosition(blockID: "p", offset: offset, assoc: pos.assoc)))
+        }
+
+        // Capture carets on both sides of the boundary between two chips, then peer inserts "mid".
+        let beforeBoundary = EditorPosition(blockID: "p", offset: 1, assoc: -1)
+        let afterBoundary = EditorPosition(blockID: "p", offset: 1, assoc: 0)
+        let beforePeerJSON = try XCTUnwrap(engine.awarenessPosition(beforeBoundary))
+        let afterPeerJSON = try XCTUnwrap(engine.awarenessPosition(afterBoundary))
+
+        let edit = try XCTUnwrap(BlockNoteInlineCaptures.edits.first { $0.name == "typeBetweenAdjacentChips" })
+        let peerDoc = try decodeDoc(edit.seed)
+        defer { peerDoc.destroy() }
+        // Replicate "mid" insert from a remote peer transaction.
+        let midUpdate = try XCTUnwrap(Data(base64Encoded: edit.update))
+        try engine.durablyIntegrateRemote(
+            update: midUpdate,
+            apply: { try doc.applyUpdate(YUpdateDecoder.decode(midUpdate), origin: .remote) },
+            persist: { _ in })
+
+        XCTAssertEqual(engine.peerPlace(beforePeerJSON), .text(EditorPosition(blockID: "p", offset: 1, assoc: -1)))
+        XCTAssertEqual(engine.peerPlace(afterPeerJSON), .text(EditorPosition(blockID: "p", offset: 4, assoc: 0)))
+
+        // Middle-chip XmlText boundary positions ("before " + chip + " after").
+        for offset in 0...5 {
+            let pos = EditorPosition(blockID: "p", offset: offset, assoc: -1)
+            try engine.setSelection(EditorSelection(anchor: pos, head: pos))
+            XCTAssertEqual(try engine.currentSelection()?.head, pos)
+            let json = try XCTUnwrap(engine.awarenessPosition(pos))
+            XCTAssertEqual(engine.peerPlace(json), .text(pos))
+        }
+    }
+
+    func testPasteInlineRangeMoveDuplicateAndRefusals() throws {
+        let doc = YDoc(clientID: 1, gc: true)
+        defer { doc.destroy() }
+        let interlink = NativeInlineObject.interlink(
+            docID: "11111111-1111-4111-8111-111111111111", blockID: nil, title: nil, disabled: false, trigger: "/")
+        let mention = NativeInlineObject.mention(userID: "user-1", fullName: "Ada")
+        try populateBlock(doc, node: "paragraph") { element, tx in
+            let t = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: element, after: nil, [.type(t)])
+            try t.insert(0, "hello world", nil)
+        }
+        let codeDoc = YDoc(clientID: 2, gc: true)
+        defer { codeDoc.destroy() }
+        try populateBlock(codeDoc, node: "codeBlock", props: ["language": .string("swift")]) { element, tx in
+            let t = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: element, after: nil, [.type(t)])
+            try t.insert(0, "let x = 1", nil)
+        }
+
+        // Code block refuses insertInlineObject cleanly without mutating XML.
+        let codeEngine = DocumentEngine(doc: codeDoc, surface: HeadlessSurface())
+        defer { codeEngine.detach() }
+        let codeBefore = YXMLString.fragment(codeDoc)
+        let codeInsert = NativeEditCommand(
+            id: UUID(), baseRevision: codeEngine.revision, blockID: "b1",
+            kind: .insertInlineObject(interlink, replacing: 4..<4))
+        XCTAssertFalse(codeEngine.canApplyStructural(codeInsert))
+        do {
+            _ = try codeEngine.applyStructural(codeInsert) { _ in }
+            XCTFail("codeBlock must refuse insertInlineObject")
+        } catch DocumentEngineError.unsupportedNativeInput {
+        }
+        XCTAssertEqual(YXMLString.fragment(codeDoc), codeBefore)
+
+        // pasteInline into codeBlock degrades chips to plain text.
+        let slicePayload = try BlockNoteInlinePayload.encode([
+            [
+                .text([.run(InlineRun("hi "))]),
+                .element(
+                    "userMentionInline", [("userId", .string("u1")), ("fullName", .string("Ada"))], []),
+                .text([.run(InlineRun(" "))]),
+                .element(
+                    "interlinkingLinkInline",
+                    [
+                        ("docId", .string("11111111-1111-4111-8111-111111111111")),
+                        ("blockId", .string("")),
+                        ("disabled", .bool(false)),
+                        ("trigger", .string("/")),
+                    ], []),
+            ]
+        ])
+        let pasteCode = NativeEditCommand(
+            id: UUID(), baseRevision: codeEngine.revision, blockID: "b1",
+            kind: .pasteInline(
+                payload: slicePayload,
+                range: NativeRangeCommand(
+                    startOffset: 9, endBlockID: "b1", endOffset: 9, replacement: "", newBlockIDs: [])))
+        let codeCaret = try codeEngine.applyStructural(pasteCode) { _ in }
+        XCTAssertEqual(
+            codeCaret,
+            EditorPosition(
+                blockID: "b1", offset: 9 + "hi @Ada 11111111-1111-4111-8111-111111111111".utf16.count, assoc: -1))
+        XCTAssertEqual(
+            codeEngine.nativeSnapshot(for: "b1")?.runs.first?.text,
+            "let x = 1hi @Ada 11111111-1111-4111-8111-111111111111")
+
+        // Malformed inline props refuse edits and keep block non-projectable.
+        let badDoc = YDoc(clientID: 3, gc: true)
+        defer { badDoc.destroy() }
+        try populateBlock(badDoc, node: "paragraph") { element, tx in
+            let chip = YType(typeRef: .xmlElement(nodeName: "interlinkingLinkInline"))
+            try YWrite.insertAfter(tx, into: element, after: nil, [.type(chip)])
+            try YWrite.mapSet(tx, on: chip, key: "docId", .any([.string("11111111-1111-4111-8111-111111111111")]))
+            try YWrite.mapSet(tx, on: chip, key: "disabled", .any([.int(1)]))
+        }
+        let badEngine = DocumentEngine(doc: badDoc, surface: HeadlessSurface())
+        defer { badEngine.detach() }
+        XCTAssertTrue(badEngine.nativeSnapshot(for: "b1")?.isOpaque == true)
+        XCTAssertFalse(
+            badEngine.canApplyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: badEngine.revision, blockID: "b1",
+                    kind: .insertInlineObject(mention, replacing: 0..<0))))
+
+        // Paste inline slice + duplicate + moveDown + cross-block range on chip paragraphs.
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        defer { engine.detach() }
+        let pasteCaret = try engine.applyStructural(
+            NativeEditCommand(
+                id: UUID(), baseRevision: engine.revision, blockID: "b1",
+                kind: .pasteInline(
+                    payload: slicePayload,
+                    range: NativeRangeCommand(
+                        startOffset: 6, endBlockID: "b1", endOffset: 11, replacement: "", newBlockIDs: [])))
+        ) { _ in }
+        XCTAssertEqual(pasteCaret, EditorPosition(blockID: "b1", offset: 12, assoc: -1))
+        XCTAssertTrue(engine.nativeSnapshot(for: "b1")?.runs.contains { $0.inlineObject != nil } == true)
+
+        let dupCaret = try engine.applyStructural(
+            NativeEditCommand(
+                id: UUID(), baseRevision: engine.revision, blockID: "b1", kind: .duplicate(newIDs: ["b2"]))
+        ) { _ in }
+        XCTAssertEqual(dupCaret.blockID, "b1")
+        _ = try engine.applyStructural(
+            NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: "b1", kind: .moveDown)
+        ) { _ in }
+        let mergedCaret = try engine.applyStructural(
+            NativeEditCommand(
+                id: UUID(), baseRevision: engine.revision, blockID: "b2",
+                kind: .range(
+                    NativeRangeCommand(
+                        startOffset: 3, endBlockID: "b1", endOffset: 6, replacement: "!", newBlockIDs: [])))
+        ) { _ in }
+        XCTAssertEqual(mergedCaret, EditorPosition(blockID: "b2", offset: 4, assoc: -1))
+    }
+
+    func testCollaborativeUndoRedoWithChipEditsAndPeerUpdates() throws {
+        let seed = try XCTUnwrap(BlockNoteInlineCaptures.edits.first { $0.name == "typeLeftOfMiddleChip" })
+        let localDoc = try decodeDoc(seed.seed)
+        defer { localDoc.destroy() }
+        localDoc.clientID = 10
+
+        let engine = DocumentEngine(doc: localDoc, surface: HeadlessSurface())
+        defer { engine.detach() }
+        let history = ReplicaHistory(doc: localDoc, engine: engine)
+        defer { history.destroy() }
+
+        let beforeXML = YXMLString.fragment(localDoc)
+        try engine.setSelection(
+            EditorSelection(
+                anchor: EditorPosition(blockID: "p", offset: 2, assoc: -1),
+                head: EditorPosition(blockID: "p", offset: 2, assoc: -1)))
+        let delCmd = NativeEditCommand(
+            id: UUID(), baseRevision: engine.revision, blockID: "p", range: 2..<3, replacement: "")
+        try engine.replaceText(delCmd) { _ in }
+        history.stopCapturing()
+
+        // Peer concurrently edits at the start of the coalesced paragraph.
+        let peerDoc = YDoc(clientID: 20, gc: true)
+        defer { peerDoc.destroy() }
+        let seedBytes = try XCTUnwrap(Data(base64Encoded: seed.seed))
+        try peerDoc.applyUpdate(YUpdateDecoder.decode(seedBytes), origin: .remote)
+        let peerWriter = BlockNoteWriter(doc: peerDoc)
+        let peerUpdate = try peerWriter.replaceText(block: "p", range: NSRange(location: 0, length: 0), with: "hi ")
+        try engine.durablyIntegrateRemote(
+            update: peerUpdate,
+            apply: { try localDoc.applyUpdate(YUpdateDecoder.decode(peerUpdate), origin: .remote) },
+            persist: { _ in })
+
+        XCTAssertTrue(history.canUndo)
+        let undone = try engine.applyHistoryStep(
+            NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: "", kind: .undo),
+            step: { try history.step(undo: true) },
+            persist: { _ in })
+        XCTAssertTrue(undone)
+        let afterUndoXML = YXMLString.fragment(localDoc)
+        XCTAssertTrue(afterUndoXML.contains("hi ab<interlinkinglinkinline"), "undo restores chip and keeps peer edit")
+        XCTAssertNotEqual(afterUndoXML, beforeXML)
+
+        let redone = try engine.applyHistoryStep(
+            NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: "", kind: .redo),
+            step: { try history.step(undo: false) },
+            persist: { _ in })
+        XCTAssertTrue(redone)
+        XCTAssertEqual(
+            YXMLString.fragment(localDoc),
+            #"<blockgroup><blockcontainer id="p"><paragraph backgroundColor="default" textAlignment="left" textColor="default">hi abcd</paragraph></blockcontainer></blockgroup>"#
+        )
     }
 
     // MARK: - Helpers

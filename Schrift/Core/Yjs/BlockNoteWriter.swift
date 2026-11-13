@@ -146,11 +146,141 @@ struct BlockNoteWriter {
         let parts = try inline(target.element, block: block)
         let bounds = try clamp(range, parts: parts)
         return try transaction { tx in
-            try remove(tx, parts: parts, range: bounds)
+            try remove(tx, parts: parts, range: bounds, element: target.element, block: block)
             guard !text.isEmpty else { return }
             let current = try inline(target.element, block: block)
             let (type, offset) = try textPosition(tx, element: target.element, parts: current, at: bounds.lowerBound)
             try type.insert(UInt(offset), text, target.node == "codeBlock" ? [:] : marks)
+        }
+    }
+
+    /// Replaces `range` in a non-code block with `object`, splitting a containing
+    /// `XmlText` only when strictly inside it and never creating empty `XmlText`
+    /// siblings.
+    @discardableResult
+    func insertInlineObject(_ object: NativeInlineObject, in target: Target, replacing range: Range<Int>) throws -> Data
+    {
+        guard target.node != "codeBlock" else { throw Error.unsupportedBlockType(target.node) }
+        let block = target.id
+        let parts = try inline(target.element, block: block)
+        let bounds = try clamp(NSRange(location: range.lowerBound, length: range.count), parts: parts)
+        return try transaction { tx in
+            if bounds.lowerBound < bounds.upperBound {
+                try remove(tx, parts: parts, range: bounds, element: target.element, block: block)
+            }
+            for item in children(target.element) {
+                if case .type(let type) = item.content, type.typeRef == .xmlText, type.length == 0 {
+                    item.delete(tx)
+                }
+            }
+            let current = try inline(target.element, block: block)
+            let offset = bounds.lowerBound
+            var start = 0
+            var left: YItem?
+            var split: (part: Part, at: Int)?
+            for part in current {
+                if offset <= start { break }
+                if part.type.typeRef == .xmlText, offset < start + part.width {
+                    split = (part, offset - start)
+                    break
+                }
+                start += part.width
+                left = part.item
+            }
+            if let split {
+                let tail = try snapshot(split.part.type, range: split.at..<split.part.width, block: block, depth: 0)
+                try split.part.type.delete(UInt(split.at), UInt(split.part.width - split.at))
+                let inserted = try buildInlineObject(tx, object, into: target.element, after: split.part.item)
+                try insertText(tx, tail, into: target.element, after: inserted)
+            } else {
+                try buildInlineObject(tx, object, into: target.element, after: left)
+            }
+        }
+    }
+
+    /// Replaces `start..end` across sibling blocks (or within one block/cell) with
+    /// copied inline slices (`lines`), splitting into `newIDs` when `lines.count > 1`
+    /// and degrading inline objects to plain text inside a `codeBlock`.
+    @discardableResult
+    func insertInlineSlice(
+        from start: Target, at startOffset: Int, to end: Target, at endOffset: Int, lines: [[Copy]], newIDs: [String]
+    ) throws -> Data {
+        let same = start.item === end.item
+        guard !lines.isEmpty, newIDs.count == lines.count - 1, !newIDs.contains(where: \.isEmpty),
+            Set(newIDs).count == newIDs.count, start.group === end.group
+        else { throw Error.malformedBlock(start.id) }
+        for line in lines {
+            for copy in line {
+                if case .element(let node, _, let nested) = copy {
+                    guard nested.isEmpty,
+                        ["userMentionInline", "interlinkingLinkInline", "mentionSearchInline"].contains(node)
+                    else { throw Error.malformedBlock(start.id) }
+                }
+            }
+        }
+        if same, start.node == "codeBlock" {
+            let parts = try inline(start.element, block: start.id)
+            let total = try length(parts)
+            let lower = snap(parts, min(max(0, startOffset), total))
+            let upper = snap(parts, min(max(0, endOffset), total), forward: true)
+            guard lower <= upper else { throw Error.malformedBlock(start.id) }
+            let plain = Self.plainText(of: lines)
+            return try replaceText(
+                in: start, range: NSRange(location: lower, length: upper - lower), with: plain, marks: [:])
+        }
+        for target in [start, end] {
+            if try target.node == "codeBlock"
+                || Self.isToggle(node: target.node, props: properties(target.element, block: target.id))
+            {
+                throw Error.unsupportedBlockType(target.node)
+            }
+        }
+        if (!same && end.nested != nil) || (lines.count > 1 && start.nested != nil) {
+            throw Error.unsupportedBlockType(start.nested != nil ? start.node : end.node)
+        }
+        var middle: [YItem] = []
+        if !same {
+            var item = start.item.right
+            while let current = item, current !== end.item {
+                if !current.deleted { middle.append(current) }
+                item = current.right
+            }
+            guard item === end.item else { throw Error.malformedBlock(end.id) }
+        }
+        let startParts = try inline(start.element, block: start.id)
+        let startLength = try length(startParts)
+        let endParts = same ? startParts : try inline(end.element, block: end.id)
+        let endLength = try length(endParts)
+        let lower = snap(startParts, min(max(0, startOffset), startLength))
+        let upper = snap(endParts, min(max(0, endOffset), endLength), forward: true)
+        guard !same || lower <= upper else { throw Error.malformedBlock(start.id) }
+        let suffix = try snapshots(endParts, range: upper..<endLength, block: end.id)
+        let node = Self.splitKeepsType.contains(start.node) ? start.node : "paragraph"
+        let defaults = schemas[node] ?? []
+        return try transaction { tx in
+            try remove(
+                tx, parts: startParts, range: lower..<(same && lines.count == 1 ? upper : startLength),
+                element: start.element, block: start.id)
+            if lines.count == 1 {
+                let inserted = lines[0] + (same ? [] : suffix)
+                try insertCopies(tx, inserted, into: start.element, at: lower, block: start.id)
+            } else {
+                try insertCopies(tx, lines[0], into: start.element, at: lower, block: start.id)
+            }
+            var left = start.item
+            for (index, id) in newIDs.enumerated() {
+                var content = lines[index + 1]
+                if index == newIDs.count - 1 { content += suffix }
+                let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+                guard let item = try YWrite.insertAfter(tx, into: start.group, after: left, [.type(container)]) else {
+                    throw Error.malformedBlock(id)
+                }
+                try buildElement(tx, into: container, after: nil, node: node, props: defaults, children: content)
+                try YWrite.mapSet(tx, on: container, key: "id", .any([.string(id)]))
+                left = item
+            }
+            for item in middle { item.delete(tx) }
+            if !same { end.item.delete(tx) }
         }
     }
 
@@ -252,7 +382,7 @@ struct BlockNoteWriter {
         let suffix = try snapshots(parts, range: index..<count, block: block)
         if isToggle, toggleOpen == true {
             return try transaction { tx in
-                try remove(tx, parts: parts, range: index..<count)
+                try remove(tx, parts: parts, range: index..<count, element: target.element, block: block)
                 let group: YType
                 if let nested = target.nested {
                     group = nested.type
@@ -276,7 +406,7 @@ struct BlockNoteWriter {
         let keepsChildren = isToggle
         let kids = keepsChildren ? nil : try target.nested.map { try snapshot($0.type, block: block, depth: 0) }
         return try transaction { tx in
-            try remove(tx, parts: parts, range: index..<count)
+            try remove(tx, parts: parts, range: index..<count, element: target.element, block: block)
             if !keepsChildren { target.nested?.item.delete(tx) }
             try insertBlock(tx, after: target.item, content: suffix, kids: kids)
         }
@@ -426,7 +556,9 @@ struct BlockNoteWriter {
         return try transaction { tx in
             // One same-block line is a plain replacement; otherwise everything
             // after `lower` leaves `start` and the suffix returns from its copy.
-            try remove(tx, parts: startParts, range: lower..<(same && lines.count == 1 ? upper : startLength))
+            try remove(
+                tx, parts: startParts, range: lower..<(same && lines.count == 1 ? upper : startLength),
+                element: start.element, block: start.id)
             if !lines[0].isEmpty {
                 let current = try inline(start.element, block: start.id)
                 let (text, offset) = try textPosition(tx, element: start.element, parts: current, at: lower)
@@ -654,7 +786,8 @@ struct BlockNoteWriter {
                 return Part(item: item, type: type, width: width)
             }
             guard case .xmlElement(let node)? = type.typeRef,
-                ["userMentionInline", "interlinkingLinkInline", "math", "hardBreak"].contains(node)
+                ["userMentionInline", "interlinkingLinkInline", "mentionSearchInline", "math", "hardBreak"]
+                    .contains(node)
             else {
                 throw Error.malformedBlock(block)
             }
@@ -709,7 +842,7 @@ struct BlockNoteWriter {
         return offset
     }
 
-    private func remove(_ tx: YTransaction, parts: [Part], range: Range<Int>) throws {
+    private func remove(_ tx: YTransaction, parts: [Part], range: Range<Int>, element: YType, block: String) throws {
         var start = 0
         for part in parts {
             let end = start + part.width
@@ -724,6 +857,133 @@ struct BlockNoteWriter {
             }
             start = end
         }
+        if parts.count > 1 {
+            try normalizeTextSiblings(tx, in: element, dropEmpty: true, block: block)
+        }
+    }
+
+    /// Mirrors y-prosemirror's `normalizePNodeContent`: drops emptied `XmlText`
+    /// siblings (when `dropEmpty`) and coalesces adjacent `XmlText` siblings
+    /// left-to-right so XML matches `document-store`.
+    private func normalizeTextSiblings(_ tx: YTransaction, in element: YType, dropEmpty: Bool, block: String) throws {
+        if dropEmpty {
+            for item in children(element) {
+                if case .type(let type) = item.content, type.typeRef == .xmlText, type.length == 0 {
+                    item.delete(tx)
+                }
+            }
+        }
+        var previous: YType?
+        for item in children(element) {
+            guard case .type(let type) = item.content, type.typeRef == .xmlText else {
+                previous = nil
+                continue
+            }
+            if let left = previous {
+                let copy = try snapshot(type, block: block, depth: 0)
+                if case .text(let values) = copy, !values.isEmpty {
+                    try write(values, into: left)
+                }
+                item.delete(tx)
+            } else {
+                previous = type
+            }
+        }
+    }
+
+    @discardableResult
+    private func buildInlineObject(
+        _ tx: YTransaction, _ object: NativeInlineObject, into parent: YType, after left: YItem?
+    ) throws -> YItem {
+        let props: [(key: String, value: YAnyValue)]
+        switch object {
+        case .interlink(let docID, let blockID, let title, let disabled, let trigger):
+            var entries: [(key: String, value: YAnyValue)] = [
+                ("docId", .string(docID)),
+                ("blockId", .string(blockID ?? "")),
+                ("disabled", .bool(disabled)),
+                ("trigger", .string(trigger ?? "/")),
+            ]
+            if let title, !title.isEmpty { entries.append(("title", .string(title))) }
+            props = entries
+        case .mention(let userID, let fullName):
+            props = [("userId", .string(userID)), ("fullName", .string(fullName))]
+        case .mentionSearch(let disabled, let trigger):
+            props = [("disabled", .bool(disabled)), ("trigger", .string(trigger ?? "@"))]
+        }
+        return try buildElement(tx, into: parent, after: left, node: object.nodeName, props: props, children: [])
+    }
+
+    private func insertCopies(
+        _ tx: YTransaction, _ copies: [Copy], into element: YType, at offset: Int, block: String
+    ) throws {
+        guard !copies.isEmpty else { return }
+        let parts = try inline(element, block: block)
+        var start = 0
+        var left: YItem?
+        var split: (part: Part, at: Int)?
+        for part in parts {
+            if offset <= start { break }
+            if part.type.typeRef == .xmlText, offset < start + part.width {
+                split = (part, offset - start)
+                break
+            }
+            start += part.width
+            left = part.item
+        }
+        var sequence = copies
+        var cursor = left
+        if let split {
+            let tail = try snapshot(split.part.type, range: split.at..<split.part.width, block: block, depth: 0)
+            try split.part.type.delete(UInt(split.at), UInt(split.part.width - split.at))
+            sequence.append(tail)
+            cursor = split.part.item
+        }
+        for copy in sequence {
+            switch copy {
+            case .text(let values):
+                guard !values.isEmpty else { continue }
+                if let cursor, case .type(let existing) = cursor.content, existing.typeRef == .xmlText {
+                    try write(values, into: existing)
+                } else {
+                    let text = YType(typeRef: .xmlText)
+                    let inserted = try YWrite.insertAfter(tx, into: element, after: cursor, [.type(text)])
+                    try write(values, into: text)
+                    cursor = inserted
+                }
+            case .element(let node, let props, let nested):
+                cursor = try buildElement(tx, into: element, after: cursor, node: node, props: props, children: nested)
+            }
+        }
+        try normalizeTextSiblings(tx, in: element, dropEmpty: children(element).count > 1, block: block)
+    }
+
+    static func plainText(of lines: [[Copy]]) -> String {
+        lines.map { plainText(of: $0) }.joined(separator: "\n")
+    }
+
+    private static func plainText(of copies: [Copy]) -> String {
+        var result = ""
+        for copy in copies {
+            switch copy {
+            case .text(let values):
+                for value in values {
+                    if case .run(let run) = value { result += run.text }
+                }
+            case .element(let node, let props, let nested):
+                let projected = props.map { ProjectedProp(key: $0.key, value: $0.value) }
+                if let inline = NativeInlineObject.read(node: node, props: projected, hasChildren: !nested.isEmpty) {
+                    switch inline {
+                    case .mention: result += inline.visibleText
+                    case .interlink(_, _, _, let disabled, _): result += disabled ? "" : inline.visibleText
+                    case .mentionSearch: break
+                    }
+                } else {
+                    result += plainText(of: nested)
+                }
+            }
+        }
+        return result
     }
 
     private func textPosition(_ tx: YTransaction, element: YType, parts: [Part], at index: Int) throws -> (YType, Int) {
@@ -904,6 +1164,7 @@ struct BlockNoteWriter {
             let last = children(element).last
             switch copy {
             case .text(let values):
+                guard !values.isEmpty else { continue }
                 let text: YType
                 if let last, case .type(let existing) = last.content, existing.typeRef == .xmlText {
                     text = existing
@@ -913,7 +1174,13 @@ struct BlockNoteWriter {
                 }
                 try write(values, into: text)
             case .element(let node, let props, let nested):
-                try buildElement(tx, into: element, after: last, node: node, props: props, children: nested)
+                if let last, case .type(let existing) = last.content, existing.typeRef == .xmlText,
+                    existing.length == 0
+                {
+                    last.delete(tx)
+                }
+                try buildElement(
+                    tx, into: element, after: children(element).last, node: node, props: props, children: nested)
             }
         }
     }
