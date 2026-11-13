@@ -22,7 +22,11 @@ enum NativeClipboard {
         else { return nil }
         let blocks = surface.blocks
         let depth = blocks[start.position].depth
-        guard blocks[start.position...end.position].allSatisfy({ $0.depth >= depth }) else { return nil }
+        guard
+            blocks[start.position...end.position].allSatisfy({
+                $0.depth >= depth && $0.node != "tableParagraph" && !TableGrid.isParagraphID($0.id)
+            })
+        else { return nil }
         var next = end.position + 1
         while next < blocks.count, blocks[next].depth > depth {
             guard surface.isHidden(position: next) else { return nil }

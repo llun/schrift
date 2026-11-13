@@ -378,7 +378,8 @@ final class NativeEditorSession {
             replica: replica, surfaceID: surfaceID, revision: revision, surface: surface, view: textView,
             recoveries: recoveries, hasRecoveryStore: hasRecoveryStore)
         let resolvedOrigin =
-            interlinkingOrigin.isEmpty ? (scope?.serverOrigin ?? textView.blockControls.serverOrigin) : interlinkingOrigin
+            interlinkingOrigin.isEmpty
+            ? (scope?.serverOrigin ?? textView.blockControls.serverOrigin) : interlinkingOrigin
         input.serverOrigin = resolvedOrigin
         input.onJournaled = { [weak scheduler] in scheduler?.schedule() }
         self.input = input

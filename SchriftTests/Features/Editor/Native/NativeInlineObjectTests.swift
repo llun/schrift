@@ -684,9 +684,9 @@ final class NativeInlineObjectTests: NativeEditingTestCase {
         harness.input.textViewDidChangeSelection(harness.view)
         XCTAssertTrue(harness.input.activeMarks.contains { $0.key == "bold" })
 
-        XCTAssertTrue(harness.input.replace(range: NSRange(location: pEntry1.textRange.location + 3, length: 0), with: "!"))
+        harness.input.typeKey("!")
         XCTAssertTrue(harness.session.surface.predictions.isEmpty, "chips block skips optimistic prediction")
-        XCTAssertTrue(harness.input.replace(range: NSRange(location: pEntry1.textRange.location + 4, length: 0), with: "?"))
+        harness.input.typeKey("?")
         await harness.settle()
 
         var block = try XCTUnwrap(harness.session.surface.blocks.first { $0.id == "p1" })
@@ -904,8 +904,10 @@ final class NativeInlineObjectTests: NativeEditingTestCase {
         let peerSV = try YUpdateDecoder.decodeStateVector(peerSVBytes)
         let sinceMap = Dictionary(peerSV.map { ($0.client, $0.clock) }, uniquingKeysWith: max)
         try peer.transact { tx in
-            if let groupItem = YBlockProjection.children(of: peer.get(BlockNoteYjs.fragmentField), includeFormats: false)
-                .first,
+            if let groupItem = YBlockProjection.children(
+                of: peer.get(BlockNoteYjs.fragmentField), includeFormats: false
+            )
+            .first,
                 case .type(let group) = groupItem.content,
                 let p1Item = YBlockProjection.children(of: group, includeFormats: false).first
             {
@@ -1067,20 +1069,24 @@ final class NativeInlineObjectTests: NativeEditingTestCase {
         XCTAssertEqual(tableInput.serverOrigin, "https://example.test")
 
         // Copy mention chip from cell (row 0, index 1) and paste into zombie cell (row 1, index 1).
-        let mentionCellEntry = tableSession.surface.rangeIndex.entries[1]
+        let mentionCellID = tableSession.surface.blocks[1].id
+        tableSession.surface.setFocus([mentionCellID])
+        let mentionCellEntry = try XCTUnwrap(tableSession.surface.rangeIndex.entry(for: mentionCellID))
         tableSession.textView.selectedRange = mentionCellEntry.textRange
         tableInput.copySelection()
         _ = await tableSession.settle()
         XCTAssertEqual(tableHarness.pasteboard.string, "@Ada")
         XCTAssertNotNil(tableHarness.pasteboard.data(forPasteboardType: BlockNoteInlinePayload.pasteboardType))
 
-        let destCellEntry = tableSession.surface.rangeIndex.entries[3]
+        let destCellID = tableSession.surface.blocks[3].id
+        tableSession.surface.setFocus([destCellID])
+        let destCellEntry = try XCTUnwrap(tableSession.surface.rangeIndex.entry(for: destCellID))
         tableSession.textView.selectedRange = NSRange(location: NSMaxRange(destCellEntry.textRange), length: 0)
         ok = await tableSession.run { tableInput.pasteFromPasteboard() }
         XCTAssertTrue(ok)
         XCTAssertEqual(
             tableSession.surface.blocks[3].runs.compactMap(\.inlineObject).last,
-            .mention(userID: "u1", fullName: "Ada"))
+            .mention(userID: "user-1", fullName: "Ada"))
     }
 
     func testPasteSameOriginDocURLCreatesInterlinkOrFallsBackToPlainText() async throws {
@@ -1088,7 +1094,8 @@ final class NativeInlineObjectTests: NativeEditingTestCase {
         let state = try makeYDocState { tx, group in
             var after: YItem?
             try insertContainer(tx, into: group, after: &after, id: "p1", node: "paragraph", children: [.text("hi ")])
-            try insertContainer(tx, into: group, after: &after, id: "p2", node: "paragraph", children: [.text("replace")])
+            try insertContainer(
+                tx, into: group, after: &after, id: "p2", node: "paragraph", children: [.text("replace")])
             try insertContainer(
                 tx, into: group, after: &after, id: "code1", node: "codeBlock",
                 props: [("language", .string("swift"))],
@@ -1152,7 +1159,9 @@ final class NativeInlineObjectTests: NativeEditingTestCase {
         addTeardownBlock { await tableSession.close().value }
         let tableInput = try XCTUnwrap(tableSession.input)
         tableHarness.pasteboard.string = "https://example.test/docs/\(targetUUID.uuidString)"
-        let firstCell = tableSession.surface.rangeIndex.entries[0]
+        let firstCellID = tableSession.surface.blocks[0].id
+        tableSession.surface.setFocus([firstCellID])
+        let firstCell = try XCTUnwrap(tableSession.surface.rangeIndex.entry(for: firstCellID))
         tableSession.textView.selectedRange = NSRange(location: NSMaxRange(firstCell.textRange), length: 0)
         ok = await tableSession.run { tableInput.pasteFromPasteboard() }
         XCTAssertTrue(ok)
