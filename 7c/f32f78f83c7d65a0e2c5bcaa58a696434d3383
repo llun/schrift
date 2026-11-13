@@ -1,0 +1,53 @@
+Schrift/App/RootView.swift
+  s_dc239db0cc1c9d::t_28ae4cf8d1b7ab 37,88-93
+Schrift/Core/Localization/L10nKey.swift
+  s_dc239db0cc1c9d::t_c61e0958035b0b 528-531
+Schrift/Core/Localization/Strings+en.swift
+  s_dc239db0cc1c9d::t_a1e41628d963d7 17-20
+Schrift/Core/Yjs/BlockNoteMediaCommands.swift
+  s_dc239db0cc1c9d::t_457bc4ae684eb5 88
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_dc239db0cc1c9d::t_b8b9142e5697de 1304-1457,3418,3420-3421,3435-3440
+Schrift/Features/Editor/EditorView.swift
+  s_dc239db0cc1c9d::t_7a47c8aaa4a789 327
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_dc239db0cc1c9d::t_f2bddef81e1907 1080-1091
+Schrift/Features/Editor/Native/AttributedDocumentProjection.swift
+  s_dc239db0cc1c9d::t_365d9302b56d09 62
+Schrift/Features/Editor/Native/DocumentReplicaSession.swift
+  s_dc239db0cc1c9d::t_b7447c639ac61e 426-427
+Schrift/Features/Editor/Native/NativeBlockAttachment.swift
+  s_dc239db0cc1c9d::t_3807a924663e8a 216-217,220,222-224
+Schrift/Features/Editor/Native/NativeBlockControls.swift
+  s_dc239db0cc1c9d::t_90f4e64efaefd9 81-83,85-91
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_dc239db0cc1c9d::t_d4e58361deb81d 259-286,325,334-335,840
+Schrift/Features/Editor/Native/NativeEditorView.swift
+  s_dc239db0cc1c9d::t_e653fd4b5e6993 27,29,69-70,162-163,490-491,509-510,533-534
+Schrift/Features/Editor/Native/NativeMediaInspector.swift
+  s_dc239db0cc1c9d::t_68cec07f5bdd6b 165,173,199-200,219-223,226-229,241,248-254
+Schrift/Features/Editor/Native/NativeMediaUploads.swift
+  s_dc239db0cc1c9d::t_b8216aeea5905e 4-6,9-19,23,36-37,42,44,46,49-67,71-85,91,95-97,100,104-105,107,144,148-153
+Schrift/Features/Editor/Native/NativeSessionRegistry.swift
+  s_dc239db0cc1c9d::t_869a339430ae65 120-196
+Schrift/Features/Editor/Native/ReplicaCommandMailbox.swift
+  s_dc239db0cc1c9d::t_0c0ddf06bbf915 76-78,109,135-143
+Schrift/Features/Editor/PendingAttachmentStore.swift
+  s_dc239db0cc1c9d::t_3426b0c4b3265b 91-94,103-104,113-120,127-138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7cf32f78f83c7d65a0e2c5bcaa58a696434d3383",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
