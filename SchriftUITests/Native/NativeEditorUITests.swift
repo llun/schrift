@@ -365,7 +365,9 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(second.waitForExistence(timeout: 10), "the column editor opened")
         XCTAssertTrue(field.waitForNonExistence(timeout: 5), "the outline closed")
         XCTAssertFalse(app.keyboards.firstMatch.waitForExistence(timeout: 2), "it did not take the keyboard")
-        XCTAssertEqual(second.value as? String, "Right", "nothing typed")
+        // The column's value ends with the text's closing separator.
+        XCTAssertEqual(
+            (second.value as? String)?.trimmingCharacters(in: .newlines), "Right", "nothing typed")
         app.buttons["nativeEditor.columns.done"].tap()
         XCTAssertTrue(card.waitForExistence(timeout: 5))
     }
