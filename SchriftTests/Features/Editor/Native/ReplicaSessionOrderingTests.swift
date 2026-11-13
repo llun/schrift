@@ -618,6 +618,9 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
         XCTAssertEqual(
             text(of: try block(harness.session, Self.firstID)), "aFirst paragraph.", "the journaled key stays")
         XCTAssertEqual(harness.input.composition.pendingRecoveries.map(\.text), ["b"])
+        // Before the test returns: the held append parks a pool thread, and
+        // finishing an async test needs one.
+        disk.open()
     }
 
     /// F9: undo restores the selection its step stored even after the user's
