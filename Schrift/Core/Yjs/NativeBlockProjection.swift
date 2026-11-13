@@ -123,15 +123,17 @@ enum NativeBlockProjection {
     /// classic shadow scrubs them. Blocks only the native editor models take
     /// the server export's spelling (`exportSpelling`), and a root subtree the
     /// classic rendering cannot spell like the export (`needsExport`) is the
-    /// export's own Markdown (`NativeExportMarkdown`). `nil` when the document
-    /// has no total shadow.
+    /// export's own Markdown (`NativeExportMarkdown`), as is one holding edge
+    /// whitespace the classic rendering would trim (`hasEdgeWhitespace`), so
+    /// a trailing space just typed always has a shadow. `nil` when the
+    /// document has no total shadow.
     static func markdownShadow(_ doc: YDoc) -> String? {
         let tree = project(doc, nativeMarks: false)
         // A flat document with no native-only block keeps exactly the classic shadow.
         guard
             tree.blocks.contains(where: {
                 $0.depth > 0 || $0.block.node == "table" || $0.block.node == "columnList"
-                    || nativeOnlyReasons.contains(opaqueReason($0.block))
+                    || nativeOnlyReasons.contains(opaqueReason($0.block)) || hasEdgeWhitespace($0.block)
             })
         else {
             return YBlockProjection.projectedMarkdown(YBlockProjection.project(doc))
@@ -185,9 +187,16 @@ enum NativeBlockProjection {
                 }
                 parts += [before] + columns
                 plain = end
-            } else if needsExport(blocks[root..<end]) {
+            } else if case let subtree = blocks[root..<end],
+                needsExport(subtree) || subtree.contains(where: { hasEdgeWhitespace($0.block) })
+            {
+                // Edge whitespace falls back to the classic rendering only for a block the port lacks.
+                // Edge whitespace never takes a shadow away: last, the classic
+                // rendering with it trimmed, as the conflict comparison reads it.
                 guard let before = classicSpelling(blocks[plain..<root]),
-                    let chunk = NativeExportMarkdown.markdown(NativeExportMarkdown.nodes(blocks[root..<end]))
+                    let chunk = exportNodes(subtree).flatMap(NativeExportMarkdown.body)
+                        ?? (needsExport(subtree)
+                            ? nil : classicSpelling(subtree) ?? classicSpelling(edgeTrimmed(subtree)))
                 else { return nil }
                 parts += [before, chunk]
                 plain = end
@@ -196,10 +205,69 @@ enum NativeBlockProjection {
         }
         guard let rest = classicSpelling(blocks[plain...]) else { return nil }
         guard !parts.isEmpty else { return rest }
-        // The export separates root blocks by a blank line; a list split here
-        // only turns loose, which `canonicalMarkdown` does not see.
+        // The export separates root blocks by a blank line and trims only the
+        // document's ends; a list split here only turns loose, which
+        // `canonicalMarkdown` does not see.
         let spelled = (parts + [rest]).map { $0.trimmingCharacters(in: .newlines) }.filter { !$0.isEmpty }
-        return spelled.joined(separator: "\n\n") + "\n"
+        return NativeExportMarkdown.trimmed(spelled.joined(separator: "\n\n"))
+    }
+
+    /// Whether the classic rendering cannot spell `block` like the export:
+    /// text that starts or ends with whitespace (the classic re-parse trims
+    /// `.whitespaces`, so its self-check refuses the block; the export's trim
+    /// takes `jsWhitespace` off the document's ends), or a marked run that does
+    /// (the export keeps that whitespace inside the delimiters, except the
+    /// trailing part of bold and italic). A code block is verbatim either way.
+    private static func hasEdgeWhitespace(_ block: ProjectedBlock) -> Bool {
+        guard block.node != "codeBlock" else { return false }
+        func edges(_ text: String) -> Bool {
+            [text.unicodeScalars.first, text.unicodeScalars.last].contains { $0.map(edgeWhitespace.contains) == true }
+        }
+        return edges(block.runs.map(\.text).joined()) || block.runs.contains { !$0.marks.isEmpty && edges($0.text) }
+    }
+
+    private static let edgeWhitespace = CharacterSet.whitespaces.union(NativeExportMarkdown.jsWhitespace)
+
+    /// The port's nodes for a root subtree. Outside the shapes `needsExport`
+    /// sends there (where the port refuses callouts), a callout is the
+    /// paragraph `exportSpelling` makes of it; `nil` for one it refuses.
+    private static func exportNodes(_ subtree: ArraySlice<NativeBlockSnapshot>) -> [NativeExportMarkdown.Node]? {
+        guard !needsExport(subtree) else { return NativeExportMarkdown.nodes(subtree) }
+        var snapshots = Array(subtree)
+        for index in snapshots.indices where opaqueReason(snapshots[index].block) == "unknownNode:callout" {
+            guard let spelled = exportSpelling(snapshots[index...index])?.blocks.first else { return nil }
+            snapshots[index].block = spelled
+        }
+        return NativeExportMarkdown.nodes(snapshots[...])
+    }
+
+    /// The subtree with each block's edge `.whitespaces` removed from its runs.
+    private static func edgeTrimmed(_ subtree: ArraySlice<NativeBlockSnapshot>) -> ArraySlice<NativeBlockSnapshot> {
+        func strip(_ text: String, leading: Bool) -> String {
+            var scalars = Array(text.unicodeScalars)
+            while let edge = leading ? scalars.first : scalars.last, CharacterSet.whitespaces.contains(edge) {
+                if leading { scalars.removeFirst() } else { scalars.removeLast() }
+            }
+            return String(String.UnicodeScalarView(scalars))
+        }
+        return ArraySlice(
+            subtree.map { snapshot in
+                guard snapshot.block.node != "codeBlock" else { return snapshot }
+                var snapshot = snapshot
+                var runs = snapshot.block.runs
+                while !runs.isEmpty {
+                    runs[0].text = strip(runs[0].text, leading: true)
+                    guard runs[0].text.isEmpty else { break }
+                    runs.removeFirst()
+                }
+                while !runs.isEmpty {
+                    runs[runs.count - 1].text = strip(runs[runs.count - 1].text, leading: false)
+                    guard runs[runs.count - 1].text.isEmpty else { break }
+                    runs.removeLast()
+                }
+                snapshot.block.runs = runs
+                return snapshot
+            })
     }
 
     /// A column group's native fidelity (PR12a): modeled when the group is

@@ -2585,6 +2585,36 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   sixteen links pinned byte for byte against the
   installed exporter, `canType`, a typed save and Return in an open toggle whose shadow
   `draftSyncDecision` reads as our last push).
+- **Edge whitespace in the save shadow (fix after PR11c).** The classic rendering's
+  self-check re-parses its Markdown, and the parser trims a line's edge whitespace (a
+  leading space or tab even makes the line verbatim text), so a block whose text started or
+  ended with whitespace had no shadow: a save captured right after typing a space (the
+  10-second debounce, or a close) threw `unprojectableShadow` and froze authoring with
+  "Couldn't save", and a document holding such a block opened read-only. Now a root subtree
+  with a block whose text, or one of whose marked runs, starts or ends with
+  `.whitespaces` or JS whitespace (`hasEdgeWhitespace`; never a code block, which is
+  verbatim) is spelled by `NativeExportMarkdown.body`, untrimmed, and the whole shadow is
+  trimmed like `htmlToMarkdown` (`result.trim() + "\n"`, `NativeExportMarkdown.trimmed`).
+  `jsWhitespace` is exactly ECMAScript WhiteSpace and LineTerminator (U+0009–000D, U+0020,
+  U+00A0, U+1680, U+2000–200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF), never
+  Foundation's `.whitespaces`, which holds U+200B: JS keeps a leading U+200B, so
+  `"\u{200B}# Heading"` stays a paragraph. What BlockNote 0.56 exports: a block keeps its
+  edge spaces, tabs and NBSP verbatim and only the document's ends are trimmed; bold and
+  italic move trailing whitespace out of their delimiters and keep leading whitespace inside
+  (`** b**x`), strike, code and links keep both inside (`~~s ~~`, `` `c ` ``,
+  `[ site ](url)`); a table cell is trimmed the same way. In such a subtree a childless
+  callout outside a toggle (root or nested under a plain block or list, the shapes the
+  classic rendering spells) is the paragraph `exportSpelling` makes of it (`exportNodes`;
+  its whitespace export is unconfirmed: the harness's callout is a stub). **An edge space
+  never takes a shadow away:** a subtree the port cannot spell (a nested image) falls back
+  to the classic rendering, then to the classic rendering of the text with its edge
+  whitespace trimmed (`edgeTrimmed`, as `syncCanonicalMarkdown` reads it; a false conflict
+  at worst, never a freeze). Known limit: each flagged root is its own chunk, so a list it
+  splits renumbers and turns loose, which `syncCanonicalMarkdown` does not see. Tests:
+  `BlockNoteWhitespaceOracleTests` (`BlockNoteWhitespaceCaptures`, ws.mjs: 32 web
+  fixtures with U+200B and U+FEFF, the shadow byte for byte the export except the split
+  list, equal under `syncCanonicalMarkdown`) and `NativeShadowExportParityTests`
+  (`testASaveRightAfterATrailingSpaceDoesNotFreeze`, `testAnEdgeSpaceNeverTakesAShadowAway`).
 - **PR06e bounded previews and attachment sizing.** A block `AttributedDocumentProjection.isPlaceholder`
   (non-prose node or opaque) is **one U+FFFC attachment character** plus its separator:
   `displayText` is `attachmentCharacter`, so the range index, refusals and clipboard rules
@@ -3484,11 +3514,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `liftToOuterList`), where this harness's web run leaves it nested and nests the siblings under
   it, at the root as in a column; a frozen save (`freezeAuthoring`, below) now also stops the table
   and column surfaces the document opened (they share its journal; before, a table surface kept
-  journaling). **Pre-existing, found here (not fixed):** a paragraph whose text starts or ends with
-  a space has no classic shadow (`markdownShadow` is nil for "Left " in a flat document too), so a
-  save captured at that moment (the 10-second debounce after a pause right after a space, or a
-  close right after typing one) fails as `unprojectableShadow` and freezes authoring with
-  "Couldn't save"; the host UI test types words without edge spaces for that reason.
+  journaling). Edge whitespace inside a column takes the same shadow rules as at the root (see
+  "Edge whitespace in the save shadow").
   Tests: `BlockNoteColumnOracleTests` (`BlockNoteColumnCaptures`,
   cols.mjs: seven web fixtures familiar with their export as the shadow, widths, column blocks;
   typing, Return, Return in an empty column block (`emptyChildEnter: "stay"`), an empty nested
