@@ -1,0 +1,22 @@
+SchriftTests/Features/Editor/Native/NativeMediaQueueTests.swift
+  s_dc239db0cc1c9d::t_4ade0edf950fe4 1-481
+  s_dc239db0cc1c9d::t_a2c5898f6c6e29 482-484
+SchriftTests/Features/Editor/Native/NativeMediaTests.swift
+  s_dc239db0cc1c9d::t_90fddebceb68b9 7-8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4300d50c7e367569b991a5e61291c199b1b47ba6",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
