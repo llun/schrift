@@ -259,6 +259,8 @@ enum Strings_sl {
         .editor_slash_code_block: "Blok kode",
         .editor_slash_toggle_list: "Zložljiv seznam",
         .editor_slash_toggle_heading: "Zložljiv naslov",
+        .editor_slash_two_columns: "Dva stolpca",
+        .editor_slash_three_columns: "Trije stolpci",
         .editor_slash_divider: "Ločilna črta",
         .editor_slash_photo: "Fotografija",
 
@@ -388,6 +390,8 @@ enum Strings_sl {
         .native_editor_table_format: "Oblika",
         .native_editor_columns: "Stolpci, %d",
         .native_editor_column: "Stolpec %d od %d",
+        .native_editor_column_move_left: "Premakni stolpec levo",
+        .native_editor_column_move_right: "Premakni stolpec desno",
         .native_editor_math: "Formula",
         .native_editor_diagram: "Diagram",
         .native_editor_input_unavailable: "Ta vnos v izvornem urejevalniku še ni podprt.",

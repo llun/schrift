@@ -175,6 +175,10 @@ enum BlockNoteSubtreePayload {
 
     /// Checks that `copies` are whole BlockNote containers within the bounds.
     /// Returns the block count and the deepest block level (0: the copies).
+    private static func hasID(_ props: [(key: String, value: YAnyValue)]) -> Bool {
+        props.contains { if case .string(let id) = $0.value { $0.key == "id" && !id.isEmpty } else { false } }
+    }
+
     static func validate(_ copies: [BlockNoteWriter.Copy]) throws -> (blocks: Int, depth: Int) {
         var blocks = 0
         var deepest = 0
@@ -205,8 +209,30 @@ enum BlockNoteSubtreePayload {
                 try inline(children)
             }
         }
+        // A root column group (PR12b): its columns hold containers, each one
+        // of its ids counted with the blocks (they get fresh ones too).
+        func columnList(_ props: [(key: String, value: YAnyValue)], _ columns: [BlockNoteWriter.Copy]) throws {
+            guard hasID(props), (2...ColumnGroup.maxColumns).contains(columns.count) else { throw Error.malformed }
+            blocks += 1
+            for column in columns {
+                guard case .element("column", let columnProps, let kids) = column, hasID(columnProps), !kids.isEmpty,
+                    // A width `ColumnGroup.read` refuses would leave an unfamiliar group with no
+                    // shadow, so every save would fail (PR12b review): absent, or positive and finite.
+                    columnProps.allSatisfy({ $0.key != "width" || (TableGrid.number($0.value) ?? 0) > 0 })
+                else { throw Error.malformed }
+                blocks += 1
+                guard blocks <= maxBlocks else { throw Error.tooLarge }
+                for kid in kids { try container(kid, depth: 0) }
+            }
+        }
         guard !copies.isEmpty else { throw Error.malformed }
-        for copy in copies { try container(copy, depth: 0) }
+        for copy in copies {
+            if case .element("columnList", let props, let columns) = copy {
+                try columnList(props, columns)
+            } else {
+                try container(copy, depth: 0)
+            }
+        }
         return (blocks, deepest)
     }
 }
@@ -218,11 +244,23 @@ extension BlockNoteWriter.Copy {
         return (node == "blockContainer" ? 1 : 0) + children.reduce(0) { $0 + $1.containerCount }
     }
 
-    /// This copy with every `blockContainer`'s `id` replaced by the next of
-    /// `ids`, in preorder (prop order kept). Throws when `ids` runs out.
+    /// The ids a copy carries: its containers', and a column group's and its
+    /// columns' (PR12b).
+    var idCount: Int {
+        guard case .element(let node, _, let children) = self else { return 0 }
+        return (Self.carriesID(node) ? 1 : 0) + children.reduce(0) { $0 + $1.idCount }
+    }
+
+    private static func carriesID(_ node: String) -> Bool {
+        node == "blockContainer" || node == "columnList" || node == "column"
+    }
+
+    /// This copy with every `blockContainer`'s (and column group's and
+    /// column's) `id` replaced by the next of `ids`, in preorder (prop order
+    /// kept). Throws when `ids` runs out.
     func replacingIDs(_ ids: inout ArraySlice<String>) throws -> Self {
         guard case .element(let node, var props, let children) = self else { return self }
-        if node == "blockContainer" {
+        if Self.carriesID(node) {
             guard let id = ids.popFirst(), let at = props.firstIndex(where: { $0.key == "id" }) else {
                 throw BlockNoteSubtreePayload.Error.malformed
             }

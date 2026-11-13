@@ -3532,6 +3532,74 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `testTypingInBothColumnsSurvivesRelaunch` and `testTypingAfterAColumnsTableSurvivesRelaunch`
   (`--native-column-table`)
   (`--native-open --native-columns`).
+- **PR12b Column structure, moves across a column's edge, the group as a block.** Every command
+  produces the web's XML (`BlockNoteColumnStructureCaptures`, cols2.mjs: 33 web operations).
+  **Column commands** (`Core/Yjs/BlockNoteColumnCommands.swift`, `BlockNoteColumnCommand`, one
+  `NativeEditCommand.Kind.columns` on the group's id, `DocumentEngine.prepareColumnCommand`,
+  validated before arming, open or closed group): `add` (a column of one empty paragraph, width 1,
+  the others' widths first normalised to an average of 1 when it is outside 0.99...1.01, as the
+  column drop handler's `updateBlock` does, JS arithmetic kept: `1.7999999999999998`), `remove`
+  (`removeBlocks([column])`; a group of two dissolves into the other column's blocks, copied in
+  place of the group, `fixLayoutBlock`), `move` (the column cloned to its new place) and `resize`
+  (the handle's two `width` attributes, each at least `minimumWidth` 0.5,
+  `ColumnResizeExtension`'s floor). Widths are written as lib0's `writeAny` keeps a number
+  (`BlockNoteWriter.number`: an int within 31 bits, a float32 when exact, else a float64). New ids
+  must be unused by any block, column or group (`isUnused`, `ColumnGroup.columnIDs`). **Insertion**
+  (`.insertColumns(count:ids:removing:)`, the slash menu's `twoColumnsSlashItem`/
+  `threeColumnsSlashItem`, native only, `SlashMenuAction.columns`): `insertColumnList`'s
+  `insertOrUpdateBlockForSlashMenu` — a root paragraph left empty once the "/query" goes becomes
+  the group (keeping its id; one of the `2n + 1` ids is then spare), one with text gets the group
+  after it, and from a column the group goes after its group; a nested paragraph is refused (a
+  group below the root has no shadow). **Moves across a column's edge** (`DocumentEngine.crossing`,
+  the web's `getInsertionPos`), for Move up/down and Backspace (`.join` at a block start, which the
+  web turns into the same move): a block next to a group goes in (Move down: the top of its first
+  column; Move up and Backspace: the end of its last column); a column's first block moving up goes
+  to the end of the previous column, or above the group from the first column; a column's last
+  block moving down to the top of the next column, or below the group from the last. A column the
+  move empties keeps one empty paragraph (`moveAcross`'s `padID`, `DocumentEngine.newBlockID`):
+  the web keeps the empty column, refilled by ProseMirror. Delete at the end of the block before a
+  group (a `.range` to the group's offset 0) pulls its first column's first block out after it
+  (`pullFirstBlock`). **The group as a block:** the document's block menu on its card moves it
+  among plain root blocks (never past a block with children or a group: it would nest), duplicates
+  it with fresh ids for the group, its columns and its blocks (the engine's own ids:
+  `BlockNoteWriter.Copy.idCount`, `replacingIDs` renames lists and columns too), copies it
+  (`BlockNoteSubtreePayload.validate` takes a root `columnList` of 2...16 columns of containers;
+  its ids count as blocks) and deletes it; a pasted group lands at the root only. **The editor
+  follows the group** (`ColumnEditorModel.reconcile`): the group's own change (its
+  `.replaceBlock`, a `.reset`, or its removal, which column surfaces now receive as a signal)
+  re-reads it; a column a peer or a command added gets a surface, a removed one loses its own, the
+  order follows the group's, the shown column stays shown by id (else the nearest), and a group
+  that dissolved, went or turned unfamiliar closes the editor. **The Column menu** (toolbar,
+  `nativeEditor.columns.menu`; `ColumnAction`: insert left/right, move left/right, wider,
+  narrower, delete, each disabled when unavailable) acts on the shown column; Wider/Narrower move
+  the handle beside it (its right one; the last column's left one) by a quarter column, clamped as
+  the web clamps. Awareness per column: a peer's position in a column's block resolves to that
+  block while the group is open (its column paints it) and to the group's card while closed.
+  **Known limits:** Delete at a column's end (the web pulls the next column's first block in) is
+  refused: a column surface holds only its column; a resize is a menu step, not a drag, and is an
+  undo step (the web's resize is not in its history); the column editor is not opened by itself
+  after the slash menu makes a group, and the caret does not follow a block moved into another
+  column; a moved or reordered column and a dissolved group's blocks are clones (a peer's
+  concurrent edit in them lands in the deleted original, as for every native move, PR06d);
+  a group never moves past a block with children or another group. Tests:
+  `BlockNoteColumnStructureOracleTests` (every capture, refusals, the group moved, duplicated and
+  copied), `ColumnStructureTests` (the menu end to end through a dissolve, a peer's new, deleted and
+  dissolved column, a group turning unfamiliar, a block moved out by a peer, a block moved to the
+  next column, the slash item, the block menu on the card, awareness per column) and the host UI
+  test `testTheColumnMenuInsertsAColumnThatSurvivesRelaunch`. The PR12a bullet's refusals of these
+  moves are superseded.
+  **Review fixes (PR #284).** A column command carries the column ids its indices address
+  (`.columns(_:expecting:)`, the editor's group when the menu was used) and is refused once a peer
+  changed the columns, never retargeted. Insert column refuses widths whose normalisation would
+  not stay positive and finite (1e308s sum to infinity and divide to 0: an unfamiliar, unsaveable
+  group), and a pasted group's widths must be absent or positive and finite (`validate`), for the
+  same reason. New-id checks collect the replica's ids once per command (`usedIDs`,
+  `idCollections`), not one document walk per id (a 2,000-block Duplicate). `ColumnTextContainer.show`
+  removes a removed column's text view (it sat on top and took every touch) and sets every view's
+  visibility each pass. A reconcile closed while it attaches ends every surface it attached
+  (`beforeAttach` is the test seam), so the group closes and its card updates again. Tests:
+  `BlockNoteColumnStructureOracleTests` (stale column ids, huge widths, pasted widths, one id walk)
+  and `ColumnStructureTests` (deleting the shown column, closing during an attach).
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below

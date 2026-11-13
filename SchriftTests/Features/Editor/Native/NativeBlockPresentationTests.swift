@@ -449,9 +449,10 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
             NativeInputCoordinator.slashItems.map(\.id),
             [
                 "paragraph", "heading1", "heading2", "heading3", "toggleHeading", "bullet", "numbered", "checklist",
-                "toggleList", "quote", "code",
+                "toggleList", "quote", "code", "twoColumns", "threeColumns",
             ],
-            "divider, photo and file wait for later slices; the toggles are NativeToggleTests'")
+            "divider, photo and file wait for later slices; the toggles are NativeToggleTests', the columns ColumnStructureTests'"
+        )
         for (itemID, node, level) in expected {
             let harness = try await makeHarness([paragraph("p", "Above"), paragraph("s", "")])
             addTeardownBlock { await harness.close() }

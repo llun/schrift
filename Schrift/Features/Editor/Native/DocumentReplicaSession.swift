@@ -811,7 +811,8 @@ actor DocumentReplicaSession {
                 case .text(let id, _), .props(let id, _), .replaceBlock(let id, _):
                     return columns[id] == column.id || id == column.group ? change : nil
                 case .remove(let ids):
-                    let kept = ids.filter { removedColumns[$0] == column.id }
+                    // The group's own removal (it dissolved or went) too: a structure signal (PR12b).
+                    let kept = ids.filter { removedColumns[$0] == column.id || $0 == column.group }
                     return kept.isEmpty ? nil : .remove(blockIDs: kept)
                 case .insert(let after, let blocks):
                     let kept = blocks.filter { columns[$0.id] == column.id }

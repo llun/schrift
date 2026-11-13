@@ -54,12 +54,8 @@ final class ColumnEditorModel: Identifiable {
             return
         }
         var sessions: [NativeEditorSession] = []
-        for (index, column) in group.columns.enumerated() {
-            guard let session = await document.openColumn(group: groupID, column: column.id) else { break }
-            session.textView.accessibilityIdentifier = "nativeEditor.column.\(index)"
-            session.input?.onExit = { [weak self] in self?.close() }
-            session.textView.blockControls.onOpenTable = { [weak self] in self?.openTable = NativeTableRequest(id: $0) }
-            if let awareness = document.awareness { session.showAwareness(awareness) }
+        for column in group.columns {
+            guard let session = await attach(column.id) else { break }
             sessions.append(session)
         }
         // Closed while attaching, or a column the replica refused (a peer
@@ -72,7 +68,166 @@ final class ColumnEditorModel: Identifiable {
         }
         self.group = group
         columns = sessions
+        relabel()
         isLoaded = true
+    }
+
+    /// One column's surface, wired to this editor.
+    private func attach(_ columnID: String) async -> NativeEditorSession? {
+        guard let session = await document.openColumn(group: groupID, column: columnID) else { return nil }
+        session.input?.onExit = { [weak self] in self?.close() }
+        session.textView.blockControls.onOpenTable = { [weak self] in self?.openTable = NativeTableRequest(id: $0) }
+        // The group's own change reaches every column: its structure may have changed (PR12b).
+        session.onApplied = { [weak self] delivery in
+            guard let self, self.touchesGroup(delivery) else { return }
+            self.scheduleReconcile()
+        }
+        if let awareness = document.awareness { session.showAwareness(awareness) }
+        onAttached?(session)
+        return session
+    }
+
+    private func touchesGroup(_ delivery: ReplicaDelivery) -> Bool {
+        delivery.events.contains { event in
+            guard case .patch(let patch, _) = event else { return false }
+            return patch.changes.contains { change in
+                switch change {
+                case .replaceBlock(let id, _): id == groupID
+                case .remove(let ids): ids.contains(groupID)
+                case .reset: true
+                default: false
+                }
+            }
+        }
+    }
+
+    private func relabel() {
+        for (index, session) in columns.enumerated() {
+            session.textView.accessibilityIdentifier = "nativeEditor.column.\(index)"
+        }
+    }
+
+    // MARK: - Structure (PR12b)
+
+    @ObservationIgnored private var reconciling = false
+    @ObservationIgnored private var reconcileAgain = false
+    /// Set by tests: after each reconcile.
+    @ObservationIgnored var onReconciled: (() -> Void)?
+    /// Set by tests: before a reconcile attaches a new column, and each surface attached.
+    @ObservationIgnored var beforeAttach: (() async -> Void)?
+    @ObservationIgnored var onAttached: ((NativeEditorSession) -> Void)?
+
+    private func scheduleReconcile() {
+        guard !isClosed else { return }
+        if reconciling {
+            reconcileAgain = true
+            return
+        }
+        reconciling = true
+        Task { await reconcile() }
+    }
+
+    /// The group as the replica holds it now, shown: a column a peer (or a
+    /// command) added gets a surface, a removed one loses its own, the order
+    /// follows the group's, and the shown column stays shown while it exists.
+    /// A group that dissolved, went or turned unfamiliar closes the editor:
+    /// the document shows what is left.
+    private func reconcile() async {
+        repeat {
+            reconcileAgain = false
+            let group = await document.columnGroup(groupID)
+            guard !isClosed else { break }
+            guard let group, group.isFamiliar else {
+                close()
+                break
+            }
+            let shown = activeSession?.column?.id
+            var byID: [String: NativeEditorSession] = [:]
+            for session in columns { if let id = session.column?.id { byID[id] = session } }
+            var next: [NativeEditorSession] = []
+            // Surfaces attached by this pass: a close while one attaches ends them
+            // all, or the group stays open and its card stops updating (PR12b review).
+            var attached: [NativeEditorSession] = []
+            for column in group.columns {
+                if let session = byID.removeValue(forKey: column.id) {
+                    next.append(session)
+                } else {
+                    await beforeAttach?()
+                    if let session = await attach(column.id) {
+                        attached.append(session)
+                        next.append(session)
+                    }
+                    guard !isClosed else { break }
+                }
+            }
+            guard !isClosed else {
+                for session in attached { session.close() }
+                break
+            }
+            for session in byID.values {
+                session.textView.resignFirstResponder()
+                session.close()
+            }
+            self.group = group
+            columns = next
+            relabel()
+            active = next.firstIndex { $0.column?.id == shown } ?? min(active, max(0, next.count - 1))
+        } while reconcileAgain && !isClosed
+        reconciling = false
+        onReconciled?()
+    }
+
+    /// The shown column's structure commands, as the column menu offers them.
+    enum ColumnAction: CaseIterable {
+        case addLeft, addRight, moveLeft, moveRight, wider, narrower, delete
+    }
+
+    /// The command `action` is for the shown column now; nil when it is not
+    /// available (an edge, the minimum width, the column bound).
+    func command(_ action: ColumnAction) -> BlockNoteColumnCommand? {
+        guard let group, group.columns.indices.contains(active) else { return nil }
+        let count = group.columns.count
+        let widths = group.columns.map { $0.width ?? 1 }
+        switch action {
+        case .addLeft, .addRight:
+            guard count < ColumnGroup.maxColumns else { return nil }
+            return .add(
+                index: active + (action == .addRight ? 1 : 0), columnID: UUID().uuidString,
+                paragraphID: UUID().uuidString)
+        case .moveLeft: return active > 0 ? .move(from: active, to: active - 1) : nil
+        case .moveRight: return active + 1 < count ? .move(from: active, to: active + 1) : nil
+        case .delete: return .remove(index: active)
+        case .wider, .narrower:
+            // The resize handle beside the column (its right one, the last
+            // column's left one), dragged by a quarter of a column, clamped as
+            // `ColumnResizeExtension` clamps (no column below 0.5).
+            let left = active + 1 < count ? active : active - 1
+            guard left >= 0 else { return nil }
+            let growsLeft = (action == .wider) == (left == active)
+            let step = growsLeft ? Self.widthStep : -Self.widthStep
+            var newLeft = widths[left] + step
+            var newRight = widths[left + 1] - step
+            let minimum = BlockNoteColumnCommand.minimumWidth
+            if newLeft < minimum {
+                newRight -= minimum - newLeft
+                newLeft = minimum
+            } else if newRight < minimum {
+                newLeft -= minimum - newRight
+                newRight = minimum
+            }
+            guard newLeft >= minimum, newRight >= minimum, newLeft != widths[left] else { return nil }
+            return .resize(left: left, leftWidth: newLeft, rightWidth: newRight)
+        }
+    }
+
+    /// One Wider/Narrower step: a quarter of an average column.
+    static let widthStep = 0.25
+
+    /// Applies `action` to the shown column through its input.
+    @discardableResult
+    func perform(_ action: ColumnAction) -> Bool {
+        guard let command = command(action), let input = activeSession?.input else { return false }
+        return input.applyColumns(groupID, command, expecting: group?.columns.map(\.id))
     }
 
     /// Ends every column surface and hands focus back to the document.
@@ -85,6 +240,20 @@ final class ColumnEditorModel: Identifiable {
         }
         columns = []
         onClose?()
+    }
+}
+
+extension ColumnEditorModel.ColumnAction {
+    var titleKey: L10nKey {
+        switch self {
+        case .addLeft: .native_editor_table_column_left
+        case .addRight: .native_editor_table_column_right
+        case .moveLeft: .native_editor_column_move_left
+        case .moveRight: .native_editor_column_move_right
+        case .wider: .native_editor_table_wider
+        case .narrower: .native_editor_table_narrower
+        case .delete: .native_editor_table_column_delete
+        }
     }
 }
 
@@ -112,6 +281,24 @@ struct ColumnEditorScreen: View {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button(loc[.editor_action_done]) { model.close() }
                             .accessibilityIdentifier("nativeEditor.columns.done")
+                    }
+                    // The shown column's structure (PR12b), as the web's handles and drop zones do it.
+                    ToolbarItem(placement: .topBarLeading) {
+                        Menu {
+                            ForEach(ColumnEditorModel.ColumnAction.allCases, id: \.self) { action in
+                                Button(role: action == .delete ? .destructive : nil) {
+                                    model.perform(action)
+                                } label: {
+                                    Text(loc[action.titleKey])
+                                }
+                                .disabled(model.activeSession?.input == nil || model.command(action) == nil)
+                                .accessibilityIdentifier("nativeEditor.columns.\(action)")
+                            }
+                        } label: {
+                            Text(loc[.native_editor_table_column])
+                        }
+                        .accessibilityIdentifier("nativeEditor.columns.menu")
+                        .disabled(model.activeSession?.input == nil)
                     }
                 }
         }
@@ -241,15 +428,23 @@ final class ColumnTextContainer: UIView {
                 view.bottomAnchor.constraint(equalTo: bottomAnchor),
             ])
         }
-        guard views.indices.contains(active) else { return }
+        let stale = subviews.filter { view in !views.contains { $0 === view } }
+        guard views.indices.contains(active) else {
+            for view in stale { view.removeFromSuperview() }
+            return
+        }
         let next = views[active]
-        guard next !== shown else { return }
-        let previous = shown
-        next.isHidden = false
-        // First responder moves before the old view hides: the keyboard stays.
-        if previous?.isFirstResponder == true || previous == nil, next.isEditable { next.becomeFirstResponder() }
-        for view in views where view !== next { view.isHidden = true }
-        shown = next
-        UIAccessibility.post(notification: .screenChanged, argument: next)
+        if next !== shown {
+            let previous = shown
+            next.isHidden = false
+            // First responder moves before the old view hides (or leaves): the keyboard stays.
+            if previous?.isFirstResponder == true || previous == nil, next.isEditable { next.becomeFirstResponder() }
+            shown = next
+            UIAccessibility.post(notification: .screenChanged, argument: next)
+        }
+        // A removed column's view leaves, or it would sit on top and take every
+        // touch (PR12b review); every other view's visibility follows `active`.
+        for view in stale { view.removeFromSuperview() }
+        for view in views { view.isHidden = view !== next }
     }
 }

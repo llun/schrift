@@ -63,6 +63,14 @@ struct NativeEditCommand: Equatable, Sendable {
         case lineBreak(offset: Int)
         /// A structure command on a table block (PR11b).
         case table(BlockNoteTableCommand)
+        /// A column group's structure (PR12b), on the group's block id.
+        /// `expecting`: the group's column ids the command's indices address;
+        /// a group whose columns changed since refuses it (nil: no check).
+        case columns(BlockNoteColumnCommand, expecting: [String]? = nil)
+        /// The slash menu's Columns items (PR12b), on the "/query" paragraph:
+        /// `count` columns; `ids` the group's (unless it replaces the
+        /// paragraph), then each column's and its paragraph's.
+        case insertColumns(count: Int, ids: [String], removing: Range<Int>)
         case undo
         case redo
     }
@@ -96,7 +104,7 @@ struct NativeEditCommand: Equatable, Sendable {
         case .replace(_, let replacement, _): return replacement
         case .range(let range): return range.replacement
         case .split, .join, .marks, .props, .blockType, .indent, .outdent, .moveUp, .moveDown, .duplicate,
-            .deleteBlock, .insertBlock, .insertSubtrees, .lineBreak, .table, .undo, .redo:
+            .deleteBlock, .insertBlock, .insertSubtrees, .lineBreak, .table, .columns, .insertColumns, .undo, .redo:
             return ""
         }
     }

@@ -241,6 +241,8 @@ enum Strings_zhHant {
         .editor_slash_code_block: "程式碼區塊",
         .editor_slash_toggle_list: "可摺疊列表",
         .editor_slash_toggle_heading: "可摺疊標題",
+        .editor_slash_two_columns: "兩欄",
+        .editor_slash_three_columns: "三欄",
         .editor_slash_divider: "分隔線",
         .editor_slash_photo: "照片",
 
@@ -368,6 +370,8 @@ enum Strings_zhHant {
         .native_editor_table_format: "格式",
         .native_editor_columns: "分欄，%d",
         .native_editor_column: "第 %d 欄，共 %d 欄",
+        .native_editor_column_move_left: "欄左移",
+        .native_editor_column_move_right: "欄右移",
         .native_editor_math: "公式",
         .native_editor_diagram: "圖表",
         .native_editor_input_unavailable: "原生編輯器暫不支援此輸入。",

@@ -9,6 +9,9 @@ enum SlashMenuAction: Equatable, Sendable {
     /// A toggle list item, or a level-1 toggle heading: native editor only
     /// (`NativeInputCoordinator.slashItems`); the classic menu never offers it.
     case toggle(heading: Bool)
+    /// A column group of this many columns: native editor only (PR12b,
+    /// BlockNote's "Two Columns" / "Three Columns").
+    case columns(Int)
 
     /// True for the actions that must reach the server **now** — the only items withheld
     /// offline or on a document that has no server id yet.
@@ -22,7 +25,7 @@ enum SlashMenuAction: Equatable, Sendable {
     var requiresImmediateUpload: Bool {
         switch self {
         case .insertAttachment: return true
-        case .insertPhoto, .convert, .toggle: return false
+        case .insertPhoto, .convert, .toggle, .columns: return false
         }
     }
 }
@@ -97,6 +100,13 @@ let allSlashMenuItems: [SlashMenuItem] = [
 let toggleListSlashItem = SlashMenuItem(
     id: "toggleList", title: "Toggle list", titleKey: .editor_slash_toggle_list, icon: .chevron_right,
     action: .toggle(heading: false), keywords: ["toggle", "collapsible", "list", "details"])
+/// The web's "Two Columns" / "Three Columns" items (PR12b, native editor only).
+let twoColumnsSlashItem = SlashMenuItem(
+    id: "twoColumns", title: "Two columns", titleKey: .editor_slash_two_columns, icon: .content_copy,
+    action: .columns(2), keywords: ["columns", "row", "split", "layout", "two"])
+let threeColumnsSlashItem = SlashMenuItem(
+    id: "threeColumns", title: "Three columns", titleKey: .editor_slash_three_columns, icon: .content_copy,
+    action: .columns(3), keywords: ["columns", "row", "split", "layout", "three"])
 let toggleHeadingSlashItem = SlashMenuItem(
     id: "toggleHeading", title: "Toggle heading", titleKey: .editor_slash_toggle_heading, icon: .expand_more,
     action: .toggle(heading: true), keywords: ["toggle", "collapsible", "heading", "details"])

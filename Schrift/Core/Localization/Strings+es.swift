@@ -252,6 +252,8 @@ enum Strings_es {
         .editor_slash_code_block: "Bloque de código",
         .editor_slash_toggle_list: "Lista plegable",
         .editor_slash_toggle_heading: "Encabezado plegable",
+        .editor_slash_two_columns: "Dos columnas",
+        .editor_slash_three_columns: "Tres columnas",
         .editor_slash_divider: "Separador",
         .editor_slash_photo: "Foto",
 
@@ -379,6 +381,8 @@ enum Strings_es {
         .native_editor_table_format: "Formato",
         .native_editor_columns: "Columnas, %d",
         .native_editor_column: "Columna %d de %d",
+        .native_editor_column_move_left: "Mover columna a la izquierda",
+        .native_editor_column_move_right: "Mover columna a la derecha",
         .native_editor_math: "Fórmula",
         .native_editor_diagram: "Diagrama",
         .native_editor_input_unavailable: "Esta entrada aún no es compatible con el editor nativo.",

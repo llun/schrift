@@ -247,6 +247,8 @@ enum Strings_pt {
         .editor_slash_code_block: "Bloco de código",
         .editor_slash_toggle_list: "Lista expansível",
         .editor_slash_toggle_heading: "Título expansível",
+        .editor_slash_two_columns: "Duas colunas",
+        .editor_slash_three_columns: "Três colunas",
         .editor_slash_divider: "Divisor",
         .editor_slash_photo: "Fotografia",
 
@@ -374,6 +376,8 @@ enum Strings_pt {
         .native_editor_table_format: "Formatar",
         .native_editor_columns: "Colunas, %d",
         .native_editor_column: "Coluna %d de %d",
+        .native_editor_column_move_left: "Mover coluna para a esquerda",
+        .native_editor_column_move_right: "Mover coluna para a direita",
         .native_editor_math: "Fórmula",
         .native_editor_diagram: "Diagrama",
         .native_editor_input_unavailable: "Esta entrada ainda não é suportada no editor nativo.",

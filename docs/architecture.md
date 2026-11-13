@@ -1123,6 +1123,17 @@ find in PR12c. A group the editor does not understand (one column, an empty colu
 inside a column, over 16 columns or 2,000 blocks) and a group holding media, math or a diagram
 keep the document read-only and the group untouched.
 
+**PR12b Column structure.** The slash menu offers Two columns and Three columns, as the web
+does: an empty paragraph becomes the group, otherwise the group goes after it. The column editor
+has a Column menu: insert a column left or right, move the shown column left or right, make it
+wider or narrower, and delete it; deleting one of two columns turns the group back into the other
+column's blocks, as on the web. Move up and Move down, and Backspace at a block's start, cross a
+column's edge the way the web does: into the previous or next column, into a group from the block
+next to it, and out above or below the group. The document's block menu moves, duplicates, copies
+and deletes a whole group. A column a collaborator adds or removes, or a group they dissolve,
+shows in the open editor at once; a group that can no longer be edited closes it. Each change is
+the web's own, checked against the web for every operation.
+
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom
 actions on the text view) acts on the caret's block and its whole subtree: Move up, Move
