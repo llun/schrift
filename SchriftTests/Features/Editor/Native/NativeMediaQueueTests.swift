@@ -132,7 +132,8 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
     /// An editor on the scope, typing through the scope's journal as `installTyping` does.
     private func openEditor(_ app: App) async throws -> NativeEditorSession {
         let session = try await unwrapped(app.registry.open(store: app.store, scope: app.device.scope))
-        app.registry.installJournal(ReplicaSaveAdapter(store: app.store, scope: app.device.scope), for: app.device.scope)
+        app.registry.installJournal(
+            ReplicaSaveAdapter(store: app.store, scope: app.device.scope), for: app.device.scope)
         session.enableTyping(persist: nil)
         return session
     }
@@ -193,7 +194,8 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
         XCTAssertEqual(server.uploads, 1)
         XCTAssertNotNil(
             server.log.indexOfFirstRequest(
-                method: "POST", urlContaining: "documents/\(Self.documentID.uuidString.lowercased())/attachment-upload/"))
+                method: "POST", urlContaining: "documents/\(Self.documentID.uuidString.lowercased())/attachment-upload/"
+            ))
     }
 
     /// Picked in an open editor: the bytes are prepared and queued, the card
@@ -322,7 +324,8 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
         await waitUntil { app.registry.openScopes.isEmpty }
         let xml = try storedXML(device)
         XCTAssertTrue(xml.contains(#"<column id="c1" width="1"><blockcontainer id="a">"#), xml)
-        XCTAssertTrue(xml.contains(#"name="up.bin" showPreview="true" textAlignment="left" url="\#(Self.mediaURL)""#), xml)
+        XCTAssertTrue(
+            xml.contains(#"name="up.bin" showPreview="true" textAlignment="left" url="\#(Self.mediaURL)""#), xml)
         XCTAssertEqual(try localCommits(device), 1)
     }
 
@@ -435,7 +438,8 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
     /// is never written; the record fails for the user to answer.
     func testOnlyThisDocumentsMediaURLIsWritten() async throws {
         let server = Server()
-        server.mediaPath.value = "/media/\(UUID().uuidString.lowercased())/attachments/5f0f6a54-0b1d-4a8e-9f8c-3d2e1f0a9b8c.png"
+        server.mediaPath.value =
+            "/media/\(UUID().uuidString.lowercased())/attachments/5f0f6a54-0b1d-4a8e-9f8c-3d2e1f0a9b8c.png"
         let app = launch(try makeDevice(), server: server)
         app.coordinator.queueNativeAttachment(scope: app.device.scope, target: target(), data: Data())
         await waitUntil { app.coordinator.nativeAttachments(documentID: Self.documentID).first?.failedAt != nil }
@@ -454,7 +458,8 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
         await waitAndConfirmNever { server.uploads > 0 }
         XCTAssertNotNil(device.attachments.attachment(for: localID))
         XCTAssertNotNil(device.attachments.data(for: localID))
-        let foreign = ReplicaScope(serverOrigin: Self.origin, ownerUserID: other, org: "docs", documentID: Self.documentID)
+        let foreign = ReplicaScope(
+            serverOrigin: Self.origin, ownerUserID: other, org: "docs", documentID: Self.documentID)
         XCTAssertNil(app.coordinator.queueNativeAttachment(scope: foreign, target: target(), data: Data()))
     }
 

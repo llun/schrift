@@ -488,7 +488,8 @@ extension NativeEditorLabels {
             imageExternalA11y: loc[.editor_image_external_a11y], imageOffline: loc[.editor_image_offline],
             imageFailed: loc[.editor_image_failed], mediaEmpty: loc[.native_editor_media_empty],
             mediaUploading: loc[.native_editor_media_uploading],
-            mediaUploadFailed: loc[.native_editor_media_upload_stopped], uploadElsewhere: loc[.native_editor_upload_elsewhere],
+            mediaUploadFailed: loc[.native_editor_media_upload_stopped],
+            uploadElsewhere: loc[.native_editor_upload_elsewhere],
             blockMenu: loc[.native_editor_block_actions],
             blockActions: Dictionary(
                 uniqueKeysWithValues: NativeBlockAction.allCases.map { ($0, loc[$0.labelKey]) }))

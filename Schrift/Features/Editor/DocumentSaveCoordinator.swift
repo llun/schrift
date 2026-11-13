@@ -3416,7 +3416,8 @@ final class DocumentSaveCoordinator {
         let records = attachmentStore.allAttachments()
         // Cheap pre-gate before any request at all, mirroring the create pass: a device with
         // nothing sendable must not cost a `/users/me/` round trip.
-        guard records.contains(where: { ($0.serverOrigin == serverOrigin || $0.native != nil) && $0.ownerUserID != nil })
+        guard
+            records.contains(where: { ($0.serverOrigin == serverOrigin || $0.native != nil) && $0.ownerUserID != nil })
         else { return }
         // Captured before the identity request: a sign-in switch from here on sends nothing.
         let isCurrent = signInIsCurrent?()
@@ -3436,7 +3437,9 @@ final class DocumentSaveCoordinator {
             // A native record (PR13b) names no Markdown, so the collection below would delete it:
             // its own run commits or drops it by the block's slot.
             if record.native != nil {
-                if record.ownerUserID == currentUserID { await runNativeAttachment(record.localID, isCurrent: isCurrent) }
+                if record.ownerUserID == currentUserID {
+                    await runNativeAttachment(record.localID, isCurrent: isCurrent)
+                }
                 continue
             }
             guard isAttachmentReplayable(record, currentUserID: currentUserID) else { continue }

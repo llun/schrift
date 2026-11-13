@@ -162,8 +162,10 @@ final class NativeSessionRegistry {
         }
         guard let root = try? await open(store: store, scope: scope) else { return .unavailable }
         defer { root.close() }
-        // shortcut: a block moved out of its group meanwhile is looked for at the root only; search every group if that ever matters.
-        let columnSurface = if let column { await root.openColumn(group: column.group, column: column.id) } else { nil as NativeEditorSession? }
+        // shortcut: a block moved out of its group meanwhile is looked for at the root only;
+        // search every group if that ever matters.
+        var columnSurface: NativeEditorSession?
+        if let column { columnSurface = await root.openColumn(group: column.group, column: column.id) }
         defer { columnSurface?.close() }
         let session = columnSurface ?? root
         guard let props else {

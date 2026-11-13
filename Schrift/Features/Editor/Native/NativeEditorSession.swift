@@ -323,7 +323,9 @@ final class NativeEditorSession {
             navigation.documentChanged()
         }
         if let token = delivery.drained { drains.removeValue(forKey: token)?.resume() }
-        if let result = delivery.result, let id = result.commandID { results.removeValue(forKey: id)?.resume(returning: result) }
+        if let result = delivery.result, let id = result.commandID {
+            results.removeValue(forKey: id)?.resume(returning: result)
+        }
         onApplied?(delivery)
     }
 

@@ -3788,9 +3788,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   rules; any other `isAuthoredURL` URL only on a tap, in the browser, its host shown) and Delete; read-only for a document
   that cannot type and for `uploadLoader`. The inspector reads `session.revision` so it re-renders
   after each delivery (the surface is not observable). An empty media card says
-  `native_editor_media_empty`. **Known limits:** no native offline queue (the classic photo
-  sidecar stays classic), an upload finishing after the editor closed is dropped (the empty block
-  stays), no drag/drop or paste of files, no poster frames, unknown props survive an edit where the
+  `native_editor_media_empty`. **Known limits:** no native offline queue and an upload finishing
+  after the editor closed is dropped (both lifted by PR13b, bullet below), no drag/drop or paste of files, no poster frames, unknown props survive an edit where the
   web drops them, a nested media block authored on the web keeps its document read-only unless it
   is a plain image, Width offers presets (any web width is kept and shown), and 72ebe1bb stays
   read-only (interlink: 13c; math, diagram: PR14). Tests: `BlockNoteMediaOracleTests`
