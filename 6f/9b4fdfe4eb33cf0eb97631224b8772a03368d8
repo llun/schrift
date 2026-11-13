@@ -1,0 +1,89 @@
+SchriftTests/Core/Yjs/BlockNoteMediaOracleTests.swift
+  s_dc239db0cc1c9d::t_f148ecfeca9213 1-334
+  s_dc239db0cc1c9d::t_a688ba9c543529 335-364
+Schrift/Core/Yjs/BlockNoteMediaCommands.swift
+  s_dc239db0cc1c9d::t_ab9c0b34bf34e0 1-232
+Schrift/Features/Editor/Native/NativeMediaUploads.swift
+  s_dc239db0cc1c9d::t_0a4c2c9468b72c 1-152
+  s_dc239db0cc1c9d::t_0f5af3c3ef9736 153-158
+Schrift/Features/Editor/Native/NativeMediaInspector.swift
+  s_dc239db0cc1c9d::t_e0a29a0fb43b24 1-301
+  s_dc239db0cc1c9d::t_db5b0cd3b0ef85 302-308
+Schrift/Core/Yjs/NativeExportMarkdown.swift
+  s_dc239db0cc1c9d::t_e53e4e7ffb884e 55-132
+  s_dc239db0cc1c9d::t_473129b3975fa0 133-135
+Schrift/Core/Localization/L10nKey.swift
+  s_dc239db0cc1c9d::t_15898c9db6a7b7 517-543
+Schrift/Core/Localization/Strings+de.swift
+  s_dc239db0cc1c9d::t_c469385430b284 6-33
+Schrift/Core/Localization/Strings+en.swift
+  s_dc239db0cc1c9d::t_6fbacb7356e550 7-32
+Schrift/Core/Localization/Strings+es.swift
+  s_dc239db0cc1c9d::t_fe0e333b2b6196 6-31
+Schrift/Core/Localization/Strings+fr.swift
+  s_dc239db0cc1c9d::t_83c31612628c1e 6-32
+Schrift/Core/Localization/Strings+it.swift
+  s_dc239db0cc1c9d::t_0afd856ed80c3c 6-32
+Schrift/Core/Localization/Strings+nl.swift
+  s_dc239db0cc1c9d::t_ebbf93da229fb3 6-33
+Schrift/Core/Localization/Strings+pt.swift
+  s_dc239db0cc1c9d::t_019b68e64a06f1 6-32
+Schrift/Core/Localization/Strings+sl.swift
+  s_dc239db0cc1c9d::t_d3fb7661d8f583 10-35
+Schrift/Core/Localization/Strings+th.swift
+  s_dc239db0cc1c9d::t_0f0b09316a5357 6-31
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_dc239db0cc1c9d::t_aa85b653b61d05 4-29
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_dc239db0cc1c9d::t_fcdc291c0259a2 4-29
+Schrift/Core/Yjs/BlockNoteWriter.swift
+  s_dc239db0cc1c9d::t_e09cb61d1e96e3 579,597-599,618-624
+Schrift/Core/Yjs/NativeBlockPreview.swift
+  s_dc239db0cc1c9d::t_59eda6986dadba 14-15,71-76
+Schrift/Core/Yjs/NativeBlockProjection.swift
+  s_dc239db0cc1c9d::t_8c858797baa852 136,159-180,307-324
+Schrift/Core/Yjs/YBlockProjection.swift
+  s_dc239db0cc1c9d::t_1374db0ad1c86a 612-614,616-619
+Schrift/Features/Editor/EditorView.swift
+  s_dc239db0cc1c9d::t_4bebf8b6b75a78 325-328
+Schrift/Features/Editor/EditorViewModel.swift
+  s_dc239db0cc1c9d::t_ec006d97a8388e 3133,3167
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_dc239db0cc1c9d::t_83178ed74e8c0f 368-373,624-625,704-706,708-709,712-713,732-736,1019-1097
+Schrift/Features/Editor/Engine/PatchBuilder.swift
+  s_dc239db0cc1c9d::t_91bb0e19396677 267,385-391
+Schrift/Features/Editor/Native/AttributedDocumentProjection.swift
+  s_dc239db0cc1c9d::t_8ba93575d24006 59-62
+Schrift/Features/Editor/Native/NativeBlockAttachment.swift
+  s_dc239db0cc1c9d::t_e70e339ae7bb13 196-198,204-223,227-228,299-306,510-513,547
+Schrift/Features/Editor/Native/NativeBlockControls.swift
+  s_dc239db0cc1c9d::t_3ea48c51ea9d85 78-87
+Schrift/Features/Editor/Native/NativeEditCommand.swift
+  s_dc239db0cc1c9d::t_e048491ebbb912 74-82,116-117
+Schrift/Features/Editor/Native/NativeEditorView.swift
+  s_dc239db0cc1c9d::t_0da35492667a1a 25-29,48-50,68-69,93-98,146-163,488-490,506-507,529-530
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  s_dc239db0cc1c9d::t_4df336246525b7 1663-1678,1721,1749-1790
+Schrift/Features/Editor/SlashMenu.swift
+  s_dc239db0cc1c9d::t_73950960b42fc7 15-18,32,114-132
+SchriftTests/Core/Yjs/BlockNoteColumnOracleTests.swift
+  s_dc239db0cc1c9d::t_2c8a7c33835f20 256-258,275
+SchriftTests/Core/Yjs/BlockNoteMediaCaptures.swift
+  s_dc239db0cc1c9d::t_89b5149fbd3160 1-590
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6f9b4fdfe4eb33cf0eb97631224b8772a03368d8",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
