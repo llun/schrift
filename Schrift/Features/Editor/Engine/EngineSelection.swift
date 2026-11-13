@@ -49,7 +49,6 @@ struct RelativeEditorPosition {
             entry.hasInlineObjects
                 || (element.typeRef == .xmlElement(nodeName: "tableParagraph")
                     && index.isTableParagraph(position.blockID))
-                || (entry.isSimpleContainer && !entry.runs.isEmpty)
         {
             // A mixed-inline block or cell paragraph: in the text part that
             // holds the offset, else between parts on the element.
@@ -117,7 +116,9 @@ struct RelativeEditorPosition {
             guard let inText = Int(exactly: absolute.index), !(absolute.type.item?.deleted ?? true) else { return nil }
             if let text = entry.textType, absolute.type === text {
                 offset = inText
-            } else if entry.isSimpleContainer, let element = entry.element,
+            } else if entry.isSimpleContainer,
+                entry.hasInlineObjects || index.isTableParagraph(blockID),
+                let element = entry.element,
                 absolute.type.item?.parentType === element,
                 let part = Self.parts(of: element).first(where: { $0.type === absolute.type })
             {
@@ -127,7 +128,10 @@ struct RelativeEditorPosition {
                 return nil
             }
         case .child:
-            guard let element = entry.element, absolute.type === element, let child = Int(exactly: absolute.index)
+            guard entry.isSimpleContainer,
+                entry.textType != nil || entry.hasInlineObjects || index.isTableParagraph(blockID)
+                    || entry.element?.length == 0,
+                let element = entry.element, absolute.type === element, let child = Int(exactly: absolute.index)
             else { return nil }
             offset = Self.parts(of: element).prefix(child).reduce(0) { $0 + $1.width }
         }

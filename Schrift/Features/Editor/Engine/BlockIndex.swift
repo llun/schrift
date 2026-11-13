@@ -522,9 +522,10 @@ struct BlockIndex {
                 BlockNoteWriter.nativePropSchemas[node] != nil, node != "codeBlock"
             {
                 let projected = YBlockProjection.projectBlock(item, nativeMarks: true, nestedChildren: true)
-                isProjectable = !projected.fidelity.isOpaque
-                hasInlineObjects = isProjectable && projected.runs.contains { $0.inlineObject != nil }
-                runs = isProjectable ? projected.runs : []
+                let hasChips = !projected.fidelity.isOpaque && projected.runs.contains { $0.inlineObject != nil }
+                hasInlineObjects = hasChips
+                isProjectable = hasChips
+                runs = hasChips ? projected.runs : []
             } else if case .xmlElement("codeBlock")? = element.typeRef {
                 hasInlineObjects = false
                 isProjectable = false
