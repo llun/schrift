@@ -309,6 +309,10 @@ final class ColumnStructureTests: NativeEditingTestCase {
     func testClosingWhileAColumnAttachesEndsEverySurface() async throws {
         let (harness, model) = try await editor()
         var attaches = 0
+        // Held here, as a collaborator view or a table cover could hold one: a
+        // surface must be closed, not left to its deinit.
+        var attached: [NativeEditorSession] = []
+        model.onAttached = { attached.append($0) }
         model.beforeAttach = {
             attaches += 1
             if attaches == 2 { model.close() }
@@ -323,6 +327,8 @@ final class ColumnStructureTests: NativeEditingTestCase {
         try await harness.session.integrateServerState(update)
         await waitUntil { model.isClosed }
         await harness.settle()
+        XCTAssertEqual(attached.count, 2, "both peer columns attached before the close took effect")
+        XCTAssertTrue(attached.allSatisfy(\.isClosed), "every attached surface was closed")
         let open = await harness.session.engine { $0.columnBlocks("p1") != nil } ?? true
         XCTAssertFalse(open, "no surface keeps the group open")
     }

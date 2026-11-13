@@ -3588,6 +3588,18 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   next column, the slash item, the block menu on the card, awareness per column) and the host UI
   test `testTheColumnMenuInsertsAColumnThatSurvivesRelaunch`. The PR12a bullet's refusals of these
   moves are superseded.
+  **Review fixes (PR #284).** A column command carries the column ids its indices address
+  (`.columns(_:expecting:)`, the editor's group when the menu was used) and is refused once a peer
+  changed the columns, never retargeted. Insert column refuses widths whose normalisation would
+  not stay positive and finite (1e308s sum to infinity and divide to 0: an unfamiliar, unsaveable
+  group), and a pasted group's widths must be absent or positive and finite (`validate`), for the
+  same reason. New-id checks collect the replica's ids once per command (`usedIDs`,
+  `idCollections`), not one document walk per id (a 2,000-block Duplicate). `ColumnTextContainer.show`
+  removes a removed column's text view (it sat on top and took every touch) and sets every view's
+  visibility each pass. A reconcile closed while it attaches ends every surface it attached
+  (`beforeAttach` is the test seam), so the group closes and its card updates again. Tests:
+  `BlockNoteColumnStructureOracleTests` (stale column ids, huge widths, pasted widths, one id walk)
+  and `ColumnStructureTests` (deleting the shown column, closing during an attach).
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below

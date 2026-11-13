@@ -83,6 +83,7 @@ final class ColumnEditorModel: Identifiable {
             self.scheduleReconcile()
         }
         if let awareness = document.awareness { session.showAwareness(awareness) }
+        onAttached?(session)
         return session
     }
 
@@ -112,8 +113,9 @@ final class ColumnEditorModel: Identifiable {
     @ObservationIgnored private var reconcileAgain = false
     /// Set by tests: after each reconcile.
     @ObservationIgnored var onReconciled: (() -> Void)?
-    /// Set by tests: before a reconcile attaches a new column.
+    /// Set by tests: before a reconcile attaches a new column, and each surface attached.
     @ObservationIgnored var beforeAttach: (() async -> Void)?
+    @ObservationIgnored var onAttached: ((NativeEditorSession) -> Void)?
 
     private func scheduleReconcile() {
         guard !isClosed else { return }
