@@ -19,7 +19,10 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     private weak var textView: NativeTextView?
     /// The surface whose fold state decides which paragraphs are laid out.
     weak var surface: NativeTextSurface? {
-        didSet { connectAspectRatios() }
+        didSet {
+            connectAspectRatios()
+            connectDocumentTitle()
+        }
     }
     private(set) var checkboxes: [String: UIButton] = [:]
     private(set) var languageButtons: [String: UIButton] = [:]
@@ -65,6 +68,18 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         surface?.aspectRatio = { [weak self] url in
             guard let loader = self?.sessionImages else { return nil }
             return URL(string: url).flatMap { loader.aspectRatio(for: $0) }
+        }
+    }
+
+    /// Cached title resolver for linked document chips, wired from the editor view model.
+    var documentTitle: (@MainActor (UUID) -> String?)? {
+        didSet { connectDocumentTitle() }
+    }
+
+    private func connectDocumentTitle() {
+        surface?.documentTitle = documentTitle
+        if documentTitle != nil {
+            surface?.refreshAttachmentGeometry()
         }
     }
     /// Offline, the loader shows cached bytes and issues no request.

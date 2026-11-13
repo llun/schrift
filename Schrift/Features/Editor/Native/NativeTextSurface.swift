@@ -42,9 +42,13 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     /// aspect ratios known at the last restyle. Never a Yjs input.
     private(set) var attachmentGeometry = NativeAttachmentGeometry()
     private var pendingAttachmentWidth: CGFloat?
+    private var pendingGeometryRefresh = false
     /// An image URL's remembered aspect ratio (the image loader's), read only
     /// when the geometry is recomputed: a download never restyles storage.
     var aspectRatio: (@MainActor (String) -> CGFloat?)?
+    /// Cached title for a linked document UUID, used only for inline interlink
+    /// chip display without modifying Yjs.
+    var documentTitle: (@MainActor (UUID) -> String?)?
     /// Replica-backed surfaces use the owner's settled projection to validate
     /// fast patches. Value-only fixtures may omit this callback.
     private let reprojectBlock: ((String) -> BlockSnapshot?)?
@@ -261,6 +265,9 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                 var seen = existing
                 let fresh = inserted.filter { seen.insert($0.id).inserted }
                 guard !fresh.isEmpty else { continue }
+                for block in fresh {
+                    collectDocumentTitles(from: block, into: &attachmentGeometry.documentTitles)
+                }
                 let position = after.flatMap { rangeIndex.position(for: $0) }.map { $0 + 1 } ?? 0
                 let offset =
                     position < rangeIndex.entries.count ? rangeIndex.entries[position].range.location : storage.length
@@ -276,6 +283,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                 offscreen.formUnion(predictions.map(\.blockID))
                 canonical = [:]
                 blocks = reset
+                attachmentGeometry = geometry(width: attachmentGeometry.width)
                 rangeIndex = ProjectionRangeIndex(blocks: blocks, labels: labels)
                 storage.setAttributedString(
                     AttributedDocumentProjection.attributedString(
@@ -631,22 +639,60 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         }
         if let width = pendingAttachmentWidth {
             pendingAttachmentWidth = nil
+            pendingGeometryRefresh = false
             updateAttachmentWidth(width)
+        } else if pendingGeometryRefresh {
+            pendingGeometryRefresh = false
+            refreshAttachmentGeometry()
         }
     }
 
     // MARK: Attachment geometry (PR06e)
 
-    /// The geometry for `width`, with the current ratio of every image shown.
+    private func collectDocumentTitles(from block: BlockSnapshot, into titles: inout [UUID: String]) {
+        guard let documentTitle else { return }
+        for run in block.runs {
+            guard case .interlink(let docID, _, _, let disabled, _)? = run.inlineObject,
+                !disabled,
+                let uuid = UUID(uuidString: docID),
+                titles[uuid] == nil,
+                let title = documentTitle(uuid),
+                !title.isEmpty
+            else { continue }
+            titles[uuid] = title
+        }
+    }
+
+    /// The geometry for `width`, with the current ratio of every image shown
+    /// and cached document titles for any inline interlink chips.
     private func geometry(width: CGFloat) -> NativeAttachmentGeometry {
         var next = NativeAttachmentGeometry(width: width)
-        guard let aspectRatio else { return next }
-        for block in blocks where AttributedDocumentProjection.isPlaceholder(block) {
-            if case .image(let url, _, _)? = block.preview, let ratio = aspectRatio(url) {
+        for block in blocks {
+            if let aspectRatio, AttributedDocumentProjection.isPlaceholder(block),
+                case .image(let url, _, _)? = block.preview, let ratio = aspectRatio(url)
+            {
                 next.aspectRatios[url] = ratio
             }
+            collectDocumentTitles(from: block, into: &next.documentTitles)
         }
         return next
+    }
+
+    /// Recomputes cached image aspect ratios and linked document titles without
+    /// changing the width or writing to Yjs.
+    func refreshAttachmentGeometry() {
+        guard !holdsComposition else {
+            pendingGeometryRefresh = true
+            return
+        }
+        pendingGeometryRefresh = false
+        let next = geometry(width: attachmentGeometry.width)
+        guard next != attachmentGeometry else { return }
+        attachmentGeometry = next
+        let positions = blocks.indices.filter {
+            AttributedDocumentProjection.isPlaceholder(blocks[$0]) || blocks[$0].hasInlineObjects
+        }
+        restyleAttachments(positions: positions)
     }
 
     /// The text container's usable width changed (first layout, rotation,
@@ -660,10 +706,17 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
             pendingAttachmentWidth = width
             return
         }
+        pendingGeometryRefresh = false
         let next = geometry(width: width)
         guard next != attachmentGeometry else { return }
         attachmentGeometry = next
-        let positions = blocks.indices.filter { AttributedDocumentProjection.isPlaceholder(blocks[$0]) }
+        let positions = blocks.indices.filter {
+            AttributedDocumentProjection.isPlaceholder(blocks[$0]) || blocks[$0].hasInlineObjects
+        }
+        restyleAttachments(positions: positions)
+    }
+
+    private func restyleAttachments(positions: [Int]) {
         guard !positions.isEmpty else { return }
         isApplyingPatch = true
         defer { isApplyingPatch = false }
@@ -683,6 +736,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         if blocks[position].runs.map(\.text).joined() != block.runs.map(\.text).joined() {
             shownRetexted.insert(block.id)
         }
+        collectDocumentTitles(from: block, into: &attachmentGeometry.documentTitles)
         storage.replaceCharacters(
             in: rangeIndex.entries[position].range,
             with: rendered(block, at: position))

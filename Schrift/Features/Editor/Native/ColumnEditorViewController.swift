@@ -327,6 +327,7 @@ struct ColumnEditorScreen: View {
     var isOffline = false
     /// The document's uploads (PR13a): a column's media block uploads into its column.
     var uploads: NativeMediaUploads? = nil
+    var documentTitle: ((UUID) -> String?)? = nil
     @State private var linkTarget: NativeLinkTarget?
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.docsTheme) private var theme
@@ -388,7 +389,8 @@ struct ColumnEditorScreen: View {
             }
             ColumnTextHost(
                 model: model, contentSize: uiContentSizeCategory(for: dynamicTypeSize), labels: .document(loc),
-                theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline)
+                theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline,
+                documentTitle: documentTitle)
         }
         .safeAreaInset(edge: .bottom) {
             if let input = model.activeSession?.input {
@@ -420,8 +422,9 @@ struct ColumnEditorScreen: View {
             if let session = model.activeSession {
                 TableEditorScreen(
                     document: session, tableID: request.id,
-                    labels: NativeEditorLabels(table: loc[.native_editor_table]), doneTitle: loc[.editor_action_done],
+                    labels: .document(loc), doneTitle: loc[.editor_action_done],
                     cellLabel: { String(format: loc[.native_editor_table_cell], $0, $1) }, text: { loc[$0] },
+                    documentTitle: documentTitle,
                     onClose: {
                         model.lastTable = request.id
                         model.openTable = nil
@@ -457,6 +460,7 @@ private struct ColumnTextHost: UIViewRepresentable {
     let images: ImageLoader?
     let serverOrigin: String
     let isOffline: Bool
+    let documentTitle: ((UUID) -> String?)?
 
     func makeUIView(context: Context) -> ColumnTextContainer {
         let container = ColumnTextContainer()
@@ -476,6 +480,7 @@ private struct ColumnTextHost: UIViewRepresentable {
             session.textView.blockControls.images = images
             session.textView.blockControls.serverOrigin = serverOrigin
             session.textView.blockControls.isOffline = isOffline
+            session.textView.blockControls.documentTitle = documentTitle
             let presentation = NativeTextPresentation(contentSize: contentSize, labels: labels)
             if container.presentations[ObjectIdentifier(session)] != presentation {
                 container.presentations[ObjectIdentifier(session)] = presentation

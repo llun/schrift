@@ -27,6 +27,8 @@ struct NativeEditorView: View {
     /// coordinator's durable queue (PR13b); no queue offers no upload.
     var uploadDocumentID: UUID? = nil
     var mediaQueue: DocumentSaveCoordinator? = nil
+    /// Cached title resolver for linked document chips (read-only display).
+    var documentTitle: ((UUID) -> String?)? = nil
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -68,7 +70,8 @@ struct NativeEditorView: View {
                     onOpenColumns: { openColumns = columnEditor($0) },
                     onOpenMedia: { openMedia = NativeMediaRequest(id: $0) },
                     uploadingBlocks: uploads?.uploadingBlocks ?? [], waitingUploads: uploads?.waitingBlocks ?? [],
-                    failedUploads: uploads?.failedBlocks ?? []
+                    failedUploads: uploads?.failedBlocks ?? [],
+                    documentTitle: documentTitle
                 )
                 .id(ObjectIdentifier(session))
             }
@@ -126,9 +129,10 @@ struct NativeEditorView: View {
             }
         ) { request in
             TableEditorScreen(
-                document: session, tableID: request.id, labels: NativeEditorLabels(table: loc[.native_editor_table]),
+                document: session, tableID: request.id, labels: .document(loc),
                 doneTitle: loc[.editor_action_done],
                 cellLabel: { String(format: loc[.native_editor_table_cell], $0, $1) }, text: { loc[$0] },
+                documentTitle: documentTitle,
                 onClose: {
                     lastTable = request.id
                     openTable = nil
@@ -143,7 +147,9 @@ struct NativeEditorView: View {
                 if let id = lastColumns { session.input?.focus(after: id) }
             }
         ) { model in
-            ColumnEditorScreen(model: model, serverOrigin: serverOrigin, isOffline: isOffline, uploads: uploads)
+            ColumnEditorScreen(
+                model: model, serverOrigin: serverOrigin, isOffline: isOffline, uploads: uploads,
+                documentTitle: documentTitle)
         }
         .sheet(item: $openMedia) { request in
             NativeMediaInspector(
@@ -199,6 +205,7 @@ struct NativeEditorView: View {
                     store: readingPositions ?? ReadingPositionStore(), serverOrigin: serverOrigin,
                     documentID: documentID)
             }
+            session.navigation.documentTitle = documentTitle
             await session.navigation.refresh()
             session.navigation.restore()
         }
@@ -492,6 +499,9 @@ extension NativeEditorLabels {
             mediaUploadFailed: loc[.native_editor_media_upload_stopped],
             mediaUploadWaiting: loc[.native_editor_media_upload_queued],
             uploadElsewhere: loc[.native_editor_upload_elsewhere],
+            chipPage: loc[.native_editor_chip_page],
+            chipMention: loc[.native_editor_chip_mention],
+            chipUntitled: loc[.native_editor_chip_untitled],
             blockMenu: loc[.native_editor_block_actions],
             blockActions: Dictionary(
                 uniqueKeysWithValues: NativeBlockAction.allCases.map { ($0, loc[$0.labelKey]) }))
@@ -512,6 +522,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
     var uploadingBlocks: Set<String> = []
     var waitingUploads: Set<String> = []
     var failedUploads: Set<String> = []
+    var documentTitle: ((UUID) -> String?)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -537,6 +548,8 @@ private struct NativeTextCanvas: UIViewRepresentable {
         session.textView.blockControls.uploadingBlocks = uploadingBlocks
         session.textView.blockControls.waitingUploads = waitingUploads
         session.textView.blockControls.failedUploads = failedUploads
+        session.textView.blockControls.documentTitle = documentTitle
+        session.navigation.documentTitle = documentTitle
         coordinator.update(
             surface: session.surface, presentation: NativeTextPresentation(contentSize: contentSize, labels: labels))
     }

@@ -324,7 +324,8 @@ struct EditorView: View {
                     onSave: { nativeOpen.saveNow(viewModel: viewModel) }, isOffline: showsOffline,
                     documentID: viewModel.documentID,
                     uploadDocumentID: viewModel.isLocalDocument ? nil : viewModel.documentID,
-                    mediaQueue: viewModel.saveCoordinator)
+                    mediaQueue: viewModel.saveCoordinator,
+                    documentTitle: { [viewModel] id in viewModel.cachedDocumentTitle(for: id) })
             case .preservedUnavailable:
                 ContentUnavailableView(
                     loc[.native_editor_owned_unavailable_title], systemImage: "doc.richtext",

@@ -413,6 +413,9 @@ enum Strings_it {
         .native_editor_column_move_right: "Sposta colonna a destra",
         .native_editor_math: "Formula",
         .native_editor_diagram: "Diagramma",
+        .native_editor_chip_page: "Pagina",
+        .native_editor_chip_mention: "Menzione",
+        .native_editor_chip_untitled: "Pagina senza titolo",
         .native_editor_input_unavailable: "Questo input non è ancora supportato nell’editor nativo.",
         .native_editor_range_unavailable:
             "Questa selezione include contenuti che l’editor nativo non può ancora modificare.",

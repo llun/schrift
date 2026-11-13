@@ -54,6 +54,8 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     var onClose: (() -> Void)?
     /// Menu titles (the app's localized strings; English in tests).
     var text: (L10nKey) -> String = { Strings_en.table[$0] ?? "" }
+    /// Cached title resolver for linked document chips (read-only display).
+    var documentTitle: ((UUID) -> String?)?
     /// The Row, Column, Cell and Format menus (PR11b), shown while editing.
     let controls = UIStackView()
 
@@ -164,6 +166,8 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
             session.input?.tableMove = { [weak self] in self?.move($0) ?? false }
             session.input?.tableKey = { [weak self] in self?.key($0) ?? false }
             session.textView.isScrollEnabled = false
+            session.textView.blockControls.labels = labels
+            session.textView.blockControls.documentTitle = documentTitle
             if let awareness = document.awareness { session.showAwareness(awareness) }
         } else {
             grid = await document.tableGrid(tableID, full: true)
@@ -891,8 +895,29 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
 
     private func configureText(_ view: TableCellView, _ ref: TableGrid.CellRef) {
         guard let grid else { return }
-        let text = Self.text(paragraphs(ref), cell: grid.cell(ref), traits: traitCollection)
+        let blocks = paragraphs(ref)
+        let text = Self.text(
+            blocks, cell: grid.cell(ref), traits: traitCollection, labels: labels,
+            geometry: cellGeometry(for: blocks))
         if view.label.attributedText != text { view.label.attributedText = text }
+    }
+
+    private func cellGeometry(for paragraphs: [BlockSnapshot], width: CGFloat = 0) -> NativeAttachmentGeometry {
+        var geometry = NativeAttachmentGeometry(width: width)
+        guard let documentTitle else { return geometry }
+        for paragraph in paragraphs {
+            for run in paragraph.runs {
+                guard case .interlink(let docID, _, _, let disabled, _)? = run.inlineObject,
+                    !disabled,
+                    let uuid = UUID(uuidString: docID),
+                    geometry.documentTitles[uuid] == nil,
+                    let title = documentTitle(uuid),
+                    !title.isEmpty
+                else { continue }
+                geometry.documentTitles[uuid] = title
+            }
+        }
+        return geometry
     }
 
     /// The text VoiceOver reads for `element`'s cell, its header and selected
@@ -903,7 +928,8 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         else { return }
         let cell = grid.cell(ref)
         element.accessibilityLabel = cellLabel(cell.row + 1, cell.column + 1)
-        let value = paragraphs(ref).map { $0.runs.map(\.text).joined() }.joined(separator: "\n")
+        let resolver = documentTitle ?? { _ in nil }
+        let value = paragraphs(ref).map { $0.visibleText(titleForDocument: resolver) }.joined(separator: "\n")
         let peers = (peerMarks[ref] ?? []).map { String(format: labels.peerCursor, $0.name) }
         element.accessibilityValue = ([value] + peers).filter { !$0.isEmpty }.joined(separator: ", ")
         var traits: UIAccessibilityTraits = .staticText
@@ -977,9 +1003,12 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     private func height(_ ref: TableGrid.CellRef, width: CGFloat) -> CGFloat {
         guard let grid else { return Self.minimumRowHeight }
         // A realised cell's label already holds its text (`configureText`).
+        let cellBlocks = paragraphs(ref)
         let text =
             cellViews[ref]?.label.attributedText
-            ?? Self.text(paragraphs(ref), cell: grid.cell(ref), traits: traitCollection)
+            ?? Self.text(
+                cellBlocks, cell: grid.cell(ref), traits: traitCollection, labels: labels,
+                geometry: cellGeometry(for: cellBlocks, width: width))
         let key = text.string.hashValue ^ Int(width * 2) ^ (ref == active ? 1 : 0)
         if let cached = cellHeights[ref], cached.key == key { return cached.height }
         var insets = UIEdgeInsets(top: Self.padding, left: Self.padding, bottom: Self.padding, right: Self.padding)
@@ -1108,11 +1137,16 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
 
     /// A cell's paragraphs as the document draws them, bold in a header, in
     /// the cell's alignment and text colour.
-    static func text(_ paragraphs: [BlockSnapshot], cell: TableGrid.Cell, traits: UITraitCollection)
+    static func text(
+        _ paragraphs: [BlockSnapshot], cell: TableGrid.Cell, traits: UITraitCollection,
+        labels: NativeEditorLabels = NativeEditorLabels(),
+        geometry: NativeAttachmentGeometry = NativeAttachmentGeometry()
+    )
         -> NSAttributedString
     {
         let text = NSMutableAttributedString(
-            attributedString: AttributedDocumentProjection.attributedString(blocks: paragraphs, traits: traits))
+            attributedString: AttributedDocumentProjection.attributedString(
+                blocks: paragraphs, traits: traits, labels: labels, geometry: geometry))
         if text.string.hasSuffix("\n") { text.deleteCharacters(in: NSRange(location: text.length - 1, length: 1)) }
         let whole = NSRange(location: 0, length: text.length)
         let alignment: NSTextAlignment =
@@ -1193,6 +1227,7 @@ struct TableEditorScreen: UIViewControllerRepresentable {
     let doneTitle: String
     let cellLabel: (Int, Int) -> String
     let text: (L10nKey) -> String
+    var documentTitle: ((UUID) -> String?)? = nil
     let onClose: () -> Void
 
     func makeUIViewController(context: Context) -> UINavigationController {
@@ -1201,6 +1236,7 @@ struct TableEditorScreen: UIViewControllerRepresentable {
         editor.doneTitle = doneTitle
         editor.cellLabel = cellLabel
         editor.text = text
+        editor.documentTitle = documentTitle
         editor.onClose = onClose
         return UINavigationController(rootViewController: editor)
     }

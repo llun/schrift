@@ -10,16 +10,30 @@ struct NativeNavigationEntry: Equatable, Sendable {
     var blockID: String
     var level: Int?
     var text: String
+    /// Inline runs retained only when `hasInlineObjects`, so navigation can
+    /// re-resolve cached interlink titles dynamically.
+    var runs: [InlineRun]
     /// The column group this block is in (PR12c); nil for a document block.
     var group: NativeBlockHandle?
 
     init(_ block: BlockSnapshot, handle: NativeBlockHandle?) {
         self.handle = handle
         blockID = block.id
-        text = block.runs.map(\.text).joined()
+        text = block.visibleText
+        runs = block.hasInlineObjects ? block.runs : []
         if block.node == "heading", case .int(let level)? = block.props.first(where: { $0.key == "level" })?.value {
             self.level = level
         }
+    }
+
+    func resolvedText(titleForDocument: (UUID) -> String?) -> String {
+        guard !runs.isEmpty else { return text }
+        return runs.map { run in
+            if let inline = run.inlineObject {
+                return inline.visibleText(titleForDocument: titleForDocument)
+            }
+            return run.text
+        }.joined()
     }
 }
 
@@ -58,6 +72,8 @@ final class NativeDocumentNavigation {
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var restorePending = false
     @ObservationIgnored var voiceOverEnabled: () -> Bool = { UIAccessibility.isVoiceOverRunning }
+    /// Cached title resolver for linked documents referenced by interlink chips.
+    @ObservationIgnored var documentTitle: ((UUID) -> String?)?
 
     init(
         replica: DocumentReplicaSession?, surface: NativeTextSurface, textView: NativeTextView,
@@ -111,7 +127,7 @@ final class NativeDocumentNavigation {
             let id = seen.insert(entry.blockID).inserted ? ids[entry.blockID, default: UUID()] : UUID()
             if ids[entry.blockID] == nil { ids[entry.blockID] = id }
             next[id] = entry
-            built.append(Self.editorBlock(entry, id: id))
+            built.append(editorBlock(entry, id: id))
         }
         return (next, built)
     }
@@ -130,9 +146,10 @@ final class NativeDocumentNavigation {
 
     /// The classic rules read markdown: a heading's literal text is escaped so
     /// `**` or `#` stay text; anything else is taken verbatim (`.unknown`).
-    private static func editorBlock(_ entry: NativeNavigationEntry, id: UUID) -> EditorBlock {
-        guard let level = entry.level else { return EditorBlock(id: id, kind: .unknown, text: entry.text) }
-        let escaped = entry.text.map { "\\`*_{}[]()#+-.!~>|".contains($0) ? "\\\($0)" : String($0) }.joined()
+    private func editorBlock(_ entry: NativeNavigationEntry, id: UUID) -> EditorBlock {
+        let displayText = entry.resolvedText(titleForDocument: documentTitle ?? { _ in nil })
+        guard let level = entry.level else { return EditorBlock(id: id, kind: .unknown, text: displayText) }
+        let escaped = displayText.map { "\\`*_{}[]()#+-.!~>|".contains($0) ? "\\\($0)" : String($0) }.joined()
         return EditorBlock(id: id, kind: .heading(level: level), text: escaped)
     }
 

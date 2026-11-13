@@ -417,6 +417,9 @@ enum Strings_es {
         .native_editor_column_move_right: "Mover columna a la derecha",
         .native_editor_math: "Fórmula",
         .native_editor_diagram: "Diagrama",
+        .native_editor_chip_page: "Página",
+        .native_editor_chip_mention: "Mención",
+        .native_editor_chip_untitled: "Página sin título",
         .native_editor_input_unavailable: "Esta entrada aún no es compatible con el editor nativo.",
         .native_editor_range_unavailable: "Esta selección incluye contenido que el editor nativo aún no puede cambiar.",
         .native_editor_paste_too_large:

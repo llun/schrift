@@ -426,6 +426,9 @@ enum Strings_sl {
         .native_editor_column_move_right: "Premakni stolpec desno",
         .native_editor_math: "Formula",
         .native_editor_diagram: "Diagram",
+        .native_editor_chip_page: "Stran",
+        .native_editor_chip_mention: "Omemba",
+        .native_editor_chip_untitled: "Neimenovana stran",
         .native_editor_input_unavailable: "Ta vnos v izvornem urejevalniku še ni podprt.",
         .native_editor_range_unavailable: "Ta izbor vsebuje vsebino, ki je izvorni urejevalnik še ne more spremeniti.",
         .native_editor_paste_too_large:

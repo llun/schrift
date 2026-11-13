@@ -3084,6 +3084,30 @@ final class EditorViewModel {
         }
     }
 
+    /// Cached title for a linked document within this account's known scope
+    /// (current document, subpages, signed-in Home lists, and their cached children).
+    func cachedDocumentTitle(for targetID: UUID) -> String? {
+        if targetID == documentID { return title.isEmpty ? nil : title }
+        if let subpage = subpages?.first(where: { $0.id == targetID }),
+            let title = subpage.title, !title.isEmpty
+        {
+            return title
+        }
+        let homeLists = signedInUser.userID.map { listCache.documents(fetchedFor: $0) } ?? []
+        if let listed = homeLists.first(where: { $0.id == targetID }),
+            let title = listed.title, !title.isEmpty
+        {
+            return title
+        }
+        let parents = Set([documentID] + (subpages ?? []).map(\.id) + homeLists.map(\.id))
+        if let child = childrenCache.children(ofParents: parents).first(where: { $0.id == targetID }),
+            let title = child.title, !title.isEmpty
+        {
+            return title
+        }
+        return nil
+    }
+
     /// Inserts a divider below the focused block (or at the end), keeping an
     /// editable paragraph after it.
     func insertDividerBelowFocused() {

@@ -304,6 +304,8 @@ final class NativeTextView: UITextView {
                 textStorage.enumerateAttribute(.attachment, in: range) { value, run, _ in
                     if let attachment = value as? NativeBlockAttachment {
                         visible += attachment.content.label
+                    } else if let chip = value as? NativeInlineChipAttachment {
+                        visible += Array(repeating: chip.content.accessibilityLabel, count: run.length).joined()
                     } else {
                         visible += (textStorage.string as NSString).substring(with: run)
                     }

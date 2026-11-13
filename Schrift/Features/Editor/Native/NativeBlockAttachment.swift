@@ -12,6 +12,8 @@ struct NativeAttachmentGeometry: Equatable {
     var width: CGFloat = 0
     /// Width over height, by image URL string.
     var aspectRatios: [String: CGFloat] = [:]
+    /// Cached titles for linked documents shown in inline interlink chips.
+    var documentTitles: [UUID: String] = [:]
 
     var usableWidth: CGFloat { width > 0 ? width : Self.fallbackWidth }
 }

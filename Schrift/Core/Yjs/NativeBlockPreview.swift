@@ -147,10 +147,14 @@ enum NativeBlockPreview: Equatable, Sendable {
             guard depth < 32 else { return }
             for item in YBlockProjection.children(of: type, includeFormats: false) where units.count < limit {
                 switch item.content {
-                case .string(let string): units += string.prefix(limit - units.count)
+                case .string(let string):
+                    units += string.filter { $0 != 0xFFFC }.prefix(limit - units.count)
                 case .type(let child):
                     if child.typeRef == .xmlText {
                         walk(child, depth: depth + 1)
+                    } else if let inline = NativeInlineObject.read(child) {
+                        let visible = Array(inline.visibleText.utf16)
+                        units += visible.prefix(limit - units.count)
                     } else {
                         let before = units.count
                         walk(child, depth: depth + 1)
