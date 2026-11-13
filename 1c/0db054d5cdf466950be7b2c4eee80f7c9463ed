@@ -1,0 +1,29 @@
+Schrift/Features/Editor/Native/ColumnEditorViewController.swift
+  s_dc239db0cc1c9d::t_b95638d5ac972c 330,463
+Schrift/Features/Editor/Native/NativeDocumentNavigation.swift
+  s_dc239db0cc1c9d::t_678de45617ad7f 76
+Schrift/Features/Editor/Native/NativeEditorView.swift
+  s_dc239db0cc1c9d::t_c64111f3f7b475 31,525
+Schrift/Features/Editor/Native/NativeInlineChipAttachment.swift
+  s_dc239db0cc1c9d::t_149a1c37953cc5 61,70,98-99,179-180
+Schrift/Features/Editor/Native/TableEditorViewController.swift
+  s_dc239db0cc1c9d::t_ec317e8bab49c8 58,1230
+SchriftTests/Features/Editor/Native/NativeInlineObjectTests.swift
+  s_dc239db0cc1c9d::t_153bef8b836ccb 1-655
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1c0db054d5cdf466950be7b2c4eee80f7c9463ed",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
