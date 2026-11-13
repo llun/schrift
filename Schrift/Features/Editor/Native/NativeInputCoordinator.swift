@@ -317,14 +317,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// its offsets in its block. The editor re-reads the group when the
     /// result shows.
     @discardableResult
-    func applyColumns(_ groupID: String, _ command: BlockNoteColumnCommand) -> Bool {
+    func applyColumns(_ groupID: String, _ command: BlockNoteColumnCommand, expecting: [String]? = nil) -> Bool {
         guard let view, view.isEditable, !isFrozen, !isDetached, !compositionOwnsView else { return false }
         let selection = view.selectedRange
         let remapping = surface.rangeIndex.entry(atUTF16: selection.location).map {
             (blockID: $0.blockID, offset: max(0, selection.location - $0.textRange.location), length: selection.length)
         }
         return applyStructural(
-            groupID, .columns(command), refusal: .native_editor_input_unavailable, remapping: remapping)
+            groupID, .columns(command, expecting: expecting), refusal: .native_editor_input_unavailable,
+            remapping: remapping)
     }
 
     /// Shift-Return in a table cell (PR11b): one hard break at the caret

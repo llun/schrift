@@ -359,7 +359,9 @@ final class DocumentEngine {
         // `tableParagraph` schema), and a mark change stays in the paragraph.
         if builder.index.isTableParagraph(command.blockID) { return try prepareCellCommand(command) }
         if case .table(let table) = command.kind { return try prepareTableCommand(command, table) }
-        if case .columns(let columns) = command.kind { return try prepareColumnCommand(command, columns) }
+        if case .columns(let columns, let expecting) = command.kind {
+            return try prepareColumnCommand(command, columns, expecting: expecting)
+        }
         if case .insertColumns(let count, let ids, let removing) = command.kind {
             return try prepareInsertColumns(command, count: count, ids: ids, removing: removing)
         }
@@ -898,19 +900,31 @@ final class DocumentEngine {
 
     /// A column structure command on familiar, modeled group `command.blockID`,
     /// validated whole before arming.
-    private func prepareColumnCommand(_ command: NativeEditCommand, _ columns: BlockNoteColumnCommand) throws
-        -> PreparedCommand
-    {
+    private func prepareColumnCommand(
+        _ command: NativeEditCommand, _ columns: BlockNoteColumnCommand, expecting: [String]?
+    ) throws -> PreparedCommand {
         let index = builder.index
         guard index.isCanonical, index.isColumnGroup(command.blockID), let entry = index.entries[command.blockID],
             !builder.nativeSnapshot(entry).block.fidelity.isOpaque
         else { throw DocumentEngineError.unsupportedNativeInput }
         let group = ColumnGroup.read(entry.container, id: command.blockID)
+        // Indices address the columns the command was made for: a peer's change
+        // since (a column added, removed or moved) refuses it (PR12b review).
+        if let expecting, expecting != group.columns.map(\.id) { throw DocumentEngineError.unsupportedNativeInput }
         let count = group.columns.count
         switch columns {
         case .add(let at, let columnID, let paragraphID):
+            let used = usedIDs()
             guard (0...count).contains(at), count < ColumnGroup.maxColumns, columnID != paragraphID,
-                isUnused(columnID), isUnused(paragraphID)
+                isUnused(columnID, in: used), isUnused(paragraphID, in: used)
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            // The normalised widths must stay positive and finite, or the group
+            // turns unfamiliar and the document unsaveable (PR12b review: 1e308s
+            // sum to infinity and divide to 0).
+            let widths = group.columns.map { $0.width ?? 1 }
+            let average = widths.reduce(0, +) / Double(widths.count)
+            guard average.isFinite, average > 0,
+                average >= 0.99 && average <= 1.01 || widths.allSatisfy({ ($0 / average).isFinite && $0 / average > 0 })
             else { throw DocumentEngineError.unsupportedNativeInput }
         case .remove(let at):
             guard group.columns.indices.contains(at) else { throw DocumentEngineError.unsupportedNativeInput }
@@ -948,7 +962,7 @@ final class DocumentEngine {
         let (node, units) = try structuralTarget(command.blockID)
         guard node == "paragraph", let entry = index.entries[command.blockID], (2...3).contains(count),
             Self.isBoundary(removing.lowerBound, in: units), Self.isBoundary(removing.upperBound, in: units),
-            Set(ids).count == ids.count, ids.allSatisfy(isUnused)
+            Set(ids).count == ids.count, ids.allSatisfy({ [used = usedIDs()] in isUnused($0, in: used) })
         else { throw DocumentEngineError.unsupportedNativeInput }
         let anchor: (item: YItem, group: YType)
         let replacing: Bool
@@ -989,16 +1003,30 @@ final class DocumentEngine {
     }
 
     /// An id no block, column or group of the replica uses.
-    private func isUnused(_ id: String) -> Bool {
-        guard !id.isEmpty, builder.index.entries[id] == nil else { return false }
-        do {
-            _ = try writer.find(id)
-            return false
-        } catch BlockNoteWriter.Error.missingBlock {
-            return !ColumnGroup.columnIDs(in: doc).contains(id)
-        } catch {
-            return false
+    private func isUnused(_ id: String, in used: Set<String>) -> Bool {
+        !id.isEmpty && builder.index.entries[id] == nil && !used.contains(id)
+    }
+
+    /// Times the replica's ids were collected: a test seam for one walk per
+    /// command, never one per new id (PR12b review: a 2,000-block Duplicate).
+    private(set) var idCollections = 0
+
+    /// Every block, group and column id of the replica, in one walk.
+    private func usedIDs() -> Set<String> {
+        idCollections += 1
+        var ids: Set<String> = []
+        guard let root = doc.share[BlockNoteYjs.fragmentField] else { return ids }
+        var stack = [root]
+        while let type = stack.popLast() {
+            for item in YBlockProjection.children(of: type, includeFormats: false) {
+                guard case .type(let child) = item.content, case .xmlElement(let node)? = child.typeRef,
+                    ["blockGroup", "blockContainer", "columnList", "column"].contains(node)
+                else { continue }
+                if node != "blockGroup", let id = BlockIndex.blockID(of: child) { ids.insert(id) }
+                stack.append(child)
+            }
         }
+        return ids
     }
 
     private func resetOnBackspaceOrEnter(_ blockID: String, node: String) throws -> Data {
@@ -1168,7 +1196,8 @@ final class DocumentEngine {
             let copy = try writer.snapshot(entry.container, block: id, depth: 0)
             _ = try BlockNoteSubtreePayload.validate([copy])
             if isGroup { newIDs = (0..<copy.idCount).map { _ in newBlockID() } }
-            guard newIDs.count == copy.idCount, isFresh(newIDs), newIDs.allSatisfy(isUnused) else {
+            let used = usedIDs()
+            guard newIDs.count == copy.idCount, isFresh(newIDs), newIDs.allSatisfy({ isUnused($0, in: used) }) else {
                 throw DocumentEngineError.unsupportedNativeInput
             }
             var ids = newIDs[...]

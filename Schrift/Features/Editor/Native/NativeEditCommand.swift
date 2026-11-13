@@ -64,7 +64,9 @@ struct NativeEditCommand: Equatable, Sendable {
         /// A structure command on a table block (PR11b).
         case table(BlockNoteTableCommand)
         /// A column group's structure (PR12b), on the group's block id.
-        case columns(BlockNoteColumnCommand)
+        /// `expecting`: the group's column ids the command's indices address;
+        /// a group whose columns changed since refuses it (nil: no check).
+        case columns(BlockNoteColumnCommand, expecting: [String]? = nil)
         /// The slash menu's Columns items (PR12b), on the "/query" paragraph:
         /// `count` columns; `ids` the group's (unless it replaces the
         /// paragraph), then each column's and its paragraph's.

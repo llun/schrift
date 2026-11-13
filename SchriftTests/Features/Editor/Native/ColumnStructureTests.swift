@@ -273,4 +273,57 @@ final class ColumnStructureTests: NativeEditingTestCase {
         }
         XCTAssertEqual(resolved, [.text(EditorPosition(blockID: "c", offset: 2, assoc: 0)), .block("cl")])
     }
+
+    // MARK: - Review fixes (PR #284)
+
+    /// F1: deleting the shown column takes its text view out of the editor
+    /// (it would sit on top and take every touch); the next column types.
+    func testDeletingTheShownColumnRemovesItsView() async throws {
+        let (harness, model) = try await editor("removeColumnOfThree")
+        let container = ColumnTextContainer(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        let window = UIWindow(frame: container.frame)
+        window.addSubview(container)
+        window.isHidden = false
+        addTeardownBlock { window.isHidden = true }
+        model.active = 2
+        container.show(model.columns.map(\.textView), active: model.active)
+        let deleted = model.columns[2].textView
+        XCTAssertTrue(model.perform(.delete))
+        await waitUntil { model.columns.count == 2 }
+        container.show(model.columns.map(\.textView), active: model.active)
+        XCTAssertFalse(container.subviews.contains { $0 === deleted }, "the deleted column's view left")
+        XCTAssertEqual(container.subviews.count, 2)
+        let shown = try XCTUnwrap(model.activeSession)
+        XCTAssertFalse(shown.textView.isHidden)
+        XCTAssertEqual(container.subviews.filter { !$0.isHidden }.count, 1)
+        shown.textView.selectedRange = NSRange(location: try location(shown, "c", 3), length: 0)
+        shown.input?.textViewDidChangeSelection(shown.textView)
+        shown.textView.insertText("x")
+        await shown.settle()
+        await harness.settle()
+        XCTAssertEqual(harness.log.commands.count, 2, "the delete and the key")
+    }
+
+    /// F5: closing the editor while a reconcile attaches a peer's new columns
+    /// ends the ones already attached, so the group closes and its card updates.
+    func testClosingWhileAColumnAttachesEndsEverySurface() async throws {
+        let (harness, model) = try await editor()
+        var attaches = 0
+        model.beforeAttach = {
+            attaches += 1
+            if attaches == 2 { model.close() }
+        }
+        let update = try peerUpdate("addColumnRight") { tx, _, list, writer in
+            var left = YBlockProjection.children(of: list, includeFormats: false).last
+            for (column, paragraph) in [("p1", "q1"), ("p2", "q2")] {
+                left = try writer.insertCopy(
+                    tx, writer.emptyColumn(column, paragraph: paragraph), into: list, after: left)
+            }
+        }
+        try await harness.session.integrateServerState(update)
+        await waitUntil { model.isClosed }
+        await harness.settle()
+        let open = await harness.session.engine { $0.columnBlocks("p1") != nil } ?? true
+        XCTAssertFalse(open, "no surface keeps the group open")
+    }
 }

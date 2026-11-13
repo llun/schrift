@@ -197,4 +197,87 @@ final class BlockNoteColumnStructureOracleTests: XCTestCase {
         // Moving a group next to another group is refused (it would nest).
         XCTAssertFalse(engine.canApplyStructural(command(engine, "n1", .moveUp)))
     }
+
+    // MARK: - Review fixes (PR #284)
+
+    /// F6: a column command addresses the columns it was made for; after a
+    /// peer's change it is refused, never retargeted.
+    func testAColumnCommandMadeForOtherColumnsIsRefused() throws {
+        let doc = try doc(try capture("addColumnRight").seed)
+        defer { doc.destroy() }
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        defer { engine.detach() }
+        let stale = command(engine, "cl", .columns(.remove(index: 1), expecting: ["c1", "c3", "c2"]))
+        XCTAssertFalse(engine.canApplyStructural(stale))
+        XCTAssertTrue(
+            engine.canApplyStructural(command(engine, "cl", .columns(.remove(index: 1), expecting: ["c1", "c2"]))))
+    }
+
+    /// F3: widths whose normalisation would overflow (1e308s sum to infinity
+    /// and divide to 0) refuse Insert column: the group would turn unfamiliar.
+    func testInsertingAColumnBesideHugeWidthsIsRefused() throws {
+        let doc = try doc(try capture("addColumnRight").seed)
+        defer { doc.destroy() }
+        let root = try XCTUnwrap(doc.share[BlockNoteYjs.fragmentField])
+        guard case .type(let group)? = YBlockProjection.children(of: root, includeFormats: false).first?.content,
+            case .type(let list) = YBlockProjection.children(of: group, includeFormats: false)[1].content
+        else { return XCTFail("no group") }
+        try doc.transact { tx in
+            for column in ColumnGroup.columnTypes(of: list) {
+                try YWrite.mapSet(tx, on: column, key: "width", .any([BlockNoteWriter.number(1e308)]))
+            }
+        }
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        defer { engine.detach() }
+        XCTAssertTrue(try XCTUnwrap(engine.columnGroup("cl")).isFamiliar)
+        XCTAssertFalse(
+            engine.canApplyStructural(
+                command(engine, "cl", .columns(.add(index: 1, columnID: "nc", paragraphID: "np")))))
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc), "still saveable")
+    }
+
+    /// F2: a pasted group with a width `ColumnGroup.read` refuses is never written.
+    func testAPastedGroupWithAnUnreadableWidthIsRefused() throws {
+        func payload(width: YAnyValue) throws -> Data {
+            let source = YDoc(clientID: 1, gc: false)
+            defer { source.destroy() }
+            let writer = BlockNoteWriter(doc: source)
+            let root = source.get(BlockNoteYjs.fragmentField)
+            let column = { (id: String, paragraph: String) in
+                BlockNoteWriter.Copy.element(
+                    "column", [("id", .string(id)), ("width", width)], [writer.emptyParagraph(paragraph)])
+            }
+            let list = BlockNoteWriter.Copy.element(
+                "columnList", [("id", .string("g"))], [column("x1", "y1"), column("x2", "y2")])
+            return try writer.transaction { tx in
+                let group = YType(typeRef: .xmlElement(nodeName: "blockGroup"))
+                try YWrite.insertAfter(tx, into: root, after: nil, [.type(group)])
+                try writer.insertCopy(tx, list, into: group, after: nil)
+            }
+        }
+        let doc = try doc(try capture("addColumnRight").seed)
+        defer { doc.destroy() }
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        defer { engine.detach() }
+        for bad in [YAnyValue.int(0), .int(-1), .string("1"), TableClipboard.notANumber] {
+            XCTAssertFalse(
+                engine.canApplyStructural(command(engine, "tail", .insertSubtrees(payload: try payload(width: bad)))),
+                "\(bad)")
+        }
+        XCTAssertTrue(
+            engine.canApplyStructural(command(engine, "tail", .insertSubtrees(payload: try payload(width: .int(1))))))
+    }
+
+    /// F4: Duplicate collects the replica's ids once, never once per new id.
+    func testDuplicatingAGroupWalksTheIDsOnce() throws {
+        let doc = try doc(try capture("addColumnRight").seed)
+        defer { doc.destroy() }
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        defer { engine.detach() }
+        let before = engine.idCollections
+        _ = try engine.applyStructural(command(engine, "cl", .duplicate(newIDs: [])), persist: { _ in })
+        XCTAssertEqual(ColumnGroup.groups(in: doc).count, 2)
+        XCTAssertLessThanOrEqual(
+            engine.idCollections - before, 2, "one walk to validate (another when armed), not seven")
+    }
 }

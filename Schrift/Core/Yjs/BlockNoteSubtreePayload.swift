@@ -215,7 +215,10 @@ enum BlockNoteSubtreePayload {
             guard hasID(props), (2...ColumnGroup.maxColumns).contains(columns.count) else { throw Error.malformed }
             blocks += 1
             for column in columns {
-                guard case .element("column", let columnProps, let kids) = column, hasID(columnProps), !kids.isEmpty
+                guard case .element("column", let columnProps, let kids) = column, hasID(columnProps), !kids.isEmpty,
+                    // A width `ColumnGroup.read` refuses would leave an unfamiliar group with no
+                    // shadow, so every save would fail (PR12b review): absent, or positive and finite.
+                    columnProps.allSatisfy({ $0.key != "width" || (TableGrid.number($0.value) ?? 0) > 0 })
                 else { throw Error.malformed }
                 blocks += 1
                 guard blocks <= maxBlocks else { throw Error.tooLarge }

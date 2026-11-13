@@ -136,21 +136,6 @@ struct ColumnGroup: Equatable, Sendable {
         return groups
     }
 
-    /// Every column id of `doc`'s root groups (PR12b: a new id must not reuse one).
-    static func columnIDs(in doc: YDoc) -> Set<String> {
-        guard let root = doc.share[BlockNoteYjs.fragmentField],
-            case .type(let rootGroup)? = YBlockProjection.children(of: root, includeFormats: false).first?.content
-        else { return [] }
-        var ids: Set<String> = []
-        for item in YBlockProjection.children(of: rootGroup, includeFormats: false) {
-            guard case .type(let list) = item.content, list.typeRef == .xmlElement(nodeName: "columnList") else {
-                continue
-            }
-            for column in columnTypes(of: list) { if let id = BlockIndex.blockID(of: column) { ids.insert(id) } }
-        }
-        return ids
-    }
-
     /// The `column` elements of `list`, in order (no familiarity check).
     static func columnTypes(of list: YType) -> [YType] {
         YBlockProjection.children(of: list, includeFormats: false).compactMap { item in

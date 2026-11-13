@@ -112,6 +112,8 @@ final class ColumnEditorModel: Identifiable {
     @ObservationIgnored private var reconcileAgain = false
     /// Set by tests: after each reconcile.
     @ObservationIgnored var onReconciled: (() -> Void)?
+    /// Set by tests: before a reconcile attaches a new column.
+    @ObservationIgnored var beforeAttach: (() async -> Void)?
 
     private func scheduleReconcile() {
         guard !isClosed else { return }
@@ -141,18 +143,25 @@ final class ColumnEditorModel: Identifiable {
             var byID: [String: NativeEditorSession] = [:]
             for session in columns { if let id = session.column?.id { byID[id] = session } }
             var next: [NativeEditorSession] = []
+            // Surfaces attached by this pass: a close while one attaches ends them
+            // all, or the group stays open and its card stops updating (PR12b review).
+            var attached: [NativeEditorSession] = []
             for column in group.columns {
                 if let session = byID.removeValue(forKey: column.id) {
                     next.append(session)
-                } else if let session = await attach(column.id) {
-                    guard !isClosed else {
-                        session.close()
-                        break
+                } else {
+                    await beforeAttach?()
+                    if let session = await attach(column.id) {
+                        attached.append(session)
+                        next.append(session)
                     }
-                    next.append(session)
+                    guard !isClosed else { break }
                 }
             }
-            guard !isClosed else { break }
+            guard !isClosed else {
+                for session in attached { session.close() }
+                break
+            }
             for session in byID.values {
                 session.textView.resignFirstResponder()
                 session.close()
@@ -216,7 +225,7 @@ final class ColumnEditorModel: Identifiable {
     @discardableResult
     func perform(_ action: ColumnAction) -> Bool {
         guard let command = command(action), let input = activeSession?.input else { return false }
-        return input.applyColumns(groupID, command)
+        return input.applyColumns(groupID, command, expecting: group?.columns.map(\.id))
     }
 
     /// Ends every column surface and hands focus back to the document.
@@ -417,15 +426,23 @@ final class ColumnTextContainer: UIView {
                 view.bottomAnchor.constraint(equalTo: bottomAnchor),
             ])
         }
-        guard views.indices.contains(active) else { return }
+        let stale = subviews.filter { view in !views.contains { $0 === view } }
+        guard views.indices.contains(active) else {
+            for view in stale { view.removeFromSuperview() }
+            return
+        }
         let next = views[active]
-        guard next !== shown else { return }
-        let previous = shown
-        next.isHidden = false
-        // First responder moves before the old view hides: the keyboard stays.
-        if previous?.isFirstResponder == true || previous == nil, next.isEditable { next.becomeFirstResponder() }
-        for view in views where view !== next { view.isHidden = true }
-        shown = next
-        UIAccessibility.post(notification: .screenChanged, argument: next)
+        if next !== shown {
+            let previous = shown
+            next.isHidden = false
+            // First responder moves before the old view hides (or leaves): the keyboard stays.
+            if previous?.isFirstResponder == true || previous == nil, next.isEditable { next.becomeFirstResponder() }
+            shown = next
+            UIAccessibility.post(notification: .screenChanged, argument: next)
+        }
+        // A removed column's view leaves, or it would sit on top and take every
+        // touch (PR12b review); every other view's visibility follows `active`.
+        for view in stale { view.removeFromSuperview() }
+        for view in views { view.isHidden = view !== next }
     }
 }
