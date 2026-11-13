@@ -134,6 +134,10 @@ struct NativeMediaTarget: Codable, Equatable, Sendable {
     let slot: MediaBlock.Slot
     let fileName: String
     let contentType: String
+    /// The column group and column the block sat in when picked (a column's blocks are only
+    /// addressable once their group is open); nil for a root block.
+    var columnGroup: String? = nil
+    var columnID: String? = nil
 }
 
 /// Photos queued on this device: records in UserDefaults, bytes as files.

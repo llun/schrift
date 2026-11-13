@@ -424,7 +424,7 @@ actor DocumentReplicaSession {
         case .columnGroup(let blockID, let reply):
             reply(engine.columnGroup(blockID))
         case .mediaSlot(let blockID, let reply):
-            reply(engine.mediaSlot(blockID))
+            reply(.some(engine.mediaSlot(blockID)))
         case .requestAvailability(let surfaceID, let blockID, let candidates):
             let actions = candidates.filter { candidate in
                 guard let kind = candidate.kind else { return engine.hasLosslessCopy(blockID) }

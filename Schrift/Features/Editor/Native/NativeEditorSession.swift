@@ -256,9 +256,10 @@ final class NativeEditorSession {
         }
     }
 
-    /// Media block `blockID`'s slot, read in mailbox order anywhere in the
-    /// document (PR13b); nil without a replica or for anything else.
-    func mediaSlot(_ blockID: String) async -> MediaBlock.Slot? {
+    /// Block `blockID`'s slot, read in mailbox order anywhere in the document
+    /// (PR13b): `.some(nil)` when no block has that id, nil when nothing
+    /// answered (no replica, closed, a full mailbox).
+    func mediaSlot(_ blockID: String) async -> MediaBlock.Slot?? {
         guard let replica, !isClosed else { return nil }
         return await withCheckedContinuation { done in
             replica.mailbox.post(.mediaSlot(blockID: blockID, reply: { done.resume(returning: $0) }))

@@ -96,13 +96,15 @@ final class NativeMediaUploads {
         preparing = blockID
         // Never retained across the preparation: a closed editor is gone, not kept alive.
         let target = WeakSession(session: session)
+        let column = session.column
         return Task { [weak self] in
-            await self?.prepare(source, into: blockID, slot: slot, scope: scope, target: target)
+            await self?.prepare(source, into: blockID, slot: slot, scope: scope, column: column, target: target)
         }
     }
 
     private func prepare(
-        _ source: Source, into blockID: String, slot: MediaBlock.Slot, scope: ReplicaScope, target: WeakSession
+        _ source: Source, into blockID: String, slot: MediaBlock.Slot, scope: ReplicaScope,
+        column: (group: String, id: String)?, target: WeakSession
     ) async {
         defer { preparing = nil }
         let fileName: String
@@ -148,7 +150,8 @@ final class NativeMediaUploads {
         let queued = queue.queueNativeAttachment(
             scope: scope,
             target: NativeMediaTarget(
-                org: scope.org, blockID: blockID, slot: slot, fileName: fileName, contentType: contentType),
+                org: scope.org, blockID: blockID, slot: slot, fileName: fileName, contentType: contentType,
+                columnGroup: column?.group, columnID: column?.id),
             data: data)
         if queued == nil { fail(blockID, .native_editor_media_upload_failed) }
     }

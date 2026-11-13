@@ -73,9 +73,10 @@ enum ReplicaMessage: Sendable {
     case tableCopy(blockID: String, from: TableSlot, to: TableSlot, reply: @Sendable (TableCopy?) -> Void)
     /// Column groups (PR12a): group `blockID` as the replica holds it now.
     case columnGroup(blockID: String, reply: @Sendable (ColumnGroup?) -> Void)
-    /// Media (PR13b): media block `blockID`'s slot (kind and url) now, anywhere in
-    /// the document (a column's included); nil when it is not a familiar media block.
-    case mediaSlot(blockID: String, reply: @Sendable (MediaBlock.Slot?) -> Void)
+    /// Media (PR13b): block `blockID`'s slot (kind and url) now, anywhere in the
+    /// document (a column's included), `.some(nil)` when no such block exists;
+    /// nil when the message could not be handled (nothing decided).
+    case mediaSlot(blockID: String, reply: @Sendable (MediaBlock.Slot??) -> Void)
     case requestAvailability(surfaceID: UUID, blockID: String, candidates: [ReplicaAvailabilityCandidate])
     case copyPayload(surfaceID: UUID, requestID: UUID, blockIDs: [String])
     /// Installs the journal (nil makes the session read-only) and the shared

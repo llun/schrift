@@ -1077,16 +1077,16 @@ final class DocumentEngine {
     }
 
     /// A media block's props (PR13a), validated per kind before arming;
-    /// Media block `blockID`'s slot now, wherever it sits (PR13b: the headless
-    /// commit's check); nil for anything a `.mediaProps` would refuse outright.
+    /// Block `blockID`'s slot now, wherever it sits (PR13b: the headless
+    /// commit's check): its node and stored url. Nil only when no block has
+    /// that id; a block a `.mediaProps` would refuse for another reason (an
+    /// unreadable prop) still answers, so its upload waits rather than drops.
     func mediaSlot(_ blockID: String) -> MediaBlock.Slot? {
-        let index = builder.index
-        guard !isDetached, index.isCanonical, let entry = index.entries[blockID], !index.isTableParagraph(blockID),
-            !builder.nativeSnapshot(entry).block.fidelity.isOpaque, let element = entry.element,
-            case .xmlElement(let node)? = element.typeRef, MediaBlock.nodes.contains(node),
-            let stored = YBlockProjection.props(of: element)
+        guard !isDetached, let element = builder.index.entries[blockID]?.element,
+            case .xmlElement(let node)? = element.typeRef
         else { return nil }
-        return MediaBlock.Slot(node: node, url: MediaBlock.string("url", in: stored))
+        return MediaBlock.Slot(
+            node: node, url: YBlockProjection.props(of: element).map { MediaBlock.string("url", in: $0) } ?? "")
     }
 
     /// `expecting` (an upload's slot) refuses a block whose kind or url changed.

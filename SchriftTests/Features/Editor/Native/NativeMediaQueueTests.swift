@@ -49,16 +49,27 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
         var uploads: Int { log.count(ofMethod: "POST", urlContaining: "attachment-upload") }
     }
 
-    private func makeDevice(seed: String = "imageCommit") throws -> Device {
+    /// A capture's seed, or (`applied`) the document after its web edit.
+    private func state(_ name: String, applied: Bool) throws -> Data {
+        let capture = try XCTUnwrap(BlockNoteMediaCaptures.edits.first { $0.name == name })
+        let seed = try XCTUnwrap(Data(base64Encoded: capture.seed))
+        guard applied else { return seed }
+        let doc = YDoc(clientID: 98)
+        defer { doc.destroy() }
+        try doc.applyUpdate(YUpdateDecoder.decode(seed), origin: .remote)
+        try doc.applyUpdate(YUpdateDecoder.decode(try XCTUnwrap(Data(base64Encoded: capture.update))), origin: .remote)
+        return try YStateEncoder.encodeStateAsUpdate(doc)
+    }
+
+    private func makeDevice(seed: String = "imageCommit", applied: Bool = false) throws -> Device {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("NativeMediaQueue-\(UUID())")
         let suite = "NativeMediaQueue.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         SignedInUserStore(userDefaults: defaults).remember(Self.owner)
         let scope = ReplicaScope(
             serverOrigin: Self.origin, ownerUserID: Self.owner, org: "docs", documentID: Self.documentID)
-        let capture = try XCTUnwrap(BlockNoteMediaCaptures.edits.first { $0.name == seed })
         let device = Device(directory: directory, defaults: defaults, scope: scope)
-        _ = try device.store.create(for: scope, checkpoint: try XCTUnwrap(Data(base64Encoded: capture.seed)))
+        _ = try device.store.create(for: scope, checkpoint: try state(seed, applied: applied))
         addTeardownBlock {
             MockURLProtocol.reset()
             try? FileManager.default.removeItem(at: directory)
@@ -140,21 +151,25 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
         try XCTUnwrap(device.store.restore(for: device.scope)).manifest.journal.filter { $0.origin == .local }.count
     }
 
-    private func target(_ blockID: String = "mx", name: String = "up.bin") -> NativeMediaTarget {
+    private func target(_ blockID: String = "mx", name: String = "up.bin", column: [String]? = nil)
+        -> NativeMediaTarget
+    {
         NativeMediaTarget(
-            org: "docs", blockID: blockID, slot: slot, fileName: name, contentType: "application/octet-stream")
+            org: "docs", blockID: blockID, slot: slot, fileName: name, contentType: "application/octet-stream",
+            columnGroup: column?.first, columnID: column?.last)
     }
 
     /// A record left on disk by an earlier process (queued, maybe checkpointed).
-    private func leftBehind(_ device: Device, blockID: String = "mx", checkpoint: String? = nil, owner: UUID = owner)
-        -> UUID
-    {
+    private func leftBehind(
+        _ device: Device, blockID: String = "mx", column: [String]? = nil, checkpoint: String? = nil,
+        owner: UUID = owner
+    ) -> UUID {
         let localID = UUID()
         device.attachments.saveData(Data("bytes".utf8), for: localID)
         device.attachments.save(
             PendingAttachment(
                 localID: localID, documentID: Self.documentID, createdAt: Date(), serverOrigin: Self.origin,
-                ownerUserID: owner, uploadedURLString: checkpoint, native: target(blockID)))
+                ownerUserID: owner, uploadedURLString: checkpoint, native: target(blockID, column: column)))
         return localID
     }
 
@@ -293,6 +308,56 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
         XCTAssertEqual(server.uploads, 0)
         XCTAssertTrue(try storedXML(device).contains(Self.mediaPath))
         XCTAssertEqual(try localCommits(device), 1)
+    }
+
+    /// A media block inside a column (the web's slash insertion there) commits
+    /// like a root one: the engine resolves the id document-wide.
+    func testAColumnsMediaBlockCommitsHeadlessly() async throws {
+        let device = try makeDevice(seed: "imageSlashInColumn", applied: true)
+        let server = Server()
+        _ = leftBehind(device, blockID: "q", column: ["cl", "c1"])
+        let app = launch(device, server: server)
+        await app.coordinator.syncPendingDrafts()
+        await waitUntil { app.coordinator.nativeAttachments(documentID: Self.documentID).isEmpty }
+        await waitUntil { app.registry.openScopes.isEmpty }
+        let xml = try storedXML(device)
+        XCTAssertTrue(xml.contains(#"<column id="c1" width="1"><blockcontainer id="a">"#), xml)
+        XCTAssertTrue(xml.contains(#"name="up.bin" showPreview="true" textAlignment="left" url="\#(Self.mediaURL)""#), xml)
+        XCTAssertEqual(try localCommits(device), 1)
+    }
+
+    /// Picked in the column editor, the record names the block's column.
+    func testAnUploadFromAColumnNamesItsColumn() async throws {
+        let app = launch(try makeDevice(seed: "imageSlashInColumn", applied: true), server: Server(), leases: false)
+        let editor = try await openEditor(app)
+        let column = try await unwrapped(editor.openColumn(group: "cl", column: "c1"))
+        let uploads = NativeMediaUploads(documentID: Self.documentID, queue: app.coordinator)
+        await uploads.start(.file { Self.file }, into: "q", slot: slot, in: column)?.value
+        let record = try XCTUnwrap(uploads.record("q"))
+        XCTAssertEqual(record.native?.columnGroup, "cl")
+        XCTAssertEqual(record.native?.columnID, "c1")
+        await column.close().value
+        await editor.close().value
+    }
+
+    /// The commit cannot land (an open editor that does not write): the
+    /// checkpointed URL stays on the record, and the next pass commits it
+    /// without uploading again.
+    func testACommitThatCannotLandKeepsItsCheckpoint() async throws {
+        let server = Server()
+        let app = launch(try makeDevice(), server: server)
+        let reader = try await unwrapped(app.registry.open(store: app.store, scope: app.device.scope))
+        let localID = try XCTUnwrap(
+            app.coordinator.queueNativeAttachment(scope: app.device.scope, target: target(), data: Data()))
+        await waitUntil { app.coordinator.pendingAttachment(localID: localID)?.uploadedURLString == Self.mediaURL }
+        await waitUntil { app.registry.surfaces(of: app.device.scope).count == 1 }
+        XCTAssertEqual(try localCommits(app.device), 0)
+        await reader.close().value
+        await app.coordinator.syncPendingDrafts()
+        await waitUntil { app.coordinator.pendingAttachment(localID: localID) == nil }
+        await waitUntil { app.registry.openScopes.isEmpty }
+        XCTAssertEqual(server.uploads, 1, "the checkpoint is what keeps a second copy off the server")
+        XCTAssertEqual(try localCommits(app.device), 1)
     }
 
     /// A block deleted while its photo waited: the record and bytes go before

@@ -3802,6 +3802,57 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   upload pipeline incl. other documents' and other origins' URLs, a block deleted or filled during
   the upload, offline/local/concurrent refusal, a closed editor, a too-large file) and the host UI
   test `testAMediaCaptionEditedInTheInspectorSurvivesRelaunch` (`--native-open --native-media-edit`).
+- **PR13b Native media: offline queue and headless commits.** (13b2, later: drag and drop or paste
+  of files into the text view, poster frames, an image's height refreshed when its ratio arrives.)
+  **One path, record first:** `NativeMediaUploads.start` prepares the bytes as PR13a did, then
+  `DocumentSaveCoordinator.queueNativeAttachment(scope:target:data:)` writes bytes, then a
+  `PendingAttachment` whose optional `native: NativeMediaTarget` (org, block id, the
+  `MediaBlock.Slot` the upload started from, file name, content type) stands in for the Markdown
+  placeholder; the record's scope is derived (`nativeScope`: origin, owner, org, document), so
+  `migrateCreatedDocument`'s re-key carries it (a native editor never types a local document, so
+  none is minted for one). Online or offline the same record; the queue refuses another account's
+  or server's scope and an unreadable store. **The run** (`runNativeAttachment`, kicked at queue time
+  and by `runAttachmentPass` for each native record whose owner is the `/users/me/` answer; one
+  runner per record, `nativeRuns`): the slot checked headlessly first (block gone, retyped or filled →
+  record and bytes dropped, nothing sent), the upload (`client.mediaUploader`, its `isCurrent` the
+  sign-in generation captured when the run started — `signInIsCurrent`, set by `RootView` from the
+  clock), the answered URL this server's attachment for **this** document and `isAuthoredURL`
+  (else failed), the URL **checkpointed** on the record, then the headless commit; `.committed` or
+  `.gone` removes the record. Transient failures (offline, 5xx, an expired session, a refused
+  switch) wait for the next pass; a rejection sets `failedAt`. The classic pass `continue`s past
+  native records: no Markdown names them, so its collection would delete them. **The headless lease**
+  (`NativeSessionRegistry.commitMedia`, the coordinator's `weak nativeSessions`): no replica on disk →
+  `.gone`, an unreadable one → `.unavailable`; `open` a surface (an open editor's replica, else one
+  restored for this), the slot read in mailbox order (`ReplicaMessage.mediaSlot`, document-wide so a
+  column's block answers; `.some(nil)` only when no block has the id, nil when nothing answered),
+  then the journal (`installJournal`, now shared with `installTyping`) and scheduler installed only
+  when this is the scope's only surface (an open read-only editor stays read-only → unavailable),
+  one `.mediaProps([name, url], expecting: slot)` barrier posted from the surface
+  (`NativeEditorSession.post`, a surface without input, answered by its result) after a settle,
+  `.stale` and a same-slot refusal (a composition) retried `nativeCommitAttempts` × interval, then
+  `schedule` + `flush`. A refused commit re-reads the slot: changed → `.gone`, same → `.unavailable`.
+  Visible editors get the change by fan-out. The headless save (`enqueueNativeReplica`) is
+  `installTyping`'s without a view model; the title is the cached server title or the draft's,
+  never guessed (none known: the journal waits for the next open). **Kill and relaunch:** before
+  the checkpoint the record uploads again (no idempotency key; the old upload is an orphan on the
+  server), after it only commits, and a commit that landed before the record went is refused by
+  its own slot (url no longer ""), so a block never gets two photos and no photo is lost.
+  **UI:** the card says "Uploading…" for every block with a live record or being prepared
+  (`NativeBlockControls.uploadingBlocks`) and "Upload failed · tap to retry" for a failed one
+  (`failedUploads`); the inspector shows the same, "Uploads when you're back online." offline, and
+  Retry upload / Discard upload for a failed record (`nativeMedia.retryUpload`/`discardUpload`);
+  Delete also discards the block's record; uploads no longer refuse offline; one upload per block.
+  Document delete and keep-server drop the records (`discardPendingAttachments`). **Known limits:**
+  no local thumbnail while a photo waits; a document that stops being typable keeps its record
+  waiting (retried each pass); a commit blocked past its retries by a composition waits for the
+  next pass; a block moved to another column meanwhile still receives its upload. Tests:
+  `NativeMediaQueueTests` (`MockURLProtocol`, a real registry, `ReplicaStore` and attachment store:
+  the web's `imageCommit` XML with no editor open, the inspector's upload reaching an open editor,
+  an upload finishing after its editor closed, offline then the next pass, kill/relaunch before and
+  after the checkpoint and after the commit, a column's block, a deleted block (nothing sent), a
+  block filled during the upload, a rejection then Retry and Discard, another document's URL,
+  another account's record, a sign-in switch, the classic pass, document delete, JPEG preparation,
+  a close during preparation, too large and local); PR13a's upload cases moved there.
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below
@@ -5738,6 +5789,9 @@ markdown write endpoint**. Understand this before touching the save path:
     deleted document is never cleaned up; deferred while an editor is open) → terminal
     skip → parent-create gate. `migrateCreatedDocument` re-keys these records **before**
     `removePendingCreate`, beside the children re-key and for the same reason.
+  - **Native records (PR13b) are not this pass's:** they carry `native` and no placeholder, so the
+    classic collection would delete them; the pass hands each one whose owner is the signed-in
+    account to `runNativeAttachment` (the PR13b bullet) and moves on.
   - **Those four gates cover the REST save path only.** `insertImageBlock` calls
     `markDirty()`, whose first line forwards to `LiveEditingBridge.forwardLocalEdit` and
     **returns without enqueuing** — so an edit made while a live session is engaged is

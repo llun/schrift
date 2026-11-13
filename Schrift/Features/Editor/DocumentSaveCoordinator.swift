@@ -1425,8 +1425,9 @@ final class DocumentSaveCoordinator {
         guard let registry = nativeSessions, let target = record.native, let scope = record.nativeScope else {
             return .unavailable
         }
+        let column = target.columnGroup.flatMap { group in target.columnID.map { (group: group, id: $0) } }
         return await registry.commitMedia(
-            props, into: target.blockID, expecting: target.slot, scope: scope, store: replicaStore,
+            props, into: target.blockID, expecting: target.slot, column: column, scope: scope, store: replicaStore,
             attempts: nativeCommitAttempts, interval: nativeCommitInterval
         ) { [weak self, weak registry] in
             NativeReplicaSaveScheduler(

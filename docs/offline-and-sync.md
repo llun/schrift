@@ -252,9 +252,20 @@ column-root) media block without children is spelled as the export spells it (im
 as `![name](url)` or a `<figure>` with a caption, audio as `<audio>` HTML, files and hidden
 previews as a link and a caption paragraph, a PDF preview and a peer's `uploadLoader` as nothing),
 so documents with media type too; a media block below the root keeps the classic image line or
-none. A native upload needs a connection (no offline queue for native media yet, PR13b): the
-classic photo sidecar (`PendingAttachmentStore`) stays the classic editor's. Existing Markdown
-drafts retain their classic owner.
+none. Since PR13b every native upload, online or offline, is queued first on the same sidecar
+(`PendingAttachmentStore`): a record whose `native` target names the document's replica scope, the
+media block and the slot (kind and url) the upload started from, with the prepared bytes beside it
+(backup-included, owner-scoped like a classic photo). The coordinator's native run checks the slot
+through a **headless lease** of the replica (`NativeSessionRegistry.commitMedia`: a surface on the
+open editor's replica, or one restored for it), uploads, checkpoints the answered URL on the record,
+then commits `.mediaProps([name, url], expecting: slot)` and hands the save over; a slot that
+changed (block deleted, retyped or filled) drops the record and its bytes, so an upload lands after
+its editor closed or after a relaunch, never twice (a checkpointed record only commits; a commit
+that landed before the record went is refused by its own slot). The classic pass skips native
+records (no Markdown names them). Offline and transient failures wait for the next pass
+(reconnect, foreground, launch); a rejection marks the record failed, answered from the inspector
+(Retry or Discard). Deleting the document or keeping the server version drops its records.
+Existing Markdown drafts retain their classic owner.
 
 > **Amendment (2026-07-03):** the document **lists** (Home, the editor's
 > Subpages section, and the Shared tab) now follow this same
