@@ -15,6 +15,10 @@ enum Strings_de {
         .native_editor_media_upload_failed: "Die Datei konnte nicht hochgeladen werden. Bitte versuche es erneut.",
         .native_editor_media_upload_dropped:
             "Der Block hat sich während des Hochladens geändert, daher wurde die Datei nicht hinzugefügt.",
+        .native_editor_media_upload_stopped: "Hochladen fehlgeschlagen · zum Wiederholen tippen",
+        .native_editor_media_upload_waiting: "Wird hochgeladen, sobald du wieder online bist.",
+        .native_media_retry_upload: "Erneut hochladen",
+        .native_media_discard_upload: "Hochladen verwerfen",
         .native_media_name: "Name",
         .native_media_caption: "Bildunterschrift",
         .native_media_width: "Breite",

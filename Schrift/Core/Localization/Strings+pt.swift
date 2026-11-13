@@ -14,6 +14,10 @@ enum Strings_pt {
         .native_editor_media_upload_failed: "Não foi possível carregar o ficheiro. Tente novamente.",
         .native_editor_media_upload_dropped:
             "O bloco mudou durante o carregamento, por isso o ficheiro não foi adicionado.",
+        .native_editor_media_upload_stopped: "Falha no envio · toque para tentar de novo",
+        .native_editor_media_upload_waiting: "Será enviado quando voltar a estar online.",
+        .native_media_retry_upload: "Tentar enviar de novo",
+        .native_media_discard_upload: "Descartar envio",
         .native_media_name: "Nome",
         .native_media_caption: "Legenda",
         .native_media_width: "Largura",

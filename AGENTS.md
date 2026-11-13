@@ -3851,7 +3851,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   after the checkpoint and after the commit, a column's block, a deleted block (nothing sent), a
   block filled during the upload, a rejection then Retry and Discard, another document's URL,
   another account's record, a sign-in switch, the classic pass, document delete, JPEG preparation,
-  a close during preparation, too large and local); PR13a's upload cases moved there.
+  a close during preparation, too large and local); PR13a's upload cases moved there, and
+  `testAMediaCaptionEditedInTheInspectorSurvivesRelaunch` now expects Upload file offered offline.
+  `RootView` sets `nativeSessions` and `signInIsCurrent`; a host without them queues and waits.
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below

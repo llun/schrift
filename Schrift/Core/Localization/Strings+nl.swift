@@ -15,6 +15,10 @@ enum Strings_nl {
         .native_editor_media_upload_failed: "Kan het bestand niet uploaden. Probeer het opnieuw.",
         .native_editor_media_upload_dropped:
             "Het blok is tijdens het uploaden gewijzigd, dus het bestand is niet toegevoegd.",
+        .native_editor_media_upload_stopped: "Uploaden mislukt · tik om opnieuw te proberen",
+        .native_editor_media_upload_waiting: "Wordt geüpload zodra je weer online bent.",
+        .native_media_retry_upload: "Opnieuw uploaden",
+        .native_media_discard_upload: "Upload verwijderen",
         .native_media_name: "Naam",
         .native_media_caption: "Bijschrift",
         .native_media_width: "Breedte",
