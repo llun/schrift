@@ -3751,6 +3751,21 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   marks), and a stored name or caption over its limit is read-only. S5: `isAuthoredURL` accepts only
   RFC 3986 characters with `%` as a hex escape, checked on the raw string before `URLComponents`
   (Foundation may percent-encode what it would otherwise refuse; a non-ASCII host must be punycode).
+  **Round 2.** V1: an upload is bound to the sign-in generation it started in, checked when the
+  request is built, not only before the await: `SessionStore.generationClock`
+  (`SignInGenerationClock`, a `Mutex`, set at every `signInGeneration` bump, in the environment as
+  `signInGenerationClock`) gives `EditorView` an `isCurrent()` closure that
+  `DocsAPIClient.mediaUploader(isCurrent:)` threads to `uploadAttachment`/`send`/`performRequest`,
+  which asks it synchronously after building the request and before handing it to the session
+  (false: `CancellationError`, nothing sent). V2: a pdf url must also be one the export spells
+  (`NativeExportMarkdown.isSafePDFURL`, for native edits and pastes), and a pasted media block must
+  have its export chunk before insertion. V3: a pasted url is canonicalised first
+  (`MediaBlock.pastedURL`: a web IRI such as `https://images.example/été.png` or a non-ASCII host is
+  percent-encoded and punycoded by `URL(string:encodingInvalidCharacters:)`, then must pass
+  `isAuthoredURL`; whitespace and controls are refused before), so a cut web image pastes back;
+  `BlockNoteSubtreePayload.validatingMedia` returns the canonical copies. V4: a submitted name or
+  caption becomes that field's synced value at once (`NativeMediaTextDraft.committed`), so a
+  delivery bringing a peer's later rename with ours is followed, not overwritten by Done.
   **UI:** slash items Image/Video/Audio/File/PDF (`mediaSlashItems`, `SlashMenuAction.media`,
   native only) insert and set `requestedMedia`, which opens the inspector; a media card tap or
   VoiceOver activation (`NativeBlockControls.onOpenMedia`) opens `NativeMediaInspector` (a sheet,
