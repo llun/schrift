@@ -369,6 +369,9 @@ struct TableGrid: Equatable, Sendable {
                 isSimpleText = children.count == 1
             } else if type.typeRef == .xmlElement(nodeName: "hardBreak") {
                 runs.append(InlineRun("\n"))
+            } else if case .xmlElement(let node)? = type.typeRef, NativeInlineObject.nodeNames.contains(node) {
+                guard let object = NativeInlineObject.read(type) else { return nil }
+                runs.append(InlineRun(inlineObject: object))
             } else {
                 return nil
             }
@@ -380,7 +383,9 @@ struct TableGrid: Equatable, Sendable {
     private static func merged(_ runs: [InlineRun]) -> [InlineRun] {
         var out: [InlineRun] = []
         for run in runs where !run.text.isEmpty {
-            if let last = out.last, InlineRun("", marks: last.marks) == InlineRun("", marks: run.marks) {
+            if let last = out.last, last.inlineObject == nil, run.inlineObject == nil,
+                InlineRun("", marks: last.marks) == InlineRun("", marks: run.marks)
+            {
                 out[out.count - 1].text += run.text
             } else {
                 out.append(run)

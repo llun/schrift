@@ -8,14 +8,29 @@ import Foundation
 struct InlineRun: Equatable, Sendable {
     var text: String
     var marks: [(key: String, valueJSON: String)]
+    var inlineObject: NativeInlineObject?
 
-    init(_ text: String, marks: [(key: String, valueJSON: String)] = []) {
+    init(
+        _ text: String, marks: [(key: String, valueJSON: String)] = [],
+        inlineObject: NativeInlineObject? = nil
+    ) {
         self.text = text
         self.marks = marks
+        self.inlineObject = inlineObject
+    }
+
+    /// Creates a 1-UTF-16-unit `\u{FFFC}` atom run representing a BlockNote
+    /// inline leaf object with no marks.
+    init(inlineObject: NativeInlineObject) {
+        self.text = "\u{FFFC}"
+        self.marks = []
+        self.inlineObject = inlineObject
     }
 
     static func == (lhs: InlineRun, rhs: InlineRun) -> Bool {
-        lhs.text == rhs.text && lhs.marks.map { [$0.key, $0.valueJSON] } == rhs.marks.map { [$0.key, $0.valueJSON] }
+        lhs.text == rhs.text
+            && lhs.marks.map { [$0.key, $0.valueJSON] } == rhs.marks.map { [$0.key, $0.valueJSON] }
+            && lhs.inlineObject == rhs.inlineObject
     }
 }
 

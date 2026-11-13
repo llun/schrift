@@ -80,8 +80,10 @@ final class NativeEditorSession {
     }
 
     /// The read-only route (PR01): a one-shot projection, no replica session.
-    static func inspect(state: Data) async throws -> NativeEditorSession {
-        let inspected = try await Task.detached { try DocumentReplicaSession.inspect(state: state) }.value
+    static func inspect(state: Data, interlinkingOrigin: String? = nil) async throws -> NativeEditorSession {
+        let inspected = try await Task.detached {
+            try DocumentReplicaSession.inspect(state: state, interlinkingOrigin: interlinkingOrigin)
+        }.value
         let session = NativeEditorSession(
             replica: nil, blocks: inspected.blocks, revision: 0, hasUnsupportedRoot: inspected.hasUnsupportedRoot,
             canType: inspected.canType, recoveries: [], state: ReplicaState())
@@ -117,9 +119,12 @@ final class NativeEditorSession {
     /// component tests); `enableTyping` gives it a journal.
     /// `clientID` fixes the author (tests compare bytes); nil picks one.
     static func seed(
-        state: Data, clientID: UInt? = nil, gc: Bool = true, hooks: DocumentReplicaSession.Hooks = .init()
+        state: Data, clientID: UInt? = nil, gc: Bool = true, interlinkingOrigin: String? = nil,
+        hooks: DocumentReplicaSession.Hooks = .init()
     ) async throws -> NativeEditorSession {
-        await attach(try await DocumentReplicaSession.seed(state: state, clientID: clientID, gc: gc, hooks: hooks))
+        await attach(
+            try await DocumentReplicaSession.seed(
+                state: state, clientID: clientID, gc: gc, interlinkingOrigin: interlinkingOrigin, hooks: hooks))
     }
 
     /// Offline restoration never rebuilds rich state from a Markdown shadow:
@@ -703,7 +708,10 @@ final class NativeEditorOpen {
             return
         }
         let session: NativeEditorSession
-        do { session = try await NativeEditorSession.inspect(state: state) } catch {
+        do {
+            session = try await NativeEditorSession.inspect(
+                state: state, interlinkingOrigin: viewModel.client.serverOrigin)
+        } catch {
             guard generation == request else { return }
             route = .classic
             return

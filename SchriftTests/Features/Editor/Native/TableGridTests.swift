@@ -104,12 +104,12 @@ final class TableGridTests: XCTestCase {
         }
     }
 
-    func testAMentionKeepsTheTableOpaqueButReadable() throws {
+    func testAnUnfamiliarInlineNodeKeepsTheTableOpaqueButReadable() throws {
         let doc = try doc([
             Self.row([
                 .element(
                     "tableCell", [],
-                    [.element("tableParagraph", [], [.text("Hi "), .element("userMentionInline", [], [])])])
+                    [.element("tableParagraph", [], [.text("Hi "), .element("math", [], [])])])
             ])
         ])
         defer { doc.destroy() }

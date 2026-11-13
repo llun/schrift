@@ -426,11 +426,11 @@ final class TableEditorTests: NativeEditingTestCase {
     }
 
     func testAnUnfamiliarTableIsPreservedAndOpensReadOnly() async throws {
-        // A mention in a cell: a node 11a does not read.
+        // Inline math in a cell: a node 11a does not read.
         let update = try peerUpdate("styled") { _, tx, table in
             let paragraph = try XCTUnwrap(self.element(table, [2, 1, 0]))
-            let mention = YType(typeRef: .xmlElement(nodeName: "userMentionInline"))
-            try YWrite.insertAfter(tx, into: paragraph, after: nil, [.type(mention)])
+            let math = YType(typeRef: .xmlElement(nodeName: "math"))
+            try YWrite.insertAfter(tx, into: paragraph, after: nil, [.type(math)])
         }
         let doc = YDoc(clientID: 3, gc: true)
         try doc.applyUpdate(YUpdateDecoder.decode(try fixture("styled")))

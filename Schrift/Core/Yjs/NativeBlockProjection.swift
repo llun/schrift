@@ -20,7 +20,8 @@ enum NativeBlockProjection {
     static let maxDepth = 64
 
     static func project(
-        _ doc: YDoc, generation: UUID = UUID(), interlinkingOrigin: String? = nil, nativeMarks: Bool = true
+        _ doc: YDoc, generation: UUID = UUID(), interlinkingOrigin: String? = nil, nativeMarks: Bool = true,
+        inlineObjects: Bool = false
     ) -> (blocks: [NativeBlockSnapshot], isFullyRenderable: Bool, isFullyModeled: Bool) {
         guard let root = doc.share[BlockNoteYjs.fragmentField] else { return ([], true, true) }
         let rootChildren = YBlockProjection.children(of: root, includeFormats: false)
@@ -32,7 +33,7 @@ enum NativeBlockProjection {
         var seen: Set<String> = []
         walk(
             group, depth: 0, parent: nil, generation: generation, interlinkingOrigin: interlinkingOrigin,
-            nativeMarks: nativeMarks, seen: &seen, into: &blocks)
+            nativeMarks: nativeMarks, inlineObjects: inlineObjects, seen: &seen, into: &blocks)
         let renderable = blocks.allSatisfy { !$0.block.fidelity.isOpaque }
         let modeled = renderable && blocks.allSatisfy { $0.block.fidelity == .modeled }
         return (blocks, renderable, modeled)
@@ -42,12 +43,12 @@ enum NativeBlockProjection {
     /// whose children are containers too: PR12a).
     private static func walk(
         _ group: YType, depth: Int, parent: NativeBlockHandle?, generation: UUID, interlinkingOrigin: String?,
-        nativeMarks: Bool, seen: inout Set<String>, into blocks: inout [NativeBlockSnapshot]
+        nativeMarks: Bool, inlineObjects: Bool, seen: inout Set<String>, into blocks: inout [NativeBlockSnapshot]
     ) {
         for item in YBlockProjection.children(of: group, includeFormats: false) {
             var snapshot = projectBlock(
                 item, depth: depth, parent: parent, generation: generation,
-                interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks)
+                interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks, inlineObjects: inlineObjects)
             // Only the first of a repeated id is addressable; an id-less or
             // repeated container stands for its subtree.
             let unique = !snapshot.id.isEmpty && seen.insert(snapshot.id).inserted
@@ -63,7 +64,8 @@ enum NativeBlockProjection {
             else { continue }
             walk(
                 nested, depth: depth + 1, parent: snapshot.handle, generation: generation,
-                interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks, seen: &seen, into: &blocks)
+                interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks, inlineObjects: inlineObjects,
+                seen: &seen, into: &blocks)
         }
     }
 
@@ -71,13 +73,14 @@ enum NativeBlockProjection {
     /// column (its top-level blocks are depth 0, with no parent): what a
     /// column surface shows and what the shadow spells per column.
     static func columnBlocks(
-        _ column: YType, generation: UUID = UUID(), interlinkingOrigin: String? = nil, nativeMarks: Bool = true
+        _ column: YType, generation: UUID = UUID(), interlinkingOrigin: String? = nil, nativeMarks: Bool = true,
+        inlineObjects: Bool = false
     ) -> [NativeBlockSnapshot] {
         var blocks: [NativeBlockSnapshot] = []
         var seen: Set<String> = []
         walk(
             column, depth: 0, parent: nil, generation: generation, interlinkingOrigin: interlinkingOrigin,
-            nativeMarks: nativeMarks, seen: &seen, into: &blocks)
+            nativeMarks: nativeMarks, inlineObjects: inlineObjects, seen: &seen, into: &blocks)
         return blocks
     }
 
@@ -85,10 +88,11 @@ enum NativeBlockProjection {
     /// engine's per-block snapshot. O(block); a column group, O(group).
     static func projectBlock(
         _ item: YItem, depth: Int, parent: NativeBlockHandle?, generation: UUID,
-        interlinkingOrigin: String? = nil, nativeMarks: Bool = true
+        interlinkingOrigin: String? = nil, nativeMarks: Bool = true, inlineObjects: Bool = false
     ) -> NativeBlockSnapshot {
         var block = YBlockProjection.projectBlock(
-            item, interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks, nestedChildren: true)
+            item, interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks, nestedChildren: true,
+            inlineObjects: inlineObjects)
         if depth >= maxDepth, case .type(let container) = item.content, nestedGroup(of: container) != nil {
             block = ProjectedBlock(id: block.id, node: "", props: [], runs: [], fidelity: .opaque(reason: "nesting"))
         }
@@ -127,19 +131,22 @@ enum NativeBlockProjection {
     /// whitespace the classic rendering would trim (`hasEdgeWhitespace`), so
     /// a trailing space just typed always has a shadow. `nil` when the
     /// document has no total shadow.
-    static func markdownShadow(_ doc: YDoc) -> String? {
-        let tree = project(doc, nativeMarks: false)
-        // A flat document with no native-only block keeps exactly the classic shadow.
+    static func markdownShadow(_ doc: YDoc, interlinkingOrigin: String? = nil) -> String? {
+        let tree = project(doc, nativeMarks: false, inlineObjects: true)
+        // A flat document with no native-only block or inline object keeps
+        // exactly the classic shadow.
         guard
             tree.blocks.contains(where: {
                 $0.depth > 0 || $0.block.node == "table" || $0.block.node == "columnList"
                     || MediaBlock.isMediaLike($0.block.node)
                     || nativeOnlyReasons.contains(opaqueReason($0.block)) || hasEdgeWhitespace($0.block)
+                    || hasInlineObject($0.block)
             })
         else {
             return YBlockProjection.projectedMarkdown(YBlockProjection.project(doc))
         }
-        return spell(tree.blocks[...], items: rootItems(doc), allowsColumns: true)
+        return spell(
+            tree.blocks[...], items: rootItems(doc), allowsColumns: true, interlinkingOrigin: interlinkingOrigin)
     }
 
     /// The shadow of a run of root subtrees (the document's, or one column's,
@@ -148,7 +155,8 @@ enum NativeBlockProjection {
     /// holds the run's top-level containers by item id (a table's grid and a
     /// group's columns are read from them).
     private static func spell(
-        _ blocks: ArraySlice<NativeBlockSnapshot>, items: [YID: YItem], allowsColumns: Bool
+        _ blocks: ArraySlice<NativeBlockSnapshot>, items: [YID: YItem], allowsColumns: Bool,
+        interlinkingOrigin: String?
     ) -> String? {
         var parts: [String] = []
         var plain = blocks.startIndex  // the first block not yet spelled
@@ -181,7 +189,7 @@ enum NativeBlockProjection {
                 // A root table without children: the export's own grid (PR11a).
                 guard end == root + 1, let item = items[blocks[root].handle.itemID],
                     let grid = tableGrid(of: item), let before = classicSpelling(blocks[plain..<root]),
-                    let chunk = NativeExportMarkdown.table(grid)
+                    let chunk = NativeExportMarkdown.table(grid, interlinkingOrigin: interlinkingOrigin)
                 else { return nil }
                 parts += [before, chunk]
                 plain = end
@@ -201,8 +209,12 @@ enum NativeBlockProjection {
                     for child in YBlockProjection.children(of: column, includeFormats: false) {
                         columnItems[child.id] = child
                     }
-                    let snapshots = columnBlocks(column, nativeMarks: false)
-                    guard let spelled = spell(snapshots[...], items: columnItems, allowsColumns: false) else {
+                    let snapshots = columnBlocks(column, nativeMarks: false, inlineObjects: true)
+                    guard
+                        let spelled = spell(
+                            snapshots[...], items: columnItems, allowsColumns: false,
+                            interlinkingOrigin: interlinkingOrigin)
+                    else {
                         return nil
                     }
                     columns.append(spelled)
@@ -210,14 +222,18 @@ enum NativeBlockProjection {
                 parts += [before] + columns
                 plain = end
             } else if case let subtree = blocks[root..<end],
-                needsExport(subtree) || subtree.contains(where: { hasEdgeWhitespace($0.block) })
+                needsExport(subtree)
+                    || subtree.contains(where: { hasEdgeWhitespace($0.block) || hasInlineObject($0.block) })
             {
+                let requiresExport = needsExport(subtree) || subtree.contains { hasInlineObject($0.block) }
                 // Edge whitespace falls back to the classic rendering only for a block the port lacks.
                 // Edge whitespace never takes a shadow away: last, the classic
                 // rendering with it trimmed, as the conflict comparison reads it.
                 guard let before = classicSpelling(blocks[plain..<root]),
-                    let chunk = exportNodes(subtree).flatMap(NativeExportMarkdown.body)
-                        ?? (needsExport(subtree)
+                    let chunk = exportNodes(subtree).flatMap({
+                        NativeExportMarkdown.body($0, interlinkingOrigin: interlinkingOrigin)
+                    })
+                        ?? (requiresExport
                             ? nil : classicSpelling(subtree) ?? classicSpelling(edgeTrimmed(subtree)))
                 else { return nil }
                 parts += [before, chunk]
@@ -246,6 +262,10 @@ enum NativeBlockProjection {
             [text.unicodeScalars.first, text.unicodeScalars.last].contains { $0.map(edgeWhitespace.contains) == true }
         }
         return edges(block.runs.map(\.text).joined()) || block.runs.contains { !$0.marks.isEmpty && edges($0.text) }
+    }
+
+    private static func hasInlineObject(_ block: ProjectedBlock) -> Bool {
+        block.runs.contains { $0.inlineObject != nil }
     }
 
     private static let edgeWhitespace = CharacterSet.whitespaces.union(NativeExportMarkdown.jsWhitespace)

@@ -138,11 +138,11 @@ actor DocumentReplicaSession {
     /// `makeReplica` creates the graph (tests pass fixed client ids).
     private init(
         state: Data, updates: [Data], revision: UInt64, store: ReplicaStore?, scope: ReplicaScope?,
-        freshClientID: Bool, makeReplica: @Sendable () -> YDoc, hooks: Hooks
+        freshClientID: Bool, interlinkingOrigin: String? = nil, makeReplica: @Sendable () -> YDoc, hooks: Hooks
     ) throws {
         let graph = try Self.build(
             state: state, updates: updates, revision: revision, durable: store != nil, freshClientID: freshClientID,
-            makeReplica: makeReplica)
+            interlinkingOrigin: interlinkingOrigin ?? scope?.serverOrigin, makeReplica: makeReplica)
         hasUnsupportedRoot = graph.hasUnsupportedRoot
         canType = graph.canType
         self.doc = graph.doc
@@ -163,7 +163,7 @@ actor DocumentReplicaSession {
 
     private static func build(
         state: Data, updates: [Data], revision: UInt64, durable: Bool, freshClientID: Bool,
-        makeReplica: () -> YDoc
+        interlinkingOrigin: String? = nil, makeReplica: () -> YDoc
     ) throws -> Graph {
         let doc = makeReplica()
         do {
@@ -201,16 +201,19 @@ actor DocumentReplicaSession {
         return Graph(
             doc: doc, engine: engine, sink: sink,
             hasUnsupportedRoot: projected.blocks.isEmpty && !projected.isFullyRenderable,
-            canType: projected.isFullyModeled && NativeBlockProjection.markdownShadow(doc) != nil)
+            canType: projected.isFullyModeled
+                && NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) != nil)
     }
 
     /// An in-memory replica of `state` (no journal until `setWritable`).
     /// `clientID` fixes the author (tests compare bytes); nil picks one.
     static func seed(
-        state: Data, revision: UInt64 = 0, clientID: UInt? = nil, gc: Bool = true, hooks: Hooks = Hooks()
+        state: Data, revision: UInt64 = 0, clientID: UInt? = nil, gc: Bool = true,
+        interlinkingOrigin: String? = nil, hooks: Hooks = Hooks()
     ) async throws -> DocumentReplicaSession {
         try DocumentReplicaSession(
             state: state, updates: [], revision: revision, store: nil, scope: nil, freshClientID: false,
+            interlinkingOrigin: interlinkingOrigin,
             makeReplica: { YDoc(clientID: clientID ?? UInt.random(in: 1...UInt(UInt32.max)), gc: gc) }, hooks: hooks)
     }
 
@@ -238,7 +241,7 @@ actor DocumentReplicaSession {
     }
 
     /// The read-only route's one-shot projection: no session outlives it.
-    static func inspect(state: Data) throws -> (
+    static func inspect(state: Data, interlinkingOrigin: String? = nil) throws -> (
         blocks: [BlockSnapshot], hasUnsupportedRoot: Bool, canType: Bool, tables: [String: TableGrid],
         columns: [String: (group: ColumnGroup, blocks: [[BlockSnapshot]])]
     ) {
@@ -248,7 +251,9 @@ actor DocumentReplicaSession {
         let projected = NativeBlockProjection.project(doc)
         return (
             projected.blocks.map(BlockSnapshot.init), projected.blocks.isEmpty && !projected.isFullyRenderable,
-            projected.isFullyModeled && NativeBlockProjection.markdownShadow(doc) != nil, TableGrid.tables(in: doc),
+            projected.isFullyModeled
+                && NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) != nil,
+            TableGrid.tables(in: doc),
             ColumnGroup.groups(in: doc)
         )
     }
@@ -690,7 +695,7 @@ actor DocumentReplicaSession {
         guard let store, let scope, let restored = try? store.restore(for: scope),
             let graph = try? Self.build(
                 state: restored.checkpoint, updates: restored.updates, revision: restored.manifest.revision,
-                durable: true, freshClientID: true,
+                durable: true, freshClientID: true, interlinkingOrigin: scope.serverOrigin,
                 makeReplica: { YDoc(clientID: UInt.random(in: 1...UInt(UInt32.max))) })
         else { return }
         _ = sink.take()
