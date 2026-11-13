@@ -1,3 +1,4 @@
+import ImageIO
 import UIKit
 import XCTest
 
@@ -146,13 +147,13 @@ final class NativeMediaTests: NativeEditingTestCase {
     private func uploads(
         _ harness: Harness, gate: Latch? = nil, offline: Bool = false,
         answer: @escaping @Sendable (UUID) -> String?
-    ) -> (NativeMediaUploads, Locked<[(UUID, String, String, Int)]>) {
-        let calls = Locked<[(UUID, String, String, Int)]>([])
+    ) -> (NativeMediaUploads, Locked<[(UUID, String, String, Data)]>) {
+        let calls = Locked<[(UUID, String, String, Data)]>([])
         let uploads = NativeMediaUploads(
             documentID: harness.scope.documentID, serverOrigin: Self.origin,
             isOffline: { offline },
             upload: { documentID, name, type, data in
-                calls.update { $0.append((documentID, name, type, data.count)) }
+                calls.update { $0.append((documentID, name, type, data)) }
                 if let gate { await gate.passing() }
                 return answer(documentID)
             })
@@ -161,7 +162,7 @@ final class NativeMediaTests: NativeEditingTestCase {
     }
 
     private nonisolated static let file = PreparedAttachmentFile(
-        fileName: "harbour.png", contentType: "image/png", data: Data(repeating: 7, count: 64))
+        fileName: "harbour.png", contentType: "image/png", data: testJPEGDataWithGPSMetadata(width: 8, height: 8))
 
     private var slot: MediaBlock.Slot { MediaBlock.Slot(node: "image", url: "") }
 
@@ -178,10 +179,10 @@ final class NativeMediaTests: NativeEditingTestCase {
         XCTAssertNil(uploads.uploading)
         XCTAssertNil(uploads.failure)
         XCTAssertEqual(calls.value.map(\.0), [harness.scope.documentID])
-        XCTAssertEqual(calls.value.map(\.1), ["harbour.png"])
+        XCTAssertEqual(calls.value.map(\.1), ["harbour.jpg"], "an image block's file goes as a JPEG")
         let stored = try props(harness, "mx")
         XCTAssertEqual(MediaBlock.string("url", in: stored), Self.mediaURL(harness.scope.documentID))
-        XCTAssertEqual(MediaBlock.string("name", in: stored), "harbour.png")
+        XCTAssertEqual(MediaBlock.string("name", in: stored), "harbour.jpg")
         try await assertConsistent(harness, localCommands: 1)
     }
 
@@ -293,6 +294,46 @@ final class NativeMediaTests: NativeEditingTestCase {
         XCTAssertEqual(uploads.failure?.key, .native_editor_media_upload_dropped)
         let restored = try XCTUnwrap(harness.store.restore(for: harness.scope))
         XCTAssertTrue(restored.manifest.journal.isEmpty)
+        await harness.close()
+    }
+
+    /// An image block's picked file is re-encoded like a photo (review A2):
+    /// its GPS never leaves the device; a file block's bytes go as picked.
+    func testAnImageBlocksFileUploadDropsItsMetadata() async throws {
+        let harness = try await makeHarness(state: try seed("imageCommit"))
+        addTeardownBlock { await harness.close() }
+        let (uploads, calls) = uploads(harness) { Self.mediaURL($0) }
+        let original = testJPEGDataWithGPSMetadata(width: 60, height: 40)
+        XCTAssertNotNil(testImageProperties(of: original)?[kCGImagePropertyGPSDictionary], "the fixture carries GPS")
+        let picked = PreparedAttachmentFile(fileName: "harbour.JPG", contentType: "image/jpeg", data: original)
+        await uploads.start(.file { picked }, into: "mx", slot: slot, in: harness.session)?.value
+        let sent = try XCTUnwrap(calls.value.first)
+        XCTAssertEqual(sent.1, "harbour.jpg")
+        XCTAssertNil(testImageProperties(of: sent.3)?[kCGImagePropertyGPSDictionary], "no GPS uploaded")
+        XCTAssertNotEqual(sent.3, original)
+    }
+
+    /// The editor closes (another account's reopen, a sign-out) while a photo
+    /// is prepared: nothing is sent (review A3).
+    func testNothingIsSentOnceTheEditorClosedDuringPreparation() async throws {
+        let harness = try await makeHarness(state: try seed("imageCommit"))
+        let gate = Latch()
+        let (uploads, calls) = uploads(harness) { Self.mediaURL($0) }
+        let png = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).pngData { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+        }
+        let task = try XCTUnwrap(
+            uploads.start(
+                .photo {
+                    await gate.passing()
+                    return png
+                }, into: "mx", slot: slot, in: harness.session))
+        await harness.session.close().value
+        gate.open()
+        await task.value
+        XCTAssertTrue(calls.value.isEmpty, "no request after the editor closed")
+        XCTAssertEqual(uploads.failure?.key, .native_editor_media_upload_dropped)
         await harness.close()
     }
 

@@ -209,7 +209,8 @@ struct NativeMediaInspector: View {
         VStack(alignment: .leading, spacing: DocsSpacing.space2xs) {
             Text(
                 MediaBlock.clipped(
-                    MediaBlock.string(block.node == MediaBlock.uploadLoader ? "blockUploadName" : "name", in: block.props)
+                    MediaBlock.string(
+                        block.node == MediaBlock.uploadLoader ? "blockUploadName" : "name", in: block.props)
                 ).nonEmpty ?? labels.kind(block.node)
             )
             .font(.headline)

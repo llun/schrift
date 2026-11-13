@@ -275,6 +275,66 @@ final class BlockNoteMediaOracleTests: XCTestCase {
         }
     }
 
+    /// A pasted media block (an untrusted payload, review S2) must hold only
+    /// what a native edit could write: a script, data or non-web url, an
+    /// unbounded name, a width out of range or a pdf the shadow cannot spell
+    /// is refused before any write; a well-formed one pastes.
+    func testPastedMediaIsValidatedLikeANativeEdit() throws {
+        let capture = try XCTUnwrap(BlockNoteMediaCaptures.edits.first { $0.name == "imageSetCaption" })
+        let doc = try doc(capture.seed, clientID: 2)
+        defer { doc.destroy() }
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        defer { engine.detach() }
+        func payload(_ node: String, _ overrides: [String: YAnyValue]) throws -> Data {
+            let props = (MediaBlock.schemas[node] ?? []).map { (key: $0.key, value: overrides[$0.key] ?? $0.value) }
+            return try BlockNoteSubtreePayload.encode([
+                .element("blockContainer", [("id", .string("pasted"))], [.element(node, props, [])])
+            ])
+        }
+        let refused: [(String, [String: YAnyValue])] = [
+            ("image", ["url": .string("javascript:alert(1)")]),
+            ("image", ["url": .string("data:image/png;base64,AAAA")]),
+            ("file", ["url": .string("/media/relative.bin")]),
+            ("pdf", ["url": .string("ftp://files.example/a.pdf")]),
+            ("image", ["name": .string(String(repeating: "n", count: MediaBlock.maxName + 1))]),
+            ("video", ["caption": .string("two\nlines")]),
+            ("image", ["previewWidth": BlockNoteWriter.number(1e20)]),
+            ("image", ["textAlignment": .string("middle")]),
+            ("image", ["url": .int(3)]),
+        ]
+        let before = YXMLString.fragment(doc)
+        for (node, overrides) in refused {
+            XCTAssertFalse(
+                engine.canApplyStructural(
+                    command(engine, "lead", .insertSubtrees(payload: try payload(node, overrides)))),
+                "\(node) \(overrides)")
+        }
+        XCTAssertEqual(YXMLString.fragment(doc), before)
+        try apply(
+            engine, "lead",
+            .insertSubtrees(
+                payload: try payload("image", ["url": .string(Self.mediaURL("image")), "name": .string("a")])))
+        XCTAssertTrue(YXMLString.fragment(doc).contains("name=\"a\""))
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc))
+    }
+
+    /// Only RFC 3986 characters are stored (review S5): Foundation's parser
+    /// must not be the one deciding what a raw string means, so non-ASCII,
+    /// quotes, angle brackets, spaces and a bare `%` are refused before it.
+    func testAuthoredURLsAreRFC3986() {
+        for url in [
+            "https://exämple.com/a", "https://example.com/a\"b", "https://example.com/<a>", "https://example.com/a b",
+            "https://example.com/%zz", "https://example.com/%", "https://example.com/é", "https://example.com/a{b}",
+        ] {
+            XCTAssertFalse(MediaBlock.isAuthoredURL(url), url)
+        }
+        for url in [
+            "https://example.com/a%20b.png?x=1&y=(2)", "http://xn--exmple-cua.com/a", "https://h.example:8443/p",
+        ] {
+            XCTAssertTrue(MediaBlock.isAuthoredURL(url), url)
+        }
+    }
+
     /// A peer's upload in progress is shown and preserved: modeled (the
     /// document types), spelled as nothing (as the server exports it), and
     /// never a target of a native prop edit.

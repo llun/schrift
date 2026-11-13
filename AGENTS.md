@@ -3732,6 +3732,25 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   Yjs, and **never write `uploadLoader`**: it makes every editable web client poll and replace the
   block. A peer's `uploadLoader` is modeled (the document types), shown as
   `native_editor_upload_elsewhere`, saved as nothing, and never polled, replaced or edited.
+  **Review fixes (PR #286).** F1: the inspector's name and caption are a `NativeMediaTextDraft`: each
+  field remembers the stored value it last synced to, an untouched field follows the block on every
+  delivery (an upload's name, a peer's caption) and Done writes only the fields the user changed
+  (before, Done wiped an upload's name and reverted peers' edits). S1/A1: the width a peer stored is
+  shown only through `MediaBlock.displayWidth` (in 1…10,000, else unset); `Int(1e20)` trapped. A2: a
+  file picked for an **image** block is re-encoded by `preparedJPEGData` like a photo (name
+  `<stem>.jpg`), so its EXIF/GPS never uploads; a file block's bytes still go as picked. S2: a pasted
+  media block must be `MediaBlock.isPastable` (familiar, every editable prop `isValidEdit`,
+  `backgroundColor` a bounded string; `BlockNoteSubtreePayload.validateMedia`, paste only: copy and
+  delete keep any block), so a payload cannot store `javascript:`/`data:`/relative urls, unbounded
+  text, an out-of-range width or a pdf the shadow cannot spell. A3: after preparation, before the
+  request, an upload whose starting session closed (Done, sign-out, another account's reopen) sends
+  nothing; `NativeEditorView` makes one `NativeMediaUploads` per session. S3: Open opens only an
+  `isAuthoredURL` URL (no userinfo to disguise the host) and shows its host on its own line
+  (`NativeMediaInspector.openTarget`). S4: names, captions and URLs are displayed through
+  `MediaBlock.clipped` (300 scalars, never characters: one character can carry a million combining
+  marks), and a stored name or caption over its limit is read-only. S5: `isAuthoredURL` accepts only
+  RFC 3986 characters with `%` as a hex escape, checked on the raw string before `URLComponents`
+  (Foundation may percent-encode what it would otherwise refuse; a non-ASCII host must be punycode).
   **UI:** slash items Image/Video/Audio/File/PDF (`mediaSlashItems`, `SlashMenuAction.media`,
   native only) insert and set `requestedMedia`, which opens the inspector; a media card tap or
   VoiceOver activation (`NativeBlockControls.onOpenMedia`) opens `NativeMediaInspector` (a sheet,
@@ -3739,7 +3758,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   Width (Original or 240–640 pt, plus the block's own), Alignment, Upload photo (image), Upload file
   (types by kind), Link (`isAuthoredURL`; the name becomes its last path segment, the web's
   `filenameFromURL`), Open (a same-origin attachment through `AttachmentCardView`, its loader's
-  rules; any other http(s) URL only on a tap, in the browser) and Delete; read-only for a document
+  rules; any other `isAuthoredURL` URL only on a tap, in the browser, its host shown) and Delete; read-only for a document
   that cannot type and for `uploadLoader`. The inspector reads `session.revision` so it re-renders
   after each delivery (the surface is not observable). An empty media card says
   `native_editor_media_empty`. **Known limits:** no native offline queue (the classic photo
