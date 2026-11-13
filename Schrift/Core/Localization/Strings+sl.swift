@@ -390,6 +390,7 @@ enum Strings_sl {
         .native_editor_table_format: "Oblika",
         .native_editor_columns: "Stolpci, %d",
         .native_editor_column: "Stolpec %d od %d",
+        .native_editor_columns_rotor: "Stolpci",
         .native_editor_column_move_left: "Premakni stolpec levo",
         .native_editor_column_move_right: "Premakni stolpec desno",
         .native_editor_math: "Formula",

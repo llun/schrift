@@ -415,8 +415,8 @@ actor DocumentReplicaSession {
                 })
         case .navigation(let reply):
             reply(engine.navigationEntries())
-        case .locate(let handle, let reply):
-            reply(engine.locate(handle))
+        case .locate(let handle, let group, let reply):
+            reply(group.map { engine.locateColumn(handle, group: $0) } ?? engine.locate(handle))
         case .tableGrid(let blockID, let full, let reply):
             reply(engine.tableGrid(blockID, full: full))
         case .tableCopy(let blockID, let from, let to, let reply):

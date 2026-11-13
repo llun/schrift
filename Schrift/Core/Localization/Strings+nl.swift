@@ -377,6 +377,7 @@ enum Strings_nl {
         .native_editor_table_format: "Opmaak",
         .native_editor_columns: "Kolommen, %d",
         .native_editor_column: "Kolom %d van %d",
+        .native_editor_columns_rotor: "Kolommen",
         .native_editor_column_move_left: "Kolom naar links",
         .native_editor_column_move_right: "Kolom naar rechts",
         .native_editor_math: "Formule",

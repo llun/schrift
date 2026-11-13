@@ -68,6 +68,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         /// was shown since), not one made meanwhile. Nil for an action on its
         /// own target (a history step, a block's props, a mapped range).
         let origin: BlockRange?
+        /// A move or a join, which may take the caret's block to another
+        /// column (PR12c); a column or table command never does.
+        var movesBlock = false
     }
     @ObservationIgnored private var barrier: Barrier?
     /// What the deliveries since the barrier was posted showed: a retry and a
@@ -102,7 +105,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         var reset: Bool
     }
     private typealias BlockRange = (start: (String, Int), end: (String, Int))
-    private enum Intent {
+    /// A key held while a barrier is in flight (internal so a column a block
+    /// moved into can adopt them, PR12c).
+    enum Intent {
         case insert(String)
         case deleteBackward
     }
@@ -357,6 +362,49 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             asOneKeyboardChange { selection.place(caret) }
         }
         view.becomeFirstResponder()
+    }
+
+    /// The caret (or a selection) in `blockID` at `offset` (PR12c: a jump
+    /// into a column, a block that moved into this column). The selection
+    /// only: nothing is written.
+    func focus(at blockID: String, offset: Int = 0, length: Int = 0) {
+        guard let entry = surface.rangeIndex.entry(for: blockID) else { return }
+        let text = entry.textRange
+        let location = text.location + min(max(0, offset), text.length)
+        let range = NSRange(location: location, length: max(0, min(length, NSMaxRange(text) - location)))
+        asOneKeyboardChange { selection.place(range) }
+    }
+
+    /// A block this surface moved or joined away left it (across a column's
+    /// edge, PR12c): its id, the selection's offset and length in it, and
+    /// the keys held meanwhile, which belong where the block went.
+    @ObservationIgnored var onBlockLeft: ((BlockLeft) -> Void)?
+
+    struct BlockLeft {
+        var blockID: String
+        var offset: Int
+        var length: Int
+        var keys: [Intent]
+    }
+
+    /// The caret's block went elsewhere: its held keys go with it, never
+    /// replayed here.
+    private func blockLeft(_ blockID: String, offset: Int, length: Int) {
+        let keys = intents
+        intents = []
+        onBlockLeft?(BlockLeft(blockID: blockID, offset: offset, length: length, keys: keys))
+    }
+
+    /// Keys held by the column a block left, typed here after the caret
+    /// followed it (PR12c).
+    func adopt(_ keys: [Intent]) {
+        for key in keys { hold(key) }
+        replayIntents()
+    }
+
+    /// Held keys' text, for a recovery entry when no column took them.
+    static func text(of keys: [Intent]) -> String {
+        keys.reduce(into: "") { text, key in if case .insert(let typed) = key { text += typed } }
     }
 
     /// A delivered patch that was not this surface's own command: the selection
@@ -642,6 +690,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                     selection.place(
                         NSRange(
                             location: entry.textRange.location + min(caret.offset, entry.textRange.length), length: 0))
+                } else if let caret, barrier.movesBlock {
+                    // Backspace at a column's first block moved it into the previous column.
+                    blockLeft(caret.blockID, offset: caret.offset, length: 0)
                 }
             case .keeping(let range):
                 selection.place(range)
@@ -650,6 +701,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                     let text = entry.textRange
                     let location = text.location + min(max(0, offset), text.length)
                     selection.place(NSRange(location: location, length: min(length, NSMaxRange(text) - location)))
+                } else if barrier.movesBlock {
+                    blockLeft(blockID, offset: offset, length: length)
                 }
             case .at(let location):
                 typingCaret = NSRange(location: location, length: 0)
@@ -1394,6 +1447,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         barrier = Barrier(
             id: command.id, refusal: refusal, placement: placement, retry: retry,
             origin: readsSelection ? blockSelection() : nil)
+        switch kind {
+        case .moveUp, .moveDown, .join: barrier?.movesBlock = true
+        default: break
+        }
         barrierShown = []
         userSelection = nil
         lastCommandID = command.id

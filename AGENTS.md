@@ -3168,7 +3168,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   groups them (`shouldGroupAccessibilityChildren`); the overlay itself is never an element, so
   it does not cover the text. **Known limits:** a heading moved while the sheet is open needs
   the sheet to refresh (reopen) before it jumps; the outline is at most 500 ms behind typing;
-  find matches block text only (a preview's name or caption is not searched); restore needs one
+  find matches block text only (a preview's name or caption is not searched; PR12c reads inside
+  familiar column groups); restore needs one
   round trip to the replica after open; the overlay's elements still sit in the text view's
   element order (grouped, not removed). Tests: `NativeNavigationTests` (literal headings and
   find, a heading jump that changes no content, journal or selection, a find jump into a fold,
@@ -3587,7 +3588,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   dissolved column, a group turning unfamiliar, a block moved out by a peer, a block moved to the
   next column, the slash item, the block menu on the card, awareness per column) and the host UI
   test `testTheColumnMenuInsertsAColumnThatSurvivesRelaunch`. The PR12a bullet's refusals of these
-  moves are superseded.
+  moves are superseded. (PR12c: the caret now follows a block moved into another column.)
   **Review fixes (PR #284).** A column command carries the column ids its indices address
   (`.columns(_:expecting:)`, the editor's group when the menu was used) and is refused once a peer
   changed the columns, never retargeted. Insert column refuses widths whose normalisation would
@@ -3600,6 +3601,81 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   (`beforeAttach` is the test seam), so the group closes and its card updates again. Tests:
   `BlockNoteColumnStructureOracleTests` (stale column ids, huge widths, pasted widths, one id walk)
   and `ColumnStructureTests` (deleting the shown column, closing during an attach).
+- **PR12c Column presentation, scale, VoiceOver, find into columns.** **Layout**
+  (`ColumnTextContainer`, a `UIScrollView`, one scroll for the whole editor): side by side at the
+  group's relative widths (`width`, unset 1; a hairline between) when the horizontal size class is
+  regular and the narrowest column gets `minimumColumnWidth` (220 pt, scaled by the host's Dynamic
+  Type `contentSizeCategory`), else stacked (a hairline above each column after the first). Every
+  column is shown; `active` (the picker's selection, the Column menu's target) follows first
+  responder (`NativeTextView.onFocus` → `onActivate`), and a column made active by the picker takes
+  first responder when the previous one had it and is scrolled to its caret. **Viewports, not
+  full layout:** each column's text view sits in a `ColumnFrameView` framed to the part of its
+  column on screen (`viewport`: the visible clip; off screen, at most a screen of it at the edge
+  nearest the screen) with its `contentOffset` set to match, so TextKit lays out only what is
+  visible. Its own pan, scroll indicator, scroll-to-top and safe-area insets are off; this view
+  scrolls. Heights are the text views' (estimated) `contentSize`; a text view that has not laid
+  out stands for a screen. After each of its layout passes (`NativeTextView.onGeometry`) a height
+  change lays the columns out again, and a self-scroll (UIKit keeping its caret visible) or a moved
+  caret of the first responder is shown by scrolling this view (`reveal`, after the next layout:
+  place, lay out, place again, at most three times, because an off-screen caret is TextKit's
+  estimate); a user's scroll changes no selection, so it is never pulled back. **Transitions**
+  (rotation, split view, Stage Manager, a Dynamic Type change, a column added) only move frames: no
+  view leaves the hierarchy or resigns, so focus, the selection, marked text and an unconfirmed
+  prediction stay. **VoiceOver:** each `ColumnFrameView` is a `.semanticGroup` labelled
+  `NativeEditorLabels.column` ("Column 2 of 3", `native_editor_column`), the container's
+  `accessibilityElements` are the columns in order, and a custom Columns rotor
+  (`native_editor_columns_rotor`, 11 languages) moves between their text views; the document's
+  group card (a button) has the value "Column 1 of 2, <first lines>; Column 2 of 2, …".
+  **Find and outline into columns:** `DocumentEngine.navigationEntries` lists each familiar root
+  group's blocks after its card, column after column, each entry carrying the group's handle
+  (`NativeNavigationEntry.group`); `.locate(handle, group:)` answers the block's column id only
+  while the group and that block item are still the ones read (`locateColumn`, O(group)), so a
+  block a move re-created does not jump. A jump to one calls `NativeDocumentNavigation.onOpenColumn`:
+  `NativeEditorView` closes the outline (a cover cannot present over the sheet) and, in its
+  `onDismiss`, opens `ColumnEditorModel(target:)`, which makes that column active with the caret at
+  the block's start (`NativeInputCoordinator.focus(at:)`: the selection only). The reading position
+  restores and persists over the document's blocks only (`documentBlocks`). **The 12b caret limit:**
+  a Move up/down whose block left the column (`.remapping` finds no entry) reports it
+  (`onBlockLeft`), and the model makes the column that shows it active with the caret at the same
+  offset (`follow`, checked after every column delivery). **Scale** (fixture gate, debug iPhone 17
+  Pro simulator, iOS 27): a 2,000-block group (two columns of 1,000, the `maxBlocks` bound) loads in
+  ~80–85 ms, shows its first frame in ~30–140 ms, realises < 60 blocks per column, scrolls at p99
+  ~3.2–3.4 ms a step, and a key far down the second column (insert plus the container's layout) takes
+  p50 ~11–12 ms, p95 ~16–21 ms (four runs): over the provisional 8.3 ms typing budget in a debug build, to be
+  measured on TestFlight. **Known limits:** stacked heights are TextKit estimates until a column is
+  laid out, so a long column above the screen can shift the ones below by its estimate's error (no
+  anchor correction, as in the document); a block moved out of the group into the document is not
+  followed (the document is behind the editor) and the column editor still does not open by itself
+  after the slash menu makes a group; the one-shot reader's find does not search inside columns;
+  layout follows the size class, so a compact-width window wide enough for the columns (iPhone
+  landscape) still stacks; Next/Previous onto a match in a column closes the outline (the editor
+  opens there), so stepping through matches stops at it. Tests: `ColumnLayoutTests` (side by side at the widths, stacked, a change of layout keeping
+  first responder, selection, marked text and a pending key, Dynamic Type without clipping, the
+  2,000-block gate, typing scrolling to the caret, the containers and rotor, the card's value, find
+  and outline into columns with an unchanged document, a stale column handle, the caret following a
+  moved block), the updated `ColumnEditorTests`/`ColumnStructureTests` (every column shown) and the
+  host UI tests `testAFindMatchInAColumnOpensTheColumnEditorThere` and (iPad only)
+  `testColumnsSitSideBySideOnIPadAndKeepTypingThroughRotation`.
+  **Review fixes (PR #285).** F1: the find field's query-following jump (`DocumentOutlineSheet
+  .onQueryMatch`, `jump(to:deliberate: false)`) only scrolls the document to the group's card; only
+  a tap, Next or Previous opens the column editor, once until it closes
+  (`NativeDocumentNavigation.isOpeningColumn`/`columnEditorClosed`, and the view drops a reply while
+  an editor is up or pending), and an editor opened at a result does not take first responder
+  (`ColumnTextContainer.takesFocusOnOpen`), so the rest of a query is never typed into a column.
+  F2: keys held while a move is in flight go with the block (`BlockLeft.keys`, adopted by the
+  column that shows it, `NativeInputCoordinator.adopt`), never replayed in the column it left; when
+  no column shows it (it left the group, or another column's delivery came first) they become the
+  document's recovery entry. F3: Backspace at a column's first block (a `.join` whose `.caret` block
+  is no longer on the surface) reports the block too. F4: only moves and joins report
+  (`Barrier.movesBlock`; a column or table command's `.remapping` never does), and a wait ends at
+  another column's delivery or at close. F5: a target or followed block inside a collapsed toggle is
+  revealed (`surface.reveal`) before the caret goes there, the reader too. Tests (each fails without
+  its fix): `testTypingAQueryNeverOpensTheColumnEditorAndADeliberateJumpOpensItOnce`,
+  `testAnEditorOpenedAtAResultDoesNotTakeTheKeyboard`, `testAKeyHeldDuringAMoveIsTypedWhereTheBlockWent`,
+  `testBackspaceAcrossAColumnEdgeTakesTheCaretWithTheBlock`,
+  `testDeletingAndRestoringAColumnDoesNotPullTheCaretLater` (fails only with both F4 guards removed)
+  and `testAResultInsideACollapsedToggleIsRevealed`; the host UI test now types the whole query, sees
+  no editor, and opens it with Next.
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below

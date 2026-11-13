@@ -40,6 +40,9 @@ struct DocumentOutlineSheet: View {
     /// there: otherwise UIKit gives the caret back to the old block when the sheet closes and the
     /// canvas scrolls back to it. Falls back to a plain scroll.
     var onSelectHeading: ((UUID) -> Void)?
+    /// Follows the query's first match as it is typed; falls back to `onScroll`. The native
+    /// editor only scrolls here: a match inside a column opens its editor on a deliberate step.
+    var onQueryMatch: ((EditorScrollTarget) -> Void)?
 
     @State private var query = ""
     /// The match the stepper is on. An id rather than an index so an edit that adds or removes
@@ -88,7 +91,7 @@ struct DocumentOutlineSheet: View {
             // true of what is on screen.
             let found = findMatchingBlockIDs(in: blocks, query: query)
             currentMatchID = found.first
-            if let first = found.first { onScroll(.block(first)) }
+            if let first = found.first { (onQueryMatch ?? onScroll)(.block(first)) }
             announceMatch(position: found.isEmpty ? nil : 0, count: found.count)
         }
     }
@@ -242,6 +245,7 @@ struct DocumentOutlinePresentation: ViewModifier {
     /// outline was up (see `OutlinePresentationGate`) can safely come up.
     let onDismiss: () -> Void
     let onSelectHeading: (UUID) -> Void
+    var onQueryMatch: ((EditorScrollTarget) -> Void)? = nil
 
     func body(content: Content) -> some View {
         content
@@ -251,7 +255,7 @@ struct DocumentOutlinePresentation: ViewModifier {
             .sheet(isPresented: $isPresented, onDismiss: onDismiss) {
                 DocumentOutlineSheet(
                     documentTitle: documentTitle, blocks: blocks, focusesFind: focusesFind, onScroll: onScroll,
-                    onSelectHeading: onSelectHeading
+                    onSelectHeading: onSelectHeading, onQueryMatch: onQueryMatch
                 )
                 .presentationDetents([.medium, .large])
                 // Let the canvas behind the half-height sheet be seen and scrolled while stepping

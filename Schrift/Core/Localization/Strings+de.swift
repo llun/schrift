@@ -380,6 +380,7 @@ enum Strings_de {
         .native_editor_table_format: "Format",
         .native_editor_columns: "Spalten, %d",
         .native_editor_column: "Spalte %d von %d",
+        .native_editor_columns_rotor: "Spalten",
         .native_editor_column_move_left: "Spalte nach links",
         .native_editor_column_move_right: "Spalte nach rechts",
         .native_editor_math: "Formel",

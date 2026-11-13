@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 final class NativeEditorUITests: XCTestCase {
@@ -305,14 +306,13 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(done.waitForExistence(timeout: 5), "the table editor opened over the column")
         done.tap()
         XCTAssertTrue(first.waitForExistence(timeout: 5))
-        // A hidden column is not in the tree: count each while it is shown.
+        // Every column shows (PR12c: stacked here), one text view each.
         let picker = app.segmentedControls["nativeEditor.columns.picker"]
         XCTAssertEqual(
             app.textViews.matching(identifier: "nativeEditor.column.0").count, 1, "one surface per column")
+        XCTAssertEqual(app.textViews.matching(identifier: "nativeEditor.column.1").count, 1)
         picker.buttons.element(boundBy: 1).tap()
         XCTAssertTrue(app.textViews["nativeEditor.column.1"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.textViews.matching(identifier: "nativeEditor.column.1").count, 1)
-        XCTAssertEqual(app.textViews.matching(identifier: "nativeEditor.column.0").count, 0, "the other column hides")
         picker.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(first.waitForExistence(timeout: 5))
         // On the paragraph: below the column's last block (the table) the caret is the table's,
@@ -337,6 +337,95 @@ final class NativeEditorUITests: XCTestCase {
             predicate: NSPredicate(format: "value CONTAINS %@", "ward"), object: first)
         XCTAssertEqual(
             XCTWaiter.wait(for: [restored], timeout: 5), .completed, "the journal keeps it: \(first.value ?? "nil")")
+    }
+
+    /// PR12c: typing a query whose match is inside a column keeps typing in
+    /// the find field; Next then closes the outline and opens the column
+    /// editor at that block without taking the keyboard (PR #285 F1).
+    func testAFindMatchInAColumnOpensTheColumnEditorThere() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-columns"]
+        app.launch()
+        let card = app.descendants(matching: .any)["nativeEditor.attachment.owned-columns"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        let outline = app.buttons["nativeEditor.outline"]
+        XCTAssertTrue(outline.waitForExistence(timeout: 5))
+        outline.tap()
+        let field = app.textFields["Find in this document"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("Right")
+        // Typing the query only follows it in the document: the whole word is in the field.
+        let second = app.textViews["nativeEditor.column.1"]
+        XCTAssertFalse(second.waitForExistence(timeout: 2), "no column editor while the query is typed")
+        XCTAssertEqual(field.value as? String, "Right")
+        XCTAssertTrue(app.staticTexts["1 of 1"].exists)
+        // A deliberate step opens it at the match, without the keyboard.
+        app.buttons["Next match"].tap()
+        XCTAssertTrue(second.waitForExistence(timeout: 10), "the column editor opened")
+        XCTAssertTrue(field.waitForNonExistence(timeout: 5), "the outline closed")
+        XCTAssertFalse(app.keyboards.firstMatch.waitForExistence(timeout: 2), "it did not take the keyboard")
+        // The column's value ends with the text's closing separator.
+        XCTAssertEqual(
+            (second.value as? String)?.trimmingCharacters(in: .newlines), "Right", "nothing typed")
+        app.buttons["nativeEditor.columns.done"].tap()
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+    }
+
+    /// PR12c on iPad (regular width): the columns sit side by side, both take
+    /// typing, and rotating keeps the keyboard and the text; it survives a relaunch.
+    func testColumnsSitSideBySideOnIPadAndKeepTypingThroughRotation() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "regular width")
+        addTeardownBlock { XCUIDevice.shared.orientation = .portrait }
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-columns"]
+        app.launch()
+        let card = app.descendants(matching: .any)["nativeEditor.attachment.owned-columns"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        card.tap()
+        let first = app.textViews["nativeEditor.column.0"]
+        let second = app.textViews["nativeEditor.column.1"]
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        XCTAssertTrue(second.waitForExistence(timeout: 5))
+        XCTAssertTrue(second.waitForStableFrame())
+        XCTAssertEqual(first.frame.minY, second.frame.minY, accuracy: 1, "top-aligned")
+        XCTAssertGreaterThan(second.frame.minX, first.frame.maxX, "side by side")
+        XCTAssertEqual(first.frame.width, second.frame.width, accuracy: 2, "equal widths")
+        second.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        app.typeText("ward")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(second.waitForStableFrame())
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "rotation keeps the keyboard")
+        XCTAssertGreaterThan(second.frame.minX, first.frame.maxX, "still side by side")
+        app.typeText("ly")
+        let typed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", "wardly"), object: second)
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [typed], timeout: 5), .completed, "typing went on in place: \(second.value ?? "nil")")
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(second.waitForStableFrame())
+        XCTAssertTrue(app.keyboards.firstMatch.exists)
+        first.tap()
+        app.typeText("ful")
+        let typedFirst = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", "ful"), object: first)
+        XCTAssertEqual(XCTWaiter.wait(for: [typedFirst], timeout: 5), .completed)
+        app.buttons["nativeEditor.columns.done"].tap()
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        app.terminate()
+
+        app.launchArguments = ["--native-open", "--native-columns"]
+        app.launch()
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        card.tap()
+        XCTAssertTrue(second.waitForExistence(timeout: 5))
+        let restored = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", "wardly"), object: second)
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 5), .completed, "the journal keeps it")
+        XCTAssertEqual((first.value as? String)?.contains("ful"), true)
     }
 
     /// PR11c: a long press and drag selects two cells, and the Cell menu

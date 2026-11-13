@@ -34,10 +34,18 @@ final class ColumnEditorModel: Identifiable {
     /// The editor closed: the document takes focus back after the group.
     @ObservationIgnored var onClose: (() -> Void)?
     @ObservationIgnored private var loadStarted = false
+    /// Where the editor opens (PR12c: a find or outline result in a column):
+    /// that column is active with the caret at the block's start.
+    let target: (column: String, block: String)?
+    /// A block a column moved or joined into another column, until that
+    /// column shows it: the caret and the keys held meanwhile follow it
+    /// there (PR12c). `source` is the column it left.
+    @ObservationIgnored private var following: (left: NativeInputCoordinator.BlockLeft, source: NativeEditorSession)?
 
-    init(document: NativeEditorSession, groupID: String) {
+    init(document: NativeEditorSession, groupID: String, target: (column: String, block: String)? = nil) {
         self.document = document
         self.groupID = groupID
+        self.target = target
     }
 
     var activeSession: NativeEditorSession? { columns.indices.contains(active) ? columns[active] : nil }
@@ -69,7 +77,45 @@ final class ColumnEditorModel: Identifiable {
         self.group = group
         columns = sessions
         relabel()
+        if let target, let index = group.columns.firstIndex(where: { $0.id == target.column }) {
+            active = index
+            place(sessions[index], at: target.block)
+        }
         isLoaded = true
+    }
+
+    /// The selection in `block` of `session`, a folded toggle above it
+    /// opened first (view state); a reader's text view has no input.
+    private func place(_ session: NativeEditorSession, at block: String, offset: Int = 0, length: Int = 0) {
+        session.surface.reveal(block)
+        if let input = session.input {
+            input.focus(at: block, offset: offset, length: length)
+        } else if let entry = session.surface.rangeIndex.entry(for: block) {
+            session.textView.selectedRange = NSRange(location: entry.textRange.location, length: 0)
+        }
+    }
+
+    /// The column showing the block a column moved out, now that one does,
+    /// takes the caret in it and types the held keys there. A delivery to
+    /// another column that does not show it ends the wait (the block left
+    /// the group, or a peer changed it first): the keys become the
+    /// document's recovery entry, never typed where the block was.
+    private func follow(after delivered: NativeEditorSession? = nil) {
+        guard let (left, source) = following else { return }
+        guard let index = columns.firstIndex(where: { $0.surface.rangeIndex.entry(for: left.blockID) != nil }) else {
+            if let delivered, delivered !== source { dropFollowing() }
+            return
+        }
+        following = nil
+        active = index
+        place(columns[index], at: left.blockID, offset: left.offset, length: left.length)
+        columns[index].input?.adopt(left.keys)
+    }
+
+    private func dropFollowing() {
+        guard let (left, source) = following else { return }
+        following = nil
+        source.input?.composition.recover(NativeInputCoordinator.text(of: left.keys), blockID: left.blockID)
     }
 
     /// One column's surface, wired to this editor.
@@ -79,8 +125,18 @@ final class ColumnEditorModel: Identifiable {
         session.textView.blockControls.onOpenTable = { [weak self] in self?.openTable = NativeTableRequest(id: $0) }
         // The group's own change reaches every column: its structure may have changed (PR12b).
         session.onApplied = { [weak self] delivery in
-            guard let self, self.touchesGroup(delivery) else { return }
-            self.scheduleReconcile()
+            guard let self else { return }
+            self.follow(after: session)
+            if self.touchesGroup(delivery) { self.scheduleReconcile() }
+        }
+        // shortcut: a block moved out of the group (into the document) is not
+        // followed: the document is behind the editor; follow it when the
+        // document can show a caret beside the group.
+        session.input?.onBlockLeft = { [weak self, weak session] left in
+            guard let self, let session else { return }
+            self.dropFollowing()
+            self.following = (left, session)
+            self.follow()
         }
         if let awareness = document.awareness { session.showAwareness(awareness) }
         onAttached?(session)
@@ -233,6 +289,7 @@ final class ColumnEditorModel: Identifiable {
     /// Ends every column surface and hands focus back to the document.
     func close() {
         guard !isClosed else { return }
+        dropFollowing()
         isClosed = true
         for session in columns {
             session.textView.resignFirstResponder()
@@ -408,43 +465,308 @@ private struct ColumnTextHost: UIViewRepresentable {
                     traits: UITraitCollection(preferredContentSizeCategory: contentSize), labels: labels)
             }
         }
-        container.show(model.columns.map(\.textView), active: model.active)
+        container.takesFocusOnOpen = model.target == nil
+        container.contentSizeCategory = contentSize
+        if container.labels != labels { container.labels = labels }
+        container.onActivate = { [model] index in
+            // Focus moved during a SwiftUI update too (the picker's column): change only what changed.
+            if model.active != index { model.active = index }
+        }
+        container.show(
+            model.columns.map(\.textView), widths: model.group?.columns.map { $0.width ?? 1 } ?? [],
+            active: model.active)
     }
 }
 
-/// The column editor's text views (PR12a).
-final class ColumnTextContainer: UIView {
+/// The column editor's text views (PR12a), laid out in one scroll (PR12c):
+/// side by side at their relative widths in regular width when every column
+/// gets `minimumColumnWidth` (scaled with Dynamic Type), stacked otherwise.
+/// Each column's text view is a viewport of its column: framed to the part of
+/// the column on screen and scrolled to match, so TextKit lays out only what
+/// is visible (a column of 1,000 blocks realises a screen of it). Its own pan
+/// is off; this view scrolls. A change of layout only moves frames: no view
+/// leaves the hierarchy or resigns, so focus, the selection, marked text and
+/// a pending prediction stay through rotation, split view and Stage Manager.
+final class ColumnTextContainer: UIScrollView {
+    enum Layout: Equatable { case sideBySide, stacked }
+
+    static let spacing = DocsSpacing.spaceSM
+    /// The narrowest column side by side, at the default text size.
+    static let minimumColumnWidth: CGFloat = 220
+
     fileprivate var presentations: [ObjectIdentifier: NativeTextPresentation] = [:]
     private(set) var shown: NativeTextView?
-
-    func show(_ views: [NativeTextView], active: Int) {
-        for view in views where view.superview !== self {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(view)
-            NSLayoutConstraint.activate([
-                view.leadingAnchor.constraint(equalTo: leadingAnchor),
-                view.trailingAnchor.constraint(equalTo: trailingAnchor),
-                view.topAnchor.constraint(equalTo: topAnchor),
-                view.bottomAnchor.constraint(equalTo: bottomAnchor),
-            ])
+    /// Each column's VoiceOver container, in column order.
+    private(set) var frames: [ColumnFrameView] = []
+    private(set) var layout: Layout = .stacked
+    private var widths: [CGFloat] = []
+    /// Each column's rectangle in this view's content, from the last layout.
+    private var regions: [ObjectIdentifier: CGRect] = [:]
+    /// The offset this view gave each text view, and the selection it last saw.
+    private var offsets: [ObjectIdentifier: CGFloat] = [:]
+    private var selections: [ObjectIdentifier: NSRange] = [:]
+    private var placing = false
+    private var revealing = false
+    /// A column whose caret moved or which scrolled itself: shown after the next layout.
+    private var pendingReveal: NativeTextView?
+    /// The text size the columns are drawn at (the host's Dynamic Type).
+    var contentSizeCategory: UIContentSizeCategory = .large {
+        didSet { if contentSizeCategory != oldValue { setNeedsLayout() } }
+    }
+    var labels = NativeEditorLabels() {
+        didSet {
+            columnRotor.name = labels.columnsRotor
+            relabel()
         }
-        let stale = subviews.filter { view in !views.contains { $0 === view } }
+    }
+    /// The first column shown takes first responder (the keyboard comes up);
+    /// not when the editor opened at a find result (PR12c review).
+    var takesFocusOnOpen = true
+    /// A column's text view became first responder (a tap): it is the active column.
+    var onActivate: ((Int) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        alwaysBounceVertical = true
+        accessibilityCustomRotors = [columnRotor]
+        registerForTraitChanges([UITraitHorizontalSizeClass.self]) { (view: ColumnTextContainer, _) in
+            view.setNeedsLayout()
+        }
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    /// Shows `views` (one per column, in order) at `widths`, `active` the
+    /// column the picker and the Column menu act on. A newly active column
+    /// takes first responder when the previous one had it (the keyboard
+    /// stays) and is scrolled to its caret.
+    func show(_ views: [NativeTextView], widths: [Double] = [], active: Int) {
+        var next: [ColumnFrameView] = []
+        for view in views {
+            if let frame = frames.first(where: { $0.textView === view }) {
+                next.append(frame)
+            } else {
+                next.append(adopt(view))
+            }
+        }
+        // A removed column's view leaves, or it would sit on top and take every touch (PR12b review).
+        for frame in frames where !next.contains(where: { $0 === frame }) {
+            frame.textView.onGeometry = nil
+            frame.textView.onFocus = nil
+            frame.removeFromSuperview()
+        }
+        frames = next
+        self.widths = views.indices.map { index in
+            let width = widths.indices.contains(index) ? widths[index] : 1
+            return width.isFinite && width > 0 ? CGFloat(width) : 1
+        }
+        relabel()
+        setNeedsLayout()
         guard views.indices.contains(active) else {
-            for view in stale { view.removeFromSuperview() }
+            shown = nil
             return
         }
-        let next = views[active]
-        if next !== shown {
-            let previous = shown
-            next.isHidden = false
-            // First responder moves before the old view hides (or leaves): the keyboard stays.
-            if previous?.isFirstResponder == true || previous == nil, next.isEditable { next.becomeFirstResponder() }
-            shown = next
-            UIAccessibility.post(notification: .screenChanged, argument: next)
+        let target = views[active]
+        guard target !== shown else { return }
+        let previous = shown
+        shown = target
+        // First responder moves with the column: the keyboard stays.
+        if previous?.isFirstResponder == true || (previous == nil && takesFocusOnOpen), target.isEditable,
+            !target.isFirstResponder
+        {
+            _ = target.becomeFirstResponder()
         }
-        // A removed column's view leaves, or it would sit on top and take every
-        // touch (PR12b review); every other view's visibility follows `active`.
-        for view in stale { view.removeFromSuperview() }
-        for view in views { view.isHidden = view !== next }
+        layoutIfNeeded()
+        reveal(target)
+        UIAccessibility.post(notification: .layoutChanged, argument: target)
     }
+
+    private func adopt(_ view: NativeTextView) -> ColumnFrameView {
+        let frame = ColumnFrameView(view)
+        // This view scrolls; the text view only follows it.
+        view.panGestureRecognizer.isEnabled = false
+        view.contentInsetAdjustmentBehavior = .never
+        view.showsVerticalScrollIndicator = false
+        view.alwaysBounceVertical = false
+        view.scrollsToTop = false
+        view.onGeometry = { [weak self, weak view] in
+            guard let self, let view else { return }
+            self.textViewLaidOut(view)
+        }
+        view.onFocus = { [weak self, weak view] in
+            guard let self, let view, let index = self.frames.firstIndex(where: { $0.textView === view }) else {
+                return
+            }
+            self.onActivate?(index)
+        }
+        addSubview(frame)
+        return frame
+    }
+
+    private func relabel() {
+        for (index, frame) in frames.enumerated() {
+            frame.accessibilityLabel = String(format: labels.column, index + 1, frames.count)
+        }
+        accessibilityElements = frames
+    }
+
+    /// Side by side needs regular width and room for the narrowest column.
+    static func layout(
+        width: CGFloat, widths: [CGFloat], sizeClass: UIUserInterfaceSizeClass, contentSize: UIContentSizeCategory
+    ) -> Layout {
+        guard sizeClass == .regular, widths.count > 1, let narrowest = widths.min() else { return .stacked }
+        let minimum = UIFontMetrics(forTextStyle: .body).scaledValue(
+            for: minimumColumnWidth, compatibleWith: UITraitCollection(preferredContentSizeCategory: contentSize))
+        let usable = width - spacing * CGFloat(widths.count - 1)
+        return usable * narrowest / widths.reduce(0, +) >= minimum ? .sideBySide : .stacked
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        place()
+        if let view = pendingReveal {
+            pendingReveal = nil
+            reveal(view)
+        }
+    }
+
+    /// Lays the columns out and frames each text view to its column's part of the screen.
+    private func place() {
+        guard !frames.isEmpty, bounds.width > 0, bounds.height > 0 else { return }
+        layout = Self.layout(
+            width: bounds.width, widths: widths, sizeClass: traitCollection.horizontalSizeClass,
+            contentSize: contentSizeCategory)
+        // A text view that has not laid out yet stands for a screen of text until it has.
+        let heights = frames.map { $0.textView.contentSize.height > 0 ? $0.textView.contentSize.height : bounds.height }
+        var rects: [CGRect] = []
+        switch layout {
+        case .sideBySide:
+            let usable = bounds.width - Self.spacing * CGFloat(frames.count - 1)
+            let total = widths.reduce(0, +)
+            var x: CGFloat = 0
+            for index in frames.indices {
+                let width =
+                    index == frames.count - 1 ? bounds.width - x : (usable * widths[index] / total).rounded(.down)
+                rects.append(CGRect(x: x, y: 0, width: width, height: heights[index]))
+                x += width + Self.spacing
+            }
+        case .stacked:
+            var y: CGFloat = 0
+            for index in frames.indices {
+                rects.append(CGRect(x: 0, y: y, width: bounds.width, height: heights[index]))
+                y += heights[index] + Self.spacing
+            }
+        }
+        let size = CGSize(width: bounds.width, height: rects.map(\.maxY).max() ?? 0)
+        if contentSize != size { contentSize = size }
+        let visible = CGRect(x: 0, y: contentOffset.y, width: bounds.width, height: bounds.height)
+        placing = true
+        defer { placing = false }
+        for (frame, region) in zip(frames, rects) {
+            let id = ObjectIdentifier(frame.textView)
+            regions[id] = region
+            let viewport = Self.viewport(region, visible: visible)
+            if frame.frame != viewport { frame.frame = viewport }
+            let offset = CGPoint(x: 0, y: viewport.minY - region.minY)
+            offsets[id] = offset.y
+            if frame.textView.contentOffset != offset { frame.textView.contentOffset = offset }
+            // A hairline between columns: above a stacked one, left of one side by side.
+            let hairline = 1 / max(1, traitCollection.displayScale)
+            frame.divider.isHidden = region.minX == 0 && region.minY == 0
+            frame.divider.frame =
+                layout == .stacked
+                ? CGRect(x: 0, y: -offset.y - Self.spacing / 2, width: region.width, height: hairline)
+                : CGRect(x: -Self.spacing / 2, y: 0, width: hairline, height: viewport.height)
+            frame.divider.backgroundColor = frame.textView.blockControls.color(\.borderDefault)
+        }
+    }
+
+    /// The part of `region` on screen; off screen, a screen of it (at most)
+    /// at the edge nearest the screen, so the text view stays a real viewport.
+    static func viewport(_ region: CGRect, visible: CGRect) -> CGRect {
+        let clip = region.intersection(visible)
+        if !clip.isNull, clip.height >= 1 { return clip }
+        let height = min(region.height, visible.height)
+        let top = min(max(visible.minY, region.minY), region.maxY - height)
+        return CGRect(x: region.minX, y: top, width: region.width, height: height)
+    }
+
+    /// After one text view's layout pass: its height may have changed (lay
+    /// the columns out again), it may have scrolled itself (UIKit keeping the
+    /// caret visible: this view scrolls instead), or its caret moved (shown).
+    private func textViewLaidOut(_ view: NativeTextView) {
+        guard !placing, !revealing else { return }
+        let id = ObjectIdentifier(view)
+        if let region = regions[id], abs(region.height - view.contentSize.height) > 0.5 { setNeedsLayout() }
+        let scrolled = offsets[id].map { abs($0 - view.contentOffset.y) > 0.5 } ?? false
+        let moved = view.isFirstResponder && selections[id] != view.selectedRange
+        selections[id] = view.selectedRange
+        if scrolled || moved {
+            if view.isFirstResponder { pendingReveal = view }
+            setNeedsLayout()
+        }
+    }
+
+    /// Scrolls the caret (or the selection's end) of `view` into sight. A
+    /// caret off screen is where TextKit estimates it: place, lay out, place again.
+    func reveal(_ view: NativeTextView) {
+        let id = ObjectIdentifier(view)
+        revealing = true
+        defer {
+            revealing = false
+            selections[id] = view.selectedRange
+        }
+        for _ in 0..<3 {
+            guard let region = regions[id], let end = view.selectedTextRange?.end else { return }
+            let caret = view.caretRect(for: end)
+            guard caret.minY.isFinite, caret.height.isFinite else { return }
+            let before = contentOffset
+            scrollRectToVisible(
+                caret.offsetBy(dx: region.minX, dy: region.minY).insetBy(dx: 0, dy: -DocsSpacing.spaceBase),
+                animated: false)
+            guard contentOffset != before else { return }
+            place()
+            view.layoutIfNeeded()
+        }
+    }
+
+    /// VoiceOver's Columns rotor: the next or previous column's text.
+    private lazy var columnRotor = UIAccessibilityCustomRotor(name: labels.columnsRotor) { [weak self] predicate in
+        guard let self else { return nil }
+        let views = self.frames.map(\.textView)
+        let current = predicate.currentItem.targetElement.flatMap { element in
+            views.firstIndex { view in
+                (element as? UIView).map { $0 === view || $0.isDescendant(of: view) } ?? false
+            }
+        }
+        let next: Int
+        if predicate.searchDirection == .next {
+            next = current.map { $0 + 1 } ?? 0
+        } else {
+            next = current.map { $0 - 1 } ?? views.count - 1
+        }
+        guard views.indices.contains(next) else { return nil }
+        return UIAccessibilityCustomRotorItemResult(targetElement: views[next], targetRange: nil)
+    }
+}
+
+/// One column in the editor (PR12c): VoiceOver's container "Column 2 of 3"
+/// around the column's text view, framed by `ColumnTextContainer`.
+final class ColumnFrameView: UIView {
+    let textView: NativeTextView
+    /// A hairline before every column but the first.
+    let divider = UIView()
+
+    init(_ textView: NativeTextView) {
+        self.textView = textView
+        super.init(frame: .zero)
+        accessibilityContainerType = .semanticGroup
+        textView.frame = bounds
+        textView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(textView)
+        divider.isUserInteractionEnabled = false
+        addSubview(divider)
+    }
+
+    required init?(coder: NSCoder) { nil }
 }
