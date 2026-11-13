@@ -443,6 +443,10 @@ actor DocumentReplicaSession {
             var delivery = ReplicaDelivery(revision: engine.revision, state: state)
             delivery.clipboard = (requestID, engine.subtreePayload(blockIDs))
             send(delivery, to: surfaceID)
+        case .copyInlinePayload(let surfaceID, let requestID, let slices):
+            var delivery = ReplicaDelivery(revision: engine.revision, state: state)
+            delivery.inlineClipboard = (requestID, engine.inlinePayload(slices))
+            send(delivery, to: surfaceID)
         case .setWritable(let journal):
             self.journal = journal
             if journal != nil, history == nil { history = ReplicaHistory(doc: doc, engine: engine) }
@@ -606,6 +610,7 @@ actor DocumentReplicaSession {
                     predicting = (surfaceID, commandID)
                 }
                 defer { predicting = nil }
+                selectionOwner = surfaceID
                 deliver(to: surfaceID, result: .composition(commandID: commandID, .committed), selection: true)
             case .orphaned:
                 invalidate(surfaceID, commandID: commandID)

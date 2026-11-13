@@ -541,6 +541,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
         session.textView.blockControls.labels = labels
         session.textView.blockControls.images = images
         session.textView.blockControls.serverOrigin = serverOrigin
+        session.input?.serverOrigin = serverOrigin
         session.textView.blockControls.isOffline = isOffline
         session.textView.blockControls.onOpenTable = onOpenTable
         session.textView.blockControls.onOpenColumns = onOpenColumns

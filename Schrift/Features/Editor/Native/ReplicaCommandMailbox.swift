@@ -1,6 +1,11 @@
 import Foundation
 import Synchronization
 
+struct ReplicaInlineSlice: Equatable, Sendable {
+    let blockID: String
+    let range: Range<Int>
+}
+
 /// One command a surface sends its replica session (PR08b).
 ///
 /// `predicted` is option A's optimistic typing: the surface already shows it
@@ -79,6 +84,7 @@ enum ReplicaMessage: Sendable {
     case mediaLocation(blockID: String, reply: @Sendable (MediaLocation??) -> Void)
     case requestAvailability(surfaceID: UUID, blockID: String, candidates: [ReplicaAvailabilityCandidate])
     case copyPayload(surfaceID: UUID, requestID: UUID, blockIDs: [String])
+    case copyInlinePayload(surfaceID: UUID, requestID: UUID, slices: [ReplicaInlineSlice])
     /// Installs the journal (nil makes the session read-only) and the shared
     /// history.
     case setWritable(DocumentReplicaSession.Journal?)
@@ -198,6 +204,7 @@ struct ReplicaDelivery: Sendable {
     var state: ReplicaState
     var availability: (blockID: String, revision: UInt64, actions: [NativeBlockAction])?
     var clipboard: (requestID: UUID, payload: Data?)?
+    var inlineClipboard: (requestID: UUID, payload: Data?)?
     var drained: UUID?
     var timings: ReplicaTimings?
     var resync: Resync?
@@ -208,7 +215,9 @@ struct ReplicaDelivery: Sendable {
         var kept = self
         kept.events = []
         kept.selection = nil
-        let answers = result != nil || drained != nil || clipboard != nil || availability != nil || resync != nil
+        let answers =
+            result != nil || drained != nil || clipboard != nil || inlineClipboard != nil || availability != nil
+            || resync != nil
         return answers ? kept : nil
     }
 }

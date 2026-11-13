@@ -168,6 +168,11 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
             session.textView.isScrollEnabled = false
             session.textView.blockControls.labels = labels
             session.textView.blockControls.documentTitle = documentTitle
+            let origin =
+                (document.input?.serverOrigin).flatMap { $0.isEmpty ? nil : $0 }
+                ?? document.textView.blockControls.serverOrigin
+            session.textView.blockControls.serverOrigin = origin
+            session.input?.serverOrigin = origin
             if let awareness = document.awareness { session.showAwareness(awareness) }
         } else {
             grid = await document.tableGrid(tableID, full: true)
@@ -510,7 +515,11 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         var cells = pasteboard.data(forPasteboardType: BlockNoteSubtreePayload.pasteboardType).flatMap(
             TableClipboard.cells(payload:))
         if cells == nil, let html = Self.html(pasteboard) { cells = TableClipboard.cells(html: html) }
-        if cells == nil, selection != nil, let text = pasteboard.string, !text.isEmpty {
+        if cells == nil, selection != nil,
+            let raw = pasteboard.string, !raw.isEmpty
+        {
+            let text = NativeClipboard.strippingObjectReplacementCharacters(raw)
+            guard !text.isEmpty else { return false }
             guard !NativeClipboard.isTooLarge(NativeClipboard.normalizingLineBreaks(text)) else {
                 input.refuse(.native_editor_paste_too_large)
                 return true

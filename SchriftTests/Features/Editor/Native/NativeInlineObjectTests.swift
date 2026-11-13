@@ -652,4 +652,513 @@ final class NativeInlineObjectTests: NativeEditingTestCase {
         XCTAssertEqual(outline.map(\.matchCount), [1])
         XCTAssertFalse(outline.contains { $0.title.contains("\u{FFFC}") })
     }
+
+    // MARK: - Step 5: Surface Input, Marks, IME, Clipboard, and Paste-Interlink
+
+    func testTypingAroundChipsUsesBarrierAndMarkInheritanceFollowsBoundaryRules() async throws {
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            try insertContainer(
+                tx, into: group, after: &after, id: "p1", node: "paragraph",
+                children: [
+                    .text("pre"),
+                    .inline(.mention(userID: "u1", fullName: "Ada")),
+                    .inline(.mention(userID: "u2", fullName: "Grace")),
+                    .text("post"),
+                ])
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+
+        // Bold "pre" so the run immediately before chip 1 carries a bold mark.
+        var ok = await harness.session.run { harness.input.replace(range: NSRange(location: 0, length: 3), with: "") }
+        XCTAssertTrue(ok)
+        _ = harness.input.toggleMark("bold")
+        ok = await harness.session.run { harness.input.replace(range: NSRange(location: 0, length: 0), with: "pre") }
+        XCTAssertTrue(ok)
+
+        // Rapid keystrokes immediately before chip 1 stay off the predicted path
+        // (barrier + queued intents), never rolling back, and inherit bold.
+        let pEntry1 = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "p1"))
+        harness.view.selectedRange = NSRange(location: pEntry1.textRange.location + 3, length: 0)
+        harness.input.textViewDidChangeSelection(harness.view)
+        XCTAssertTrue(harness.input.activeMarks.contains { $0.key == "bold" })
+
+        XCTAssertTrue(harness.input.replace(range: NSRange(location: pEntry1.textRange.location + 3, length: 0), with: "!"))
+        XCTAssertTrue(harness.session.surface.predictions.isEmpty, "chips block skips optimistic prediction")
+        XCTAssertTrue(harness.input.replace(range: NSRange(location: pEntry1.textRange.location + 4, length: 0), with: "?"))
+        await harness.settle()
+
+        var block = try XCTUnwrap(harness.session.surface.blocks.first { $0.id == "p1" })
+        XCTAssertEqual(block.runs.map(\.text).joined(), "pre!?\u{FFFC}\u{FFFC}post")
+        XCTAssertEqual(block.runs.first?.text, "pre!?")
+        XCTAssertEqual(block.runs.first?.marks.map(\.key), ["bold"])
+
+        // Immediately after chip 1 (between chip 1 and chip 2): activeMarks is [],
+        // typing inherits [] (no mark leakage across chip 1).
+        let betweenOffset = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "p1")).textRange.location + 6
+        harness.view.selectedRange = NSRange(location: betweenOffset, length: 0)
+        harness.input.textViewDidChangeSelection(harness.view)
+        XCTAssertEqual(harness.input.activeMarks, [])
+
+        ok = await harness.session.run {
+            harness.input.replace(range: NSRange(location: betweenOffset, length: 0), with: "M")
+        }
+        XCTAssertTrue(ok)
+        block = try XCTUnwrap(harness.session.surface.blocks.first { $0.id == "p1" })
+        XCTAssertEqual(block.runs.map(\.text).joined(), "pre!?\u{FFFC}M\u{FFFC}post")
+        let betweenRun = try XCTUnwrap(block.runs.first { $0.text == "M" })
+        XCTAssertTrue(betweenRun.marks.isEmpty)
+
+        // Immediately after chip 2: activeMarks starts empty, and an explicit
+        // toggle arms pendingTypingMarks for the next keystroke.
+        let afterChip2 = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "p1")).textRange.location + 8
+        harness.view.selectedRange = NSRange(location: afterChip2, length: 0)
+        harness.input.textViewDidChangeSelection(harness.view)
+        XCTAssertEqual(harness.input.activeMarks, [])
+        XCTAssertTrue(harness.input.toggleMark("italic"))
+        XCTAssertEqual(harness.input.activeMarks.map(\.key), ["italic"])
+
+        ok = await harness.session.run {
+            harness.input.replace(range: NSRange(location: afterChip2, length: 0), with: "Y")
+        }
+        XCTAssertTrue(ok)
+        block = try XCTUnwrap(harness.session.surface.blocks.first { $0.id == "p1" })
+        XCTAssertEqual(block.runs.map(\.text).joined(), "pre!?\u{FFFC}M\u{FFFC}Ypost")
+        let afterRun = try XCTUnwrap(block.runs.first { $0.text.contains("Y") })
+        XCTAssertEqual(afterRun.text, "Y")
+        XCTAssertEqual(afterRun.marks.map(\.key), ["italic"])
+    }
+
+    func testBackspaceAndForwardDeleteRemoveChipAsOneUnitAndCoalesceXmlText() async throws {
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            try insertContainer(
+                tx, into: group, after: &after, id: "p1", node: "paragraph",
+                children: [
+                    .text("A"),
+                    .inline(.mention(userID: "u1", fullName: "Ada")),
+                    .text("B"),
+                    .inline(.interlink(docID: "doc-1", blockID: nil, title: "Spec", disabled: false, trigger: "/")),
+                    .text("C"),
+                ])
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+
+        // Backspace right after the mention removes it as 1 UTF-16 unit.
+        let base = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "p1")).textRange.location
+        harness.view.selectedRange = NSRange(location: base + 2, length: 0)
+        harness.view.deleteBackward()
+        await harness.settle()
+
+        var block = try XCTUnwrap(harness.session.surface.blocks.first { $0.id == "p1" })
+        XCTAssertEqual(block.runs.map(\.text).joined(), "AB\u{FFFC}C")
+        XCTAssertEqual(harness.view.selectedRange, NSRange(location: base + 1, length: 0))
+
+        // Forward delete (replacing chipOffset..<chipOffset+1 with "") removes the interlink as 1 unit
+        // and coalesces "AB" + "C" into one XmlText sibling on the replica.
+        let ok = await harness.session.run {
+            harness.input.replace(range: NSRange(location: base + 2, length: 1), with: "")
+        }
+        XCTAssertTrue(ok)
+        block = try XCTUnwrap(harness.session.surface.blocks.first { $0.id == "p1" })
+        XCTAssertEqual(block.runs.map(\.text).joined(), "ABC")
+        XCTAssertFalse(block.hasInlineObjects)
+
+        let childCount = await harness.session.replicaDoc { doc -> Int in
+            guard
+                let groupItem = YBlockProjection.children(
+                    of: doc.get(BlockNoteYjs.fragmentField), includeFormats: false
+                ).first,
+                case .type(let group) = groupItem.content,
+                let p1Item = YBlockProjection.children(of: group, includeFormats: false).first,
+                case .type(let p1) = p1Item.content,
+                let elItem = YBlockProjection.children(of: p1, includeFormats: false).first,
+                case .type(let el) = elItem.content
+            else { return -1 }
+            return YBlockProjection.children(of: el, includeFormats: false).count
+        }
+        XCTAssertEqual(childCount, 1)
+    }
+
+    func testFormattingSelectionAcrossChipsAndLinkSheetGating() async throws {
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            try insertContainer(
+                tx, into: group, after: &after, id: "p1", node: "paragraph",
+                children: [
+                    .text("one"),
+                    .inline(.mention(userID: "u1", fullName: "Ada")),
+                    .text("two"),
+                ])
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+
+        let base = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "p1")).textRange.location
+        // Bold both text sides individually ("one" and "two").
+        harness.view.selectedRange = NSRange(location: base, length: 3)
+        var ok = await harness.session.run { harness.input.toggleMark("bold") }
+        XCTAssertTrue(ok)
+        harness.view.selectedRange = NSRange(location: base + 4, length: 3)
+        ok = await harness.session.run { harness.input.toggleMark("bold") }
+        XCTAssertTrue(ok)
+
+        // Selecting across "one<chip>two": common marks skips chip, reports [bold],
+        // and linkTarget() returns nil because selection includes an inline object.
+        harness.view.selectedRange = NSRange(location: base, length: 7)
+        harness.input.textViewDidChangeSelection(harness.view)
+        XCTAssertEqual(harness.input.activeMarks.map(\.key), ["bold"])
+        XCTAssertNil(harness.input.linkTarget())
+
+        // Toggling italic across the chip formats text on both sides, never the chip.
+        ok = await harness.session.run { harness.input.toggleMark("italic") }
+        XCTAssertTrue(ok)
+        let block = try XCTUnwrap(harness.session.surface.blocks.first { $0.id == "p1" })
+        let mentionRun = try XCTUnwrap(block.runs.first { $0.inlineObject != nil })
+        XCTAssertTrue(mentionRun.marks.isEmpty)
+        XCTAssertEqual(Set(block.runs.first { $0.text == "one" }?.marks.map(\.key) ?? []), ["bold", "italic"])
+        XCTAssertEqual(Set(block.runs.first { $0.text == "two" }?.marks.map(\.key) ?? []), ["bold", "italic"])
+
+        // Selecting solely the chip: activeMarks == [], toggles are no-ops, linkTarget() == nil.
+        harness.view.selectedRange = NSRange(location: base + 3, length: 1)
+        harness.input.textViewDidChangeSelection(harness.view)
+        XCTAssertEqual(harness.input.activeMarks, [])
+        let beforeCommands = harness.log.commands.count
+        XCTAssertFalse(harness.input.toggleMark("underline"))
+        XCTAssertFalse(harness.input.setColor(NativeMark.textColor, name: "red"))
+        XCTAssertNil(harness.input.linkTarget())
+        await harness.settle()
+        XCTAssertEqual(harness.log.commands.count, beforeCommands, "chip-only mark toggles post no commands")
+
+        // Collapsed caret right after the chip allows opening Link sheet for a new link.
+        harness.view.selectedRange = NSRange(location: base + 4, length: 0)
+        harness.input.textViewDidChangeSelection(harness.view)
+        let linkTarget = try XCTUnwrap(harness.input.linkTarget())
+        XCTAssertEqual(linkTarget.range, NSRange(location: base + 4, length: 0))
+        XCTAssertNil(linkTarget.href)
+    }
+
+    func testIMECompositionAroundChipsCommitCancelAndPeerDeletionInvalidation() async throws {
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            try insertContainer(
+                tx, into: group, after: &after, id: "p1", node: "paragraph",
+                children: [
+                    .text("ab"),
+                    .inline(.mention(userID: "u1", fullName: "Ada")),
+                    .inline(.mentionSearch(disabled: false, trigger: "@")),
+                    .text("cd"),
+                ])
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+
+        // 1. IME before chip 1: unpredicted commit reconciles and places caret cleanly.
+        let base = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "p1")).textRange.location
+        harness.view.selectedRange = NSRange(location: base + 2, length: 0)
+        XCTAssertTrue(harness.input.beginComposition(markedText: "kan"))
+        await harness.settle()
+        XCTAssertTrue(harness.input.commitComposition(text: "漢"))
+        XCTAssertTrue(harness.session.surface.predictions.isEmpty, "chips block does not predict IME commit")
+        await harness.settle()
+
+        var p1Text = harness.session.surface.blocks.first { $0.id == "p1" }?.runs.map(\.text).joined()
+        XCTAssertEqual(p1Text, "ab漢\u{FFFC}\u{FFFC}cd")
+        XCTAssertEqual(harness.view.selectedRange, NSRange(location: base + 3, length: 0))
+
+        // 2. IME between the two chips + held rapid key right after commit.
+        let between = base + 4
+        harness.view.selectedRange = NSRange(location: between, length: 0)
+        XCTAssertTrue(harness.input.beginComposition(markedText: "zi"))
+        await harness.settle()
+        XCTAssertTrue(harness.input.commitComposition(text: "字"))
+        XCTAssertTrue(harness.input.replace(range: NSRange(location: between, length: 0), with: "z"))
+        await harness.settle()
+
+        p1Text = harness.session.surface.blocks.first { $0.id == "p1" }?.runs.map(\.text).joined()
+        XCTAssertEqual(p1Text, "ab漢\u{FFFC}字z\u{FFFC}cd")
+
+        // 3. Cancel IME next to chip leaves content intact.
+        harness.view.selectedRange = NSRange(location: base + 7, length: 0)
+        XCTAssertTrue(harness.input.beginComposition(markedText: "tmp"))
+        await harness.settle()
+        XCTAssertTrue(harness.input.cancelComposition())
+        await harness.settle()
+        p1Text = harness.session.surface.blocks.first { $0.id == "p1" }?.runs.map(\.text).joined()
+        XCTAssertEqual(p1Text, "ab漢\u{FFFC}字z\u{FFFC}cd")
+
+        // 4. Peer deletes the block before commit: unpredicted commit recovers cleanly without crashing.
+        harness.view.selectedRange = NSRange(location: base + 7, length: 0)
+        XCTAssertTrue(harness.input.beginComposition(markedText: "lose"))
+        await harness.settle()
+
+        let currentUpdate: Data? = await harness.session.replicaDoc { doc in
+            (try? YStateEncoder.encodeStateAsUpdate(doc)) ?? Data()
+        }
+        let docSnapshot = try XCTUnwrap(currentUpdate)
+        let peer = try decodeDoc(docSnapshot)
+        defer { peer.destroy() }
+        let peerSVBytes = try YStateEncoder.encodeStateVector(peer)
+        let peerSV = try YUpdateDecoder.decodeStateVector(peerSVBytes)
+        let sinceMap = Dictionary(peerSV.map { ($0.client, $0.clock) }, uniquingKeysWith: max)
+        try peer.transact { tx in
+            if let groupItem = YBlockProjection.children(of: peer.get(BlockNoteYjs.fragmentField), includeFormats: false)
+                .first,
+                case .type(let group) = groupItem.content,
+                let p1Item = YBlockProjection.children(of: group, includeFormats: false).first
+            {
+                p1Item.delete(tx)
+            }
+        }
+        let deleteDelta = try YStateEncoder.encodeStateAsUpdate(peer, since: sinceMap)
+        harness.session.replica?.mailbox.post(.integrate(deleteDelta, reply: nil))
+        XCTAssertTrue(harness.input.commitComposition(text: "失"))
+        await harness.settle()
+        XCTAssertTrue(harness.input.composition.pendingRecoveries.contains { $0.text == "失" })
+    }
+
+    func testCopyCutPasteChipsPartialMultiLineWholeBlockTableAndCodeBlockDegradation() async throws {
+        let docID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            try insertContainer(
+                tx, into: group, after: &after, id: "p1", node: "paragraph",
+                children: [
+                    .text("Alpha "),
+                    .inline(.mention(userID: "u1", fullName: "Ada")),
+                    .text(" "),
+                    .inline(
+                        .interlink(
+                            docID: docID.uuidString.lowercased(), blockID: "b1", title: "Spec", disabled: false,
+                            trigger: "/")),
+                    .text(" "),
+                    .inline(.interlink(docID: "missing", blockID: nil, title: "Dead", disabled: true, trigger: "/")),
+                    .text(" "),
+                    .inline(.mentionSearch(disabled: false, trigger: "@")),
+                    .text(" Omega"),
+                ])
+            try insertContainer(
+                tx, into: group, after: &after, id: "p2", node: "paragraph",
+                children: [.text("Second line")])
+            try insertContainer(
+                tx, into: group, after: &after, id: "target", node: "paragraph",
+                children: [.text("XY")])
+            try insertContainer(
+                tx, into: group, after: &after, id: "code1", node: "codeBlock",
+                props: [("language", .string("swift"))],
+                children: [.text("let x = ")])
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+        // serverOrigin comes from ReplicaScope ("https://example.test").
+        XCTAssertEqual(harness.input.serverOrigin, "https://example.test")
+
+        let p1Entry = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "p1"))
+        // 1. Copy partial slice spanning mention + space + enabled interlink: no U+FFFC in plain text.
+        harness.view.selectedRange = NSRange(location: p1Entry.textRange.location + 6, length: 3)
+        harness.input.copySelection()
+        await harness.settle()
+        XCTAssertEqual(
+            harness.pasteboard.string,
+            "@Ada https://example.test/docs/\(docID.uuidString.lowercased())/")
+        XCTAssertFalse((harness.pasteboard.string ?? "").contains("\u{FFFC}"))
+        XCTAssertNotNil(harness.pasteboard.data(forPasteboardType: BlockNoteInlinePayload.pasteboardType))
+
+        // Paste inline slice at collapsed caret inside "target" ("XY" -> "X<chip> <interlink>Y").
+        let targetEntry = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "target"))
+        harness.view.selectedRange = NSRange(location: targetEntry.textRange.location + 1, length: 0)
+        var ok = await harness.session.run { harness.input.pasteFromPasteboard() }
+        XCTAssertTrue(ok)
+        let targetBlock = try XCTUnwrap(harness.session.surface.blocks.first { $0.id == "target" })
+        XCTAssertEqual(targetBlock.runs.map(\.text).joined(), "X\u{FFFC} \u{FFFC}Y")
+        XCTAssertEqual(
+            targetBlock.runs.compactMap(\.inlineObject),
+            [
+                .mention(userID: "u1", fullName: "Ada"),
+                .interlink(
+                    docID: docID.uuidString.lowercased(), blockID: "b1", title: "Spec", disabled: false, trigger: "/"),
+            ])
+
+        // 2. Cut solely the zombie mentionSearchInline: plain text is nil, lossless payload kept, chip deleted.
+        let refreshedP1 = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "p1"))
+        // In p1: "Alpha "(6) + mention(1) + " "(1) + interlink(1) + " "(1) + disabled(1) + " "(1) + zombie(1) + " Omega"(6)
+        harness.view.selectedRange = NSRange(location: refreshedP1.textRange.location + 12, length: 1)
+        ok = await harness.session.run { harness.input.cutSelection() }
+        XCTAssertTrue(ok)
+        XCTAssertNil(harness.pasteboard.string)
+        XCTAssertNotNil(harness.pasteboard.data(forPasteboardType: BlockNoteInlinePayload.pasteboardType))
+        let p1AfterCut = try XCTUnwrap(harness.session.surface.blocks.first { $0.id == "p1" })
+        XCTAssertEqual(p1AfterCut.runs.filter { $0.inlineObject != nil }.count, 3)
+
+        // 3. Copy multi-line selection spanning p1 (mention + disabled) through "Sec" of p2.
+        let p1Now = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "p1"))
+        let p2Now = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "p2"))
+        let multiStart = p1Now.textRange.location + 6
+        let multiEnd = p2Now.textRange.location + 3
+        harness.view.selectedRange = NSRange(location: multiStart, length: multiEnd - multiStart)
+        harness.input.copySelection()
+        await harness.settle()
+        XCTAssertTrue((harness.pasteboard.string ?? "").contains("\nSec"))
+        XCTAssertFalse((harness.pasteboard.string ?? "").contains("\u{FFFC}"))
+
+        // Pasting multi-line inline payload into "target" splits into 2 prose blocks preserving chips.
+        let targetNow = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "target"))
+        harness.view.selectedRange = NSRange(location: targetNow.textRange.location, length: 0)
+        ok = await harness.session.run { harness.input.pasteFromPasteboard() }
+        XCTAssertTrue(ok)
+        XCTAssertTrue(harness.session.surface.blocks.contains { $0.runs.map(\.text).joined().hasPrefix("SecX") })
+
+        // Pasting multi-line inline payload into a codeBlock degrades chips to plain text (no elements in codeBlock).
+        let codeEntry = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "code1"))
+        harness.view.selectedRange = NSRange(location: NSMaxRange(codeEntry.textRange), length: 0)
+        ok = await harness.session.run { harness.input.pasteFromPasteboard() }
+        XCTAssertTrue(ok)
+        let codeBlock = try XCTUnwrap(harness.session.surface.blocks.first { $0.id == "code1" })
+        XCTAssertFalse(codeBlock.hasInlineObjects)
+        let codeText = codeBlock.runs.map(\.text).joined()
+        XCTAssertTrue(codeText.contains("@Ada"))
+        XCTAssertFalse(codeText.contains("\u{FFFC}"))
+
+        // 4. Whole-block copy of p1 copies BlockNoteSubtreePayload and pastes losslessly as a fresh block.
+        let p1Whole = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "p1"))
+        harness.view.selectedRange = p1Whole.textRange
+        harness.input.copySelection()
+        await harness.settle()
+        XCTAssertNotNil(harness.pasteboard.data(forPasteboardType: BlockNoteSubtreePayload.pasteboardType))
+        let p2Latest = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "p2"))
+        harness.view.selectedRange = NSRange(location: NSMaxRange(p2Latest.textRange), length: 0)
+        let countBefore = harness.session.surface.blocks.count
+        ok = await harness.session.run { harness.input.pasteFromPasteboard() }
+        XCTAssertTrue(ok)
+        XCTAssertEqual(harness.session.surface.blocks.count, countBefore + 1)
+
+        // 5. Crafted subtree putting an inline element inside a codeBlock is rejected.
+        let crafted = BlockNoteWriter.Copy.element(
+            "blockContainer", [("id", .string("bad"))],
+            [
+                .element(
+                    "codeBlock", [("language", .string("swift"))],
+                    [.element("userMentionInline", [("userId", .string("u1")), ("fullName", .string("Ada"))], [])])
+            ])
+        XCTAssertThrowsError(try BlockNoteSubtreePayload.validate([crafted]))
+
+        // 6. External paste containing U+FFFC strips it; U+FFFC-only external paste is ignored.
+        harness.pasteboard.string = "\u{FFFC}"
+        let p2Again = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "p2"))
+        harness.view.selectedRange = NSRange(location: NSMaxRange(p2Again.textRange), length: 0)
+        XCTAssertFalse(harness.input.pasteFromPasteboard())
+
+        harness.pasteboard.string = "A\u{FFFC}B"
+        ok = await harness.session.run { harness.input.pasteFromPasteboard() }
+        XCTAssertTrue(ok)
+        XCTAssertEqual(
+            harness.session.surface.blocks.first { $0.id == "p2" }?.runs.map(\.text).joined(),
+            "Second lineAB")
+
+        // 7. Table cells inherit serverOrigin and copy/paste inline slices losslessly.
+        let tableHarness = try await makeHarness(state: try fixtureUpdate("chipsInTable"))
+        addTeardownBlock { await tableHarness.close() }
+        let openedTable = await tableHarness.session.openTable("tbl")
+        let tableSession = try XCTUnwrap(openedTable)
+        addTeardownBlock { await tableSession.close().value }
+        let tableInput = try XCTUnwrap(tableSession.input)
+        XCTAssertEqual(tableInput.serverOrigin, "https://example.test")
+
+        // Copy mention chip from cell (row 0, index 1) and paste into zombie cell (row 1, index 1).
+        let mentionCellEntry = tableSession.surface.rangeIndex.entries[1]
+        tableSession.textView.selectedRange = mentionCellEntry.textRange
+        tableInput.copySelection()
+        _ = await tableSession.settle()
+        XCTAssertEqual(tableHarness.pasteboard.string, "@Ada")
+        XCTAssertNotNil(tableHarness.pasteboard.data(forPasteboardType: BlockNoteInlinePayload.pasteboardType))
+
+        let destCellEntry = tableSession.surface.rangeIndex.entries[3]
+        tableSession.textView.selectedRange = NSRange(location: NSMaxRange(destCellEntry.textRange), length: 0)
+        ok = await tableSession.run { tableInput.pasteFromPasteboard() }
+        XCTAssertTrue(ok)
+        XCTAssertEqual(
+            tableSession.surface.blocks[3].runs.compactMap(\.inlineObject).last,
+            .mention(userID: "u1", fullName: "Ada"))
+    }
+
+    func testPasteSameOriginDocURLCreatesInterlinkOrFallsBackToPlainText() async throws {
+        let targetUUID = UUID(uuidString: "AABBCCDD-1111-4222-8333-444455556666")!
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            try insertContainer(tx, into: group, after: &after, id: "p1", node: "paragraph", children: [.text("hi ")])
+            try insertContainer(tx, into: group, after: &after, id: "p2", node: "paragraph", children: [.text("replace")])
+            try insertContainer(
+                tx, into: group, after: &after, id: "code1", node: "codeBlock",
+                props: [("language", .string("swift"))],
+                children: [.text("// ")])
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+
+        // Same-origin doc URL with trailing slash & block fragment at collapsed caret -> interlink chip.
+        harness.pasteboard.string = "https://example.test/docs/\(targetUUID.uuidString)/#blk1"
+        let p1Entry = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "p1"))
+        let caretAt = NSMaxRange(p1Entry.textRange)
+        harness.view.selectedRange = NSRange(location: caretAt, length: 0)
+        var ok = await harness.session.run { harness.input.pasteFromPasteboard() }
+        XCTAssertTrue(ok)
+
+        let p1Block = try XCTUnwrap(harness.session.surface.blocks.first { $0.id == "p1" })
+        XCTAssertEqual(p1Block.runs.map(\.text).joined(), "hi \u{FFFC}")
+        XCTAssertEqual(
+            p1Block.runs.compactMap(\.inlineObject),
+            [
+                .interlink(
+                    docID: targetUUID.uuidString.lowercased(), blockID: "blk1", title: nil, disabled: false,
+                    trigger: "/")
+            ])
+        XCTAssertEqual(harness.view.selectedRange, NSRange(location: caretAt + 1, length: 0))
+
+        // Over a non-empty selection -> pastes plain URL text.
+        let p2Entry = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "p2"))
+        harness.view.selectedRange = p2Entry.textRange
+        ok = await harness.session.run { harness.input.pasteFromPasteboard() }
+        XCTAssertTrue(ok)
+        let p2Block = try XCTUnwrap(harness.session.surface.blocks.first { $0.id == "p2" })
+        XCTAssertFalse(p2Block.hasInlineObjects)
+        XCTAssertEqual(
+            p2Block.runs.map(\.text).joined(),
+            "https://example.test/docs/\(targetUUID.uuidString)/#blk1")
+
+        // Inside a codeBlock -> pastes plain URL text.
+        let codeEntry = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "code1"))
+        harness.view.selectedRange = NSRange(location: NSMaxRange(codeEntry.textRange), length: 0)
+        ok = await harness.session.run { harness.input.pasteFromPasteboard() }
+        XCTAssertTrue(ok)
+        let codeBlock = try XCTUnwrap(harness.session.surface.blocks.first { $0.id == "code1" })
+        XCTAssertFalse(codeBlock.hasInlineObjects)
+
+        // Foreign host or query parameter at collapsed caret -> plain text.
+        harness.pasteboard.string = "https://other.test/docs/\(targetUUID.uuidString)"
+        let p1Updated = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "p1"))
+        harness.view.selectedRange = NSRange(location: NSMaxRange(p1Updated.textRange), length: 0)
+        ok = await harness.session.run { harness.input.pasteFromPasteboard() }
+        XCTAssertTrue(ok)
+        let p1Final = try XCTUnwrap(harness.session.surface.blocks.first { $0.id == "p1" })
+        XCTAssertTrue(p1Final.runs.map(\.text).joined().hasSuffix("https://other.test/docs/\(targetUUID.uuidString)"))
+
+        // Same-origin doc URL pasted inside a table cell creates an interlink chip too.
+        let tableHarness = try await makeHarness(state: try fixtureUpdate("chipsInTable"))
+        addTeardownBlock { await tableHarness.close() }
+        let openedTable = await tableHarness.session.openTable("tbl")
+        let tableSession = try XCTUnwrap(openedTable)
+        addTeardownBlock { await tableSession.close().value }
+        let tableInput = try XCTUnwrap(tableSession.input)
+        tableHarness.pasteboard.string = "https://example.test/docs/\(targetUUID.uuidString)"
+        let firstCell = tableSession.surface.rangeIndex.entries[0]
+        tableSession.textView.selectedRange = NSRange(location: NSMaxRange(firstCell.textRange), length: 0)
+        ok = await tableSession.run { tableInput.pasteFromPasteboard() }
+        XCTAssertTrue(ok)
+        XCTAssertTrue(
+            tableSession.surface.blocks[0].runs.compactMap(\.inlineObject).contains(
+                .interlink(
+                    docID: targetUUID.uuidString.lowercased(), blockID: "", title: nil, disabled: false, trigger: "/")))
+    }
 }

@@ -479,6 +479,7 @@ private struct ColumnTextHost: UIViewRepresentable {
             session.textView.blockControls.labels = labels
             session.textView.blockControls.images = images
             session.textView.blockControls.serverOrigin = serverOrigin
+            session.input?.serverOrigin = serverOrigin
             session.textView.blockControls.isOffline = isOffline
             session.textView.blockControls.documentTitle = documentTitle
             let presentation = NativeTextPresentation(contentSize: contentSize, labels: labels)

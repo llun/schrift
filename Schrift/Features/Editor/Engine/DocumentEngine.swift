@@ -1655,6 +1655,29 @@ final class DocumentEngine {
             })
     }
 
+    /// The lossless inline-slice transfer payload (`BlockNoteInlinePayload`)
+    /// for a partial selection covering one or more inline objects, or nil
+    /// when any slice is unprojectable, opaque, or out of bounds. Reads only.
+    func inlinePayload(_ slices: [ReplicaInlineSlice]) -> Data? {
+        guard !isDetached, !nativeWriteFailed, builder.index.isCanonical, !slices.isEmpty else { return nil }
+        return try? BlockNoteInlinePayload.encode(
+            slices.map { slice in
+                guard let entry = builder.index.entries[slice.blockID],
+                    entry.isProjectable,
+                    !builder.nativeSnapshot(entry).block.fidelity.isOpaque,
+                    entry.isSimpleContainer || isCellText(entry),
+                    !slice.range.isEmpty || slices.count > 1
+                else { throw DocumentEngineError.unsupportedNativeInput }
+                let target = try textTarget(entry)
+                let units = textUnits(entry)
+                guard Self.isBoundary(slice.range.lowerBound, in: units),
+                    Self.isBoundary(slice.range.upperBound, in: units),
+                    slice.range.lowerBound <= slice.range.upperBound
+                else { throw DocumentEngineError.unsupportedNativeInput }
+                return try writer.inlineSnapshots(in: target, range: slice.range)
+            })
+    }
+
     /// The selection head's offset when it is in `blockID`, else 0. A tree
     /// move changes no text, so the caret keeps its offset in the clone.
     private func caretOffset(in blockID: String) throws -> Int {

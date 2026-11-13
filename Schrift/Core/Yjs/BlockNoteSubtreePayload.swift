@@ -194,6 +194,11 @@ enum BlockNoteSubtreePayload {
             blocks += 1
             deepest = max(deepest, depth)
             guard blocks <= maxBlocks else { throw Error.tooLarge }
+            if node == "codeBlock" {
+                for item in content {
+                    if case .element = item { throw Error.malformed }
+                }
+            }
             try inline(content)
             if children.count == 2 {
                 guard case .element("blockGroup", let groupProps, let kids) = children[1], groupProps.isEmpty,

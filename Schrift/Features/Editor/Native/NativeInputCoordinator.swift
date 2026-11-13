@@ -132,6 +132,12 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @ObservationIgnored let selection: NativeSelectionCoordinator
     /// The general pasteboard; tests use a uniquely named one.
     @ObservationIgnored var pasteboard: UIPasteboard = .general
+    /// Origin used to recognize same-origin document links on paste and format
+    /// interlink plain text when copying.
+    @ObservationIgnored var serverOrigin: String = ""
+    /// An unpredicted IME composition commit (on a block containing inline
+    /// objects) waiting for `.composition(.committed)` / `.reset` / `.invalidated`.
+    @ObservationIgnored private var pendingCompositionCommit: (id: UUID, blockID: String, text: String)?
     private(set) var noticeKey: L10nKey?
     /// What the formatting bar shows: the marks every selected character
     /// carries, or at a caret the marks typing there would carry.
@@ -526,6 +532,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 if let first = dropped.first {
                     composition.recover(dropped.map(\.text).joined(), blockID: first.blockID)
                 }
+                if let pending = pendingCompositionCommit {
+                    pendingCompositionCommit = nil
+                    composition.finish(pending.id)
+                    composition.recover(pending.text, blockID: pending.blockID)
+                }
             }
             if case .stale(let id)? = delivery.result {
                 staleAfterDrain.append(id)
@@ -562,6 +573,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
         if let clipboard = delivery.clipboard, pendingCopies[clipboard.requestID] != nil {
             pendingCopies[clipboard.requestID]?.payload = .some(clipboard.payload)
+            flushCopies()
+        }
+        if let inlineClipboard = delivery.inlineClipboard, pendingCopies[inlineClipboard.requestID] != nil {
+            pendingCopies[inlineClipboard.requestID]?.payload = .some(inlineClipboard.payload)
             flushCopies()
         }
         refreshSelectionMarks()
@@ -782,10 +797,28 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             case .committed:
                 onJournaled()
                 if let id { surface.confirm(id) }
+                if let pending = pendingCompositionCommit, pending.id == id {
+                    pendingCompositionCommit = nil
+                    if resolved != nil {
+                        selection.restore(from: resolved)
+                    } else if let entry = surface.rangeIndex.entry(for: pending.blockID) {
+                        selection.place(NSRange(location: NSMaxRange(entry.textRange), length: 0))
+                    }
+                    keepSelectionVisible()
+                }
             case .failed:
+                if let pending = pendingCompositionCommit, pending.id == id {
+                    pendingCompositionCommit = nil
+                }
                 lastOutcome = false
                 stopAfterStorageFailure()
             case .orphaned, .cancelled:
+                if let pending = pendingCompositionCommit, id == nil || pending.id == id {
+                    pendingCompositionCommit = nil
+                    if result == .cancelled {
+                        composition.recover(pending.text, blockID: pending.blockID)
+                    }
+                }
                 // An orphaned commit's epoch already ended: its rollback keeps the text.
                 break
             }
@@ -803,6 +836,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         for case .insert(let typed) in intents { text += typed }
         intents = []
         typingCaret = nil
+        if let pending = pendingCompositionCommit {
+            pendingCompositionCommit = nil
+            composition.finish(pending.id)
+            composition.recover(pending.text, blockID: pending.blockID)
+        }
         // Held keys with no prediction behind them are kept too, at the caret's block.
         if let block = dropped.first?.blockID ?? blockSelection()?.start.0 ?? surface.blocks.first?.id {
             composition.recover(text, blockID: block)
@@ -817,11 +855,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     private var isBusy: Bool {
         barrier != nil || surface.expectsInvalidation
             || surface.predictions.count >= Self.maxPendingTyping || awaitsReset
+            || pendingCompositionCommit != nil
     }
 
     /// True while a command, a held key, a composition result or a reset is in flight.
     var hasInFlightWork: Bool {
         barrier != nil || hasUnansweredPrediction || !intents.isEmpty || !pendingCopies.isEmpty || awaitsReset
+            || pendingCompositionCommit != nil
     }
 
     /// A prediction whose answer has not arrived (one queued behind a
@@ -1230,7 +1270,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// surrogate). The session refuses anything else, and a block it refused
     /// once is typed through barriers from then on.
     private func canPredict(_ block: BlockSnapshot, _ range: Range<Int>, _ text: String, _ marks: [TextMark]?) -> Bool {
-        guard !surface.expectsInvalidation, !barrierOnly.contains(block.id), !block.isOpaque,
+        guard !surface.expectsInvalidation, !barrierOnly.contains(block.id), !block.isOpaque, !block.hasInlineObjects,
             !AttributedDocumentProjection.isPlaceholder(block), BlockNoteWriter.nativePropSchemas[block.node] != nil,
             // A table cell's hard break (PR11a): shown, not typed into.
             block.node == "codeBlock" || !block.runs.contains(where: { $0.text.contains("\n") }),
@@ -1539,7 +1579,33 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             refreshSelectionMarks()
             return true
         }
+        guard !coversOnlyInlineObjects(range) else { return false }
         return applyMarks([TextMark(key: key, valueJSON: value ?? "null")], over: range)
+    }
+
+    private func coversOnlyInlineObjects(_ range: NSRange) -> Bool {
+        let index = surface.rangeIndex
+        guard range.length > 0, let start = index.textPosition(atUTF16: range.location),
+            let end = index.textPosition(atUTF16: NSMaxRange(range), isUpperBound: true)
+        else { return false }
+        var sawInline = false
+        for position in start.position...end.position {
+            let block = surface.blocks[position]
+            guard !AttributedDocumentProjection.isPlaceholder(block) else { continue }
+            let lower = position == start.position ? start.offset : 0
+            let upper = position == end.position ? end.offset : index.entries[position].textRange.length
+            let selected = lower..<max(lower, upper)
+            var offset = 0
+            for run in block.runs {
+                let len = (run.text as NSString).length
+                let runRange = offset..<(offset + len)
+                offset += len
+                guard runRange.overlaps(selected) else { continue }
+                if run.inlineObject == nil { return false }
+                sawInline = true
+            }
+        }
+        return sawInline
     }
 
     private func applyMarks(_ attributes: [TextMark], over range: NSRange) -> Bool {
@@ -1568,9 +1634,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         guard let view, canFormat else { return nil }
         let range = view.selectedRange
         if range.length > 0 {
+            guard !NativeClipboard.touchesInlineObject(range, surface: surface) else { return nil }
             let href = (NativeMarkSelection.common(in: surface.blocks, index: surface.rangeIndex, range: range) ?? [])
                 .first { $0.key == NativeMark.link }.flatMap { YBlockProjection.linkHref(from: $0.valueJSON) }
-            let label = NativeClipboard.plainText(for: range, surface: surface) ?? ""
+            let label = NativeClipboard.plainText(for: range, surface: surface, serverOrigin: serverOrigin) ?? ""
             return NativeLinkTarget(range: range, label: label, href: href)
         }
         guard let entry = surface.rangeIndex.entry(atUTF16: range.location),
@@ -1582,7 +1649,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             return NativeLinkTarget(range: range, label: "", href: nil)
         }
         let linkRange = NSRange(location: entry.textRange.location + link.range.lowerBound, length: link.range.count)
-        let label = NativeClipboard.plainText(for: linkRange, surface: surface) ?? ""
+        let label = NativeClipboard.plainText(for: linkRange, surface: surface, serverOrigin: serverOrigin) ?? ""
         return NativeLinkTarget(range: linkRange, label: label, href: link.href)
     }
 
@@ -1815,12 +1882,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// block, and, when the selection is whole sibling subtrees
     /// (`NativeClipboard.wholeBlocks`), their lossless payload beside it.
     func copySelection() {
-        guard let view, !compositionOwnsView,
-            let text = NativeClipboard.plainText(for: view.selectedRange, surface: surface)
-        else {
-            return
-        }
-        copy(text: text, blocks: NativeClipboard.wholeBlocks(for: view.selectedRange, surface: surface))
+        guard let view, !compositionOwnsView, view.selectedRange.length > 0 else { return }
+        let range = view.selectedRange
+        let text = NativeClipboard.plainText(for: range, surface: surface, serverOrigin: serverOrigin)
+        let blocks = NativeClipboard.wholeBlocks(for: range, surface: surface)
+        let slices =
+            blocks == nil && NativeClipboard.touchesInlineObject(range, surface: surface)
+            ? NativeClipboard.inlineSlices(for: range, surface: surface) : nil
+        guard text != nil || blocks != nil || slices != nil else { return }
+        copy(text: text, blocks: blocks, inlineSlices: slices)
         flushCopies()
     }
 
@@ -1833,14 +1903,17 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             noticeKey = .native_editor_input_busy
             return false
         }
-        guard let view, !compositionOwnsView,
-            let text = NativeClipboard.plainText(for: view.selectedRange, surface: surface)
-        else {
-            return false
-        }
+        guard let view, !compositionOwnsView, view.selectedRange.length > 0 else { return false }
+        let range = view.selectedRange
+        let text = NativeClipboard.plainText(for: range, surface: surface, serverOrigin: serverOrigin)
+        let blocks = NativeClipboard.wholeBlocks(for: range, surface: surface)
+        let slices =
+            blocks == nil && NativeClipboard.touchesInlineObject(range, surface: surface)
+            ? NativeClipboard.inlineSlices(for: range, surface: surface) : nil
+        guard text != nil || blocks != nil || slices != nil else { return false }
         // Asked for before the delete removes the blocks (the mailbox is
         // ordered), written once the delete is applied.
-        let copy = copy(text: text, blocks: NativeClipboard.wholeBlocks(for: view.selectedRange, surface: surface))
+        let copy = copy(text: text, blocks: blocks, inlineSlices: slices)
         let before = lastCommandID
         guard replace(range: view.selectedRange, with: ""), lastCommandID != before, let delete = lastCommandID else {
             pendingCopies[copy] = nil
@@ -1850,10 +1923,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return true
     }
 
-    /// Paste at a caret prefers Schrift's lossless payload (one command
-    /// inserting the subtrees with fresh ids); otherwise, and over a
-    /// selection, the pasteboard's plain text replaces the selection as one
-    /// command, newlines splitting blocks.
+    /// Paste at a caret prefers Schrift's lossless subtree payload, then
+    /// lossless inline-slice payload (`BlockNoteInlinePayload`), then same-origin
+    /// document URL interlinking at a collapsed non-`codeBlock` caret; otherwise
+    /// plain text (with `\u{FFFC}` stripped) replaces the selection.
     @discardableResult
     func pasteFromPasteboard() -> Bool {
         guard let view, view.isEditable else { return false }
@@ -1862,7 +1935,28 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         {
             return pasteBlocks(payload)
         }
-        guard let text = pasteboard.string, !text.isEmpty else { return false }
+        if let inlinePayload = pasteboard.data(forPasteboardType: BlockNoteInlinePayload.pasteboardType) {
+            return pasteInline(inlinePayload, replacing: view.selectedRange)
+        }
+        guard let raw = pasteboard.string, !raw.isEmpty else { return false }
+        if view.selectedRange.length == 0,
+            let pos = surface.rangeIndex.textPosition(atUTF16: view.selectedRange.location),
+            let position = pos.position as Int?,
+            !AttributedDocumentProjection.isPlaceholder(surface.blocks[position]),
+            !isCode(surface.blocks[position].id),
+            let interlink = NativeInlineObject.interlink(fromURLString: raw, serverOrigin: serverOrigin)
+        {
+            directInsertion = nil
+            guard !compositionOwnsView, !isFrozen, !isDetached else { return false }
+            let blockID = surface.blocks[position].id
+            let range = pos.offset..<pos.offset
+            return applyStructural(
+                blockID, .insertInlineObject(interlink, replacing: range),
+                refusal: .native_editor_paste_unavailable,
+                retry: again { [weak self] in self?.pasteFromPasteboard() ?? false }, readsSelection: true)
+        }
+        let text = NativeClipboard.strippingObjectReplacementCharacters(raw)
+        guard !text.isEmpty else { return false }
         guard !NativeClipboard.isTooLarge(NativeClipboard.normalizingLineBreaks(text)) else {
             noticeKey = .native_editor_paste_too_large
             return false
@@ -1883,22 +1977,73 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             retry: again { [weak self] in self?.pasteBlocks(payload) ?? false }, readsSelection: true)
     }
 
-    /// Writes `text` (and, for whole blocks, their lossless payload, which the
-    /// session encodes) once the payload arrives and, for a cut, once its delete
-    /// was applied. `requiresPayload` (Copy block) writes nothing without one.
+    private func pasteInline(_ payload: Data, replacing range: NSRange) -> Bool {
+        directInsertion = nil
+        guard view != nil, !compositionOwnsView, !isFrozen, !isDetached else { return false }
+        let index = surface.rangeIndex
+        guard let start = index.textPosition(atUTF16: range.location),
+            let end = index.textPosition(atUTF16: NSMaxRange(range), isUpperBound: range.length > 0)
+        else {
+            noticeKey = .native_editor_paste_unavailable
+            return false
+        }
+        guard !touchesFoldedContent(start.position, end.position) else {
+            noticeKey = .native_editor_range_unavailable
+            return false
+        }
+        let lineCount = (try? BlockNoteInlinePayload.decode(payload).count) ?? 1
+        let startBlockID = index.entries[start.position].blockID
+        let newIDs = isCode(startBlockID) ? [] : (1..<max(1, lineCount)).map { _ in UUID().uuidString.lowercased() }
+        let command = NativeRangeCommand(
+            startOffset: start.offset, endBlockID: index.entries[end.position].blockID, endOffset: end.offset,
+            replacement: "", newBlockIDs: newIDs)
+        return applyStructural(
+            startBlockID, .pasteInline(payload: payload, range: command),
+            refusal: .native_editor_paste_unavailable,
+            retry: again(at: range) { [weak self] in self?.pasteInline(payload, replacing: $0) ?? false })
+    }
+
+    private enum PendingCopyKind {
+        case none
+        case subtree
+        case inline
+    }
+
+    /// Writes `text` (and, for whole blocks or inline slices, their lossless
+    /// payload, which the session encodes) once the payload arrives and, for a
+    /// cut, once its delete was applied. `requiresPayload` (Copy block) writes
+    /// nothing without one.
     @discardableResult
-    private func copy(text: String?, blocks: [String]?, requiresPayload: Bool = false) -> UUID {
+    private func copy(
+        text: String?, blocks: [String]? = nil, inlineSlices: [ReplicaInlineSlice]? = nil,
+        requiresPayload: Bool = false
+    ) -> UUID {
         let id = UUID()
+        let kind: PendingCopyKind =
+            if blocks != nil { .subtree } else if inlineSlices != nil { .inline } else { .none }
         pendingCopies[id] = PendingCopy(
-            text: text, requiresPayload: requiresPayload, payload: blocks == nil ? .some(nil) : nil, after: nil)
-        if let blocks, !post(.copyPayload(surfaceID: surfaceID, requestID: id, blockIDs: blocks)) {
-            pendingCopies[id] = nil
+            text: text, kind: kind, requiresPayload: requiresPayload, payload: kind == .none ? .some(nil) : nil,
+            after: nil)
+        switch kind {
+        case .subtree:
+            if let blocks, !post(.copyPayload(surfaceID: surfaceID, requestID: id, blockIDs: blocks)) {
+                pendingCopies[id] = nil
+            }
+        case .inline:
+            if let inlineSlices,
+                !post(.copyInlinePayload(surfaceID: surfaceID, requestID: id, slices: inlineSlices))
+            {
+                pendingCopies[id] = nil
+            }
+        case .none:
+            break
         }
         return id
     }
 
     private struct PendingCopy {
         let text: String?
+        let kind: PendingCopyKind
         let requiresPayload: Bool
         /// Nil until the session answered.
         var payload: Data??
@@ -1915,7 +2060,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 lastOutcome = false
                 continue
             }
-            writePasteboard(text: copy.text, payload: payload)
+            writePasteboard(text: copy.text, payload: payload, kind: copy.kind)
         }
     }
 
@@ -1929,10 +2074,16 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     /// One pasteboard item: plain text and, when there is one, the lossless
     /// payload. Replaces whatever was there, as `string` did.
-    private func writePasteboard(text: String?, payload: Data?) {
+    private func writePasteboard(text: String?, payload: Data?, kind: PendingCopyKind) {
         var item: [String: Any] = [:]
         if let text { item[UTType.utf8PlainText.identifier] = text }
-        if let payload { item[BlockNoteSubtreePayload.pasteboardType] = payload }
+        if let payload {
+            switch kind {
+            case .subtree: item[BlockNoteSubtreePayload.pasteboardType] = payload
+            case .inline: item[BlockNoteInlinePayload.pasteboardType] = payload
+            case .none: break
+            }
+        }
         guard !item.isEmpty else { return }
         pasteboard.setItems([item])
     }
@@ -2033,7 +2184,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 ? surface.rangeIndex.entries[span.upperBound - 1] : nil
         else { return false }
         let range = NSRange(location: first.range.location, length: NSMaxRange(last.textRange) - first.range.location)
-        copy(text: NativeClipboard.plainText(for: range, surface: surface), blocks: [id], requiresPayload: true)
+        copy(
+            text: NativeClipboard.plainText(for: range, surface: surface, serverOrigin: serverOrigin), blocks: [id],
+            requiresPayload: true)
         return true
     }
 
@@ -2116,29 +2269,36 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             releaseComposition()
             return true
         }
-        // Shown at once and journaled in order, like a typed key; what waited
-        // for the composition then rebases through it.
+        // Shown at once and journaled in order, unless the block holds inline
+        // objects: there the commit stays unpredicted and reconciles cleanly
+        // when `.composition(.committed)` arrives.
         if let entry = surface.rangeIndex.entry(for: commit.blockID),
             let position = surface.rangeIndex.position(for: commit.blockID)
         {
-            let runs = surface.blocks[position].runs
-            let caret = NSRange(
-                location: entry.textRange.location + commit.range.lowerBound + commit.text.utf16.count, length: 0)
-            asOneKeyboardChange {
-                surface.predict(
-                    NativeTextSurface.Prediction(
-                        commandID: commit.id, blockID: commit.blockID, range: commit.range, text: commit.text,
-                        marks: NativeMarkSelection.inherited(runs, at: commit.range.lowerBound)))
-                selection.place(caret)
-            }
-            // While a barrier is in flight its retry maps through the commit,
-            // and the commit's caret is the user's latest selection.
-            if barrier != nil {
-                barrierShown.append(
-                    Shown(
-                        deltas: [(commit.blockID, [TextDelta(range: commit.range, replacement: commit.text)])],
-                        replaced: [], reset: false))
-                userSelection = blockSelection().map { ($0, barrierShown.count) }
+            if surface.blocks[position].hasInlineObjects {
+                pendingCompositionCommit = (id: commit.id, blockID: commit.blockID, text: commit.text)
+                selection.place(
+                    NSRange(location: entry.textRange.location + commit.range.lowerBound, length: 0))
+            } else {
+                let runs = surface.blocks[position].runs
+                let caret = NSRange(
+                    location: entry.textRange.location + commit.range.lowerBound + commit.text.utf16.count, length: 0)
+                asOneKeyboardChange {
+                    surface.predict(
+                        NativeTextSurface.Prediction(
+                            commandID: commit.id, blockID: commit.blockID, range: commit.range, text: commit.text,
+                            marks: NativeMarkSelection.inherited(runs, at: commit.range.lowerBound)))
+                    selection.place(caret)
+                }
+                // While a barrier is in flight its retry maps through the commit,
+                // and the commit's caret is the user's latest selection.
+                if barrier != nil {
+                    barrierShown.append(
+                        Shown(
+                            deltas: [(commit.blockID, [TextDelta(range: commit.range, replacement: commit.text)])],
+                            replaced: [], reset: false))
+                    userSelection = blockSelection().map { ($0, barrierShown.count) }
+                }
             }
         }
         lastCommandID = commit.id

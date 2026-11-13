@@ -206,9 +206,7 @@ struct BlockNoteWriter {
         from start: Target, at startOffset: Int, to end: Target, at endOffset: Int, lines: [[Copy]], newIDs: [String]
     ) throws -> Data {
         let same = start.item === end.item
-        guard !lines.isEmpty, newIDs.count == lines.count - 1, !newIDs.contains(where: \.isEmpty),
-            Set(newIDs).count == newIDs.count, start.group === end.group
-        else { throw Error.malformedBlock(start.id) }
+        guard !lines.isEmpty, start.group === end.group else { throw Error.malformedBlock(start.id) }
         for line in lines {
             for copy in line {
                 if case .element(let node, _, let nested) = copy {
@@ -219,6 +217,7 @@ struct BlockNoteWriter {
             }
         }
         if same, start.node == "codeBlock" {
+            guard newIDs.isEmpty else { throw Error.malformedBlock(start.id) }
             let parts = try inline(start.element, block: start.id)
             let total = try length(parts)
             let lower = snap(parts, min(max(0, startOffset), total))
@@ -228,6 +227,9 @@ struct BlockNoteWriter {
             return try replaceText(
                 in: start, range: NSRange(location: lower, length: upper - lower), with: plain, marks: [:])
         }
+        guard newIDs.count == lines.count - 1, !newIDs.contains(where: \.isEmpty),
+            Set(newIDs).count == newIDs.count
+        else { throw Error.malformedBlock(start.id) }
         for target in [start, end] {
             if try target.node == "codeBlock"
                 || Self.isToggle(node: target.node, props: properties(target.element, block: target.id))
@@ -1047,6 +1049,11 @@ struct BlockNoteWriter {
             }
             return (key, values[0])
         }
+    }
+
+    func inlineSnapshots(in target: Target, range: Range<Int>) throws -> [Copy] {
+        let parts = try inline(target.element, block: target.id)
+        return try snapshots(parts, range: range, block: target.id)
     }
 
     private func snapshots(_ parts: [Part], range: Range<Int>, block: String) throws -> [Copy] {
