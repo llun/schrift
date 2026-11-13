@@ -454,6 +454,74 @@ final class NativeShadowExportParityTests: NativeEditingTestCase {
         XCTAssertTrue(restored.canType, "a toggle with a paragraph child stays typeable")
     }
 
+    /// A save captured right after typing a trailing space (the debounce after
+    /// a pause, or a close) has a shadow, the export's, and the scheduler does
+    /// not freeze. Before, `markdownShadow` was nil for "Left " and the capture
+    /// threw `unprojectableShadow`, freezing authoring with "Couldn't save".
+    func testASaveRightAfterATrailingSpaceDoesNotFreeze() async throws {
+        let harness = try await makeHarness([paragraph("p", "Left"), paragraph("q", "Next")])
+        addTeardownBlock { await harness.close() }
+        let session = harness.session
+        setSelection(harness, NSRange(location: try location(session, "p", 4), length: 0))
+        session.textView.insertText(" ")
+        try await assertConsistent(harness, localCommands: 1)
+        let adapter = ReplicaSaveAdapter(store: harness.store, scope: harness.scope)
+        var captured: String?
+        let scheduler = NativeReplicaSaveScheduler(
+            enqueue: {
+                captured = try adapter.prepare().markdown
+                return true
+            }, onFailure: { XCTFail("the capture failed: \($0)") })
+        scheduler.schedule()
+        scheduler.flush()
+        XCTAssertFalse(scheduler.isFrozen)
+        XCTAssertEqual(captured, "Left \n\nNext\n", "BlockNote 0.56 `blocksToMarkdownLossy`")
+        let reopened = try await makeHarness([paragraph("p", "Left "), paragraph("q", " Next")])
+        addTeardownBlock { await reopened.close() }
+        XCTAssertTrue(reopened.session.canType, "a document with edge spaces opens typeable")
+        // A root callout is spelled as its paragraph, edge space and all.
+        let doc = try makeDoc([callout("c", "Note "), paragraph("z", "After")], clientID: 1)
+        defer { doc.destroy() }
+        XCTAssertEqual(NativeBlockProjection.markdownShadow(doc), "💡 Note \n\nAfter\n")
+    }
+
+    /// A shape with a shadow keeps one when a block's text gains an edge
+    /// space, tab or NBSP, even where the export port lacks a block of the
+    /// subtree (a nested image): then the classic rendering of the trimmed
+    /// text, as the conflict comparison reads it. A callout nested under a
+    /// plain block or a list is the export's paragraph, edge space and all.
+    func testAnEdgeSpaceNeverTakesAShadowAway() throws {
+        let image = BlockNoteBlock(
+            node: "image",
+            props: [
+                ("backgroundColor", .string("default")), ("textAlignment", .string("left")),
+                ("name", .string("")), ("url", .string("https://x.example/i.png")), ("caption", .string("")),
+                ("showPreview", .bool(true)), ("previewWidth", .undefined),
+            ], runs: [], id: "img")
+        let shapes: [(name: String, blocks: (String) -> [BlockNoteBlock])] = [
+            ("callout under a paragraph", { [self.nested(self.paragraph("p", $0), [self.callout("c", "Note")])] }),
+            ("callout under a bullet", { [self.nested(self.bullet("b", $0), [self.callout("c", "Note")])] }),
+            ("image under a paragraph", { [self.nested(self.paragraph("p", $0), [image])] }),
+            ("image under a bullet", { [self.nested(self.bullet("b", $0), [image])] }),
+            ("a callout's own text", { [self.paragraph("p", "Intro"), self.callout("c", $0)] }),
+            ("a heading", { [self.heading("h", $0), self.paragraph("p", "Body")] }),
+            ("a toggle", { [self.toggle("t", $0, [self.paragraph("c", "Child")])] }),
+        ]
+        for shape in shapes {
+            let base = try makeDoc(shape.blocks("Parent"), clientID: 1)
+            defer { base.destroy() }
+            XCTAssertNotNil(NativeBlockProjection.markdownShadow(base), "\(shape.name) has a shadow")
+            for text in ["Parent ", " Parent", "Parent\t", "Parent\u{A0}", "  Parent  "] {
+                let doc = try makeDoc(shape.blocks(text), clientID: 1)
+                defer { doc.destroy() }
+                XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc), "\(shape.name): \(text.debugDescription)")
+            }
+        }
+        let doc = try makeDoc([nested(paragraph("p", "Parent "), [callout("c", "Note")])], clientID: 1)
+        defer { doc.destroy() }
+        XCTAssertEqual(NativeBlockProjection.markdownShadow(doc), "Parent \n\n💡 Note\n")
+    }
+
     /// Typing in such a document and saving: the save's shadow is what the
     /// server exports for the saved body, so `draftSyncDecision` sees our own
     /// last push, not a conflict, after the save bumped `updated_at`.
