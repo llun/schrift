@@ -1,0 +1,96 @@
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_dc239db0cc1c9d::t_4f740df4d18b75 11
+Schrift/Core/Localization/Strings+sl.swift
+  s_dc239db0cc1c9d::t_4f740df4d18b75 17
+SchriftTests/Features/Editor/Native/NativeMediaQueueTests.swift
+  s_dc239db0cc1c9d::t_ebf9b061e4a921 646
+  s_dc239db0cc1c9d::t_6b03247392470b 82,95-97,105-115,169,171,176-177,180,184,201,219,243,248,260,291,303,319,331-332,335,364-425,429-432,434-435,437-439,441-454,459-467,476,489,511,547,566-571,618,643,660
+  s_dc239db0cc1c9d::t_c1e7f07e3b1035 426-428,433,436,440
+  s_dc239db0cc1c9d::t_ede23f89136b6e 455-458
+Schrift/Features/Editor/PendingAttachmentStore.swift
+  s_dc239db0cc1c9d::t_425640eb266478 282-284
+  s_dc239db0cc1c9d::t_08aef7619273d7 285-286
+Schrift/Core/Localization/Strings+fr.swift
+  s_dc239db0cc1c9d::t_4f740df4d18b75 14
+Schrift/Features/Editor/Native/NativeMediaUploads.swift
+  s_dc239db0cc1c9d::t_d37be9b75c4cea 40-44,47-48,54,62,65,94,103,108,154
+Schrift/Core/Localization/Strings+de.swift
+  s_dc239db0cc1c9d::t_4f740df4d18b75 14
+Schrift/Features/Editor/Native/NativeEditorView.swift
+  s_dc239db0cc1c9d::t_d37be9b75c4cea 163
+SchriftTests/Features/Editor/Native/ReplicaSaveAdapterTests.swift
+  s_dc239db0cc1c9d::t_f4ebfe21d96ef3 61-62,78-80,142-180,183-184,186,192,196
+  s_dc239db0cc1c9d::t_7a9b3640117ac4 181-182
+  s_dc239db0cc1c9d::t_a014467d727a38 185
+  s_dc239db0cc1c9d::t_fabd2566b676e0 187-191
+  s_dc239db0cc1c9d::t_3ec66876f33645 193-195
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_dc239db0cc1c9d::t_91e1de5c55a91e 3473-3474,3482,3506
+  s_dc239db0cc1c9d::t_425640eb266478 1315-1319,1343-1346,1349-1351,1355-1363,1391-1394,1410-1412,1420-1424,1447-1449,1460-1480,4315
+  s_dc239db0cc1c9d::t_8d7b72c8a97b6a 4263-4265,4267-4269,4275-4277,4314
+  s_dc239db0cc1c9d::t_a1572b8985b074 4429-4431
+  s_dc239db0cc1c9d::t_415a6094a2230d 1481
+  s_dc239db0cc1c9d::t_ba5e9fae318ec8 4278-4280,4311-4313
+  s_dc239db0cc1c9d::t_20e5338ae1e2b4 4316-4317
+  s_dc239db0cc1c9d::t_4127f9547dc3f4 4432
+  s_332e632ef0d349::t_3b27bb390356fc 4281-4310
+Schrift/Core/Localization/L10nKey.swift
+  s_dc239db0cc1c9d::t_4f740df4d18b75 525
+Schrift/Core/Localization/Strings+it.swift
+  s_dc239db0cc1c9d::t_4f740df4d18b75 13
+Schrift/Core/Networking/DocsAPIClient.swift
+  s_dc239db0cc1c9d::t_8d7b72c8a97b6a 155-160,202
+Schrift/Core/Localization/Strings+th.swift
+  s_dc239db0cc1c9d::t_4f740df4d18b75 13
+Schrift/Features/Editor/Native/NativeSessionRegistry.swift
+  s_dc239db0cc1c9d::t_512d4e3a266a88 146-158,160-162,171-172,175-181,183-186,190,193,205-206
+AGENTS.md
+  s_dc239db0cc1c9d::t_1781409b3ebde9 3818-3822,3825-3835,3838-3849,3851-3852,3861-3864,3866-3868,3872-3873,3877-3879,3885-3886
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_dc239db0cc1c9d::t_af854cc239b3f3 1080-1106
+docs/offline-and-sync.md
+  s_dc239db0cc1c9d::t_fa723c6c5746ab 265-273
+Schrift/Core/Localization/Strings+es.swift
+  s_dc239db0cc1c9d::t_4f740df4d18b75 13
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_dc239db0cc1c9d::t_4f740df4d18b75 11
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_dc239db0cc1c9d::t_fd3a086c7e56f4 259-262,265,280-281,287-288,315-316
+  s_dc239db0cc1c9d::t_d37be9b75c4cea 856-857
+Schrift/Core/Yjs/BlockNoteMediaCommands.swift
+  s_dc239db0cc1c9d::t_ae000b68641d5a 92-112
+Schrift/Features/Editor/Native/ReplicaCommandMailbox.swift
+  s_dc239db0cc1c9d::t_fd3a086c7e56f4 76-79,110
+Schrift/Core/Localization/Strings+nl.swift
+  s_dc239db0cc1c9d::t_4f740df4d18b75 14
+Schrift/Features/Editor/Native/DocumentReplicaSession.swift
+  s_dc239db0cc1c9d::t_fd3a086c7e56f4 426-427
+Schrift/Core/Localization/Strings+en.swift
+  s_dc239db0cc1c9d::t_4f740df4d18b75 14
+Schrift/Core/Localization/Strings+pt.swift
+  s_dc239db0cc1c9d::t_4f740df4d18b75 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "14e61d5713a388f58797dd44c7363a17fcaa6d40",
+  "prompts": {},
+  "sessions": {
+    "s_332e632ef0d349": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a783367bada67d0fb",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    },
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
