@@ -253,6 +253,39 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertEqual((second.value as? String)?.contains("ful"), true, "and column two")
     }
 
+    /// PR12b: the column editor's Column menu inserts a column, which shows at
+    /// once and survives a relaunch.
+    func testTheColumnMenuInsertsAColumnThatSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-columns"]
+        app.launch()
+        let card = app.descendants(matching: .any)["nativeEditor.attachment.owned-columns"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        card.tap()
+        let picker = app.segmentedControls["nativeEditor.columns.picker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5), "the column editor opened")
+        XCTAssertEqual(picker.buttons.count, 2)
+        let menu = app.buttons["nativeEditor.columns.menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        menu.tap()
+        let insert = app.buttons["nativeEditor.columns.addRight"]
+        XCTAssertTrue(insert.waitForExistence(timeout: 5))
+        insert.tap()
+        let three = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 3"), object: picker.buttons)
+        XCTAssertEqual(XCTWaiter.wait(for: [three], timeout: 5), .completed, "a third column shows")
+        app.buttons["nativeEditor.columns.done"].tap()
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        app.terminate()
+
+        app.launchArguments = ["--native-open", "--native-columns"]
+        app.launch()
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        card.tap()
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        XCTAssertEqual(picker.buttons.count, 3, "the journal keeps the column")
+    }
+
     /// PR12a review: returning from a column's table editor keeps one surface per
     /// column, and typing in the column afterwards is durable.
     func testTypingAfterAColumnsTableSurvivesRelaunch() {

@@ -230,6 +230,32 @@ final class ColumnStructureTests: NativeEditingTestCase {
         try await assertConsistent(harness, localCommands: 5)
     }
 
+    /// The document's block menu on the group's card acts on the whole group:
+    /// move, duplicate (fresh ids throughout), copy and delete.
+    func testTheDocumentsBlockMenuActsOnTheWholeGroup() async throws {
+        let harness = try await makeHarness(state: try seed("addColumnRight"))
+        addTeardownBlock { await harness.close() }
+        setSelection(harness, NSRange(location: try location(harness.session, "cl", 0), length: 0))
+        XCTAssertEqual(harness.input.blockActionTarget(), "cl")
+        _ = harness.input.availableBlockActions()
+        await waitUntil { !harness.input.availableBlockActions().isEmpty }
+        let actions = Set(harness.input.availableBlockActions())
+        XCTAssertTrue(actions.isSuperset(of: [.moveUp, .duplicate, .copy, .delete]), "\(actions)")
+        XCTAssertFalse(actions.contains(.indent))
+        let duplicated = await harness.run { harness.input.performBlockAction(.duplicate) }
+        XCTAssertTrue(duplicated)
+        var groups = await harness.session.replicaDoc { ColumnGroup.groups(in: $0) } ?? [:]
+        XCTAssertEqual(groups.count, 2)
+        XCTAssertEqual(harness.session.surface.blocks.filter { $0.node == "columnList" }.count, 2)
+        setSelection(harness, NSRange(location: try location(harness.session, "cl", 0), length: 0))
+        let deleted = await harness.run { harness.input.performBlockAction(.delete) }
+        XCTAssertTrue(deleted)
+        groups = await harness.session.replicaDoc { ColumnGroup.groups(in: $0) } ?? [:]
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertNil(groups["cl"])
+        try await assertConsistent(harness, localCommands: 2)
+    }
+
     /// Awareness per column: a peer's position in a column's block resolves
     /// to that block while the group is open (its column shows the caret) and
     /// to the group (its card) while it is closed.
