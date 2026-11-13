@@ -222,10 +222,25 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(caption.waitForExistence(timeout: 5), "the inspector opened")
         XCTAssertEqual(caption.value as? String, "Old caption")
         XCTAssertFalse(app.buttons["nativeMedia.uploadFile"].isEnabled, "offline: no upload")
+        // The inspector follows the document: hiding the preview flips the switch it reads back.
+        let preview = app.switches["nativeMedia.preview"]
+        XCTAssertEqual(preview.value as? String, "1")
+        preview.switches.firstMatch.press(forDuration: 0.2)
+        let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '0'"), object: preview)
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed, "the switch reads the written prop")
         caption.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         // The tap leaves the caret at the end: delete "Old caption", then type.
         caption.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 11) + "Harbour at dawn")
+        app.buttons["nativeMedia.done"].tap()
+        // Shown by name while its preview is hidden; the caption is in the inspector.
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.tap()
+        XCTAssertTrue(caption.waitForExistence(timeout: 5))
+        XCTAssertEqual(caption.value as? String, "Harbour at dawn")
+        preview.switches.firstMatch.press(forDuration: 0.2)
+        let shown = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '1'"), object: preview)
+        XCTAssertEqual(XCTWaiter.wait(for: [shown], timeout: 5), .completed)
         app.buttons["nativeMedia.done"].tap()
         XCTAssertTrue(card.waitForExistence(timeout: 5))
         let captioned = XCTNSPredicateExpectation(

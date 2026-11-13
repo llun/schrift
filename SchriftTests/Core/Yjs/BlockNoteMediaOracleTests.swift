@@ -325,6 +325,30 @@ final class BlockNoteMediaOracleTests: XCTestCase {
         XCTAssertTrue(YXMLString.fragment(doc).contains("caption=\"New caption\""))
     }
 
+    /// A captioned image below the root has no confirmed export spelling: no
+    /// shadow (the classic line would drop the caption), so the document stays
+    /// read-only rather than saving a wrong shadow.
+    func testANestedCaptionedImageHasNoShadow() throws {
+        let fixture = try XCTUnwrap(BlockNoteMediaCaptures.fixtures.first { $0.name == "nestedImage" })
+        let doc = try doc(fixture.update)
+        defer { doc.destroy() }
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc), "a plain nested image keeps the classic line")
+        let writer = BlockNoteWriter(doc: doc)
+        var stack: [YType] = doc.share[BlockNoteYjs.fragmentField].map { [$0] } ?? []
+        var image: YType?
+        while let type = stack.popLast(), image == nil {
+            for item in writer.children(type) {
+                guard case .type(let child) = item.content else { continue }
+                if child.typeRef == .xmlElement(nodeName: "image") { image = child }
+                stack.append(child)
+            }
+        }
+        let element = try XCTUnwrap(image)
+        try writer.transaction { tx in try YWrite.mapSet(tx, on: element, key: "caption", .any([.string("cap")])) }
+        XCTAssertTrue(NativeBlockProjection.project(doc).isFullyModeled)
+        XCTAssertNil(NativeBlockProjection.markdownShadow(doc))
+    }
+
     /// A media block stays a root block without children (its shadow): Tab
     /// neither nests one nor nests a block under one, and a move never takes
     /// one below the root.

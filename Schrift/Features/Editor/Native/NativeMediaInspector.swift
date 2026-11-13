@@ -37,7 +37,10 @@ struct NativeMediaInspector: View {
     static let widths: [Int] = [240, 360, 480, 640]
 
     private var block: BlockSnapshot? {
-        session.input?.mediaBlock(blockID)
+        // The surface is not observable; each delivery advances the session's
+        // revision, so reading it here re-renders the inspector after one.
+        _ = session.revision
+        return session.input?.mediaBlock(blockID)
             ?? session.surface.blocks.first { $0.id == blockID && MediaBlock.isMediaLike($0.node) }
     }
 

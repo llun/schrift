@@ -109,9 +109,8 @@ final class NativeMediaTests: NativeEditingTestCase {
         try await assertConsistent(harness, localCommands: 3)
     }
 
-    /// A peer's caption change reaches the card: a prop change on a preview
-    /// block is a whole-block patch (before PR13a it was a `.props` patch the
-    /// card never showed).
+    /// A peer's caption change reaches the card (the surface re-reads a
+    /// block's snapshot, preview included, on a `.props` patch).
     func testAPeersMediaPropChangeRefreshesTheCard() async throws {
         let state = try seed("imageSetCaption")
         let harness = try await makeHarness(state: state)
