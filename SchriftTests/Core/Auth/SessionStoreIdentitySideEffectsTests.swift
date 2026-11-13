@@ -26,6 +26,25 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertNil(first.imageCacheSessionID)
     }
 
+    /// PR13a review V1: the thread-safe clock moves with every sign-in
+    /// generation (cookie handover, sign-in, sign-out), so a request bound to
+    /// an earlier one is never sent.
+    func testTheGenerationClockMovesAtEveryAccountChange() throws {
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        for change in ["handover", "signIn", "signOut"] {
+            let isCurrent = store.generationClock.isCurrent()
+            XCTAssertTrue(isCurrent(), change)
+            switch change {
+            case "handover": store.noteSessionCookiesReplaced()
+            case "signIn": try store.signIn(serverURL: serverURL)
+            default: try store.signOut()
+            }
+            XCTAssertFalse(isCurrent(), change)
+            XCTAssertEqual(store.generationClock.current, store.signInGeneration, change)
+        }
+    }
+
     /// Sign-in is the moment a possibly-different account takes over, and the cached profile
     /// is shown *before* any fetch — so a kept entry would put the previous user's name and
     /// email on the new user's Profile screen, indefinitely if they are offline.

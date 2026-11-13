@@ -38,6 +38,21 @@ final class NativeMediaInspectorTests: XCTestCase {
         XCTAssertEqual(draft.caption, "Mine")
     }
 
+    /// Submitting writes the field; a delivery that brings a peer's later
+    /// rename together with ours is followed, never overwritten by Done
+    /// (review V4).
+    func testASubmittedFieldFollowsALaterPeerRename() {
+        var draft = NativeMediaTextDraft()
+        draft.follow(props(name: "a.png"))
+        draft.name = "mine.png"
+        let written = draft.edits(props(name: "a.png"))
+        XCTAssertEqual(written, [ProjectedProp(key: "name", value: .string("mine.png"))])
+        draft.committed(written)
+        draft.follow(props(name: "peer.png"))
+        XCTAssertEqual(draft.name, "peer.png")
+        XCTAssertEqual(draft.edits(props(name: "peer.png")), [])
+    }
+
     /// A peer's name or caption longer than a native edit may write is not
     /// editable (and never written back); display clips it by scalars, so a
     /// million combining marks in one character stay small.

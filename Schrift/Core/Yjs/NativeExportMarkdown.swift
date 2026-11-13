@@ -111,7 +111,7 @@ enum NativeExportMarkdown {
     /// host, invalid path characters percent-encoded as the URL parser does;
     /// anything doubtful (edge whitespace or controls, which that parser
     /// strips, an encoded host) is unsafe (no shadow).
-    private static func isSafePDFURL(_ url: String) -> Bool {
+    static func isSafePDFURL(_ url: String) -> Bool {
         let edges = [url.unicodeScalars.first, url.unicodeScalars.last].compactMap { $0 }
         guard !edges.contains(where: { $0.value <= 0x20 }),
             !url.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }),

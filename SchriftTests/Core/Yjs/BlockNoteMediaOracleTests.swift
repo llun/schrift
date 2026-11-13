@@ -318,6 +318,58 @@ final class BlockNoteMediaOracleTests: XCTestCase {
         XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc))
     }
 
+    /// A pasted pdf whose url the export would not spell (a percent-encoded
+    /// host, review V2) is refused, as is the same url typed natively: a block
+    /// without a shadow would make every save fail.
+    func testAPdfUrlWithoutAShadowIsNeverWritten() throws {
+        let capture = try XCTUnwrap(BlockNoteMediaCaptures.edits.first { $0.name == "pdfSetCaption" })
+        let doc = try doc(capture.seed, clientID: 2)
+        defer { doc.destroy() }
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        defer { engine.detach() }
+        let url = "https://%65xample.com/a.pdf"
+        XCTAssertTrue(MediaBlock.isAuthoredURL(url), "the url check alone passes it")
+        let props = (MediaBlock.schemas["pdf"] ?? []).map {
+            (key: $0.key, value: $0.key == "url" ? .string(url) : $0.value)
+        }
+        let payload = try BlockNoteSubtreePayload.encode([
+            .element("blockContainer", [("id", .string("pasted"))], [.element("pdf", props, [])])
+        ])
+        XCTAssertFalse(engine.canApplyStructural(command(engine, "lead", .insertSubtrees(payload: payload))))
+        XCTAssertFalse(engine.canApplyStructural(command(engine, "mx", .mediaProps([string("url", url)]))))
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc))
+    }
+
+    /// A web image whose url is an IRI (a non-ASCII path or host, stored
+    /// verbatim on the web) cuts and pastes back: the paste stores it
+    /// percent-encoded and punycoded (review V3); whitespace, userinfo and
+    /// other schemes stay refused.
+    func testAWebImageWithAnIRIPastesBackCanonicalised() throws {
+        let capture = try XCTUnwrap(BlockNoteMediaCaptures.edits.first { $0.name == "imageSetCaption" })
+        let doc = try doc(capture.seed, clientID: 2)
+        defer { doc.destroy() }
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        defer { engine.detach() }
+        func payload(_ url: String) throws -> Data {
+            let props = (MediaBlock.schemas["image"] ?? []).map {
+                (key: $0.key, value: $0.key == "url" ? .string(url) : $0.value)
+            }
+            return try BlockNoteSubtreePayload.encode([
+                .element("blockContainer", [("id", .string("pasted"))], [.element("image", props, [])])
+            ])
+        }
+        try apply(engine, "lead", .insertSubtrees(payload: try payload("https://images.example/été.png")))
+        try apply(engine, "lead", .insertSubtrees(payload: try payload("https://exämple.com/a.png")))
+        let xml = YXMLString.fragment(doc)
+        XCTAssertTrue(xml.contains("url=\"https://images.example/%C3%A9t%C3%A9.png\""), xml)
+        XCTAssertTrue(xml.contains("url=\"https://xn--exmple-cua.com/a.png\""), xml)
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc))
+        for url in ["https://images.example/a b.png", "https://user@evil.example/a.png", "javascript:alert(1)"] {
+            XCTAssertFalse(
+                engine.canApplyStructural(command(engine, "lead", .insertSubtrees(payload: try payload(url)))), url)
+        }
+    }
+
     /// Only RFC 3986 characters are stored (review S5): Foundation's parser
     /// must not be the one deciding what a raw string means, so non-ASCII,
     /// quotes, angle brackets, spaces and a bare `%` are refused before it.

@@ -97,7 +97,9 @@ enum MediaBlock {
             schemas[node]?.contains(where: { $0.key == prop.key }) == true
         else { return false }
         switch (prop.key, prop.value) {
-        case ("url", .string(let url)): return url.isEmpty || isAuthoredURL(url)
+        // A pdf's url must be one the export spells (review V2): else the block has no shadow.
+        case ("url", .string(let url)):
+            return url.isEmpty || isAuthoredURL(url) && (node != "pdf" || NativeExportMarkdown.isSafePDFURL(url))
         case ("name", .string(let name)): return isPlainText(name, limit: maxName)
         case ("caption", .string(let caption)): return isPlainText(caption, limit: maxCaption)
         case ("previewWidth", .undefined): return true
@@ -146,9 +148,10 @@ enum MediaBlock {
     /// neither store what the inspector refuses nor leave a block without a
     /// shadow (a pdf with a non-http(s) url).
     static func isPastable(node: String, props: [ProjectedProp], hasContent: Bool) -> Bool {
-        guard nodes.contains(node), unfamiliarReason(node: node, props: props, hasContent: hasContent) == nil else {
-            return false
-        }
+        guard nodes.contains(node), unfamiliarReason(node: node, props: props, hasContent: hasContent) == nil,
+            // Spelled before insertion (review V2): a paste never leaves a block without a shadow.
+            NativeExportMarkdown.media(node: node, props: props) != nil
+        else { return false }
         return props.allSatisfy { prop in
             switch prop.key {
             case _ where editableKeys.contains(prop.key): isValidEdit(prop, on: node)
@@ -156,6 +159,23 @@ enum MediaBlock {
             default: true
             }
         }
+    }
+
+    /// A pasted url in the form a native edit stores (review V3): a web block
+    /// may hold an IRI (`https://images.example/été.png`, a non-ASCII host),
+    /// which is percent-encoded and punycoded here; whitespace, controls and
+    /// anything that is not then an `isAuthoredURL` stay refused. Empty stays empty.
+    static func pastedURL(_ url: String) -> String? {
+        guard !url.isEmpty else { return url }
+        if isAuthoredURL(url) { return url }
+        guard
+            !url.unicodeScalars.contains(where: {
+                CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0)
+            }),
+            let canonical = URL(string: url, encodingInvalidCharacters: true)?.absoluteString,
+            isAuthoredURL(canonical)
+        else { return nil }
+        return canonical
     }
 
     /// `text` for display: at most `limit` scalars, with an ellipsis when

@@ -75,7 +75,10 @@ extension DocsAPIClient {
     /// server-side, so the part's filename extension must match the real bytes
     /// (a mismatch stores the file under an `-unsafe` key that won't render
     /// inline). Returns the raw `file` string: a media-check path, not a URL.
-    func uploadAttachment(documentID: UUID, fileName: String, contentType: String, data: Data) async throws -> String {
+    /// `isCurrent` (PR13a review V1): asked when the request is built; false sends nothing.
+    func uploadAttachment(
+        documentID: UUID, fileName: String, contentType: String, data: Data, isCurrent: (@Sendable () -> Bool)? = nil
+    ) async throws -> String {
         let boundary = "schrift-" + UUID().uuidString
         guard
             let body = multipartFormDataBody(
@@ -84,7 +87,7 @@ extension DocsAPIClient {
         let response: AttachmentUploadResponse = try await send(
             path: "documents/\(documentID.uuidString.lowercased())/attachment-upload/",
             method: "POST", body: body,
-            contentType: "multipart/form-data; boundary=\(boundary)")
+            contentType: "multipart/form-data; boundary=\(boundary)", isCurrent: isCurrent)
         return response.file
     }
 

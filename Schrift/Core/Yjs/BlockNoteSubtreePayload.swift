@@ -238,22 +238,28 @@ enum BlockNoteSubtreePayload {
 }
 
 extension BlockNoteSubtreePayload {
-    /// A paste's media blocks (PR13a): each must be one a native edit could
+    /// A paste's media blocks (PR13a): each url canonicalised to what a native
+    /// edit stores (`MediaBlock.pastedURL`: a web IRI percent-encoded and
+    /// punycoded, review V3), then each block must be one a native edit could
     /// write (`MediaBlock.isPastable`), so a payload never stores a
-    /// `javascript:`/`data:` url, an unbounded name or a pdf the shadow cannot
+    /// `javascript:`/`data:` url, an unbounded name or a block the shadow cannot
     /// spell. Only pasting asks this: copy and delete keep any block as it is.
-    static func validateMedia(_ copies: [BlockNoteWriter.Copy]) throws {
-        for copy in copies {
-            guard case .element(let node, let props, let children) = copy else { continue }
-            if MediaBlock.isMediaLike(node) {
-                guard
-                    MediaBlock.isPastable(
-                        node: node, props: props.map { ProjectedProp(key: $0.key, value: $0.value) },
-                        hasContent: !children.isEmpty)
-                else { throw Error.malformed }
-                continue
+    static func validatingMedia(_ copies: [BlockNoteWriter.Copy]) throws -> [BlockNoteWriter.Copy] {
+        try copies.map { copy in
+            guard case .element(let node, var props, let children) = copy else { return copy }
+            guard MediaBlock.isMediaLike(node) else { return .element(node, props, try validatingMedia(children)) }
+            for index in props.indices where props[index].key == "url" {
+                guard case .string(let url) = props[index].value, let pasted = MediaBlock.pastedURL(url) else {
+                    throw Error.malformed
+                }
+                props[index].value = .string(pasted)
             }
-            try validateMedia(children)
+            guard
+                MediaBlock.isPastable(
+                    node: node, props: props.map { ProjectedProp(key: $0.key, value: $0.value) },
+                    hasContent: !children.isEmpty)
+            else { throw Error.malformed }
+            return .element(node, props, children)
         }
     }
 }

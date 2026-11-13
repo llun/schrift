@@ -297,6 +297,8 @@ struct EditorView: View {
     /// reopened rather than left typing into the previous account's replica.
     var signInGeneration: Int = 0
     @State private var nativeOpen = NativeEditorOpen()
+    /// The sign-in generation an upload is bound to (PR13a review V1).
+    @Environment(\.signInGenerationClock) private var signInClock
     /// The app's replica registry (PR08c); hosts without one keep the open's own.
     @Environment(NativeSessionRegistry.self) private var nativeSessions: NativeSessionRegistry?
     /// Dials the native live socket (PR09a); hosts without one stay HTTP-only.
@@ -325,7 +327,7 @@ struct EditorView: View {
                     documentID: viewModel.documentID,
                     uploadDocumentID: viewModel.isLocalDocument ? nil : viewModel.documentID,
                     mediaUpload: viewModel.client.mediaUploader(
-                        retryInterval: viewModel.mediaCheckRetryInterval))
+                        retryInterval: viewModel.mediaCheckRetryInterval, isCurrent: signInClock?.isCurrent()))
             case .preservedUnavailable:
                 ContentUnavailableView(
                     loc[.native_editor_owned_unavailable_title], systemImage: "doc.richtext",

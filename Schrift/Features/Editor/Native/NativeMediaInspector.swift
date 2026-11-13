@@ -298,7 +298,9 @@ struct NativeMediaInspector: View {
         guard isEditable, let block else { return }
         let props = draft.edits(block.props)
         guard !props.isEmpty else { return }
-        set(props)
+        // Written: those values are the stored ones now, so a delivery that
+        // brings a peer's later rename with ours is followed, never overwritten (V4).
+        if session.input?.setMediaProps(blockID, props) == true { draft.committed(props) }
     }
 
     /// BlockNote's embed: the URL, and the name its last path segment
@@ -345,6 +347,15 @@ struct NativeMediaTextDraft: Equatable {
         if caption == baseCaption { caption = storedCaption }
         baseName = storedName
         baseCaption = storedCaption
+    }
+
+    /// `edits` were written: they are the fields' synced values now (review V4).
+    mutating func committed(_ edits: [ProjectedProp]) {
+        for edit in edits {
+            guard case .string(let value) = edit.value else { continue }
+            if edit.key == "name" { baseName = value }
+            if edit.key == "caption" { baseCaption = value }
+        }
     }
 
     /// The fields the user changed and the block does not already hold.

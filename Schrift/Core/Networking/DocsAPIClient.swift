@@ -118,10 +118,11 @@ actor DocsAPIClient {
     }
 
     func send<T: Decodable>(
-        path: String, method: String, body: Data?, contentType: String? = "application/json", accept: String? = nil
+        path: String, method: String, body: Data?, contentType: String? = "application/json", accept: String? = nil,
+        isCurrent: (@Sendable () -> Bool)? = nil
     ) async throws -> T {
         let data = try await performRequest(
-            path: path, method: method, body: body, contentType: contentType, accept: accept)
+            path: path, method: method, body: body, contentType: contentType, accept: accept, isCurrent: isCurrent)
         do {
             return try JSONDecoder.docsAPI.decode(T.self, from: data)
         } catch {
@@ -151,8 +152,12 @@ actor DocsAPIClient {
         _ = try await performRequest(path: path, method: method, body: body, contentType: contentType)
     }
 
+    /// `isCurrent` (PR13a review V1) is asked synchronously once the request
+    /// is built, right before it is sent: false sends nothing and throws
+    /// `CancellationError` (the session changed under a request that waited).
     private func performRequest(
-        path: String, method: String, body: Data?, contentType: String?, accept: String? = nil
+        path: String, method: String, body: Data?, contentType: String?, accept: String? = nil,
+        isCurrent: (@Sendable () -> Bool)? = nil
     ) async throws -> Data {
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw DocsAPIError.network("Invalid path: \(path)")
@@ -186,6 +191,8 @@ actor DocsAPIClient {
             }
         }
 
+        // Built; nothing after this suspends before the request is handed to the session.
+        if let isCurrent, !isCurrent() { throw CancellationError() }
         let data: Data
         let response: URLResponse
         // Captured before the await: a request issued on a dead link reports only when its

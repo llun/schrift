@@ -173,12 +173,15 @@ final class NativeMediaUploads {
 extension DocsAPIClient {
     /// The native editor's upload (PR13a): the classic attachment upload and
     /// its bounded media-check poll, answering the URL to embed.
-    nonisolated func mediaUploader(maxAttempts: Int = 5, retryInterval: Duration = .seconds(1))
-        -> NativeMediaUploads.Upload
-    {
+    /// `isCurrent` binds the upload to the sign-in generation it started in
+    /// (`SignInGenerationClock.isCurrent`), checked when the request is built.
+    nonisolated func mediaUploader(
+        maxAttempts: Int = 5, retryInterval: Duration = .seconds(1), isCurrent: (@Sendable () -> Bool)? = nil
+    ) -> NativeMediaUploads.Upload {
         { [self] documentID, fileName, contentType, data in
             let path = try await uploadAttachment(
-                documentID: documentID, fileName: fileName, contentType: contentType, data: data)
+                documentID: documentID, fileName: fileName, contentType: contentType, data: data,
+                isCurrent: isCurrent)
             return await readyMediaURLString(
                 fromMediaCheckPath: path, maxAttempts: maxAttempts, retryInterval: retryInterval)
         }

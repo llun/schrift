@@ -1,4 +1,6 @@
 import Foundation
+import SwiftUI
+import Synchronization
 
 /// How soon after a silent re-login a further 401 — from a request issued *after* it — is taken
 /// as the fresh session being refused too, and sent to the sheet rather than retried silently.
@@ -80,6 +82,9 @@ final class SessionStore {
     /// keeps showing. Never persisted: what matters is only that it *changes* within a
     /// process, and a fresh launch rebuilds every screen anyway.
     private(set) var signInGeneration = 0
+    /// `signInGeneration`, readable from any thread (PR13a review V1): a request
+    /// built off the main actor checks it right before it is sent.
+    nonisolated let generationClock = SignInGenerationClock()
     /// An opaque cache namespace, not an account id or credential. Persisted so
     /// image bytes survive offline relaunch; rotated whenever cookies change hands.
     private(set) var imageCacheSessionID: UUID?
@@ -164,6 +169,7 @@ final class SessionStore {
         }
         // Tell screens that survived the sheet to re-read what they are showing.
         signInGeneration += 1
+        generationClock.set(signInGeneration)
     }
 
     /// A web login has just handed its cookies to the shared storage — call it *before* the
@@ -208,6 +214,7 @@ final class SessionStore {
         // The identity may have changed under screens that survived the sheet, exactly as at
         // `signIn` — clearing the stores is only half of scoping the account row to the session.
         signInGeneration += 1
+        generationClock.set(signInGeneration)
     }
 
     /// Everything that answers *whose session is this*, forgotten together. One body, so a
@@ -234,6 +241,7 @@ final class SessionStore {
         // A session change like any other: a native editor still mounted closes and reopens
         // (read-only, no account) instead of typing on under a forgotten identity.
         signInGeneration += 1
+        generationClock.set(signInGeneration)
         try keychain.delete(forKey: Self.authenticatedKeychainKey)
         try? keychain.delete(forKey: Self.sessionCookiesKeychainKey)
         deleteServerCookies()
@@ -353,4 +361,23 @@ final class SessionStore {
             cookieStorage.deleteCookie(cookie)
         }
     }
+}
+
+/// The sign-in generation as a value any thread can read synchronously
+/// (`SessionStore.generationClock`): an upload started under one generation
+/// is never sent under another (PR13a review V1).
+final class SignInGenerationClock: Sendable {
+    private let value = Mutex(0)
+    var current: Int { value.withLock { $0 } }
+    func set(_ generation: Int) { value.withLock { $0 = generation } }
+    /// True while the generation is still the one current now.
+    func isCurrent() -> @Sendable () -> Bool {
+        let start = current
+        return { [self] in current == start }
+    }
+}
+
+extension EnvironmentValues {
+    /// The app's `SessionStore.generationClock` (RootView); nil in hosts without an account.
+    @Entry var signInGenerationClock: SignInGenerationClock?
 }
