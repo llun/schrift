@@ -34,6 +34,7 @@ struct SilentReauthenticationView: View {
         WebLoginView(
             url: authenticationURL(server: viewModel.serverURL),
             serverHost: viewModel.serverURL.host ?? "",
+            onCookiesWillChange: { viewModel.cookiesWillChange() },
             onLoginComplete: {
                 Task {
                     await viewModel.handleLoginComplete()

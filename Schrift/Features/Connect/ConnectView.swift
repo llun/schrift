@@ -72,6 +72,7 @@ struct ConnectView: View {
                 WebLoginView(
                     url: authenticationURL(server: url),
                     serverHost: url.host ?? "",
+                    onCookiesWillChange: { viewModel.cookiesWillChange() },
                     onLoginComplete: {
                         Task { await viewModel.handleLoginComplete() }
                     }

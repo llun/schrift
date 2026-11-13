@@ -50,6 +50,34 @@ final class AttachmentEndpointsClientTests: XCTestCase {
 
     /// The upload is a non-GET request, so it must route through `send` and pick
     /// up the CSRF/Origin/Referer headers Django's middleware requires.
+    /// PR13a review V1: an upload bound to a sign-in generation is checked
+    /// when its request is built; a changed account sends nothing.
+    func testAnUploadFromAnEarlierSignInIsNeverSent() async throws {
+        let log = RequestRecorder()
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 201, headers: [:], body: Data(#"{"file": "/x"}"#.utf8), error: nil)
+        }
+        let clock = SignInGenerationClock()
+        let isCurrent = clock.isCurrent()
+        clock.advance()
+        do {
+            _ = try await makeClient().uploadAttachment(
+                documentID: documentID, fileName: "photo.jpg", contentType: "image/jpeg", data: Data([0xFF]),
+                isCurrent: isCurrent)
+            XCTFail("sent")
+        } catch is CancellationError {
+        } catch {
+            XCTFail("\(error)")
+        }
+        XCTAssertEqual(log.count(ofMethod: "POST", urlContaining: "attachment-upload"), 0)
+        // The same generation sends.
+        _ = try await makeClient().uploadAttachment(
+            documentID: documentID, fileName: "photo.jpg", contentType: "image/jpeg", data: Data([0xFF]),
+            isCurrent: clock.isCurrent())
+        XCTAssertEqual(log.count(ofMethod: "POST", urlContaining: "attachment-upload"), 1)
+    }
+
     func testUploadAttachmentSendsCSRFAndOriginHeaders() async throws {
         let responseBody = Data(#"{"file": "/api/v1.0/documents/1/media-check/?key=1%2Fattachments%2F2.jpg"}"#.utf8)
         MockURLProtocol.stubHandler = { _ in .init(statusCode: 201, headers: [:], body: responseBody, error: nil) }

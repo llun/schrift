@@ -221,6 +221,7 @@ private struct AuthenticatedHomeContainer: View {
         .environment(nativeSessions)
         .environment(attachments)
         .environment(images)
+        .environment(\.signInGenerationClock, sessionStore.generationClock)
         .task {
             // Learn whether this deployment runs the collaboration server, so the
             // availability gate can open once the toggle is on, and our own

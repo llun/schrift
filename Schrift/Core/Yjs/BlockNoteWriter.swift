@@ -576,7 +576,7 @@ struct BlockNoteWriter {
         return found
     }
 
-    private func resolve(_ item: YItem, group: YType, id: String) throws -> Target {
+    private func resolve(_ item: YItem, group: YType, id: String, media: Bool = false) throws -> Target {
         // A column's blocks sit in the column itself (PR12a).
         guard Self.isBlockList(group),
             case .type(let container) = item.content, container.typeRef == .xmlElement(nodeName: "blockContainer"),
@@ -594,7 +594,9 @@ struct BlockNoteWriter {
             else { throw Error.malformedBlock(id) }
             nested = (contents[1], group)
         }
-        guard schemas[node] != nil else { throw Error.unsupportedBlockType(node) }
+        guard media ? MediaBlock.nodes.contains(node) : schemas[node] != nil else {
+            throw Error.unsupportedBlockType(node)
+        }
         return Target(
             id: id, item: item, container: container, elementItem: first, element: element, node: node,
             nested: nested, group: group)
@@ -611,6 +613,13 @@ struct BlockNoteWriter {
     func indexedTarget(_ item: YItem, id: String) throws -> Target {
         guard !item.deleted, let group = item.parentType else { throw Error.missingBlock(id) }
         return try resolve(item, group: group, id: id)
+    }
+
+    /// A media block (PR13a) as a prop target, never a text target: only
+    /// `setMediaProps` takes it.
+    func mediaTarget(_ item: YItem, id: String) throws -> Target {
+        guard !item.deleted, let group = item.parentType else { throw Error.missingBlock(id) }
+        return try resolve(item, group: group, id: id, media: true)
     }
 
     /// A table cell's paragraph as a text target (PR11a): the native engine's

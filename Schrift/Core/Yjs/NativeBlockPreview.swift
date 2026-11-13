@@ -11,7 +11,8 @@ enum NativeBlockPreview: Equatable, Sendable {
     /// BlockNote's `image` with its preview shown. `previewWidth` is the
     /// web's displayed width in points, when set.
     case image(url: String, alt: String, previewWidth: Double?)
-    /// `video`, `audio`, `file`, `pdf`, or an image whose preview is hidden.
+    /// `video`, `audio`, `file`, `pdf`, an image whose preview is hidden or
+    /// that has no url yet, or another client's `uploadLoader` (PR13a).
     case file(node: String, name: String, url: String)
     /// The first `maxRows` × `maxColumns` cells and the full table size.
     case table(cells: [[String]], rowCount: Int, columnCount: Int)
@@ -67,6 +68,12 @@ enum NativeBlockPreview: Equatable, Sendable {
             return nil
         }
         switch block.node {
+        case "image" where prop("url")?.isEmpty != false:
+            // Nothing to show yet: the web's "add image" placeholder (PR13a).
+            return .file(node: "image", name: clipped(prop("name") ?? ""), url: "")
+        case MediaBlock.uploadLoader:
+            // Another client's upload in progress (PR13a): shown, never acted on.
+            return .file(node: block.node, name: clipped(prop("blockUploadName") ?? ""), url: "")
         case "image" where block.props.first(where: { $0.key == "showPreview" })?.value != .bool(false):
             let caption = prop("caption") ?? ""
             return .image(

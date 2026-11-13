@@ -1,4 +1,6 @@
 import Foundation
+import SwiftUI
+import Synchronization
 
 /// How soon after a silent re-login a further 401 — from a request issued *after* it — is taken
 /// as the fresh session being refused too, and sent to the sheet rather than retried silently.
@@ -80,6 +82,11 @@ final class SessionStore {
     /// keeps showing. Never persisted: what matters is only that it *changes* within a
     /// process, and a fresh launch rebuilds every screen anyway.
     private(set) var signInGeneration = 0
+    /// The account's request clock, readable from any thread (PR13a review V1,
+    /// W1): it moves with every `signInGeneration` bump and again *before* a web
+    /// login writes new cookies (`noteSessionCookiesWillChange`), so a request
+    /// built off the main actor checks it right before it is sent.
+    nonisolated let generationClock = SignInGenerationClock()
     /// An opaque cache namespace, not an account id or credential. Persisted so
     /// image bytes survive offline relaunch; rotated whenever cookies change hands.
     private(set) var imageCacheSessionID: UUID?
@@ -164,6 +171,7 @@ final class SessionStore {
         }
         // Tell screens that survived the sheet to re-read what they are showing.
         signInGeneration += 1
+        generationClock.advance()
     }
 
     /// A web login has just handed its cookies to the shared storage — call it *before* the
@@ -202,12 +210,21 @@ final class SessionStore {
     /// `noteSessionExpired` — still holds there. It deliberately does **not** hold for a sheet
     /// that *completed* a login and then failed its confirmation: cookies did change hands, so
     /// the cached profile goes with them, and that is the point rather than a side effect.
+    /// A web login is about to write a (possibly different) account's cookies
+    /// into the shared storage (PR13a review W1): from now until the handover
+    /// completes no request bound to the previous session passes, and none
+    /// bound while switching does either.
+    func noteSessionCookiesWillChange() {
+        generationClock.beginSwitch()
+    }
+
     func noteSessionCookiesReplaced() {
         cookiesAwaitingConfirmation = true
         forgetSignedInIdentity()
         // The identity may have changed under screens that survived the sheet, exactly as at
         // `signIn` — clearing the stores is only half of scoping the account row to the session.
         signInGeneration += 1
+        generationClock.advance()
     }
 
     /// Everything that answers *whose session is this*, forgotten together. One body, so a
@@ -234,6 +251,7 @@ final class SessionStore {
         // A session change like any other: a native editor still mounted closes and reopens
         // (read-only, no account) instead of typing on under a forgotten identity.
         signInGeneration += 1
+        generationClock.advance()
         try keychain.delete(forKey: Self.authenticatedKeychainKey)
         try? keychain.delete(forKey: Self.sessionCookiesKeychainKey)
         deleteServerCookies()
@@ -353,4 +371,32 @@ final class SessionStore {
             cookieStorage.deleteCookie(cookie)
         }
     }
+}
+
+/// The sign-in generation as a value any thread can read synchronously
+/// (`SessionStore.generationClock`): an upload started under one generation
+/// is never sent under another (PR13a review V1).
+final class SignInGenerationClock: Sendable {
+    private struct State {
+        var tick = 0
+        var switching = false
+    }
+
+    private let state = Mutex(State())
+    var current: Int { state.withLock { $0.tick } }
+    /// A `signInGeneration` bump: the handover (if any) is over.
+    func advance() { state.withLock { $0 = State(tick: $0.tick + 1, switching: false) } }
+    /// New cookies are about to be written (W1): every earlier request is
+    /// stale, and nothing passes until the next `advance`.
+    func beginSwitch() { state.withLock { $0 = State(tick: $0.tick + 1, switching: true) } }
+    /// True while nothing moved the clock since this was made and no switch is under way.
+    func isCurrent() -> @Sendable () -> Bool {
+        let start = current
+        return { [self] in state.withLock { $0.tick == start && !$0.switching } }
+    }
+}
+
+extension EnvironmentValues {
+    /// The app's `SessionStore.generationClock` (RootView); nil in hosts without an account.
+    @Entry var signInGenerationClock: SignInGenerationClock?
 }

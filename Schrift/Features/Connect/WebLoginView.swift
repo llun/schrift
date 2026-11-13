@@ -19,6 +19,10 @@ import WebKit
 struct WebLoginView: UIViewRepresentable {
     let url: URL
     let serverHost: String
+    /// Called on the main actor just before the login's cookies are written
+    /// into the shared storage (PR13a review W1): the session store stops every
+    /// request bound to the previous session before the new cookies exist.
+    var onCookiesWillChange: (@MainActor () -> Void)? = nil
     let onLoginComplete: @MainActor () -> Void
     /// Where the login has got to (`WebLoginProgress`). The interactive sheet ignores it; the
     /// silent re-login uses it to decide when to stop waiting and hand over to the sheet, since
@@ -35,7 +39,9 @@ struct WebLoginView: UIViewRepresentable {
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(serverHost: serverHost, onLoginComplete: onLoginComplete, onProgress: onProgress)
+        Coordinator(
+            serverHost: serverHost, onLoginComplete: onLoginComplete, onProgress: onProgress,
+            onCookiesWillChange: onCookiesWillChange)
     }
 
     @MainActor
@@ -43,6 +49,7 @@ struct WebLoginView: UIViewRepresentable {
         private let serverHost: String
         private let onLoginComplete: @MainActor () -> Void
         private let onProgress: (@MainActor (WebLoginProgress) -> Void)?
+        private let onCookiesWillChange: (@MainActor () -> Void)?
         /// Syncs the web view's cookies into `HTTPCookieStorage.shared` (so the
         /// native API client inherits the freshly authenticated session), then
         /// runs `completion` on the main actor. Injected as a seam so tests can
@@ -58,6 +65,7 @@ struct WebLoginView: UIViewRepresentable {
             serverHost: String,
             onLoginComplete: @escaping @MainActor () -> Void,
             onProgress: (@MainActor (WebLoginProgress) -> Void)? = nil,
+            onCookiesWillChange: (@MainActor () -> Void)? = nil,
             captureCookies: @escaping (_ completion: @escaping @MainActor () -> Void) -> Void = { completion in
                 WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
                     syncCookies(cookies, into: HTTPCookieStorage.shared)
@@ -68,6 +76,7 @@ struct WebLoginView: UIViewRepresentable {
             self.serverHost = serverHost
             self.onLoginComplete = onLoginComplete
             self.onProgress = onProgress
+            self.onCookiesWillChange = onCookiesWillChange
             self.captureCookies = captureCookies
         }
 
@@ -138,6 +147,8 @@ struct WebLoginView: UIViewRepresentable {
             // can give up on it in the gap between arriving and confirming.
             onProgress?(.reachedServer)
             didComplete = true
+            // Before the cookie write, never after it (W1).
+            onCookiesWillChange?()
 
             captureCookies { [onLoginComplete] in
                 onLoginComplete()

@@ -41,6 +41,11 @@ final class ConnectViewModel {
         isPresentingWebLogin = true
     }
 
+    /// The web login is about to write its cookies (PR13a review W1).
+    func cookiesWillChange() {
+        sessionStore.noteSessionCookiesWillChange()
+    }
+
     func handleLoginComplete() async {
         isPresentingWebLogin = false
         // The same handover the re-login sheet makes: this login's cookies are already live in

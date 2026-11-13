@@ -2576,9 +2576,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   lines as verbatim text, so the chunk skips the classic self-check (nothing to compare)
   and is joined to the classic segments by blank lines. Lossy like the export; the raw Yjs
   save still carries the real blocks. Besides those callouts, only a callout without a
-  non-empty emoji (the native editor never writes one) has no shadow; media, math, columns and diagrams gate
-  as before (a familiar root table is spelled since PR11a and a familiar root column group since
-  PR12a, bullets below). The writer spells italic `_x_` where the export writes `*x*`; conflict decisions
+  non-empty emoji (the native editor never writes one) has no shadow; math and diagrams gate
+  as before (a familiar root table is spelled since PR11a, a familiar root column group since
+  PR12a and a root media block since PR13a, bullets below). The writer spells italic `_x_` where the export writes `*x*`; conflict decisions
   compare parsed runs (`syncCanonicalMarkdown`), so that is not a conflict, but the port's
   verbatim chunks are compared as text. Tests: `NativeShadowExportParityTests` (the `.review/`
   capture item by item up to its table, the export's spellings, thirteen toggle shapes and
@@ -2619,7 +2619,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   (non-prose node or opaque) is **one U+FFFC attachment character** plus its separator:
   `displayText` is `attachmentCharacter`, so the range index, refusals and clipboard rules
   are unchanged and these blocks stay preserved and read-only (PR11–PR14 author them; a
-  familiar table's cells are edited in the table editor since PR11a, bullet below).
+  familiar table's cells are edited in the table editor since PR11a, media blocks in their
+  inspector since PR13a, bullets below).
   The preview data is `Core/Yjs/NativeBlockPreview`, read by `NativeBlockProjection.projectBlock`
   into `NativeBlockSnapshot.preview` / `BlockSnapshot.preview` (a duplicate-id rewrite gets a
   `.preserved` one), so it travels in every snapshot, reset and `.replaceBlock` and a peer's
@@ -3512,8 +3513,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   previous column or above the group, the block after the group moves into its last column, Delete
   at a column's end pulls the next column's first block in) write nothing natively; a column a peer
   adds while the editor is open shows when it is reopened; a group that turns unfamiliar while
-  open empties its columns without closing the editor; a group below the root, or holding media,
-  math or a diagram (the 72ebe1bb test document), keeps the document read-only; Shift-Tab of a
+  open empties its columns without closing the editor; a group below the root, or holding math or
+  a diagram (the 72ebe1bb test document; its media are modeled since PR13a), keeps the document
+  read-only; Shift-Tab of a
   nested block with following siblings lifts it with them as their parent (the existing PR06a
   `liftToOuterList`), where this harness's web run leaves it nested and nests the siblings under
   it, at the root as in a column; a frozen save (`freezeAuthoring`, below) now also stops the table
@@ -3676,6 +3678,130 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `testDeletingAndRestoringAColumnDoesNotPullTheCaretLater` (fails only with both F4 guards removed)
   and `testAResultInsideACollapsedToggleIsRevealed`; the host UI test now types the whole query, sees
   no editor, and opens it with Next.
+- **PR13a Native media: model, export shadow, props, insertion, online upload.** The staging plan
+  (13a here; 13b the native offline queue, headless commits and drag/drop; 13c mentions and page
+  links) lives outside the repo. **The model** (`Core/Yjs/BlockNoteMediaCommands.swift`,
+  `MediaBlock`): BlockNote 0.56's `image`, `video`, `audio`, `file` and Docs' `pdf` and
+  `uploadLoader`, props in schema order (`MediaBlock.schemas`, the order y-prosemirror sets a new
+  element's attributes; `pdf`/`uploadLoader` are Docs' **server** specs,
+  `docs/src/frontend/servers/y-provider/src/blockSpecs`). Under `nativeMarks` a block with no
+  content and every known prop of a readable type is `.modeled` (`unfamiliarReason`; unknown props
+  are preserved and never written); the classic projection, its default-props image rule and every
+  golden are unchanged. **The shadow** (`NativeExportMarkdown.media`, a port of each block's
+  `toExternalHTML` and `htmlToMarkdown`'s media serializers, media.mjs captures): a shown image or
+  video without a caption is `![name](url)` (nothing escaped; a video's name is the export
+  layer's `data-name`), with a caption a raw `<figure>` (attributes and text HTML-escaped, the
+  caption JS-trimmed, the image alt dropped when empty or equal to the caption, no name on a
+  video figure); audio is `<audio src controls></audio>`, in a figure with a caption; a hidden
+  preview and a file are `formatLink(name || url)` then the caption as its own untrimmed
+  paragraph; a pdf preview is an iframe, which prints **nothing** (its caption paragraph stays), a
+  hidden one the link, and a pdf url Docs' `isSafePdfUrl` would refuse (the server prints a span
+  glued to the next block) has no shadow; an empty url prints an empty block (blank lines the
+  shadow drops, canonical-equal like empty paragraphs) and `uploadLoader` nothing. Only a root or
+  column-root media block without children gets the chunk; below the root or with children only
+  the classic projection's modeled image line spells one, anything else has no shadow.
+  **Commands** (`NativeEditCommand.Kind`): `.mediaProps(props, expecting:)` (`prepareMediaProps`,
+  validated per kind by `MediaBlock.isValidEdit`: name ≤ 1,024 and caption ≤ 4,096 UTF-16 without
+  control characters, url empty or `isAuthoredURL` — absolute http(s) with a host, no userinfo,
+  whitespace or controls, ≤ 2,048 —, `previewWidth` 1…10,000 or unset, `textAlignment` of the four,
+  `showPreview` bool, only keys the kind's schema has) writes like y-prosemirror's
+  `updateYFragment`: changed props set (an absent default included) and every schema prop whose
+  value is `undefined` **removed** (the web's `!= null`: an edited block loses its stored
+  `previewWidth="undefined"`); unknown props stay (the web would drop them). The writer resolves
+  media through `mediaTarget` (never a text target). `expecting` is an upload's `MediaBlock.Slot`
+  (kind + url when it started): a block whose kind or url changed refuses. `.insertMedia(node:ids:
+  removing:)` is `insertOrUpdateBlockForSlashMenu`: the "/query" removed, the emptied paragraph
+  becomes the block in place (element replaced, container and id kept, shared props carried), else
+  a new container after it; then, when no later sibling takes text
+  (`needsTrailingParagraph`, walking past `MediaBlock.contentless`), an empty paragraph after the
+  **document's last root block**, even from a column, as `setSelectionToNextContentEditableBlock`
+  does; one transaction; root or column-root paragraphs without children only (a nested media
+  block has no shadow). The engine's table rules now cover media (`rootOnlyNodes`): nothing indents
+  under one, none indents or moves below the root, a paste never nests one. **Uploads** (`Native/NativeMediaUploads.swift`): one at a
+  time per document (the view owns it, the column editor shares it), the classic pipeline
+  (`preparedJPEGData`, `loadPickedAttachmentFile`, `DocsAPIClient.mediaUploader` =
+  `uploadAttachment` + `readyMediaURLString`) to the document id captured at start; the answered
+  URL must parse as this server's attachment for **that** document (`parseAttachmentLink`, document
+  UUID compared) and pass `isAuthoredURL`, else nothing is written. The commit is
+  `.mediaProps([name, url], expecting: slot)` through the **starting session's** input, held weakly
+  (a busy input is retried every 100 ms, up to 50 times; a block gone from the surface, a closed
+  session — Done, sign-out, another account — drops it, never retargeting another session).
+  Offline, a local document or no uploader refuses with `native_editor_media_upload_offline`; the
+  card shows "Uploading…" (`NativeBlockControls.uploadingBlock`, presentation only). **Never** put a
+  local path, `schrift-attachment://` placeholder or the picked name the server did not store into
+  Yjs, and **never write `uploadLoader`**: it makes every editable web client poll and replace the
+  block. A peer's `uploadLoader` is modeled (the document types), shown as
+  `native_editor_upload_elsewhere`, saved as nothing, and never polled, replaced or edited.
+  **Review fixes (PR #286).** F1: the inspector's name and caption are a `NativeMediaTextDraft`: each
+  field remembers the stored value it last synced to, an untouched field follows the block on every
+  delivery (an upload's name, a peer's caption) and Done writes only the fields the user changed
+  (before, Done wiped an upload's name and reverted peers' edits). S1/A1: the width a peer stored is
+  shown only through `MediaBlock.displayWidth` (in 1…10,000, else unset); `Int(1e20)` trapped. A2: a
+  file picked for an **image** block is re-encoded by `preparedJPEGData` like a photo (name
+  `<stem>.jpg`), so its EXIF/GPS never uploads; a file block's bytes still go as picked. S2: a pasted
+  media block must be `MediaBlock.isPastable` (familiar, every editable prop `isValidEdit`,
+  `backgroundColor` a bounded string; `BlockNoteSubtreePayload.validateMedia`, paste only: copy and
+  delete keep any block), so a payload cannot store `javascript:`/`data:`/relative urls, unbounded
+  text, an out-of-range width or a pdf the shadow cannot spell. A3: after preparation, before the
+  request, an upload whose starting session closed (Done, sign-out, another account's reopen) sends
+  nothing; `NativeEditorView` makes one `NativeMediaUploads` per session. S3: Open opens only an
+  `isAuthoredURL` URL (no userinfo to disguise the host) and shows its host on its own line
+  (`NativeMediaInspector.openTarget`). S4: names, captions and URLs are displayed through
+  `MediaBlock.clipped` (300 scalars, never characters: one character can carry a million combining
+  marks), and a stored name or caption over its limit is read-only. S5: `isAuthoredURL` accepts only
+  RFC 3986 characters with `%` as a hex escape, checked on the raw string before `URLComponents`
+  (Foundation may percent-encode what it would otherwise refuse; a non-ASCII host must be punycode).
+  **Round 2.** V1: an upload is bound to the sign-in generation it started in, checked when the
+  request is built, not only before the await: `SessionStore.generationClock`
+  (`SignInGenerationClock`, a `Mutex`, set at every `signInGeneration` bump, in the environment as
+  `signInGenerationClock`) gives `EditorView` an `isCurrent()` closure that
+  `DocsAPIClient.mediaUploader(isCurrent:)` threads to `uploadAttachment`/`send`/`performRequest`,
+  which asks it synchronously after building the request and before handing it to the session
+  (false: `CancellationError`, nothing sent). V2: a pdf url must also be one the export spells
+  (`NativeExportMarkdown.isSafePDFURL`, for native edits and pastes), and a pasted media block must
+  have its export chunk before insertion. V3: a pasted url is canonicalised first
+  (`MediaBlock.pastedURL`: a web IRI such as `https://images.example/été.png` or a non-ASCII host is
+  percent-encoded and punycoded by `URL(string:encodingInvalidCharacters:)`, then must pass
+  `isAuthoredURL`; whitespace and controls are refused before), so a cut web image pastes back;
+  `BlockNoteSubtreePayload.validatingMedia` returns the canonical copies. V4: a submitted name or
+  caption becomes that field's synced value at once (`NativeMediaTextDraft.committed`), so a
+  delivery bringing a peer's later rename with ours is followed, not overwritten by Done.
+  **Round 3.** W1: the clock moves **before** a web login writes cookies: `WebLoginView`'s
+  `onCookiesWillChange` (called on the main actor just before `captureCookies`; the three login
+  views pass their view model's `cookiesWillChange`) calls `SessionStore.noteSessionCookiesWillChange`,
+  which `beginSwitch`es the clock: every earlier `isCurrent` closure is false from then on, and one
+  made while switching stays false; the next `signInGeneration` bump `advance`s it and ends the
+  switch. W2: the paste check that keeps tables and media at the top level (`nestsTable`) now walks a
+  pasted column group's columns (their blocks at the column's top level), so a pdf nested under a
+  paragraph in a pasted group is refused instead of leaving a document without a shadow. W3: a
+  submitted name or caption is **pending** (`NativeMediaTextDraft.pendingName`/`pendingCaption`),
+  the field dirty, until a delivery shows it stored or a peer's later change of that field supersedes
+  it (`setMediaProps` returning true only means posted: a command and its retry can both go stale),
+  so Done writes a lost submit again.
+  **UI:** slash items Image/Video/Audio/File/PDF (`mediaSlashItems`, `SlashMenuAction.media`,
+  native only) insert and set `requestedMedia`, which opens the inspector; a media card tap or
+  VoiceOver activation (`NativeBlockControls.onOpenMedia`) opens `NativeMediaInspector` (a sheet,
+  `nativeMedia.*` identifiers): name and caption (one command on submit or Done), Show preview,
+  Width (Original or 240–640 pt, plus the block's own), Alignment, Upload photo (image), Upload file
+  (types by kind), Link (`isAuthoredURL`; the name becomes its last path segment, the web's
+  `filenameFromURL`), Open (a same-origin attachment through `AttachmentCardView`, its loader's
+  rules; any other `isAuthoredURL` URL only on a tap, in the browser, its host shown) and Delete; read-only for a document
+  that cannot type and for `uploadLoader`. The inspector reads `session.revision` so it re-renders
+  after each delivery (the surface is not observable). An empty media card says
+  `native_editor_media_empty`. **Known limits:** no native offline queue (the classic photo
+  sidecar stays classic), an upload finishing after the editor closed is dropped (the empty block
+  stays), no drag/drop or paste of files, no poster frames, unknown props survive an edit where the
+  web drops them, a nested media block authored on the web keeps its document read-only unless it
+  is a plain image, Width offers presets (any web width is kept and shown), and 72ebe1bb stays
+  read-only (interlink: 13c; math, diagram: PR14). Tests: `BlockNoteMediaOracleTests`
+  (`BlockNoteMediaCaptures`: 70 web fixtures modeled with the export as their shadow, byte for byte
+  except empty blocks and classic list spellings; 56 web edits — caption, name, commit, replace,
+  width, fraction, alignment, preview, slash insertion in every shape, delete — equal to the web's
+  XML and Markdown; refusals; the nested captioned image; `uploadLoader`; an unknown prop; the
+  `.review/` capture), `NativeMediaTests` (slash items, inspector commands, a peer's caption, the
+  upload pipeline incl. other documents' and other origins' URLs, a block deleted or filled during
+  the upload, offline/local/concurrent refusal, a closed editor, a too-large file) and the host UI
+  test `testAMediaCaptionEditedInTheInspectorSurvivesRelaunch` (`--native-open --native-media-edit`).
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below

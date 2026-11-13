@@ -247,7 +247,13 @@ in between still has a shadow. Since PR11c a table larger than 1,000 cells still
 as the web writes them, so they save like any other edit. Since PR12a a familiar root column
 group is spelled as the export spells it (each column's blocks as root blocks, column after
 column, lists restarting at each column), so a document with one types too; a group holding a
-block without a shadow (media, math, a diagram) keeps its document read-only. Existing Markdown
+block without a shadow (math, a diagram) keeps its document read-only. Since PR13a a root (or
+column-root) media block without children is spelled as the export spells it (images and videos
+as `![name](url)` or a `<figure>` with a caption, audio as `<audio>` HTML, files and hidden
+previews as a link and a caption paragraph, a PDF preview and a peer's `uploadLoader` as nothing),
+so documents with media type too; a media block below the root keeps the classic image line or
+none. A native upload needs a connection (no offline queue for native media yet, PR13b): the
+classic photo sidecar (`PendingAttachmentStore`) stays the classic editor's. Existing Markdown
 drafts retain their classic owner.
 
 > **Amendment (2026-07-03):** the document **lists** (Home, the editor's

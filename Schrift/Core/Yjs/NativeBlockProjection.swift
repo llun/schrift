@@ -133,6 +133,7 @@ enum NativeBlockProjection {
         guard
             tree.blocks.contains(where: {
                 $0.depth > 0 || $0.block.node == "table" || $0.block.node == "columnList"
+                    || MediaBlock.isMediaLike($0.block.node)
                     || nativeOnlyReasons.contains(opaqueReason($0.block)) || hasEdgeWhitespace($0.block)
             })
         else {
@@ -155,7 +156,28 @@ enum NativeBlockProjection {
         while root < blocks.endIndex {
             var end = root + 1
             while end < blocks.endIndex, blocks[end].depth > 0 { end += 1 }
-            if blocks[root].block.node == "table" {
+            // Media below the root or with children (PR13a): only the classic
+            // projection's plain image line has a spelling (the export's
+            // flattening there is unconfirmed).
+            if blocks[root..<end].contains(where: {
+                MediaBlock.isMediaLike($0.block.node) && $0.block.fidelity != .modeled
+                    && ($0.depth > 0 || end > root + 1)
+            }) {
+                return nil
+            }
+            if MediaBlock.isMediaLike(blocks[root].block.node), end == root + 1 {
+                // A root media block (PR13a): the export's own chunk, read
+                // from its element (the classic projection keeps most media opaque).
+                guard let item = items[blocks[root].handle.itemID], let element = contentElement(of: item),
+                    let props = YBlockProjection.props(of: element),
+                    MediaBlock.unfamiliarReason(
+                        node: blocks[root].block.node, props: props, hasContent: hasContent(element)) == nil,
+                    let before = classicSpelling(blocks[plain..<root]),
+                    let chunk = NativeExportMarkdown.media(node: blocks[root].block.node, props: props)
+                else { return nil }
+                parts += [before, chunk]
+                plain = end
+            } else if blocks[root].block.node == "table" {
                 // A root table without children: the export's own grid (PR11a).
                 guard end == root + 1, let item = items[blocks[root].handle.itemID],
                     let grid = tableGrid(of: item), let before = classicSpelling(blocks[plain..<root]),
@@ -280,6 +302,24 @@ enum NativeBlockProjection {
             return .opaque(reason: "columnList: unmodeled block")
         }
         return .modeled
+    }
+
+    /// A container's content element (its first element child).
+    private static func contentElement(of container: YItem) -> YType? {
+        guard case .type(let type) = container.content,
+            let first = YBlockProjection.children(of: type, includeFormats: false).first,
+            case .type(let element) = first.content, case .xmlElement = element.typeRef
+        else { return nil }
+        return element
+    }
+
+    /// Whether an element holds anything but empty text (a media block holds
+    /// nothing), as the projection's runs read it.
+    private static func hasContent(_ element: YType) -> Bool {
+        YBlockProjection.children(of: element, includeFormats: false).contains { child in
+            guard case .type(let type) = child.content, type.typeRef == .xmlText else { return true }
+            return YBlockProjection.textRuns(type).map { $0.contains { !$0.text.isEmpty } } ?? true
+        }
     }
 
     /// The root group's containers by item id (a table's grid is read from its item).

@@ -1149,6 +1149,29 @@ editor on that column with the caret at the block, through a handle that refuses
 group re-created since it was read. Move up/down that takes a block into the next or previous
 column now takes the caret with it.
 
+**PR13a Native media: images, video, audio, files and PDFs you can edit.** A media block the
+web wrote (BlockNote's image, video, audio and file, and Docs' PDF) is read as the native editor
+understands it whatever its caption, width, alignment or preview setting, so a document holding
+media types and saves. Its Markdown shadow is the server's own export: `![name](url)` for a
+shown image or video, raw `<figure>` HTML once it has a caption, `<audio>` HTML for audio, a
+link plus a caption paragraph for a file or a hidden preview, and nothing for a PDF preview (the
+server prints an iframe as nothing). Another client's upload in progress (Docs' `uploadLoader`)
+is shown as "Upload in progress elsewhere", saved as nothing, and never polled, replaced or
+edited: the web client that wrote it finishes it. The slash menu offers Image, Video, Audio,
+File and PDF; like the web it turns the emptied "/query" paragraph into an empty media block (or
+adds one after a paragraph with text) and adds an empty paragraph at the end of the document
+when nothing after the block takes text. Tapping a media card opens its inspector: name,
+caption, width, alignment and preview are each one `updateBlock`-shaped command (an unset width
+is removed, as the web removes it), and the file comes from Upload photo, Upload file or a
+typed http(s) link. An upload goes through the existing attachment upload and media-check poll
+to the document the editor had open when it started; the URL it returns must be this server's
+media URL for that document, and it is committed only while the block still has the kind and
+URL the upload started from (a block deleted, converted or filled meanwhile keeps what it has).
+Nothing local, no placeholder and no picked name the server did not store reaches the replica.
+Uploads need a connection and a document the server knows; the native offline queue, uploads
+that finish after the editor closed, and drag and drop are PR13b. A media block stays a root
+(or column-root) block without children, like a table, because only that has a confirmed shadow.
+
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom
 actions on the text view) acts on the caret's block and its whole subtree: Move up, Move

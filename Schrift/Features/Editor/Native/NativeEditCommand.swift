@@ -71,6 +71,15 @@ struct NativeEditCommand: Equatable, Sendable {
         /// `count` columns; `ids` the group's (unless it replaces the
         /// paragraph), then each column's and its paragraph's.
         case insertColumns(count: Int, ids: [String], removing: Range<Int>)
+        /// The slash menu's media items (PR13a), on the "/query" paragraph: an
+        /// empty `node` block (BlockNote's `insertOrUpdateBlockForSlashMenu`)
+        /// in place of the emptied paragraph or after it; `ids` are the new
+        /// block's and the trailing paragraph's (either may go unused).
+        case insertMedia(node: String, ids: [String], removing: Range<Int>)
+        /// A media block's props (PR13a): BlockNote's `updateBlock`.
+        /// `expecting` is the slot an upload started from: a block whose kind
+        /// or url changed since refuses the commit.
+        case mediaProps([ProjectedProp], expecting: MediaBlock.Slot? = nil)
         case undo
         case redo
     }
@@ -104,7 +113,8 @@ struct NativeEditCommand: Equatable, Sendable {
         case .replace(_, let replacement, _): return replacement
         case .range(let range): return range.replacement
         case .split, .join, .marks, .props, .blockType, .indent, .outdent, .moveUp, .moveDown, .duplicate,
-            .deleteBlock, .insertBlock, .insertSubtrees, .lineBreak, .table, .columns, .insertColumns, .undo, .redo:
+            .deleteBlock, .insertBlock, .insertSubtrees, .lineBreak, .table, .columns, .insertColumns, .insertMedia,
+            .mediaProps, .undo, .redo:
             return ""
         }
     }

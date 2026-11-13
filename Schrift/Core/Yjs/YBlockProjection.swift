@@ -609,8 +609,14 @@ extension YBlockProjection {
             return classifyDivider(props, runs: runs)
         case "pageBreak":
             return nativeMarks ? classifyPageBreak(props, runs: runs) : .opaque(reason: "unknownNode:pageBreak")
-        case "image":
+        // The native projection models familiar media blocks with any props
+        // (PR13a); the classic one keeps its default-props image only.
+        case "image" where !nativeMarks:
             return classifyImage(props, runs: runs)
+        case let node where nativeMarks && MediaBlock.isMediaLike(node):
+            return MediaBlock.unfamiliarReason(node: node, props: props, hasContent: !runs.isEmpty).map {
+                .opaque(reason: "\(node): \($0)")
+            } ?? .modeled
         default:
             return .opaque(reason: "unknownNode:\(node)")
         }

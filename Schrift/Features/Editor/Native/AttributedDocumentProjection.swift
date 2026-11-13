@@ -56,6 +56,10 @@ struct NativeEditorLabels: Equatable {
     var imageExternalA11y = Strings_en.table[.editor_image_external_a11y]!
     var imageOffline = Strings_en.table[.editor_image_offline]!
     var imageFailed = Strings_en.table[.editor_image_failed]!
+    /// A media card's states (PR13a): no url yet, ours uploading, a peer's upload.
+    var mediaEmpty = Strings_en.table[.native_editor_media_empty]!
+    var mediaUploading = Strings_en.table[.native_editor_media_uploading]!
+    var uploadElsewhere = Strings_en.table[.native_editor_upload_elsewhere]!
     /// The block menu's title and actions (PR06d): the edit menu and VoiceOver.
     var blockMenu = Strings_en.table[.native_editor_block_actions]!
     var blockActions = Dictionary(

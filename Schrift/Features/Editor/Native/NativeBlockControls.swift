@@ -75,6 +75,16 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     /// A tap (or VoiceOver activation) on a column group's card opens the
     /// column editor (PR12a), with the group's block id.
     var onOpenColumns: ((String) -> Void)?
+    /// A tap (or VoiceOver activation) on a media block's card opens its
+    /// inspector (PR13a), with the block id.
+    var onOpenMedia: ((String) -> Void)?
+    /// The media block whose upload runs (PR13a): its realised card says so.
+    var uploadingBlock: String? {
+        didSet {
+            guard uploadingBlock != oldValue else { return }
+            for view in attachmentViews.allObjects { view.applyUploadState() }
+        }
+    }
     /// Every preview view TextKit realised: the bounded-realisation seam.
     private(set) var attachmentViewLoads = 0
     let attachmentViews = NSHashTable<NativeAttachmentView>.weakObjects()

@@ -449,9 +449,10 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
             NativeInputCoordinator.slashItems.map(\.id),
             [
                 "paragraph", "heading1", "heading2", "heading3", "toggleHeading", "bullet", "numbered", "checklist",
-                "toggleList", "quote", "code", "twoColumns", "threeColumns",
+                "toggleList", "quote", "code", "twoColumns", "threeColumns", "mediaImage", "mediaVideo", "mediaAudio",
+                "mediaFile", "mediaPDF",
             ],
-            "divider, photo and file wait for later slices; the toggles are NativeToggleTests', the columns ColumnStructureTests'"
+            "divider waits for a later slice; the toggles are NativeToggleTests', the columns ColumnStructureTests', media NativeMediaTests'"
         )
         for (itemID, node, level) in expected {
             let harness = try await makeHarness([paragraph("p", "Above"), paragraph("s", "")])

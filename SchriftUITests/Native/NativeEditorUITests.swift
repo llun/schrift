@@ -206,6 +206,57 @@ final class NativeEditorUITests: XCTestCase {
     /// PR12a: the group's card opens the column editor; typing in one column,
     /// switching to the other with the picker (the keyboard stays) and typing
     /// there are durable, and the document shows the group as one card.
+    /// PR13a: a document holding a captioned image and a file types; the
+    /// image's inspector edits its caption (one durable command, which
+    /// survives a relaunch), and offers no upload offline.
+    func testAMediaCaptionEditedInTheInspectorSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-media-edit"]
+        app.launch()
+        let card = app.descendants(matching: .any)["nativeEditor.attachment.owned-image"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["nativeEditor.attachment.owned-file"].exists)
+        XCTAssertFalse(app.staticTexts["nativeEditor.preservedNotice"].exists, "the document types")
+        card.tap()
+        let caption = app.textFields["nativeMedia.caption"]
+        XCTAssertTrue(caption.waitForExistence(timeout: 5), "the inspector opened")
+        XCTAssertEqual(caption.value as? String, "Old caption")
+        XCTAssertFalse(app.buttons["nativeMedia.uploadFile"].isEnabled, "offline: no upload")
+        // The inspector follows the document: hiding the preview flips the switch it reads back.
+        let preview = app.switches["nativeMedia.preview"]
+        XCTAssertEqual(preview.value as? String, "1")
+        preview.switches.firstMatch.press(forDuration: 0.2)
+        let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '0'"), object: preview)
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed, "the switch reads the written prop")
+        caption.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        // The tap leaves the caret at the end: delete "Old caption", then type.
+        caption.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 11) + "Harbour at dawn")
+        app.buttons["nativeMedia.done"].tap()
+        // Shown by name while its preview is hidden; the caption is in the inspector.
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.tap()
+        XCTAssertTrue(caption.waitForExistence(timeout: 5))
+        XCTAssertEqual(caption.value as? String, "Harbour at dawn")
+        preview.switches.firstMatch.press(forDuration: 0.2)
+        let shown = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '1'"), object: preview)
+        XCTAssertEqual(XCTWaiter.wait(for: [shown], timeout: 5), .completed)
+        app.buttons["nativeMedia.done"].tap()
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        let captioned = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", "Harbour at dawn"), object: card)
+        XCTAssertEqual(XCTWaiter.wait(for: [captioned], timeout: 5), .completed, "the card shows the caption")
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 5))
+        app.terminate()
+
+        app.launchArguments = ["--native-open", "--native-media-edit"]
+        app.launch()
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        let restored = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", "Harbour at dawn"), object: card)
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 5), .completed, "the journal restores the caption")
+    }
+
     func testTypingInBothColumnsSurvivesRelaunch() {
         let app = XCUIApplication()
         app.launchArguments = ["--native-open", "--reset", "--native-columns"]

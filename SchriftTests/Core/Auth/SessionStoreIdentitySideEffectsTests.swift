@@ -26,6 +26,40 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertNil(first.imageCacheSessionID)
     }
 
+    /// PR13a review V1: the thread-safe clock moves with every sign-in
+    /// generation (cookie handover, sign-in, sign-out), so a request bound to
+    /// an earlier one is never sent.
+    func testTheGenerationClockMovesAtEveryAccountChange() throws {
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        for change in ["handover", "signIn", "signOut"] {
+            let isCurrent = store.generationClock.isCurrent()
+            XCTAssertTrue(isCurrent(), change)
+            switch change {
+            case "handover": store.noteSessionCookiesReplaced()
+            case "signIn": try store.signIn(serverURL: serverURL)
+            default: try store.signOut()
+            }
+            XCTAssertFalse(isCurrent(), change)
+        }
+    }
+
+    /// PR13a review W1: a web login stops every request bound to the previous
+    /// session before it writes new cookies, and nothing bound while it
+    /// switches passes either, until the handover is noted.
+    func testRequestsStopBeforeAWebLoginWritesItsCookies() throws {
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        let before = store.generationClock.isCurrent()
+        store.noteSessionCookiesWillChange()
+        XCTAssertFalse(before())
+        let during = store.generationClock.isCurrent()
+        XCTAssertFalse(during(), "bound while switching")
+        store.noteSessionCookiesReplaced()
+        XCTAssertFalse(during())
+        XCTAssertTrue(store.generationClock.isCurrent()(), "the new session's requests pass")
+    }
+
     /// Sign-in is the moment a possibly-different account takes over, and the cached profile
     /// is shown *before* any fetch — so a kept entry would put the previous user's name and
     /// email on the new user's Profile screen, indefinitely if they are offline.

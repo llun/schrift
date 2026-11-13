@@ -365,6 +365,12 @@ final class DocumentEngine {
         if case .insertColumns(let count, let ids, let removing) = command.kind {
             return try prepareInsertColumns(command, count: count, ids: ids, removing: removing)
         }
+        if case .insertMedia(let node, let ids, let removing) = command.kind {
+            return try prepareInsertMedia(command, node: node, ids: ids, removing: removing)
+        }
+        if case .mediaProps(let props, let expecting) = command.kind {
+            return try prepareMediaProps(command, props: props, expecting: expecting)
+        }
         // A prop edit (a code block's language) is the one command code accepts.
         let isPropEdit = if case .props = command.kind { true } else { false }
         let (node, units) = try structuralTarget(command.blockID, allowCode: isPropEdit)
@@ -615,8 +621,8 @@ final class DocumentEngine {
             throw DocumentEngineError.unsupportedNativeInput  // prepared above
         case .undo, .redo:
             throw DocumentEngineError.unsupportedNativeInput  // `applyHistoryStep`
-        case .lineBreak, .table, .columns, .insertColumns:
-            throw DocumentEngineError.unsupportedNativeInput  // cells, tables and groups, prepared above
+        case .lineBreak, .table, .columns, .insertColumns, .insertMedia, .mediaProps:
+            throw DocumentEngineError.unsupportedNativeInput  // cells, tables, groups and media, prepared above
         }
         return (write, caret)
     }
@@ -695,11 +701,15 @@ final class DocumentEngine {
         return (TableGrid.paragraphRuns(element) ?? []).flatMap { Array($0.text.utf16) }
     }
 
-    /// A table block: the shadow spells one only as a root block without
-    /// children, so no command may nest one or give one children (PR11a).
+    /// A table (PR11a) or media block (PR13a): the shadow spells one only as
+    /// a root block without children, so no command may nest one or give one
+    /// children.
     private func isTable(_ blockID: String) -> Bool {
-        builder.index.entries[blockID]?.element?.typeRef == .xmlElement(nodeName: "table")
+        guard case .xmlElement(let node)? = builder.index.entries[blockID]?.element?.typeRef else { return false }
+        return Self.rootOnlyNodes.contains(node)
     }
+
+    private static let rootOnlyNodes: Set<String> = MediaBlock.nodes.union(["table", MediaBlock.uploadLoader])
 
     /// Whether the blocks a move takes (`blockID` and the following ones
     /// `including` accepts, as `requireMovable` walks them) hold a table.
@@ -714,12 +724,24 @@ final class DocumentEngine {
         return false
     }
 
-    /// Whether pasted containers would put a table below the root or give
-    /// one children.
+    /// Whether pasted containers would put a table or media block below the
+    /// root (or a column's top level) or give one children. A pasted column
+    /// group's columns are walked too (PR13a review W2), their blocks at their
+    /// column's top level.
     private static func nestsTable(_ copies: [BlockNoteWriter.Copy], depth: Int) -> Bool {
         copies.contains { copy in
+            if case .element("columnList", _, let columns) = copy {
+                return columns.contains { column in
+                    guard case .element("column", _, let blocks) = column else { return false }
+                    return nestsTable(blocks, depth: 0)
+                }
+            }
             guard case .element("blockContainer", _, let children) = copy else { return false }
-            if case .element("table", _, _)? = children.first, depth > 0 || children.count > 1 { return true }
+            if case .element(let node, _, _)? = children.first, rootOnlyNodes.contains(node),
+                depth > 0 || children.count > 1
+            {
+                return true
+            }
             return children.dropFirst().contains { child in
                 guard case .element("blockGroup", _, let inner) = child else { return false }
                 return nestsTable(inner, depth: depth + 1)
@@ -1002,6 +1024,85 @@ final class DocumentEngine {
         )
     }
 
+    /// The slash menu's media items (PR13a, `insertOrUpdateBlockForSlashMenu`):
+    /// the "/query" removed, then an empty `node` block replacing the
+    /// paragraph (its id kept) when nothing else is left, else after it; and
+    /// an empty paragraph after the document's last root block when no later
+    /// sibling takes text. Root or column-root paragraphs without children
+    /// only: media below the root has no shadow.
+    private func prepareInsertMedia(_ command: NativeEditCommand, node: String, ids: [String], removing: Range<Int>)
+        throws -> PreparedCommand
+    {
+        let index = builder.index
+        let (paragraph, units) = try structuralTarget(command.blockID)
+        guard paragraph == "paragraph", MediaBlock.nodes.contains(node), let entry = index.entries[command.blockID],
+            entry.depth == 0, entry.nestedGroup == nil, ids.count == 2, ids[0] != ids[1],
+            Self.isBoundary(removing.lowerBound, in: units), Self.isBoundary(removing.upperBound, in: units),
+            ids.allSatisfy({ [used = usedIDs()] in isUnused($0, in: used) })
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let replacing = units.count == removing.count
+        let item = entry.containerItem
+        let group = entry.group
+        let trailing = writer.needsTrailingParagraph(after: item, in: group)
+        return (
+            write: {
+                try self.writer.transaction { _ in
+                    if !removing.isEmpty, !replacing {
+                        try self.writer.replaceText(
+                            in: try self.writer.indexedTarget(item, id: command.blockID), range: removing, with: "")
+                    }
+                    try self.writer.insertMedia(
+                        node, at: item, in: group, replacing: replacing, blockID: ids[0],
+                        paragraphID: trailing ? ids[1] : nil)
+                }
+            },
+            // The caret goes where the web's does: the next block taking text.
+            caret: {
+                if trailing { return EditorPosition(blockID: ids[1], offset: 0, assoc: -1) }
+                let media = replacing ? command.blockID : ids[0]
+                let list = self.builder.index.list(of: media)
+                guard let at = self.builder.index.listPosition(of: media) else {
+                    return EditorPosition(blockID: media, offset: 0, assoc: -1)
+                }
+                let next =
+                    list[(at + 1)...].first { id in
+                        guard case .xmlElement(let name)? = self.builder.index.entries[id]?.element?.typeRef else {
+                            return true
+                        }
+                        return !MediaBlock.contentless.contains(name)
+                    } ?? media
+                return EditorPosition(blockID: next, offset: self.textLength(next), assoc: -1)
+            }
+        )
+    }
+
+    /// A media block's props (PR13a), validated per kind before arming;
+    /// `expecting` (an upload's slot) refuses a block whose kind or url changed.
+    private func prepareMediaProps(_ command: NativeEditCommand, props: [ProjectedProp], expecting: MediaBlock.Slot?)
+        throws -> PreparedCommand
+    {
+        let index = builder.index
+        guard index.isCanonical, let entry = index.entries[command.blockID], !index.isTableParagraph(command.blockID),
+            !builder.nativeSnapshot(entry).block.fidelity.isOpaque, let element = entry.element,
+            case .xmlElement(let node)? = element.typeRef, MediaBlock.nodes.contains(node),
+            !props.isEmpty, Set(props.map(\.key)).count == props.count,
+            props.allSatisfy({ MediaBlock.isValidEdit($0, on: node) }),
+            let stored = YBlockProjection.props(of: element)
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        if let expecting, expecting != MediaBlock.Slot(node: node, url: MediaBlock.string("url", in: stored)) {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        let item = entry.containerItem
+        return (
+            write: {
+                try self.writer.setMediaProps(
+                    in: try self.writer.mediaTarget(item, id: command.blockID),
+                    props: props.map { ($0.key, $0.value) })
+            },
+            caret: { EditorPosition(blockID: command.blockID, offset: 0, assoc: -1) }
+        )
+    }
+
     /// An id no block, column or group of the replica uses.
     private func isUnused(_ id: String, in used: Set<String>) -> Bool {
         !id.isEmpty && builder.index.entries[id] == nil && !used.contains(id)
@@ -1231,7 +1332,7 @@ final class DocumentEngine {
         case .insertSubtrees(let payload):
             // The payload is untrusted (any app's pasteboard): decoded, bounded
             // and validated here, and every container gets a fresh id.
-            let copies = try BlockNoteSubtreePayload.decode(payload)
+            let copies = try BlockNoteSubtreePayload.validatingMedia(BlockNoteSubtreePayload.decode(payload))
             let shape = try BlockNoteSubtreePayload.validate(copies)
             let newIDs = (0..<shape.blocks).map { _ in UUID().uuidString }
             // A pasted group (PR12b) lands at the root only: never in a column or a block's children.
