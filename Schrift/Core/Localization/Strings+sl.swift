@@ -19,6 +19,7 @@ enum Strings_sl {
         .native_editor_media_upload_dropped: "Blok se je med nalaganjem spremenil, zato datoteka ni bila dodana.",
         .native_editor_media_upload_stopped: "Nalaganje ni uspelo · tapnite za ponovni poskus",
         .native_editor_media_upload_waiting: "Naloži se, ko boste spet povezani.",
+        .native_editor_media_upload_queued: "Čaka na nalaganje",
         .native_media_retry_upload: "Ponovno naloži",
         .native_media_discard_upload: "Zavrzi nalaganje",
         .native_media_name: "Ime",

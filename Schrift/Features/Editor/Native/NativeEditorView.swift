@@ -67,7 +67,8 @@ struct NativeEditorView: View {
                     onOpenTable: { openTable = NativeTableRequest(id: $0) },
                     onOpenColumns: { openColumns = columnEditor($0) },
                     onOpenMedia: { openMedia = NativeMediaRequest(id: $0) },
-                    uploadingBlocks: uploads?.uploadingBlocks ?? [], failedUploads: uploads?.failedBlocks ?? []
+                    uploadingBlocks: uploads?.uploadingBlocks ?? [], waitingUploads: uploads?.waitingBlocks ?? [],
+                    failedUploads: uploads?.failedBlocks ?? []
                 )
                 .id(ObjectIdentifier(session))
             }
@@ -489,6 +490,7 @@ extension NativeEditorLabels {
             imageFailed: loc[.editor_image_failed], mediaEmpty: loc[.native_editor_media_empty],
             mediaUploading: loc[.native_editor_media_uploading],
             mediaUploadFailed: loc[.native_editor_media_upload_stopped],
+            mediaUploadWaiting: loc[.native_editor_media_upload_queued],
             uploadElsewhere: loc[.native_editor_upload_elsewhere],
             blockMenu: loc[.native_editor_block_actions],
             blockActions: Dictionary(
@@ -508,6 +510,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
     let onOpenColumns: (String) -> Void
     var onOpenMedia: ((String) -> Void)? = nil
     var uploadingBlocks: Set<String> = []
+    var waitingUploads: Set<String> = []
     var failedUploads: Set<String> = []
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -532,6 +535,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
         session.textView.blockControls.onOpenColumns = onOpenColumns
         session.textView.blockControls.onOpenMedia = onOpenMedia
         session.textView.blockControls.uploadingBlocks = uploadingBlocks
+        session.textView.blockControls.waitingUploads = waitingUploads
         session.textView.blockControls.failedUploads = failedUploads
         coordinator.update(
             surface: session.surface, presentation: NativeTextPresentation(contentSize: contentSize, labels: labels))

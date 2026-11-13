@@ -159,7 +159,7 @@ final class NativeSessionRegistry {
     func commitMedia(
         _ props: [ProjectedProp]?, into blockID: String, expecting slot: MediaBlock.Slot, scope: ReplicaScope,
         store: ReplicaStore, attempts: Int = 50, interval: Duration = .milliseconds(100),
-        mayWrite: () -> Bool = { false }, scheduler make: () -> NativeReplicaSaveScheduler
+        mayWrite: () async -> Bool = { false }, scheduler make: () -> NativeReplicaSaveScheduler
     ) async -> MediaCommit {
         switch Result(catching: { try store.manifest(for: scope) }) {
         case .success(nil): return .gone
@@ -184,13 +184,17 @@ final class NativeSessionRegistry {
         guard let props else { return .matches }
         let session = columnSurface ?? root
         guard root.canType, !root.hasUnsupportedRoot else { return .unavailable }
-        let entry = entries[scope]
-        if entry?.isWritable != true {
-            // Another surface (an editor) decides whether the scope writes.
-            guard entry?.surfaces.count == 1, mayWrite() else { return .unavailable }
-            installJournal(ReplicaSaveAdapter(store: store, scope: scope), for: scope)
+        if entries[scope]?.isWritable != true {
+            let allowed = await mayWrite()
+            // Re-read after the await: an editor may have opened (and decided) meanwhile.
+            let entry = entries[scope]
+            if entry?.isWritable != true {
+                // Another surface (an editor) decides whether the scope writes.
+                guard allowed, entry?.surfaces.count == 1, !session.isClosed else { return .unavailable }
+                installJournal(ReplicaSaveAdapter(store: store, scope: scope), for: scope)
+            }
         }
-        let scheduler = entry?.scheduler ?? make()
+        let scheduler = entries[scope]?.scheduler ?? make()
         for attempt in 0..<attempts {
             if attempt > 0 { try? await Task.sleep(for: interval) }
             await session.settle()

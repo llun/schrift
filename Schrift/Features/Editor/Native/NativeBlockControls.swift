@@ -86,6 +86,12 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
             for view in attachmentViews.allObjects { view.applyUploadState() }
         }
     }
+    var waitingUploads: Set<String> = [] {
+        didSet {
+            guard waitingUploads != oldValue else { return }
+            for view in attachmentViews.allObjects { view.applyUploadState() }
+        }
+    }
     var failedUploads: Set<String> = [] {
         didSet {
             guard failedUploads != oldValue else { return }

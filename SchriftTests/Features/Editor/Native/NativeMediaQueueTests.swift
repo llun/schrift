@@ -46,6 +46,8 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
         let mediaPath = Locked(NativeMediaQueueTests.mediaPath)
         let offline = Locked(false)
         let gate = Locked<MockURLProtocol.ResponseGate?>(nil)
+        /// `documents/{id}/`'s `abilities.update`; nil answers 404 (the gate falls back to caches).
+        let canUpdate = Locked<Bool?>(nil)
         var uploads: Int { log.count(ofMethod: "POST", urlContaining: "attachment-upload") }
     }
 
@@ -134,6 +136,11 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
                     statusCode: server.uploadStatus.value, headers: [:],
                     body: Data(#"{"file": "/api/v1.0/documents/x/media-check/?key=k.png"}"#.utf8), error: nil,
                     releasedBy: server.gate.value)
+            case "GET" where url.hasSuffix("documents/\(Self.documentID.uuidString.lowercased())/"):
+                guard let update = server.canUpdate.value else {
+                    return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+                }
+                return .init(statusCode: 200, headers: [:], body: Self.documentJSON(update: update), error: nil)
             case "GET" where url.contains("media-check"):
                 let body = #"{"status":"ready","file":"\#(server.mediaPath.value)"}"#
                 return .init(statusCode: 200, headers: [:], body: Data(body.utf8), error: nil)
@@ -141,6 +148,17 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
                 return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
             }
         }
+    }
+
+    private nonisolated static func documentJSON(update: Bool) -> Data {
+        Data(
+            """
+            {"id": "\(documentID.uuidString.lowercased())", "title": "Doc", "excerpt": null,
+             "abilities": {"update": \(update)}, "computed_link_reach": "restricted", "computed_link_role": null,
+             "created_at": "2026-01-15T10:30:00Z", "creator": null, "depth": 1, "link_role": "reader",
+             "link_reach": "restricted", "numchild": 0, "path": "0001", "updated_at": "2026-01-15T10:30:00Z",
+             "user_role": "owner", "is_favorite": false}
+            """.utf8)
     }
 
     /// An editor on the scope, typing through the scope's journal as `installTyping` does.
@@ -396,6 +414,76 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
             XCTAssertNotNil(app.coordinator.pendingAttachment(localID: localID), gate)
             XCTAssertEqual(try localCommits(device), 0, gate)
         }
+    }
+
+    /// Review Y1: the server's reader answer wins over a cached `update: true`
+    /// and is remembered, so an offline pass (or a relaunch) never trusts the
+    /// stale cache; an editor's reader answer (`noteNativeReader`) counts too.
+    func testAReaderAnswerWinsOverTheCacheAndIsRemembered() async throws {
+        let device = try makeDevice()
+        let server = Server()
+        server.canUpdate.value = false
+        let localID = leftBehind(device, checkpoint: Self.mediaURL)
+        let app = launch(device, server: server)
+        await app.coordinator.syncPendingDrafts()
+        await waitUntil { app.registry.openScopes.isEmpty }
+        XCTAssertNotNil(app.coordinator.pendingAttachment(localID: localID))
+        XCTAssertEqual(try localCommits(device), 0)
+        // Offline after a relaunch: the cache still says update, the remembered answer does not.
+        server.canUpdate.value = nil
+        let relaunched = launch(device, server: server)
+        await relaunched.coordinator.syncPendingDrafts()
+        await waitUntil { relaunched.registry.openScopes.isEmpty }
+        XCTAssertEqual(try localCommits(device), 0)
+        // The server saying it may again lifts it.
+        server.canUpdate.value = true
+        await relaunched.coordinator.syncPendingDrafts()
+        await waitUntil { relaunched.coordinator.pendingAttachment(localID: localID) == nil }
+        XCTAssertEqual(try localCommits(device), 1)
+    }
+
+    /// Review Y1: an editor's reader answer is remembered for the scope.
+    func testAnEditorsReaderAnswerBlocksAHeadlessCommit() async throws {
+        let device = try makeDevice()
+        let localID = leftBehind(device, checkpoint: Self.mediaURL)
+        let app = launch(device, server: Server())
+        app.coordinator.noteNativeReader(device.scope)
+        await app.coordinator.syncPendingDrafts()
+        await waitUntil { app.registry.openScopes.isEmpty }
+        XCTAssertNotNil(app.coordinator.pendingAttachment(localID: localID))
+        XCTAssertEqual(try localCommits(device), 0)
+    }
+
+    /// Review Y3: a document outside the Home lists (a folder, a deep link)
+    /// commits headlessly once the server says it may be updated; while
+    /// nothing may write it, its card says it waits, not that it uploads.
+    func testADocumentOutsideTheCachesAsksTheServer() async throws {
+        let device = try makeDevice()
+        let server = Server()
+        let localID = leftBehind(device, checkpoint: Self.mediaURL)
+        let app = launch(device, server: server, writable: false)
+        let uploads = NativeMediaUploads(scope: device.scope, queue: app.coordinator)
+        await app.coordinator.syncPendingDrafts()
+        await waitUntil { app.registry.openScopes.isEmpty }
+        XCTAssertEqual(uploads.waitingBlocks, ["mx"], "unknown ability: it waits")
+        XCTAssertTrue(uploads.uploadingBlocks.isEmpty, "never claims to upload")
+        server.canUpdate.value = true
+        await app.coordinator.syncPendingDrafts()
+        await waitUntil { app.coordinator.pendingAttachment(localID: localID) == nil }
+        XCTAssertEqual(try localCommits(device), 1)
+    }
+
+    /// Review Y2: deleting the document drops only this account's records:
+    /// another account's queued photo of the same document keeps its bytes.
+    func testDeletingTheDocumentKeepsAnotherAccountsRecords() async throws {
+        let device = try makeDevice()
+        let mine = leftBehind(device)
+        let theirs = leftBehind(device, owner: UUID())
+        let app = launch(device, server: Server(), leases: false)
+        app.coordinator.discardPendingWork(documentID: Self.documentID)
+        XCTAssertNil(device.attachments.attachment(for: mine))
+        XCTAssertNotNil(device.attachments.attachment(for: theirs))
+        XCTAssertNotNil(device.attachments.data(for: theirs))
     }
 
     /// Review X3: a checkpoint restored from disk is checked like a fresh

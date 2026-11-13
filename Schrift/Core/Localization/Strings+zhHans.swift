@@ -13,6 +13,7 @@ enum Strings_zhHans {
         .native_editor_media_upload_dropped: "上传期间该块已更改，因此未添加文件。",
         .native_editor_media_upload_stopped: "上传失败 · 轻点重试",
         .native_editor_media_upload_waiting: "恢复联网后将上传。",
+        .native_editor_media_upload_queued: "等待上传",
         .native_media_retry_upload: "重新上传",
         .native_media_discard_upload: "放弃上传",
         .native_media_name: "名称",

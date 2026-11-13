@@ -219,9 +219,15 @@ final class NativeAttachmentView: UIView {
         guard let detail else { return }
         let id = content.blockID
         detail.label.text =
-            controls?.failedUploads.contains(id) == true
-            ? labels.mediaUploadFailed
-            : controls?.uploadingBlocks.contains(id) == true ? labels.mediaUploading : detail.text
+            if controls?.failedUploads.contains(id) == true {
+                labels.mediaUploadFailed
+            } else if controls?.waitingUploads.contains(id) == true {
+                labels.mediaUploadWaiting
+            } else if controls?.uploadingBlocks.contains(id) == true {
+                labels.mediaUploading
+            } else {
+                detail.text
+            }
     }
 
     @objc private func openTable() {

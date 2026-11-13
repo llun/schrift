@@ -1287,8 +1287,14 @@ final class DocumentSaveCoordinator {
 
     /// Drop every queued photo for a document, bytes included. Used where the body that named
     /// them is being thrown away, so nothing would ever collect them.
+    /// Only this session's account's records on this server (review Y2): another account's copy of
+    /// the same document keeps its photos, as `isAttachmentReplayable` keeps them dormant.
     func discardPendingAttachments(documentID: UUID) {
-        let localIDs = pendingAttachments.values.filter { $0.documentID == documentID }.map(\.localID)
+        let owner = signedInUser.userID
+        let localIDs = pendingAttachments.values.filter {
+            $0.documentID == documentID && owner != nil && $0.ownerUserID == owner
+                && ($0.serverOrigin == serverOrigin || $0.serverOrigin == client.serverOrigin)
+        }.map(\.localID)
         guard !localIDs.isEmpty else { return }
         attachmentStore.remove(localIDs: localIDs)
         for localID in localIDs { pendingAttachments[localID] = nil }
@@ -1320,6 +1326,9 @@ final class DocumentSaveCoordinator {
     /// Native records whose run is under way: one runner per record, so a pass and a queue kick
     /// never upload the same bytes twice.
     private var nativeRuns: Set<UUID> = []
+    /// Native records a run left behind for a later pass (offline, a gate, a busy block): their
+    /// cards say they wait rather than upload (review Y3). In memory: a relaunch runs them anyway.
+    private(set) var nativeWaiting: Set<UUID> = []
 
     /// Queues a native media upload (PR13b), online or offline alike: bytes, then the record, then
     /// the run starts at once. Nil when nothing was queued (the store is unreadable, the bytes did
@@ -1377,13 +1386,17 @@ final class DocumentSaveCoordinator {
     private func runNativeAttachment(_ localID: UUID, isCurrent: (@Sendable () -> Bool)?) async {
         guard !nativeRuns.contains(localID) else { return }
         nativeRuns.insert(localID)
-        defer { nativeRuns.remove(localID) }
+        nativeWaiting.remove(localID)
+        defer {
+            nativeRuns.remove(localID)
+            if let left = pendingAttachments[localID], left.failedAt == nil { nativeWaiting.insert(localID) }
+        }
         guard let record = pendingAttachments[localID], let target = record.native, record.failedAt == nil,
             isNativeReplayable(record), isCurrent?() != false
         else { return }
         var resolved = record.uploadedURLString
         if resolved == nil {
-            switch await nativeLease(nil, record) {
+            switch await nativeLease(nil, record, isCurrent: isCurrent) {
             case .gone: return removeNativeAttachment(localID)
             case .matches: break
             case .committed, .unavailable: return
@@ -1425,7 +1438,7 @@ final class DocumentSaveCoordinator {
         let props = [
             ProjectedProp(key: "name", value: .string(target.fileName)), ProjectedProp(key: "url", value: .string(url)),
         ]
-        switch await nativeLease(props, record) {
+        switch await nativeLease(props, record, isCurrent: isCurrent) {
         case .committed, .gone: removeNativeAttachment(localID)
         case .matches, .unavailable: break
         }
@@ -1437,16 +1450,16 @@ final class DocumentSaveCoordinator {
     }
 
     /// The headless lease for `record`'s block; without a registry nothing is decided.
-    private func nativeLease(_ props: [ProjectedProp]?, _ record: PendingAttachment) async
-        -> NativeSessionRegistry.MediaCommit
-    {
+    private func nativeLease(
+        _ props: [ProjectedProp]?, _ record: PendingAttachment, isCurrent: (@Sendable () -> Bool)?
+    ) async -> NativeSessionRegistry.MediaCommit {
         guard let registry = nativeSessions, let target = record.native, let scope = record.nativeScope else {
             return .unavailable
         }
         return await registry.commitMedia(
             props, into: target.blockID, expecting: target.slot, scope: scope, store: replicaStore,
             attempts: nativeCommitAttempts, interval: nativeCommitInterval,
-            mayWrite: { [weak self] in self?.nativeMayWrite(scope) ?? false }
+            mayWrite: { [weak self] in await self?.nativeMayWrite(scope, isCurrent: isCurrent) ?? false }
         ) { [weak self, weak registry] in
             NativeReplicaSaveScheduler(
                 enqueue: { try self?.enqueueNativeReplica(scope) ?? false },
@@ -1465,18 +1478,64 @@ final class DocumentSaveCoordinator {
         return display.documentUUID.lowercased() == documentID.uuidString.lowercased() && MediaBlock.isAuthoredURL(url)
     }
 
-    /// The editor open's typing gate, for a headless journal (review X2): the native switch, the
-    /// account's cached `abilities.update` (unknown is no), and `mayType`'s holds (no pending
-    /// create or delete, no live owner, no classic draft). The session's `canType` is the lease's.
-    private func nativeMayWrite(_ scope: ReplicaScope) -> Bool {
+    /// The editor open's typing gate, for a headless journal (review X2, Y1, Y3): the native
+    /// switch, `mayType`'s holds (no pending create or delete, no live owner, no classic draft),
+    /// and `abilities.update`:
+    /// - a scope the server said this account only reads (`noteNativeReader`, or this check's own
+    ///   answer) is refused offline, whatever a cache says, until the server says otherwise;
+    /// - online, the server is asked once (`documents/{id}/`, bound to the run's sign-in
+    ///   generation), so a document outside the Home lists (a folder, a deep link) commits too;
+    /// - with no answer, the account's cached rows decide (Home lists, then subpage lists, which
+    ///   hold only documents this device listed); unknown is no.
+    /// The session's `canType` is the lease's.
+    private func nativeMayWrite(_ scope: ReplicaScope, isCurrent: (@Sendable () -> Bool)?) async -> Bool {
         let documentID = scope.documentID
-        guard nativeEditorEnabled(), signedInUser.userID == scope.ownerUserID,
-            listCache.documents(fetchedFor: scope.ownerUserID).first(where: { $0.id == documentID })?
-                .abilities.update == true
-        else { return false }
-        return !isPendingCreate(documentID: documentID) && !isPendingDelete(documentID: documentID)
-            && !isLiveHeld(documentID: documentID)
-            && (draftStore.draft(for: documentID).map { $0.replica != nil } ?? true)
+        func holds() -> Bool {
+            nativeEditorEnabled() && signedInUser.userID == scope.ownerUserID
+                && !isPendingCreate(documentID: documentID)
+                && !isPendingDelete(documentID: documentID) && !isLiveHeld(documentID: documentID)
+                && (draftStore.draft(for: documentID).map { $0.replica != nil } ?? true)
+        }
+        guard holds() else { return false }
+        let answer = try? await DocsAPIClient.$saveIsCurrent.withValue(isCurrent) {
+            try await client.document(documentID: documentID).abilities.update
+        }
+        // Re-read after the await: a sign-out, a delete or a reader answer may have come between.
+        guard holds(), isCurrent?() != false else { return false }
+        if let answer {
+            if answer { clearNativeReader(scope) } else { noteNativeReader(scope) }
+            return answer
+        }
+        guard !isNativeReader(scope) else { return false }
+        let cached =
+            listCache.documents(fetchedFor: scope.ownerUserID).first { $0.id == documentID }
+            ?? childrenCache.document(for: documentID)
+        return cached?.abilities.update == true
+    }
+
+    private static let nativeReadersKey = "dev.llun.Schrift.nativeMediaReaderScopes"
+
+    /// The server said this account may only read `scope`'s document (an editor's reader answer,
+    /// or the headless gate's): no headless media commit writes it until the server says it may.
+    /// Persisted, so an offline relaunch never trusts a stale cached `update: true`.
+    func noteNativeReader(_ scope: ReplicaScope) {
+        guard let key = try? scope.directoryName() else { return }
+        var readers = Set(listCache.userDefaults.stringArray(forKey: Self.nativeReadersKey) ?? [])
+        guard readers.insert(key).inserted else { return }
+        listCache.userDefaults.set(Array(readers), forKey: Self.nativeReadersKey)
+    }
+
+    private func clearNativeReader(_ scope: ReplicaScope) {
+        guard let key = try? scope.directoryName(),
+            let readers = listCache.userDefaults.stringArray(forKey: Self.nativeReadersKey), readers.contains(key)
+        else { return }
+        listCache.userDefaults.set(readers.filter { $0 != key }, forKey: Self.nativeReadersKey)
+    }
+
+    private func isNativeReader(_ scope: ReplicaScope) -> Bool {
+        // An unreadable scope digest is treated as a reader: fail closed.
+        guard let key = try? scope.directoryName() else { return true }
+        return listCache.userDefaults.stringArray(forKey: Self.nativeReadersKey)?.contains(key) == true
     }
 
     /// The headless save: what `NativeEditorOpen.installTyping`'s scheduler hands over, without an

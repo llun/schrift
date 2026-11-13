@@ -16,6 +16,7 @@ enum Strings_it {
             "Il blocco è cambiato durante il caricamento, quindi il file non è stato aggiunto.",
         .native_editor_media_upload_stopped: "Caricamento non riuscito · tocca per riprovare",
         .native_editor_media_upload_waiting: "Verrà caricato quando tornerai online.",
+        .native_editor_media_upload_queued: "In attesa di caricamento",
         .native_media_retry_upload: "Riprova caricamento",
         .native_media_discard_upload: "Annulla caricamento",
         .native_media_name: "Nome",

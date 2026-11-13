@@ -54,16 +54,24 @@ final class NativeMediaUploads {
         scope.flatMap { queue.nativeAttachment(scope: $0, blockID: blockID) }
     }
 
-    /// The blocks of this document with an upload under way, and those whose upload failed.
-    var uploadingBlocks: Set<String> { blocks(failed: false).union(preparing.map { [$0] } ?? []) }
-    var failedBlocks: Set<String> { blocks(failed: true) }
+    /// What an upload of this document is doing, by block: under way, waiting for a later pass
+    /// (offline, or nothing may write the document yet: review Y3), or failed.
+    enum State { case uploading, waiting, failed }
 
-    private func blocks(failed: Bool) -> Set<String> {
+    var uploadingBlocks: Set<String> { blocks(.uploading).union(preparing.map { [$0] } ?? []) }
+    var waitingBlocks: Set<String> { blocks(.waiting) }
+    var failedBlocks: Set<String> { blocks(.failed) }
+
+    func state(of record: PendingAttachment) -> State {
+        if record.failedAt != nil { return .failed }
+        return queue.nativeWaiting.contains(record.localID) ? .waiting : .uploading
+    }
+
+    private func blocks(_ wanted: State) -> Set<String> {
         guard let scope else { return [] }
         _ = queue.pendingAttachmentsVersion
         return Set(
-            queue.nativeAttachments(scope: scope).filter { ($0.failedAt != nil) == failed }
-                .compactMap(\.native?.blockID))
+            queue.nativeAttachments(scope: scope).filter { state(of: $0) == wanted }.compactMap(\.native?.blockID))
     }
 
     /// Whether an upload into `blockID` can start now (a server document, none under way for it).

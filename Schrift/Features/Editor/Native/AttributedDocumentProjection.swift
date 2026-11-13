@@ -60,6 +60,7 @@ struct NativeEditorLabels: Equatable {
     var mediaEmpty = Strings_en.table[.native_editor_media_empty]!
     var mediaUploading = Strings_en.table[.native_editor_media_uploading]!
     var mediaUploadFailed = Strings_en.table[.native_editor_media_upload_stopped]!
+    var mediaUploadWaiting = Strings_en.table[.native_editor_media_upload_queued]!
     var uploadElsewhere = Strings_en.table[.native_editor_upload_elsewhere]!
     /// The block menu's title and actions (PR06d): the edit menu and VoiceOver.
     var blockMenu = Strings_en.table[.native_editor_block_actions]!

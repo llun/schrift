@@ -880,7 +880,7 @@ final class NativeEditorOpen {
                 guard isCurrent() else { return }
                 // The row was stale: every surface of the scope stops writing
                 // (a key typed meanwhile becomes a recovery entry) and no socket opens.
-                becomeReader(scope)
+                becomeReader(scope, coordinator: viewModel.saveCoordinator)
             }
             startLive(session, scope: scope, config: config, viewModel: viewModel)
             // Refreshes the server title native saves send.
@@ -934,7 +934,10 @@ final class NativeEditorOpen {
                 guard let viewModel else { return false }
                 return await Self.serverSaysReader(viewModel, asking: true)
             },
-            becameReader: { [weak self] in self?.becomeReader(scope) },
+            becameReader: { [weak self, weak coordinator = viewModel.saveCoordinator] in
+                guard let coordinator else { return }
+                self?.becomeReader(scope, coordinator: coordinator)
+            },
             localState: { [weak collaboration] in collaboration?.localAwarenessState })
         session.showAwareness(binding.awareness)
     }
@@ -942,8 +945,10 @@ final class NativeEditorOpen {
     /// The server says this account may only read now: every surface of the
     /// scope stops writing (a key typed meanwhile becomes a recovery entry,
     /// what is journaled stays for HTTP) and no socket stays open.
-    private func becomeReader(_ scope: ReplicaScope) {
+    private func becomeReader(_ scope: ReplicaScope, coordinator: DocumentSaveCoordinator) {
         canUpdate = false
+        // No headless media commit trusts a cached `update: true` for this scope again (review Y1).
+        coordinator.noteNativeReader(scope)
         registry.setWritable(nil, for: scope)
         registry.liveBinding(for: scope, create: false)?.disconnect()
     }

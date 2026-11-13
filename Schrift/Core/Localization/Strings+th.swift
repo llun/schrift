@@ -15,6 +15,7 @@ enum Strings_th {
         .native_editor_media_upload_dropped: "บล็อกเปลี่ยนไประหว่างอัปโหลด จึงไม่ได้เพิ่มไฟล์",
         .native_editor_media_upload_stopped: "อัปโหลดไม่สำเร็จ · แตะเพื่อลองอีกครั้ง",
         .native_editor_media_upload_waiting: "จะอัปโหลดเมื่อคุณกลับมาออนไลน์",
+        .native_editor_media_upload_queued: "รอการอัปโหลด",
         .native_media_retry_upload: "ลองอัปโหลดอีกครั้ง",
         .native_media_discard_upload: "ยกเลิกการอัปโหลด",
         .native_media_name: "ชื่อ",

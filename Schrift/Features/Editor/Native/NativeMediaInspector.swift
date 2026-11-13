@@ -220,6 +220,13 @@ struct NativeMediaInspector: View {
             if let record, record.failedAt != nil {
                 Text(labels.mediaUploadFailed).foregroundStyle(theme.colors.danger)
                     .accessibilityIdentifier("nativeMedia.uploadFailed")
+            } else if let record, uploads?.state(of: record) == .waiting {
+                Label(labels.mediaUploadWaiting, systemImage: "clock")
+                    .accessibilityIdentifier("nativeMedia.uploadWaiting")
+                if isOffline {
+                    Text(loc[.native_editor_media_upload_waiting]).font(.footnote)
+                        .foregroundStyle(theme.colors.textSecondary)
+                }
             } else if record != nil || uploads?.preparing == blockID {
                 Label(labels.mediaUploading, systemImage: "arrow.up.circle")
                     .accessibilityIdentifier("nativeMedia.uploading")

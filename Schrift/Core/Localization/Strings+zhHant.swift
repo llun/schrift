@@ -13,6 +13,7 @@ enum Strings_zhHant {
         .native_editor_media_upload_dropped: "上傳期間該區塊已變更，因此未加入檔案。",
         .native_editor_media_upload_stopped: "上傳失敗 · 輕點重試",
         .native_editor_media_upload_waiting: "恢復連線後將上傳。",
+        .native_editor_media_upload_queued: "等待上傳",
         .native_media_retry_upload: "重新上傳",
         .native_media_discard_upload: "放棄上傳",
         .native_media_name: "名稱",

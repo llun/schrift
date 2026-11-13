@@ -3841,9 +3841,14 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   column is opened before the commit; `.some(nil)` only when no block of the document has the id,
   nil when nothing answered), the session's `canType` required, then the journal (`installJournal`,
   shared with `installTyping`) installed only when this is the scope's only surface **and**
-  `mayWrite` holds — the coordinator's `nativeMayWrite`, the editor open's typing gate: the native
-  switch (`nativeEditorEnabled`), the account's cached `abilities.update` (`listCache` fetched for
-  the owner; unknown is no), no pending create or delete, no live owner, no classic draft — else
+  `mayWrite` holds — the coordinator's async `nativeMayWrite`, the editor open's typing gate: the
+  native switch (`nativeEditorEnabled`), no pending create or delete, no live owner, no classic
+  draft, and `abilities.update` asked of the server once (`documents/{id}/`, under the run's
+  sign-in generation, so a document opened from a folder or a deep link commits too); a reader
+  answer, or an editor's (`becomeReader` → `noteNativeReader`), is remembered per scope
+  (persisted, `nativeMediaReaderScopes`) and only the server saying update again lifts it; with no
+  answer (offline, a failure) a remembered reader is no, else the account's Home lists then the
+  subpage cache decide (unknown is no); the registry re-reads the entry after that await — else
   `.unavailable` and the record waits (an open editor that does not write stays so); the save goes
   through the scope's scheduler when an editor installed one, else a private one that is never
   registered, so an editor opened later keeps its own save rules (review X7);
@@ -3860,23 +3865,28 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   its own slot (url no longer ""), so a block never gets two photos and no photo is lost.
   **UI:** a file-style card (an empty block, a file, audio, a hidden preview) says "Uploading…" for
   every block with a live record or being prepared (`NativeBlockControls.uploadingBlocks`) and
-  "Upload failed · tap to retry" for a failed one (`failedUploads`); an image or video card showing
+  "Upload failed · tap to retry" for a failed one (`failedUploads`), "Waiting to upload" for one a
+  run left for a later pass (offline, the gate, a busy block: `nativeWaiting`, `waitingUploads`;
+  the inspector says the same); an image or video card showing
   its picture shows no state (the inspector does); the inspector shows the same, "Uploads when you're back online." offline, and
   Retry upload / Discard upload for a failed record (`nativeMedia.retryUpload`/`discardUpload`);
   Delete also discards the block's record; uploads no longer refuse offline (only a local document
   says `native_editor_media_upload_offline`, now "Uploading needs a document saved to the
   server."); one upload per block.
-  Document delete and keep-server drop the records (`discardPendingAttachments`). **Known limits:**
+  Document delete and keep-server drop the signed-in account's records on this server only
+  (`discardPendingAttachments`; another account's, or any with the account unknown, are kept). **Known limits:**
   no local thumbnail while a photo waits; a document that stops being typable keeps its record
   waiting (retried each pass); a commit blocked past its retries by a composition waits for the
-  next pass; with no editor open, an unknown `abilities.update` (a document not in the account's
-  cached lists) waits for the editor to open it. Tests:
+  next pass; offline, a document in no cached list waits for the server or its editor. Tests:
   `NativeMediaQueueTests` (`MockURLProtocol`, a real registry, `ReplicaStore` and attachment store:
   the web's `imageCommit` XML with no editor open, the inspector's upload reaching an open editor,
   an upload finishing after its editor closed, offline then the next pass, kill/relaunch before and
   after the checkpoint and after the commit, a column's block, a block moved into a column, the
   typing gate (reader, unknown, switch off), a restored checkpoint re-checked, bytes over the limit,
-  the headless scheduler never the editor's, a headless post after a resync, a deleted block (nothing sent), a
+  the headless scheduler never the editor's, a headless post after a resync, a reader answer
+  winning over the cache and remembered across a relaunch, an editor's reader answer, a document
+  outside the caches asking the server (waiting meanwhile), a delete keeping another account's
+  records, a deleted block (nothing sent), a
   block filled during the upload, a rejection then Retry and Discard, another document's URL,
   another account's record, a sign-in switch, the classic pass, document delete, JPEG preparation,
   a close during preparation, too large and local); PR13a's upload cases moved there, and
