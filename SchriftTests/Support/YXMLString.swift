@@ -109,7 +109,7 @@ enum YXMLString {
             return values.map { $0 == .null || $0 == .undefined ? "" : render($0) }.joined(separator: ",")
         // A float as JS's `String(number)` for the values the captures hold
         // (a web drag's width, a pasted width's `NaN`).
-        case .float64:
+        case .float64, .float32:
             guard let number = TableGrid.number(value) else {
                 if case .float64(let data) = value, data.count == 8,
                     Double(bitPattern: data.reduce(UInt64(0)) { $0 << 8 | UInt64($1) }).isNaN

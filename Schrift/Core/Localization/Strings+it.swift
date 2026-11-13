@@ -373,6 +373,7 @@ enum Strings_it {
         .native_editor_table_align_right: "Allinea a destra",
         .native_editor_table_format: "Formato",
         .native_editor_columns: "Colonne, %d",
+        .native_editor_column: "Colonna %d di %d",
         .native_editor_math: "Formula",
         .native_editor_diagram: "Diagramma",
         .native_editor_input_unavailable: "Questo input non è ancora supportato nell’editor nativo.",

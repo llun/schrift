@@ -30,35 +30,59 @@ enum NativeBlockProjection {
         else { return ([], false, false) }
         var blocks: [NativeBlockSnapshot] = []
         var seen: Set<String> = []
-        func walk(_ group: YType, depth: Int, parent: NativeBlockHandle?) {
-            for item in YBlockProjection.children(of: group, includeFormats: false) {
-                var snapshot = projectBlock(
-                    item, depth: depth, parent: parent, generation: generation,
-                    interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks)
-                // Only the first of a repeated id is addressable; an id-less or
-                // repeated container stands for its subtree.
-                let unique = !snapshot.id.isEmpty && seen.insert(snapshot.id).inserted
-                if !unique, !snapshot.block.fidelity.isOpaque {
-                    snapshot.block = ProjectedBlock(
-                        id: snapshot.id, node: "", props: [], runs: [],
-                        fidelity: .opaque(reason: snapshot.id.isEmpty ? "missing block id" : "duplicate block id"))
-                    snapshot.preview = .preserved(node: "", summary: "")
-                }
-                blocks.append(snapshot)
-                guard unique, depth < maxDepth, case .type(let container) = item.content,
-                    let nested = nestedGroup(of: container)
-                else { continue }
-                walk(nested, depth: depth + 1, parent: snapshot.handle)
-            }
-        }
-        walk(group, depth: 0, parent: nil)
+        walk(
+            group, depth: 0, parent: nil, generation: generation, interlinkingOrigin: interlinkingOrigin,
+            nativeMarks: nativeMarks, seen: &seen, into: &blocks)
         let renderable = blocks.allSatisfy { !$0.block.fidelity.isOpaque }
         let modeled = renderable && blocks.allSatisfy { $0.block.fidelity == .modeled }
         return (blocks, renderable, modeled)
     }
 
+    /// The preorder walk of `group`'s blocks (a `blockGroup`, or a `column`,
+    /// whose children are containers too: PR12a).
+    private static func walk(
+        _ group: YType, depth: Int, parent: NativeBlockHandle?, generation: UUID, interlinkingOrigin: String?,
+        nativeMarks: Bool, seen: inout Set<String>, into blocks: inout [NativeBlockSnapshot]
+    ) {
+        for item in YBlockProjection.children(of: group, includeFormats: false) {
+            var snapshot = projectBlock(
+                item, depth: depth, parent: parent, generation: generation,
+                interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks)
+            // Only the first of a repeated id is addressable; an id-less or
+            // repeated container stands for its subtree.
+            let unique = !snapshot.id.isEmpty && seen.insert(snapshot.id).inserted
+            if !unique, !snapshot.block.fidelity.isOpaque {
+                snapshot.block = ProjectedBlock(
+                    id: snapshot.id, node: "", props: [], runs: [],
+                    fidelity: .opaque(reason: snapshot.id.isEmpty ? "missing block id" : "duplicate block id"))
+                snapshot.preview = .preserved(node: "", summary: "")
+            }
+            blocks.append(snapshot)
+            guard unique, depth < maxDepth, case .type(let container) = item.content,
+                let nested = nestedGroup(of: container)
+            else { continue }
+            walk(
+                nested, depth: depth + 1, parent: snapshot.handle, generation: generation,
+                interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks, seen: &seen, into: &blocks)
+        }
+    }
+
+    /// A column's blocks (PR12a), in preorder, each at its depth below the
+    /// column (its top-level blocks are depth 0, with no parent): what a
+    /// column surface shows and what the shadow spells per column.
+    static func columnBlocks(
+        _ column: YType, generation: UUID = UUID(), interlinkingOrigin: String? = nil, nativeMarks: Bool = true
+    ) -> [NativeBlockSnapshot] {
+        var blocks: [NativeBlockSnapshot] = []
+        var seen: Set<String> = []
+        walk(
+            column, depth: 0, parent: nil, generation: generation, interlinkingOrigin: interlinkingOrigin,
+            nativeMarks: nativeMarks, seen: &seen, into: &blocks)
+        return blocks
+    }
+
     /// One block, as `project` reads it at `depth` under `parent`: the
-    /// engine's per-block snapshot. O(block).
+    /// engine's per-block snapshot. O(block); a column group, O(group).
     static func projectBlock(
         _ item: YItem, depth: Int, parent: NativeBlockHandle?, generation: UUID,
         interlinkingOrigin: String? = nil, nativeMarks: Bool = true
@@ -67,6 +91,13 @@ enum NativeBlockProjection {
             item, interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks, nestedChildren: true)
         if depth >= maxDepth, case .type(let container) = item.content, nestedGroup(of: container) != nil {
             block = ProjectedBlock(id: block.id, node: "", props: [], runs: [], fidelity: .opaque(reason: "nesting"))
+        }
+        // A familiar column group (PR12a) whose every block the native
+        // projection models is modeled by it: its blocks are the column
+        // editor's, and the save shadow spells it as the export does. The
+        // classic projection keeps it opaque.
+        if nativeMarks, block.node == "columnList", case .type(let list) = item.content {
+            block.fidelity = columnFidelity(list, id: block.id, generation: generation)
         }
         return NativeBlockSnapshot(
             handle: NativeBlockHandle(generation: generation, itemID: item.id, stringID: block.id), block: block,
@@ -92,38 +123,80 @@ enum NativeBlockProjection {
     /// classic shadow scrubs them. Blocks only the native editor models take
     /// the server export's spelling (`exportSpelling`), and a root subtree the
     /// classic rendering cannot spell like the export (`needsExport`) is the
-    /// export's own Markdown (`NativeExportMarkdown`). `nil` when the document
-    /// has no total shadow.
+    /// export's own Markdown (`NativeExportMarkdown`), as is one holding edge
+    /// whitespace the classic rendering would trim (`hasEdgeWhitespace`), so
+    /// a trailing space just typed always has a shadow. `nil` when the
+    /// document has no total shadow.
     static func markdownShadow(_ doc: YDoc) -> String? {
         let tree = project(doc, nativeMarks: false)
         // A flat document with no native-only block keeps exactly the classic shadow.
         guard
             tree.blocks.contains(where: {
-                $0.depth > 0 || $0.block.node == "table" || nativeOnlyReasons.contains(opaqueReason($0.block))
+                $0.depth > 0 || $0.block.node == "table" || $0.block.node == "columnList"
+                    || nativeOnlyReasons.contains(opaqueReason($0.block)) || hasEdgeWhitespace($0.block)
             })
         else {
             return YBlockProjection.projectedMarkdown(YBlockProjection.project(doc))
         }
-        let blocks = tree.blocks
+        return spell(tree.blocks[...], items: rootItems(doc), allowsColumns: true)
+    }
+
+    /// The shadow of a run of root subtrees (the document's, or one column's,
+    /// PR12a): classic segments, each table and export-only subtree as the
+    /// export's own chunk, joined as the export joins root blocks. `items`
+    /// holds the run's top-level containers by item id (a table's grid and a
+    /// group's columns are read from them).
+    private static func spell(
+        _ blocks: ArraySlice<NativeBlockSnapshot>, items: [YID: YItem], allowsColumns: Bool
+    ) -> String? {
         var parts: [String] = []
         var plain = blocks.startIndex  // the first block not yet spelled
         var root = blocks.startIndex
-        var rootItems: [YID: YItem]?
         while root < blocks.endIndex {
             var end = root + 1
             while end < blocks.endIndex, blocks[end].depth > 0 { end += 1 }
             if blocks[root].block.node == "table" {
                 // A root table without children: the export's own grid (PR11a).
-                rootItems = rootItems ?? Self.rootItems(doc)
-                guard end == root + 1, let item = rootItems?[blocks[root].handle.itemID],
+                guard end == root + 1, let item = items[blocks[root].handle.itemID],
                     let grid = tableGrid(of: item), let before = classicSpelling(blocks[plain..<root]),
                     let chunk = NativeExportMarkdown.table(grid)
                 else { return nil }
                 parts += [before, chunk]
                 plain = end
-            } else if needsExport(blocks[root..<end]) {
+            } else if blocks[root].block.node == "columnList" {
+                // A root column group (PR12a): the export prints its column
+                // frames transparently, so it is each column's blocks spelled
+                // as root blocks, column after column, lists restarting at
+                // each column. No group inside a column.
+                guard allowsColumns, end == root + 1, let item = items[blocks[root].handle.itemID],
+                    case .type(let list) = item.content,
+                    ColumnGroup.read(list, id: blocks[root].id).isFamiliar,
+                    let before = classicSpelling(blocks[plain..<root])
+                else { return nil }
+                var columns: [String] = []
+                for column in ColumnGroup.columnTypes(of: list) {
+                    var columnItems: [YID: YItem] = [:]
+                    for child in YBlockProjection.children(of: column, includeFormats: false) {
+                        columnItems[child.id] = child
+                    }
+                    let snapshots = columnBlocks(column, nativeMarks: false)
+                    guard let spelled = spell(snapshots[...], items: columnItems, allowsColumns: false) else {
+                        return nil
+                    }
+                    columns.append(spelled)
+                }
+                parts += [before] + columns
+                plain = end
+            } else if case let subtree = blocks[root..<end],
+                needsExport(subtree) || subtree.contains(where: { hasEdgeWhitespace($0.block) })
+            {
+                // Edge whitespace falls back to the classic rendering only for a block the port lacks.
+                // Edge whitespace never takes a shadow away: last, the classic
+                // rendering with it trimmed, as the conflict comparison reads it.
                 guard let before = classicSpelling(blocks[plain..<root]),
-                    let chunk = NativeExportMarkdown.markdown(NativeExportMarkdown.nodes(blocks[root..<end]))
+                    let chunk = exportNodes(subtree).flatMap(NativeExportMarkdown.body)
+                        ?? (needsExport(subtree)
+                            ? nil : classicSpelling(subtree) ?? classicSpelling(edgeTrimmed(subtree)))
                 else { return nil }
                 parts += [before, chunk]
                 plain = end
@@ -132,10 +205,81 @@ enum NativeBlockProjection {
         }
         guard let rest = classicSpelling(blocks[plain...]) else { return nil }
         guard !parts.isEmpty else { return rest }
-        // The export separates root blocks by a blank line; a list split here
-        // only turns loose, which `canonicalMarkdown` does not see.
+        // The export separates root blocks by a blank line and trims only the
+        // document's ends; a list split here only turns loose, which
+        // `canonicalMarkdown` does not see.
         let spelled = (parts + [rest]).map { $0.trimmingCharacters(in: .newlines) }.filter { !$0.isEmpty }
-        return spelled.joined(separator: "\n\n") + "\n"
+        return NativeExportMarkdown.trimmed(spelled.joined(separator: "\n\n"))
+    }
+
+    /// Whether the classic rendering cannot spell `block` like the export:
+    /// text that starts or ends with whitespace (the classic re-parse trims
+    /// `.whitespaces`, so its self-check refuses the block; the export's trim
+    /// takes `jsWhitespace` off the document's ends), or a marked run that does
+    /// (the export keeps that whitespace inside the delimiters, except the
+    /// trailing part of bold and italic). A code block is verbatim either way.
+    private static func hasEdgeWhitespace(_ block: ProjectedBlock) -> Bool {
+        guard block.node != "codeBlock" else { return false }
+        func edges(_ text: String) -> Bool {
+            [text.unicodeScalars.first, text.unicodeScalars.last].contains { $0.map(edgeWhitespace.contains) == true }
+        }
+        return edges(block.runs.map(\.text).joined()) || block.runs.contains { !$0.marks.isEmpty && edges($0.text) }
+    }
+
+    private static let edgeWhitespace = CharacterSet.whitespaces.union(NativeExportMarkdown.jsWhitespace)
+
+    /// The port's nodes for a root subtree. Outside the shapes `needsExport`
+    /// sends there (where the port refuses callouts), a callout is the
+    /// paragraph `exportSpelling` makes of it; `nil` for one it refuses.
+    private static func exportNodes(_ subtree: ArraySlice<NativeBlockSnapshot>) -> [NativeExportMarkdown.Node]? {
+        guard !needsExport(subtree) else { return NativeExportMarkdown.nodes(subtree) }
+        var snapshots = Array(subtree)
+        for index in snapshots.indices where opaqueReason(snapshots[index].block) == "unknownNode:callout" {
+            guard let spelled = exportSpelling(snapshots[index...index])?.blocks.first else { return nil }
+            snapshots[index].block = spelled
+        }
+        return NativeExportMarkdown.nodes(snapshots[...])
+    }
+
+    /// The subtree with each block's edge `.whitespaces` removed from its runs.
+    private static func edgeTrimmed(_ subtree: ArraySlice<NativeBlockSnapshot>) -> ArraySlice<NativeBlockSnapshot> {
+        func strip(_ text: String, leading: Bool) -> String {
+            var scalars = Array(text.unicodeScalars)
+            while let edge = leading ? scalars.first : scalars.last, CharacterSet.whitespaces.contains(edge) {
+                if leading { scalars.removeFirst() } else { scalars.removeLast() }
+            }
+            return String(String.UnicodeScalarView(scalars))
+        }
+        return ArraySlice(
+            subtree.map { snapshot in
+                guard snapshot.block.node != "codeBlock" else { return snapshot }
+                var snapshot = snapshot
+                var runs = snapshot.block.runs
+                while !runs.isEmpty {
+                    runs[0].text = strip(runs[0].text, leading: true)
+                    guard runs[0].text.isEmpty else { break }
+                    runs.removeFirst()
+                }
+                while !runs.isEmpty {
+                    runs[runs.count - 1].text = strip(runs[runs.count - 1].text, leading: false)
+                    guard runs[runs.count - 1].text.isEmpty else { break }
+                    runs.removeLast()
+                }
+                snapshot.block.runs = runs
+                return snapshot
+            })
+    }
+
+    /// A column group's native fidelity (PR12a): modeled when the group is
+    /// familiar and the native projection models every block in it.
+    private static func columnFidelity(_ list: YType, id: String, generation: UUID) -> ProjectionFidelity {
+        let group = ColumnGroup.read(list, id: id)
+        if case .unfamiliar(let reason) = group.familiarity { return .opaque(reason: "columnList: \(reason)") }
+        for column in ColumnGroup.columnTypes(of: list)
+        where !columnBlocks(column, generation: generation).allSatisfy({ $0.block.fidelity == .modeled }) {
+            return .opaque(reason: "columnList: unmodeled block")
+        }
+        return .modeled
     }
 
     /// The root group's containers by item id (a table's grid is read from its item).

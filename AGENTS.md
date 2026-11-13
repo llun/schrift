@@ -2577,13 +2577,44 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   and is joined to the classic segments by blank lines. Lossy like the export; the raw Yjs
   save still carries the real blocks. Besides those callouts, only a callout without a
   non-empty emoji (the native editor never writes one) has no shadow; media, math, columns and diagrams gate
-  as before (a familiar root table is spelled since PR11a, bullet below). The writer spells italic `_x_` where the export writes `*x*`; conflict decisions
+  as before (a familiar root table is spelled since PR11a and a familiar root column group since
+  PR12a, bullets below). The writer spells italic `_x_` where the export writes `*x*`; conflict decisions
   compare parsed runs (`syncCanonicalMarkdown`), so that is not a conflict, but the port's
   verbatim chunks are compared as text. Tests: `NativeShadowExportParityTests` (the `.review/`
   capture item by item up to its table, the export's spellings, thirteen toggle shapes and
   sixteen links pinned byte for byte against the
   installed exporter, `canType`, a typed save and Return in an open toggle whose shadow
   `draftSyncDecision` reads as our last push).
+- **Edge whitespace in the save shadow (fix after PR11c).** The classic rendering's
+  self-check re-parses its Markdown, and the parser trims a line's edge whitespace (a
+  leading space or tab even makes the line verbatim text), so a block whose text started or
+  ended with whitespace had no shadow: a save captured right after typing a space (the
+  10-second debounce, or a close) threw `unprojectableShadow` and froze authoring with
+  "Couldn't save", and a document holding such a block opened read-only. Now a root subtree
+  with a block whose text, or one of whose marked runs, starts or ends with
+  `.whitespaces` or JS whitespace (`hasEdgeWhitespace`; never a code block, which is
+  verbatim) is spelled by `NativeExportMarkdown.body`, untrimmed, and the whole shadow is
+  trimmed like `htmlToMarkdown` (`result.trim() + "\n"`, `NativeExportMarkdown.trimmed`).
+  `jsWhitespace` is exactly ECMAScript WhiteSpace and LineTerminator (U+0009–000D, U+0020,
+  U+00A0, U+1680, U+2000–200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF), never
+  Foundation's `.whitespaces`, which holds U+200B: JS keeps a leading U+200B, so
+  `"\u{200B}# Heading"` stays a paragraph. What BlockNote 0.56 exports: a block keeps its
+  edge spaces, tabs and NBSP verbatim and only the document's ends are trimmed; bold and
+  italic move trailing whitespace out of their delimiters and keep leading whitespace inside
+  (`** b**x`), strike, code and links keep both inside (`~~s ~~`, `` `c ` ``,
+  `[ site ](url)`); a table cell is trimmed the same way. In such a subtree a childless
+  callout outside a toggle (root or nested under a plain block or list, the shapes the
+  classic rendering spells) is the paragraph `exportSpelling` makes of it (`exportNodes`;
+  its whitespace export is unconfirmed: the harness's callout is a stub). **An edge space
+  never takes a shadow away:** a subtree the port cannot spell (a nested image) falls back
+  to the classic rendering, then to the classic rendering of the text with its edge
+  whitespace trimmed (`edgeTrimmed`, as `syncCanonicalMarkdown` reads it; a false conflict
+  at worst, never a freeze). Known limit: each flagged root is its own chunk, so a list it
+  splits renumbers and turns loose, which `syncCanonicalMarkdown` does not see. Tests:
+  `BlockNoteWhitespaceOracleTests` (`BlockNoteWhitespaceCaptures`, ws.mjs: 32 web
+  fixtures with U+200B and U+FEFF, the shadow byte for byte the export except the split
+  list, equal under `syncCanonicalMarkdown`) and `NativeShadowExportParityTests`
+  (`testASaveRightAfterATrailingSpaceDoesNotFreeze`, `testAnEdgeSpaceNeverTakesAShadowAway`).
 - **PR06e bounded previews and attachment sizing.** A block `AttributedDocumentProjection.isPlaceholder`
   (non-prose node or opaque) is **one U+FFFC attachment character** plus its separator:
   `displayText` is `attachmentCharacter`, so the range index, refusals and clipboard rules
@@ -3399,6 +3430,108 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `TableEditorTests` (alignment, a mixed transaction, a collaborator, a dropped cell
   composition) and the host UI test `testDraggingAcrossCellsSelectsThemAndTheCellMenuMergesThem`.
 
+- **PR12a Native columns: the group, preservation and column editing.** The staging plan (12a
+  here; 12b group/column structure, widths, boundary moves, concurrency and awareness; 12c
+  side-by-side presentation, scale, VoiceOver, find/outline) lives outside the repo. **The group**
+  (`Core/Yjs/ColumnGroupModel.swift`, `ColumnGroup.read`) is `@blocknote/xl-multi-column` 0.56's
+  shape: a `columnList` **directly in a `blockGroup`** with its own `id`, holding `column`
+  elements (attributes `id`, `width`, BlockNote's default 1) that hold `blockContainer`s
+  **directly** (no `blockGroup`). **Familiar** = at least two columns (the schema's `min: 2`), each
+  with a readable id, readable attributes and a width absent or positive, each holding at least
+  one container with a readable non-empty id unique in the group, no group inside a column, no
+  deeper than `NativeBlockProjection.maxDepth`, at most `maxColumns` (16) columns and `maxBlocks`
+  (2,000) blocks, counted before any per-block allocation. Anything else (an empty column, a group
+  of one: the shapes `fixLayoutBlocks` repairs on the web) is unfamiliar: opaque, preserved, never
+  addressed. lib0 stores a width float32 holds exactly (1.5, 0.75) as **float32**, so
+  `TableGrid.number` reads float32 too (a web table width such as 120.5 used to read as unset).
+  **The index:** a `columnList` is a canonical atomic entry of its group (`BlockIndex.containers`,
+  `isCanonical(group:)`; before, a document with columns was non-canonical: every transaction a
+  `.reset`, all input refused), its own element, no text; a change inside a closed group resolves
+  to it (`blockID(for:)`), so a peer's edit there is the group's `.replaceBlock` (its preview).
+  `DocumentEngine.openColumns/closeColumns` index every block of every column (`openGroups`,
+  `columnOrders`, `columnOf`; depth and parent relative to the column, top-level blocks depth 0
+  with no parent) as entries outside `order`; a document id reused inside the group refuses the
+  open. The engine's order rules (join, range, marks, moves, `requireMovable`, `movesTable`) use
+  the block's own list (`BlockIndex.list(of:)`, `listPosition(of:)`, `sameList`), so a column's
+  blocks never meet another column's or the document's: Backspace at a column's first block, a
+  range or mark command across columns, a move past a column's edge and Shift-Tab at a column's
+  top are refused before arming. A column keeps a block (delete of its only block refused, the
+  existing `siblings.count > 1` rule). The group's own move and duplicate are refused
+  (`requireMovable`: `isColumnGroup`), its delete and copy have no lossless payload
+  (`BlockNoteSubtreePayload.validate` takes containers only), and nothing indents under it;
+  inserting a block above or below it works. **Review fixes (PR #281):** Move up/down of a block
+  whose neighbour is a group is refused (the web's `getMovePlacement`/`getInsertionPos` moves it
+  into the group's first or last column: PR12b), two columns sharing an id make the group
+  unfamiliar (`duplicate column id`), and the presenter (`NativeEditorView`) owns the
+  `ColumnEditorModel` (made when the card is tapped; `ColumnEditorScreen` only loads it, once,
+  and never closes it on disappear), so a screen `.task` that runs again (a table editor's cover
+  dismissed over it) cannot attach every column a second time. On the iOS 26 simulator the
+  cover's dismissal did not re-run the task (the host UI test passed without the fix);
+  `testTheScreenAttachesEachColumnOnceWhenItReappears` forces a re-run by removing and re-adding
+  the hosted screen. A caret placed below a table that ends a column is the table's, which takes no
+  text (as after a trailing table in the document). **The writer** (`find`) descends into
+  `columnList`/`column`, `resolve` accepts a `column` as the parent list
+  (`BlockNoteWriter.isBlockList`), and `liftListItem` lifts into a column; split, join, marks,
+  type changes and indent were already parent-agnostic. **Patches:** a change inside an open group
+  is its block's patch (the `.text` fast path included); a `column`/`columnList` child-list change
+  in an open group is a tree change, and after the rebuild each column's list is diffed like the
+  document's (`PatchBuilder.diff`; a block that changed container, depth or parent is a
+  `.replaceBlock`). Every column-scope change is tagged in the patch (`BlockPatch.columns`: block id
+  → column id; `removedColumns` for removals, by the column the block was in), so the session
+  routes by tag, never by spelling (column blocks have real ids). **Surfaces** gain a column scope
+  (`DocumentReplicaSession.attach(surfaceID:group:column:)`): a document surface never sees a
+  tagged change; a column surface sees only its column's and its group's own changes (a structure
+  signal its surface ignores), and a `.reset` re-expressed as its column's blocks
+  (`engine.columnBlocks`); a table surface keeps its table's changes even when the table is a
+  column's block. Closing the last column surface sends the document one `.replaceBlock(group)`;
+  a rebuilt replica reopens open groups (before tables: a column's table is one of their blocks).
+  **The shadow** spells a root familiar group as the export does: `htmlToMarkdown` prints the
+  column frames transparently, so it is each column's blocks spelled as root blocks
+  (`NativeBlockProjection.spell`, the same classic/table/export-chunk rules), column after column,
+  each column its own segment (lists restart, as the export's `1. two\n\n1. three`). Its classic
+  spellings differ from the export only where they do at the root (`- `, `_x_`, dropped empty
+  paragraphs; `syncCanonicalMarkdown` equal). Under `nativeMarks` a familiar group whose every
+  block the native projection models is `.modeled` (`columnFidelity`; else `columnList: <reason>`
+  or `columnList: unmodeled block`), so the document types; the classic projection keeps it opaque.
+  A group below the root has no shadow. **The editor** (`ColumnEditorViewController.swift`:
+  `ColumnEditorModel`, `ColumnEditorScreen`, `ColumnTextContainer`), presented full screen by
+  `NativeEditorView` from a tap or VoiceOver activation of the group's card
+  (`NativeBlockControls.onOpenColumns`), leases **one surface per column**, all attached at open
+  (`NativeEditorSession.openColumn`: the document's journal, scheduler and pasteboard, its
+  composition recovery forwarded to the document's, the document's awareness painted), and shows
+  one at a time behind a segmented picker (`nativeEditor.columns.picker`; each text view
+  `nativeEditor.column.<index>`). Switching hands first responder to the next text view before the
+  shown one hides, so the keyboard stays up; no focus set is needed (Return would have to keep
+  growing one). The document's formatting bar, slash menu and link sheet
+  (`nativeLinkEditing`) act on the shown column's input; a table card in a column opens the table
+  editor over that column's surface. Escape (`NativeInputCoordinator.onExit`) and Done close every
+  column surface and put the document's caret after the group. A reader (`inspect` keeps
+  `ColumnGroup.groups`) gets read-only columns without input; an unfamiliar group does not open.
+  **Known limits:** the web's boundary moves (Backspace at a column's first block moves it into the
+  previous column or above the group, the block after the group moves into its last column, Delete
+  at a column's end pulls the next column's first block in) write nothing natively; a column a peer
+  adds while the editor is open shows when it is reopened; a group that turns unfamiliar while
+  open empties its columns without closing the editor; a group below the root, or holding media,
+  math or a diagram (the 72ebe1bb test document), keeps the document read-only; Shift-Tab of a
+  nested block with following siblings lifts it with them as their parent (the existing PR06a
+  `liftToOuterList`), where this harness's web run leaves it nested and nests the siblings under
+  it, at the root as in a column; a frozen save (`freezeAuthoring`, below) now also stops the table
+  and column surfaces the document opened (they share its journal; before, a table surface kept
+  journaling). Edge whitespace inside a column takes the same shadow rules as at the root (see
+  "Edge whitespace in the save shadow").
+  Tests: `BlockNoteColumnOracleTests` (`BlockNoteColumnCaptures`,
+  cols.mjs: seven web fixtures familiar with their export as the shadow, widths, column blocks;
+  typing, Return, Return in an empty column block (`emptyChildEnter: "stay"`), an empty nested
+  Return, list Return, join, Tab, Shift-Tab, bold, a type change, a range delete and a cell of a
+  column's table equal to the web's XML and Markdown; the web's boundary moves refused, moves past the group included; duplicate column ids; a closed
+  group's blocks not targets; the real `.review/` group preserved), `ColumnEditorTests` (typing
+  predicted and journaled and never shown to the document, the preview on close, Return/Backspace
+  in the column, Tab, IME, undo and redo, relaunch, peers in two columns, a peer's new block, the
+  picker keeping first responder, a column's table, the reader, an unfamiliar group, the document
+  typing around a group, a frozen document freezing its columns) and the host UI tests
+  `testTypingInBothColumnsSurvivesRelaunch` and `testTypingAfterAColumnsTableSurvivesRelaunch`
+  (`--native-column-table`)
+  (`--native-open --native-columns`).
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below

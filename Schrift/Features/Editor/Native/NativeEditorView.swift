@@ -35,6 +35,9 @@ struct NativeEditorView: View {
     /// The table whose editor is open (PR11a).
     @State private var openTable: NativeTableRequest?
     @State private var lastTable: String?
+    /// The column group whose editor is open (PR12a).
+    @State private var openColumns: ColumnEditorModel?
+    @State private var lastColumns: String?
 
     var body: some View {
         Group {
@@ -49,28 +52,10 @@ struct NativeEditorView: View {
             } else {
                 NativeTextCanvas(
                     session: session, contentSize: uiContentSizeCategory(for: dynamicTypeSize),
-                    labels: NativeEditorLabels(
-                        preservedBlock: loc[.native_editor_preserved_block],
-                        unknownBlock: loc[.native_editor_unknown_block],
-                        pageBreak: loc[.native_editor_page_break], codeLanguage: loc[.native_editor_code_language],
-                        markDone: loc[.editor_checklist_done_a11y], markNotDone: loc[.editor_checklist_not_done_a11y],
-                        done: loc[.editor_checklist_state_done_a11y],
-                        notDone: loc[.editor_checklist_state_not_done_a11y], toggle: loc[.native_editor_toggle],
-                        expanded: loc[.native_editor_toggle_expanded],
-                        collapsed: loc[.native_editor_toggle_collapsed], peerCursor: loc[.native_editor_peer_cursor],
-                        peerSelection: loc[.native_editor_peer_selection], peerFolded: loc[.native_editor_peer_folded],
-                        named: loc[.native_editor_attachment_named],
-                        image: loc[.editor_image_a11y], video: loc[.native_editor_video],
-                        audio: loc[.native_editor_audio], file: loc[.native_editor_file], pdf: loc[.native_editor_pdf],
-                        table: loc[.native_editor_table], tableMore: loc[.native_editor_table_more],
-                        columns: loc[.native_editor_columns], math: loc[.native_editor_math],
-                        diagram: loc[.native_editor_diagram], imageExternal: loc[.editor_image_external],
-                        imageExternalA11y: loc[.editor_image_external_a11y], imageOffline: loc[.editor_image_offline],
-                        imageFailed: loc[.editor_image_failed], blockMenu: loc[.native_editor_block_actions],
-                        blockActions: Dictionary(
-                            uniqueKeysWithValues: NativeBlockAction.allCases.map { ($0, loc[$0.labelKey]) })),
+                    labels: .document(loc),
                     theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline,
-                    onOpenTable: { openTable = NativeTableRequest(id: $0) }
+                    onOpenTable: { openTable = NativeTableRequest(id: $0) },
+                    onOpenColumns: { openColumns = columnEditor($0) }
                 )
                 .id(ObjectIdentifier(session))
             }
@@ -132,25 +117,16 @@ struct NativeEditorView: View {
             )
             .ignoresSafeArea()
         }
-        .sheet(item: $linkTarget) { target in
-            LinkEditorSheet(
-                request: EditorViewModel.LinkEditorRequest(
-                    blockID: UUID(),
-                    span: target.href.map {
-                        InlineLinkSpan(range: target.range, labelRange: target.range, label: target.label, url: $0)
-                    },
-                    label: target.label, url: target.href ?? "", range: target.range),
-                onSave: { label, url in
-                    guard session.input?.applyLink(label: label, url: url, to: target) == true else { return false }
-                    linkTarget = nil
-                    return true
-                },
-                onRemove: {
-                    session.input?.removeLink(target)
-                    linkTarget = nil
-                },
-                onCancel: { linkTarget = nil })
+        .fullScreenCover(
+            item: $openColumns,
+            onDismiss: { [session] in
+                // Back to the document, after the group (the keyboard stays up).
+                if let id = lastColumns { session.input?.focus(after: id) }
+            }
+        ) { model in
+            ColumnEditorScreen(model: model, serverOrigin: serverOrigin, isOffline: isOffline)
         }
+        .nativeLinkEditing($linkTarget, input: session.input)
         .modifier(
             DocumentOutlinePresentation(
                 isPresented: $isPresentingOutline, focusesFind: outlineFocusesFind, documentTitle: title,
@@ -208,6 +184,16 @@ struct NativeEditorView: View {
 }
 
 extension NativeEditorView {
+    /// The column editor's model for group `groupID`, owned by this view while presented (PR12a).
+    fileprivate func columnEditor(_ groupID: String) -> ColumnEditorModel {
+        let model = ColumnEditorModel(document: session, groupID: groupID)
+        model.onClose = {
+            lastColumns = groupID
+            openColumns = nil
+        }
+        return model
+    }
+
     fileprivate func presentOutline(focusingFind: Bool) {
         outlineFocusesFind = focusingFind
         session.navigation.isOutlinePresented = true
@@ -272,7 +258,7 @@ extension NativeEditorView {
 
 /// The native editor's formatting bar: the classic bar's tokens and labels
 /// over the selection's marks. Each action is at most one durable command.
-private struct NativeFormattingBar: View {
+struct NativeFormattingBar: View {
     let input: NativeInputCoordinator
     let editLink: (NativeLinkTarget) -> Void
     @Environment(LocalizationStore.self) private var loc
@@ -413,6 +399,33 @@ private struct NativeBlockMenu: View {
     }
 }
 
+extension NativeEditorLabels {
+    /// The document's labels, localized: every native text view's chrome
+    /// (the document's and, PR12a, each column's).
+    @MainActor static func document(_ loc: LocalizationStore) -> NativeEditorLabels {
+        NativeEditorLabels(
+            preservedBlock: loc[.native_editor_preserved_block],
+            unknownBlock: loc[.native_editor_unknown_block],
+            pageBreak: loc[.native_editor_page_break], codeLanguage: loc[.native_editor_code_language],
+            markDone: loc[.editor_checklist_done_a11y], markNotDone: loc[.editor_checklist_not_done_a11y],
+            done: loc[.editor_checklist_state_done_a11y],
+            notDone: loc[.editor_checklist_state_not_done_a11y], toggle: loc[.native_editor_toggle],
+            expanded: loc[.native_editor_toggle_expanded],
+            collapsed: loc[.native_editor_toggle_collapsed], peerCursor: loc[.native_editor_peer_cursor],
+            peerSelection: loc[.native_editor_peer_selection], peerFolded: loc[.native_editor_peer_folded],
+            named: loc[.native_editor_attachment_named],
+            image: loc[.editor_image_a11y], video: loc[.native_editor_video],
+            audio: loc[.native_editor_audio], file: loc[.native_editor_file], pdf: loc[.native_editor_pdf],
+            table: loc[.native_editor_table], tableMore: loc[.native_editor_table_more],
+            columns: loc[.native_editor_columns], math: loc[.native_editor_math],
+            diagram: loc[.native_editor_diagram], imageExternal: loc[.editor_image_external],
+            imageExternalA11y: loc[.editor_image_external_a11y], imageOffline: loc[.editor_image_offline],
+            imageFailed: loc[.editor_image_failed], blockMenu: loc[.native_editor_block_actions],
+            blockActions: Dictionary(
+                uniqueKeysWithValues: NativeBlockAction.allCases.map { ($0, loc[$0.labelKey]) }))
+    }
+}
+
 private struct NativeTextCanvas: UIViewRepresentable {
     let session: NativeEditorSession
     let contentSize: UIContentSizeCategory
@@ -422,6 +435,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
     let serverOrigin: String
     let isOffline: Bool
     let onOpenTable: (String) -> Void
+    let onOpenColumns: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -442,6 +456,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
         session.textView.blockControls.serverOrigin = serverOrigin
         session.textView.blockControls.isOffline = isOffline
         session.textView.blockControls.onOpenTable = onOpenTable
+        session.textView.blockControls.onOpenColumns = onOpenColumns
         coordinator.update(
             surface: session.surface, presentation: NativeTextPresentation(contentSize: contentSize, labels: labels))
     }
@@ -460,6 +475,31 @@ private struct NativeTextCanvas: UIViewRepresentable {
             surface.updatePresentation(
                 traits: UITraitCollection(preferredContentSizeCategory: presentation.contentSize),
                 labels: presentation.labels)
+        }
+    }
+}
+
+/// The link editor over a native input: the document's and a column's (PR12a).
+extension View {
+    func nativeLinkEditing(_ target: Binding<NativeLinkTarget?>, input: NativeInputCoordinator?) -> some View {
+        sheet(item: target) { link in
+            LinkEditorSheet(
+                request: EditorViewModel.LinkEditorRequest(
+                    blockID: UUID(),
+                    span: link.href.map {
+                        InlineLinkSpan(range: link.range, labelRange: link.range, label: link.label, url: $0)
+                    },
+                    label: link.label, url: link.href ?? "", range: link.range),
+                onSave: { label, url in
+                    guard input?.applyLink(label: label, url: url, to: link) == true else { return false }
+                    target.wrappedValue = nil
+                    return true
+                },
+                onRemove: {
+                    input?.removeLink(link)
+                    target.wrappedValue = nil
+                },
+                onCancel: { target.wrappedValue = nil })
         }
     }
 }

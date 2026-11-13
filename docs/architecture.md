@@ -1105,6 +1105,24 @@ later change (the typing surface still holds every cell). The cell being edited 
 alignment, collaborators show on their cells (a caret in the active one), and a composition
 lost in a cell becomes the document's recovery entry.
 
+**PR12a Native columns: a column group you can type in.** A web-authored column group
+(BlockNote's `columnList` of at least two `column`s, each holding blocks) that the editor fully
+understands is part of a typeable document: its save shadow is each column's blocks spelled as
+the server export spells them, column after column, with lists restarting at each column, as the
+export's column frames make them. The document shows the group as one card; tapping it opens the
+column editor: a picker for the columns and the shown column's blocks, edited exactly as the
+document is (typing, Return, Backspace, Tab, lists, marks, the slash menu, the formatting bar,
+links, IME, undo, offline saves and live collaboration), because every column is its own surface
+of the same replica session and its blocks are text targets only while the group is open. Moving
+between columns keeps the keyboard up. A table in a column opens the table editor. Moves the web
+makes across a column's edge (Backspace at a column's first block, the block after the group
+moving into it, Shift-Tab at a column's top) write nothing yet, so no native edit empties a
+column, moves a block between columns or dissolves the group; those, adding and removing
+columns, widths and the group's own commands come in PR12b, side-by-side layout, VoiceOver and
+find in PR12c. A group the editor does not understand (one column, an empty column, a group
+inside a column, over 16 columns or 2,000 blocks) and a group holding media, math or a diagram
+keep the document read-only and the group untouched.
+
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom
 actions on the text view) acts on the caret's block and its whole subtree: Move up, Move

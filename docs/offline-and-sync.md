@@ -244,8 +244,11 @@ read-only. Since PR11b a styled merged cell is spelled as BlockNote reads it, an
 concurrent structure change left uneven is spelled as the web's repair will leave it, so a save
 in between still has a shadow. Since PR11c a table larger than 1,000 cells still has no shadow
 (its document stays read-only natively) but its viewer reads it whole; pasted cells are written
-as the web writes them, so they save like any other edit. Existing Markdown drafts retain their
-classic owner.
+as the web writes them, so they save like any other edit. Since PR12a a familiar root column
+group is spelled as the export spells it (each column's blocks as root blocks, column after
+column, lists restarting at each column), so a document with one types too; a group holding a
+block without a shadow (media, math, a diagram) keeps its document read-only. Existing Markdown
+drafts retain their classic owner.
 
 > **Amendment (2026-07-03):** the document **lists** (Home, the editor's
 > Subpages section, and the Shared tab) now follow this same

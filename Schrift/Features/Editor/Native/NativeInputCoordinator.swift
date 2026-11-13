@@ -266,6 +266,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// Backspace at a paragraph's start does nothing (BlockNote keeps the
     /// cell). Returns whether the key was handled.
     @ObservationIgnored var tableMove: ((TableMove) -> Bool)?
+    /// A column surface (PR12a): Escape returns to the document.
+    @ObservationIgnored var onExit: (() -> Void)?
 
     /// Shows the cell made of `blockIDs` (a table surface) and selects its
     /// text, as prosemirror-tables' `goToNextCell` does; a cell of several

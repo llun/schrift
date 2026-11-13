@@ -406,11 +406,15 @@ final class DocumentEngine {
             // BlockNote's `mergeBlocksCommand`: into the block above (the
             // previous sibling's last descendant, or a first child's parent).
             // A nested block outdents only when that merge cannot happen.
+            // A column's first block has nothing above it in its column: the
+            // web's move into the previous column or out of the group is
+            // PR12b's, so nothing is written (PR12a).
             let index = builder.index
-            guard let entry = index.entries[command.blockID], let position = index.position[command.blockID],
+            let list = index.list(of: command.blockID)
+            guard let entry = index.entries[command.blockID], let position = index.listPosition(of: command.blockID),
                 position > 0
             else { throw DocumentEngineError.unsupportedNativeInput }
-            let previousID = index.order[position - 1]
+            let previousID = list[position - 1]
             let firstChild =
                 entry.depth > 0 && index.groupOrder[ObjectIdentifier(entry.group)]?.first == command.blockID
             // The destination is written too: it must be unlocked.
@@ -467,8 +471,11 @@ final class DocumentEngine {
             // opaque block, a placeholder, code, nested children, inline nodes
             // or a toggle heading anywhere refuses the whole command.
             let index = builder.index
-            guard let lower = index.position[command.blockID], let upper = index.position[range.endBlockID],
-                lower <= upper, let group = index.entries[command.blockID]?.group
+            let list = index.list(of: command.blockID)
+            guard index.sameList(command.blockID, range.endBlockID),
+                let lower = index.listPosition(of: command.blockID),
+                let upper = index.listPosition(of: range.endBlockID), lower <= upper,
+                let group = index.entries[command.blockID]?.group
             else { throw DocumentEngineError.unsupportedNativeInput }
             var endUnits = units
             // A toggle's split depends on its view state: a range touching one is refused.
@@ -476,12 +483,12 @@ final class DocumentEngine {
             for position in stride(from: lower + 1, through: upper, by: 1) {
                 // Siblings of one group only: a range across depths, or over a
                 // block with children it would delete, waits for subtree commands.
-                guard index.entries[index.order[position]]?.group === group else {
+                guard index.entries[list[position]]?.group === group else {
                     throw DocumentEngineError.unsupportedNativeInput
                 }
-                try requireEditableBlock(index.order[position])
-                endUnits = try structuralTarget(index.order[position]).units
-                guard !isToggle(index.order[position]) else { throw DocumentEngineError.unsupportedNativeInput }
+                try requireEditableBlock(list[position])
+                endUnits = try structuralTarget(list[position]).units
+                guard !isToggle(list[position]) else { throw DocumentEngineError.unsupportedNativeInput }
             }
             let lines = NativeRangeCommand.lines(of: range.replacement)
             let ids = range.newBlockIDs
@@ -517,13 +524,15 @@ final class DocumentEngine {
             // named attributes change ("null" removes), so the text is never
             // touched and the patch is marks-only.
             let index = builder.index
-            guard let lower = index.position[command.blockID], let upper = index.position[marks.endBlockID],
-                lower <= upper, !marks.attributes.isEmpty,
+            let list = index.list(of: command.blockID)
+            guard index.sameList(command.blockID, marks.endBlockID),
+                let lower = index.listPosition(of: command.blockID),
+                let upper = index.listPosition(of: marks.endBlockID), lower <= upper, !marks.attributes.isEmpty,
                 marks.attributes.allSatisfy({ Self.isMarkValue($0) })
             else { throw DocumentEngineError.unsupportedNativeInput }
             var segments: [(item: YItem, id: String, range: Range<Int>)] = []
             for position in lower...upper {
-                let id = index.order[position]
+                let id = list[position]
                 if position == upper, position > lower, marks.endOffset == 0 { break }
                 if position > lower { try requireEditableBlock(id) }
                 let blockUnits = position == lower ? units : try structuralTarget(id).units
@@ -675,11 +684,12 @@ final class DocumentEngine {
     /// `including` accepts, as `requireMovable` walks them) hold a table.
     private func movesTable(_ blockID: String, including: (Int) -> Bool) -> Bool {
         let index = builder.index
-        guard var position = index.position[blockID] else { return false }
+        let list = index.list(of: blockID)
+        guard var position = index.listPosition(of: blockID) else { return false }
         repeat {
-            if isTable(index.order[position]) { return true }
+            if isTable(list[position]) { return true }
             position += 1
-        } while position < index.order.count && including(index.entries[index.order[position]]?.depth ?? -1)
+        } while position < list.count && including(index.entries[list[position]]?.depth ?? -1)
         return false
     }
 
@@ -751,6 +761,42 @@ final class DocumentEngine {
         return TableClipboard.copy(grid, tableProps: YBlockProjection.props(of: element) ?? [])
     }
 
+    // MARK: - Open column groups (PR12a)
+
+    /// Indexes column group `blockID`'s blocks for column surfaces. Writes
+    /// nothing and delivers nothing. False for anything but a familiar group
+    /// of this index.
+    @discardableResult
+    func openColumns(_ blockID: String) -> Bool {
+        guard !isDetached, builder.index.isCanonical else { return false }
+        return builder.openColumns(blockID)
+    }
+
+    func closeColumns(_ blockID: String) {
+        builder.closeColumns(blockID)
+    }
+
+    /// An open column's blocks, in preorder (empty once it is gone); nil
+    /// when its group is not open.
+    func columnBlocks(_ columnID: String) -> [BlockSnapshot]? {
+        guard let ids = builder.index.columnOrders[columnID] else {
+            let open = builder.index.openGroups.values.contains { $0.contains(columnID) }
+            return open ? [] : nil
+        }
+        return ids.compactMap { builder.index.entries[$0].map { BlockSnapshot(builder.nativeSnapshot($0)) } }
+    }
+
+    /// The open column `blockID` is a block of, if any.
+    func column(of blockID: String) -> String? { builder.index.columnOf[blockID] }
+
+    /// Column group `blockID` as the replica holds it now.
+    func columnGroup(_ blockID: String) -> ColumnGroup? {
+        guard !isDetached, let entry = builder.index.entries[blockID], builder.index.isColumnGroup(blockID) else {
+            return nil
+        }
+        return ColumnGroup.read(entry.container, id: blockID)
+    }
+
     private func resetOnBackspaceOrEnter(_ blockID: String, node: String) throws -> Data {
         guard node == "heading", isToggle(blockID) else {
             return try writer.setBlockType(block: blockID, to: "paragraph")
@@ -805,19 +851,22 @@ final class DocumentEngine {
     /// would add one level (the caller's bound).
     private func requireMovable(_ blockID: String, including: (Int) -> Bool) throws -> Int {
         let index = builder.index
-        guard let start = index.position[blockID], let depth = index.entries[blockID]?.depth else {
+        let list = index.list(of: blockID)
+        guard let start = index.listPosition(of: blockID), let depth = index.entries[blockID]?.depth else {
             throw DocumentEngineError.unsupportedNativeInput
         }
         var deepest = depth + 1
         var position = start
         repeat {
-            guard let entry = index.entries[index.order[position]],
+            guard let entry = index.entries[list[position]],
+                // A column group moves as a whole only in PR12b.
+                !index.isColumnGroup(entry.id),
                 !builder.nativeSnapshot(entry).block.fidelity.isOpaque
             else { throw DocumentEngineError.unsupportedNativeInput }
             try requireEditableBlock(entry.id)
             deepest = max(deepest, entry.depth + 1)
             position += 1
-        } while position < index.order.count && including(index.entries[index.order[position]]?.depth ?? -1)
+        } while position < list.count && including(index.entries[list[position]]?.depth ?? -1)
         return deepest
     }
 
@@ -836,14 +885,18 @@ final class DocumentEngine {
     private func prepareBlockCommand(_ command: NativeEditCommand) throws -> PreparedCommand {
         let index = builder.index
         let id = command.blockID
-        guard index.isCanonical, let entry = index.entries[id], let position = index.position[id],
+        let order = index.list(of: id)
+        // A column group's own move and duplicate are PR12b's (`requireMovable`
+        // refuses it; delete and copy have no lossless payload for it).
+        guard index.isCanonical, let entry = index.entries[id],
+            let position = index.listPosition(of: id),
             let siblings = index.groupOrder[ObjectIdentifier(entry.group)], let at = siblings.firstIndex(of: id)
         else { throw DocumentEngineError.unsupportedNativeInput }
         let writer = self.writer
         let item = entry.containerItem
         // The preorder position just past the block's subtree.
         var end = position + 1
-        while end < index.order.count, (index.entries[index.order[end]]?.depth ?? -1) > entry.depth { end += 1 }
+        while end < order.count, (index.entries[order[end]]?.depth ?? -1) > entry.depth { end += 1 }
         func start(_ id: String) -> EditorPosition { EditorPosition(blockID: id, offset: 0, assoc: -1) }
         func isFresh(_ ids: [String]) -> Bool {
             Set(ids).count == ids.count && ids.allSatisfy { !$0.isEmpty && index.entries[$0] == nil }
@@ -856,6 +909,11 @@ final class DocumentEngine {
             let deepest = try requireMovable(id, including: { $0 > entry.depth }) - 1
             let destination: (group: YType, left: YItem?, depth: Int)
             let neighbour = up ? (at > 0 ? siblings[at - 1] : nil) : (at + 1 < siblings.count ? siblings[at + 1] : nil)
+            // Past a column group the web moves the block into its first or last
+            // column (`getInsertionPos`): PR12b's, so nothing is written yet.
+            guard neighbour.map({ !index.isColumnGroup($0) }) ?? true else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
             if let neighbour, let next = index.entries[neighbour] {
                 if let nested = next.nestedGroup, let kids = index.groupOrder[ObjectIdentifier(nested)],
                     let last = kids.last.flatMap({ index.entries[$0] }), !kids.isEmpty
@@ -900,10 +958,10 @@ final class DocumentEngine {
         case .deleteBlock:
             // The document keeps one block.
             guard entry.depth > 0 || siblings.count > 1 else { throw DocumentEngineError.unsupportedNativeInput }
-            for p in position..<end { try requireEditableBlock(index.order[p]) }
+            for p in position..<end { try requireEditableBlock(order[p]) }
             _ = try BlockNoteSubtreePayload.validate([try writer.snapshot(entry.container, block: id, depth: 0)])
-            let next = end < index.order.count ? index.order[end] : nil
-            let previous = position > 0 ? index.order[position - 1] : nil
+            let next = end < order.count ? order[end] : nil
+            let previous = position > 0 ? order[position - 1] : nil
             return (
                 { try writer.deleteBlock(item, id: id) },
                 {
@@ -1110,10 +1168,11 @@ final class DocumentEngine {
             // descendant, the block before it in preorder; its children move
             // into its place.
             let index = builder.index
-            if let position = index.position[block], let depth = index.entries[block]?.depth {
-                if position > 0 { try requireEditableBlock(index.order[position - 1]) }
+            let list = index.list(of: block)
+            if let position = index.listPosition(of: block), let depth = index.entries[block]?.depth {
+                if position > 0 { try requireEditableBlock(list[position - 1]) }
                 var next = position + 1
-                while next < index.order.count, let entry = index.entries[index.order[next]], entry.depth > depth {
+                while next < list.count, let entry = index.entries[list[next]], entry.depth > depth {
                     try requireEditableBlock(entry.id)
                     next += 1
                 }
