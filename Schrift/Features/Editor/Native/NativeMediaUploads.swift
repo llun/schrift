@@ -1,25 +1,26 @@
 import Foundation
 import Observation
 
-/// The native editor's media uploads (PR13a): the classic pipeline
-/// (`preparedJPEGData`, `loadPickedAttachmentFile`, `uploadAttachment` and the
-/// bounded media-check poll) feeding a generation-checked commit.
+/// The native editor's media uploads (PR13a, queued since PR13b): the
+/// classic preparation (`preparedJPEGData`, `loadPickedAttachmentFile`)
+/// feeding the coordinator's durable native queue.
 ///
 /// The block exists before its upload (the slash menu inserts it empty, as the
-/// web does); the upload records the block's **slot** (its kind and url) when
-/// it starts, and the URL is committed with `.mediaProps([name, url],
-/// expecting: slot)` through the same editor session's input. A block deleted,
-/// retyped or filled meanwhile refuses the commit; a session that closed (Done,
-/// sign-out, another account) drops it, never retargeting another session. The
-/// URL written is always the server's own media URL for **this** document
-/// (`parseAttachmentLink` + the document id); nothing local, no placeholder and
-/// no picked file name the server did not store ever reaches the replica.
-/// One upload at a time per document. Offline and local documents are refused
-/// with a notice: the native offline queue is PR13b.
+/// web does); an upload records the block's **slot** (its kind and url) when
+/// it starts and is queued at once, online or offline
+/// (`DocumentSaveCoordinator.queueNativeAttachment`: bytes and record on disk
+/// first). The coordinator uploads, checkpoints the URL and commits
+/// `.mediaProps([name, url], expecting: slot)` through a headless lease of the
+/// document's replica, so it lands whether this editor is still open or not,
+/// and after a relaunch. A block deleted, retyped or filled meanwhile refuses
+/// the commit and drops the record. The URL written is always the server's own
+/// media URL for **this** document; nothing local, no placeholder and no picked
+/// file name the server did not store ever reaches the replica. One upload per
+/// block at a time. A local document (no server id) is refused with a notice.
 @MainActor @Observable
 final class NativeMediaUploads {
     /// Uploads to document `documentID`, answering the absolute media URL (or
-    /// nil when the server gave none). The app's: `uploadAttachment` then
+    /// nil when the server gave none): `uploadAttachment` then
     /// `readyMediaURLString` (`DocsAPIClient.mediaUploader`).
     typealias Upload =
         @Sendable (_ documentID: UUID, _ fileName: String, _ contentType: String, _ data: Data)
@@ -32,56 +33,78 @@ final class NativeMediaUploads {
         case file(@Sendable () async throws -> PreparedAttachmentFile?)
     }
 
-    /// The block an upload is running for, if any.
-    private(set) var uploading: String?
+    /// The block whose bytes are being prepared, before they are queued.
+    private(set) var preparing: String?
     /// The last failure, for the block it was for.
     private(set) var failure: (blockID: String, key: L10nKey)?
     /// The server's id for the document; nil for one only this device knows.
     let documentID: UUID?
-    let serverOrigin: String
-    @ObservationIgnored var isOffline: () -> Bool
-    @ObservationIgnored private let upload: Upload
-    /// How long a commit waits for the input to be free, a step at a time.
-    @ObservationIgnored var commitAttempts = 50
-    @ObservationIgnored var commitInterval: Duration = .milliseconds(100)
+    @ObservationIgnored private let queue: DocumentSaveCoordinator
 
-    init(documentID: UUID?, serverOrigin: String, isOffline: @escaping () -> Bool, upload: @escaping Upload) {
+    init(documentID: UUID?, queue: DocumentSaveCoordinator) {
         self.documentID = documentID
-        self.serverOrigin = serverOrigin
-        self.isOffline = isOffline
-        self.upload = upload
+        self.queue = queue
     }
 
-    /// Whether an upload can start now (one at a time, online, a server document).
-    var canUpload: Bool { uploading == nil && documentID != nil && !isOffline() }
+    /// Block `blockID`'s queued upload (waiting, uploading or failed), if any.
+    func record(_ blockID: String) -> PendingAttachment? {
+        documentID.flatMap { queue.nativeAttachment(documentID: $0, blockID: blockID) }
+    }
+
+    /// The blocks of this document with an upload under way, and those whose upload failed.
+    var uploadingBlocks: Set<String> { blocks(failed: false).union(preparing.map { [$0] } ?? []) }
+    var failedBlocks: Set<String> { blocks(failed: true) }
+
+    private func blocks(failed: Bool) -> Set<String> {
+        guard let documentID else { return [] }
+        _ = queue.pendingAttachmentsVersion
+        return Set(
+            queue.nativeAttachments(documentID: documentID).filter { ($0.failedAt != nil) == failed }
+                .compactMap(\.native?.blockID))
+    }
+
+    /// Whether an upload into `blockID` can start now (a server document, none under way for it).
+    func canUpload(_ blockID: String) -> Bool { documentID != nil && preparing == nil && record(blockID) == nil }
 
     func clearFailure() { failure = nil }
 
-    /// Starts uploading `source` into media block `blockID` of `session`'s
-    /// surface (the document's, or a column's), whose slot is `slot` now. Nil
-    /// (and a failure notice) when it cannot start.
+    /// A failed upload goes again (its bytes are still queued).
+    func retry(_ blockID: String) {
+        guard let record = record(blockID) else { return }
+        queue.retryPendingAttachment(localID: record.localID)
+    }
+
+    /// The queued upload and its bytes go; the block stays as it is.
+    func discard(_ blockID: String) {
+        guard let record = record(blockID) else { return }
+        queue.discardPendingAttachment(localID: record.localID)
+    }
+
+    /// Prepares `source` and queues it for media block `blockID` of
+    /// `session`'s surface (the document's, or a column's), whose slot is
+    /// `slot` now. Nil (and a failure notice) when it cannot start.
     @discardableResult
     func start(_ source: Source, into blockID: String, slot: MediaBlock.Slot, in session: NativeEditorSession)
         -> Task<Void, Never>?
     {
         failure = nil
-        guard uploading == nil else { return nil }
-        guard let documentID, !isOffline() else {
+        guard documentID != nil, let scope = session.scope else {
             failure = (blockID, .native_editor_media_upload_offline)
             return nil
         }
-        uploading = blockID
-        // Never retained across the upload: a closed editor is gone, not kept alive.
+        guard canUpload(blockID) else { return nil }
+        preparing = blockID
+        // Never retained across the preparation: a closed editor is gone, not kept alive.
         let target = WeakSession(session: session)
         return Task { [weak self] in
-            await self?.run(source, into: blockID, slot: slot, documentID: documentID, target: target)
+            await self?.prepare(source, into: blockID, slot: slot, scope: scope, target: target)
         }
     }
 
-    private func run(
-        _ source: Source, into blockID: String, slot: MediaBlock.Slot, documentID: UUID, target: WeakSession
+    private func prepare(
+        _ source: Source, into blockID: String, slot: MediaBlock.Slot, scope: ReplicaScope, target: WeakSession
     ) async {
-        defer { uploading = nil }
+        defer { preparing = nil }
         let fileName: String
         let contentType: String
         let data: Data
@@ -118,47 +141,16 @@ final class NativeMediaUploads {
             return fail(blockID, .native_editor_media_upload_failed)
         }
         // Preparation awaited: the editor that started this may have closed
-        // (Done, a sign-out or another account's reopen). Nothing is sent then.
+        // (Done, a sign-out or another account's reopen). Nothing is queued then.
         guard target.session.map({ !$0.isClosed }) == true else {
             return fail(blockID, .native_editor_media_upload_dropped)
         }
-        let url: String
-        do {
-            guard let answered = try await upload(documentID, fileName, contentType, data) else {
-                return fail(blockID, .native_editor_media_upload_failed)
-            }
-            url = answered
-        } catch {
-            return fail(blockID, .native_editor_media_upload_failed)
-        }
-        // Only this server's media URL for this very document is written.
-        guard let display = parseAttachmentLink("[file](\(url))", serverOrigin: serverOrigin),
-            display.documentUUID.lowercased() == documentID.uuidString.lowercased(),
-            MediaBlock.isAuthoredURL(url)
-        else { return fail(blockID, .native_editor_media_upload_failed) }
-        await commit(
-            blockID, in: target,
-            props: [
-                ProjectedProp(key: "name", value: .string(fileName)), ProjectedProp(key: "url", value: .string(url)),
-            ],
-            slot: slot)
-    }
-
-    /// Posts the commit through the same session's input once it is free
-    /// (a composition or another command in flight); a session that closed
-    /// meanwhile drops it.
-    private func commit(
-        _ blockID: String, in target: WeakSession, props: [ProjectedProp], slot: MediaBlock.Slot
-    ) async {
-        for attempt in 0..<commitAttempts {
-            // A block that is gone drops at once; a busy input is waited for.
-            guard let session = target.session, !session.isClosed, let input = session.input,
-                input.mediaBlock(blockID) != nil
-            else { break }
-            if input.setMediaProps(blockID, props, expecting: slot) { return }
-            if attempt + 1 < commitAttempts { try? await Task.sleep(for: commitInterval) }
-        }
-        fail(blockID, .native_editor_media_upload_dropped)
+        let queued = queue.queueNativeAttachment(
+            scope: scope,
+            target: NativeMediaTarget(
+                org: scope.org, blockID: blockID, slot: slot, fileName: fileName, contentType: contentType),
+            data: data)
+        if queued == nil { fail(blockID, .native_editor_media_upload_failed) }
     }
 
     private struct WeakSession {

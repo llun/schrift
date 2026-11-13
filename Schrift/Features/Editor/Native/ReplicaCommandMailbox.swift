@@ -73,6 +73,9 @@ enum ReplicaMessage: Sendable {
     case tableCopy(blockID: String, from: TableSlot, to: TableSlot, reply: @Sendable (TableCopy?) -> Void)
     /// Column groups (PR12a): group `blockID` as the replica holds it now.
     case columnGroup(blockID: String, reply: @Sendable (ColumnGroup?) -> Void)
+    /// Media (PR13b): media block `blockID`'s slot (kind and url) now, anywhere in
+    /// the document (a column's included); nil when it is not a familiar media block.
+    case mediaSlot(blockID: String, reply: @Sendable (MediaBlock.Slot?) -> Void)
     case requestAvailability(surfaceID: UUID, blockID: String, candidates: [ReplicaAvailabilityCandidate])
     case copyPayload(surfaceID: UUID, requestID: UUID, blockIDs: [String])
     /// Installs the journal (nil makes the session read-only) and the shared
@@ -103,6 +106,7 @@ enum ReplicaMessage: Sendable {
         case .tableGrid(_, _, let reply): reply(nil)
         case .tableCopy(_, _, _, let reply): reply(nil)
         case .columnGroup(_, let reply): reply(nil)
+        case .mediaSlot(_, let reply): reply(nil)
         case .inspect(let body): body(nil, nil, nil)
         default: break
         }
@@ -127,6 +131,15 @@ enum ReplicaResult: Sendable, Equatable {
 
     enum CompositionResult: Sendable, Equatable {
         case committed, orphaned, cancelled, failed
+    }
+
+    /// The command this answers.
+    var commandID: UUID? {
+        switch self {
+        case .applied(let id, _, _), .refused(let id, _), .stale(let id), .invalidated(_, let id), .failed(let id):
+            id
+        case .composition(let id, _): id
+        }
     }
 }
 

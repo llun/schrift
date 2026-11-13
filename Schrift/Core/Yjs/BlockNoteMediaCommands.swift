@@ -85,7 +85,7 @@ enum MediaBlock {
 
     /// What an upload started from (PR13a): the block's kind and url then.
     /// A block deleted, retyped or given another url since refuses the commit.
-    struct Slot: Equatable, Sendable {
+    struct Slot: Codable, Equatable, Sendable {
         var node: String
         var url: String
     }

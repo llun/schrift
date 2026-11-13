@@ -1077,6 +1077,18 @@ final class DocumentEngine {
     }
 
     /// A media block's props (PR13a), validated per kind before arming;
+    /// Media block `blockID`'s slot now, wherever it sits (PR13b: the headless
+    /// commit's check); nil for anything a `.mediaProps` would refuse outright.
+    func mediaSlot(_ blockID: String) -> MediaBlock.Slot? {
+        let index = builder.index
+        guard !isDetached, index.isCanonical, let entry = index.entries[blockID], !index.isTableParagraph(blockID),
+            !builder.nativeSnapshot(entry).block.fidelity.isOpaque, let element = entry.element,
+            case .xmlElement(let node)? = element.typeRef, MediaBlock.nodes.contains(node),
+            let stored = YBlockProjection.props(of: element)
+        else { return nil }
+        return MediaBlock.Slot(node: node, url: MediaBlock.string("url", in: stored))
+    }
+
     /// `expecting` (an upload's slot) refuses a block whose kind or url changed.
     private func prepareMediaProps(_ command: NativeEditCommand, props: [ProjectedProp], expecting: MediaBlock.Slot?)
         throws -> PreparedCommand

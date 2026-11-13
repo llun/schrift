@@ -1301,6 +1301,160 @@ final class DocumentSaveCoordinator {
         pendingAttachments.values.contains { $0.documentID == documentID }
     }
 
+    // MARK: - Native media queue (PR13b)
+
+    /// The app's replica registry: a native upload commits through a headless lease of it, so it
+    /// lands whether or not its editor is still open. Nil (tests, previews): native records wait.
+    weak var nativeSessions: NativeSessionRegistry?
+    /// `SignInGenerationClock.isCurrent` (RootView): a native upload is bound to the sign-in
+    /// generation its run started in, checked when each request is built (PR13a review V1/W1).
+    var signInIsCurrent: (() -> @Sendable () -> Bool)?
+    /// The headless commit's retry budget while the block is busy (tests shorten it).
+    var nativeCommitAttempts = 50
+    var nativeCommitInterval: Duration = .milliseconds(100)
+    /// Native records whose run is under way: one runner per record, so a pass and a queue kick
+    /// never upload the same bytes twice.
+    private var nativeRuns: Set<UUID> = []
+
+    /// Queues a native media upload (PR13b), online or offline alike: bytes, then the record, then
+    /// the run starts at once. Nil when nothing was queued (the store is unreadable, the bytes did
+    /// not write, or the scope is not this session's).
+    @discardableResult
+    func queueNativeAttachment(scope: ReplicaScope, target: NativeMediaTarget, data: Data) -> UUID? {
+        guard !attachmentStore.holdsUnreadableData, scope.serverOrigin == client.serverOrigin,
+            scope.ownerUserID == signedInUser.userID, scope.org == target.org
+        else { return nil }
+        let localID = UUID()
+        guard attachmentStore.saveData(data, for: localID) else { return nil }
+        updatePendingAttachment(
+            PendingAttachment(
+                localID: localID, documentID: scope.documentID, createdAt: Date(), serverOrigin: scope.serverOrigin,
+                ownerUserID: scope.ownerUserID, native: target))
+        let isCurrent = signInIsCurrent?()
+        Task { await runNativeAttachment(localID, isCurrent: isCurrent) }
+        return localID
+    }
+
+    /// The newest native record for media block `blockID` of a document: what its card and
+    /// inspector show (waiting or failed).
+    func nativeAttachment(documentID: UUID, blockID: String) -> PendingAttachment? {
+        pendingAttachments.values.filter { $0.documentID == documentID && $0.native?.blockID == blockID }
+            .max(by: orderedByAttachmentCreation)
+    }
+
+    /// Every native record for a document, oldest first.
+    func nativeAttachments(documentID: UUID) -> [PendingAttachment] {
+        pendingAttachments.values.filter { $0.documentID == documentID && $0.native != nil }
+            .sorted(by: orderedByAttachmentCreation)
+    }
+
+    /// May this native record be sent or committed now? Its server and the remembered account.
+    private func isNativeReplayable(_ record: PendingAttachment) -> Bool {
+        record.native != nil && record.serverOrigin == client.serverOrigin && record.ownerUserID != nil
+            && record.ownerUserID == signedInUser.userID
+    }
+
+    /// One native record's replay, two-phase like the classic one: the slot checked headlessly
+    /// (a block deleted, retyped or filled meanwhile drops the record before anything is sent),
+    /// the upload, the URL **checkpointed** before any commit, then the headless commit, whose slot
+    /// check decides commit or drop. A death anywhere resumes from the record: before the
+    /// checkpoint it uploads again (no idempotency key exists), after it only commits, and a commit
+    /// that landed before the record went is refused by its own slot (the url changed), so a block
+    /// never gets a second photo.
+    private func runNativeAttachment(_ localID: UUID, isCurrent: (@Sendable () -> Bool)?) async {
+        guard !nativeRuns.contains(localID) else { return }
+        nativeRuns.insert(localID)
+        defer { nativeRuns.remove(localID) }
+        guard let record = pendingAttachments[localID], let target = record.native, record.failedAt == nil,
+            isNativeReplayable(record), isCurrent?() != false
+        else { return }
+        var resolved = record.uploadedURLString
+        if resolved == nil {
+            switch await nativeLease(nil, record) {
+            case .gone: return removeNativeAttachment(localID)
+            case .matches: break
+            case .committed, .unavailable: return
+            }
+            guard let bytes = attachmentStore.data(for: localID) else { return markAttachmentFailed(localID: localID) }
+            // Re-read after the await: a delete, a discard or a sign-out may have come between.
+            guard pendingAttachments[localID] != nil, isNativeReplayable(record) else { return }
+            let upload = client.mediaUploader(
+                maxAttempts: mediaCheckMaxAttempts, retryInterval: mediaCheckRetryInterval, isCurrent: isCurrent)
+            let answered: String?
+            do {
+                answered = try await upload(record.documentID, target.fileName, target.contentType, bytes)
+            } catch let error as DocsAPIError {
+                // Transient (offline, a 5xx, an expired session): the next pass carries it.
+                if retryableSaveFailure(error) || error == .sessionExpired { return }
+                return markAttachmentFailed(localID: localID)
+            } catch {
+                // A sign-in switch refused the request: nothing was sent.
+                return
+            }
+            // Only this server's media URL for this very document is ever written.
+            guard let url = answered,
+                let display = parseAttachmentLink("[file](\(url))", serverOrigin: client.serverOrigin),
+                display.documentUUID.lowercased() == record.documentID.uuidString.lowercased(),
+                MediaBlock.isAuthoredURL(url)
+            else { return markAttachmentFailed(localID: localID) }
+            guard var checkpointed = pendingAttachments[localID] else { return }
+            checkpointed.uploadedURLString = url
+            updatePendingAttachment(checkpointed)
+            resolved = url
+        }
+        guard let url = resolved, pendingAttachments[localID] != nil, isNativeReplayable(record), isCurrent?() != false
+        else { return }
+        let props = [
+            ProjectedProp(key: "name", value: .string(target.fileName)), ProjectedProp(key: "url", value: .string(url)),
+        ]
+        switch await nativeLease(props, record) {
+        case .committed, .gone: removeNativeAttachment(localID)
+        case .matches, .unavailable: break
+        }
+    }
+
+    private func removeNativeAttachment(_ localID: UUID) {
+        guard pendingAttachments[localID] != nil else { return }
+        removePendingAttachment(localID: localID)
+    }
+
+    /// The headless lease for `record`'s block; without a registry nothing is decided.
+    private func nativeLease(_ props: [ProjectedProp]?, _ record: PendingAttachment) async
+        -> NativeSessionRegistry.MediaCommit
+    {
+        guard let registry = nativeSessions, let target = record.native, let scope = record.nativeScope else {
+            return .unavailable
+        }
+        return await registry.commitMedia(
+            props, into: target.blockID, expecting: target.slot, scope: scope, store: replicaStore,
+            attempts: nativeCommitAttempts, interval: nativeCommitInterval
+        ) { [weak self, weak registry] in
+            NativeReplicaSaveScheduler(
+                enqueue: { try self?.enqueueNativeReplica(scope) ?? false },
+                onFailure: { error in
+                    for surface in registry?.surfaces(of: scope) ?? [] { surface.freezeAuthoring() }
+                    self?.noteReplicaCaptureFailure(documentID: scope.documentID, error: error)
+                })
+        }
+    }
+
+    /// The headless save: what `NativeEditorOpen.installTyping`'s scheduler hands over, without an
+    /// editor. The title is the server copy on disk (the save PATCHes it, so it is never guessed):
+    /// with none known the journal stays on the device and the next editor open hands it over.
+    private func enqueueNativeReplica(_ scope: ReplicaScope) throws -> Bool {
+        guard signedInUser.userID == scope.ownerUserID else { return false }
+        let cached = contentCache.content(for: scope.documentID)
+        let draft = draftStore.draft(for: scope.documentID)
+        guard let title = cached?.title ?? draft?.title else { return false }
+        try enqueueReplica(
+            adapter: ReplicaSaveAdapter(store: replicaStore, scope: scope), title: title,
+            baseline: draft?.baseline
+                ?? cached.map {
+                    DraftBaseline(serverUpdatedAt: $0.serverUpdatedAt, markdown: $0.markdown, title: $0.title)
+                })
+        return true
+    }
+
     private func updatePendingAttachment(_ record: PendingAttachment) {
         attachmentStore.save(record)
         pendingAttachments[record.localID] = record
@@ -3261,8 +3415,10 @@ final class DocumentSaveCoordinator {
         let records = attachmentStore.allAttachments()
         // Cheap pre-gate before any request at all, mirroring the create pass: a device with
         // nothing sendable must not cost a `/users/me/` round trip.
-        guard records.contains(where: { $0.serverOrigin == serverOrigin && $0.ownerUserID != nil })
+        guard records.contains(where: { ($0.serverOrigin == serverOrigin || $0.native != nil) && $0.ownerUserID != nil })
         else { return }
+        // Captured before the identity request: a sign-in switch from here on sends nothing.
+        let isCurrent = signInIsCurrent?()
         // With the *drafts* unreadable every reference check answers "no document names this
         // photo", and the collection branch would delete every queued photo's bytes.
         guard !draftStore.holdsUnreadableData else { return }
@@ -3276,6 +3432,12 @@ final class DocumentSaveCoordinator {
             // Re-read after every await: the user can delete the document or discard the photo
             // while an upload is in flight, and acting on a stale copy would resurrect it.
             guard let record = pendingAttachments[snapshot.localID] else { continue }
+            // A native record (PR13b) names no Markdown, so the collection below would delete it:
+            // its own run commits or drops it by the block's slot.
+            if record.native != nil {
+                if record.ownerUserID == currentUserID { await runNativeAttachment(record.localID, isCurrent: isCurrent) }
+                continue
+            }
             guard isAttachmentReplayable(record, currentUserID: currentUserID) else { continue }
 
             // **Collection runs before the failure skip**, or a terminally-failed record whose

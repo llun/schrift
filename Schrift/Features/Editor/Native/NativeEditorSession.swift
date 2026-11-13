@@ -256,6 +256,34 @@ final class NativeEditorSession {
         }
     }
 
+    /// Media block `blockID`'s slot, read in mailbox order anywhere in the
+    /// document (PR13b); nil without a replica or for anything else.
+    func mediaSlot(_ blockID: String) async -> MediaBlock.Slot? {
+        guard let replica, !isClosed else { return nil }
+        return await withCheckedContinuation { done in
+            replica.mailbox.post(.mediaSlot(blockID: blockID, reply: { done.resume(returning: $0) }))
+        }
+    }
+
+    /// A headless surface's command (PR13b, no input coordinator): posted as a
+    /// barrier at the revision shown, answered by its result; nil when it could
+    /// not be posted or the session ended first.
+    func post(_ kind: NativeEditCommand.Kind, blockID: String) async -> ReplicaResult? {
+        guard let replica, !isClosed, input == nil else { return nil }
+        let command = NativeEditCommand(id: UUID(), baseRevision: revision, blockID: blockID, kind: kind)
+        return await withCheckedContinuation { done in
+            results[command.id] = done
+            let posted = replica.mailbox.post(
+                .command(
+                    ReplicaCommand(
+                        surfaceID: surfaceID, epoch: 0, predicted: false, command: command, undoBefore: true,
+                        undoAfter: true)))
+            if !posted { results.removeValue(forKey: command.id)?.resume(returning: nil) }
+        }
+    }
+
+    @ObservationIgnored private var results: [UUID: CheckedContinuation<ReplicaResult?, Never>] = [:]
+
     /// Paints `awareness`'s peers over this surface (PR10).
     func showAwareness(_ awareness: NativeAwarenessController) {
         self.awareness = awareness
@@ -294,6 +322,7 @@ final class NativeEditorSession {
             navigation.documentChanged()
         }
         if let token = delivery.drained { drains.removeValue(forKey: token)?.resume() }
+        if let result = delivery.result, let id = result.commandID { results.removeValue(forKey: id)?.resume(returning: result) }
         onApplied?(delivery)
     }
 
@@ -302,6 +331,8 @@ final class NativeEditorSession {
     private func didFinishDeliveries() {
         for drain in drains.values { drain.resume() }
         drains = [:]
+        for result in results.values { result.resume(returning: nil) }
+        results = [:]
         input?.detach()
         input = nil
         saveScheduler?.flush()
@@ -806,12 +837,7 @@ final class NativeEditorOpen {
         // The append runs on the replica session; the save is scheduled only on
         // the journaled result, and the live socket gets the bytes only after
         // the append succeeded (journal before publication).
-        let outbox = registry.liveBinding(for: scope)?.outbox
-        registry.setWritable(
-            { command, update in
-                try adapter.record(command, update: update)
-                outbox?.publish(update)
-            }, for: scope)
+        registry.installJournal(adapter, for: scope)
         session.enableTyping(persist: nil, scheduler: scheduler)
         // Edits an earlier process journaled but never handed over (it ended
         // inside the debounce) have no draft, so no replay pass knows them.

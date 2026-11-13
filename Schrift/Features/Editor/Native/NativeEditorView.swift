@@ -24,9 +24,9 @@ struct NativeEditorView: View {
     var readingPositions: ReadingPositionStore? = nil
     /// Uploads a media block's file (PR13a): the server's id for the document
     /// (nil for one only this device knows, which cannot upload) and the
-    /// upload itself; no upload offers none.
+    /// coordinator's durable queue (PR13b); no queue offers no upload.
     var uploadDocumentID: UUID? = nil
-    var mediaUpload: NativeMediaUploads.Upload? = nil
+    var mediaQueue: DocumentSaveCoordinator? = nil
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -66,7 +66,8 @@ struct NativeEditorView: View {
                     theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline,
                     onOpenTable: { openTable = NativeTableRequest(id: $0) },
                     onOpenColumns: { openColumns = columnEditor($0) },
-                    onOpenMedia: { openMedia = NativeMediaRequest(id: $0) }, uploadingBlock: uploads?.uploading
+                    onOpenMedia: { openMedia = NativeMediaRequest(id: $0) },
+                    uploadingBlocks: uploads?.uploadingBlocks ?? [], failedUploads: uploads?.failedBlocks ?? []
                 )
                 .id(ObjectIdentifier(session))
             }
@@ -154,15 +155,12 @@ struct NativeEditorView: View {
             session.input?.requestedMedia = nil
             openMedia = NativeMediaRequest(id: id)
         }
-        .onChange(of: isOffline) { _, _ in uploads?.isOffline = { [isOffline] in isOffline } }
         .task(id: ObjectIdentifier(session)) {
             // One uploads object per session: a reopened session (another
             // account) never inherits the previous one's.
             uploads = nil
-            guard let mediaUpload else { return }
-            uploads = NativeMediaUploads(
-                documentID: uploadDocumentID, serverOrigin: serverOrigin,
-                isOffline: { [isOffline] in isOffline }, upload: mediaUpload)
+            guard let mediaQueue else { return }
+            uploads = NativeMediaUploads(documentID: uploadDocumentID, queue: mediaQueue)
         }
         .nativeLinkEditing($linkTarget, input: session.input)
         .modifier(
@@ -489,7 +487,8 @@ extension NativeEditorLabels {
             diagram: loc[.native_editor_diagram], imageExternal: loc[.editor_image_external],
             imageExternalA11y: loc[.editor_image_external_a11y], imageOffline: loc[.editor_image_offline],
             imageFailed: loc[.editor_image_failed], mediaEmpty: loc[.native_editor_media_empty],
-            mediaUploading: loc[.native_editor_media_uploading], uploadElsewhere: loc[.native_editor_upload_elsewhere],
+            mediaUploading: loc[.native_editor_media_uploading],
+            mediaUploadFailed: loc[.native_editor_media_upload_stopped], uploadElsewhere: loc[.native_editor_upload_elsewhere],
             blockMenu: loc[.native_editor_block_actions],
             blockActions: Dictionary(
                 uniqueKeysWithValues: NativeBlockAction.allCases.map { ($0, loc[$0.labelKey]) }))
@@ -507,7 +506,8 @@ private struct NativeTextCanvas: UIViewRepresentable {
     let onOpenTable: (String) -> Void
     let onOpenColumns: (String) -> Void
     var onOpenMedia: ((String) -> Void)? = nil
-    var uploadingBlock: String? = nil
+    var uploadingBlocks: Set<String> = []
+    var failedUploads: Set<String> = []
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -530,7 +530,8 @@ private struct NativeTextCanvas: UIViewRepresentable {
         session.textView.blockControls.onOpenTable = onOpenTable
         session.textView.blockControls.onOpenColumns = onOpenColumns
         session.textView.blockControls.onOpenMedia = onOpenMedia
-        session.textView.blockControls.uploadingBlock = uploadingBlock
+        session.textView.blockControls.uploadingBlocks = uploadingBlocks
+        session.textView.blockControls.failedUploads = failedUploads
         coordinator.update(
             surface: session.surface, presentation: NativeTextPresentation(contentSize: contentSize, labels: labels))
     }

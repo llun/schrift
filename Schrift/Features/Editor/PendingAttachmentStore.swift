@@ -88,6 +88,10 @@ struct PendingAttachment: Codable, Equatable, Sendable {
     /// have to survive a relaunch: the document's saves stay held until the user answers, and a
     /// state the user cannot see is a state they cannot answer.
     var failedAt: Date?
+    /// A native editor's upload (PR13b): the block it fills instead of a Markdown placeholder.
+    /// Nil for a classic photo. The classic pass never collects a native record (no Markdown
+    /// names it); the native run commits or drops it by the block's slot.
+    let native: NativeMediaTarget?
 
     init(
         localID: UUID,
@@ -96,7 +100,8 @@ struct PendingAttachment: Codable, Equatable, Sendable {
         serverOrigin: String,
         ownerUserID: UUID? = nil,
         uploadedURLString: String? = nil,
-        failedAt: Date? = nil
+        failedAt: Date? = nil,
+        native: NativeMediaTarget? = nil
     ) {
         self.localID = localID
         self.documentID = documentID
@@ -105,10 +110,30 @@ struct PendingAttachment: Codable, Equatable, Sendable {
         self.ownerUserID = ownerUserID
         self.uploadedURLString = uploadedURLString
         self.failedAt = failedAt
+        self.native = native
+    }
+
+    /// The replica a native record commits into: derived, so a document re-key carries it.
+    var nativeScope: ReplicaScope? {
+        guard let native, let ownerUserID else { return nil }
+        return ReplicaScope(
+            serverOrigin: serverOrigin, ownerUserID: ownerUserID, org: native.org, documentID: documentID)
     }
 
     /// The placeholder URL this record's block carries.
     var placeholderURL: String { pendingAttachmentPlaceholderURL(for: localID) }
+}
+
+/// Where a native media upload lands (PR13b): media block `blockID` of the document's replica in
+/// collaboration org `org`, which must still hold `slot` (the kind and url the upload started from)
+/// for the commit to write `name` and the answered url. Stored with the record so a relaunch can
+/// finish it with no editor open.
+struct NativeMediaTarget: Codable, Equatable, Sendable {
+    let org: String
+    let blockID: String
+    let slot: MediaBlock.Slot
+    let fileName: String
+    let contentType: String
 }
 
 /// Photos queued on this device: records in UserDefaults, bytes as files.
