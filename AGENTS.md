@@ -3766,6 +3766,18 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `BlockNoteSubtreePayload.validatingMedia` returns the canonical copies. V4: a submitted name or
   caption becomes that field's synced value at once (`NativeMediaTextDraft.committed`), so a
   delivery bringing a peer's later rename with ours is followed, not overwritten by Done.
+  **Round 3.** W1: the clock moves **before** a web login writes cookies: `WebLoginView`'s
+  `onCookiesWillChange` (called on the main actor just before `captureCookies`; the three login
+  views pass their view model's `cookiesWillChange`) calls `SessionStore.noteSessionCookiesWillChange`,
+  which `beginSwitch`es the clock: every earlier `isCurrent` closure is false from then on, and one
+  made while switching stays false; the next `signInGeneration` bump `advance`s it and ends the
+  switch. W2: the paste check that keeps tables and media at the top level (`nestsTable`) now walks a
+  pasted column group's columns (their blocks at the column's top level), so a pdf nested under a
+  paragraph in a pasted group is refused instead of leaving a document without a shadow. W3: a
+  submitted name or caption is **pending** (`NativeMediaTextDraft.pendingName`/`pendingCaption`),
+  the field dirty, until a delivery shows it stored or a peer's later change of that field supersedes
+  it (`setMediaProps` returning true only means posted: a command and its retry can both go stale),
+  so Done writes a lost submit again.
   **UI:** slash items Image/Video/Audio/File/PDF (`mediaSlashItems`, `SlashMenuAction.media`,
   native only) insert and set `requestedMedia`, which opens the inspector; a media card tap or
   VoiceOver activation (`NativeBlockControls.onOpenMedia`) opens `NativeMediaInspector` (a sheet,
