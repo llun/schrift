@@ -1,0 +1,69 @@
+Schrift/Core/Yjs/BlockNoteColumnCommands.swift
+  s_dc239db0cc1c9d::t_1cada23d29d0a6 1-167
+SchriftTests/Core/Yjs/BlockNoteColumnStructureOracleTests.swift
+  s_dc239db0cc1c9d::t_8d0c4aa9b73971 1-195
+  s_dc239db0cc1c9d::t_78f70957631f80 196-198
+  s_dc239db0cc1c9d::t_241ed7fd499f26 199-200
+Schrift/Core/Localization/L10nKey.swift
+  s_dc239db0cc1c9d::t_0e9198eec57645 302-303,462-463
+Schrift/Core/Localization/Strings+de.swift
+  s_dc239db0cc1c9d::t_82bee6babcbceb 254-255,383-384
+Schrift/Core/Localization/Strings+en.swift
+  s_dc239db0cc1c9d::t_f3998fd88af7b2 246-247,388-389
+Schrift/Core/Localization/Strings+es.swift
+  s_dc239db0cc1c9d::t_b0f6c1d42d773b 255-256,384-385
+Schrift/Core/Localization/Strings+fr.swift
+  s_dc239db0cc1c9d::t_c62c9e59b6d7ab 251-252,380-381
+Schrift/Core/Localization/Strings+it.swift
+  s_dc239db0cc1c9d::t_7ebedb8cda6398 250-251,379-380
+Schrift/Core/Localization/Strings+nl.swift
+  s_dc239db0cc1c9d::t_acb8df237c04cd 251-252,380-381
+Schrift/Core/Localization/Strings+pt.swift
+  s_dc239db0cc1c9d::t_4ebfdf1141d697 250-251,379-380
+Schrift/Core/Localization/Strings+sl.swift
+  s_dc239db0cc1c9d::t_238f38509c5b09 262-263,393-394
+Schrift/Core/Localization/Strings+th.swift
+  s_dc239db0cc1c9d::t_2776805369c88c 246-247,375-376
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_dc239db0cc1c9d::t_cf10e147c2d036 244-245,373-374
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_dc239db0cc1c9d::t_3281a6341d0fe1 244-245,373-374
+Schrift/Core/Yjs/BlockNoteSubtreePayload.swift
+  s_dc239db0cc1c9d::t_7c0d2046a238fc 178-181,212-224,226-232,244-257,260
+Schrift/Core/Yjs/ColumnGroupModel.swift
+  s_dc239db0cc1c9d::t_697de01ef37842 139-153
+Schrift/Features/Editor/EditorViewModel.swift
+  s_dc239db0cc1c9d::t_da23918f7bfd88 3132,3166
+Schrift/Features/Editor/Native/ColumnEditorViewController.swift
+  s_dc239db0cc1c9d::t_450a1e5f90156f 57-58,71,75-220,234-247,273-290
+Schrift/Features/Editor/Native/NativeEditCommand.swift
+  s_dc239db0cc1c9d::t_de1a12f70d3fa5 66-71,105
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  s_dc239db0cc1c9d::t_cdcb07320c4743 315-329,1605-1615,1640-1647
+Schrift/Features/Editor/SlashMenu.swift
+  s_dc239db0cc1c9d::t_8b75457646af70 12-14,28,103-109
+SchriftTests/Core/Yjs/BlockNoteColumnOracleTests.swift
+  s_dc239db0cc1c9d::t_1b7d4af459e92b 176,178,198
+SchriftTests/Core/Yjs/BlockNoteColumnStructureCaptures.swift
+  s_dc239db0cc1c9d::t_29e2da0c54f692 1-201
+SchriftTests/Features/Editor/Native/ColumnEditorTests.swift
+  s_dc239db0cc1c9d::t_ebcf6bd2564b50 129,135-137,140,453-454,458-459,464-465
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_dc239db0cc1c9d::t_50ad2eff98a8a2 362-365,413-420,479-488,616-617,819-1003,1113-1117,1119-1127,1129-1130,1158-1167,1170-1171,1208-1209,1212-1213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3a04900e848478736e9888b12ab0931816b61548",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
