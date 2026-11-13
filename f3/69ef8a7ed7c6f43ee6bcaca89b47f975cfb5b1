@@ -1,0 +1,19 @@
+SchriftUITests/Native/NativeEditorUITests.swift
+  s_dc239db0cc1c9d::t_1e89e352f6d263 368-370
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f369ef8a7ed7c6f43ee6bcaca89b47f975cfb5b1",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
