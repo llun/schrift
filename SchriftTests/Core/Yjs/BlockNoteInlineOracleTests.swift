@@ -991,6 +991,18 @@ final class BlockNoteInlineOracleTests: XCTestCase {
         XCTAssertTrue(xml.contains("<interlinkinglinkinline"))
         XCTAssertTrue(xml.contains("<usermentioninline"))
 
+        // BlockNote 0.56 nodeToBlock joins a cell's paragraphs at a non-text boundary with no break.
+        let grid = try XCTUnwrap(TableGrid.tables(in: doc)["b1"])
+        let cell00 = grid.rows[0][0]
+        XCTAssertEqual(cell00.paragraphs.count, 1)
+        XCTAssertEqual(cell00.paragraphs[0].runs.count, 2)
+        XCTAssertEqual(
+            cell00.paragraphs[0].runs.compactMap(\.inlineObject),
+            [
+                .interlink(docID: docID, blockID: "", title: "Roadmap", disabled: false, trigger: "/"),
+                .mention(userID: "u1", fullName: "Ada"),
+            ])
+
         let shadow = try XCTUnwrap(
             NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: "https://docs.example"))
         XCTAssertFalse(shadow.contains("\u{FFFC}"))

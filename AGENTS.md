@@ -3967,7 +3967,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `EditorViewModel.openLinkedDocument(_:)` and dismisses open table/column/media/outline covers
   before pushing. `NativeDocumentNavigation` expands inline objects in outline/find summaries.
   **Known limits:** Tapping `@mention` does nothing in PR13c1; `/` and `@` autocomplete pickers,
-  `blockID` scroll-on-open landing, and localized `L10nKey` for `"Open link"` are PR13c2.
+  `blockID` scroll-on-open landing, and localized `L10nKey` for `"Open link"` are PR13c2. A table
+  command (header toggle, cell prop) or table copy joins a cell's paragraphs across a chip with no
+  break, as the web does (BlockNote 0.56 `nodeToBlock`).
   **Tests:** `BlockNoteInlineOracleTests` (11 tests covering captured Yjs oracle parity, shadows,
   fail-closed parsing, URL parsing, native edits matching web XML, selection boundaries, inline
   clipboard slices, and collaborative undo/redo) and `NativeInlineObjectTests` (19 tests covering
