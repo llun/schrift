@@ -1,0 +1,41 @@
+Schrift/Core/Yjs/BlockNoteDocument.swift
+  s_dc239db0cc1c9d::t_e2d5034b038fd3 11,13-16,19-27,31-33
+Schrift/Core/Yjs/NativeBlockProjection.swift
+  s_dc239db0cc1c9d::t_0b007d374f60af 23-24,36,46,51,67-68,76-77,83,91,94-95,134-137,143,148-149,158-159,192,212-217,225-226,228,233-236,267-270
+Schrift/Core/Yjs/NativeExportMarkdown.swift
+  s_dc239db0cc1c9d::t_10e7cb07c3986e 39-40,45-46,151,156,185-187,201,212,217-220,265,310,316,356-358,446-454,457-460,465-477,498-513
+Schrift/Core/Yjs/NativeInlineObject.swift
+  s_dc239db0cc1c9d::t_9f4a6bb01ef392 1-251
+Schrift/Core/Yjs/TableGridModel.swift
+  s_dc239db0cc1c9d::t_0961d0ff8f0a8b 372-374,386-388
+Schrift/Core/Yjs/YBlockProjection.swift
+  s_dc239db0cc1c9d::t_eedb4241adcf25 190,194,208-209,243,250-251,256,281-282,325,353,362-372,498,523,765-768
+Schrift/Features/Editor/Native/DocumentReplicaSession.swift
+  s_dc239db0cc1c9d::t_ebaf566a343551 141,145,166,204-205,211-212,216,244,254-256,698
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_dc239db0cc1c9d::t_47d5abec116804 83-86,122-123,125-127,711-714
+Schrift/Features/Editor/Native/ReplicaSaveAdapter.swift
+  s_dc239db0cc1c9d::t_f2744f8c254e41 71-73,80,97,103
+SchriftTests/Core/Yjs/BlockNoteInlineOracleTests.swift
+  s_dc239db0cc1c9d::t_f6e9e9e7b89e0f 1-350
+SchriftTests/Features/Editor/Native/TableEditorTests.swift
+  s_dc239db0cc1c9d::t_53b69f713da20d 429,432-433
+SchriftTests/Features/Editor/Native/TableGridTests.swift
+  s_dc239db0cc1c9d::t_c2f683a3b59e62 107,112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e20cf8c51a29393e5491925d0e0521665af5e0e7",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
