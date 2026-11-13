@@ -3639,9 +3639,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   (`onBlockLeft`), and the model makes the column that shows it active with the caret at the same
   offset (`follow`, checked after every column delivery). **Scale** (fixture gate, debug iPhone 17
   Pro simulator, iOS 27): a 2,000-block group (two columns of 1,000, the `maxBlocks` bound) loads in
-  ~85 ms, shows its first frame in ~115–140 ms, realises < 60 blocks per column, scrolls at p99
-  ~3.3 ms a step, and a key far down the second column (insert plus the container's layout) takes
-  p50 ~12 ms, p95 ~16–18 ms: over the provisional 8.3 ms typing budget in a debug build, to be
+  ~80–85 ms, shows its first frame in ~30–140 ms, realises < 60 blocks per column, scrolls at p99
+  ~3.2–3.4 ms a step, and a key far down the second column (insert plus the container's layout) takes
+  p50 ~11–12 ms, p95 ~16–21 ms (four runs): over the provisional 8.3 ms typing budget in a debug build, to be
   measured on TestFlight. **Known limits:** stacked heights are TextKit estimates until a column is
   laid out, so a long column above the screen can shift the ones below by its estimate's error (no
   anchor correction, as in the document); a block moved out of the group into the document is not
