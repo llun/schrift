@@ -710,6 +710,54 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         }
     }
 
+    /// PR13b review Z2c: a 403, a 404 or an answer naming another document is
+    /// a reader answer: the owned route stops writing and dials no socket.
+    func testAForbiddenMissingOrMismatchedAbilitiesAnswerIsAReader() async throws {
+        for answer in ["403", "404", "mismatch"] {
+            let env = makeEnvironment()
+            let server = ServerStub(owner: owner, state: seedState())
+            server.collaborationWsUrl = "wss://docs.example.org/collaboration/ws/"
+            if answer == "mismatch" { server.detailID = UUID() } else { server.detailStatus = Int(answer)! }
+            server.install()
+            try seedReplica(env, typed: nil)
+            let spy = ManagerSocketFactorySpy()
+            let open = NativeEditorOpen(preference: { true }, livePreference: { true })
+            open.collaboration = DocumentCollaborationManager(
+                serverBaseURL: URL(string: "https://docs.example.org/api/v1.0/")!, cookieProvider: { [] },
+                featureEnabled: { true }, isOffline: { false }, serverConfigProvider: { nil },
+                socketFactory: spy.factory)
+            await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+            guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+            await session.settle()
+            XCTAssertFalse(session.state.writable, answer)
+            await waitAndConfirmNever { !spy.sockets.isEmpty }
+            open.close()
+            env.clean()
+        }
+    }
+
+    /// PR13b review Z2c: a denial a headless media commit learned keeps the
+    /// editor off the live socket while the server does not answer.
+    func testARememberedMediaDenialKeepsTheOpenOffTheSocket() async throws {
+        let env = makeEnvironment()
+        let server = ServerStub(owner: owner, state: seedState())
+        server.collaborationWsUrl = "wss://docs.example.org/collaboration/ws/"
+        server.detailFails = true
+        server.install()
+        env.model.saveCoordinator.noteNativeReader(try seedReplica(env, typed: nil))
+        let spy = ManagerSocketFactorySpy()
+        let open = NativeEditorOpen(preference: { true }, livePreference: { true })
+        open.collaboration = DocumentCollaborationManager(
+            serverBaseURL: URL(string: "https://docs.example.org/api/v1.0/")!, cookieProvider: { [] },
+            featureEnabled: { true }, isOffline: { false }, serverConfigProvider: { nil },
+            socketFactory: spy.factory)
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native = open.route else { return XCTFail("expected a native session") }
+        await waitAndConfirmNever { !spy.sockets.isEmpty }
+        open.close()
+        env.clean()
+    }
+
     // MARK: - Mid-session changes (PR09b)
 
     private func liveOpen(
@@ -931,6 +979,8 @@ private final class ServerStub: @unchecked Sendable {
     private var _collaborationWsUrl: String?
     private var _canUpdate = true
     private var _detailFails = false
+    private var _detailStatus = 200
+    private var _detailID: UUID?
     private var _patched: [Data] = []
     private var _titles: [String] = []
     var stateGate: MockURLProtocol.ResponseGate?
@@ -954,6 +1004,16 @@ private final class ServerStub: @unchecked Sendable {
     var detailFails: Bool {
         get { locked { _detailFails } }
         set { locked { _detailFails = newValue } }
+    }
+    /// The detail route answers this status instead (403, 404: an answer about the document).
+    var detailStatus: Int {
+        get { locked { _detailStatus } }
+        set { locked { _detailStatus = newValue } }
+    }
+    /// The id the detail route's answer names (nil: the one asked for).
+    var detailID: UUID? {
+        get { locked { _detailID } }
+        set { locked { _detailID = newValue } }
     }
     var collaborationWsUrl: String? {
         get { locked { _collaborationWsUrl } }
@@ -1013,8 +1073,11 @@ private final class ServerStub: @unchecked Sendable {
                 let id = url.split(separator: "/").last.flatMap({ UUID(uuidString: String($0)) })
             {
                 if detailFails { return .init(statusCode: 503, headers: [:], body: Data(), error: nil) }
+                if detailStatus != 200 {
+                    return .init(statusCode: detailStatus, headers: [:], body: Data(), error: nil)
+                }
                 let detail: [String: Any] = [
-                    "id": id.uuidString.lowercased(), "title": "Fresh server title", "excerpt": NSNull(),
+                    "id": (detailID ?? id).uuidString.lowercased(), "title": "Fresh server title", "excerpt": NSNull(),
                     "abilities": ["update": canUpdate], "computed_link_reach": "restricted",
                     "computed_link_role": NSNull(), "created_at": "2026-11-07T10:00:00Z", "creator": NSNull(),
                     "depth": 1, "link_role": "reader", "link_reach": "restricted", "numchild": 0, "path": "0001",

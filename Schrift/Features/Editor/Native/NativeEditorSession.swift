@@ -876,11 +876,15 @@ final class NativeEditorOpen {
             guard isCurrent() else { return }
             try await session.integrateServerState(state)
             guard isCurrent() else { return }
-            if canUpdate, await Self.serverSaysReader(viewModel, asking: true) {
-                guard isCurrent() else { return }
+            let ability = canUpdate ? await Self.serverAbility(viewModel) : nil
+            guard isCurrent() else { return }
+            if ability == false {
                 // The row was stale: every surface of the scope stops writing
                 // (a key typed meanwhile becomes a recovery entry) and no socket opens.
                 becomeReader(scope, coordinator: viewModel.saveCoordinator)
+            } else if ability == true {
+                // The server says writer: an earlier remembered denial no longer holds.
+                viewModel.saveCoordinator.clearNativeReader(scope)
             }
             startLive(session, scope: scope, config: config, viewModel: viewModel)
             // Refreshes the server title native saves send.
@@ -898,9 +902,23 @@ final class NativeEditorOpen {
     /// 5xx, a timeout, a captive portal) keeps the row, and the server still
     /// refuses a real reader's save. A row that says reader is never asked.
     private static func serverSaysReader(_ viewModel: EditorViewModel, asking: Bool) async -> Bool {
-        guard asking, let document = try? await viewModel.client.document(documentID: viewModel.documentID)
-        else { return false }
-        return !document.abilities.update
+        guard asking else { return false }
+        return await serverAbility(viewModel) == false
+    }
+
+    /// The server's `abilities.update` for the document: nil when it did not
+    /// answer (offline, a 5xx, an expired session). A 403, a 404, any other
+    /// answer about the document and an answer naming another document are a
+    /// reader answer (review Z2c, as the headless gate reads them).
+    private static func serverAbility(_ viewModel: EditorViewModel) async -> Bool? {
+        do {
+            let document = try await viewModel.client.document(documentID: viewModel.documentID)
+            return document.id == viewModel.documentID && document.abilities.update
+        } catch let error as DocsAPIError where !retryableSaveFailure(error) && error != .sessionExpired {
+            return false
+        } catch {
+            return nil
+        }
     }
 
     /// Joins the scope's live room when the native live gate holds, unless its
@@ -915,6 +933,8 @@ final class NativeEditorOpen {
                 nativeEnabled: enabled, liveEnabled: livePreference(),
                 serverSupports: config.supportsNativeLiveCollaboration && config.collaborationOrg == scope.org,
                 canUpdate: canUpdate),
+            // A denial a headless media commit learned (review Z2c) keeps a reader off the socket.
+            !viewModel.saveCoordinator.isNativeReader(scope),
             let binding = registry.liveBinding(for: scope), let collaboration
         else { return }
         let signedInUser = viewModel.signedInUser

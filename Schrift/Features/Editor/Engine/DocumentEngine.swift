@@ -1085,41 +1085,92 @@ final class DocumentEngine {
     /// rather than drops.
     func mediaLocation(_ blockID: String) -> MediaLocation? {
         guard !isDetached else { return nil }
-        if let element = builder.index.entries[blockID]?.element { return MediaLocation(element: element) }
-        // A closed group's blocks are not indexed: search each group's whole subtree (a web-authored
-        // block nested under a column's paragraph included, review F1), so nil means absent.
-        for entry in builder.index.entries.values where builder.index.isColumnGroup(entry.id) {
-            if let found = Self.mediaLocation(blockID, in: entry.container, group: entry.id, column: nil, depth: 0) {
-                return found
-            }
+        if let entry = builder.index.entries[blockID] {
+            // Indexed but not a simple container: found, not addressable (review F1b).
+            return entry.element.map(MediaLocation.init(element:)) ?? .undecided
         }
-        return nil
+        // Not indexed: a closed column group's block, or one past the index's depth. Walk the block
+        // structure of the whole document (never inline content), so nil means absent.
+        guard let root = doc.share[BlockNoteYjs.fragmentField] else { return nil }
+        var search = MediaSearch(blockID: blockID)
+        search.visit(root, column: nil, depth: 0)
+        return search.found ?? (search.wasCut ? .undecided : nil)
     }
 
-    /// Past this depth the search answers undecided rather than absent (a hostile nesting
-    /// must neither overflow the stack nor drop an upload).
-    private static let mediaSearchDepth = 64
+    /// The fallback search of `mediaLocation` (review F1b): block structure only
+    /// (`blockGroup`, `blockContainer`, `columnList`, `column`), block depth
+    /// capped like the projection, a cut branch never stopping the rest.
+    private struct MediaSearch {
+        let blockID: String
+        var found: MediaLocation?
+        var wasCut = false
 
-    private static func mediaLocation(
-        _ blockID: String, in type: YType, group: String, column: String?, depth: Int
-    ) -> MediaLocation? {
-        guard depth < mediaSearchDepth else { return .undecided }
-        for item in YBlockProjection.children(of: type, includeFormats: false) {
-            guard case .type(let child) = item.content else { continue }
-            let column = child.typeRef == .xmlElement(nodeName: "column") ? BlockIndex.blockID(of: child) : column
-            if child.typeRef == .xmlElement(nodeName: "blockContainer"), BlockIndex.blockID(of: child) == blockID,
-                let columnID = column,
-                case .type(let element)? = YBlockProjection.children(of: child, includeFormats: false).first?.content
-            {
-                var location = MediaLocation(element: element)
-                location.column = MediaLocation.Column(group: group, id: columnID)
-                return location
-            }
-            if let found = mediaLocation(blockID, in: child, group: group, column: column, depth: depth + 1) {
-                return found
+        /// `type`'s structural children: groups and containers (and column groups and columns).
+        mutating func visit(_ type: YType, column: MediaLocation.Column?, depth: Int) {
+            for item in YBlockProjection.children(of: type, includeFormats: false) {
+                guard found == nil else { return }
+                guard case .type(let child) = item.content, case .xmlElement(let name)? = child.typeRef else {
+                    continue
+                }
+                switch name {
+                case "blockGroup":
+                    visit(child, column: column, depth: depth)
+                case "blockContainer":
+                    container(child, column: column, depth: depth)
+                case "columnList":
+                    columns(child, depth: depth)
+                default:
+                    continue
+                }
             }
         }
-        return nil
+
+        private mutating func columns(_ list: YType, depth: Int) {
+            for columnItem in YBlockProjection.children(of: list, includeFormats: false) {
+                guard found == nil, case .type(let columnType) = columnItem.content,
+                    columnType.typeRef == .xmlElement(nodeName: "column")
+                else { continue }
+                // A column without a readable id still holds blocks: found there, they answer undecided.
+                let place = BlockIndex.blockID(of: list).flatMap { group in
+                    BlockIndex.blockID(of: columnType).map { MediaLocation.Column(group: group, id: $0) }
+                }
+                visit(columnType, column: place ?? MediaLocation.Column(group: "", id: ""), depth: depth)
+            }
+        }
+
+        private mutating func container(_ container: YType, column: MediaLocation.Column?, depth: Int) {
+            if BlockIndex.blockID(of: container) == blockID {
+                // Found: addressable only as a simple container inside a column with ids, within the
+                // projection's depth; anything else is undecided, never gone.
+                guard let column, !column.group.isEmpty, !column.id.isEmpty, depth < NativeBlockProjection.maxDepth,
+                    case .type(let element)? = YBlockProjection.children(of: container, includeFormats: false)
+                        .first?.content,
+                    case .xmlElement(let name)? = element.typeRef, name != "blockGroup"
+                else {
+                    found = .undecided
+                    return
+                }
+                var location = MediaLocation(element: element)
+                location.column = column
+                found = location
+                return
+            }
+            for item in YBlockProjection.children(of: container, includeFormats: false) {
+                guard found == nil, case .type(let child) = item.content,
+                    child.typeRef == .xmlElement(nodeName: "blockGroup")
+                        || child.typeRef == .xmlElement(nodeName: "columnList")
+                else { continue }
+                guard depth + 1 < NativeBlockProjection.maxDepth else {
+                    wasCut = true
+                    continue
+                }
+                if child.typeRef == .xmlElement(nodeName: "columnList") {
+                    columns(child, depth: depth + 1)
+                } else {
+                    visit(child, column: column, depth: depth + 1)
+                }
+            }
+        }
     }
 
     /// A media block's props (PR13a), validated per kind before arming;

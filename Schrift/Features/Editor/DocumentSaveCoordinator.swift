@@ -1541,14 +1541,14 @@ final class DocumentSaveCoordinator {
         listCache.userDefaults.set(Array(readers), forKey: Self.nativeReadersKey)
     }
 
-    private func clearNativeReader(_ scope: ReplicaScope) {
+    func clearNativeReader(_ scope: ReplicaScope) {
         guard let key = try? scope.directoryName(),
             let readers = listCache.userDefaults.stringArray(forKey: Self.nativeReadersKey), readers.contains(key)
         else { return }
         listCache.userDefaults.set(readers.filter { $0 != key }, forKey: Self.nativeReadersKey)
     }
 
-    private func isNativeReader(_ scope: ReplicaScope) -> Bool {
+    func isNativeReader(_ scope: ReplicaScope) -> Bool {
         // An unreadable scope digest is treated as a reader: fail closed.
         guard let key = try? scope.directoryName() else { return true }
         return listCache.userDefaults.stringArray(forKey: Self.nativeReadersKey)?.contains(key) == true
