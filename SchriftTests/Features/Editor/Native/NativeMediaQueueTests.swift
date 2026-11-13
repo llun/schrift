@@ -1,0 +1,484 @@
+import ImageIO
+import UIKit
+import XCTest
+
+@testable import Schrift
+
+/// PR13b: the native media queue end to end on real stores. A coordinator over
+/// `MockURLProtocol` (nothing reaches a network), a real registry and
+/// `ReplicaStore`, records and bytes in `PendingAttachmentStore`: every upload
+/// is queued first, uploaded, checkpointed and committed through a headless
+/// lease of the document's replica, open editor or not.
+@MainActor
+final class NativeMediaQueueTests: NativeEditingTestCase {
+    private nonisolated static let origin = "https://docs.example"
+    /// The web capture's document, so a commit can equal its `updateBlock` XML.
+    private nonisolated static let documentID = UUID(uuidString: "0b5d1c0e-7e4b-4c3b-9a35-5b8f3c9b8e11")!
+    private nonisolated static let owner = UUID(uuidString: "55555555-5555-4555-8555-555555555555")!
+    private nonisolated static let mediaPath =
+        "/media/0b5d1c0e-7e4b-4c3b-9a35-5b8f3c9b8e11/attachments/5f0f6a54-0b1d-4a8e-9f8c-3d2e1f0a9b8c.png"
+    private nonisolated static var mediaURL: String { origin + mediaPath }
+    private let slot = MediaBlock.Slot(node: "image", url: "")
+
+    /// One device's stores: a second `Device` over the same one is a relaunch.
+    private struct Device {
+        let directory: URL
+        let defaults: UserDefaults
+        let scope: ReplicaScope
+        var store: ReplicaStore { ReplicaStore(directory: directory.appendingPathComponent("replicas")) }
+        var attachments: PendingAttachmentStore {
+            PendingAttachmentStore(userDefaults: defaults, directory: directory.appendingPathComponent("bytes"))
+        }
+    }
+
+    @MainActor
+    private struct App {
+        let coordinator: DocumentSaveCoordinator
+        let registry: NativeSessionRegistry
+        let device: Device
+        var store: ReplicaStore { coordinator.replicaStore }
+    }
+
+    /// What the fake server answers: an upload's status, and the media path its check reports.
+    private final class Server: Sendable {
+        let log = RequestRecorder()
+        let uploadStatus = Locked(201)
+        let mediaPath = Locked(NativeMediaQueueTests.mediaPath)
+        let offline = Locked(false)
+        let gate = Locked<MockURLProtocol.ResponseGate?>(nil)
+        var uploads: Int { log.count(ofMethod: "POST", urlContaining: "attachment-upload") }
+    }
+
+    private func makeDevice(seed: String = "imageCommit") throws -> Device {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("NativeMediaQueue-\(UUID())")
+        let suite = "NativeMediaQueue.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        SignedInUserStore(userDefaults: defaults).remember(Self.owner)
+        let scope = ReplicaScope(
+            serverOrigin: Self.origin, ownerUserID: Self.owner, org: "docs", documentID: Self.documentID)
+        let capture = try XCTUnwrap(BlockNoteMediaCaptures.edits.first { $0.name == seed })
+        let device = Device(directory: directory, defaults: defaults, scope: scope)
+        _ = try device.store.create(for: scope, checkpoint: try XCTUnwrap(Data(base64Encoded: capture.seed)))
+        addTeardownBlock {
+            MockURLProtocol.reset()
+            try? FileManager.default.removeItem(at: directory)
+            UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+        }
+        return device
+    }
+
+    /// The app on `device`: a fresh coordinator and registry over its stores (a launch).
+    private func launch(_ device: Device, server: Server, leases: Bool = true) -> App {
+        let client = DocsAPIClient(
+            baseURL: URL(string: Self.origin + "/api/v1.0/")!, session: MockURLProtocol.makeSession(),
+            cookieProvider: { [] })
+        let coordinator = DocumentSaveCoordinator(
+            client: client, draftStore: PendingDraftStore(userDefaults: device.defaults), replicaStore: device.store,
+            contentCache: DocumentContentCacheStore(directory: device.directory.appendingPathComponent("cache")),
+            createStore: PendingDocumentCreateStore(userDefaults: device.defaults),
+            attachmentStore: device.attachments, listCache: DocumentCacheStore(userDefaults: device.defaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: device.defaults), serverOrigin: Self.origin,
+            mediaCheckMaxAttempts: 1, mediaCheckRetryInterval: .milliseconds(1), backgroundTasks: .noop)
+        let registry = NativeSessionRegistry()
+        if leases { coordinator.nativeSessions = registry }
+        coordinator.nativeCommitAttempts = 5
+        coordinator.nativeCommitInterval = .milliseconds(10)
+        addTeardownBlock { await registry.closeAll().value }
+        stub(server)
+        return App(coordinator: coordinator, registry: registry, device: device)
+    }
+
+    private func stub(_ server: Server) {
+        MockURLProtocol.stubHandler = { request in
+            server.log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            if server.offline.value {
+                return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+            }
+            switch request.httpMethod {
+            case "GET" where url.contains("/users/me/"):
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data(
+                        """
+                        {"id": "55555555-5555-4555-8555-555555555555", "email": "a@b.c", \
+                        "full_name": "Ana", "short_name": "Ana", "language": "en"}
+                        """.utf8), error: nil)
+            case "POST" where url.contains("attachment-upload"):
+                return .init(
+                    statusCode: server.uploadStatus.value, headers: [:],
+                    body: Data(#"{"file": "/api/v1.0/documents/x/media-check/?key=k.png"}"#.utf8), error: nil,
+                    releasedBy: server.gate.value)
+            case "GET" where url.contains("media-check"):
+                let body = #"{"status":"ready","file":"\#(server.mediaPath.value)"}"#
+                return .init(statusCode: 200, headers: [:], body: Data(body.utf8), error: nil)
+            default:
+                return .init(statusCode: 404, headers: [:], body: Data(), error: nil)
+            }
+        }
+    }
+
+    /// An editor on the scope, typing through the scope's journal as `installTyping` does.
+    private func openEditor(_ app: App) async throws -> NativeEditorSession {
+        let session = try await unwrapped(app.registry.open(store: app.store, scope: app.device.scope))
+        app.registry.installJournal(ReplicaSaveAdapter(store: app.store, scope: app.device.scope), for: app.device.scope)
+        session.enableTyping(persist: nil)
+        return session
+    }
+
+    /// The replica as the journal replays it (what a relaunch restores).
+    private func storedXML(_ device: Device) throws -> String {
+        let restored = try XCTUnwrap(device.store.restore(for: device.scope))
+        let replica = YDoc(clientID: 99)
+        defer { replica.destroy() }
+        try replica.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
+        for update in restored.updates { try replica.applyUpdate(YUpdateDecoder.decode(update), origin: .remote) }
+        return YXMLString.fragment(replica)
+    }
+
+    private func localCommits(_ device: Device) throws -> Int {
+        try XCTUnwrap(device.store.restore(for: device.scope)).manifest.journal.filter { $0.origin == .local }.count
+    }
+
+    private func target(_ blockID: String = "mx", name: String = "up.bin") -> NativeMediaTarget {
+        NativeMediaTarget(
+            org: "docs", blockID: blockID, slot: slot, fileName: name, contentType: "application/octet-stream")
+    }
+
+    /// A record left on disk by an earlier process (queued, maybe checkpointed).
+    private func leftBehind(_ device: Device, blockID: String = "mx", checkpoint: String? = nil, owner: UUID = owner)
+        -> UUID
+    {
+        let localID = UUID()
+        device.attachments.saveData(Data("bytes".utf8), for: localID)
+        device.attachments.save(
+            PendingAttachment(
+                localID: localID, documentID: Self.documentID, createdAt: Date(), serverOrigin: Self.origin,
+                ownerUserID: owner, uploadedURLString: checkpoint, native: target(blockID)))
+        return localID
+    }
+
+    private nonisolated static let file = PreparedAttachmentFile(
+        fileName: "harbour.png", contentType: "image/png", data: testJPEGDataWithGPSMetadata(width: 8, height: 8))
+
+    // MARK: - The queue and the headless commit
+
+    /// The fixture gate: a queued upload with no editor open commits exactly
+    /// the web's `updateBlock` XML (name and url set, `previewWidth="undefined"`
+    /// removed), once, through a headless lease, and the record goes.
+    func testAQueuedUploadCommitsTheWebsUpdateBlockWithNoEditorOpen() async throws {
+        let server = Server()
+        let app = launch(try makeDevice(), server: server)
+        let capture = try XCTUnwrap(BlockNoteMediaCaptures.edits.first { $0.name == "imageCommit" })
+        XCTAssertNotNil(app.coordinator.queueNativeAttachment(scope: app.device.scope, target: target(), data: Data()))
+        await waitUntil { app.coordinator.nativeAttachments(documentID: Self.documentID).isEmpty }
+        await waitUntil { app.registry.openScopes.isEmpty }
+        XCTAssertEqual(try storedXML(app.device), capture.xml)
+        XCTAssertEqual(try localCommits(app.device), 1)
+        XCTAssertEqual(server.uploads, 1)
+        XCTAssertNotNil(
+            server.log.indexOfFirstRequest(
+                method: "POST", urlContaining: "documents/\(Self.documentID.uuidString.lowercased())/attachment-upload/"))
+    }
+
+    /// Picked in an open editor: the bytes are prepared and queued, the card
+    /// says uploading, and the commit reaches the editor by fan-out.
+    func testAnUploadFromTheInspectorReachesTheOpenEditor() async throws {
+        let server = Server()
+        server.gate.value = MockURLProtocol.ResponseGate()
+        let app = launch(try makeDevice(), server: server)
+        let editor = try await openEditor(app)
+        let uploads = NativeMediaUploads(documentID: Self.documentID, queue: app.coordinator)
+        await uploads.start(.file { Self.file }, into: "mx", slot: slot, in: editor)?.value
+        XCTAssertEqual(uploads.uploadingBlocks, ["mx"])
+        XCTAssertFalse(uploads.canUpload("mx"), "one upload per block")
+        XCTAssertEqual(uploads.record("mx")?.native?.fileName, "harbour.jpg", "an image block's file goes as a JPEG")
+        await waitUntil { server.uploads == 1 }
+        server.gate.value?.open()
+        await waitUntil { uploads.record("mx") == nil }
+        await editor.settle()
+        let block = try XCTUnwrap(editor.surface.blocks.first { $0.id == "mx" })
+        XCTAssertEqual(MediaBlock.string("url", in: block.props), Self.mediaURL)
+        XCTAssertEqual(MediaBlock.string("name", in: block.props), "harbour.jpg")
+        XCTAssertTrue(uploads.uploadingBlocks.isEmpty)
+        XCTAssertEqual(try localCommits(app.device), 1)
+        await editor.close().value
+    }
+
+    /// PR13a dropped an upload that finished after its editor closed; now the
+    /// headless lease commits it into the closed document.
+    func testAnUploadFinishingAfterTheEditorClosedStillCommits() async throws {
+        let server = Server()
+        server.gate.value = MockURLProtocol.ResponseGate()
+        let app = launch(try makeDevice(), server: server)
+        let editor = try await openEditor(app)
+        let uploads = NativeMediaUploads(documentID: Self.documentID, queue: app.coordinator)
+        await uploads.start(.file { Self.file }, into: "mx", slot: slot, in: editor)?.value
+        await waitUntil { server.uploads == 1 }
+        await editor.close().value
+        server.gate.value?.open()
+        await waitUntil { app.coordinator.nativeAttachments(documentID: Self.documentID).isEmpty }
+        await waitUntil { app.registry.openScopes.isEmpty }
+        XCTAssertTrue(try storedXML(app.device).contains(Self.mediaPath))
+        XCTAssertEqual(try localCommits(app.device), 1)
+    }
+
+    /// Offline the upload is queued, not refused; the reconnect's pass commits it.
+    func testOfflineQueuesAndTheNextPassCommits() async throws {
+        let server = Server()
+        server.offline.value = true
+        let app = launch(try makeDevice(), server: server)
+        let editor = try await openEditor(app)
+        let uploads = NativeMediaUploads(documentID: Self.documentID, queue: app.coordinator)
+        await uploads.start(.file { Self.file }, into: "mx", slot: slot, in: editor)?.value
+        XCTAssertNil(uploads.failure)
+        await waitUntil { server.uploads == 1 }
+        await waitUntil { app.registry.surfaces(of: app.device.scope).count == 1 }
+        let waiting = try XCTUnwrap(uploads.record("mx"))
+        XCTAssertNil(waiting.failedAt, "offline is transient")
+        XCTAssertNil(waiting.uploadedURLString)
+        XCTAssertNotNil(app.device.attachments.data(for: waiting.localID), "the bytes wait on the device")
+        server.offline.value = false
+        await app.coordinator.syncPendingDrafts()
+        await waitUntil { uploads.record("mx") == nil }
+        await editor.settle()
+        XCTAssertEqual(
+            editor.surface.blocks.first { $0.id == "mx" }.map { MediaBlock.string("url", in: $0.props) },
+            Self.mediaURL)
+        XCTAssertNil(app.device.attachments.data(for: waiting.localID), "the bytes go with the record")
+        await editor.close().value
+    }
+
+    /// Kill and relaunch: a record killed mid-upload uploads once on the next
+    /// launch; one killed after its checkpoint commits without uploading; one
+    /// killed after its commit (record not yet removed) is refused by its own
+    /// slot and dropped. One block, one URL, never a second photo.
+    func testKillAndRelaunchNeverDuplicatesOrLosesAPhoto() async throws {
+        let device = try makeDevice()
+        let server = Server()
+        // Killed mid-upload: no checkpoint.
+        let killed = leftBehind(device)
+        let first = launch(device, server: server)
+        await first.coordinator.syncPendingDrafts()
+        await waitUntil { first.coordinator.nativeAttachments(documentID: Self.documentID).isEmpty }
+        await waitUntil { first.registry.openScopes.isEmpty }
+        XCTAssertEqual(server.uploads, 1)
+        XCTAssertEqual(try localCommits(device), 1)
+        XCTAssertNil(device.attachments.attachment(for: killed))
+        let committed = try storedXML(device)
+        XCTAssertTrue(committed.contains(Self.mediaPath))
+
+        // Killed after the commit, before the record went: the slot (url "") no longer holds.
+        let again = leftBehind(device, checkpoint: Self.mediaURL)
+        let second = launch(device, server: server)
+        await second.coordinator.syncPendingDrafts()
+        await waitUntil { second.coordinator.nativeAttachments(documentID: Self.documentID).isEmpty }
+        await waitUntil { second.registry.openScopes.isEmpty }
+        XCTAssertEqual(server.uploads, 1, "a checkpointed record never uploads again")
+        XCTAssertEqual(try localCommits(device), 1, "no second commit")
+        XCTAssertEqual(try storedXML(device), committed)
+        XCTAssertNil(device.attachments.data(for: again))
+    }
+
+    /// Killed after the checkpoint, before the commit: the relaunch commits
+    /// the checkpointed URL and sends nothing.
+    func testACheckpointedRecordCommitsWithoutUploadingAgain() async throws {
+        let device = try makeDevice()
+        let server = Server()
+        _ = leftBehind(device, checkpoint: Self.mediaURL)
+        let app = launch(device, server: server)
+        await app.coordinator.syncPendingDrafts()
+        await waitUntil { app.coordinator.nativeAttachments(documentID: Self.documentID).isEmpty }
+        await waitUntil { app.registry.openScopes.isEmpty }
+        XCTAssertEqual(server.uploads, 0)
+        XCTAssertTrue(try storedXML(device).contains(Self.mediaPath))
+        XCTAssertEqual(try localCommits(device), 1)
+    }
+
+    /// A block deleted while its photo waited: the record and bytes go before
+    /// anything is uploaded.
+    func testADeletedBlockDropsTheRecordBeforeAnyUpload() async throws {
+        let device = try makeDevice()
+        let server = Server()
+        let localID = leftBehind(device, blockID: "gone")
+        let app = launch(device, server: server)
+        await app.coordinator.syncPendingDrafts()
+        await waitUntil { app.coordinator.nativeAttachments(documentID: Self.documentID).isEmpty }
+        XCTAssertEqual(server.uploads, 0)
+        XCTAssertNil(device.attachments.data(for: localID))
+        XCTAssertEqual(try localCommits(device), 0)
+    }
+
+    /// The block is filled (a link, a peer) while its upload runs: the commit's
+    /// slot no longer holds, nothing is written over it and the record goes.
+    func testABlockFilledDuringTheUploadRefusesTheCommit() async throws {
+        let server = Server()
+        server.gate.value = MockURLProtocol.ResponseGate()
+        let app = launch(try makeDevice(), server: server)
+        let editor = try await openEditor(app)
+        let uploads = NativeMediaUploads(documentID: Self.documentID, queue: app.coordinator)
+        await uploads.start(.file { Self.file }, into: "mx", slot: slot, in: editor)?.value
+        await waitUntil { server.uploads == 1 }
+        let other = "https://other.example/picture.png"
+        _ = await editor.run { editor.input!.setMediaProps("mx", [ProjectedProp(key: "url", value: .string(other))]) }
+        server.gate.value?.open()
+        await waitUntil { uploads.record("mx") == nil }
+        await editor.settle()
+        XCTAssertEqual(
+            editor.surface.blocks.first { $0.id == "mx" }.map { MediaBlock.string("url", in: $0.props) }, other)
+        XCTAssertFalse(try storedXML(app.device).contains(Self.mediaPath))
+        XCTAssertEqual(try localCommits(app.device), 1, "only the link")
+        await editor.close().value
+    }
+
+    /// A rejection on the merits fails the record (bytes kept, the card says
+    /// so); Retry uploads again and commits; Discard drops the bytes.
+    func testARejectedUploadFailsThenRetryCommitsOrDiscardDrops() async throws {
+        let server = Server()
+        server.uploadStatus.value = 400
+        let app = launch(try makeDevice(), server: server)
+        let editor = try await openEditor(app)
+        let uploads = NativeMediaUploads(documentID: Self.documentID, queue: app.coordinator)
+        await uploads.start(.file { Self.file }, into: "mx", slot: slot, in: editor)?.value
+        await waitUntil { uploads.failedBlocks == ["mx"] }
+        XCTAssertTrue(uploads.uploadingBlocks.isEmpty)
+        let failed = try XCTUnwrap(uploads.record("mx"))
+        XCTAssertNotNil(app.device.attachments.data(for: failed.localID))
+        server.uploadStatus.value = 201
+        uploads.retry("mx")
+        await waitUntil { uploads.record("mx") == nil }
+        await editor.settle()
+        XCTAssertEqual(
+            editor.surface.blocks.first { $0.id == "mx" }.map { MediaBlock.string("url", in: $0.props) },
+            Self.mediaURL)
+
+        // Discard: the next failed upload's bytes go, the block stays as it is.
+        server.uploadStatus.value = 400
+        _ = await editor.run {
+            editor.input!.setMediaProps("mx", [ProjectedProp(key: "url", value: .string(""))])
+        }
+        await uploads.start(.file { Self.file }, into: "mx", slot: slot, in: editor)?.value
+        await waitUntil { uploads.failedBlocks == ["mx"] }
+        let second = try XCTUnwrap(uploads.record("mx"))
+        uploads.discard("mx")
+        XCTAssertNil(uploads.record("mx"))
+        XCTAssertNil(app.device.attachments.data(for: second.localID))
+        await editor.close().value
+    }
+
+    /// An answered URL that is not this server's attachment for this document
+    /// is never written; the record fails for the user to answer.
+    func testOnlyThisDocumentsMediaURLIsWritten() async throws {
+        let server = Server()
+        server.mediaPath.value = "/media/\(UUID().uuidString.lowercased())/attachments/5f0f6a54-0b1d-4a8e-9f8c-3d2e1f0a9b8c.png"
+        let app = launch(try makeDevice(), server: server)
+        app.coordinator.queueNativeAttachment(scope: app.device.scope, target: target(), data: Data())
+        await waitUntil { app.coordinator.nativeAttachments(documentID: Self.documentID).first?.failedAt != nil }
+        XCTAssertEqual(try localCommits(app.device), 0)
+    }
+
+    /// Another account's record on this device is never sent nor collected,
+    /// and nothing is queued for a scope that is not the signed-in account's.
+    func testAnotherAccountsRecordIsNeverSentNorCollected() async throws {
+        let device = try makeDevice()
+        let server = Server()
+        let other = UUID()
+        let localID = leftBehind(device, owner: other)
+        let app = launch(device, server: server)
+        await app.coordinator.syncPendingDrafts()
+        await waitAndConfirmNever { server.uploads > 0 }
+        XCTAssertNotNil(device.attachments.attachment(for: localID))
+        XCTAssertNotNil(device.attachments.data(for: localID))
+        let foreign = ReplicaScope(serverOrigin: Self.origin, ownerUserID: other, org: "docs", documentID: Self.documentID)
+        XCTAssertNil(app.coordinator.queueNativeAttachment(scope: foreign, target: target(), data: Data()))
+    }
+
+    /// A sign-in switch (cookies about to change) before the request is built:
+    /// nothing is sent and the record waits, untouched.
+    func testASignInSwitchSendsNothing() async throws {
+        let server = Server()
+        let app = launch(try makeDevice(), server: server)
+        let clock = SignInGenerationClock()
+        app.coordinator.signInIsCurrent = { clock.isCurrent() }
+        let localID = try XCTUnwrap(
+            app.coordinator.queueNativeAttachment(scope: app.device.scope, target: target(), data: Data()))
+        clock.beginSwitch()
+        await waitAndConfirmNever { server.uploads > 0 }
+        XCTAssertNotNil(app.device.attachments.attachment(for: localID))
+        XCTAssertNil(app.device.attachments.attachment(for: localID)?.failedAt)
+    }
+
+    /// The classic pass collects a record no Markdown names; a native record
+    /// names none and must survive it until its own run decides.
+    func testTheClassicPassNeverCollectsANativeRecord() async throws {
+        let device = try makeDevice()
+        let server = Server()
+        let localID = leftBehind(device)
+        let app = launch(device, server: server, leases: false)
+        await app.coordinator.syncPendingDrafts()
+        XCTAssertNotNil(device.attachments.attachment(for: localID))
+        XCTAssertNotNil(device.attachments.data(for: localID))
+    }
+
+    /// Deleting the document drops its native records and their bytes.
+    func testDeletingTheDocumentDropsItsRecords() async throws {
+        let device = try makeDevice()
+        let localID = leftBehind(device)
+        let app = launch(device, server: Server(), leases: false)
+        app.coordinator.discardPendingWork(documentID: Self.documentID)
+        XCTAssertNil(device.attachments.attachment(for: localID))
+        XCTAssertNil(device.attachments.data(for: localID))
+    }
+
+    // MARK: - Preparation (PR13a, now feeding the queue)
+
+    /// A photo is re-encoded as a JPEG before it is queued (metadata stripped),
+    /// and an image block's picked file too (review A2): no GPS leaves.
+    func testPhotosAndImageFilesAreQueuedAsJPEGsWithoutMetadata() async throws {
+        let app = launch(try makeDevice(), server: Server(), leases: false)
+        let editor = try await openEditor(app)
+        let uploads = NativeMediaUploads(documentID: Self.documentID, queue: app.coordinator)
+        let original = testJPEGDataWithGPSMetadata(width: 60, height: 40)
+        XCTAssertNotNil(testImageProperties(of: original)?[kCGImagePropertyGPSDictionary], "the fixture carries GPS")
+        await uploads.start(.photo { original }, into: "mx", slot: slot, in: editor)?.value
+        let photo = try XCTUnwrap(uploads.record("mx"))
+        XCTAssertEqual(photo.native?.fileName, "photo.jpg")
+        XCTAssertEqual(photo.native?.contentType, "image/jpeg")
+        let bytes = try XCTUnwrap(app.device.attachments.data(for: photo.localID))
+        XCTAssertNil(testImageProperties(of: bytes)?[kCGImagePropertyGPSDictionary], "no GPS queued")
+        uploads.discard("mx")
+        let picked = PreparedAttachmentFile(fileName: "harbour.JPG", contentType: "image/jpeg", data: original)
+        await uploads.start(.file { picked }, into: "mx", slot: slot, in: editor)?.value
+        let file = try XCTUnwrap(uploads.record("mx"))
+        XCTAssertEqual(file.native?.fileName, "harbour.jpg")
+        let fileBytes = try XCTUnwrap(app.device.attachments.data(for: file.localID))
+        XCTAssertNil(testImageProperties(of: fileBytes)?[kCGImagePropertyGPSDictionary])
+        await editor.close().value
+    }
+
+    /// The editor closes (another account's reopen, a sign-out) while a photo
+    /// is prepared: nothing is queued (review A3); a too-large file fails with
+    /// its own notice; a local document cannot upload.
+    func testClosedDuringPreparationTooLargeAndLocalAreRefused() async throws {
+        let app = launch(try makeDevice(), server: Server(), leases: false)
+        let editor = try await openEditor(app)
+        let uploads = NativeMediaUploads(documentID: Self.documentID, queue: app.coordinator)
+        await uploads.start(.file { throw AttachmentImportError.tooLarge }, into: "mx", slot: slot, in: editor)?.value
+        XCTAssertEqual(uploads.failure?.key, .editor_error_file_too_large)
+        let local = NativeMediaUploads(documentID: nil, queue: app.coordinator)
+        XCTAssertNil(local.start(.file { Self.file }, into: "mx", slot: slot, in: editor))
+        XCTAssertEqual(local.failure?.key, .native_editor_media_upload_offline)
+        let gate = Latch()
+        let task = try XCTUnwrap(
+            uploads.start(
+                .file {
+                    await gate.passing()
+                    return Self.file
+                }, into: "mx", slot: slot, in: editor))
+        await editor.close().value
+        gate.open()
+        await task.value
+        XCTAssertEqual(uploads.failure?.key, .native_editor_media_upload_dropped)
+        XCTAssertTrue(app.coordinator.nativeAttachments(documentID: Self.documentID).isEmpty)
+    }
+}
