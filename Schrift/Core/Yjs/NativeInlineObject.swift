@@ -170,8 +170,8 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
     private static func isPastableText(_ text: String, limit: Int) -> Bool {
         text.utf16.count <= limit
             && !text.unicodeScalars.contains {
-                CharacterSet.controlCharacters.contains($0) || CharacterSet.newlines.contains($0)
-                    || $0.value == 0xFFFC
+                $0.properties.generalCategory == .control || CharacterSet.newlines.contains($0)
+                    || isStrippedDisplayScalar($0)
             }
     }
 
@@ -234,7 +234,7 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
         if !truncated {
             for scalar in text.unicodeScalars {
                 if isStrippedDisplayScalar(scalar) { continue }
-                if CharacterSet.newlines.contains(scalar) || CharacterSet.controlCharacters.contains(scalar) {
+                if CharacterSet.newlines.contains(scalar) || scalar.properties.generalCategory == .control {
                     if !scalars.isEmpty { pendingSpace = true }
                     continue
                 }
@@ -353,7 +353,9 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
     /// non-UUID doc paths.
     static func interlink(fromURLString raw: String, serverOrigin: String) -> NativeInlineObject? {
         guard !raw.isEmpty,
-            !raw.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) || isControl($0) }),
+            !raw.unicodeScalars.contains(where: {
+                CharacterSet.whitespacesAndNewlines.contains($0) || $0.properties.generalCategory == .control
+            }),
             let url = URLComponents(string: raw),
             let server = URLComponents(string: serverOrigin),
             let urlScheme = url.scheme?.lowercased(), urlScheme == "http" || urlScheme == "https",
@@ -379,9 +381,7 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
 
         var blockID: String?
         if let fragment = url.fragment {
-            guard fragment.utf16.count <= 256,
-                !fragment.unicodeScalars.contains(where: isControl)
-            else { return nil }
+            guard isPastableText(fragment, limit: maxIdentifierUTF16) else { return nil }
             blockID = fragment
         }
 
@@ -395,10 +395,6 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
 
     private static func effectivePort(_ components: URLComponents, scheme: String) -> Int {
         components.port ?? (scheme == "https" ? 443 : 80)
-    }
-
-    private static func isControl(_ scalar: UnicodeScalar) -> Bool {
-        scalar.value < 0x20 || scalar.value == 0x7F
     }
 
     private static func isUnescapedURIComponentByte(_ byte: UInt8) -> Bool {

@@ -341,7 +341,23 @@ final class TableSelectionTests: NativeEditingTestCase {
         editor.select(.init(anchor: TableSlot(row: 2, column: 0), head: TableSlot(row: 2, column: 1)))
         let pasted = await table.run { editor.key(.paste) }
         XCTAssertTrue(pasted)
+        await harness.settle()
+        XCTAssertNil(table.input?.noticeKey)
         let written = await xml(harness)
         XCTAssertFalse(written.contains("\u{FFFC}"))
+        let maybeRows = await harness.engine { $0.tableGrid("tbl")?.rows }
+        let rows = try XCTUnwrap(maybeRows)
+        XCTAssertEqual(rows[2][0].runs, rows[0][0].runs)
+        XCTAssertEqual(
+            rows[2][0].runs.compactMap(\.inlineObject),
+            [
+                .interlink(
+                    docID: "11111111-1111-4111-8111-111111111111", blockID: "", title: nil, disabled: false,
+                    trigger: "/")
+            ])
+        XCTAssertEqual(rows[2][1].runs, rows[0][1].runs)
+        XCTAssertEqual(
+            rows[2][1].runs.compactMap(\.inlineObject),
+            [.mention(userID: "user-1", fullName: "Ada")])
     }
 }

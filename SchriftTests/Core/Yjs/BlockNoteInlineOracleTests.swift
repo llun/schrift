@@ -1014,6 +1014,108 @@ final class BlockNoteInlineOracleTests: XCTestCase {
         XCTAssertEqual(objects.count, 2)
     }
 
+    // MARK: - Review Round 2 (R1)
+
+    func testCfJoinersPreservedInPasteAndDisplayAndURLFragmentValidated() throws {
+        let validUUID = "11111111-1111-4111-8111-111111111111"
+        let zwjEmoji = "👩\u{200D}💻"
+        let zwnjLabel = "می\u{200C}خواهم"
+
+        // Cf joiners (ZWJ/ZWNJ) are allowed on paste and stay intact in clipped display text.
+        XCTAssertTrue(
+            NativeInlineObject.isPastable(
+                node: "interlinkingLinkInline",
+                props: [
+                    ProjectedProp(key: "docId", value: .string(validUUID)),
+                    ProjectedProp(key: "title", value: .string(zwjEmoji)),
+                    ProjectedProp(key: "disabled", value: .bool(false)),
+                    ProjectedProp(key: "trigger", value: .string("/")),
+                ]))
+        XCTAssertTrue(
+            NativeInlineObject.isPastable(
+                node: "userMentionInline",
+                props: [
+                    ProjectedProp(key: "userId", value: .string("u1")),
+                    ProjectedProp(key: "fullName", value: .string(zwnjLabel)),
+                ]))
+        XCTAssertEqual(NativeInlineObject.clippedDisplayText(zwjEmoji), zwjEmoji)
+        XCTAssertEqual(NativeInlineObject.clippedDisplayText(zwnjLabel), zwnjLabel)
+
+        // C0/C1 controls, newlines, bidi overrides, and U+FFFC are still rejected.
+        for bad in ["a\u{0007}b", "a\u{009B}b", "a\u{2028}b", "a\u{202E}b", "a\u{2066}b", "a\u{FFFC}b"] {
+            XCTAssertFalse(
+                NativeInlineObject.isPastable(
+                    node: "userMentionInline",
+                    props: [
+                        ProjectedProp(key: "userId", value: .string("u1")),
+                        ProjectedProp(key: "fullName", value: .string(bad)),
+                    ]),
+                "should reject \(bad.unicodeScalars.map(\.value))")
+        }
+
+        // Table payload with ZWJ/ZWNJ chips round-trips through TableClipboard.cells(payload:) without falling back.
+        let cellSubtree = BlockNoteWriter.Copy.element(
+            "blockContainer", [("id", .string("table"))],
+            [
+                .element(
+                    "table", [],
+                    [
+                        .element(
+                            "tableRow", [],
+                            [
+                                .element(
+                                    "tableCell", [],
+                                    [
+                                        .element(
+                                            "tableParagraph", [],
+                                            [
+                                                .element(
+                                                    "interlinkingLinkInline",
+                                                    [
+                                                        ("docId", .string(validUUID)),
+                                                        ("blockId", .string("")),
+                                                        ("disabled", .bool(false)),
+                                                        ("trigger", .string("/")),
+                                                        ("title", .string(zwjEmoji)),
+                                                    ], []),
+                                                .element(
+                                                    "userMentionInline",
+                                                    [("userId", .string("u1")), ("fullName", .string(zwnjLabel))], []),
+                                            ])
+                                    ])
+                            ])
+                    ])
+            ])
+        let tableCells = try XCTUnwrap(
+            TableClipboard.cells(payload: try BlockNoteSubtreePayload.encode([cellSubtree])))
+        XCTAssertEqual(
+            tableCells[0][0].runs.compactMap(\.inlineObject),
+            [
+                .interlink(docID: validUUID, blockID: "", title: zwjEmoji, disabled: false, trigger: "/"),
+                .mention(userID: "u1", fullName: zwnjLabel),
+            ])
+
+        // URL fragment validation uses isPastableText: rejects encoded controls/bidi/FFFC, keeps valid ZWJ emoji.
+        for badFragment in ["sec%0A1", "sec%C2%851", "sec%E2%80%AE1", "sec%E2%81%A61", "sec%EF%BF%BC1"] {
+            XCTAssertNil(
+                NativeInlineObject.interlink(
+                    fromURLString: "https://docs.example/docs/\(validUUID)#\(badFragment)",
+                    serverOrigin: "https://docs.example"),
+                badFragment)
+        }
+        let zwjLink = try XCTUnwrap(
+            NativeInlineObject.interlink(
+                fromURLString: "https://docs.example/docs/\(validUUID)#%F0%9F%91%A9%E2%80%8D%F0%9F%92%BB",
+                serverOrigin: "https://docs.example"))
+        XCTAssertEqual(
+            zwjLink,
+            .interlink(docID: validUUID, blockID: zwjEmoji, title: nil, disabled: false, trigger: "/"))
+        XCTAssertTrue(
+            NativeInlineObject.isPastable(
+                node: zwjLink.nodeName,
+                props: zwjLink.canonicalProps.map { ProjectedProp(key: $0.key, value: $0.value) }))
+    }
+
     // MARK: - Helpers
 
     private func decodeDoc(_ base64: String) throws -> YDoc {
