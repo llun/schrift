@@ -724,10 +724,18 @@ final class DocumentEngine {
         return false
     }
 
-    /// Whether pasted containers would put a table below the root or give
-    /// one children.
+    /// Whether pasted containers would put a table or media block below the
+    /// root (or a column's top level) or give one children. A pasted column
+    /// group's columns are walked too (PR13a review W2), their blocks at their
+    /// column's top level.
     private static func nestsTable(_ copies: [BlockNoteWriter.Copy], depth: Int) -> Bool {
         copies.contains { copy in
+            if case .element("columnList", _, let columns) = copy {
+                return columns.contains { column in
+                    guard case .element("column", _, let blocks) = column else { return false }
+                    return nestsTable(blocks, depth: 0)
+                }
+            }
             guard case .element("blockContainer", _, let children) = copy else { return false }
             if case .element(let node, _, _)? = children.first, rootOnlyNodes.contains(node),
                 depth > 0 || children.count > 1

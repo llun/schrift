@@ -298,8 +298,8 @@ struct NativeMediaInspector: View {
         guard isEditable, let block else { return }
         let props = draft.edits(block.props)
         guard !props.isEmpty else { return }
-        // Written: those values are the stored ones now, so a delivery that
-        // brings a peer's later rename with ours is followed, never overwritten (V4).
+        // Posted, not yet stored: pending until a delivery shows it, or a peer's
+        // later change of that field supersedes it (V4, W3).
         if session.input?.setMediaProps(blockID, props) == true { draft.committed(props) }
     }
 
@@ -325,15 +325,20 @@ extension String {
     fileprivate var nonEmpty: String? { isEmpty ? nil : self }
 }
 
-/// The inspector's name and caption fields (PR13a review F1): each keeps the
-/// stored value it was last synced to. A field the user has not touched
+/// The inspector's name and caption fields (PR13a review F1, V4, W3): each
+/// keeps the stored value it last synced to. A field the user has not touched
 /// follows the block (an upload's name, a peer's caption); Done writes only the
-/// fields the user changed, so it never writes a stale value back.
+/// fields the user changed, so it never writes a stale value back. A submitted
+/// value stays pending, the field dirty, until a delivery shows it stored or a
+/// peer's later change to that field supersedes it: a post that went stale is
+/// written again by Done, never lost.
 struct NativeMediaTextDraft: Equatable {
     var name = ""
     var caption = ""
     private(set) var baseName = ""
     private(set) var baseCaption = ""
+    private(set) var pendingName: String?
+    private(set) var pendingCaption: String?
 
     /// Whether the stored value fits a native edit (a longer one is read-only).
     var canEditName: Bool { baseName.utf16.count <= MediaBlock.maxName }
@@ -341,20 +346,31 @@ struct NativeMediaTextDraft: Equatable {
 
     /// Takes the block's stored values for every untouched field.
     mutating func follow(_ props: [ProjectedProp]) {
-        let storedName = MediaBlock.string("name", in: props)
-        let storedCaption = MediaBlock.string("caption", in: props)
-        if name == baseName { name = storedName }
-        if caption == baseCaption { caption = storedCaption }
-        baseName = storedName
-        baseCaption = storedCaption
+        Self.sync(&name, base: &baseName, pending: &pendingName, stored: MediaBlock.string("name", in: props))
+        Self.sync(
+            &caption, base: &baseCaption, pending: &pendingCaption, stored: MediaBlock.string("caption", in: props))
     }
 
-    /// `edits` were written: they are the fields' synced values now (review V4).
+    private static func sync(_ value: inout String, base: inout String, pending: inout String?, stored: String) {
+        if let submitted = pending {
+            // Not stored yet (in flight, or its post went stale): keep it dirty.
+            guard stored == submitted || stored != base else { return }
+            // Stored, or superseded by a peer's change of this field.
+            pending = nil
+            if value == submitted { value = stored }
+            base = stored
+            return
+        }
+        if value == base { value = stored }
+        base = stored
+    }
+
+    /// `edits` were posted: pending until a delivery shows them (review W3).
     mutating func committed(_ edits: [ProjectedProp]) {
         for edit in edits {
             guard case .string(let value) = edit.value else { continue }
-            if edit.key == "name" { baseName = value }
-            if edit.key == "caption" { baseCaption = value }
+            if edit.key == "name" { pendingName = value }
+            if edit.key == "caption" { pendingCaption = value }
         }
     }
 

@@ -340,6 +340,46 @@ final class BlockNoteMediaOracleTests: XCTestCase {
         XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc))
     }
 
+    /// A pasted column group holding a pdf nested under a paragraph is refused
+    /// (review W2): a media block below a column's top level has no shadow;
+    /// the same group with the pdf at the column's top level pastes.
+    func testAPastedColumnGroupNeverNestsMedia() throws {
+        let capture = try XCTUnwrap(BlockNoteMediaCaptures.edits.first { $0.name == "imageSetCaption" })
+        let doc = try doc(capture.seed, clientID: 2)
+        defer { doc.destroy() }
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        defer { engine.detach() }
+        let pdfProps = (MediaBlock.schemas["pdf"] ?? []).map {
+            (key: $0.key, value: $0.key == "url" ? YAnyValue.string(Self.mediaURL("file")) : $0.value)
+        }
+        let paragraphProps = BlockNoteWriter.propSchemas["paragraph"] ?? []
+        func container(
+            _ id: String, _ node: String, _ props: [(key: String, value: YAnyValue)], kids: [BlockNoteWriter.Copy] = []
+        )
+            -> BlockNoteWriter.Copy
+        {
+            .element(
+                "blockContainer", [("id", .string(id))],
+                [.element(node, props, [])] + (kids.isEmpty ? [] : [.element("blockGroup", [], kids)]))
+        }
+        func group(_ first: BlockNoteWriter.Copy) throws -> Data {
+            try BlockNoteSubtreePayload.encode([
+                .element(
+                    "columnList", [("id", .string("g"))],
+                    [
+                        .element("column", [("id", .string("c1")), ("width", .int(1))], [first]),
+                        .element(
+                            "column", [("id", .string("c2")), ("width", .int(1))],
+                            [container("p2", "paragraph", paragraphProps)]),
+                    ])
+            ])
+        }
+        let nested = container("p1", "paragraph", paragraphProps, kids: [container("pdf", "pdf", pdfProps)])
+        XCTAssertFalse(engine.canApplyStructural(command(engine, "lead", .insertSubtrees(payload: try group(nested)))))
+        try apply(engine, "lead", .insertSubtrees(payload: try group(container("pdf", "pdf", pdfProps))))
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc))
+    }
+
     /// A web image whose url is an IRI (a non-ASCII path or host, stored
     /// verbatim on the web) cuts and pastes back: the paste stores it
     /// percent-encoded and punycoded (review V3); whitespace, userinfo and

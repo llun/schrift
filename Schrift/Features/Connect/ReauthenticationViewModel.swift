@@ -34,6 +34,11 @@ final class ReauthenticationViewModel {
         self.apiClientFactory = apiClientFactory
     }
 
+    /// The web login is about to write its cookies (PR13a review W1).
+    func cookiesWillChange() {
+        sessionStore.noteSessionCookiesWillChange()
+    }
+
     func handleLoginComplete() async {
         // Before the confirmation, not after it. The web view has already put this login's
         // cookies in the shared storage, so whoever was signed in a moment ago may no longer be

@@ -41,8 +41,23 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
             default: try store.signOut()
             }
             XCTAssertFalse(isCurrent(), change)
-            XCTAssertEqual(store.generationClock.current, store.signInGeneration, change)
         }
+    }
+
+    /// PR13a review W1: a web login stops every request bound to the previous
+    /// session before it writes new cookies, and nothing bound while it
+    /// switches passes either, until the handover is noted.
+    func testRequestsStopBeforeAWebLoginWritesItsCookies() throws {
+        let store = SessionStore(
+            userDefaults: userDefaults, keychain: FakeKeychainStore(), cookieStorage: FakeCookieStorage())
+        let before = store.generationClock.isCurrent()
+        store.noteSessionCookiesWillChange()
+        XCTAssertFalse(before())
+        let during = store.generationClock.isCurrent()
+        XCTAssertFalse(during(), "bound while switching")
+        store.noteSessionCookiesReplaced()
+        XCTAssertFalse(during())
+        XCTAssertTrue(store.generationClock.isCurrent()(), "the new session's requests pass")
     }
 
     /// Sign-in is the moment a possibly-different account takes over, and the cached profile

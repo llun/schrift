@@ -53,6 +53,26 @@ final class NativeMediaInspectorTests: XCTestCase {
         XCTAssertEqual(draft.edits(props(name: "peer.png")), [])
     }
 
+    /// A submitted value whose command (and retry) went stale under peer edits
+    /// stays pending and dirty: a delivery still showing the old value does
+    /// not reset it, so Done writes it again (review W3).
+    func testASubmittedValueThatWasNotStoredStaysDirty() {
+        var draft = NativeMediaTextDraft()
+        draft.follow(props(name: "a.png", caption: "c"))
+        draft.name = "mine.png"
+        draft.committed(draft.edits(props(name: "a.png", caption: "c")))
+        draft.follow(props(name: "a.png", caption: "peer caption"))
+        XCTAssertEqual(draft.name, "mine.png")
+        XCTAssertEqual(draft.caption, "peer caption", "another field still follows")
+        XCTAssertEqual(
+            draft.edits(props(name: "a.png", caption: "peer caption")),
+            [ProjectedProp(key: "name", value: .string("mine.png"))])
+        // Once a delivery shows it stored, it is clean.
+        draft.follow(props(name: "mine.png", caption: "peer caption"))
+        XCTAssertEqual(draft.edits(props(name: "mine.png", caption: "peer caption")), [])
+        XCTAssertNil(draft.pendingName)
+    }
+
     /// A peer's name or caption longer than a native edit may write is not
     /// editable (and never written back); display clips it by scalars, so a
     /// million combining marks in one character stay small.

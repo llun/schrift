@@ -60,7 +60,7 @@ final class AttachmentEndpointsClientTests: XCTestCase {
         }
         let clock = SignInGenerationClock()
         let isCurrent = clock.isCurrent()
-        clock.set(1)
+        clock.advance()
         do {
             _ = try await makeClient().uploadAttachment(
                 documentID: documentID, fileName: "photo.jpg", contentType: "image/jpeg", data: Data([0xFF]),

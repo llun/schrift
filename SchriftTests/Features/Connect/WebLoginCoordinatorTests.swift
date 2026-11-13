@@ -27,6 +27,23 @@ final class WebLoginCoordinatorTests: XCTestCase {
         )
     }
 
+    /// PR13a review W1: the session store hears of the cookie change before
+    /// the cookies are written, never after.
+    func testTheCookieChangeIsAnnouncedBeforeTheCookiesAreWritten() async {
+        var events: [String] = []
+        var completed = false
+        let coordinator = WebLoginView.Coordinator(
+            serverHost: "docs.llun.dev", onLoginComplete: { completed = true },
+            onCookiesWillChange: { events.append("willChange") },
+            captureCookies: { completion in
+                events.append("write")
+                Task { @MainActor in completion() }
+            })
+        coordinator.handleNavigation(to: URL(string: "https://docs.llun.dev/home/"))
+        await waitUntil { completed }
+        XCTAssertEqual(events, ["willChange", "write"])
+    }
+
     func testCommittedNavigationBackToAppReportsCompletion() async {
         var completed = false
         let coordinator = makeCoordinator { completed = true }
