@@ -1076,7 +1076,6 @@ final class DocumentEngine {
         )
     }
 
-    /// A media block's props (PR13a), validated per kind before arming;
     /// Where block `blockID` is now, wherever it sits (PR13b: the headless
     /// commit's check): its slot (node and stored url) and, for a block of a
     /// column group that is not open (review X6), that group and column, which
@@ -1087,25 +1086,43 @@ final class DocumentEngine {
     func mediaLocation(_ blockID: String) -> MediaLocation? {
         guard !isDetached else { return nil }
         if let element = builder.index.entries[blockID]?.element { return MediaLocation(element: element) }
-        // Media sit at a column's top level: search every group's columns.
+        // A closed group's blocks are not indexed: search each group's whole subtree (a web-authored
+        // block nested under a column's paragraph included, review F1), so nil means absent.
         for entry in builder.index.entries.values where builder.index.isColumnGroup(entry.id) {
-            for columnItem in YBlockProjection.children(of: entry.container, includeFormats: false) {
-                guard case .type(let column) = columnItem.content, let columnID = BlockIndex.blockID(of: column)
-                else { continue }
-                for item in YBlockProjection.children(of: column, includeFormats: false) {
-                    guard case .type(let container) = item.content, BlockIndex.blockID(of: container) == blockID,
-                        case .type(let element)? = YBlockProjection.children(of: container, includeFormats: false)
-                            .first?.content
-                    else { continue }
-                    var location = MediaLocation(element: element)
-                    location.column = MediaLocation.Column(group: entry.id, id: columnID)
-                    return location
-                }
+            if let found = Self.mediaLocation(blockID, in: entry.container, group: entry.id, column: nil, depth: 0) {
+                return found
             }
         }
         return nil
     }
 
+    /// Past this depth the search answers undecided rather than absent (a hostile nesting
+    /// must neither overflow the stack nor drop an upload).
+    private static let mediaSearchDepth = 64
+
+    private static func mediaLocation(
+        _ blockID: String, in type: YType, group: String, column: String?, depth: Int
+    ) -> MediaLocation? {
+        guard depth < mediaSearchDepth else { return .undecided }
+        for item in YBlockProjection.children(of: type, includeFormats: false) {
+            guard case .type(let child) = item.content else { continue }
+            let column = child.typeRef == .xmlElement(nodeName: "column") ? BlockIndex.blockID(of: child) : column
+            if child.typeRef == .xmlElement(nodeName: "blockContainer"), BlockIndex.blockID(of: child) == blockID,
+                let columnID = column,
+                case .type(let element)? = YBlockProjection.children(of: child, includeFormats: false).first?.content
+            {
+                var location = MediaLocation(element: element)
+                location.column = MediaLocation.Column(group: group, id: columnID)
+                return location
+            }
+            if let found = mediaLocation(blockID, in: child, group: group, column: column, depth: depth + 1) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    /// A media block's props (PR13a), validated per kind before arming;
     /// `expecting` (an upload's slot) refuses a block whose kind or url changed.
     private func prepareMediaProps(_ command: NativeEditCommand, props: [ProjectedProp], expecting: MediaBlock.Slot?)
         throws -> PreparedCommand

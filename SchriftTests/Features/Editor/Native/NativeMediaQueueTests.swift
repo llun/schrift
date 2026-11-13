@@ -68,7 +68,7 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
         return try YStateEncoder.encodeStateAsUpdate(doc)
     }
 
-    private func makeDevice(seed: String = "imageCommit", applied: Bool = false) throws -> Device {
+    private func makeDevice(seed: String = "imageCommit", applied: Bool = false, state: Data? = nil) throws -> Device {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("NativeMediaQueue-\(UUID())")
         let suite = "NativeMediaQueue.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -76,7 +76,7 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
         let scope = ReplicaScope(
             serverOrigin: Self.origin, ownerUserID: Self.owner, org: "docs", documentID: Self.documentID)
         let device = Device(directory: directory, defaults: defaults, scope: scope)
-        _ = try device.store.create(for: scope, checkpoint: try state(seed, applied: applied))
+        _ = try device.store.create(for: scope, checkpoint: try state ?? self.state(seed, applied: applied))
         addTeardownBlock {
             MockURLProtocol.reset()
             try? FileManager.default.removeItem(at: directory)
@@ -194,22 +194,23 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
         try XCTUnwrap(device.store.restore(for: device.scope)).manifest.journal.filter { $0.origin == .local }.count
     }
 
-    private func target(_ blockID: String = "mx", name: String = "up.bin") -> NativeMediaTarget {
+    private func target(_ blockID: String = "mx", name: String = "up.bin", slotURL: String = "") -> NativeMediaTarget {
         NativeMediaTarget(
-            org: "docs", blockID: blockID, slot: slot, fileName: name, contentType: "application/octet-stream")
+            org: "docs", blockID: blockID, slot: MediaBlock.Slot(node: "image", url: slotURL), fileName: name,
+            contentType: "application/octet-stream")
     }
 
     /// A record left on disk by an earlier process (queued, maybe checkpointed).
     private func leftBehind(
         _ device: Device, blockID: String = "mx", checkpoint: String? = nil, owner: UUID = owner,
-        bytes: Data = Data("bytes".utf8)
+        bytes: Data = Data("bytes".utf8), slotURL: String = ""
     ) -> UUID {
         let localID = UUID()
         device.attachments.saveData(bytes, for: localID)
         device.attachments.save(
             PendingAttachment(
                 localID: localID, documentID: Self.documentID, createdAt: Date(), serverOrigin: Self.origin,
-                ownerUserID: owner, uploadedURLString: checkpoint, native: target(blockID)))
+                ownerUserID: owner, uploadedURLString: checkpoint, native: target(blockID, slotURL: slotURL)))
         return localID
     }
 
@@ -525,7 +526,102 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
         await waitUntil { app.registry.surfaces(of: device.scope).count == 1 }
         XCTAssertNotNil(app.coordinator.pendingAttachment(localID: localID))
         XCTAssertEqual(try localCommits(device), 0)
+        // The denial ends the editor's writability too (review Z2b)…
+        await editor.settle()
+        XCTAssertFalse(editor.state.writable, "the open editor became a reader")
+        // …and a second replay while it is still open commits nothing either.
+        server.canUpdate.value = nil
+        await app.coordinator.syncPendingDrafts()
+        await waitUntil { app.registry.surfaces(of: device.scope).count == 1 }
+        XCTAssertNotNil(app.coordinator.pendingAttachment(localID: localID))
+        XCTAssertEqual(try localCommits(device), 0)
         await editor.close().value
+    }
+
+    /// Review Z2b: a remembered denial stops a commit through an editor that is
+    /// writable on its own row (opened before the pass, the server unreachable).
+    func testARememberedDenialStopsACommitThroughAWritableEditor() async throws {
+        let device = try makeDevice()
+        let localID = leftBehind(device, checkpoint: Self.mediaURL)
+        let app = launch(device, server: Server())
+        app.coordinator.noteNativeReader(device.scope)
+        let editor = try await openEditor(app)
+        await app.coordinator.syncPendingDrafts()
+        await waitUntil { app.registry.surfaces(of: device.scope).count == 1 }
+        XCTAssertNotNil(app.coordinator.pendingAttachment(localID: localID))
+        XCTAssertEqual(try localCommits(device), 0)
+        await editor.close().value
+    }
+
+    /// Review F1: a web-authored media block nested under a column's paragraph
+    /// (in a group that is not open) is found and gets its upload, never
+    /// declared gone.
+    func testANestedMediaBlockInAClosedColumnGetsItsUpload() async throws {
+        let device = try makeDevice(state: try Self.nestedImageInColumn())
+        let localID = leftBehind(device, blockID: "n", checkpoint: Self.mediaURL, slotURL: Self.oldImageURL)
+        let app = launch(device, server: Server())
+        await app.coordinator.syncPendingDrafts()
+        await waitUntil { app.registry.openScopes.isEmpty }
+        let xml = try storedXML(device)
+        XCTAssertTrue(xml.contains(Self.mediaPath), xml)
+        XCTAssertNil(app.coordinator.pendingAttachment(localID: localID))
+    }
+
+    nonisolated static let oldImageURL =
+        "https://docs.example/media/0b5d1c0e-7e4b-4c3b-9a35-5b8f3c9b8e11/attachments/1f0f6a54-0b1d-4a8e-9f8c-3d2e1f0a9b8c.png"
+
+    /// Lead, then a group `cl` whose column `c1` holds paragraph `a` with a
+    /// plain image `n` (the web's nested shape) under it, then column `c2`, then tail.
+    nonisolated static func nestedImageInColumn() throws -> Data {
+        let doc = YDoc(clientID: 1, gc: true)
+        defer { doc.destroy() }
+        let root = doc.get(BlockNoteYjs.fragmentField)
+        try doc.transact { tx in
+            func element(_ name: String, into parent: YType, after: YItem?, id: String? = nil) throws -> (YItem?, YType)
+            {
+                let type = YType(typeRef: .xmlElement(nodeName: name))
+                let item = try YWrite.insertAfter(tx, into: parent, after: after, [.type(type)])
+                if let id { try YWrite.mapSet(tx, on: type, key: "id", .any([.string(id)])) }
+                return (item, type)
+            }
+            func paragraph(_ id: String, _ text: String, into parent: YType, after: YItem?) throws
+                -> (item: YItem?, container: YType, paragraph: YItem?)
+            {
+                let (item, container) = try element("blockContainer", into: parent, after: after, id: id)
+                let (paragraphItem, paragraph) = try element("paragraph", into: container, after: nil)
+                for (key, value) in [
+                    ("backgroundColor", "default"), ("textColor", "default"), ("textAlignment", "left"),
+                ] {
+                    try YWrite.mapSet(tx, on: paragraph, key: key, .any([.string(value)]))
+                }
+                let xmlText = YType(typeRef: .xmlText)
+                try YWrite.insertAfter(tx, into: paragraph, after: nil, [.type(xmlText)])
+                try xmlText.insert(0, text, YTextAttributes())
+                return (item, container, paragraphItem)
+            }
+            let (_, group) = try element("blockGroup", into: root, after: nil)
+            let lead = try paragraph("lead", "Before", into: group, after: nil).item
+            let (listItem, list) = try element("columnList", into: group, after: lead, id: "cl")
+            let (c1Item, c1) = try element("column", into: list, after: nil, id: "c1")
+            try YWrite.mapSet(tx, on: c1, key: "width", .any([.int(1)]))
+            let a = try paragraph("a", "Left", into: c1, after: nil)
+            let (_, nested) = try element("blockGroup", into: a.container, after: a.paragraph)
+            let (_, container) = try element("blockContainer", into: nested, after: nil, id: "n")
+            let (_, image) = try element("image", into: container, after: nil)
+            for (key, value): (String, YAnyValue) in [
+                ("textAlignment", .string("left")), ("backgroundColor", .string("default")),
+                ("name", .string("old.png")),
+                ("url", .string(oldImageURL)), ("caption", .string("")), ("showPreview", .bool(true)),
+                ("previewWidth", .undefined),
+            ] {
+                try YWrite.mapSet(tx, on: image, key: key, .any([value]))
+            }
+            let (_, c2) = try element("column", into: list, after: c1Item, id: "c2")
+            try YWrite.mapSet(tx, on: c2, key: "width", .any([.int(1)]))
+            _ = try paragraph("c", "Right", into: c2, after: nil)
+            _ = try paragraph("tail", "After", into: group, after: listItem)
+        }
+        return try YStateEncoder.encodeStateAsUpdate(doc)
     }
 
     /// Review Y1: an editor's reader answer is remembered for the scope.

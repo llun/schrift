@@ -100,6 +100,16 @@ struct MediaLocation: Equatable, Sendable {
     }
     var slot: MediaBlock.Slot
     var column: Column?
+    /// The search could not decide (too deep): nothing may be concluded, the upload waits.
+    var isUndecided = false
+
+    static let undecided: MediaLocation = {
+        var location = MediaLocation(slot: MediaBlock.Slot(node: "", url: ""))
+        location.isUndecided = true
+        return location
+    }()
+
+    init(slot: MediaBlock.Slot) { self.slot = slot }
 
     /// A content element's node and stored url.
     init(element: YType) {

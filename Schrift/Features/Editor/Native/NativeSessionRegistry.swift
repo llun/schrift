@@ -170,6 +170,7 @@ final class NativeSessionRegistry {
         defer { root.close() }
         guard let found = await root.mediaLocation(blockID) else { return .unavailable }
         guard var location = found else { return .gone }
+        guard !location.isUndecided else { return .unavailable }
         var columnSurface: NativeEditorSession?
         defer { columnSurface?.close() }
         if let column = location.column {
@@ -178,22 +179,22 @@ final class NativeSessionRegistry {
                 return .unavailable
             }
             guard let reread else { return .gone }
+            guard !reread.isUndecided else { return .unavailable }
             location = reread
         }
         guard location.slot == slot else { return .gone }
         guard let props else { return .matches }
         let session = columnSurface ?? root
         guard root.canType, !root.hasUnsupportedRoot else { return .unavailable }
-        if entries[scope]?.isWritable != true {
-            // A no is final, whatever an editor opened meanwhile decided from its row (review Z2).
-            guard await mayWrite() else { return .unavailable }
-            // Re-read after the await: an editor may have opened (and decided) meanwhile.
-            let entry = entries[scope]
-            if entry?.isWritable != true {
-                // Another surface (an editor) decides whether the scope writes.
-                guard entry?.surfaces.count == 1, !session.isClosed else { return .unavailable }
-                installJournal(ReplicaSaveAdapter(store: store, scope: scope), for: scope)
-            }
+        // Before every commit, whatever the entry's state: an editor left writable (on its row's
+        // ability) never carries a commit the gate refuses (review Z2, Z2b).
+        guard await mayWrite() else { return .unavailable }
+        // Re-read after the await: an editor may have opened (and decided) meanwhile.
+        let entry = entries[scope]
+        if entry?.isWritable != true {
+            // Another surface (an editor) decides whether the scope writes.
+            guard entry?.surfaces.count == 1, !session.isClosed else { return .unavailable }
+            installJournal(ReplicaSaveAdapter(store: store, scope: scope), for: scope)
         }
         let scheduler = entries[scope]?.scheduler ?? make()
         for attempt in 0..<attempts {

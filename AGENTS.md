@@ -3753,8 +3753,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   (Foundation may percent-encode what it would otherwise refuse; a non-ASCII host must be punycode).
   **Round 2.** V1: an upload is bound to the sign-in generation it started in, checked when the
   request is built, not only before the await: `SessionStore.generationClock`
-  (`SignInGenerationClock`, a `Mutex`, set at every `signInGeneration` bump, in the environment as
-  `signInGenerationClock`) gives `EditorView` an `isCurrent()` closure that
+  (`SignInGenerationClock`, a `Mutex`, set at every `signInGeneration` bump; since PR13b read by the
+  coordinator through `signInIsCurrent`, no longer an environment entry) gives an `isCurrent()` closure that
   `DocsAPIClient.mediaUploader(isCurrent:)` threads to `uploadAttachment`/`send`/`performRequest`,
   which asks it synchronously after building the request and before handing it to the session
   (false: `CancellationError`, nothing sent). V2: a pdf url must also be one the export spells

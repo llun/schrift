@@ -1531,6 +1531,10 @@ final class DocumentSaveCoordinator {
     /// or the headless gate's): no headless media commit writes it until the server says it may.
     /// Persisted, so an offline relaunch never trusts a stale cached `update: true`.
     func noteNativeReader(_ scope: ReplicaScope) {
+        // An authoritative denial ends the scope's shared writability too (review Z2b): every
+        // surface stops writing, as an editor's own reader answer makes it (`becomeReader`).
+        nativeSessions?.setWritable(nil, for: scope)
+        nativeSessions?.liveBinding(for: scope, create: false)?.disconnect()
         guard let key = try? scope.directoryName() else { return }
         var readers = Set(listCache.userDefaults.stringArray(forKey: Self.nativeReadersKey) ?? [])
         guard readers.insert(key).inserted else { return }
