@@ -1,0 +1,69 @@
+Schrift/Core/Localization/L10nKey.swift
+  s_dc239db0cc1c9d::t_dc36400c3585ae 467-469
+Schrift/Core/Localization/Strings+de.swift
+  s_dc239db0cc1c9d::t_e1218c66905354 421-423
+Schrift/Core/Localization/Strings+en.swift
+  s_dc239db0cc1c9d::t_4da78d75bb0021 424-426
+Schrift/Core/Localization/Strings+es.swift
+  s_dc239db0cc1c9d::t_bebdc448aa38c6 420-422
+Schrift/Core/Localization/Strings+fr.swift
+  s_dc239db0cc1c9d::t_950d34d2ec0348 417-419
+Schrift/Core/Localization/Strings+it.swift
+  s_dc239db0cc1c9d::t_82251447041f65 416-418
+Schrift/Core/Localization/Strings+nl.swift
+  s_dc239db0cc1c9d::t_f54f7511f06dc8 418-420
+Schrift/Core/Localization/Strings+pt.swift
+  s_dc239db0cc1c9d::t_3ccd3a00974b2d 416-418
+Schrift/Core/Localization/Strings+sl.swift
+  s_dc239db0cc1c9d::t_bfd1c0db19bf0f 429-431
+Schrift/Core/Localization/Strings+th.swift
+  s_dc239db0cc1c9d::t_adb25c142e688e 411-413
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_dc239db0cc1c9d::t_148f9b5d66b4b1 409-411
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_dc239db0cc1c9d::t_d91d7d8a994bc9 409-411
+Schrift/Core/Yjs/NativeBlockPreview.swift
+  s_dc239db0cc1c9d::t_f3709ce9296c94 150-151,155-157
+Schrift/Features/Editor/EditorView.swift
+  s_dc239db0cc1c9d::t_2735854b1d7f7b 327-328
+Schrift/Features/Editor/EditorViewModel.swift
+  s_dc239db0cc1c9d::t_78218da6a74dc1 3087-3110
+Schrift/Features/Editor/Engine/EditorSurface.swift
+  s_dc239db0cc1c9d::t_89c27b71e4ec0d 301-317
+Schrift/Features/Editor/Native/AttributedDocumentProjection.swift
+  s_dc239db0cc1c9d::t_109ced3ddea2c4 22-24,68-71,217-226
+Schrift/Features/Editor/Native/ColumnEditorViewController.swift
+  s_dc239db0cc1c9d::t_1ff812be53725a 330,392-393,425,427,463,483
+Schrift/Features/Editor/Native/NativeBlockAttachment.swift
+  s_dc239db0cc1c9d::t_85991b6b1c9240 15-16
+Schrift/Features/Editor/Native/NativeBlockControls.swift
+  s_dc239db0cc1c9d::t_800f9096179973 22-25,73-84
+Schrift/Features/Editor/Native/NativeDocumentNavigation.swift
+  s_dc239db0cc1c9d::t_d9c0e9675df2d6 13-15,22-23,28-37,75-76,130,149-152
+Schrift/Features/Editor/Native/NativeEditorView.swift
+  s_dc239db0cc1c9d::t_703b6bb8eaaf9f 30-31,73-74,132,135,150-152,208,502-504,525,551-552
+Schrift/Features/Editor/Native/NativeInlineChipAttachment.swift
+  s_dc239db0cc1c9d::t_9df0ff8461e73e 1-249
+Schrift/Features/Editor/Native/NativeTextSurface.swift
+  s_dc239db0cc1c9d::t_65d758338a531f 45,49-51,268-270,286,642,644-646,652-667,670-673,676,681-697,709,713-719,739
+Schrift/Features/Editor/Native/NativeTextView.swift
+  s_dc239db0cc1c9d::t_7dd3d74261a4f9 307-308
+Schrift/Features/Editor/Native/TableEditorViewController.swift
+  s_dc239db0cc1c9d::t_45d55377a6f89c 57-58,169-170,898-901,905-922,931-932,1006,1009-1011,1140-1144,1148-1149,1230,1239
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7a71c83578ace717ede3b1546faada1d3d750b42",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
