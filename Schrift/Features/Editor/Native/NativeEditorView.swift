@@ -160,7 +160,7 @@ struct NativeEditorView: View {
             // account) never inherits the previous one's.
             uploads = nil
             guard let mediaQueue else { return }
-            uploads = NativeMediaUploads(documentID: uploadDocumentID, queue: mediaQueue)
+            uploads = NativeMediaUploads(scope: uploadDocumentID == nil ? nil : session.scope, queue: mediaQueue)
         }
         .nativeLinkEditing($linkTarget, input: session.input)
         .modifier(

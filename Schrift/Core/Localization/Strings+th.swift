@@ -10,7 +10,7 @@ enum Strings_th {
         .native_editor_media_empty: "ว่าง · แตะเพื่อเพิ่ม",
         .native_editor_media_uploading: "กำลังอัปโหลด…",
         .native_editor_upload_elsewhere: "กำลังอัปโหลดจากที่อื่น",
-        .native_editor_media_upload_offline: "การอัปโหลดต้องมีการเชื่อมต่อและเอกสารที่บันทึกไว้บนเซิร์ฟเวอร์",
+        .native_editor_media_upload_offline: "การอัปโหลดต้องใช้เอกสารที่บันทึกไว้บนเซิร์ฟเวอร์",
         .native_editor_media_upload_failed: "อัปโหลดไฟล์ไม่ได้ โปรดลองอีกครั้ง",
         .native_editor_media_upload_dropped: "บล็อกเปลี่ยนไประหว่างอัปโหลด จึงไม่ได้เพิ่มไฟล์",
         .native_editor_media_upload_stopped: "อัปโหลดไม่สำเร็จ · แตะเพื่อลองอีกครั้ง",

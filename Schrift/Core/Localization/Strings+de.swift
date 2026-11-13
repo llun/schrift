@@ -11,7 +11,7 @@ enum Strings_de {
         .native_editor_media_uploading: "Wird hochgeladen…",
         .native_editor_upload_elsewhere: "Upload läuft an anderer Stelle",
         .native_editor_media_upload_offline:
-            "Zum Hochladen braucht es eine Verbindung und ein auf dem Server gespeichertes Dokument.",
+            "Zum Hochladen muss das Dokument auf dem Server gespeichert sein.",
         .native_editor_media_upload_failed: "Die Datei konnte nicht hochgeladen werden. Bitte versuche es erneut.",
         .native_editor_media_upload_dropped:
             "Der Block hat sich während des Hochladens geändert, daher wurde die Datei nicht hinzugefügt.",

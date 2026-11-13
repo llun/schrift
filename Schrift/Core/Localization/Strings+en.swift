@@ -11,7 +11,7 @@ enum Strings_en {
         .native_editor_media_empty: "Empty · tap to add",
         .native_editor_media_uploading: "Uploading…",
         .native_editor_upload_elsewhere: "Upload in progress elsewhere",
-        .native_editor_media_upload_offline: "Uploading needs a connection and a document saved to the server.",
+        .native_editor_media_upload_offline: "Uploading needs a document saved to the server.",
         .native_editor_media_upload_failed: "Couldn't upload the file. Please try again.",
         .native_editor_media_upload_dropped: "The block changed while the file uploaded, so the file wasn't added.",
         .native_editor_media_upload_stopped: "Upload failed · tap to retry",

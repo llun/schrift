@@ -1077,16 +1077,33 @@ final class DocumentEngine {
     }
 
     /// A media block's props (PR13a), validated per kind before arming;
-    /// Block `blockID`'s slot now, wherever it sits (PR13b: the headless
-    /// commit's check): its node and stored url. Nil only when no block has
-    /// that id; a block a `.mediaProps` would refuse for another reason (an
-    /// unreadable prop) still answers, so its upload waits rather than drops.
-    func mediaSlot(_ blockID: String) -> MediaBlock.Slot? {
-        guard !isDetached, let element = builder.index.entries[blockID]?.element,
-            case .xmlElement(let node)? = element.typeRef
-        else { return nil }
-        return MediaBlock.Slot(
-            node: node, url: YBlockProjection.props(of: element).map { MediaBlock.string("url", in: $0) } ?? "")
+    /// Where block `blockID` is now, wherever it sits (PR13b: the headless
+    /// commit's check): its slot (node and stored url) and, for a block of a
+    /// column group that is not open (review X6), that group and column, which
+    /// must be opened before a command can address it. Nil only when no block
+    /// of the document has that id; a block a `.mediaProps` would refuse for
+    /// another reason (an unreadable prop) still answers, so its upload waits
+    /// rather than drops.
+    func mediaLocation(_ blockID: String) -> MediaLocation? {
+        guard !isDetached else { return nil }
+        if let element = builder.index.entries[blockID]?.element { return MediaLocation(element: element) }
+        // Media sit at a column's top level: search every group's columns.
+        for entry in builder.index.entries.values where builder.index.isColumnGroup(entry.id) {
+            for columnItem in YBlockProjection.children(of: entry.container, includeFormats: false) {
+                guard case .type(let column) = columnItem.content, let columnID = BlockIndex.blockID(of: column)
+                else { continue }
+                for item in YBlockProjection.children(of: column, includeFormats: false) {
+                    guard case .type(let container) = item.content, BlockIndex.blockID(of: container) == blockID,
+                        case .type(let element)? = YBlockProjection.children(of: container, includeFormats: false)
+                            .first?.content
+                    else { continue }
+                    var location = MediaLocation(element: element)
+                    location.column = MediaLocation.Column(group: entry.id, id: columnID)
+                    return location
+                }
+            }
+        }
+        return nil
     }
 
     /// `expecting` (an upload's slot) refuses a block whose kind or url changed.

@@ -256,13 +256,13 @@ final class NativeEditorSession {
         }
     }
 
-    /// Block `blockID`'s slot, read in mailbox order anywhere in the document
-    /// (PR13b): `.some(nil)` when no block has that id, nil when nothing
-    /// answered (no replica, closed, a full mailbox).
-    func mediaSlot(_ blockID: String) async -> MediaBlock.Slot?? {
+    /// Where block `blockID` is, read in mailbox order anywhere in the
+    /// document (PR13b): `.some(nil)` when no block has that id, nil when
+    /// nothing answered (no replica, closed, a full mailbox).
+    func mediaLocation(_ blockID: String) async -> MediaLocation?? {
         guard let replica, !isClosed else { return nil }
         return await withCheckedContinuation { done in
-            replica.mailbox.post(.mediaSlot(blockID: blockID, reply: { done.resume(returning: $0) }))
+            replica.mailbox.post(.mediaLocation(blockID: blockID, reply: { done.resume(returning: $0) }))
         }
     }
 
@@ -277,13 +277,15 @@ final class NativeEditorSession {
             let posted = replica.mailbox.post(
                 .command(
                     ReplicaCommand(
-                        surfaceID: surfaceID, epoch: 0, predicted: false, command: command, undoBefore: true,
-                        undoAfter: true)))
+                        surfaceID: surfaceID, epoch: headlessEpoch, predicted: false, command: command,
+                        undoBefore: true, undoAfter: true)))
             if !posted { results.removeValue(forKey: command.id)?.resume(returning: nil) }
         }
     }
 
     @ObservationIgnored private var results: [UUID: CheckedContinuation<ReplicaResult?, Never>] = [:]
+    /// A surface without input's epoch (review X8): a resync's reset moves it.
+    @ObservationIgnored private var headlessEpoch: UInt64 = 0
 
     /// Paints `awareness`'s peers over this surface (PR10).
     func showAwareness(_ awareness: NativeAwarenessController) {
@@ -310,6 +312,8 @@ final class NativeEditorSession {
             // taking input, so nothing typed looks accepted.
             if wasWritable, !state.writable { textView.isEditable = false }
         } else {
+            if case .reset(let epoch) = delivery.resync { headlessEpoch = epoch }
+            if case .invalidated(let epoch, _)? = delivery.result { headlessEpoch = epoch }
             for event in delivery.events {
                 switch event {
                 case .patch(let patch, let settled): surface.applyPatch(patch, settled: settled)
@@ -849,6 +853,8 @@ final class NativeEditorOpen {
         {
             scheduler.schedule()
         }
+        // A native upload held back while nothing could write the document may land now.
+        coordinator.replayNativeAttachments(scope: scope)
     }
 
     /// Reconnect and open both merge the server's raw state into the same

@@ -522,7 +522,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case native_editor_media_empty = "native.editor.media_empty"  // "Empty · tap to add"
     case native_editor_media_uploading = "native.editor.media_uploading"  // "Uploading…"
     case native_editor_upload_elsewhere = "native.editor.upload_elsewhere"  // "Upload in progress elsewhere"
-    case native_editor_media_upload_offline = "native.editor.media_upload_offline"  // "Uploading needs a connection and a document saved to the server."
+    case native_editor_media_upload_offline = "native.editor.media_upload_offline"  // "Uploading needs a document saved to the server."
     case native_editor_media_upload_failed = "native.editor.media_upload_failed"  // "Couldn't upload the file. Please try again."
     case native_editor_media_upload_dropped = "native.editor.media_upload_dropped"  // "The block changed while the file uploaded, so the file wasn't added."
     case native_editor_media_upload_stopped = "native.editor.media_upload_stopped"  // "Upload failed · tap to retry"

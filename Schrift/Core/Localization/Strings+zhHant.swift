@@ -8,7 +8,7 @@ enum Strings_zhHant {
         .native_editor_media_empty: "空白 · 點一下以加入",
         .native_editor_media_uploading: "正在上傳…",
         .native_editor_upload_elsewhere: "正在其他地方上傳",
-        .native_editor_media_upload_offline: "上傳需要網路連線，且文件已儲存到伺服器。",
+        .native_editor_media_upload_offline: "上傳需要文件已儲存到伺服器。",
         .native_editor_media_upload_failed: "無法上傳檔案。請再試一次。",
         .native_editor_media_upload_dropped: "上傳期間該區塊已變更，因此未加入檔案。",
         .native_editor_media_upload_stopped: "上傳失敗 · 輕點重試",

@@ -10,7 +10,7 @@ enum Strings_pt {
         .native_editor_media_empty: "Vazio · toque para adicionar",
         .native_editor_media_uploading: "A carregar…",
         .native_editor_upload_elsewhere: "Carregamento em curso noutro local",
-        .native_editor_media_upload_offline: "Carregar requer ligação e um documento guardado no servidor.",
+        .native_editor_media_upload_offline: "Para enviar, o documento tem de estar guardado no servidor.",
         .native_editor_media_upload_failed: "Não foi possível carregar o ficheiro. Tente novamente.",
         .native_editor_media_upload_dropped:
             "O bloco mudou durante o carregamento, por isso o ficheiro não foi adicionado.",

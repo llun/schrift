@@ -143,17 +143,23 @@ final class NativeSessionRegistry {
     }
 
     /// The headless lease (PR13b): a surface on `scope`'s replica (an open
-    /// editor's, else restored for this), over `column`'s group when the block
-    /// sat in one (a column's blocks are addressable only while their group is
-    /// open), the block's slot read in mailbox order, then, with `props`, one
-    /// `.mediaProps(props, expecting: slot)` barrier and its save. The scope's
-    /// journal and scheduler are installed only when no other surface is open
-    /// (an open read-only editor stays so). Visible editors get the change by
-    /// fan-out. Retried while stale or busy, `attempts` times `interval` apart.
+    /// editor's, else restored for this), the block found in mailbox order
+    /// wherever it sits (a block of a column group that is not open is reached
+    /// by opening that column first, review X6), then, with `props`, one
+    /// `.mediaProps(props, expecting: slot)` barrier and its save.
+    /// - The scope's journal is installed only when no other surface is open
+    ///   and `mayWrite` (the editor open's typing gate) holds; an open editor
+    ///   that does not write stays so (review X2). A document the session
+    ///   cannot type is never written.
+    /// - The save goes through the scope's scheduler when an editor installed
+    ///   one, else through a private `make()` that never becomes the editor's
+    ///   (review X7).
+    /// Visible editors get the change by fan-out. Retried while stale or busy,
+    /// `attempts` times `interval` apart.
     func commitMedia(
-        _ props: [ProjectedProp]?, into blockID: String, expecting slot: MediaBlock.Slot,
-        column: (group: String, id: String)? = nil, scope: ReplicaScope, store: ReplicaStore, attempts: Int = 50,
-        interval: Duration = .milliseconds(100), scheduler make: () -> NativeReplicaSaveScheduler
+        _ props: [ProjectedProp]?, into blockID: String, expecting slot: MediaBlock.Slot, scope: ReplicaScope,
+        store: ReplicaStore, attempts: Int = 50, interval: Duration = .milliseconds(100),
+        mayWrite: () -> Bool = { false }, scheduler make: () -> NativeReplicaSaveScheduler
     ) async -> MediaCommit {
         switch Result(catching: { try store.manifest(for: scope) }) {
         case .success(nil): return .gone
@@ -162,23 +168,29 @@ final class NativeSessionRegistry {
         }
         guard let root = try? await open(store: store, scope: scope) else { return .unavailable }
         defer { root.close() }
-        // shortcut: a block moved out of its group meanwhile is looked for at the root only;
-        // search every group if that ever matters.
+        guard let found = await root.mediaLocation(blockID) else { return .unavailable }
+        guard var location = found else { return .gone }
         var columnSurface: NativeEditorSession?
-        if let column { columnSurface = await root.openColumn(group: column.group, column: column.id) }
         defer { columnSurface?.close() }
-        let session = columnSurface ?? root
-        guard let props else {
-            guard let current = await session.mediaSlot(blockID) else { return .unavailable }
-            return current == slot ? .matches : .gone
+        if let column = location.column {
+            columnSurface = await root.openColumn(group: column.group, column: column.id)
+            guard let columnSurface, let reread = await columnSurface.mediaLocation(blockID) else {
+                return .unavailable
+            }
+            guard let reread else { return .gone }
+            location = reread
         }
+        guard location.slot == slot else { return .gone }
+        guard let props else { return .matches }
+        let session = columnSurface ?? root
+        guard root.canType, !root.hasUnsupportedRoot else { return .unavailable }
         let entry = entries[scope]
         if entry?.isWritable != true {
             // Another surface (an editor) decides whether the scope writes.
-            guard entry?.surfaces.count == 1 else { return .unavailable }
+            guard entry?.surfaces.count == 1, mayWrite() else { return .unavailable }
             installJournal(ReplicaSaveAdapter(store: store, scope: scope), for: scope)
         }
-        let scheduler = scheduler(for: scope, make: make)
+        let scheduler = entry?.scheduler ?? make()
         for attempt in 0..<attempts {
             if attempt > 0 { try? await Task.sleep(for: interval) }
             await session.settle()
@@ -190,8 +202,8 @@ final class NativeSessionRegistry {
                 return .committed
             case .refused:
                 // The engine refuses a changed slot; the same slot is busy (a composition) or read-only.
-                guard let current = await session.mediaSlot(blockID) else { return .unavailable }
-                if current != slot { return .gone }
+                guard let current = await session.mediaLocation(blockID) else { return .unavailable }
+                if current?.slot != slot { return .gone }
             case .stale: continue
             case nil, .failed, .invalidated, .composition: return .unavailable
             }

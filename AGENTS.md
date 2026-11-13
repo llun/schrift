@@ -3815,19 +3815,41 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   runner per record, `nativeRuns`): the slot checked headlessly first (block gone, retyped or filled →
   record and bytes dropped, nothing sent), the upload (`client.mediaUploader`, its `isCurrent` the
   sign-in generation captured when the run started — `signInIsCurrent`, set by `RootView` from the
-  clock), the answered URL this server's attachment for **this** document and `isAuthoredURL`
-  (else failed), the URL **checkpointed** on the record, then the headless commit; `.committed` or
+  clock), the stored bytes no larger than the picker's limit (`nativeAttachmentByteLimit`, checked
+  on the file size before reading; over → failed), the answered URL this server's attachment for
+  **this** document and `isAuthoredURL` (`isDocumentMediaURL`, else failed), the URL
+  **checkpointed** on the record, the URL checked again right before the commit (a checkpoint read
+  back from disk included), then the headless commit; `.committed` or
   `.gone` removes the record. Transient failures (offline, 5xx, an expired session, a refused
   switch) wait for the next pass; a rejection sets `failedAt`. The classic pass `continue`s past
-  native records: no Markdown names them, so its collection would delete them. **The headless lease**
+  native records: no Markdown names them, so its collection would delete them; the pass runs the
+  native records after every classic one, so a blocked commit's retries (about 5 s) never delay a
+  classic photo. An editor that starts typing (`installTyping`) runs its scope's waiting records
+  (`replayNativeAttachments`). Lookups are account-scoped (`nativeAttachment(scope:blockID:)`,
+  `nativeAttachments(scope:)`; `NativeMediaUploads` holds the scope), so a card never shows,
+  retries or discards another account's record. **Saves are bound to the sign-in generation**
+  (review X1, every route): `start` captures `signInIsCurrent` and runs the save under the
+  task-local `DocsAPIClient.saveIsCurrent`, which `performRequest` asks right before each request
+  (body, title, config, identity); a refusal throws `CancellationError`, which `finish` treats as
+  `.pendingSync`, so a cookie handover after `/users/me/` or between PATCHes sends nothing more
+  and the draft and journal wait for the right account. **The headless lease**
   (`NativeSessionRegistry.commitMedia`, the coordinator's `weak nativeSessions`): no replica on disk →
   `.gone`, an unreadable one → `.unavailable`; `open` a surface (an open editor's replica, else one
-  restored for this), the slot read in mailbox order (`ReplicaMessage.mediaSlot`, document-wide so a
-  column's block answers; `.some(nil)` only when no block has the id, nil when nothing answered),
-  then the journal (`installJournal`, now shared with `installTyping`) and scheduler installed only
-  when this is the scope's only surface (an open read-only editor stays read-only → unavailable),
+  restored for this), the block found in mailbox order (`ReplicaMessage.mediaLocation`,
+  `DocumentEngine.mediaLocation`: the index first, then every column group's columns in the Yjs
+  tree, so a block moved into a column or another group after it was picked is found there and its
+  column is opened before the commit; `.some(nil)` only when no block of the document has the id,
+  nil when nothing answered), the session's `canType` required, then the journal (`installJournal`,
+  shared with `installTyping`) installed only when this is the scope's only surface **and**
+  `mayWrite` holds — the coordinator's `nativeMayWrite`, the editor open's typing gate: the native
+  switch (`nativeEditorEnabled`), the account's cached `abilities.update` (`listCache` fetched for
+  the owner; unknown is no), no pending create or delete, no live owner, no classic draft — else
+  `.unavailable` and the record waits (an open editor that does not write stays so); the save goes
+  through the scope's scheduler when an editor installed one, else a private one that is never
+  registered, so an editor opened later keeps its own save rules (review X7);
   one `.mediaProps([name, url], expecting: slot)` barrier posted from the surface
-  (`NativeEditorSession.post`, a surface without input, answered by its result) after a settle,
+  (`NativeEditorSession.post`, a surface without input, answered by its result, posted with the
+  surface's current epoch, which a resync's reset or an invalidation moves) after a settle,
   `.stale` and a same-slot refusal (a composition) retried `nativeCommitAttempts` × interval, then
   `schedule` + `flush`. A refused commit re-reads the slot: changed → `.gone`, same → `.unavailable`.
   Visible editors get the change by fan-out. The headless save (`enqueueNativeReplica`) is
@@ -3836,24 +3858,32 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   the checkpoint the record uploads again (no idempotency key; the old upload is an orphan on the
   server), after it only commits, and a commit that landed before the record went is refused by
   its own slot (url no longer ""), so a block never gets two photos and no photo is lost.
-  **UI:** the card says "Uploading…" for every block with a live record or being prepared
-  (`NativeBlockControls.uploadingBlocks`) and "Upload failed · tap to retry" for a failed one
-  (`failedUploads`); the inspector shows the same, "Uploads when you're back online." offline, and
+  **UI:** a file-style card (an empty block, a file, audio, a hidden preview) says "Uploading…" for
+  every block with a live record or being prepared (`NativeBlockControls.uploadingBlocks`) and
+  "Upload failed · tap to retry" for a failed one (`failedUploads`); an image or video card showing
+  its picture shows no state (the inspector does); the inspector shows the same, "Uploads when you're back online." offline, and
   Retry upload / Discard upload for a failed record (`nativeMedia.retryUpload`/`discardUpload`);
-  Delete also discards the block's record; uploads no longer refuse offline; one upload per block.
+  Delete also discards the block's record; uploads no longer refuse offline (only a local document
+  says `native_editor_media_upload_offline`, now "Uploading needs a document saved to the
+  server."); one upload per block.
   Document delete and keep-server drop the records (`discardPendingAttachments`). **Known limits:**
   no local thumbnail while a photo waits; a document that stops being typable keeps its record
   waiting (retried each pass); a commit blocked past its retries by a composition waits for the
-  next pass; a block moved to another column meanwhile still receives its upload. Tests:
+  next pass; with no editor open, an unknown `abilities.update` (a document not in the account's
+  cached lists) waits for the editor to open it. Tests:
   `NativeMediaQueueTests` (`MockURLProtocol`, a real registry, `ReplicaStore` and attachment store:
   the web's `imageCommit` XML with no editor open, the inspector's upload reaching an open editor,
   an upload finishing after its editor closed, offline then the next pass, kill/relaunch before and
-  after the checkpoint and after the commit, a column's block, a deleted block (nothing sent), a
+  after the checkpoint and after the commit, a column's block, a block moved into a column, the
+  typing gate (reader, unknown, switch off), a restored checkpoint re-checked, bytes over the limit,
+  the headless scheduler never the editor's, a headless post after a resync, a deleted block (nothing sent), a
   block filled during the upload, a rejection then Retry and Discard, another document's URL,
   another account's record, a sign-in switch, the classic pass, document delete, JPEG preparation,
   a close during preparation, too large and local); PR13a's upload cases moved there, and
   `testAMediaCaptionEditedInTheInspectorSurvivesRelaunch` now expects Upload file offered offline.
   `RootView` sets `nativeSessions` and `signInIsCurrent`; a host without them queues and waits.
+  `ReplicaSaveAdapterTests` pins the save binding (a switch after `/users/me/`: no PATCH, pending,
+  then sent once current; a switch during the body: no title; a classic save during a switch).
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below

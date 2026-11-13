@@ -37,18 +37,21 @@ final class NativeMediaUploads {
     private(set) var preparing: String?
     /// The last failure, for the block it was for.
     private(set) var failure: (blockID: String, key: L10nKey)?
-    /// The server's id for the document; nil for one only this device knows.
-    let documentID: UUID?
+    /// The document's replica scope (its server id and account); nil for a
+    /// document only this device knows, which cannot upload. Every record
+    /// shown, retried or discarded is this account's (review X5).
+    let scope: ReplicaScope?
+    var documentID: UUID? { scope?.documentID }
     @ObservationIgnored private let queue: DocumentSaveCoordinator
 
-    init(documentID: UUID?, queue: DocumentSaveCoordinator) {
-        self.documentID = documentID
+    init(scope: ReplicaScope?, queue: DocumentSaveCoordinator) {
+        self.scope = scope
         self.queue = queue
     }
 
     /// Block `blockID`'s queued upload (waiting, uploading or failed), if any.
     func record(_ blockID: String) -> PendingAttachment? {
-        documentID.flatMap { queue.nativeAttachment(documentID: $0, blockID: blockID) }
+        scope.flatMap { queue.nativeAttachment(scope: $0, blockID: blockID) }
     }
 
     /// The blocks of this document with an upload under way, and those whose upload failed.
@@ -56,10 +59,10 @@ final class NativeMediaUploads {
     var failedBlocks: Set<String> { blocks(failed: true) }
 
     private func blocks(failed: Bool) -> Set<String> {
-        guard let documentID else { return [] }
+        guard let scope else { return [] }
         _ = queue.pendingAttachmentsVersion
         return Set(
-            queue.nativeAttachments(documentID: documentID).filter { ($0.failedAt != nil) == failed }
+            queue.nativeAttachments(scope: scope).filter { ($0.failedAt != nil) == failed }
                 .compactMap(\.native?.blockID))
     }
 
@@ -88,7 +91,7 @@ final class NativeMediaUploads {
         -> Task<Void, Never>?
     {
         failure = nil
-        guard documentID != nil, let scope = session.scope else {
+        guard let scope, session.scope == scope else {
             failure = (blockID, .native_editor_media_upload_offline)
             return nil
         }
@@ -96,15 +99,13 @@ final class NativeMediaUploads {
         preparing = blockID
         // Never retained across the preparation: a closed editor is gone, not kept alive.
         let target = WeakSession(session: session)
-        let column = session.column
         return Task { [weak self] in
-            await self?.prepare(source, into: blockID, slot: slot, scope: scope, column: column, target: target)
+            await self?.prepare(source, into: blockID, slot: slot, scope: scope, target: target)
         }
     }
 
     private func prepare(
-        _ source: Source, into blockID: String, slot: MediaBlock.Slot, scope: ReplicaScope,
-        column: (group: String, id: String)?, target: WeakSession
+        _ source: Source, into blockID: String, slot: MediaBlock.Slot, scope: ReplicaScope, target: WeakSession
     ) async {
         defer { preparing = nil }
         let fileName: String
@@ -150,8 +151,7 @@ final class NativeMediaUploads {
         let queued = queue.queueNativeAttachment(
             scope: scope,
             target: NativeMediaTarget(
-                org: scope.org, blockID: blockID, slot: slot, fileName: fileName, contentType: contentType,
-                columnGroup: column?.group, columnID: column?.id),
+                org: scope.org, blockID: blockID, slot: slot, fileName: fileName, contentType: contentType),
             data: data)
         if queued == nil { fail(blockID, .native_editor_media_upload_failed) }
     }

@@ -14,7 +14,7 @@ enum Strings_sl {
         .native_editor_media_empty: "Prazno · tapnite za dodajanje",
         .native_editor_media_uploading: "Nalaganje …",
         .native_editor_upload_elsewhere: "Nalaganje poteka drugje",
-        .native_editor_media_upload_offline: "Za nalaganje potrebujete povezavo in dokument, shranjen na strežniku.",
+        .native_editor_media_upload_offline: "Za nalaganje mora biti dokument shranjen na strežniku.",
         .native_editor_media_upload_failed: "Datoteke ni bilo mogoče naložiti. Poskusite znova.",
         .native_editor_media_upload_dropped: "Blok se je med nalaganjem spremenil, zato datoteka ni bila dodana.",
         .native_editor_media_upload_stopped: "Nalaganje ni uspelo · tapnite za ponovni poskus",

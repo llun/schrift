@@ -262,7 +262,15 @@ then commits `.mediaProps([name, url], expecting: slot)` and hands the save over
 changed (block deleted, retyped or filled) drops the record and its bytes, so an upload lands after
 its editor closed or after a relaunch, never twice (a checkpointed record only commits; a commit
 that landed before the record went is refused by its own slot). The classic pass skips native
-records (no Markdown names them). Offline and transient failures wait for the next pass
+records (no Markdown names them) and runs native ones after every classic one. The lease finds
+the block anywhere in the document (a block moved into a column group after it was picked
+included), writes a closed document only through the editor open's typing gate (the native
+switch, the account's cached `abilities.update`, no pending create or delete, no live owner, no
+classic draft), never leaves its scheduler as the editor's, and re-checks every URL, a
+checkpoint read back from disk included, right before the commit; stored bytes over the picker's
+limit fail unread. Every save (native and classic, body and title) runs bound to the sign-in
+generation it started in: a cookie handover meanwhile sends nothing more and leaves the save
+pending. Offline and transient failures wait for the next pass
 (reconnect, foreground, launch); a rejection marks the record failed, answered from the inspector
 (Retry or Discard). Deleting the document or keeping the server version drops its records.
 Existing Markdown drafts retain their classic owner.

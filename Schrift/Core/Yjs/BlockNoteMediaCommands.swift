@@ -89,6 +89,27 @@ enum MediaBlock {
         var node: String
         var url: String
     }
+}
+
+/// Where a media block sits (PR13b): its slot and, when it is a block of a
+/// column group that is not open, that group and column.
+struct MediaLocation: Equatable, Sendable {
+    struct Column: Equatable, Sendable {
+        let group: String
+        let id: String
+    }
+    var slot: MediaBlock.Slot
+    var column: Column?
+
+    /// A content element's node and stored url.
+    init(element: YType) {
+        let node = if case .xmlElement(let name)? = element.typeRef { name } else { "" }
+        slot = MediaBlock.Slot(
+            node: node, url: YBlockProjection.props(of: element).map { MediaBlock.string("url", in: $0) } ?? "")
+    }
+}
+
+extension MediaBlock {
 
     /// Whether a native edit may write `prop` to a `node` block: a key of its
     /// schema the editor edits, with a value it can safely store.

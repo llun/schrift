@@ -11,7 +11,7 @@ enum Strings_fr {
         .native_editor_media_uploading: "Envoi…",
         .native_editor_upload_elsewhere: "Envoi en cours ailleurs",
         .native_editor_media_upload_offline:
-            "L’envoi nécessite une connexion et un document enregistré sur le serveur.",
+            "L’envoi nécessite un document enregistré sur le serveur.",
         .native_editor_media_upload_failed: "Impossible d’envoyer le fichier. Veuillez réessayer.",
         .native_editor_media_upload_dropped: "Le bloc a changé pendant l’envoi, le fichier n’a donc pas été ajouté.",
         .native_editor_media_upload_stopped: "Échec de l’envoi · touchez pour réessayer",

@@ -11,7 +11,7 @@ enum Strings_nl {
         .native_editor_media_uploading: "Uploaden…",
         .native_editor_upload_elsewhere: "Upload elders bezig",
         .native_editor_media_upload_offline:
-            "Uploaden vereist een verbinding en een document dat op de server is opgeslagen.",
+            "Uploaden kan pas als het document op de server is opgeslagen.",
         .native_editor_media_upload_failed: "Kan het bestand niet uploaden. Probeer het opnieuw.",
         .native_editor_media_upload_dropped:
             "Het blok is tijdens het uploaden gewijzigd, dus het bestand is niet toegevoegd.",

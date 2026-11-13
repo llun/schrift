@@ -10,7 +10,7 @@ enum Strings_es {
         .native_editor_media_empty: "Vacío · toca para añadir",
         .native_editor_media_uploading: "Subiendo…",
         .native_editor_upload_elsewhere: "Subida en curso en otro lugar",
-        .native_editor_media_upload_offline: "Para subir hace falta conexión y un documento guardado en el servidor.",
+        .native_editor_media_upload_offline: "Para subir archivos, el documento debe estar guardado en el servidor.",
         .native_editor_media_upload_failed: "No se pudo subir el archivo. Inténtalo de nuevo.",
         .native_editor_media_upload_dropped: "El bloque cambió mientras se subía el archivo, así que no se añadió.",
         .native_editor_media_upload_stopped: "Error al subir · toca para reintentar",

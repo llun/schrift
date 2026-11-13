@@ -8,7 +8,7 @@ enum Strings_zhHans {
         .native_editor_media_empty: "空 · 轻点以添加",
         .native_editor_media_uploading: "正在上传…",
         .native_editor_upload_elsewhere: "正在其他地方上传",
-        .native_editor_media_upload_offline: "上传需要网络连接，且文档已保存到服务器。",
+        .native_editor_media_upload_offline: "上传需要文档已保存到服务器。",
         .native_editor_media_upload_failed: "无法上传文件。请重试。",
         .native_editor_media_upload_dropped: "上传期间该块已更改，因此未添加文件。",
         .native_editor_media_upload_stopped: "上传失败 · 轻点重试",
