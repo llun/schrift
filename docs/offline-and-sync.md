@@ -264,11 +264,12 @@ its editor closed or after a relaunch, never twice (a checkpointed record only c
 that landed before the record went is refused by its own slot). The classic pass skips native
 records (no Markdown names them) and runs native ones after every classic one. The lease finds
 the block anywhere in the document (a block moved into a column group after it was picked, or one
-nested under a column's paragraph, included), writes a closed document only through the editor open's typing gate (the native
+nested under a column's paragraph, included; it walks block structure only, and a block it finds
+but cannot address, or a search cut by depth, waits rather than drops), writes a closed document only through the editor open's typing gate (the native
 switch, no pending create or delete, no live owner, no classic draft, and `abilities.update` asked
 of the server once; a reader answer, the editor's included, a 403 or 404, or an answer naming
 another document is a denial remembered per scope, and offline only the account's own Home lists
-can allow it; the gate runs before every commit, and a denial makes an open editor read-only too),
+can allow it; the gate runs before every commit, and a denial makes an open editor read-only too and keeps it off the live socket),
 never leaves its scheduler as the editor's, and re-checks every URL, a
 checkpoint read back from disk included, right before the commit; stored bytes over the picker's
 limit fail unread. Every save (native and classic, body and title) runs bound to the sign-in

@@ -3836,10 +3836,14 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   (`NativeSessionRegistry.commitMedia`, the coordinator's `weak nativeSessions`): no replica on disk →
   `.gone`, an unreadable one → `.unavailable`; `open` a surface (an open editor's replica, else one
   restored for this), the block found in mailbox order (`ReplicaMessage.mediaLocation`,
-  `DocumentEngine.mediaLocation`: the index first, then every column group's whole subtree in the
-  Yjs tree (recursively, 64 levels; deeper answers undecided, so the record waits), so a block moved
-  into a column or another group after it was picked, or a web-authored one nested under a column's
-  paragraph, is found there and its
+  `DocumentEngine.mediaLocation`: the index first (an indexed container with no content element is
+  undecided), then a walk of the whole document's **block structure** only (`blockGroup`,
+  `blockContainer`, `columnList`, `column`, never inline content), counting block levels up to
+  `NativeBlockProjection.maxDepth`; a branch cut there marks the search but never stops it, and a
+  block found but not addressable (outside a column, a column or group without an id, past the
+  depth, no content element) is undecided; only an id absent from the whole document is nil, and
+  undecided means `.unavailable` (the record waits). So a block moved into a column or another
+  group after it was picked, or a web-authored one nested under a column's paragraph, is found and its
   column is opened before the commit; `.some(nil)` only when no block of the document has the id,
   nil when nothing answered), the session's `canType` required, then the journal (`installJournal`,
   shared with `installTyping`) installed only when this is the scope's only surface **and**
@@ -3856,7 +3860,11 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   even if an editor made the scope writable during the question; the gate runs before **every**
   commit, an editor's writable entry or not (an editor writable on its row's ability never carries
   a commit the gate refuses), and a denial (`noteNativeReader`) also ends the scope's shared
-  writability (`setWritable(nil)`, live disconnected), as an editor's own reader answer does; the
+  writability (`setWritable(nil)`, live disconnected), as an editor's own reader answer does, and
+  `NativeEditorOpen.startLive` refuses a scope the coordinator remembers as a reader
+  (`isNativeReader`); the editor's own ability check (`serverAbility`) reads a 403, a 404, any other
+  answer about the document and another document's id as reader too, and its writer answer clears a
+  remembered denial (`clearNativeReader`); the
   registry re-reads the entry after that await — else
   `.unavailable` and the record waits (an open editor that does not write stays so); the save goes
   through the scope's scheduler when an editor installed one, else a private one that is never
@@ -3897,7 +3905,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   outside the caches asking the server (waiting meanwhile), a 403/404 as a denial, the subpage
   cache never deciding, another document's answer, a reader answer through an editor opened
   meanwhile (and a second replay before it closes), a remembered denial through a writable editor,
-  a nested image in a closed column, a delete keeping another account's
+  a nested image in a closed column (and `DocumentEngineMediaLocationTests`: block-level depth, a cut
+  branch, found-but-unaddressable, absent; `NativeEditorActivationTests`: 403/404/mismatch as reader,
+  a remembered denial keeping the open off the socket), a delete keeping another account's
   records, a deleted block (nothing sent), a
   block filled during the upload, a rejection then Retry and Discard, another document's URL,
   another account's record, a sign-in switch, the classic pass, document delete, JPEG preparation,
