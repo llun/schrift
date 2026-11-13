@@ -141,7 +141,7 @@ struct NativeEditorView: View {
                 if let id = lastColumns { session.input?.focus(after: id) }
             }
         ) { model in
-            ColumnEditorScreen(model: model, serverOrigin: serverOrigin, isOffline: isOffline)
+            ColumnEditorScreen(model: model, serverOrigin: serverOrigin, isOffline: isOffline, uploads: uploads)
         }
         .sheet(item: $openMedia) { request in
             NativeMediaInspector(
@@ -158,7 +158,7 @@ struct NativeEditorView: View {
         .task(id: ObjectIdentifier(session)) {
             guard let mediaUpload, uploads == nil else { return }
             uploads = NativeMediaUploads(
-                session: session, documentID: uploadDocumentID, serverOrigin: serverOrigin,
+                documentID: uploadDocumentID, serverOrigin: serverOrigin,
                 isOffline: { [isOffline] in isOffline }, upload: mediaUpload)
         }
         .nativeLinkEditing($linkTarget, input: session.input)

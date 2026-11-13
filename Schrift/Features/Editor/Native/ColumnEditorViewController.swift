@@ -29,6 +29,8 @@ final class ColumnEditorModel: Identifiable {
     private(set) var isClosed = false
     /// A table card in the shown column was tapped.
     var openTable: NativeTableRequest?
+    /// The media block whose inspector is open (PR13a), in the shown column.
+    var openMedia: NativeMediaRequest?
     /// The table the shown column last opened: its caret goes after it.
     @ObservationIgnored var lastTable: String?
     /// The editor closed: the document takes focus back after the group.
@@ -123,6 +125,7 @@ final class ColumnEditorModel: Identifiable {
         guard let session = await document.openColumn(group: groupID, column: columnID) else { return nil }
         session.input?.onExit = { [weak self] in self?.close() }
         session.textView.blockControls.onOpenTable = { [weak self] in self?.openTable = NativeTableRequest(id: $0) }
+        session.textView.blockControls.onOpenMedia = { [weak self] in self?.openMedia = NativeMediaRequest(id: $0) }
         // The group's own change reaches every column: its structure may have changed (PR12b).
         session.onApplied = { [weak self] delivery in
             guard let self else { return }
@@ -322,6 +325,8 @@ struct ColumnEditorScreen: View {
     let model: ColumnEditorModel
     let serverOrigin: String
     var isOffline = false
+    /// The document's uploads (PR13a): a column's media block uploads into its column.
+    var uploads: NativeMediaUploads? = nil
     @State private var linkTarget: NativeLinkTarget?
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.docsTheme) private var theme
@@ -424,6 +429,19 @@ struct ColumnEditorScreen: View {
                 )
                 .ignoresSafeArea()
             }
+        }
+        .sheet(item: $model.openMedia) { request in
+            if let session = model.activeSession {
+                NativeMediaInspector(
+                    session: session, blockID: request.id, uploads: uploads, serverOrigin: serverOrigin,
+                    isOffline: isOffline, onClose: { model.openMedia = nil })
+            }
+        }
+        .onChange(of: model.activeSession?.input?.requestedMedia) { _, id in
+            // The slash menu's new media block in this column.
+            guard let id else { return }
+            model.activeSession?.input?.requestedMedia = nil
+            model.openMedia = NativeMediaRequest(id: id)
         }
         .nativeLinkEditing($linkTarget, input: model.activeSession?.input)
     }

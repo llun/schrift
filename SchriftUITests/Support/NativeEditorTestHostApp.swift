@@ -234,6 +234,11 @@ private struct NativeOpenFixture: View {
             if ProcessInfo.processInfo.arguments.contains("--native-columns") {
                 checkpoint = try ColumnFixture.inserting(into: checkpoint, after: "owned-0")
             }
+            // `--native-media-edit` (PR13a): a web-shaped captioned image and a
+            // file after the first paragraph (no image loader: no request).
+            if ProcessInfo.processInfo.arguments.contains("--native-media-edit") {
+                checkpoint = try MediaEditFixture.inserting(into: checkpoint, after: "owned-0")
+            }
             _ = try replicaStore.create(for: scope, checkpoint: checkpoint)
         }
         let content = DocumentContentCacheStore(directory: directory.appendingPathComponent("Content"))
@@ -536,6 +541,38 @@ private struct TreeControls: View {
 
 /// `--native-table` (PR11a): BlockNote 0.56's table shape, as the web writes
 /// one (`tableHeader` row, `tableCell` row, every cell's default props).
+/// `--native-media-edit` (PR13a): BlockNote 0.56's image and file blocks as
+/// the web writes them (schema-ordered props, no content).
+private enum MediaEditFixture {
+    static func inserting(into state: Data, after blockID: String) throws -> Data {
+        let doc = YDoc(clientID: 3, gc: true)
+        defer { doc.destroy() }
+        try doc.applyUpdate(YUpdateDecoder.decode(state))
+        guard let root = doc.share[BlockNoteYjs.fragmentField],
+            case .type(let group)? = YBlockProjection.children(of: root, includeFormats: false).first?.content
+        else { return state }
+        let left = YBlockProjection.children(of: group, includeFormats: false).first { item in
+            guard case .type(let type) = item.content else { return false }
+            return BlockIndex.blockID(of: type) == blockID
+        }
+        let writer = BlockNoteWriter(doc: doc)
+        func block(_ id: String, _ node: String, _ props: [String: String]) -> BlockNoteWriter.Copy {
+            let fields = (MediaBlock.schemas[node] ?? []).map { field in
+                (key: field.key, value: props[field.key].map { YAnyValue.string($0) } ?? field.value)
+            }
+            return .element("blockContainer", [("id", .string(id))], [.element(node, fields, [])])
+        }
+        try writer.insertBlocks(
+            [
+                block(
+                    "owned-image", "image",
+                    ["name": "harbour.png", "url": "https://images.example/harbour.png", "caption": "Old caption"]),
+                block("owned-file", "file", ["name": "notes.txt", "url": "https://files.example/notes.txt"]),
+            ], into: group, after: left)
+        return try YStateEncoder.encodeStateAsUpdate(doc)
+    }
+}
+
 private enum TableFixture {
     static func inserting(into state: Data, after blockID: String) throws -> Data {
         let doc = YDoc(clientID: 2, gc: true)

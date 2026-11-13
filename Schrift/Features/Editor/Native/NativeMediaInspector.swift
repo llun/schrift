@@ -73,11 +73,13 @@ struct NativeMediaInspector: View {
             guard let item, let block else { return }
             photo = nil
             uploads?.start(
-                .photo { try await item.loadTransferable(type: Data.self) }, into: blockID, slot: slot(block))
+                .photo { try await item.loadTransferable(type: Data.self) }, into: blockID, slot: slot(block),
+                in: session)
         }
         .fileImporter(isPresented: $isImporting, allowedContentTypes: contentTypes) { result in
             guard case .success(let url) = result, let block else { return }
-            uploads?.start(.file { try loadPickedAttachmentFile(at: url) }, into: blockID, slot: slot(block))
+            uploads?.start(
+                .file { try loadPickedAttachmentFile(at: url) }, into: blockID, slot: slot(block), in: session)
         }
     }
 

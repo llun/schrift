@@ -41,16 +41,11 @@ final class NativeMediaUploads {
     let serverOrigin: String
     @ObservationIgnored var isOffline: () -> Bool
     @ObservationIgnored private let upload: Upload
-    @ObservationIgnored private weak var session: NativeEditorSession?
     /// How long a commit waits for the input to be free, a step at a time.
     @ObservationIgnored var commitAttempts = 50
     @ObservationIgnored var commitInterval: Duration = .milliseconds(100)
 
-    init(
-        session: NativeEditorSession, documentID: UUID?, serverOrigin: String, isOffline: @escaping () -> Bool,
-        upload: @escaping Upload
-    ) {
-        self.session = session
+    init(documentID: UUID?, serverOrigin: String, isOffline: @escaping () -> Bool, upload: @escaping Upload) {
         self.documentID = documentID
         self.serverOrigin = serverOrigin
         self.isOffline = isOffline
@@ -62,10 +57,13 @@ final class NativeMediaUploads {
 
     func clearFailure() { failure = nil }
 
-    /// Starts uploading `source` into media block `blockID`, whose slot is
-    /// `slot` now. Nil (and a failure notice) when it cannot start.
+    /// Starts uploading `source` into media block `blockID` of `session`'s
+    /// surface (the document's, or a column's), whose slot is `slot` now. Nil
+    /// (and a failure notice) when it cannot start.
     @discardableResult
-    func start(_ source: Source, into blockID: String, slot: MediaBlock.Slot) -> Task<Void, Never>? {
+    func start(_ source: Source, into blockID: String, slot: MediaBlock.Slot, in session: NativeEditorSession)
+        -> Task<Void, Never>?
+    {
         failure = nil
         guard uploading == nil else { return nil }
         guard let documentID, !isOffline() else {
@@ -73,12 +71,16 @@ final class NativeMediaUploads {
             return nil
         }
         uploading = blockID
+        // Never retained across the upload: a closed editor is gone, not kept alive.
+        let target = WeakSession(session: session)
         return Task { [weak self] in
-            await self?.run(source, into: blockID, slot: slot, documentID: documentID)
+            await self?.run(source, into: blockID, slot: slot, documentID: documentID, target: target)
         }
     }
 
-    private func run(_ source: Source, into blockID: String, slot: MediaBlock.Slot, documentID: UUID) async {
+    private func run(
+        _ source: Source, into blockID: String, slot: MediaBlock.Slot, documentID: UUID, target: WeakSession
+    ) async {
         defer { uploading = nil }
         let fileName: String
         let contentType: String
@@ -118,7 +120,7 @@ final class NativeMediaUploads {
             MediaBlock.isAuthoredURL(url)
         else { return fail(blockID, .native_editor_media_upload_failed) }
         await commit(
-            blockID,
+            blockID, in: target,
             props: [
                 ProjectedProp(key: "name", value: .string(fileName)), ProjectedProp(key: "url", value: .string(url)),
             ],
@@ -128,13 +130,22 @@ final class NativeMediaUploads {
     /// Posts the commit through the same session's input once it is free
     /// (a composition or another command in flight); a session that closed
     /// meanwhile drops it.
-    private func commit(_ blockID: String, props: [ProjectedProp], slot: MediaBlock.Slot) async {
+    private func commit(
+        _ blockID: String, in target: WeakSession, props: [ProjectedProp], slot: MediaBlock.Slot
+    ) async {
         for attempt in 0..<commitAttempts {
-            guard let session, !session.isClosed, let input = session.input else { break }
+            // A block that is gone drops at once; a busy input is waited for.
+            guard let session = target.session, !session.isClosed, let input = session.input,
+                input.mediaBlock(blockID) != nil
+            else { break }
             if input.setMediaProps(blockID, props, expecting: slot) { return }
             if attempt + 1 < commitAttempts { try? await Task.sleep(for: commitInterval) }
         }
         fail(blockID, .native_editor_media_upload_dropped)
+    }
+
+    private struct WeakSession {
+        weak var session: NativeEditorSession?
     }
 
     private func fail(_ blockID: String, _ key: L10nKey) {
