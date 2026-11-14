@@ -1,0 +1,63 @@
+Schrift/Core/Localization/L10nKey.swift
+  s_dc239db0cc1c9d::t_4a12e344f9b5c3 307-309,474
+Schrift/Core/Localization/Strings+de.swift
+  s_dc239db0cc1c9d::t_cfb75979068b7b 348-350,428
+Schrift/Core/Localization/Strings+en.swift
+  s_dc239db0cc1c9d::t_8503a963774adc 340-342,431
+Schrift/Core/Localization/Strings+es.swift
+  s_dc239db0cc1c9d::t_ca52b18779bf73 347-349,427
+Schrift/Core/Localization/Strings+fr.swift
+  s_dc239db0cc1c9d::t_dab06a5666588c 344-346,424
+Schrift/Core/Localization/Strings+it.swift
+  s_dc239db0cc1c9d::t_c0098c82e64b2e 343-345,423
+Schrift/Core/Localization/Strings+nl.swift
+  s_dc239db0cc1c9d::t_478a6b8788906c 345-347,425
+Schrift/Core/Localization/Strings+pt.swift
+  s_dc239db0cc1c9d::t_1dd0e2f4057af3 343-345,423
+Schrift/Core/Localization/Strings+sl.swift
+  s_dc239db0cc1c9d::t_1285bc5517c350 354-356,436
+Schrift/Core/Localization/Strings+th.swift
+  s_dc239db0cc1c9d::t_9870e98607e938 338-340,418
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_dc239db0cc1c9d::t_d7ba78bb090487 336-338,416
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_dc239db0cc1c9d::t_425237dbaa2759 336-338,416
+Schrift/Core/Yjs/BlockNoteSourceCommands.swift
+  s_dc239db0cc1c9d::t_8734252f51d1f2 94-100
+Schrift/Features/Editor/Engine/BlockIndex.swift
+  s_dc239db0cc1c9d::t_7604dae4133d02 368-406
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_dc239db0cc1c9d::t_c2db62a9fc8067 1091-1099
+Schrift/Features/Editor/Engine/PatchBuilder.swift
+  s_dc239db0cc1c9d::t_3cad5e51990ec6 56-63
+Schrift/Features/Editor/Native/DocumentReplicaSession.swift
+  s_dc239db0cc1c9d::t_3451a9dc61d3be 71-72,343-353
+Schrift/Features/Editor/Native/NativeCompositionSession.swift
+  s_dc239db0cc1c9d::t_35afc6ee57b5ba 207-208,210,214
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_dc239db0cc1c9d::t_c44a07f817c56f 54-55,267-355
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  s_dc239db0cc1c9d::t_b2d080ced8c364 280,282-286,378-389,990,1073,1353-1357,1398-1399,1564,1752-1778,1837,1870-1872
+Schrift/Features/Editor/Native/NativeSourcePreview.swift
+  s_dc239db0cc1c9d::t_8e5919fd3bab01 5,8-9,16-23
+Schrift/Features/Editor/Native/NativeTextView.swift
+  s_dc239db0cc1c9d::t_96c495ea90ec55 121-127,137,142-145,162
+Schrift/Features/Editor/SlashMenu.swift
+  s_dc239db0cc1c9d::t_9df90b769ecb4f 19-25,39,140-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "299edf574f55328f6c6114f7a2cd8de5113dda5a",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
