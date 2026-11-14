@@ -339,7 +339,9 @@ final class NativeTextView: UITextView {
                         chunk = attachment.content.label
                     } else if let chip = value as? NativeInlineChipAttachment {
                         let unit = chip.content.accessibilityLabel
-                        let repeatCount = min(run.length, max(1, (Self.maxAccessibilityValueUTF16 - count) / max(1, unit.utf16.count) + 1))
+                        let repeatCount = min(
+                            run.length, max(1, (Self.maxAccessibilityValueUTF16 - count) / max(1, unit.utf16.count) + 1)
+                        )
                         chunk = Array(repeating: unit, count: repeatCount).joined()
                     } else {
                         let sliceLength = min(run.length, Self.maxAccessibilityValueUTF16 - count + 1)

@@ -304,4 +304,66 @@ final class ReplicaSessionSourceTests: NativeEditingTestCase {
         replica.mailbox.post(.detach(surfaceID: tableSurfaceID))
         await harness.settle()
     }
+
+    func testS2InvalidSourceCompositionCommitInvalidatesWithoutFailingSession() async throws {
+        let state = seedState([
+            BlockNoteBlock(node: "paragraph", props: Self.paragraphProps, runs: [InlineRun("x")], id: "p"),
+            BlockNoteBlock(node: SourceBlock.mathBlock, props: [], runs: [InlineRun("a")], id: "mx"),
+        ])
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+        let replica = try XCTUnwrap(harness.session.replica)
+
+        let sourceSurfaceID = UUID()
+        let attachment = try unwrapped(await replica.attach(surfaceID: sourceSurfaceID, source: .block(id: "mx")))
+        let syntheticID = try XCTUnwrap(attachment.blocks.first?.id)
+        let collector = DeliveryCollector(attachment.deliveries)
+        defer { collector.cancel() }
+
+        replica.mailbox.post(
+            .compositionBegin(
+                surfaceID: sourceSurfaceID, epoch: 0, baseRevision: attachment.revision, blockID: syntheticID,
+                range: 1..<1))
+        let commitID = UUID()
+        replica.mailbox.post(
+            .compositionCommit(
+                surfaceID: sourceSurfaceID, epoch: 0, commandID: commitID, text: "bad\u{000C}char"))
+        let token = UUID()
+        replica.mailbox.post(.drain(surfaceID: sourceSurfaceID, token: token))
+        await waitUntil { collector.deliveries.contains(where: { $0.drained == token }) }
+
+        XCTAssertTrue(
+            collector.deliveries.contains {
+                if case .invalidated(_, let id)? = $0.result { return id == commitID }
+                return false
+            })
+        XCTAssertFalse(
+            collector.deliveries.contains {
+                if case .composition(_, .failed)? = $0.result { return true }
+                return false
+            })
+        let failed = await harness.session.engine { $0.nativeWriteFailed }
+        XCTAssertEqual(failed, false)
+
+        // Epoch bumped by invalidation (epoch 1); a subsequent valid edit applies cleanly.
+        let validID = UUID()
+        replica.mailbox.post(
+            .command(
+                ReplicaCommand(
+                    surfaceID: sourceSurfaceID, epoch: 1, predicted: false,
+                    command: NativeEditCommand(
+                        id: validID, baseRevision: attachment.revision, blockID: syntheticID,
+                        range: 1..<1, replacement: "+b"),
+                    undoBefore: true, undoAfter: true)))
+        let token2 = UUID()
+        replica.mailbox.post(.drain(surfaceID: sourceSurfaceID, token: token2))
+        await waitUntil { collector.deliveries.contains(where: { $0.drained == token2 }) }
+        XCTAssertTrue(
+            collector.deliveries.contains {
+                if case .applied(let id, _, _)? = $0.result { return id == validID }
+                return false
+            })
+        replica.mailbox.post(.detach(surfaceID: sourceSurfaceID))
+        await harness.settle()
+    }
 }

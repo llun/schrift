@@ -1225,6 +1225,71 @@ final class BlockNoteSourceOracleTests: XCTestCase {
         await inspectedClean.close().value
     }
 
+    func testS1BoundedSourceProjectionAndClippedVisibleText() throws {
+        let hugeBlockText = "line1\n" + String(repeating: "a", count: SourceBlock.maxSourceUTF16 + 50)
+        let hugeMathText = String(repeating: "x", count: NativeInlineObject.maxMathUTF16 + 50)
+        let doc = YDoc(clientID: 1, gc: true)
+        defer { doc.destroy() }
+        try populateContainer(doc, id: "m-huge", node: SourceBlock.mathBlock) { element, tx in
+            let text = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: element, after: nil, [.type(text)])
+            try text.insert(0, hugeBlockText, nil)
+        }
+        try populateContainer(doc, id: "d-fffc", node: SourceBlock.diagram) { element, tx in
+            let text = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: element, after: nil, [.type(text)])
+            try text.insert(0, "graph\u{FFFC}TD", nil)
+        }
+        try populateContainer(doc, id: "p-huge-math", node: "paragraph") { element, tx in
+            let math = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+            try YWrite.insertAfter(tx, into: element, after: nil, [.type(math)])
+            let text = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: math, after: nil, [.type(text)])
+            try text.insert(0, hugeMathText, nil)
+        }
+
+        let projected = NativeBlockProjection.project(doc)
+        let byID = Dictionary(uniqueKeysWithValues: projected.blocks.map { ($0.id, $0) })
+
+        let hugeBlock = try XCTUnwrap(byID["m-huge"])
+        XCTAssertEqual(hugeBlock.block.fidelity, .modeled)
+        let projectedHugeText = hugeBlock.block.runs.map(\.text).joined()
+        XCTAssertLessThanOrEqual(projectedHugeText.count, NativeInlineObject.defaultDisplayLimit + 1)
+        XCTAssertTrue(projectedHugeText.hasSuffix("…"))
+        XCTAssertFalse(projectedHugeText.contains("\n"))
+
+        let fffcBlock = try XCTUnwrap(byID["d-fffc"])
+        XCTAssertEqual(fffcBlock.block.fidelity, .modeled)
+        XCTAssertEqual(fffcBlock.block.runs.map(\.text).joined(), "graphTD")
+
+        let hugeMathBlock = try XCTUnwrap(byID["p-huge-math"])
+        if case .math(let clippedSource)? = hugeMathBlock.block.runs.first?.inlineObject {
+            XCTAssertLessThanOrEqual(clippedSource.count, NativeInlineObject.defaultDisplayLimit + 1)
+            XCTAssertTrue(clippedSource.hasSuffix("…"))
+        } else {
+            XCTFail("expected modeled inline math")
+        }
+
+        // BlockSnapshot.clippedVisibleText() clips direct oversized source snapshots (hasInlineObjects == false).
+        let directSnapshot = BlockSnapshot(
+            id: "raw-math", node: SourceBlock.mathBlock, props: [],
+            runs: [InlineRun(String(repeating: "z", count: 1_000))], isOpaque: false)
+        let clipped = directSnapshot.clippedVisibleText()
+        XCTAssertLessThanOrEqual(clipped.count, NativeInlineObject.defaultDisplayLimit + 1)
+        XCTAssertTrue(clipped.hasSuffix("…"))
+    }
+
+    func testS3InlineMathTabAndBidiValidation() {
+        XCTAssertFalse(SourceBlock.isValidReplacement("a\tb", node: NativeInlineObject.mathNodeName))
+        XCTAssertFalse(SourceBlock.isValidReplacement("a\u{202E}b", node: NativeInlineObject.mathNodeName))
+        XCTAssertFalse(SourceBlock.isValidReplacement("a\u{2066}b", node: NativeInlineObject.mathNodeName))
+        XCTAssertFalse(SourceBlock.isValidReplacement("a\u{000C}b", node: NativeInlineObject.mathNodeName))
+        XCTAssertTrue(SourceBlock.isValidReplacement("x^2 + y^2", node: NativeInlineObject.mathNodeName))
+
+        XCTAssertTrue(SourceBlock.isValidReplacement("a\tb\nc", node: SourceBlock.mathBlock))
+        XCTAssertTrue(SourceBlock.isValidReplacement("a\tb\nc", node: SourceBlock.diagram))
+    }
+
     // MARK: - Helpers
 
     private func decodeDoc(_ base64: String) throws -> YDoc {

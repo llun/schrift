@@ -398,4 +398,175 @@ final class DocumentEngineSourceTests: DocumentEngineTestCase {
         engine.closeSource(sid)
         XCTAssertEqual(engine.peerPlace(rel), .block("cl"))
     }
+
+    func testS1OpenSourceRefusesOversizedAndObjectReplacementCharacters() throws {
+        let doc = YDoc(clientID: 1, gc: true)
+        defer { doc.destroy() }
+        try doc.transact(local: true) { tx in
+            let root = doc.get(BlockNoteYjs.fragmentField)
+            let group = YType(typeRef: .xmlElement(nodeName: "blockGroup"))
+            try YWrite.insertAfter(tx, into: root, after: nil, [.type(group)])
+            var after: YItem?
+            func addBlock(_ id: String, node: String, textValue: String) throws {
+                let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+                after = try YWrite.insertAfter(tx, into: group, after: after, [.type(container)])
+                try YWrite.mapSet(tx, on: container, key: "id", .any([.string(id)]))
+                let el = YType(typeRef: .xmlElement(nodeName: node))
+                try YWrite.insertAfter(tx, into: container, after: nil, [.type(el)])
+                let txt = YType(typeRef: .xmlText)
+                try YWrite.insertAfter(tx, into: el, after: nil, [.type(txt)])
+                try txt.insert(0, textValue, nil)
+            }
+            try addBlock(
+                "mx-huge", node: SourceBlock.mathBlock,
+                textValue: String(repeating: "a", count: SourceBlock.maxSourceUTF16 + 1))
+            try addBlock("dx-fffc", node: SourceBlock.diagram, textValue: "graph\u{FFFC}TD")
+            try addBlock(
+                "mx-editable", node: SourceBlock.mathBlock,
+                textValue: String(repeating: "b", count: NativeInlineObject.maxMathUTF16 + 1))
+
+            let pContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            after = try YWrite.insertAfter(tx, into: group, after: after, [.type(pContainer)])
+            try YWrite.mapSet(tx, on: pContainer, key: "id", .any([.string("p")]))
+            let pEl = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+            try YWrite.insertAfter(tx, into: pContainer, after: nil, [.type(pEl)])
+            var pChild: YItem?
+            for mathText in [
+                String(repeating: "x", count: NativeInlineObject.maxMathUTF16 + 1),
+                "a\u{FFFC}b",
+            ] {
+                let math = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+                pChild = try YWrite.insertAfter(tx, into: pEl, after: pChild, [.type(math)])
+                let txt = YType(typeRef: .xmlText)
+                try YWrite.insertAfter(tx, into: math, after: nil, [.type(txt)])
+                try txt.insert(0, mathText, nil)
+            }
+        }
+        let surface = HeadlessSurface(blocks: projection(doc))
+        let engine = DocumentEngine(doc: doc, surface: surface)
+        defer { engine.detach() }
+
+        XCTAssertNil(engine.openSource(.block(id: "mx-huge")))
+        XCTAssertNil(engine.openSource(.block(id: "dx-fffc")))
+        XCTAssertNotNil(engine.openSource(.block(id: "mx-editable")))
+
+        let writer = BlockNoteWriter(doc: doc)
+        let pChildren = writer.children(try writer.find("p").element)
+        XCTAssertEqual(pChildren.count, 2)
+        XCTAssertNil(engine.openSource(.inlineMath(blockID: "p", itemID: pChildren[0].id)))
+        XCTAssertNil(engine.openSource(.inlineMath(blockID: "p", itemID: pChildren[1].id)))
+    }
+
+    func testS2CompositionCommittedRejectsControlAndOverflowWithoutFreezing() throws {
+        let doc = try makeDoc(
+            [
+                BlockNoteBlock(node: "paragraph", props: Self.paragraphProps, runs: [InlineRun("x")], id: "p"),
+                mathBlock("mx", String(repeating: "a", count: SourceBlock.maxSourceUTF16 - 5)),
+            ],
+            clientID: 1)
+        defer { doc.destroy() }
+        let seedWriter = BlockNoteWriter(doc: doc)
+        try seedWriter.insertInlineMath(
+            in: try seedWriter.find("p"), replacing: 1..<1,
+            source: String(repeating: "y", count: NativeInlineObject.maxMathUTF16 - 5), trailingSpace: false)
+
+        let surface = HeadlessSurface(blocks: projection(doc))
+        let engine = DocumentEngine(doc: doc, surface: surface)
+        defer { engine.detach() }
+
+        let mxID = try XCTUnwrap(engine.openSource(.block(id: "mx")))
+        try engine.compositionBegan(blockID: mxID, at: 0)
+        XCTAssertThrowsError(try engine.compositionCommitted(text: "\u{000C}")) {
+            XCTAssertEqual($0 as? DocumentEngineError, .unsupportedNativeInput)
+        }
+        XCTAssertFalse(engine.nativeWriteFailed)
+        XCTAssertFalse(engine.isComposing)
+
+        try engine.compositionBegan(blockID: mxID, at: 0)
+        XCTAssertThrowsError(try engine.compositionCommitted(text: "123456")) {
+            XCTAssertEqual($0 as? DocumentEngineError, .payloadTooLarge)
+        }
+        XCTAssertFalse(engine.nativeWriteFailed)
+        XCTAssertFalse(engine.isComposing)
+
+        let mathItem = try inlineMathItemID(in: doc, blockID: "p")
+        let inlineID = try XCTUnwrap(engine.openSource(.inlineMath(blockID: "p", itemID: mathItem)))
+        for bad in ["\t", "\u{202E}", "\u{001B}"] {
+            try engine.compositionBegan(blockID: inlineID, at: 0)
+            XCTAssertThrowsError(try engine.compositionCommitted(text: bad)) {
+                XCTAssertEqual($0 as? DocumentEngineError, .unsupportedNativeInput)
+            }
+            XCTAssertFalse(engine.nativeWriteFailed)
+            XCTAssertFalse(engine.isComposing)
+        }
+        try engine.compositionBegan(blockID: inlineID, at: 0)
+        XCTAssertThrowsError(try engine.compositionCommitted(text: "123456")) {
+            XCTAssertEqual($0 as? DocumentEngineError, .payloadTooLarge)
+        }
+        XCTAssertFalse(engine.nativeWriteFailed)
+        XCTAssertFalse(engine.isComposing)
+
+        // Valid commit still succeeds afterwards.
+        try engine.compositionBegan(blockID: inlineID, at: 0)
+        try engine.compositionCommitted(text: "12345")
+        XCTAssertEqual(
+            engine.sourceSnapshot(inlineID)?.first?.runs.first?.text.utf16.count, NativeInlineObject.maxMathUTF16)
+    }
+
+    func testS3InlinePasteAndTableClipboardAndCumulativeSourceCaps() throws {
+        let doc = try makeDoc(
+            [
+                BlockNoteBlock(node: "paragraph", props: Self.paragraphProps, runs: [InlineRun("hi")], id: "p"),
+                mathBlock("mx", String(repeating: "a", count: SourceBlock.maxSourceUTF16 - 4)),
+            ],
+            clientID: 1)
+        defer { doc.destroy() }
+        let seedWriter = BlockNoteWriter(doc: doc)
+        try seedWriter.insertInlineMath(
+            in: try seedWriter.find("p"), replacing: 2..<2,
+            source: String(repeating: "b", count: NativeInlineObject.maxMathUTF16 - 4), trailingSpace: false)
+        let surface = HeadlessSurface(blocks: projection(doc))
+        let engine = DocumentEngine(doc: doc, surface: surface)
+        defer { engine.detach() }
+
+        // 1. 11 <math> elements of 20,000 UTF-16 units = 220,000 > NativeClipboard.maxPasteUTF16 (200,000).
+        let mathSource = String(repeating: "x", count: NativeInlineObject.maxMathUTF16)
+        let mathElements: [BlockNoteWriter.Copy] = (0..<11).map { _ in
+            .element(NativeInlineObject.mathNodeName, [], [.text([.run(InlineRun(mathSource))])])
+        }
+        let hugeInlinePayload = try BlockNoteInlinePayload.encode([mathElements])
+        XCTAssertThrowsError(
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "p",
+                    kind: .pasteInline(
+                        payload: hugeInlinePayload,
+                        range: NativeRangeCommand(
+                            startOffset: 0, endBlockID: "p", endOffset: 0, replacement: "", newBlockIDs: []))),
+                persist: { _ in })
+        ) { XCTAssertEqual($0 as? DocumentEngineError, .payloadTooLarge) }
+
+        // 2. TableClipboard.isTooLarge counts inline .math source UTF-16 length.
+        let cells: [[TablePastedCell]] = [
+            (0..<11).map { _ in
+                TablePastedCell(
+                    node: "tableCell", attrs: [:], runs: [InlineRun(inlineObject: .math(source: mathSource))])
+            }
+        ]
+        XCTAssertTrue(TableClipboard.isTooLarge(cells, repeated: 1))
+
+        // 3. Cumulative replaceText bounds for mathBlock and inline <math>.
+        let mxID = try XCTUnwrap(engine.openSource(.block(id: "mx")))
+        XCTAssertThrowsError(try engine.replaceText(block: mxID, range: 0..<0, with: "12345")) {
+            XCTAssertEqual($0 as? DocumentEngineError, .payloadTooLarge)
+        }
+        try engine.replaceText(block: mxID, range: 0..<0, with: "1234")
+
+        let mathItem = try inlineMathItemID(in: doc, blockID: "p")
+        let inlineID = try XCTUnwrap(engine.openSource(.inlineMath(blockID: "p", itemID: mathItem)))
+        XCTAssertThrowsError(try engine.replaceText(block: inlineID, range: 0..<0, with: "12345")) {
+            XCTAssertEqual($0 as? DocumentEngineError, .payloadTooLarge)
+        }
+        try engine.replaceText(block: inlineID, range: 0..<0, with: "1234")
+    }
 }

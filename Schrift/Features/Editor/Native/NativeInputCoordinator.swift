@@ -2350,7 +2350,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         surface.holdForComposition(false)
         let commitText = sourceKind == nil ? commit.text : NativeClipboard.normalizingLineBreaks(commit.text)
         if let sourceKind {
-            let currentLength = surface.rangeIndex.entry(for: commit.blockID)?.textRange.length ?? commit.range.upperBound
+            let currentLength =
+                surface.rangeIndex.entry(for: commit.blockID)?.textRange.length ?? commit.range.upperBound
             let limit = sourceKind.maxUTF16
             let validCharacters = SourceBlock.isValidReplacement(commitText, node: sourceKind.nodeName)
             let withinLimit =

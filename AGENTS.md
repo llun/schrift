@@ -3993,7 +3993,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   **Engine & Replica:** `DocumentEngine`, `BlockIndex`, `PatchBuilder`, `EngineSelection`,
   `DocumentReplicaSession`, and `NativeEditorSession` add scoped `openSource(_:)` surfaces bound to
   the source element's `YXmlText` (top-level, nested, column, or table cell), projecting it as a
-  single plain `codeBlock` surface while keeping outer block previews refreshed and isolating outer
+  single plain `codeBlock` (`mathBlock`/`diagram`) or `"paragraph"` (`inlineMath`) surface while keeping outer block previews refreshed and isolating outer
   blocks from text deltas. Awareness (`peerPlace`, `RelativeEditorPosition`) and shared `ReplicaHistory`
   undo/redo adapt between closed and open source views; peer delete/replacement/unfamiliar edits drop
   the scoped surface, auto-dismiss `NativeSourceEditorViewController`, and orphan active IME
@@ -4006,11 +4006,11 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `mathBlock`/`diagram` and exit-after-chip in `.inlineMath`, slash/formatting/link/indent gating in
   `NativeInputCoordinator` (including plain-text paste fallback inside source buffers and newline
   rejection in `.inlineMath`), and IME `provisional.json` recovery. `sourceSlashItems` adds
-  `mathBlock`, `inlineMath` (auto-opening `NativeSourceEditor`), and `diagram` (seeding
+  `mathBlock` and `inlineMath` (both auto-opening `NativeSourceEditor`), and `diagram` (seeding
   `SourceBlock.defaultDiagramSource`).
-  **Tests:** `BlockNoteSourceOracleTests` (10 tests), `DocumentEngineSourceTests` (7 tests),
-  `ReplicaSessionSourceTests` (3 tests), `NativeSourcePreviewTests` (7 tests), `NativeSourceEditorTests`
-  (13 tests), and `DocumentEngineBoundaryTests.testCoreYjsAndNativeSourceFilesRespectLayerBoundaries`
+  **Tests:** `BlockNoteSourceOracleTests` (12 tests), `DocumentEngineSourceTests` (10 tests),
+  `ReplicaSessionSourceTests` (4 tests), `NativeSourcePreviewTests` (7 tests), `NativeSourceEditorTests`
+  (18 tests), and `DocumentEngineBoundaryTests.testCoreYjsAndNativeSourceFilesRespectLayerBoundaries`
   (4 tests total in `DocumentEngineBoundaryTests`).
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves

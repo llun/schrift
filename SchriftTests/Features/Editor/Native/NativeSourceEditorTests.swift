@@ -1096,4 +1096,381 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         let xmlAfterRedo = await harness.session.replicaDoc { YXMLString.fragment($0) }
         XCTAssertTrue(xmlAfterRedo?.contains("<math>z+1</math>") == true, xmlAfterRedo ?? "")
     }
+
+    // MARK: - Review Round 1 Regression Tests (S1, S2/C3, S4, C1, C2)
+
+    func testS1SourceEditorSelectionAtZeroOnLargeBlockAndRefusalOnOversizedOrFFFC() async throws {
+        let largeEditable = String(repeating: "a", count: NativeInlineObject.maxMathUTF16 + 1)
+        let oversizedBlock = String(repeating: "b", count: SourceBlock.maxSourceUTF16 + 1)
+        let oversizedMath = String(repeating: "c", count: NativeInlineObject.maxMathUTF16 + 1)
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            for (id, node, textValue) in [
+                ("m-large", SourceBlock.mathBlock, largeEditable),
+                ("m-huge", SourceBlock.mathBlock, oversizedBlock),
+                ("d-fffc", SourceBlock.diagram, "graph\u{FFFC}TD"),
+            ] {
+                let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+                after = try YWrite.insertAfter(tx, into: group, after: after, [.type(container)])
+                try YWrite.mapSet(tx, on: container, key: "id", .any([.string(id)]))
+                let el = YType(typeRef: .xmlElement(nodeName: node))
+                try YWrite.insertAfter(tx, into: container, after: nil, [.type(el)])
+                let txt = YType(typeRef: .xmlText)
+                try YWrite.insertAfter(tx, into: el, after: nil, [.type(txt)])
+                try txt.insert(0, textValue, nil)
+            }
+            let pContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            _ = try YWrite.insertAfter(tx, into: group, after: after, [.type(pContainer)])
+            try YWrite.mapSet(tx, on: pContainer, key: "id", .any([.string("p-huge")]))
+            let pEl = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+            try YWrite.insertAfter(tx, into: pContainer, after: nil, [.type(pEl)])
+            let mathEl = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+            try YWrite.insertAfter(tx, into: pEl, after: nil, [.type(mathEl)])
+            let mTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: mathEl, after: nil, [.type(mTxt)])
+            try mTxt.insert(0, oversizedMath, nil)
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+
+        // 1. Editable source > maxMathUTF16 (20_001) places initial selection at 0 instead of end.
+        let largeEditor = NativeSourceEditorViewController(
+            document: harness.session, request: .block(blockID: "m-large"))
+        let largeWindow = hostController(UINavigationController(rootViewController: largeEditor))
+        defer { largeWindow.isHidden = true }
+        await waitForSourceLoaded(largeEditor)
+        let largeTV = try XCTUnwrap(largeEditor.sourceSession?.textView)
+        XCTAssertEqual(largeTV.selectedRange, NSRange(location: 0, length: 0))
+        largeEditor.close()
+
+        // 2. Oversized or U+FFFC targets refuse to open on live editing session (isGone).
+        for req: NativeSourceRequest in [
+            .block(blockID: "m-huge"),
+            .block(blockID: "d-fffc"),
+            .inlineMath(blockID: "p-huge", utf16Offset: 0),
+        ] {
+            let gone = NativeSourceEditorViewController(document: harness.session, request: req)
+            let win = hostController(UINavigationController(rootViewController: gone))
+            await waitForSourceLoaded(gone)
+            XCTAssertTrue(gone.isGone, "\(req)")
+            XCTAssertNil(gone.sourceSession, "\(req)")
+            win.isHidden = true
+        }
+
+        // 3. Read-only inspect session clips oversized blocks safely instead of loading 200k+ chars.
+        let inspected = try await NativeEditorSession.inspect(state: state)
+        addTeardownBlock { await inspected.close().value }
+        let roEditor = NativeSourceEditorViewController(document: inspected, request: .block(blockID: "m-huge"))
+        let roWin = hostController(UINavigationController(rootViewController: roEditor))
+        defer { roWin.isHidden = true }
+        await waitForSourceLoaded(roEditor)
+        let roText = try XCTUnwrap(roEditor.sourceSession?.textView.text)
+        XCTAssertLessThanOrEqual(roText.count, NativeInlineObject.defaultDisplayLimit + 2)
+        roEditor.close()
+    }
+
+    func testS2SourceCoordinatorNormalizesLineBreaksAndCancelsDisallowedCompositionWithoutFreezing() async throws {
+        let initialInline = String(repeating: "x", count: NativeInlineObject.maxMathUTF16 - 5)
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            let mContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            after = try YWrite.insertAfter(tx, into: group, after: after, [.type(mContainer)])
+            try YWrite.mapSet(tx, on: mContainer, key: "id", .any([.string("mx")]))
+            let mEl = YType(typeRef: .xmlElement(nodeName: SourceBlock.mathBlock))
+            try YWrite.insertAfter(tx, into: mContainer, after: nil, [.type(mEl)])
+            let mTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: mEl, after: nil, [.type(mTxt)])
+            try mTxt.insert(0, "a", nil)
+
+            let pContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            _ = try YWrite.insertAfter(tx, into: group, after: after, [.type(pContainer)])
+            try YWrite.mapSet(tx, on: pContainer, key: "id", .any([.string("px")]))
+            let pEl = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+            try YWrite.insertAfter(tx, into: pContainer, after: nil, [.type(pEl)])
+            let mathEl = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+            try YWrite.insertAfter(tx, into: pEl, after: nil, [.type(mathEl)])
+            let iTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: mathEl, after: nil, [.type(iTxt)])
+            try iTxt.insert(0, initialInline, nil)
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+
+        // 1. mathBlock normalizes \r\n, \u{2028}, \u{2029} on IME commit and stays unfrozen on \u{000C}.
+        let mathEditor = NativeSourceEditorViewController(document: harness.session, request: .block(blockID: "mx"))
+        let mathWin = hostController(UINavigationController(rootViewController: mathEditor))
+        defer { mathWin.isHidden = true }
+        await waitForSourceLoaded(mathEditor)
+        let mathSession = try XCTUnwrap(mathEditor.sourceSession)
+        let mathInput = try XCTUnwrap(mathSession.input)
+        let mathTV = mathSession.textView
+
+        mathTV.selectedRange = NSRange(location: 1, length: 0)
+        mathTV.setMarkedText("1\r\n2\u{2028}3\u{2029}4", selectedRange: NSRange(location: 7, length: 0))
+        mathTV.unmarkText()
+        await mathSession.settle()
+        let xmlNorm = await harness.session.replicaDoc { YXMLString.fragment($0) }
+        XCTAssertTrue(xmlNorm?.contains("<mathblock>a1\n2\n3\n4</mathblock>") == true, xmlNorm ?? "")
+
+        mathTV.selectedRange = NSRange(location: 1, length: 0)
+        mathTV.setMarkedText("bad\u{001B}", selectedRange: NSRange(location: 4, length: 0))
+        mathTV.unmarkText()
+        await mathSession.settle()
+        XCTAssertFalse(mathInput.isFrozen)
+        XCTAssertTrue(mathTV.isEditable)
+        XCTAssertEqual(mathInput.noticeKey, .native_editor_input_unavailable)
+        XCTAssertFalse(mathTV.text.contains("bad"))
+        XCTAssertTrue(try harness.store.provisionalRecoveries(for: harness.scope).isEmpty)
+
+        mathTV.insertText("!")
+        await mathSession.settle()
+        XCTAssertTrue(mathTV.text.contains("!"), mathTV.text ?? "")
+        mathEditor.close()
+
+        // 2. inlineMath cancels cleanly on \n and on oversized IME commit without freezing.
+        let inlineEditor = NativeSourceEditorViewController(
+            document: harness.session, request: .inlineMath(blockID: "px", utf16Offset: 0))
+        let inlineWin = hostController(UINavigationController(rootViewController: inlineEditor))
+        defer { inlineWin.isHidden = true }
+        await waitForSourceLoaded(inlineEditor)
+        let inlineSession = try XCTUnwrap(inlineEditor.sourceSession)
+        let inlineInput = try XCTUnwrap(inlineSession.input)
+        let inlineTV = inlineSession.textView
+
+        inlineTV.selectedRange = NSRange(location: 0, length: 0)
+        inlineTV.setMarkedText("a\nb", selectedRange: NSRange(location: 3, length: 0))
+        inlineTV.unmarkText()
+        await inlineSession.settle()
+        XCTAssertFalse(inlineInput.isFrozen)
+        XCTAssertTrue(inlineTV.isEditable)
+        XCTAssertEqual(inlineInput.noticeKey, .native_editor_input_unavailable)
+        XCTAssertTrue(try harness.store.provisionalRecoveries(for: harness.scope).isEmpty)
+
+        inlineTV.selectedRange = NSRange(location: 0, length: 0)
+        inlineTV.setMarkedText("123456", selectedRange: NSRange(location: 6, length: 0))
+        inlineTV.unmarkText()
+        await inlineSession.settle()
+        XCTAssertFalse(inlineInput.isFrozen)
+        XCTAssertTrue(inlineTV.isEditable)
+        XCTAssertEqual(inlineInput.noticeKey, .native_editor_paste_too_large)
+        XCTAssertTrue(try harness.store.provisionalRecoveries(for: harness.scope).isEmpty)
+
+        // Subsequent valid IME commit of 5 chars fits within maxMathUTF16 and succeeds.
+        inlineTV.selectedRange = NSRange(location: 0, length: 0)
+        inlineTV.setMarkedText("ok", selectedRange: NSRange(location: 2, length: 0))
+        inlineTV.unmarkText()
+        await inlineSession.settle()
+        XCTAssertTrue(inlineTV.text.hasPrefix("ok"))
+        inlineEditor.close()
+    }
+
+    func testS4SourcePasteControlCharsAndOverflowRouteThroughBarrierWithoutRollbackOrProvisional() async throws {
+        let initialInline = String(repeating: "x", count: NativeInlineObject.maxMathUTF16 - 5)
+        let state = try makeYDocState { tx, group in
+            let pContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            _ = try YWrite.insertAfter(tx, into: group, after: nil, [.type(pContainer)])
+            try YWrite.mapSet(tx, on: pContainer, key: "id", .any([.string("px")]))
+            let pEl = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+            try YWrite.insertAfter(tx, into: pContainer, after: nil, [.type(pEl)])
+            let mathEl = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+            try YWrite.insertAfter(tx, into: pEl, after: nil, [.type(mathEl)])
+            let iTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: mathEl, after: nil, [.type(iTxt)])
+            try iTxt.insert(0, initialInline, nil)
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+
+        let editor = NativeSourceEditorViewController(
+            document: harness.session, request: .inlineMath(blockID: "px", utf16Offset: 0))
+        let win = hostController(UINavigationController(rootViewController: editor))
+        defer { win.isHidden = true }
+        await waitForSourceLoaded(editor)
+        let sourceSession = try XCTUnwrap(editor.sourceSession)
+        let sourceInput = try XCTUnwrap(sourceSession.input)
+        let tv = sourceSession.textView
+
+        // 1. Control character paste routes through barrier -> .refused (no rollback, no provisional.json).
+        tv.selectedRange = NSRange(location: 0, length: 0)
+        sourceInput.pasteboard.string = "bad\u{000C}paste"
+        let pastedBad = await sourceSession.run { sourceInput.pasteFromPasteboard() }
+        XCTAssertFalse(pastedBad)
+        XCTAssertEqual(sourceInput.noticeKey, .native_editor_input_unavailable)
+        XCTAssertTrue(sourceInput.composition.pendingRecoveries.isEmpty)
+        XCTAssertTrue(try harness.store.provisionalRecoveries(for: harness.scope).isEmpty)
+        XCTAssertTrue(tv.isEditable)
+        XCTAssertFalse(sourceInput.isFrozen)
+
+        // 2. Cumulative overflow paste routes through barrier -> .refused (.payloadTooLarge).
+        sourceInput.pasteboard.string = "123456"
+        let pastedTooLarge = await sourceSession.run { sourceInput.pasteFromPasteboard() }
+        XCTAssertFalse(pastedTooLarge)
+        XCTAssertEqual(sourceInput.noticeKey, .native_editor_paste_too_large)
+        XCTAssertTrue(sourceInput.composition.pendingRecoveries.isEmpty)
+        XCTAssertTrue(try harness.store.provisionalRecoveries(for: harness.scope).isEmpty)
+
+        // 3. No epoch invalidation / barrierOnly lock-out: subsequent keystroke predicts synchronously on surface.
+        tv.selectedRange = NSRange(location: 0, length: 0)
+        tv.insertText("1")
+        XCTAssertEqual(sourceSession.surface.blocks.first?.runs.first?.text.first, "1")
+        await sourceSession.settle()
+        editor.close()
+    }
+
+    func testC1SelectAllInSourceEditorSupportsTypingPastingCuttingDeletingAndMarkedText() async throws {
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            let mContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            after = try YWrite.insertAfter(tx, into: group, after: after, [.type(mContainer)])
+            try YWrite.mapSet(tx, on: mContainer, key: "id", .any([.string("mx")]))
+            let mEl = YType(typeRef: .xmlElement(nodeName: SourceBlock.mathBlock))
+            try YWrite.insertAfter(tx, into: mContainer, after: nil, [.type(mEl)])
+            let mTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: mEl, after: nil, [.type(mTxt)])
+            try mTxt.insert(0, "abc", nil)
+
+            let pContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            _ = try YWrite.insertAfter(tx, into: group, after: after, [.type(pContainer)])
+            try YWrite.mapSet(tx, on: pContainer, key: "id", .any([.string("px")]))
+            let pEl = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+            try YWrite.insertAfter(tx, into: pContainer, after: nil, [.type(pEl)])
+            let mathEl = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+            try YWrite.insertAfter(tx, into: pEl, after: nil, [.type(mathEl)])
+            let iTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: mathEl, after: nil, [.type(iTxt)])
+            try iTxt.insert(0, "x+y", nil)
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+
+        let editor = NativeSourceEditorViewController(document: harness.session, request: .block(blockID: "mx"))
+        let win = hostController(UINavigationController(rootViewController: editor))
+        defer { win.isHidden = true }
+        await waitForSourceLoaded(editor)
+        let sourceSession = try XCTUnwrap(editor.sourceSession)
+        let sourceInput = try XCTUnwrap(sourceSession.input)
+        let tv = sourceSession.textView
+
+        // 1. Select all (0..<storage.length includes trailing "\n") + type replacement.
+        tv.selectedRange = NSRange(location: 0, length: tv.textStorage.length)
+        XCTAssertEqual(tv.selectedRange, NSRange(location: 0, length: 4))
+        let typed = await sourceSession.run { sourceInput.replace(range: tv.selectedRange, with: "Z") }
+        XCTAssertTrue(typed)
+        XCTAssertEqual(tv.text, "Z\n")
+
+        // 2. Select all + paste.
+        tv.selectedRange = NSRange(location: 0, length: tv.textStorage.length)
+        sourceInput.pasteboard.string = "P"
+        let pasted = await sourceSession.run { sourceInput.pasteFromPasteboard() }
+        XCTAssertTrue(pasted)
+        XCTAssertEqual(tv.text, "P\n")
+
+        // 3. Select all + cut.
+        tv.selectedRange = NSRange(location: 0, length: tv.textStorage.length)
+        let cut = await sourceSession.run { sourceInput.cutSelection() }
+        XCTAssertTrue(cut)
+        XCTAssertEqual(sourceInput.pasteboard.string, "P")
+        XCTAssertEqual(tv.text, "\n")
+
+        // 4. Select all on EMPTY source (0..<1) + delete is a clean no-op without refusal.
+        tv.selectedRange = NSRange(location: 0, length: tv.textStorage.length)
+        XCTAssertEqual(tv.selectedRange, NSRange(location: 0, length: 1))
+        let deletedEmpty = await sourceSession.run { sourceInput.replace(range: tv.selectedRange, with: "") }
+        XCTAssertTrue(deletedEmpty)
+        XCTAssertNil(sourceInput.noticeKey)
+        XCTAssertEqual(tv.text, "\n")
+        XCTAssertEqual(tv.selectedRange, NSRange(location: 0, length: 0))
+
+        // 5. Select all + IME setMarkedText.
+        _ = await sourceSession.run { sourceInput.replace(range: NSRange(location: 0, length: 0), with: "xy") }
+        XCTAssertEqual(tv.text, "xy\n")
+        tv.selectedRange = NSRange(location: 0, length: tv.textStorage.length)
+        tv.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0))
+        XCTAssertNil(sourceInput.noticeKey)
+        XCTAssertTrue(tv.isEditable)
+        tv.unmarkText()
+        await sourceSession.settle()
+        XCTAssertEqual(tv.text, "あ\n")
+        editor.close()
+
+        // 6. Select all + delete on non-empty inlineMath.
+        let inlineEditor = NativeSourceEditorViewController(
+            document: harness.session, request: .inlineMath(blockID: "px", utf16Offset: 0))
+        let inlineWin = hostController(UINavigationController(rootViewController: inlineEditor))
+        defer { inlineWin.isHidden = true }
+        await waitForSourceLoaded(inlineEditor)
+        let inlineSession = try XCTUnwrap(inlineEditor.sourceSession)
+        let inlineInput = try XCTUnwrap(inlineSession.input)
+        let inlineTV = inlineSession.textView
+        inlineTV.selectedRange = NSRange(location: 0, length: inlineTV.textStorage.length)
+        let deletedInline = await inlineSession.run { inlineInput.replace(range: inlineTV.selectedRange, with: "") }
+        XCTAssertTrue(deletedInline)
+        XCTAssertEqual(inlineTV.text, "\n")
+        inlineEditor.close()
+        await harness.settle()
+        let xml = await harness.session.replicaDoc { YXMLString.fragment($0) }
+        XCTAssertTrue(xml?.contains("<math></math>") == true, xml ?? "")
+    }
+
+    func testC2RequestedSourceSetOnlyOnAppliedNeverOnRefusedOrTwiceOnStaleRetry() async throws {
+        // 1. .refused: slash /mathBlock inside a heading (canFormat == true, engine refuses non-paragraph).
+        let headingBlock = BlockNoteBlock(
+            node: "heading",
+            props: Self.paragraphProps + [("level", .int(1)), ("isToggleable", .bool(false))],
+            runs: [InlineRun("/math")],
+            id: "h1")
+        let refusedHarness = try await makeHarness([headingBlock])
+        addTeardownBlock { await refusedHarness.close() }
+        setSelection(refusedHarness, NSRange(location: 5, length: 0))
+        let mathItem = try XCTUnwrap(NativeInputCoordinator.slashItems.first { $0.id == "mathBlock" })
+        let refusedApplied = await refusedHarness.run { refusedHarness.input.applySlashItem(mathItem) }
+        XCTAssertFalse(refusedApplied)
+        XCTAssertNil(refusedHarness.input.requestedSource, "refused slash command must not set requestedSource")
+
+        // 2. .stale then retry -> .applied: requestedSource stays nil until .applied.
+        let initial = [
+            paragraph("other", "Other"),
+            paragraph("p1", "/math"),
+        ]
+        let staleHarness = try await makeHarness(initial)
+        addTeardownBlock { await staleHarness.close() }
+        setSelection(staleHarness, NSRange(location: try location(staleHarness.session, "p1", 5), length: 0))
+
+        let peer = YDoc(clientID: 2, gc: true)
+        defer { peer.destroy() }
+        try peer.applyUpdate(
+            YUpdateDecoder.decode(try XCTUnwrap(staleHarness.store.restore(for: staleHarness.scope)?.checkpoint)))
+        let peerWriter = BlockNoteWriter(doc: peer)
+        let peerUpdate = try peerWriter.replaceText(block: "other", range: 0..<0, with: "!")
+        let replica = try XCTUnwrap(staleHarness.session.replica)
+        replica.mailbox.post(.integrate(peerUpdate, reply: nil))
+
+        let posted = staleHarness.input.applySlashItem(mathItem)
+        XCTAssertTrue(posted)
+        XCTAssertNil(staleHarness.input.requestedSource, "requestedSource must not be set before .applied")
+        await staleHarness.settle()
+        XCTAssertEqual(staleHarness.input.requestedSource, .block(blockID: "p1"))
+
+        // 3. .stale where peer deleted target block -> retry cannot apply -> requestedSource stays nil.
+        let deleteHarness = try await makeHarness([
+            paragraph("other", "Other"),
+            paragraph("p1", "/inline"),
+        ])
+        addTeardownBlock { await deleteHarness.close() }
+        setSelection(deleteHarness, NSRange(location: try location(deleteHarness.session, "p1", 7), length: 0))
+
+        let peer2 = YDoc(clientID: 3, gc: true)
+        defer { peer2.destroy() }
+        try peer2.applyUpdate(
+            YUpdateDecoder.decode(try XCTUnwrap(deleteHarness.store.restore(for: deleteHarness.scope)?.checkpoint)))
+        let peerWriter2 = BlockNoteWriter(doc: peer2)
+        let deleteUpdate = try peerWriter2.deleteBlock(try peerWriter2.find("p1").item, id: "p1")
+        try XCTUnwrap(deleteHarness.session.replica).mailbox.post(.integrate(deleteUpdate, reply: nil))
+
+        let inlineItem = try XCTUnwrap(NativeInputCoordinator.slashItems.first { $0.id == "inlineMath" })
+        _ = deleteHarness.input.applySlashItem(inlineItem)
+        XCTAssertNil(deleteHarness.input.requestedSource)
+        await deleteHarness.settle()
+        XCTAssertNil(deleteHarness.input.requestedSource)
+    }
 }

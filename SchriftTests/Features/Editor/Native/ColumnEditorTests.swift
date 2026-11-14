@@ -465,6 +465,69 @@ final class ColumnEditorTests: NativeEditingTestCase {
                 "<blockcontainer id=\"tail\"><paragraph backgroundColor=\"default\" textAlignment=\"left\" textColor=\"default\">After</paragraph></blockcontainer></column></columnlist></blockgroup>"
             ), written)
     }
+
+    func testS5OpeningSourceFromNonActiveColumnActivatesThatColumn() async throws {
+        let doc = YDoc(clientID: 7, gc: true)
+        defer { doc.destroy() }
+        try doc.transact(local: true) { tx in
+            let root = doc.get(BlockNoteYjs.fragmentField)
+            let group = YType(typeRef: .xmlElement(nodeName: "blockGroup"))
+            try YWrite.insertAfter(tx, into: root, after: nil, [.type(group)])
+            let list = YType(typeRef: .xmlElement(nodeName: "columnList"))
+            try YWrite.insertAfter(tx, into: group, after: nil, [.type(list)])
+            try YWrite.mapSet(tx, on: list, key: "id", .any([.string("cl")]))
+            var prevCol: YItem?
+            for (colID, blockID, isMath) in [("c1", "cp1", false), ("c2", "cp2", true)] {
+                let col = YType(typeRef: .xmlElement(nodeName: "column"))
+                prevCol = try YWrite.insertAfter(tx, into: list, after: prevCol, [.type(col)])
+                try YWrite.mapSet(tx, on: col, key: "id", .any([.string(colID)]))
+                try YWrite.mapSet(tx, on: col, key: "width", .any([.int(1)]))
+                let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+                try YWrite.insertAfter(tx, into: col, after: nil, [.type(container)])
+                try YWrite.mapSet(tx, on: container, key: "id", .any([.string(blockID)]))
+                let p = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+                try YWrite.insertAfter(tx, into: container, after: nil, [.type(p)])
+                if isMath {
+                    let math = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+                    try YWrite.insertAfter(tx, into: p, after: nil, [.type(math)])
+                    let mt = YType(typeRef: .xmlText)
+                    try YWrite.insertAfter(tx, into: math, after: nil, [.type(mt)])
+                    try mt.insert(0, "x", nil)
+                } else {
+                    let txt = YType(typeRef: .xmlText)
+                    try YWrite.insertAfter(tx, into: p, after: nil, [.type(txt)])
+                    try txt.insert(0, "Col 1", nil)
+                }
+            }
+        }
+        let state = try YStateEncoder.encodeStateAsUpdate(doc)
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+
+        let model = ColumnEditorModel(document: harness.session, groupID: "cl")
+        addTeardownBlock { model.close() }
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let host = UIHostingController(
+            rootView: ColumnEditorScreen(model: model, serverOrigin: "https://example.invalid")
+                .environment(LocalizationStore(userDefaults: defaults)))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        window.rootViewController = host
+        window.isHidden = false
+        windows.append(window)
+        for _ in 0..<200 where !(model.isLoaded && model.columns.count == 2) {
+            host.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(model.columns.count, 2)
+        XCTAssertEqual(model.active, 0)
+
+        let rightSession = model.columns[1]
+        let req = NativeSourceRequest.inlineMath(blockID: "cp2", utf16Offset: 0)
+        rightSession.textView.blockControls.onOpenSource?(req)
+        XCTAssertEqual(model.active, 1)
+        XCTAssertEqual(model.openSource, req)
+        XCTAssertTrue(model.activeSession === rightSession)
+    }
 }
 
 extension ColumnEditorTests {
