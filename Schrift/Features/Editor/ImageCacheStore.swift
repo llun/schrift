@@ -67,15 +67,23 @@ final class ImageCacheStore {
     }
 
     func cachedFileURL(for url: URL, serverOrigin: String, scope: String) -> URL? {
-        let file = fileURL(for: url, serverOrigin: serverOrigin, scope: scope)
+        cachedFileURL(forKey: url.absoluteString, serverOrigin: serverOrigin, scope: scope)
+    }
+
+    func cachedFileURL(forKey key: String, serverOrigin: String, scope: String) -> URL? {
+        let file = fileURL(forKey: key, serverOrigin: serverOrigin, scope: scope)
         guard fileManager.fileExists(atPath: file.path) else { return nil }
         try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
         return file
     }
 
     func store(_ data: Data, for url: URL, serverOrigin: String, scope: String) -> URL? {
+        store(data, forKey: url.absoluteString, serverOrigin: serverOrigin, scope: scope)
+    }
+
+    func store(_ data: Data, forKey key: String, serverOrigin: String, scope: String) -> URL? {
         guard countLimit > 0, data.count <= byteLimit, imageDataIsWithinLimits(data) else { return nil }
-        let file = fileURL(for: url, serverOrigin: serverOrigin, scope: scope)
+        let file = fileURL(forKey: key, serverOrigin: serverOrigin, scope: scope)
         do {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
             var folder = directory
@@ -93,22 +101,34 @@ final class ImageCacheStore {
     }
 
     func cachedFileURL(for url: URL, scope: ImageCacheScope) -> URL? {
-        cachedFileURL(for: url, serverOrigin: scope.serverOrigin, scope: scope.sessionID)
+        cachedFileURL(forKey: url.absoluteString, scope: scope)
+    }
+
+    func cachedFileURL(forKey key: String, scope: ImageCacheScope) -> URL? {
+        cachedFileURL(forKey: key, serverOrigin: scope.serverOrigin, scope: scope.sessionID)
     }
 
     func store(_ data: Data, for url: URL, scope: ImageCacheScope) -> URL? {
-        store(data, for: url, serverOrigin: scope.serverOrigin, scope: scope.sessionID)
+        store(data, forKey: url.absoluteString, scope: scope)
+    }
+
+    func store(_ data: Data, forKey key: String, scope: ImageCacheScope) -> URL? {
+        store(data, forKey: key, serverOrigin: scope.serverOrigin, scope: scope.sessionID)
     }
 
     func remove(_ url: URL, scope: ImageCacheScope) {
-        try? fileManager.removeItem(at: fileURL(for: url, serverOrigin: scope.serverOrigin, scope: scope.sessionID))
+        remove(forKey: url.absoluteString, scope: scope)
+    }
+
+    func remove(forKey key: String, scope: ImageCacheScope) {
+        try? fileManager.removeItem(at: fileURL(forKey: key, serverOrigin: scope.serverOrigin, scope: scope.sessionID))
     }
 
     func removeAll() { try? fileManager.removeItem(at: directory) }
 
-    private func fileURL(for url: URL, serverOrigin: String, scope: String) -> URL {
+    private func fileURL(forKey cacheKey: String, serverOrigin: String, scope: String) -> URL {
         // Length framing prevents delimiter collisions in freely constructible inputs.
-        let key = [serverOrigin, scope, url.absoluteString].map { "\($0.utf8.count):\($0)" }.joined()
+        let key = [serverOrigin, scope, cacheKey].map { "\($0.utf8.count):\($0)" }.joined()
         let name = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
         return directory.appendingPathComponent(name)
     }

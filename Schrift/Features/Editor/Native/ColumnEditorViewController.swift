@@ -394,6 +394,7 @@ struct ColumnEditorScreen: View {
     @Environment(\.docsTheme) private var theme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(ImageLoader.self) private var images: ImageLoader?
+    @Environment(VideoPosterLoader.self) private var posters: VideoPosterLoader?
 
     var body: some View {
         NavigationStack {
@@ -458,7 +459,7 @@ struct ColumnEditorScreen: View {
             }
             ColumnTextHost(
                 model: model, contentSize: uiContentSizeCategory(for: dynamicTypeSize), labels: .document(loc),
-                theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline,
+                theme: theme, images: images, posters: posters, serverOrigin: serverOrigin, isOffline: isOffline,
                 documentTitle: documentTitle, onOpenDocument: onOpenDocument ?? model.onOpenDocument,
                 onOpenSource: onOpenSource ?? model.onOpenSource ?? { model.openSource = $0 })
         }
@@ -568,6 +569,7 @@ private struct ColumnTextHost: UIViewRepresentable {
     let labels: NativeEditorLabels
     let theme: AppTheme
     let images: ImageLoader?
+    let posters: VideoPosterLoader?
     let serverOrigin: String
     let isOffline: Bool
     let documentTitle: (@MainActor (UUID) -> String?)?
@@ -590,6 +592,7 @@ private struct ColumnTextHost: UIViewRepresentable {
             session.textView.blockControls.theme = theme
             session.textView.blockControls.labels = labels
             session.textView.blockControls.images = images
+            session.textView.blockControls.posters = posters
             session.textView.blockControls.serverOrigin = serverOrigin
             session.input?.serverOrigin = serverOrigin
             session.textView.blockControls.isOffline = isOffline

@@ -23,7 +23,13 @@ struct ImageTransport: Sendable {
     init(session: URLSession? = nil) { client = ImageDataClient(session: session) }
     static func configuration() -> URLSessionConfiguration { ImageDataClient.configuration() }
     func data(for url: URL, cookies: [HTTPCookie], byteLimit: Int = Self.byteLimit) async throws -> Data {
+        try await responseData(for: url, cookies: cookies, byteLimit: byteLimit).data
+    }
+
+    func responseData(
+        for url: URL, cookies: [HTTPCookie], byteLimit: Int = Self.byteLimit
+    ) async throws -> (data: Data, mimeType: String?) {
         guard isFetchableImageURL(url) else { throw URLError(.badURL) }
-        return try await client.data(for: url, cookies: cookies, byteLimit: byteLimit)
+        return try await client.responseData(for: url, cookies: cookies, byteLimit: byteLimit)
     }
 }

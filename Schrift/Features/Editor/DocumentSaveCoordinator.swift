@@ -105,6 +105,7 @@ final class DocumentSaveCoordinator {
     /// Photos queued on this device, with their bytes. Mirrored like `pendingCreates` so the
     /// hot predicates never decode UserDefaults.
     private let attachmentStore: PendingAttachmentStore
+    private let attachmentCache: AttachmentCacheStore
     /// The list caches the replay has to move a document into once the server owns it.
     /// Without them a just-created document vanishes from Home between the POST landing
     /// (which stops it being listed as local) and the next successful list fetch.
@@ -431,6 +432,7 @@ final class DocumentSaveCoordinator {
         deleteStore: PendingDocumentDeleteStore = PendingDocumentDeleteStore(),
         pinStore: PendingDocumentPinStore? = nil,
         attachmentStore: PendingAttachmentStore = PendingAttachmentStore(),
+        attachmentCache: AttachmentCacheStore = AttachmentCacheStore(),
         listCache: DocumentCacheStore = DocumentCacheStore(),
         childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
         serverOrigin: String = "",
@@ -455,6 +457,7 @@ final class DocumentSaveCoordinator {
         self.createStore = createStore
         self.deleteStore = deleteStore
         self.attachmentStore = attachmentStore
+        self.attachmentCache = attachmentCache
         self.listCache = listCache
         self.childrenCache = childrenCache
         self.serverOrigin = serverOrigin
@@ -1395,6 +1398,7 @@ final class DocumentSaveCoordinator {
             isNativeReplayable(record), isCurrent?() != false
         else { return }
         var resolved = record.uploadedURLString
+        var uploadedBytes: Data?
         if resolved == nil {
             switch await nativeLease(nil, record, isCurrent: isCurrent) {
             case .gone: return removeNativeAttachment(localID)
@@ -1405,6 +1409,7 @@ final class DocumentSaveCoordinator {
             guard let size = attachmentStore.byteCount(for: localID), size <= nativeAttachmentByteLimit,
                 let bytes = attachmentStore.data(for: localID), bytes.count <= nativeAttachmentByteLimit
             else { return markAttachmentFailed(localID: localID) }
+            uploadedBytes = bytes
             // Re-read after the await: a delete, a discard or a sign-out may have come between.
             guard pendingAttachments[localID] != nil, isNativeReplayable(record) else { return }
             let upload = client.mediaUploader(
@@ -1434,6 +1439,14 @@ final class DocumentSaveCoordinator {
         // only as trustworthy as the disk.
         guard isDocumentMediaURL(url, documentID: record.documentID) else {
             return markAttachmentFailed(localID: localID)
+        }
+        // Seed the attachment cache for uploaded videos before committing the lease
+        // so the open editor extracts posters locally with zero extra download.
+        if target.slot.node == "video",
+            let display = parseAttachmentLink("[video](\(url))", serverOrigin: client.serverOrigin),
+            let bytes = uploadedBytes ?? attachmentStore.data(for: localID)
+        {
+            _ = attachmentCache.store(bytes, for: display)
         }
         let props = [
             ProjectedProp(key: "name", value: .string(target.fileName)), ProjectedProp(key: "url", value: .string(url)),

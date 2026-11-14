@@ -263,7 +263,9 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         func preview(_ id: String) throws -> NativeBlockPreview { try attachment(session, id).content.preview }
         XCTAssertEqual(
             try preview("img"), .image(url: "\(Self.origin)/media/photo.png", alt: "A red flower", previewWidth: nil))
-        XCTAssertEqual(try preview("vid"), .file(node: "video", name: "clip.mp4", url: "\(Self.origin)/media/clip.mp4"))
+        XCTAssertEqual(
+            try preview("vid"),
+            .video(url: "\(Self.origin)/media/clip.mp4", label: "clip.mp4", previewWidth: nil))
         XCTAssertEqual(try preview("aud"), .file(node: "audio", name: "roar.mp3", url: "\(Self.origin)/media/roar.mp3"))
         XCTAssertEqual(
             try preview("fil"), .file(node: "file", name: "notes.txt", url: "\(Self.origin)/media/notes.txt"))
@@ -447,12 +449,12 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         let session = harness.session
         let window = host(harness.view)
         defer { window.isHidden = true }
-        let small = try attachment(session, "vid").content.size.height
+        let small = try attachment(session, "aud").content.size.height
         session.surface.updatePresentation(
             traits: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraLarge),
             labels: session.surface.labels)
         harness.view.layoutIfNeeded()
-        XCTAssertGreaterThan(try attachment(session, "vid").content.size.height, small)
+        XCTAssertGreaterThan(try attachment(session, "aud").content.size.height, small)
         assertS2Consistent(session)
         try await assertConsistent(harness, localCommands: 0)
     }
@@ -1032,9 +1034,10 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
             preview("diagram"), .source(node: "diagram", lines: ["graph TD", "    A[Start] --> B[Stop]"], lineCount: 2))
         XCTAssertEqual(
             preview("video"),
-            .file(
-                node: "video", name: "flower.mp4",
-                url: "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"))
+            .video(
+                url: "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
+                label: "flower.mp4",
+                previewWidth: nil))
         let value = view.accessibilityValue ?? ""
         XCTAssertTrue(value.contains("Table, 3 by 3"))
         XCTAssertTrue(value.contains("Video: flower.mp4"))

@@ -11,8 +11,11 @@ enum NativeBlockPreview: Equatable, Sendable {
     /// BlockNote's `image` with its preview shown. `previewWidth` is the
     /// web's displayed width in points, when set.
     case image(url: String, alt: String, previewWidth: Double?)
-    /// `video`, `audio`, `file`, `pdf`, an image whose preview is hidden or
-    /// that has no url yet, or another client's `uploadLoader` (PR13a).
+    /// BlockNote's `video` with its preview shown and a non-empty `url`.
+    /// `label` is the caption if set, otherwise the filename.
+    case video(url: String, label: String, previewWidth: Double?)
+    /// `audio`, `file`, `pdf`, a `video` or `image` whose preview is hidden
+    /// or that has no url yet, or another client's `uploadLoader` (PR13a).
     case file(node: String, name: String, url: String)
     /// The first `maxRows` × `maxColumns` cells and the full table size.
     case table(cells: [[String]], rowCount: Int, columnCount: Int)
@@ -46,7 +49,7 @@ enum NativeBlockPreview: Equatable, Sendable {
         "callout", "divider", "pageBreak", "toggleListItem",
     ]
 
-    static let fileNodes: Set<String> = ["video", "audio", "file", "pdf"]
+    static let fileNodes: Set<String> = ["audio", "file", "pdf"]
 
     /// The preview of `block`, read from its container `item`; nil for a
     /// block the surface renders as text. Total: an unexpected shape is a
@@ -81,6 +84,16 @@ enum NativeBlockPreview: Equatable, Sendable {
                 previewWidth: number(block.props.first { $0.key == "previewWidth" }?.value))
         case "image":
             return .file(node: "image", name: clipped(prop("name") ?? ""), url: prop("url") ?? "")
+        case "video" where prop("url")?.isEmpty != false:
+            return .file(node: "video", name: clipped(prop("name") ?? ""), url: "")
+        case "video" where block.props.first(where: { $0.key == "showPreview" })?.value != .bool(false):
+            let caption = prop("caption") ?? ""
+            return .video(
+                url: prop("url") ?? "",
+                label: clipped(caption.isEmpty ? prop("name") ?? "" : caption),
+                previewWidth: number(block.props.first { $0.key == "previewWidth" }?.value))
+        case "video":
+            return .file(node: "video", name: clipped(prop("name") ?? ""), url: prop("url") ?? "")
         case let node where fileNodes.contains(node):
             return .file(node: node, name: clipped(prop("name") ?? ""), url: prop("url") ?? "")
         case "table":

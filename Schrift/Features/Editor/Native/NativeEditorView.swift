@@ -42,6 +42,8 @@ struct NativeEditorView: View {
     @State private var outlineFocusesFind = false
     /// The app's image loader; a host without one shows image placeholders.
     @Environment(ImageLoader.self) private var images: ImageLoader?
+    /// The app's video poster loader; a host without one shows clean video cards.
+    @Environment(VideoPosterLoader.self) private var posters: VideoPosterLoader?
     @Environment(\.docsTheme) private var theme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var linkTarget: NativeLinkTarget?
@@ -75,7 +77,7 @@ struct NativeEditorView: View {
                 NativeTextCanvas(
                     session: session, contentSize: uiContentSizeCategory(for: dynamicTypeSize),
                     labels: .document(loc),
-                    theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline,
+                    theme: theme, images: images, posters: posters, serverOrigin: serverOrigin, isOffline: isOffline,
                     onOpenTable: { openTable = NativeTableRequest(id: $0) },
                     onOpenColumns: { openColumns = columnEditor($0) },
                     onOpenMedia: { openMedia = NativeMediaRequest(id: $0) },
@@ -596,7 +598,9 @@ extension NativeEditorLabels {
             diagramSource: loc[.native_editor_diagram_source], sourceEmpty: loc[.native_editor_source_empty],
             openMathSource: loc[.native_editor_open_math_source], imageExternal: loc[.editor_image_external],
             imageExternalA11y: loc[.editor_image_external_a11y], imageOffline: loc[.editor_image_offline],
-            imageFailed: loc[.editor_image_failed], mediaEmpty: loc[.native_editor_media_empty],
+            imageFailed: loc[.editor_image_failed], videoExternal: loc[.editor_video_external],
+            videoExternalA11y: loc[.editor_video_external_a11y], videoOffline: loc[.editor_video_offline],
+            mediaEmpty: loc[.native_editor_media_empty],
             mediaUploading: loc[.native_editor_media_uploading],
             mediaUploadFailed: loc[.native_editor_media_upload_stopped],
             mediaUploadWaiting: loc[.native_editor_media_upload_queued],
@@ -617,6 +621,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
     let labels: NativeEditorLabels
     let theme: AppTheme
     let images: ImageLoader?
+    let posters: VideoPosterLoader?
     let serverOrigin: String
     let isOffline: Bool
     let onOpenTable: (String) -> Void
@@ -646,6 +651,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
         session.textView.blockControls.theme = theme
         session.textView.blockControls.labels = labels
         session.textView.blockControls.images = images
+        session.textView.blockControls.posters = posters
         session.textView.blockControls.serverOrigin = serverOrigin
         session.input?.serverOrigin = serverOrigin
         session.textView.blockControls.isOffline = isOffline

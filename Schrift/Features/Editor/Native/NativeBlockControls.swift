@@ -52,6 +52,15 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         }
     }
 
+    var posters: VideoPosterLoader? {
+        didSet {
+            if posters !== oldValue {
+                clearApprovedExternalMedia()
+                connectAspectRatios()
+            }
+        }
+    }
+
     /// The document's server origin (`siteOrigin(for: serverURL)`). Images
     /// load only through a loader whose session is this server's, as the
     /// classic `MarkdownImageView.matchesSession` requires.
@@ -70,6 +79,12 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         return images
     }
 
+    /// `posters`, only while its session belongs to this document's server.
+    var sessionPosters: VideoPosterLoader? {
+        guard let posters, posters.scope?.serverOrigin == serverOrigin else { return nil }
+        return posters
+    }
+
     /// External media URLs consented by the user during this view session,
     /// retained across attachment restyles and `NSCache` evictions until the
     /// session, loader, or server origin changes.
@@ -84,7 +99,7 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     }
 
     private func syncApprovedExternalScope() {
-        let scope = sessionImages?.scope
+        let scope = sessionImages?.scope ?? sessionPosters?.scope
         if approvedExternalScope != scope {
             approvedExternalURLs.removeAll()
             approvedExternalScope = scope
@@ -102,13 +117,16 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     }
 
     private func connectAspectRatios() {
-        guard images != nil else {
+        guard images != nil || posters != nil else {
             surface?.aspectRatio = nil
             return
         }
-        surface?.aspectRatio = { [weak self] url in
+        surface?.aspectRatio = { [weak self] key in
+            if let videoURL = VideoPosterLoader.posterURL(fromKey: key) {
+                return self?.sessionPosters?.posterAspectRatio(for: videoURL)
+            }
             guard let loader = self?.sessionImages else { return nil }
-            return URL(string: url).flatMap { loader.aspectRatio(for: $0) }
+            return URL(string: key).flatMap { loader.aspectRatio(for: $0) }
         }
         surface?.refreshAttachmentGeometry()
     }

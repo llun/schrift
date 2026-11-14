@@ -371,6 +371,9 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_image_loading_named_a11y = "editor.image.loading_named_a11y"  // "Loading image: %@"
     case editor_image_external = "editor.image.external"  // "External image · Tap to load"
     case editor_image_external_a11y = "editor.image.external_a11y"  // "External image from %@. Tap to load."
+    case editor_video_offline = "editor.video.offline"  // "Video available when online"
+    case editor_video_external = "editor.video.external"  // "External video · tap to load"
+    case editor_video_external_a11y = "editor.video.external_a11y"  // "External video from %@. Tap to load."
 
     // Editor - file attachment cards (AttachmentCardView). The file's name is
     // document content and is never localized; these are the state line beneath

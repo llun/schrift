@@ -657,16 +657,25 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
 
     // MARK: Attachment geometry (PR06e)
 
+    private func aspectRatioKey(for preview: NativeBlockPreview) -> String? {
+        switch preview {
+        case .image(let url, _, _): url
+        case .video(let url, _, _): VideoPosterLoader.posterKey(for: url)
+        default: nil
+        }
+    }
+
     private func cacheAspectRatios(from blocks: [BlockSnapshot]) {
         guard let aspectRatio else { return }
         var ratios = attachmentGeometry.aspectRatios
         for block in blocks {
             guard AttributedDocumentProjection.isPlaceholder(block),
-                case .image(let url, _, _)? = block.preview,
-                ratios[url] == nil,
-                let ratio = aspectRatio(url)
+                let preview = block.preview,
+                let key = aspectRatioKey(for: preview),
+                ratios[key] == nil,
+                let ratio = aspectRatio(key)
             else { continue }
-            ratios[url] = ratio
+            ratios[key] = ratio
         }
         if ratios != attachmentGeometry.aspectRatios {
             attachmentGeometry.aspectRatios = ratios
@@ -702,9 +711,11 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         var next = NativeAttachmentGeometry(width: width)
         for block in blocks {
             if let aspectRatio, AttributedDocumentProjection.isPlaceholder(block),
-                case .image(let url, _, _)? = block.preview, let ratio = aspectRatio(url)
+                let preview = block.preview,
+                let key = aspectRatioKey(for: preview),
+                let ratio = aspectRatio(key)
             {
-                next.aspectRatios[url] = ratio
+                next.aspectRatios[key] = ratio
             }
             collectDocumentTitles(from: block, into: &next.documentTitles)
         }
@@ -728,8 +739,9 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         let positions = blocks.indices.filter { position in
             let block = blocks[position]
             if AttributedDocumentProjection.isPlaceholder(block),
-                case .image(let url, _, _)? = block.preview,
-                changedRatioURLs.contains(url)
+                let preview = block.preview,
+                let key = aspectRatioKey(for: preview),
+                changedRatioURLs.contains(key)
             {
                 return true
             }

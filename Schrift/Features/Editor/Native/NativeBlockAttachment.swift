@@ -136,7 +136,7 @@ enum NativeAttachmentLayout {
         let detail = line(detailFont(traits))
         let height: CGFloat
         switch preview {
-        case .image(_, _, let previewWidth):
+        case .image(_, _, let previewWidth), .video(_, _, let previewWidth):
             let box = imageWidth(previewWidth: previewWidth, width: width)
             let natural = aspectRatio.map { box / $0 } ?? placeholderImageHeight
             height = min(maxImageHeight, max(minImageHeight, natural))
@@ -175,7 +175,9 @@ final class NativeAttachmentView: UIView {
     private let stack = UIStackView()
     private(set) var imageView: UIImageView?
     private(set) var imageStatus: UILabel?
-    /// "External image · tap to load": a request only after this tap.
+    private(set) var videoPlayBadge: UIView?
+    private(set) var videoCaptionPill: UIView?
+    /// "External image/video · tap to load": a request only after this tap.
     private(set) var loadButton: UIButton?
     private(set) var loadTask: Task<Void, Never>?
 
@@ -211,10 +213,15 @@ final class NativeAttachmentView: UIView {
     /// A media block's card (PR13a): its node is the attachment's own.
     private var isMedia: Bool {
         switch content.preview {
-        case .image: true
+        case .image, .video: true
         case .file(let node, _, _): MediaBlock.isMediaLike(node)
         default: false
         }
+    }
+
+    private var isVideo: Bool {
+        if case .video = content.preview { return true }
+        return false
     }
 
     /// A file card's detail line and its text, which an upload replaces (PR13a).
@@ -258,7 +265,12 @@ final class NativeAttachmentView: UIView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window != nil { loadImageIfNeeded() }
+        if window != nil {
+            loadImageIfNeeded()
+        } else if isVideo {
+            loadTask?.cancel()
+            loadTask = nil
+        }
     }
 
     func applyTheme() {
@@ -270,7 +282,7 @@ final class NativeAttachmentView: UIView {
         backgroundColor = imageView?.image == nil ? controls.color(\.surfaceSunken) : .clear
         layer.borderColor = controls.color(\.borderStrong).cgColor
         layer.borderWidth = content.preview.isTable ? 1 / max(1, traitCollection.displayScale) : 0
-        for case let label as UILabel in allSubviews {
+        for case let label as UILabel in allSubviews where label.tag != 2 {
             label.textColor = label.tag == 1 ? controls.color(\.textPrimary) : controls.color(\.textTertiary)
         }
         loadButton?.tintColor = controls.color(\.textBrand)
@@ -305,8 +317,10 @@ final class NativeAttachmentView: UIView {
             ])
         }
         switch content.preview {
-        case .image:
-            buildImage()
+        case .image(_, _, let previewWidth):
+            buildMediaView(previewWidth: previewWidth, contentMode: .scaleAspectFit)
+        case .video(_, let label, let previewWidth):
+            buildVideo(label: label, previewWidth: previewWidth)
         case .file(let node, let name, let url):
             pin(padding)
             let kind = labels.kind(node)
@@ -413,11 +427,11 @@ final class NativeAttachmentView: UIView {
         return label
     }
 
-    private func buildImage() {
-        guard case .image(_, _, let previewWidth) = content.preview else { return }
+    private func buildMediaView(previewWidth: Double?, contentMode: UIView.ContentMode) {
         let box = NativeAttachmentLayout.imageWidth(previewWidth: previewWidth, width: content.size.width)
         let image = UIImageView(frame: CGRect(x: 0, y: 0, width: box, height: content.size.height))
-        image.contentMode = .scaleAspectFit
+        image.contentMode = contentMode
+        image.clipsToBounds = true
         image.isAccessibilityElement = false
         addSubview(image)
         imageView = image
@@ -433,39 +447,126 @@ final class NativeAttachmentView: UIView {
         status.isHidden = true
     }
 
-    // MARK: - Images
+    private func buildVideo(label: String, previewWidth: Double?) {
+        buildMediaView(previewWidth: previewWidth, contentMode: .scaleAspectFill)
+        let box = NativeAttachmentLayout.imageWidth(previewWidth: previewWidth, width: content.size.width)
+        let cardFrame = CGRect(x: 0, y: 0, width: box, height: content.size.height)
 
-    private var imageURL: URL? {
-        guard case .image(let url, _, _) = content.preview else { return nil }
-        return URL(string: url)
+        let badgeSize: CGFloat = 44
+        let badge = UIView(
+            frame: CGRect(
+                x: (cardFrame.width - badgeSize) / 2,
+                y: (cardFrame.height - badgeSize) / 2,
+                width: badgeSize,
+                height: badgeSize))
+        badge.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+        badge.layer.cornerRadius = badgeSize / 2
+        badge.clipsToBounds = true
+        badge.isUserInteractionEnabled = false
+        badge.isAccessibilityElement = false
+        badge.autoresizingMask = [.flexibleLeftMargin, .flexibleRightMargin, .flexibleTopMargin, .flexibleBottomMargin]
+        let symbolConfig = UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
+        let playIcon = UIImageView(image: UIImage(systemName: "play.fill", withConfiguration: symbolConfig))
+        playIcon.tintColor = .white
+        playIcon.contentMode = .scaleAspectFit
+        playIcon.frame = badge.bounds.insetBy(dx: 12, dy: 12)
+        playIcon.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        badge.addSubview(playIcon)
+        addSubview(badge)
+        videoPlayBadge = badge
+
+        if !label.isEmpty {
+            let padding = NativeAttachmentLayout.padding
+            let pillInsetX = DocsSpacing.spaceSM
+            let pillInsetY: CGFloat = 4
+            let captionLabel = UILabel()
+            captionLabel.tag = 2
+            captionLabel.text = label
+            captionLabel.font = NativeAttachmentLayout.detailFont(traits)
+            captionLabel.textColor = .white
+            captionLabel.numberOfLines = 1
+            captionLabel.lineBreakMode = .byTruncatingTail
+            captionLabel.isAccessibilityElement = false
+
+            let maxTextWidth = max(0, cardFrame.width - padding * 2 - pillInsetX * 2)
+            let textSize = captionLabel.sizeThatFits(CGSize(width: maxTextWidth, height: .greatestFiniteMagnitude))
+            let pillWidth = min(max(0, cardFrame.width - padding * 2), ceil(textSize.width) + pillInsetX * 2)
+            let pillHeight = ceil(textSize.height) + pillInsetY * 2
+
+            let pill = UIView(
+                frame: CGRect(
+                    x: padding,
+                    y: max(padding, cardFrame.height - padding - pillHeight),
+                    width: pillWidth,
+                    height: pillHeight))
+            pill.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+            pill.layer.cornerRadius = DocsRadius.sm
+            pill.clipsToBounds = true
+            pill.isUserInteractionEnabled = false
+            pill.isAccessibilityElement = false
+            pill.autoresizingMask = [.flexibleTopMargin, .flexibleRightMargin]
+
+            captionLabel.frame = pill.bounds.insetBy(dx: pillInsetX, dy: pillInsetY)
+            captionLabel.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            pill.addSubview(captionLabel)
+            addSubview(pill)
+            videoCaptionPill = pill
+        }
     }
 
-    /// The loader's own rules apply: a same-origin image loads (with the
-    /// session's cookies, authenticated media included), an external one
-    /// waits for a tap (`ImageLoadPolicy`), cached bytes show without a
-    /// request, and offline issues none.
+    // MARK: - Images & Video Posters
+
+    private var mediaURLString: String? {
+        switch content.preview {
+        case .image(let url, _, _), .video(let url, _, _): url
+        default: nil
+        }
+    }
+
+    private var imageURL: URL? {
+        mediaURLString.flatMap { URL(string: $0) }
+    }
+
+    private func aspectRatioKey(for url: URL) -> String {
+        isVideo ? VideoPosterLoader.posterKey(for: url) : url.absoluteString
+    }
+
+    /// Loads inline media previews through the policy- and cache-backed loaders
+    /// (`ImageLoader` for images, `VideoPosterLoader` for video poster frames).
     func loadImageIfNeeded() {
-        guard case .image = content.preview, imageView?.image == nil, loadTask == nil else { return }
-        guard let url = imageURL, isFetchableImageURL(url) else { return showStatus(labels.imageFailed) }
-        guard let controls, controls.images != nil else { return }
+        guard content.preview.isInlineMedia, imageView?.image == nil, loadTask == nil else { return }
+        guard let url = imageURL, isFetchableImageURL(url) else {
+            if !isVideo { showStatus(labels.imageFailed) }
+            return
+        }
+        guard let controls else { return }
+
+        if isVideo {
+            loadVideoPosterIfNeeded(url: url, controls: controls)
+        } else {
+            loadPhotoIfNeeded(url: url, controls: controls)
+        }
+    }
+
+    private func loadPhotoIfNeeded(url: URL, controls: NativeBlockControls) {
+        guard controls.images != nil else { return }
         // `MarkdownImageView.matchesSession`: a loader of another server's
         // session shows nothing and requests nothing, as if offline.
         guard let loader = controls.sessionImages else { return showStatus(labels.imageOffline) }
-        let ratioKey = url.absoluteString
+        let ratioKey = aspectRatioKey(for: url)
         if controls.isExternalMediaApproved(ratioKey) {
             loader.approve(url)
         }
         if let image = loader.image(for: url) {
-            show(image)
-            if controls.surface?.attachmentGeometry.aspectRatios[ratioKey] != loader.aspectRatio(for: url) {
-                controls.noteMediaAspectRatioLoaded(for: ratioKey)
-            }
+            presentLoadedMedia(
+                image, ratioKey: ratioKey,
+                currentAspectRatio: loader.aspectRatio(for: url), controls: controls)
             return
         }
         let scope = loader.scope
         loadTask = Task { [weak self, loader] in
             let image = await loader.loadIfNeeded(url, allowsNetwork: !controls.isOffline)
-            guard let self else { return }
+            guard let self, !Task.isCancelled else { return }
             self.loadTask = nil
             // The session may have changed while the load ran (the classic
             // view's `requestedScope == loader.scope` check).
@@ -473,18 +574,76 @@ final class NativeAttachmentView: UIView {
                 return self.showStatus(self.labels.imageOffline)
             }
             if let image {
-                self.show(image)
-                if controls.surface?.attachmentGeometry.aspectRatios[ratioKey] != loader.aspectRatio(for: url) {
-                    controls.noteMediaAspectRatioLoaded(for: ratioKey)
-                }
+                self.presentLoadedMedia(
+                    image, ratioKey: ratioKey,
+                    currentAspectRatio: loader.aspectRatio(for: url), controls: controls)
                 return
             }
-            switch loader.state(for: url) {
-            case .requiresConsent: self.showConsent(host: url.host ?? url.absoluteString)
-            case .unavailableOffline: self.showStatus(self.labels.imageOffline)
-            case .failed: self.showStatus(self.labels.imageFailed)
-            default: break
+            self.handleLoadFailureState(
+                loader.state(for: url), url: url, offlineText: self.labels.imageOffline,
+                failedText: self.labels.imageFailed)
+        }
+    }
+
+    private func loadVideoPosterIfNeeded(url: URL, controls: NativeBlockControls) {
+        guard controls.posters != nil else { return }
+        guard let loader = controls.sessionPosters else { return showStatus(labels.videoOffline) }
+        let ratioKey = aspectRatioKey(for: url)
+        if controls.isExternalMediaApproved(ratioKey) {
+            loader.approve(url)
+        }
+        if let image = loader.poster(for: url) {
+            presentLoadedMedia(
+                image, ratioKey: ratioKey,
+                currentAspectRatio: loader.posterAspectRatio(for: url), controls: controls)
+            return
+        }
+        let scope = loader.scope
+        loadTask = Task { [weak self, loader] in
+            let image = await loader.loadIfNeeded(url, allowsNetwork: !controls.isOffline)
+            guard let self, !Task.isCancelled else { return }
+            self.loadTask = nil
+            guard controls.sessionPosters === loader, loader.scope == scope else {
+                return self.showStatus(self.labels.videoOffline)
             }
+            if let image {
+                self.presentLoadedMedia(
+                    image, ratioKey: ratioKey,
+                    currentAspectRatio: loader.posterAspectRatio(for: url), controls: controls)
+                return
+            }
+            // On `.failed` (e.g. >20 MB or unextractable), keep the clean video
+            // card with its play badge + optional caption pill instead of an error overlay.
+            self.handleLoadFailureState(
+                loader.state(for: url), url: url, offlineText: self.labels.videoOffline, failedText: nil)
+        }
+    }
+
+    private func presentLoadedMedia(
+        _ image: UIImage,
+        ratioKey: String,
+        currentAspectRatio: CGFloat?,
+        controls: NativeBlockControls
+    ) {
+        show(image)
+        if controls.surface?.attachmentGeometry.aspectRatios[ratioKey] != currentAspectRatio {
+            controls.noteMediaAspectRatioLoaded(for: ratioKey)
+        }
+    }
+
+    private func handleLoadFailureState(
+        _ state: ImageLoadState,
+        url: URL,
+        offlineText: String,
+        failedText: String?
+    ) {
+        switch state {
+        case .requiresConsent: showConsent(host: url.host ?? url.absoluteString)
+        case .unavailableOffline: showStatus(offlineText)
+        case .failed:
+            if let failedText { showStatus(failedText) }
+            updateVideoOverlayVisibility()
+        default: break
         }
     }
 
@@ -494,22 +653,24 @@ final class NativeAttachmentView: UIView {
         loadButton?.removeFromSuperview()
         loadButton = nil
         accessibilityValue = nil
-        accessibilityTraits = .image
+        accessibilityTraits = isVideo ? [.button] : .image
         backgroundColor = .clear
+        updateVideoOverlayVisibility()
     }
 
     private func showStatus(_ text: String) {
         imageStatus?.text = text
         imageStatus?.isHidden = false
         accessibilityValue = text
+        updateVideoOverlayVisibility()
     }
 
     private func showConsent(host: String) {
         guard loadButton == nil else { return }
         var configuration = UIButton.Configuration.plain()
-        configuration.title = labels.imageExternal
+        configuration.title = isVideo ? labels.videoExternal : labels.imageExternal
         configuration.subtitle = host
-        configuration.image = UIImage(systemName: "photo")
+        configuration.image = UIImage(systemName: isVideo ? "play.rectangle" : "photo")
         configuration.imagePadding = DocsSpacing.spaceXS
         configuration.titleLineBreakMode = .byTruncatingMiddle
         configuration.subtitleLineBreakMode = .byTruncatingMiddle
@@ -521,18 +682,34 @@ final class NativeAttachmentView: UIView {
         addSubview(button)
         loadButton = button
         applyTheme()
-        accessibilityValue = String(format: labels.imageExternalA11y, host)
+        accessibilityValue = String(format: isVideo ? labels.videoExternalA11y : labels.imageExternalA11y, host)
         accessibilityTraits = .button
+        updateVideoOverlayVisibility()
+    }
+
+    private func updateVideoOverlayVisibility() {
+        let overlayHidden = loadButton != nil || imageStatus?.isHidden == false
+        videoPlayBadge?.isHidden = overlayHidden
+        videoCaptionPill?.isHidden = overlayHidden
     }
 
     /// The tap: consent for this exact URL in this session, then the load.
     func approveAndLoad() {
-        guard let url = imageURL, let loader = controls?.sessionImages else { return }
-        controls?.approveExternalMedia(url.absoluteString)
-        loader.approve(url)
+        guard let url = imageURL else { return }
+        let approvedLoader: AnyObject?
+        if isVideo {
+            controls?.sessionPosters?.approve(url)
+            approvedLoader = controls?.sessionPosters
+        } else {
+            controls?.sessionImages?.approve(url)
+            approvedLoader = controls?.sessionImages
+        }
+        guard approvedLoader != nil else { return }
+        controls?.approveExternalMedia(aspectRatioKey(for: url))
         loadButton?.removeFromSuperview()
         loadButton = nil
-        accessibilityTraits = []
+        accessibilityTraits = isVideo ? [.button] : []
+        updateVideoOverlayVisibility()
         loadImageIfNeeded()
     }
 
@@ -560,6 +737,13 @@ final class NativeAttachmentView: UIView {
 }
 
 extension NativeBlockPreview {
+    fileprivate var isInlineMedia: Bool {
+        switch self {
+        case .image, .video: true
+        default: false
+        }
+    }
+
     fileprivate var isTable: Bool {
         if case .table = self { return true }
         return false
