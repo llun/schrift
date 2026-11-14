@@ -62,6 +62,8 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     var onOpenDocument: ((UUID, String) -> Void)?
     /// A tap (or VoiceOver action) on an inline `.math` chip opens the focused source editor.
     var onOpenSource: ((NativeSourceRequest) -> Void)?
+    /// The navigation controller presenting `NativeSourceEditorViewController` over the table.
+    private var presentedSourceController: UINavigationController?
     /// The Row, Column, Cell and Format menus (PR11b), shown while editing.
     let controls = UIStackView()
 
@@ -178,7 +180,7 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
                 self?.onOpenDocument?(id, blockID)
             }
             session.textView.blockControls.onOpenSource = { [weak self] request in
-                self?.onOpenSource?(request)
+                self?.handleOpenSource(request)
             }
             let origin =
                 serverOrigin.flatMap { $0.isEmpty ? nil : $0 }
@@ -202,11 +204,46 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     func close() {
         isClosed = true
         refreshTask?.cancel()
+        if let presented = presentedSourceController {
+            presentedSourceController = nil
+            if let sourceEditor = presented.topViewController as? NativeSourceEditorViewController {
+                sourceEditor.onClose = nil
+                sourceEditor.close()
+            }
+            presented.dismiss(animated: false)
+        }
         cellSession?.textView.resignFirstResponder()
         cellSession?.close()
         cellSession = nil
         // A SwiftUI host dismisses through `onClose`; a UIKit presenter here.
         if let onClose { onClose() } else { dismiss(animated: true) }
+    }
+
+    private func handleOpenSource(_ request: NativeSourceRequest) {
+        if let onOpenSource {
+            onOpenSource(request)
+            return
+        }
+        guard !isClosed, let cellSession else { return }
+        let editor = NativeSourceEditorViewController(document: cellSession, request: request)
+        editor.labels = labels
+        editor.doneTitle = doneTitle
+        editor.goneTitle = text(.native_editor_source_gone)
+        editor.onClose = { [weak self, weak cellSession] in
+            guard let self else { return }
+            let controller = self.presentedSourceController
+            self.presentedSourceController = nil
+            if let controller, controller.presentingViewController != nil, !controller.isBeingDismissed {
+                controller.dismiss(animated: true) { [weak cellSession] in
+                    cellSession?.input?.focus(after: request)
+                }
+            } else {
+                cellSession?.input?.focus(after: request)
+            }
+        }
+        let nav = UINavigationController(rootViewController: editor)
+        presentedSourceController = nav
+        present(nav, animated: true)
     }
 
     override func viewDidDisappear(_ animated: Bool) {

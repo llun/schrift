@@ -31,8 +31,12 @@ final class ColumnEditorModel: Identifiable {
     var openTable: NativeTableRequest?
     /// The media block whose inspector is open (PR13a), in the shown column.
     var openMedia: NativeMediaRequest?
+    /// The focused source block or inline `<math>` editor open in the shown column (PR14).
+    var openSource: NativeSourceRequest?
     /// The table the shown column last opened: its caret goes after it.
     @ObservationIgnored var lastTable: String?
+    /// The source item the shown column last opened: its caret goes after it.
+    @ObservationIgnored var lastSource: NativeSourceRequest?
     /// The editor closed: the document takes focus back after the group.
     @ObservationIgnored var onClose: (() -> Void)?
     /// A tap (or VoiceOver action) on an inline page link chip navigates to that document.
@@ -305,6 +309,8 @@ final class ColumnEditorModel: Identifiable {
         isClosed = true
         openTable = nil
         openMedia = nil
+        lastSource = nil
+        openSource = nil
         for session in columns {
             session.textView.resignFirstResponder()
             session.close()
@@ -404,7 +410,7 @@ struct ColumnEditorScreen: View {
                 model: model, contentSize: uiContentSizeCategory(for: dynamicTypeSize), labels: .document(loc),
                 theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline,
                 documentTitle: documentTitle, onOpenDocument: onOpenDocument ?? model.onOpenDocument,
-                onOpenSource: onOpenSource ?? model.onOpenSource)
+                onOpenSource: onOpenSource ?? model.onOpenSource ?? { model.openSource = $0 })
         }
         .safeAreaInset(edge: .bottom) {
             if let input = model.activeSession?.input {
@@ -456,11 +462,41 @@ struct ColumnEditorScreen: View {
                     isOffline: isOffline, onClose: { model.openMedia = nil })
             }
         }
+        .sheet(
+            item: $model.openSource,
+            onDismiss: { [model] in
+                if let request = model.lastSource {
+                    model.lastSource = nil
+                    model.activeSession?.input?.focus(after: request)
+                }
+            }
+        ) { request in
+            if let session = model.activeSession {
+                NativeSourceEditorScreen(
+                    document: session, request: request, labels: .document(loc),
+                    doneTitle: loc[.editor_action_done], goneTitle: loc[.native_editor_source_gone],
+                    contentSize: uiContentSizeCategory(for: dynamicTypeSize),
+                    onClose: {
+                        model.lastSource = request
+                        model.openSource = nil
+                    })
+            }
+        }
         .onChange(of: model.activeSession?.input?.requestedMedia) { _, id in
             // The slash menu's new media block in this column.
             guard let id else { return }
             model.activeSession?.input?.requestedMedia = nil
             model.openMedia = NativeMediaRequest(id: id)
+        }
+        .onChange(of: model.activeSession?.input?.requestedSource) { _, request in
+            // The slash menu's new `mathBlock` or inline `<math>` chip in this column.
+            guard let request else { return }
+            model.activeSession?.input?.requestedSource = nil
+            if let override = onOpenSource ?? model.onOpenSource {
+                override(request)
+            } else {
+                model.openSource = request
+            }
         }
         .nativeLinkEditing($linkTarget, input: model.activeSession?.input)
     }

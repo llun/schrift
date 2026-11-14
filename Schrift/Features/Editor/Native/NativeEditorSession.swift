@@ -306,13 +306,27 @@ final class NativeEditorSession {
     }
 
     private func openInspectedSource(_ request: NativeSourceRequest) -> NativeEditorSession? {
-        let allBlocks = surface.blocks + inspectedColumns.values.flatMap(\.blocks).flatMap { $0 }
+        let columnBlocks = inspectedColumns.values.flatMap(\.blocks).flatMap { $0 }
+        let tableBlocks = inspectedTables.flatMap { tableID, grid in
+            grid.rows.flatMap { row in
+                row.flatMap { cell in
+                    cell.paragraphs.map { para in
+                        BlockSnapshot(
+                            id: TableGrid.paragraphID(table: tableID, item: para.itemID),
+                            node: "paragraph", props: [], runs: para.runs, isOpaque: false)
+                    }
+                }
+            }
+        }
+        let allBlocks = surface.blocks + columnBlocks + tableBlocks
         switch request {
         case .block(let blockID):
             guard let block = allBlocks.first(where: { $0.id == blockID }),
-                case .source(let node, let text, true) = block.preview
+                !block.isOpaque,
+                case .source(let node, _, _) = block.preview
             else { return nil }
             let kind: NativeSourceKind = node == SourceBlock.mathBlock ? .mathBlock : .diagram
+            let text = block.runs.map(\.text).joined()
             let snapshot = BlockSnapshot(
                 id: blockID, node: "codeBlock", props: [],
                 runs: text.isEmpty ? [] : [InlineRun(text)], isOpaque: false)

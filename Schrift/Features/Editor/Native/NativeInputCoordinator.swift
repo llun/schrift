@@ -90,7 +90,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// A reset is on its way or queued: keys wait for it.
     private var awaitsReset: Bool { resyncsAsked > 0 || queued.contains { $0.resync != nil } }
     /// Marked text owns the view: storage and its offsets are UIKit's.
-    private var compositionOwnsView: Bool { composition.isActive || view?.markedTextRange != nil }
+    var compositionOwnsView: Bool { composition.isActive || view?.markedTextRange != nil }
     /// A selection the user made while the barrier was in flight, and how many
     /// of `barrierShown`'s deliveries it had already seen: it wins over wherever
     /// the barrier would put the selection.
