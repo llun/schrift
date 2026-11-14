@@ -139,6 +139,7 @@ enum NativeBlockProjection {
             tree.blocks.contains(where: {
                 $0.depth > 0 || $0.block.node == "table" || $0.block.node == "columnList"
                     || MediaBlock.isMediaLike($0.block.node)
+                    || SourceBlock.isSource($0.block.node)
                     || nativeOnlyReasons.contains(opaqueReason($0.block)) || hasEdgeWhitespace($0.block)
                     || hasInlineObject($0.block)
             })
@@ -146,7 +147,8 @@ enum NativeBlockProjection {
             return YBlockProjection.projectedMarkdown(YBlockProjection.project(doc))
         }
         return spell(
-            tree.blocks[...], items: rootItems(doc), allowsColumns: true, interlinkingOrigin: interlinkingOrigin)
+            tree.blocks[...], items: rootItems(doc), containers: allContainerItems(doc), allowsColumns: true,
+            interlinkingOrigin: interlinkingOrigin)
     }
 
     /// The shadow of a run of root subtrees (the document's, or one column's,
@@ -155,9 +157,12 @@ enum NativeBlockProjection {
     /// holds the run's top-level containers by item id (a table's grid and a
     /// group's columns are read from them).
     private static func spell(
-        _ blocks: ArraySlice<NativeBlockSnapshot>, items: [YID: YItem], allowsColumns: Bool,
-        interlinkingOrigin: String?
+        _ blocks: ArraySlice<NativeBlockSnapshot>, items: [YID: YItem], containers: [YID: YItem],
+        allowsColumns: Bool, interlinkingOrigin: String?
     ) -> String? {
+        guard let stripped = stripFamiliarSources(blocks, containers: containers) else { return nil }
+        var droppedAny = stripped.droppedAny
+        let blocks = stripped.blocks[...]
         var parts: [String] = []
         var plain = blocks.startIndex  // the first block not yet spelled
         var root = blocks.startIndex
@@ -197,7 +202,9 @@ enum NativeBlockProjection {
                 // A root column group (PR12a): the export prints its column
                 // frames transparently, so it is each column's blocks spelled
                 // as root blocks, column after column, lists restarting at
-                // each column. No group inside a column.
+                // each column. No group inside a column. Columns emptied by
+                // dropping familiar mathBlock/diagram nodes are omitted, and a
+                // columnList left with <2 non-empty columns is dropped whole.
                 guard allowsColumns, end == root + 1, let item = items[blocks[root].handle.itemID],
                     case .type(let list) = item.content,
                     ColumnGroup.read(list, id: blocks[root].id).isFamiliar,
@@ -210,16 +217,28 @@ enum NativeBlockProjection {
                         columnItems[child.id] = child
                     }
                     let snapshots = columnBlocks(column, nativeMarks: false, inlineObjects: true)
+                    guard let columnStripped = stripFamiliarSources(snapshots[...], containers: containers) else {
+                        return nil
+                    }
+                    if columnStripped.blocks.isEmpty {
+                        droppedAny = true
+                        continue
+                    }
                     guard
                         let spelled = spell(
-                            snapshots[...], items: columnItems, allowsColumns: false,
-                            interlinkingOrigin: interlinkingOrigin)
+                            columnStripped.blocks[...], items: columnItems, containers: containers,
+                            allowsColumns: false, interlinkingOrigin: interlinkingOrigin)
                     else {
                         return nil
                     }
                     columns.append(spelled)
                 }
-                parts += [before] + columns
+                if columns.count < 2 {
+                    droppedAny = true
+                    if !before.isEmpty { parts.append(before) }
+                } else {
+                    parts += [before] + columns
+                }
                 plain = end
             } else if case let subtree = blocks[root..<end],
                 needsExport(subtree)
@@ -242,12 +261,69 @@ enum NativeBlockProjection {
             root = end
         }
         guard let rest = classicSpelling(blocks[plain...]) else { return nil }
-        guard !parts.isEmpty else { return rest }
+        if parts.isEmpty { return (droppedAny && rest.isEmpty) ? "\n" : rest }
         // The export separates root blocks by a blank line and trims only the
         // document's ends; a list split here only turns loose, which
         // `canonicalMarkdown` does not see.
         let spelled = (parts + [rest]).map { $0.trimmingCharacters(in: .newlines) }.filter { !$0.isEmpty }
+        if spelled.isEmpty { return droppedAny ? "\n" : "" }
         return NativeExportMarkdown.trimmed(spelled.joined(separator: "\n\n"))
+    }
+
+    /// Drops familiar `mathBlock` and `diagram` subtrees (including any nested
+    /// descendants, matching `y-provider`), returning `nil` if any encountered
+    /// source block is unfamiliar.
+    private static func stripFamiliarSources(
+        _ blocks: ArraySlice<NativeBlockSnapshot>, containers: [YID: YItem]
+    ) -> (blocks: [NativeBlockSnapshot], droppedAny: Bool)? {
+        var kept: [NativeBlockSnapshot] = []
+        kept.reserveCapacity(blocks.count)
+        var droppedAny = false
+        var index = blocks.startIndex
+        while index < blocks.endIndex {
+            let snapshot = blocks[index]
+            if SourceBlock.isSource(snapshot.block.node) {
+                guard let item = containers[snapshot.handle.itemID], let element = contentElement(of: item),
+                    SourceBlock.isFamiliar(element)
+                else { return nil }
+                let depth = snapshot.depth
+                index += 1
+                while index < blocks.endIndex, blocks[index].depth > depth { index += 1 }
+                droppedAny = true
+                continue
+            }
+            kept.append(snapshot)
+            index += 1
+        }
+        return (kept, droppedAny)
+    }
+
+    /// Every `blockContainer` item in `doc`, including nested and column-hosted
+    /// containers, keyed by item id.
+    private static func allContainerItems(_ doc: YDoc) -> [YID: YItem] {
+        guard let root = doc.share[BlockNoteYjs.fragmentField],
+            let groupItem = YBlockProjection.children(of: root, includeFormats: false).first,
+            case .type(let rootGroup) = groupItem.content
+        else { return [:] }
+        var items: [YID: YItem] = [:]
+        var stack: [YType] = [rootGroup]
+        var visited: Set<ObjectIdentifier> = []
+        while let current = stack.popLast() {
+            guard visited.insert(ObjectIdentifier(current)).inserted else { continue }
+            for item in YBlockProjection.children(of: current, includeFormats: false) {
+                guard case .type(let type) = item.content, case .xmlElement(let name)? = type.typeRef else { continue }
+                switch name {
+                case "blockContainer":
+                    items[item.id] = item
+                    if let nested = nestedGroup(of: type) { stack.append(nested) }
+                case "columnList", "column":
+                    stack.append(type)
+                default:
+                    break
+                }
+            }
+        }
+        return items
     }
 
     /// Whether the classic rendering cannot spell `block` like the export:

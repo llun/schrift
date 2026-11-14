@@ -183,7 +183,10 @@ enum NativeExportMarkdown {
     }
 
     private static func cellContent(_ cell: TableGrid.Cell, interlinkingOrigin: String?) -> String? {
-        guard let rendered = inline(blockNoteRuns(cell), interlinkingOrigin: interlinkingOrigin) else { return nil }
+        guard
+            let rendered = inline(
+                blockNoteRuns(cell, dropOmittedObjects: true), interlinkingOrigin: interlinkingOrigin)
+        else { return nil }
         return rendered.trimmingCharacters(in: jsWhitespace).replacingOccurrences(of: "|", with: "\\|")
     }
 
@@ -194,7 +197,7 @@ enum NativeExportMarkdown {
     /// and the first of the next are text with equal styles, and are
     /// concatenated otherwise. Pinned against the exporter
     /// (`BlockNoteTableOracleTests`).
-    static func blockNoteRuns(_ cell: TableGrid.Cell) -> [InlineRun] {
+    static func blockNoteRuns(_ cell: TableGrid.Cell, dropOmittedObjects: Bool = false) -> [InlineRun] {
         enum Item {
             case text(String, Set<String>, [TextMark])
             case link(TextMark, [(text: String, styles: Set<String>, marks: [TextMark])])
@@ -215,6 +218,14 @@ enum NativeExportMarkdown {
             }
             for run in runs {
                 if let object = run.inlineObject {
+                    if dropOmittedObjects {
+                        switch object {
+                        case .math, .mention, .mentionSearch:
+                            continue
+                        case .interlink:
+                            break
+                        }
+                    }
                     items.append(.inlineObject(object))
                     continue
                 }
@@ -311,6 +322,14 @@ enum NativeExportMarkdown {
         var fragment: [Element] = []
         for node in nodes {
             let block = node.block
+            if SourceBlock.isSource(block.node) {
+                let familiarFidelity =
+                    block.fidelity == .modeled || block.fidelity == .opaque(reason: "unknownNode:\(block.node)")
+                guard familiarFidelity, block.props.isEmpty,
+                    block.runs.allSatisfy({ $0.marks.isEmpty && $0.inlineObject == nil })
+                else { return nil }
+                continue
+            }
             // The classic projection's reading: only the blocks it leaves to the native editor may be opaque.
             if case .opaque(let reason) = block.fidelity, !nativeOnlyReasons.contains(reason) { return nil }
             guard let content = inline(block.runs, interlinkingOrigin: interlinkingOrigin) else { return nil }
@@ -446,8 +465,35 @@ enum NativeExportMarkdown {
     /// link a mark splits is two links). Nothing is escaped. Fails closed
     /// (`nil`) if an enabled non-empty interlink lacks `interlinkingOrigin`.
     private static func inline(_ runs: [InlineRun], interlinkingOrigin: String?) -> String? {
-        var out = ""
+        // `math`, `userMentionInline`, and `mentionSearchInline` are omitted
+        // from `y-provider`'s `serverSchema`, so `yDocToBlocks` drops them
+        // before ProseMirror builds text nodes and adjacent runs with equal
+        // marks coalesce. `interlinkingLinkInline` remains in `serverSchema`,
+        // so disabled interlinks still separate runs.
+        var coalesced: [InlineRun] = []
+        coalesced.reserveCapacity(runs.count)
+        func markSet(_ marks: [(key: String, valueJSON: String)]) -> Set<String> {
+            Set(marks.map { "\($0.key)\0\($0.valueJSON)" })
+        }
         for run in runs {
+            if let object = run.inlineObject {
+                switch object {
+                case .math, .mention, .mentionSearch:
+                    continue
+                case .interlink:
+                    coalesced.append(run)
+                }
+                continue
+            }
+            guard !run.text.isEmpty else { continue }
+            if let last = coalesced.last, last.inlineObject == nil, markSet(last.marks) == markSet(run.marks) {
+                coalesced[coalesced.count - 1].text += run.text
+            } else {
+                coalesced.append(run)
+            }
+        }
+        var out = ""
+        for run in coalesced {
             guard let part = styled(run, interlinkingOrigin: interlinkingOrigin) else { return nil }
             out += part
         }
@@ -497,7 +543,7 @@ enum NativeExportMarkdown {
 
     private static func inlineObject(_ object: NativeInlineObject, interlinkingOrigin: String?) -> String? {
         switch object {
-        case .mention, .mentionSearch:
+        case .math, .mention, .mentionSearch:
             return ""
         case .interlink(let docID, _, let title, let disabled, _):
             guard !disabled, !docID.isEmpty else { return "" }

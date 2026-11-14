@@ -10,6 +10,7 @@ struct NativeInlineChipContent: Equatable, Hashable, Sendable {
         case disabledInterlink
         case mention
         case mentionSearch
+        case math
     }
 
     var object: NativeInlineObject
@@ -17,7 +18,9 @@ struct NativeInlineChipContent: Equatable, Hashable, Sendable {
     var displayLabel: String
     var accessibilityLabel: String
     var hasIcon: Bool
+    var isPlaceholder: Bool = false
     var fontSize: CGFloat
+    var metricsFontSize: CGFloat
     var fontDescriptorTraits: UInt32
     var band: DocumentLinkChipIconBand
     var size: CGSize
@@ -83,6 +86,7 @@ final class NativeInlineChipAttachment: NSTextAttachment {
         let displayLabel: String
         let accessibilityLabel: String
         let hasIcon: Bool
+        var isPlaceholder = false
 
         switch object {
         case .interlink(let docID, _, let title, let disabled, _):
@@ -110,12 +114,20 @@ final class NativeInlineChipAttachment: NSTextAttachment {
             let cleaned = trigger.map { NativeInlineObject.clippedDisplayText($0) }.flatMap { $0.isEmpty ? nil : $0 }
             displayLabel = cleaned ?? "@"
             accessibilityLabel = String(format: labels.named, labels.chipMention, displayLabel)
+        case .math(let source):
+            hasIcon = false
+            kind = .math
+            let resolved = NativeSourcePreview.inlineMathContent(source: source, labels: labels)
+            displayLabel = resolved.displayLabel
+            accessibilityLabel = resolved.accessibilityLabel
+            isPlaceholder = resolved.isEmpty
         }
 
+        let chipFont = NativeSourcePreview.inlineChipFont(for: kind, isPlaceholder: isPlaceholder, lineFont: font)
         let metrics = DocumentLinkChipMetrics(fontSize: font.pointSize)
         let band = DocumentLinkChipIconBand(font: font)
         let leading = hasIcon ? metrics.slotWidth : metrics.leadingPadding
-        let textWidth = ceil((displayLabel as NSString).size(withAttributes: [.font: font]).width)
+        let textWidth = ceil((displayLabel as NSString).size(withAttributes: [.font: chipFont]).width)
         let naturalWidth = leading + textWidth + metrics.trailingPadding
         let maxWidth = max(leading + metrics.trailingPadding, floor(geometry.usableWidth))
         let width = min(naturalWidth, maxWidth)
@@ -126,8 +138,10 @@ final class NativeInlineChipAttachment: NSTextAttachment {
             displayLabel: displayLabel,
             accessibilityLabel: accessibilityLabel,
             hasIcon: hasIcon,
-            fontSize: font.pointSize,
-            fontDescriptorTraits: font.fontDescriptor.symbolicTraits.rawValue,
+            isPlaceholder: isPlaceholder,
+            fontSize: chipFont.pointSize,
+            metricsFontSize: font.pointSize,
+            fontDescriptorTraits: chipFont.fontDescriptor.symbolicTraits.rawValue,
             band: band,
             size: CGSize(width: width, height: band.height))
     }
@@ -137,9 +151,12 @@ final class NativeInlineChipAttachment: NSTextAttachment {
         for object: NativeInlineObject, font: UIFont, traits: UITraitCollection, labels: NativeEditorLabels,
         geometry: NativeAttachmentGeometry
     ) -> NativeInlineChipAttachment {
-        NativeInlineChipAttachment(
-            content: content(for: object, font: font, labels: labels, geometry: geometry),
-            font: font,
+        let chipContent = content(for: object, font: font, labels: labels, geometry: geometry)
+        let chipFont = NativeSourcePreview.inlineChipFont(
+            for: chipContent.kind, isPlaceholder: chipContent.isPlaceholder, lineFont: font)
+        return NativeInlineChipAttachment(
+            content: chipContent,
+            font: chipFont,
             traits: traits)
     }
 }
@@ -154,7 +171,9 @@ enum NativeInlineChipImageCache {
         let kind: NativeInlineChipContent.Kind
         let displayLabel: String
         let hasIcon: Bool
+        let isPlaceholder: Bool
         let fontSize: CGFloat
+        let metricsFontSize: CGFloat
         let fontDescriptorTraits: UInt32
         let band: DocumentLinkChipIconBand
         let size: CGSize
@@ -163,7 +182,9 @@ enum NativeInlineChipImageCache {
             kind = content.kind
             displayLabel = content.displayLabel
             hasIcon = content.hasIcon
+            isPlaceholder = content.isPlaceholder
             fontSize = content.fontSize
+            metricsFontSize = content.metricsFontSize
             fontDescriptorTraits = content.fontDescriptorTraits
             band = content.band
             size = content.size
@@ -228,10 +249,11 @@ enum NativeInlineChipImageCache {
             case .disabledInterlink: (palette.surfaceMuted, palette.textSecondary)
             case .mention: (palette.surfaceMuted, palette.textPrimary)
             case .mentionSearch: (palette.surfaceMuted, palette.textTertiary)
+            case .math: (palette.surfaceMuted, content.isPlaceholder ? palette.textSecondary : palette.textPrimary)
             }
         let fill = uiColor(fillHex)
         let ink = uiColor(inkHex)
-        let metrics = DocumentLinkChipMetrics(fontSize: content.fontSize)
+        let metrics = DocumentLinkChipMetrics(fontSize: content.metricsFontSize)
 
         let format = UIGraphicsImageRendererFormat.default()
         format.scale = scale

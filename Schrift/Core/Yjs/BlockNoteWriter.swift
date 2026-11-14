@@ -198,6 +198,26 @@ struct BlockNoteWriter {
         }
     }
 
+    /// Replaces `range` in `target` with inline `copies` (used for inline `<math>` + trailing space).
+    @discardableResult
+    func replaceRangeWithCopies(in target: Target, range: Range<Int>, copies: [Copy]) throws -> Data {
+        guard target.node != "codeBlock" else { throw Error.unsupportedBlockType(target.node) }
+        let block = target.id
+        let parts = try inline(target.element, block: block)
+        let bounds = try clamp(NSRange(location: range.lowerBound, length: range.count), parts: parts)
+        return try transaction { tx in
+            if bounds.lowerBound < bounds.upperBound {
+                try remove(tx, parts: parts, range: bounds, element: target.element, block: block)
+            }
+            for item in children(target.element) {
+                if case .type(let type) = item.content, type.typeRef == .xmlText, type.length == 0 {
+                    item.delete(tx)
+                }
+            }
+            try insertCopies(tx, copies, into: target.element, at: bounds.lowerBound, block: block)
+        }
+    }
+
     /// Replaces `start..end` across sibling blocks (or within one block/cell) with
     /// copied inline slices (`lines`), splitting into `newIDs` when `lines.count > 1`
     /// and degrading inline objects to plain text inside a `codeBlock`.
@@ -209,9 +229,9 @@ struct BlockNoteWriter {
         guard !lines.isEmpty, start.group === end.group else { throw Error.malformedBlock(start.id) }
         for line in lines {
             for copy in line {
-                if case .element(let node, _, let nested) = copy {
-                    guard nested.isEmpty,
-                        ["userMentionInline", "interlinkingLinkInline", "mentionSearchInline"].contains(node)
+                if case .element(let node, let props, let nested) = copy {
+                    let projected = props.map { ProjectedProp(key: $0.key, value: $0.value) }
+                    guard NativeInlineObject.read(node: node, props: projected, children: nested) != nil
                     else { throw Error.malformedBlock(start.id) }
                 }
             }
@@ -675,6 +695,14 @@ struct BlockNoteWriter {
     }
 
     func find(_ id: String) throws -> Target {
+        try find(id, source: false)
+    }
+
+    func findSource(_ id: String) throws -> Target {
+        try find(id, source: true)
+    }
+
+    private func find(_ id: String, source: Bool) throws -> Target {
         guard let root = doc.share[BlockNoteYjs.fragmentField] else { throw Error.missingBlock(id) }
         var stack = [root]
         var found: Target?
@@ -692,7 +720,7 @@ struct BlockNoteWriter {
                     candidate.utf16.elementsEqual(id.utf16)
                 {
                     guard found == nil else { throw Error.duplicateID(id) }
-                    found = try resolve(item, group: type, id: id)
+                    found = try resolve(item, group: type, id: id, source: source)
                 }
                 // Only block groups/containers participate in block lookup;
                 // inline elements and tables cannot masquerade as block ids. A
@@ -710,7 +738,9 @@ struct BlockNoteWriter {
         return found
     }
 
-    private func resolve(_ item: YItem, group: YType, id: String, media: Bool = false) throws -> Target {
+    private func resolve(_ item: YItem, group: YType, id: String, media: Bool = false, source: Bool = false) throws
+        -> Target
+    {
         // A column's blocks sit in the column itself (PR12a).
         guard Self.isBlockList(group),
             case .type(let container) = item.content, container.typeRef == .xmlElement(nodeName: "blockContainer"),
@@ -728,7 +758,9 @@ struct BlockNoteWriter {
             else { throw Error.malformedBlock(id) }
             nested = (contents[1], group)
         }
-        guard media ? MediaBlock.nodes.contains(node) : schemas[node] != nil else {
+        let allowed =
+            source ? SourceBlock.isSource(node) : (media ? MediaBlock.nodes.contains(node) : schemas[node] != nil)
+        guard allowed else {
             throw Error.unsupportedBlockType(node)
         }
         return Target(
@@ -742,8 +774,8 @@ struct BlockNoteWriter {
         type.typeRef == .xmlElement(nodeName: "blockGroup") || type.typeRef == .xmlElement(nodeName: "column")
     }
 
-    /// The engine's canonical index has already proved unique root-container
-    /// identity. Resolve that exact live item without another document walk.
+    /// A media block (PR13a) as a prop target, never a text target: only
+    /// `setMediaProps` takes it.
     func indexedTarget(_ item: YItem, id: String) throws -> Target {
         guard !item.deleted, let group = item.parentType else { throw Error.missingBlock(id) }
         return try resolve(item, group: group, id: id)
@@ -754,6 +786,12 @@ struct BlockNoteWriter {
     func mediaTarget(_ item: YItem, id: String) throws -> Target {
         guard !item.deleted, let group = item.parentType else { throw Error.missingBlock(id) }
         return try resolve(item, group: group, id: id, media: true)
+    }
+
+    /// A plain-content source block (`mathBlock`/`diagram`) target (PR14).
+    func sourceTarget(_ item: YItem, id: String) throws -> Target {
+        guard !item.deleted, let group = item.parentType else { throw Error.missingBlock(id) }
+        return try resolve(item, group: group, id: id, source: true)
     }
 
     /// A table cell's paragraph as a text target (PR11a): the native engine's
@@ -898,7 +936,8 @@ struct BlockNoteWriter {
         _ tx: YTransaction, _ object: NativeInlineObject, into parent: YType, after left: YItem?
     ) throws -> YItem {
         try buildElement(
-            tx, into: parent, after: left, node: object.nodeName, props: object.canonicalProps, children: [])
+            tx, into: parent, after: left, node: object.nodeName, props: object.canonicalProps,
+            children: object.canonicalChildren)
     }
 
     private func insertCopies(
@@ -959,9 +998,9 @@ struct BlockNoteWriter {
                 }
             case .element(let node, let props, let nested):
                 let projected = props.map { ProjectedProp(key: $0.key, value: $0.value) }
-                if let inline = NativeInlineObject.read(node: node, props: projected, hasChildren: !nested.isEmpty) {
+                if let inline = NativeInlineObject.read(node: node, props: projected, children: nested) {
                     switch inline {
-                    case .mention: result += inline.visibleText
+                    case .mention, .math: result += inline.visibleText
                     case .interlink(_, _, _, let disabled, _): result += disabled ? "" : inline.visibleText
                     case .mentionSearch: break
                     }

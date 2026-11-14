@@ -3155,6 +3155,8 @@ final class EditorViewModel {
         if case .toggle = item.action { return }
         if case .columns = item.action { return }
         if case .media = item.action { return }
+        if case .source = item.action { return }
+        if case .inlineMath = item.action { return }
         let text = blocks[index].text
         let tokenEnd =
             slashTokenLength(text: text, kind: blocks[index].kind, caret: selection?.location)
@@ -3188,7 +3190,7 @@ final class EditorViewModel {
             // Same contract as photo: `insertAttachmentBlock` acts on success only.
             focusBlock(focusedBlockID, cursorAt: 0)
             requestAttachmentInsertion()
-        case .toggle, .columns, .media:
+        case .toggle, .columns, .media, .source, .inlineMath:
             break
         }
         markDirty()

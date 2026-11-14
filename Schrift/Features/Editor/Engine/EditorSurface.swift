@@ -319,6 +319,9 @@ struct BlockSnapshot: Equatable, Sendable {
     /// Display-safe visible text where inline objects are bounded and scrubbed
     /// for UI/accessibility summaries.
     func clippedVisibleText(titleForDocument: (UUID) -> String? = { _ in nil }) -> String {
+        if SourceBlock.isSource(node) {
+            return NativeInlineObject.clippedDisplayText(runs.map(\.text).joined())
+        }
         guard hasInlineObjects else { return runs.map(\.text).joined() }
         return runs.map { run in
             if let inline = run.inlineObject {

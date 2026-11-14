@@ -105,7 +105,7 @@ enum TableClipboard {
                         case .element(let inlineNode, let inlineProps, let inlineChildren):
                             let projected = inlineProps.map { ProjectedProp(key: $0.key, value: $0.value) }
                             if let object = NativeInlineObject.read(
-                                node: inlineNode, props: projected, hasChildren: !inlineChildren.isEmpty)
+                                node: inlineNode, props: projected, children: inlineChildren)
                             {
                                 runs.append(InlineRun(inlineObject: object))
                             }
@@ -135,7 +135,17 @@ enum TableClipboard {
         for row in cells {
             for cell in row {
                 for run in cell.runs {
-                    units += run.text.utf16.count
+                    let runUnits = run.text.utf16.count
+                    let mathUnits: Int =
+                        if case .math(let source)? = run.inlineObject {
+                            source.utf16.count
+                        } else {
+                            0
+                        }
+                    let (sum1, ov1) = units.addingReportingOverflow(runUnits)
+                    let (sum2, ov2) = sum1.addingReportingOverflow(mathUnits)
+                    if ov1 || ov2 || sum2 > NativeClipboard.maxPasteUTF16 { return true }
+                    units = sum2
                     lines += run.text.utf16.lazy.filter { $0 == 0x0A }.count
                 }
             }
@@ -461,6 +471,8 @@ enum TableClipboard {
                 + "\(escape(inline.visibleText, quote: false))</span>"
         case .mentionSearch:
             return "<span data-inline-content-type=\"mentionSearchInline\"></span>"
+        case .math(let source):
+            return "<span data-inline-content-type=\"math\">\(escape(source, quote: false))</span>"
         }
     }
 

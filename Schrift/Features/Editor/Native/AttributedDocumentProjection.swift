@@ -55,6 +55,10 @@ struct NativeEditorLabels: Equatable {
     var columnsRotor = Strings_en.table[.native_editor_columns_rotor]!
     var math = Strings_en.table[.native_editor_math]!
     var diagram = Strings_en.table[.native_editor_diagram]!
+    var mathSource = Strings_en.table[.native_editor_math_source]!
+    var diagramSource = Strings_en.table[.native_editor_diagram_source]!
+    var sourceEmpty = Strings_en.table[.native_editor_source_empty]!
+    var openMathSource = Strings_en.table[.native_editor_open_math_source]!
     var imageExternal = Strings_en.table[.editor_image_external]!
     var imageExternalA11y = Strings_en.table[.editor_image_external_a11y]!
     var imageOffline = Strings_en.table[.editor_image_offline]!
@@ -125,7 +129,7 @@ enum AttributedDocumentProjection {
         case .file(let node, let name, _): return named(labels.kind(node), name)
         case .table(_, let rows, let columns): return String(format: labels.table, rows, columns)
         case .columns(_, let count): return String(format: labels.columns, count)
-        case .source(let node, _, _): return labels.kind(node)
+        case .source(let node, _, _): return NativeSourcePreview.blockAccessibilityLabel(node: node, labels: labels)
         case .preserved(let node, _):
             return String(format: labels.preservedBlock, node.isEmpty ? labels.unknownBlock : node)
         }

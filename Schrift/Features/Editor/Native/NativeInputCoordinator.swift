@@ -71,6 +71,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         /// A move or a join, which may take the caret's block to another
         /// column (PR12c); a column or table command never does.
         var movesBlock = false
+        /// Scoped source surface to open once the command has actually applied (PR14).
+        var requestedSource: NativeSourceRequest? = nil
     }
     @ObservationIgnored private var barrier: Barrier?
     /// What the deliveries since the barrier was posted showed: a retry and a
@@ -90,7 +92,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// A reset is on its way or queued: keys wait for it.
     private var awaitsReset: Bool { resyncsAsked > 0 || queued.contains { $0.resync != nil } }
     /// Marked text owns the view: storage and its offsets are UIKit's.
-    private var compositionOwnsView: Bool { composition.isActive || view?.markedTextRange != nil }
+    var compositionOwnsView: Bool { composition.isActive || view?.markedTextRange != nil }
     /// A selection the user made while the barrier was in flight, and how many
     /// of `barrierShown`'s deliveries it had already seen: it wins over wherever
     /// the barrier would put the selection.
@@ -277,8 +279,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// Backspace at a paragraph's start does nothing (BlockNote keeps the
     /// cell). Returns whether the key was handled.
     @ObservationIgnored var tableMove: ((TableMove) -> Bool)?
-    /// A column surface (PR12a): Escape returns to the document.
+    /// A column surface (PR12a) or focused source editor (PR14): Escape returns.
     @ObservationIgnored var onExit: (() -> Void)?
+    /// Focused source editor (PR14): ⌘Return closes.
+    @ObservationIgnored var onDone: (() -> Void)?
+    /// When editing a scoped source surface (PR14), identifies `mathBlock`,
+    /// `diagram`, or inline `math`.
+    @ObservationIgnored var sourceKind: NativeSourceKind?
 
     /// Shows the cell made of `blockIDs` (a table surface) and selects its
     /// text, as prosemirror-tables' `goToNextCell` does; a cell of several
@@ -368,6 +375,18 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             asOneKeyboardChange { selection.place(caret) }
         }
         view.becomeFirstResponder()
+    }
+
+    /// Back from the focused source editor (PR14): places the caret after a
+    /// source block card or immediately after an inline `<math>` chip.
+    func focus(after request: NativeSourceRequest) {
+        switch request {
+        case .block(let blockID):
+            focus(after: blockID)
+        case .inlineMath(let blockID, let utf16Offset):
+            focus(at: blockID, offset: utf16Offset + 1)
+            view?.becomeFirstResponder()
+        }
     }
 
     /// The caret (or a selection) in `blockID` at `offset` (PR12c: a jump
@@ -698,6 +717,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             self.barrier = nil
             endUndoStep()
             noticeKey = nil
+            if let requested = barrier.requestedSource {
+                requestedSource = requested
+            }
             if endBarrierSelection(ownEcho: true) { return }
             switch barrier.placement {
             case .caret:
@@ -970,7 +992,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // delegate; this covers UIKit paths that do, so Return routes once.
         if Self.isNewline(text), view?.isApplyingMarkedText != true {
             // Return over a selection replaces it with a block break.
-            if range.length == 0 || composition.isActive {
+            if range.length == 0 || composition.isActive || sourceKind == .inlineMath {
                 typeKey("\n")
             } else {
                 _ = replace(range: range, with: "\n")
@@ -1053,7 +1075,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 noticeKey = .native_editor_input_unavailable
                 return false
             }
-            if range.length == 0 || composition.isActive {
+            if range.length == 0 || composition.isActive || sourceKind == .inlineMath {
                 typeKey("\n")
             } else {
                 _ = replace(range: range, with: "\n")
@@ -1210,6 +1232,20 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             return false
         }
         let text = NativeClipboard.normalizingLineBreaks(text)
+        if sourceKind == .inlineMath, text.contains("\n") {
+            noticeKey = .native_editor_input_unavailable
+            return false
+        }
+        // In a scoped source surface, Select All (0..<storage.length) and carets
+        // at or after the synthetic trailing newline separator clamp into the source text.
+        var range = range
+        if let clamped = clampedSourceRange(range) {
+            range = clamped
+            if range.length == 0, text.isEmpty {
+                selection.place(NSRange(location: range.location, length: 0))
+                return true
+            }
+        }
         // Within one block's text and without a line break: ordinary typing.
         // A code block keeps its line breaks as source. Anything else (a
         // selection across blocks, pasted or dictated lines) is one range command.
@@ -1280,7 +1316,18 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             }),
             marks?.allSatisfy({ $0.valueJSON != "null" }) != false
         else { return false }
+        if let sourceKind {
+            guard SourceBlock.isValidReplacement(text, node: sourceKind.nodeName),
+                marks?.isEmpty != false
+            else { return false }
+        }
         let units = Array(block.runs.map(\.text).joined().utf16)
+        if let sourceKind {
+            let maxUTF16 = sourceKind.maxUTF16
+            guard text.utf16.count <= maxUTF16,
+                units.count - range.count <= maxUTF16 - text.utf16.count
+            else { return false }
+        }
         func boundary(_ offset: Int) -> Bool {
             guard offset >= 0, offset <= units.count else { return false }
             return offset == 0 || offset == units.count
@@ -1333,20 +1380,26 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             hold(.insert("\n"))
             return true
         }
+        // Inline math (PR14): Return exits back to the document/cell after the chip.
+        if sourceKind == .inlineMath {
+            onExit?()
+            return true
+        }
         let selection = view.selectedRange
         if selection.length > 0, view.markedTextRange == nil { return replace(range: selection, with: "\n") }
-        guard view.markedTextRange == nil, selection.length == 0,
-            let entry = surface.rangeIndex.entry(atUTF16: selection.location),
+        let effectiveSelection = clampedSourceRange(selection) ?? selection
+        guard view.markedTextRange == nil, effectiveSelection.length == 0,
+            let entry = surface.rangeIndex.entry(atUTF16: effectiveSelection.location),
             let position = surface.rangeIndex.position(for: entry.blockID),
-            selection.location <= NSMaxRange(entry.textRange),
+            effectiveSelection.location <= NSMaxRange(entry.textRange),
             !AttributedDocumentProjection.isPlaceholder(surface.blocks[position])
         else {
             noticeKey = .native_editor_input_unavailable
             return false
         }
         // BlockNote's Enter in a code block inserts a line break in the block.
-        if isCode(entry.blockID) { return replace(range: selection, with: "\n") }
-        let offset = selection.location - entry.textRange.location
+        if isCode(entry.blockID) { return replace(range: effectiveSelection, with: "\n") }
+        let offset = effectiveSelection.location - entry.textRange.location
         // BlockNote's Enter reads whether the toggle (or a toggle parent) is open.
         let open = Set([entry.blockID, surface.blocks[position].parentID].compactMap { $0 }.filter(surface.isExpanded))
         return applyStructural(
@@ -1373,8 +1426,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @discardableResult
     func deleteBackwardAtBlockStart() -> Bool {
         directInsertion = nil
-        // BlockNote keeps a cell's paragraphs: Backspace at a start does nothing.
-        if tableMove != nil { return true }
+        // BlockNote keeps a cell's paragraphs and scoped source surfaces: Backspace at a start does nothing.
+        if tableMove != nil || sourceKind != nil { return true }
         guard let view, view.isEditable, !isFrozen, !isDetached,
             !compositionOwnsView, view.selectedRange.length == 0,
             isBlockStart(view.selectedRange.location),
@@ -1406,18 +1459,34 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return moveBlock(.outdent)
     }
 
+    /// In a scoped source surface, Select All (`0..<storage.length`) or a caret
+    /// at/after the synthetic trailing newline separator (`storage.length`) is
+    /// clamped into the source text range.
+    private func clampedSourceRange(_ range: NSRange) -> NSRange? {
+        guard sourceKind != nil, let entry = surface.rangeIndex.entries.first else { return nil }
+        let maxEnd = NSMaxRange(entry.textRange)
+        let location = min(range.location, maxEnd)
+        let end = min(NSMaxRange(range), maxEnd)
+        return NSRange(location: location, length: end - location)
+    }
+
     /// Hardware Tab: two spaces in a code block (BlockNote's
     /// `indentLineWithTab`), the next cell in a table, else `indent()`.
     @discardableResult
     func insertTab() -> Bool {
         if let tableMove { return compositionOwnsView ? false : tableMove(.next) || true }
-        guard let view, let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location) else { return false }
-        return isCode(entry.blockID) ? replace(range: view.selectedRange, with: "  ") : indent()
+        guard sourceKind != .inlineMath else { return false }
+        guard let view else { return false }
+        let effectiveSelection = clampedSourceRange(view.selectedRange) ?? view.selectedRange
+        guard let entry = surface.rangeIndex.entry(atUTF16: effectiveSelection.location) else { return false }
+        return isCode(entry.blockID) ? replace(range: effectiveSelection, with: "  ") : indent()
     }
 
     private func moveBlock(_ kind: NativeEditCommand.Kind) -> Bool {
         directInsertion = nil
-        guard let view, view.isEditable, !isFrozen, !isDetached, !compositionOwnsView else { return false }
+        guard sourceKind == nil, let view, view.isEditable, !isFrozen, !isDetached, !compositionOwnsView else {
+            return false
+        }
         let selection = view.selectedRange
         guard let entry = surface.rangeIndex.entry(atUTF16: selection.location),
             selection.location <= NSMaxRange(entry.textRange),
@@ -1454,7 +1523,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     private func applyStructural(
         _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, keeping: NSRange? = nil,
         remapping: (blockID: String, offset: Int, length: Int)? = nil, retry: (() -> Bool)? = nil,
-        readsSelection: Bool = false
+        readsSelection: Bool = false, requestedSource: NativeSourceRequest? = nil
     ) -> Bool {
         // Folded content is never the target of a command.
         guard !surface.isHidden(blockID: blockID) else {
@@ -1468,12 +1537,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // A structural command is its own undo step.
         return postBarrier(
             blockID, kind, refusal: refusal, placement: placement, undoBefore: true, undoAfter: true, retry: retry,
-            readsSelection: readsSelection)
+            readsSelection: readsSelection, requestedSource: requestedSource)
     }
 
     private func postBarrier(
         _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, placement: Barrier.Placement,
-        undoBefore: Bool, undoAfter: Bool, retry: (() -> Bool)?, readsSelection: Bool = false
+        undoBefore: Bool, undoAfter: Bool, retry: (() -> Bool)?, readsSelection: Bool = false,
+        requestedSource: NativeSourceRequest? = nil
     ) -> Bool {
         guard barrier == nil else { return false }
         let command = NativeEditCommand(id: UUID(), baseRevision: canonicalRevision, blockID: blockID, kind: kind)
@@ -1486,7 +1556,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         else { return false }
         barrier = Barrier(
             id: command.id, refusal: refusal, placement: placement, retry: retry,
-            origin: readsSelection ? blockSelection() : nil)
+            origin: readsSelection ? blockSelection() : nil, requestedSource: requestedSource)
         switch kind {
         case .moveUp, .moveDown, .join: barrier?.movesBlock = true
         default: break
@@ -1512,9 +1582,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return NativeMarkSelection.same(marks, NativeMarkSelection.inherited(runs, at: range.lowerBound)) ? nil : marks
     }
 
-    private var canFormat: Bool {
+    private var canEdit: Bool {
         guard let view else { return false }
         return view.isEditable && !isFrozen && !isDetached && !compositionOwnsView
+    }
+
+    private var canFormat: Bool {
+        sourceKind == nil && canEdit
     }
 
     /// Republishes `activeMarks` and the caret's typing attributes (what UIKit
@@ -1539,7 +1613,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 pendingTypingMarks ?? NativeMarkSelection.typing(surface.blocks[caret.position].runs, at: caret.offset)
         }
         if marks != activeMarks { activeMarks = marks }
-        slashToken = block.flatMap { Self.slashToken(in: $0, caret: caretOffset) }
+        slashToken = sourceKind == nil ? block.flatMap { Self.slashToken(in: $0, caret: caretOffset) } : nil
         let query = block.flatMap { block in
             slashToken.map { String(decoding: Array(text(of: block).utf16)[1..<$0.upperBound], as: UTF16.self) }
         }
@@ -1727,6 +1801,31 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// editor cannot author yet (divider, photo, file) are not offered.
     @discardableResult
     func applySlashItem(_ item: SlashMenuItem) -> Bool {
+        // A source block (`mathBlock`/`diagram`) or inline `<math>` chip (PR14).
+        if case .source(let node) = item.action {
+            guard let view, canFormat, view.selectedRange.length == 0, let token = slashToken,
+                let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location),
+                let position = surface.rangeIndex.position(for: entry.blockID)
+            else { return false }
+            let newID = UUID().uuidString
+            let replaces = text(of: surface.blocks[position]).utf16.count == token.count
+            let insertedID = replaces ? entry.blockID : newID
+            return applyStructural(
+                entry.blockID, .insertSourceBlock(node: node, newID: newID, removing: token),
+                refusal: .native_editor_input_unavailable,
+                retry: again { [weak self] in self?.applySlashItem(item) ?? false }, readsSelection: true,
+                requestedSource: node == SourceBlock.mathBlock ? .block(blockID: insertedID) : nil)
+        }
+        if case .inlineMath = item.action {
+            guard let view, canFormat, view.selectedRange.length == 0, let token = slashToken,
+                let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location)
+            else { return false }
+            return applyStructural(
+                entry.blockID, .insertInlineMath(replacing: token, source: "", trailingSpace: true),
+                refusal: .native_editor_input_unavailable,
+                retry: again { [weak self] in self?.applySlashItem(item) ?? false }, readsSelection: true,
+                requestedSource: .inlineMath(blockID: entry.blockID, utf16Offset: token.lowerBound))
+        }
         // A media block (PR13a): in place of the emptied paragraph or after
         // it, then its inspector (`requestedMedia`) uploads or links the file.
         if case .media(let node) = item.action {
@@ -1785,7 +1884,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             case "checklist": [item, toggleListSlashItem]
             default: [item]
             }
-        } + [twoColumnsSlashItem, threeColumnsSlashItem] + mediaSlashItems
+        } + [twoColumnsSlashItem, threeColumnsSlashItem] + mediaSlashItems + sourceSlashItems
 
     private static func slashType(_ action: SlashMenuAction) -> (node: String, props: [ProjectedProp])? {
         if case .toggle(let heading) = action {
@@ -1818,6 +1917,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// The media block the slash menu just made, for its inspector; the view
     /// clears it once presented.
     var requestedMedia: String?
+    /// The source block or inline math chip the slash menu just made, for its
+    /// focused source editor; the view clears it once presented.
+    var requestedSource: NativeSourceRequest?
 
     /// Media block `blockID` as the surface shows it (a preview card), or nil.
     func mediaBlock(_ blockID: String) -> BlockSnapshot? {
@@ -1930,16 +2032,19 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @discardableResult
     func pasteFromPasteboard() -> Bool {
         guard let view, view.isEditable else { return false }
-        if view.selectedRange.length == 0,
-            let payload = pasteboard.data(forPasteboardType: BlockNoteSubtreePayload.pasteboardType)
-        {
-            return pasteBlocks(payload)
-        }
-        if let inlinePayload = pasteboard.data(forPasteboardType: BlockNoteInlinePayload.pasteboardType) {
-            return pasteInline(inlinePayload, replacing: view.selectedRange)
+        if sourceKind == nil {
+            if view.selectedRange.length == 0,
+                let payload = pasteboard.data(forPasteboardType: BlockNoteSubtreePayload.pasteboardType)
+            {
+                return pasteBlocks(payload)
+            }
+            if let inlinePayload = pasteboard.data(forPasteboardType: BlockNoteInlinePayload.pasteboardType) {
+                return pasteInline(inlinePayload, replacing: view.selectedRange)
+            }
         }
         guard let raw = pasteboard.string, !raw.isEmpty else { return false }
-        if view.selectedRange.length == 0,
+        if sourceKind == nil,
+            view.selectedRange.length == 0,
             let pos = surface.rangeIndex.textPosition(atUTF16: view.selectedRange.location),
             let position = pos.position as Int?,
             !AttributedDocumentProjection.isPlaceholder(surface.blocks[position]),
@@ -2254,15 +2359,42 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             return true
         }
         surface.holdForComposition(false)
+        var commitText = sourceKind == nil ? commit.text : NativeClipboard.normalizingLineBreaks(commit.text)
+        if sourceKind == .inlineMath {
+            commitText = commitText.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\t", with: " ")
+        }
+        if let sourceKind {
+            let currentLength =
+                surface.rangeIndex.entry(for: commit.blockID)?.textRange.length ?? commit.range.upperBound
+            let limit = sourceKind.maxUTF16
+            let validCharacters = SourceBlock.isValidReplacement(commitText, node: sourceKind.nodeName)
+            let remainingLength = max(0, currentLength - commit.range.count)
+            let withinLimit =
+                commitText.utf16.count <= limit && remainingLength <= limit - commitText.utf16.count
+            guard validCharacters, withinLimit else {
+                composition.finish(commit.id)
+                composition.recover(commitText, blockID: commit.blockID)
+                _ = post(.compositionCancel(surfaceID: surfaceID))
+                if let entry = surface.rangeIndex.entry(for: commit.blockID) {
+                    selection.place(
+                        NSRange(
+                            location: entry.textRange.location + min(commit.range.lowerBound, entry.textRange.length),
+                            length: 0))
+                }
+                noticeKey = withinLimit ? .native_editor_input_unavailable : .native_editor_paste_too_large
+                releaseComposition()
+                return false
+            }
+        }
         guard !isBusy, intents.isEmpty else {
             // Behind held input the commit is held like a key, in order (the
             // session's composition is cancelled); a full queue keeps it as recovery.
             composition.finish(commit.id)
             _ = post(.compositionCancel(surfaceID: surfaceID))
             if intents.count < Self.maxIntents {
-                hold(.insert(commit.text))
+                hold(.insert(commitText))
             } else {
-                composition.recover(commit.text, blockID: commit.blockID)
+                composition.recover(commitText, blockID: commit.blockID)
             }
             releaseComposition()
             return true
@@ -2274,17 +2406,17 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             let position = surface.rangeIndex.position(for: commit.blockID)
         {
             if surface.blocks[position].hasInlineObjects {
-                pendingCompositionCommit = (id: commit.id, blockID: commit.blockID, text: commit.text)
+                pendingCompositionCommit = (id: commit.id, blockID: commit.blockID, text: commitText)
                 selection.place(
                     NSRange(location: entry.textRange.location + commit.range.lowerBound, length: 0))
             } else {
                 let runs = surface.blocks[position].runs
                 let caret = NSRange(
-                    location: entry.textRange.location + commit.range.lowerBound + commit.text.utf16.count, length: 0)
+                    location: entry.textRange.location + commit.range.lowerBound + commitText.utf16.count, length: 0)
                 asOneKeyboardChange {
                     surface.predict(
                         NativeTextSurface.Prediction(
-                            commandID: commit.id, blockID: commit.blockID, range: commit.range, text: commit.text,
+                            commandID: commit.id, blockID: commit.blockID, range: commit.range, text: commitText,
                             marks: NativeMarkSelection.inherited(runs, at: commit.range.lowerBound)))
                     selection.place(caret)
                 }
@@ -2293,7 +2425,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 if barrier != nil {
                     barrierShown.append(
                         Shown(
-                            deltas: [(commit.blockID, [TextDelta(range: commit.range, replacement: commit.text)])],
+                            deltas: [(commit.blockID, [TextDelta(range: commit.range, replacement: commitText)])],
                             replaced: [], reset: false))
                     userSelection = blockSelection().map { ($0, barrierShown.count) }
                 }
@@ -2301,7 +2433,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
         lastCommandID = commit.id
         // A post that fails stops authoring; the rollback keeps the text.
-        _ = post(.compositionCommit(surfaceID: surfaceID, epoch: epoch, commandID: commit.id, text: commit.text))
+        _ = post(.compositionCommit(surfaceID: surfaceID, epoch: epoch, commandID: commit.id, text: commitText))
         releaseComposition()
         return true
     }
@@ -2322,8 +2454,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// read-only, frozen or composing).
     /// The stacks are the session's, mirrored from each delivery; a typed key
     /// still waiting for its append is undoable already (the step follows it).
-    var canUndo: Bool { canFormat && (history.canUndo || !surface.predictions.isEmpty) }
-    var canRedo: Bool { canFormat && history.canRedo && surface.predictions.isEmpty }
+    var canUndo: Bool { canEdit && (history.canUndo || !surface.predictions.isEmpty) }
+    var canRedo: Bool { canEdit && history.canRedo && surface.predictions.isEmpty }
 
     @discardableResult
     func undo() -> Bool { applyHistory(.undo) }
@@ -2336,7 +2468,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// the step stored is shown. Undo and redo are boundaries on both sides.
     private func applyHistory(_ kind: NativeEditCommand.Kind) -> Bool {
         directInsertion = nil
-        guard canFormat else { return false }
+        guard canEdit else { return false }
         return postBarrier(
             "", kind, refusal: nil, placement: .history, undoBefore: true, undoAfter: true,
             retry: again { [weak self] in self?.applyHistory(kind) ?? false })

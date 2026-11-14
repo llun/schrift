@@ -31,12 +31,17 @@ final class ColumnEditorModel: Identifiable {
     var openTable: NativeTableRequest?
     /// The media block whose inspector is open (PR13a), in the shown column.
     var openMedia: NativeMediaRequest?
+    /// The focused source block or inline `<math>` editor open in the shown column (PR14).
+    var openSource: NativeSourceRequest?
     /// The table the shown column last opened: its caret goes after it.
     @ObservationIgnored var lastTable: String?
+    /// The source item the shown column last opened: its caret goes after it.
+    @ObservationIgnored var lastSource: NativeSourceRequest?
     /// The editor closed: the document takes focus back after the group.
     @ObservationIgnored var onClose: (() -> Void)?
     /// A tap (or VoiceOver action) on an inline page link chip navigates to that document.
     @ObservationIgnored var onOpenDocument: ((UUID, String) -> Void)?
+    @ObservationIgnored var onOpenSource: ((NativeSourceRequest) -> Void)?
     @ObservationIgnored private var loadStarted = false
     /// Where the editor opens (PR12c: a find or outline result in a column):
     /// that column is active with the caret at the block's start.
@@ -99,6 +104,12 @@ final class ColumnEditorModel: Identifiable {
         }
     }
 
+    func activate(session: NativeEditorSession) {
+        if let index = columns.firstIndex(where: { $0 === session }), active != index {
+            active = index
+        }
+    }
+
     /// The column showing the block a column moved out, now that one does,
     /// takes the caret in it and types the held keys there. A delivery to
     /// another column that does not show it ends the wait (the block left
@@ -130,6 +141,15 @@ final class ColumnEditorModel: Identifiable {
         session.textView.blockControls.onOpenMedia = { [weak self] in self?.openMedia = NativeMediaRequest(id: $0) }
         session.textView.blockControls.onOpenDocument = { [weak self] id, blockID in
             self?.onOpenDocument?(id, blockID)
+        }
+        session.textView.blockControls.onOpenSource = { [weak self, weak session] request in
+            guard let self else { return }
+            if let session { self.activate(session: session) }
+            if let override = self.onOpenSource {
+                override(request)
+            } else {
+                self.openSource = request
+            }
         }
         // The group's own change reaches every column: its structure may have changed (PR12b).
         session.onApplied = { [weak self] delivery in
@@ -301,6 +321,8 @@ final class ColumnEditorModel: Identifiable {
         isClosed = true
         openTable = nil
         openMedia = nil
+        lastSource = nil
+        openSource = nil
         for session in columns {
             session.textView.resignFirstResponder()
             session.close()
@@ -336,6 +358,7 @@ struct ColumnEditorScreen: View {
     var uploads: NativeMediaUploads? = nil
     var documentTitle: (@MainActor (UUID) -> String?)? = nil
     var onOpenDocument: ((UUID, String) -> Void)? = nil
+    var onOpenSource: ((NativeSourceRequest) -> Void)? = nil
     @State private var linkTarget: NativeLinkTarget?
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.docsTheme) private var theme
@@ -398,7 +421,8 @@ struct ColumnEditorScreen: View {
             ColumnTextHost(
                 model: model, contentSize: uiContentSizeCategory(for: dynamicTypeSize), labels: .document(loc),
                 theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline,
-                documentTitle: documentTitle, onOpenDocument: onOpenDocument ?? model.onOpenDocument)
+                documentTitle: documentTitle, onOpenDocument: onOpenDocument ?? model.onOpenDocument,
+                onOpenSource: onOpenSource ?? model.onOpenSource ?? { model.openSource = $0 })
         }
         .safeAreaInset(edge: .bottom) {
             if let input = model.activeSession?.input {
@@ -434,6 +458,7 @@ struct ColumnEditorScreen: View {
                     cellLabel: { String(format: loc[.native_editor_table_cell], $0, $1) }, text: { loc[$0] },
                     documentTitle: documentTitle, serverOrigin: serverOrigin,
                     onOpenDocument: onOpenDocument ?? model.onOpenDocument,
+                    onOpenSource: onOpenSource ?? model.onOpenSource,
                     onClose: {
                         model.lastTable = request.id
                         model.openTable = nil
@@ -449,11 +474,41 @@ struct ColumnEditorScreen: View {
                     isOffline: isOffline, onClose: { model.openMedia = nil })
             }
         }
+        .sheet(
+            item: $model.openSource,
+            onDismiss: { [model] in
+                if let request = model.lastSource {
+                    model.lastSource = nil
+                    model.activeSession?.input?.focus(after: request)
+                }
+            }
+        ) { request in
+            if let session = model.activeSession {
+                NativeSourceEditorScreen(
+                    document: session, request: request, labels: .document(loc),
+                    doneTitle: loc[.editor_action_done], goneTitle: loc[.native_editor_source_gone],
+                    contentSize: uiContentSizeCategory(for: dynamicTypeSize),
+                    onClose: {
+                        model.lastSource = request
+                        model.openSource = nil
+                    })
+            }
+        }
         .onChange(of: model.activeSession?.input?.requestedMedia) { _, id in
             // The slash menu's new media block in this column.
             guard let id else { return }
             model.activeSession?.input?.requestedMedia = nil
             model.openMedia = NativeMediaRequest(id: id)
+        }
+        .onChange(of: model.activeSession?.input?.requestedSource) { _, request in
+            // The slash menu's new `mathBlock` or inline `<math>` chip in this column.
+            guard let request else { return }
+            model.activeSession?.input?.requestedSource = nil
+            if let override = onOpenSource ?? model.onOpenSource {
+                override(request)
+            } else {
+                model.openSource = request
+            }
         }
         .nativeLinkEditing($linkTarget, input: model.activeSession?.input)
     }
@@ -471,6 +526,7 @@ private struct ColumnTextHost: UIViewRepresentable {
     let isOffline: Bool
     let documentTitle: (@MainActor (UUID) -> String?)?
     var onOpenDocument: ((UUID, String) -> Void)? = nil
+    var onOpenSource: ((NativeSourceRequest) -> Void)? = nil
 
     func makeUIView(context: Context) -> ColumnTextContainer {
         let container = ColumnTextContainer()
@@ -493,6 +549,10 @@ private struct ColumnTextHost: UIViewRepresentable {
             session.textView.blockControls.isOffline = isOffline
             session.textView.blockControls.documentTitle = documentTitle
             session.textView.blockControls.onOpenDocument = onOpenDocument
+            session.textView.blockControls.onOpenSource = { [weak model, weak session, onOpenSource] request in
+                if let session { model?.activate(session: session) }
+                onOpenSource?(request)
+            }
             let presentation = NativeTextPresentation(contentSize: contentSize, labels: labels)
             if container.presentations[ObjectIdentifier(session)] != presentation {
                 container.presentations[ObjectIdentifier(session)] = presentation

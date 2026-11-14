@@ -628,7 +628,7 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         let expected = [
             "img": "Image: A red flower", "vid": "Video: clip.mp4", "aud": "Audio: roar.mp3",
             "fil": "File: notes.txt", "doc": "PDF: paper.pdf", "tbl": "Table, 8 by 6", "cols": "Columns, 2",
-            "math": "Math", "diag": "Diagram", "widget": "customWidget (preserved, not editable yet)",
+            "math": "Math source", "diag": "Diagram source", "widget": "customWidget (preserved, not editable yet)",
         ]
         for (id, label) in expected {
             XCTAssertEqual(try attachment(session, id).content.label, label)

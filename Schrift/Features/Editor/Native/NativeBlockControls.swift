@@ -96,6 +96,9 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     /// A tap (or VoiceOver action) on an enabled inline page link chip opens
     /// that document (PR13c1), with the target UUID and optional `blockId`.
     var onOpenDocument: ((UUID, String) -> Void)?
+    /// A tap (or VoiceOver activation/action) on a `.source` preview card or an
+    /// inline `.math` chip opens the focused source editor (PR14).
+    var onOpenSource: ((NativeSourceRequest) -> Void)?
     /// The media blocks whose upload is queued or runs (PR13a, PR13b), and
     /// those whose upload failed: their realised cards say so.
     var uploadingBlocks: Set<String> = [] {

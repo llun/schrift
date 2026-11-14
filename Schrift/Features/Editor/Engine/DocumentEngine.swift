@@ -159,37 +159,51 @@ final class DocumentEngine {
             entry.isProjectable,
             !builder.nativeSnapshot(entry).block.fidelity.isOpaque,
             entry.isSimpleContainer, let element = entry.element,
-            case .xmlElement(let node)? = element.typeRef, writer.schemas[node] != nil || isCellText(entry),
+            case .xmlElement(let node)? = element.typeRef,
+            writer.schemas[node] != nil || isCellText(entry) || isSourceText(entry),
             // A cell paragraph may hold hard breaks or inline objects, and prose
             // blocks may hold familiar inline objects (PR13c).
-            entry.isSimpleText || entry.hasInlineObjects || element.length == 0 || isCellText(entry),
-            // A code block keeps "\n" as a source line break (BlockNote's Enter
-            // there); in prose a newline is a block break, a range command.
-            !replacement.unicodeScalars.contains(where: {
-                $0.value == 0xfffc || (CharacterSet.newlines.contains($0) && !(node == "codeBlock" && $0 == "\n"))
-            }),
+            entry.isSimpleText || entry.hasInlineObjects || element.length == 0 || isCellText(entry)
+                || isSourceText(entry),
+            // Code and source blocks keep "\n" as a source line break; in prose
+            // or inline math a newline is forbidden/a block break. Source buffers
+            // also reject control characters other than `\n` and `\t`.
+            isSourceText(entry)
+                ? true
+                : !replacement.unicodeScalars.contains(where: {
+                    $0.value == 0xfffc || (CharacterSet.newlines.contains($0) && !(node == "codeBlock" && $0 == "\n"))
+                }),
+            !isSourceText(entry) || (marks?.isEmpty != false),
             marks?.allSatisfy({ Self.isMarkValue($0) && $0.valueJSON != "null" }) != false
         else { throw DocumentEngineError.unsupportedNativeInput }
-        let target = try textTarget(entry)
-        let units = textUnits(entry)
-        func validBoundary(_ offset: Int) -> Bool {
-            guard offset >= 0, offset <= units.count else { return false }
-            return offset == 0 || offset == units.count
-                || !(0xd800...0xdbff).contains(units[offset - 1]) || !(0xdc00...0xdfff).contains(units[offset])
+        let isSource = isSourceText(entry)
+        let target = isSource ? nil : try textTarget(entry)
+        if isSource {
+            try validateSourceReplacement(entry, node: node, range: range, with: replacement, marks: marks)
+        } else {
+            let units = textUnits(entry)
+            guard !entry.isSimpleText || entry.textType?.length == UInt(units.count),
+                entry.isSimpleText || entry.hasInlineObjects || element.length == 0 || isCellText(entry)
+                    || units.isEmpty,
+                Self.validSurrogateBoundaries(units, range: range)
+            else { throw DocumentEngineError.unsupportedNativeInput }
         }
-        guard !entry.isSimpleText || entry.textType?.length == UInt(units.count),
-            entry.isSimpleText || entry.hasInlineObjects || element.length == 0 || isCellText(entry) || units.isEmpty,
-            validBoundary(range.lowerBound), validBoundary(range.upperBound)
-        else { throw DocumentEngineError.unsupportedNativeInput }
         nativeCommand = command
         nativeEmission = 0
         selectionBeforeCommand = selection
         defer { selectionBeforeCommand = nil }
         do {
-            let update = try writer.replaceText(
-                in: target, range: range,
-                with: replacement,
-                marks: marks.map { YTextAttributes($0.map { ($0.key, $0.valueJSON) }) })
+            let update: Data
+            if isSource {
+                update = try writer.replaceSourceText(
+                    in: element, range: range, with: replacement,
+                    block: SourceTarget.ownerID(of: entry.id) ?? entry.id)
+            } else {
+                update = try writer.replaceText(
+                    in: target!, range: range,
+                    with: replacement,
+                    marks: marks.map { YTextAttributes($0.map { ($0.key, $0.valueJSON) }) })
+            }
             unconfirmedNativeUpdate = update
             try persist(update)
             revision += 1
@@ -355,6 +369,9 @@ final class DocumentEngine {
             }
         default: break
         }
+        // Open source surfaces (PR14) take plain text (via `replaceText`) and
+        // history steps only; every structural command refuses them.
+        if builder.index.isSourceText(command.blockID) { throw DocumentEngineError.unsupportedNativeInput }
         // A table cell's paragraph (PR11a) takes text and marks only: every
         // structural command refuses it (`structuralTarget` knows no
         // `tableParagraph` schema), and a mark change stays in the paragraph.
@@ -369,11 +386,17 @@ final class DocumentEngine {
         if case .insertMedia(let node, let ids, let removing) = command.kind {
             return try prepareInsertMedia(command, node: node, ids: ids, removing: removing)
         }
+        if case .insertSourceBlock(let node, let newID, let removing) = command.kind {
+            return try prepareInsertSourceBlock(command, node: node, newID: newID, removing: removing)
+        }
         if case .mediaProps(let props, let expecting) = command.kind {
             return try prepareMediaProps(command, props: props, expecting: expecting)
         }
         if case .insertInlineObject(let object, let range) = command.kind {
             return try prepareInsertInlineObject(command, object, replacing: range)
+        }
+        if case .insertInlineMath(let range, let source, let trailingSpace) = command.kind {
+            return try prepareInsertInlineMath(command, replacing: range, source: source, trailingSpace: trailingSpace)
         }
         if case .pasteInline(let payload, let range) = command.kind {
             return try preparePasteInline(command, payload: payload, range: range)
@@ -628,8 +651,8 @@ final class DocumentEngine {
             throw DocumentEngineError.unsupportedNativeInput  // prepared above
         case .undo, .redo:
             throw DocumentEngineError.unsupportedNativeInput  // `applyHistoryStep`
-        case .lineBreak, .table, .columns, .insertColumns, .insertMedia, .mediaProps, .insertInlineObject,
-            .pasteInline:
+        case .lineBreak, .table, .columns, .insertColumns, .insertMedia, .insertSourceBlock, .mediaProps,
+            .insertInlineObject, .insertInlineMath, .pasteInline:
             throw DocumentEngineError.unsupportedNativeInput  // cells, tables, groups, media and inline atoms, prepared above
         }
         return (write, caret)
@@ -671,6 +694,8 @@ final class DocumentEngine {
             )
         case .insertInlineObject(let object, let range):
             return try prepareInsertInlineObject(command, object, replacing: range)
+        case .insertInlineMath(let range, let source, let trailingSpace):
+            return try prepareInsertInlineMath(command, replacing: range, source: source, trailingSpace: trailingSpace)
         case .pasteInline(let payload, let range):
             return try preparePasteInline(command, payload: payload, range: range)
         default:
@@ -702,6 +727,34 @@ final class DocumentEngine {
         )
     }
 
+    private func prepareInsertInlineMath(
+        _ command: NativeEditCommand, replacing range: Range<Int>, source: String, trailingSpace: Bool
+    ) throws -> PreparedCommand {
+        guard builder.index.isCanonical, let entry = builder.index.entries[command.blockID],
+            !source.unicodeScalars.contains(where: { $0.value == 0xfffc || CharacterSet.newlines.contains($0) })
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let units: [UInt16]
+        if isCellText(entry) {
+            guard entry.isProjectable else { throw DocumentEngineError.unsupportedNativeInput }
+            units = textUnits(entry)
+        } else {
+            units = try structuralTarget(command.blockID).units
+        }
+        guard range.lowerBound <= range.upperBound,
+            Self.isBoundary(range.lowerBound, in: units),
+            Self.isBoundary(range.upperBound, in: units)
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let target = try textTarget(entry)
+        let caretOffset = range.lowerBound + 1 + (trailingSpace ? 1 : 0)
+        return (
+            write: {
+                try self.writer.insertInlineMath(
+                    in: target, replacing: range, source: source, trailingSpace: trailingSpace)
+            },
+            caret: { EditorPosition(blockID: command.blockID, offset: caretOffset, assoc: -1) }
+        )
+    }
+
     private func preparePasteInline(
         _ command: NativeEditCommand, payload: Data, range: NativeRangeCommand
     ) throws -> PreparedCommand {
@@ -713,7 +766,10 @@ final class DocumentEngine {
         } catch {
             throw DocumentEngineError.unsupportedNativeInput
         }
-        let totalUTF16 = lines.reduce(0) { $0 + Self.utf16Count(of: $1) }
+        let totalUTF16 = lines.reduce(0) { sum, line in
+            let lineCount = Self.payloadUTF16Count(of: line)
+            return sum > NativeClipboard.maxPasteUTF16 ? sum : sum + lineCount
+        }
         guard totalUTF16 <= NativeClipboard.maxPasteUTF16, lines.count <= NativeClipboard.maxPasteLines else {
             throw DocumentEngineError.payloadTooLarge
         }
@@ -834,6 +890,27 @@ final class DocumentEngine {
         return total
     }
 
+    /// Recursive payload UTF-16 budget including inline `<math>` child text,
+    /// matching `BlockNoteTableCommands.textSize`.
+    private static func payloadUTF16Count(of copies: [BlockNoteWriter.Copy]) -> Int {
+        var total = 0
+        for copy in copies {
+            switch copy {
+            case .text(let values):
+                for value in values {
+                    switch value {
+                    case .run(let run): total += run.text.utf16.count
+                    case .embed: total += 1
+                    }
+                }
+            case .element(_, _, let children):
+                total += 1 + payloadUTF16Count(of: children)
+            }
+            if total > NativeClipboard.maxPasteUTF16 { return total }
+        }
+        return total
+    }
+
     /// A table structure command (PR11b) on a familiar table block, prepared
     /// whole (every refusal before arming) and written in one transaction.
     private func prepareTableCommand(_ command: NativeEditCommand, _ table: BlockNoteTableCommand) throws
@@ -920,6 +997,11 @@ final class DocumentEngine {
     /// An open table's paragraph (PR11a): a text target with no block schema.
     private func isCellText(_ entry: BlockIndex.Entry) -> Bool {
         builder.index.isTableParagraph(entry.id) && entry.element?.typeRef == .xmlElement(nodeName: "tableParagraph")
+    }
+
+    /// An open source surface (PR14): `mathBlock`, `diagram`, or inline `math`.
+    private func isSourceText(_ entry: BlockIndex.Entry) -> Bool {
+        builder.index.isSourceText(entry.id)
     }
 
     /// The writer's target for a text entry: a block, or an open table's paragraph.
@@ -1009,6 +1091,34 @@ final class DocumentEngine {
             return nil
         }
         return ColumnGroup.read(entry.container, id: blockID)
+    }
+
+    // MARK: - Open source surfaces (PR14)
+
+    /// Opens `mathBlock`, `diagram`, or inline `math` as a scoped source text target.
+    /// Returns its synthetic id (`"\(ownerID)\u{2}\(client).\(clock)"`), or nil
+    /// when missing or unfamiliar.
+    @discardableResult
+    func openSource(_ target: SourceTarget) -> String? {
+        guard !isDetached, builder.index.isCanonical else { return nil }
+        return builder.openSource(target)
+    }
+
+    func closeSource(_ id: String) {
+        builder.closeSource(id)
+    }
+
+    func sourceSnapshot(_ id: String) -> [BlockSnapshot]? {
+        builder.sourceSnapshot(id)
+    }
+
+    func inlineMathTarget(blockID: String, utf16Offset: Int) -> SourceTarget? {
+        guard !isDetached else { return nil }
+        return builder.inlineMathTarget(blockID: blockID, utf16Offset: utf16Offset)
+    }
+
+    func sourceKind(_ id: String) -> NativeSourceKind? {
+        builder.sourceKind(id)
     }
 
     // MARK: - Column group structure (PR12b)
@@ -1244,6 +1354,38 @@ final class DocumentEngine {
                     } ?? media
                 return EditorPosition(blockID: next, offset: self.textLength(next), assoc: -1)
             }
+        )
+    }
+
+    private func prepareInsertSourceBlock(
+        _ command: NativeEditCommand, node: String, newID: String, removing: Range<Int>
+    ) throws -> PreparedCommand {
+        let index = builder.index
+        let (paragraph, units) = try structuralTarget(command.blockID)
+        guard paragraph == "paragraph", SourceBlock.isSource(node),
+            !newID.isEmpty, !newID.unicodeScalars.contains("\u{1}"), !newID.unicodeScalars.contains("\u{2}"),
+            let entry = index.entries[command.blockID],
+            removing.lowerBound <= removing.upperBound,
+            Self.isBoundary(removing.lowerBound, in: units),
+            Self.isBoundary(removing.upperBound, in: units),
+            isUnused(newID, in: usedIDs())
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let replacing = units.count == removing.count
+        let item = entry.containerItem
+        let group = entry.group
+        let insertedID = replacing ? command.blockID : newID
+        return (
+            write: {
+                try self.writer.transaction { _ in
+                    if !removing.isEmpty, !replacing {
+                        try self.writer.replaceText(
+                            in: try self.writer.indexedTarget(item, id: command.blockID), range: removing, with: "")
+                    }
+                    try self.writer.insertSourceBlock(
+                        node, at: item, in: group, replacing: replacing, blockID: insertedID)
+                }
+            },
+            caret: { EditorPosition(blockID: insertedID, offset: 0, assoc: -1) }
         )
     }
 
@@ -1807,9 +1949,46 @@ final class DocumentEngine {
     @discardableResult
     func replaceText(block: String, range: Range<Int>, with text: String, marks: [TextMark]? = nil) throws -> Data {
         try requireEditableBlock(block)
+        guard builder.index.isCanonical, let entry = builder.index.entries[block] else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        if isSourceText(entry) {
+            guard let element = entry.element, case .xmlElement(let node)? = element.typeRef else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            try validateSourceReplacement(entry, node: node, range: range, with: text, marks: marks)
+            return try writer.replaceSourceText(
+                in: element, range: range, with: text,
+                block: SourceTarget.ownerID(of: entry.id) ?? entry.id)
+        }
         return try writer.replaceText(
-            block: block, range: range, with: text,
+            in: try textTarget(entry), range: range, with: text,
             marks: marks.map { YTextAttributes($0.map { ($0.key, $0.valueJSON) }) })
+    }
+
+    private func validateSourceReplacement(
+        _ entry: BlockIndex.Entry, node: String, range: Range<Int>, with text: String, marks: [TextMark]? = nil
+    ) throws {
+        guard SourceBlock.isValidReplacement(text, node: node), marks?.isEmpty != false else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        let units = textUnits(entry)
+        guard Self.validSurrogateBoundaries(units, range: range) else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        let resultingLength = units.count - range.count + text.utf16.count
+        guard resultingLength <= SourceBlock.maxEditableUTF16(for: node) else {
+            throw DocumentEngineError.payloadTooLarge
+        }
+    }
+
+    private static func validSurrogateBoundaries(_ units: [UInt16], range: Range<Int>) -> Bool {
+        func validBoundary(_ offset: Int) -> Bool {
+            guard offset >= 0, offset <= units.count else { return false }
+            return offset == 0 || offset == units.count
+                || !(0xd800...0xdbff).contains(units[offset - 1]) || !(0xdc00...0xdfff).contains(units[offset])
+        }
+        return validBoundary(range.lowerBound) && validBoundary(range.upperBound)
     }
 
     /// Applies marks over a block-relative range. A `"null"` value removes the
@@ -1971,6 +2150,11 @@ final class DocumentEngine {
             return .text(EditorPosition(blockID: blockID, offset: min(index, length), assoc: absolute.assoc))
         }
         if entry.isProjectable, entry.isSimpleContainer, let element = entry.element,
+            builder.index.isSourceText(blockID) || isCellText(entry)
+                || (element.typeRef.flatMap({
+                    if case .xmlElement(let name) = $0 { return NativeBlockPreview.proseNodes.contains(name) }
+                    return false
+                }) == true),
             entry.textType != nil || entry.hasInlineObjects || isCellText(entry) || element.length == 0
         {
             if absolute.type === element {
@@ -2026,9 +2210,10 @@ final class DocumentEngine {
     private func beginComposition(blockID: String, range: Range<Int>, assoc: Int) throws {
         let captured = try RelativeEditorRange(blockID: blockID, range: range, assoc: assoc, index: builder.index)
         // Selection can address any projectable single text; composing also
-        // requires a block the writer supports.
+        // requires a block or scoped source the writer supports.
         guard let entry = builder.index.entries[blockID], let element = entry.element,
-            case .xmlElement(let node)? = element.typeRef, writer.schemas[node] != nil || isCellText(entry)
+            case .xmlElement(let node)? = element.typeRef,
+            writer.schemas[node] != nil || isCellText(entry) || isSourceText(entry)
         else { throw DocumentEngineError.invalidPosition }
         composition = CompositionQueue(range: captured)
         compositionGeneration &+= 1
@@ -2086,8 +2271,15 @@ final class DocumentEngine {
         let update: Data
         do {
             update = try writer.transaction { _ in
-                // A cell paragraph has no block to find; a block keeps the writer's own lookup.
-                if let entry = builder.index.entries[blockID], isCellText(entry) {
+                // A cell paragraph or source surface uses its own element lookup; a block keeps the writer's own lookup.
+                if let entry = builder.index.entries[blockID], isSourceText(entry), let element = entry.element,
+                    case .xmlElement(let node)? = element.typeRef
+                {
+                    try validateSourceReplacement(entry, node: node, range: range, with: text)
+                    try writer.replaceSourceText(
+                        in: element, range: range, with: text,
+                        block: SourceTarget.ownerID(of: blockID) ?? blockID)
+                } else if let entry = builder.index.entries[blockID], isCellText(entry) {
                     try writer.replaceText(in: try textTarget(entry), range: range, with: text)
                 } else {
                     try writer.replaceText(block: blockID, range: range, with: text)

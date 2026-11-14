@@ -516,9 +516,9 @@ final class BlockNoteMediaOracleTests: XCTestCase {
     }
 
     /// The real test document (`.review/state.bin`, git-ignored) when present:
-    /// its media (image in a column, video, audio, file, pdf) are modeled now,
-    /// but its interlink, inline math, math block and diagram keep it
-    /// read-only (13c, PR14), its media preserved.
+    /// its media (image in a column, video, audio, file, pdf), interlink, inline
+    /// math, math block, and diagram are all modeled (its media preserved), and
+    /// `markdownShadow` succeeds once `interlinkingOrigin` is supplied.
     func testTheRealCaptureMediaAreModeledAndTheDocumentStaysReadOnly() throws {
         let review = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".review")
@@ -534,7 +534,9 @@ final class BlockNoteMediaOracleTests: XCTestCase {
             XCTAssertEqual(block.block.fidelity, .modeled, node)
         }
         XCTAssertEqual(native.blocks.first { $0.block.node == "columnList" }?.block.fidelity, .modeled)
+        XCTAssertTrue(native.isFullyRenderable)
         XCTAssertFalse(native.isFullyModeled)
         XCTAssertNil(NativeBlockProjection.markdownShadow(doc))
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: "https://docs.example"))
     }
 }

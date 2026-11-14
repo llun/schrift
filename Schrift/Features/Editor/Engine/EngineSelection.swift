@@ -35,13 +35,25 @@ struct RelativeEditorPosition {
             entry.isProjectable, position.offset >= 0
         else { throw DocumentEngineError.invalidPosition }
         blockID = position.blockID
-        let units = entry.runs.flatMap { Array($0.text.utf16) }
-        if position.offset > 0, position.offset < units.count,
+        let isClosedSource =
+            !index.isSourceText(position.blockID)
+            && entry.element.flatMap {
+                if case .xmlElement(let node)? = $0.typeRef { return SourceBlock.isSource(node) }
+                return false
+            } == true
+        let units = isClosedSource ? [] : entry.runs.flatMap { Array($0.text.utf16) }
+        if !isClosedSource, position.offset > 0, position.offset < units.count,
             UTF16.isLeadSurrogate(units[position.offset - 1]), UTF16.isTrailSurrogate(units[position.offset])
         {
             throw DocumentEngineError.invalidPosition
         }
-        if let text = entry.textType {
+        if isClosedSource {
+            guard position.offset <= 1, entry.isSimpleContainer, let element = entry.element else {
+                throw DocumentEngineError.invalidPosition
+            }
+            relative = try YRelativePosition.fromTypeIndex(element, index: 0, assoc: position.assoc)
+            anchor = .element
+        } else if let text = entry.textType {
             guard UInt(position.offset) <= text.length else { throw DocumentEngineError.invalidPosition }
             relative = try YRelativePosition.fromTypeIndex(text, index: UInt(position.offset), assoc: position.assoc)
             anchor = .text
@@ -74,6 +86,7 @@ struct RelativeEditorPosition {
             guard position.offset == 0, entry.isSimpleContainer, let element = entry.element,
                 element.length == 0, case .xmlElement(let node)? = element.typeRef,
                 BlockNoteWriter.nativePropSchemas[node] != nil || node == "tableParagraph"
+                    || index.isSourceText(position.blockID)
             else { throw DocumentEngineError.invalidPosition }
             relative = try YRelativePosition.fromTypeIndex(element, index: 0, assoc: position.assoc)
             anchor = .element
@@ -97,16 +110,43 @@ struct RelativeEditorPosition {
     /// Identity is essential: a type change, a new container under the same id,
     /// or a block becoming opaque must not retarget an old caret or composition.
     func resolve(in doc: YDoc, index: BlockIndex) -> EditorPosition? {
-        guard index.isCanonical, let entry = index.entries[blockID], entry.isProjectable,
-            let absolute = try? relative.resolve(in: doc), !entry.containerItem.deleted
+        guard index.isCanonical, let absolute = try? relative.resolve(in: doc),
+            !(absolute.type.item?.deleted ?? true)
         else { return nil }
+        guard let entry = index.entries[blockID] else {
+            guard SourceTarget.isSourceID(blockID), let ownerID = index.blockID(for: absolute.type),
+                let ownerEntry = index.entries[ownerID], ownerEntry.isProjectable, !ownerEntry.containerItem.deleted
+            else { return nil }
+            if let element = ownerEntry.element, case .xmlElement(let node)? = element.typeRef,
+                SourceBlock.isSource(node)
+            {
+                return EditorPosition(blockID: ownerID, offset: 0, assoc: absolute.assoc)
+            }
+            if let ownerElement = ownerEntry.element {
+                var current: YType? = absolute.type
+                while let candidate = current, candidate.item?.parentType !== ownerElement {
+                    current = candidate.item?.parentType
+                }
+                if let inlineType = current,
+                    let part = Self.parts(of: ownerElement).first(where: { $0.type === inlineType })
+                {
+                    return EditorPosition(blockID: ownerID, offset: part.start, assoc: absolute.assoc)
+                }
+            }
+            return nil
+        }
+        guard entry.isProjectable, !entry.containerItem.deleted else { return nil }
         let offset: Int
         switch anchor {
         case .element:
             guard let element = entry.element, absolute.type === element, !(element.item?.deleted ?? true) else {
                 return nil
             }
-            if let text = entry.textType, !(text.item?.deleted ?? true), let length = Int(exactly: text.length) {
+            if !index.isSourceText(blockID), case .xmlElement(let node)? = element.typeRef,
+                SourceBlock.isSource(node)
+            {
+                offset = 0
+            } else if let text = entry.textType, !(text.item?.deleted ?? true), let length = Int(exactly: text.length) {
                 offset = absolute.assoc < 0 ? 0 : length
             } else {
                 guard element.length == 0 else { return nil }

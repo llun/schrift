@@ -16,6 +16,13 @@ enum SlashMenuAction: Equatable, Sendable {
     /// `pdf`): native editor only (PR13a, BlockNote's media items); its
     /// inspector then uploads or links the file.
     case media(String)
+    /// A source block (`mathBlock` or `diagram`): native editor only (PR14).
+    /// `mathBlock` starts empty and opens the source editor; `diagram` seeds
+    /// `SourceBlock.defaultDiagramSource`.
+    case source(String)
+    /// An inline `<math>` chip followed by a trailing space: native editor only
+    /// (PR14), opening the source editor immediately.
+    case inlineMath
 
     /// True for the actions that must reach the server **now** — the only items withheld
     /// offline or on a document that has no server id yet.
@@ -29,7 +36,7 @@ enum SlashMenuAction: Equatable, Sendable {
     var requiresImmediateUpload: Bool {
         switch self {
         case .insertAttachment: return true
-        case .insertPhoto, .convert, .toggle, .columns, .media: return false
+        case .insertPhoto, .convert, .toggle, .columns, .media, .source, .inlineMath: return false
         }
     }
 }
@@ -129,6 +136,18 @@ let mediaSlashItems: [SlashMenuItem] = [
     SlashMenuItem(
         id: "mediaPDF", title: "PDF", titleKey: .editor_slash_pdf, icon: .description, action: .media("pdf"),
         keywords: ["pdf", "document", "embed", "file"]),
+]
+/// BlockNote 0.56's math and diagram items (PR14, native editor only).
+let sourceSlashItems: [SlashMenuItem] = [
+    SlashMenuItem(
+        id: "mathBlock", title: "Math block", titleKey: .editor_slash_math_block, icon: .data_object,
+        action: .source(SourceBlock.mathBlock), keywords: ["math", "latex", "formula", "equation", "katex"]),
+    SlashMenuItem(
+        id: "inlineMath", title: "Inline math", titleKey: .editor_slash_inline_math, icon: .data_object,
+        action: .inlineMath, keywords: ["math", "latex", "formula", "equation", "inline", "katex"]),
+    SlashMenuItem(
+        id: "diagram", title: "Diagram", titleKey: .editor_slash_diagram, icon: .account_tree,
+        action: .source(SourceBlock.diagram), keywords: ["mermaid", "diagram", "flowchart", "chart", "graph"]),
 ]
 let toggleHeadingSlashItem = SlashMenuItem(
     id: "toggleHeading", title: "Toggle heading", titleKey: .editor_slash_toggle_heading, icon: .expand_more,

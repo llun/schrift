@@ -25,6 +25,7 @@ enum NativeClipboard {
         guard
             blocks[start.position...end.position].allSatisfy({
                 $0.depth >= depth && $0.node != "tableParagraph" && !TableGrid.isParagraphID($0.id)
+                    && !SourceTarget.isSourceID($0.id)
             })
         else { return nil }
         var next = end.position + 1
@@ -137,6 +138,8 @@ enum NativeClipboard {
             return inline.visibleText
         case .mentionSearch:
             return ""
+        case .math(let source):
+            return strippingObjectReplacementCharacters(source)
         case .interlink(let docID, _, _, let disabled, _):
             guard !disabled else { return "" }
             let origin = NativeInlineObject.trimmingTrailingSlashes(serverOrigin)

@@ -304,6 +304,9 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_slash_divider = "editor.slash.divider"  // "Divider"
     case editor_slash_photo = "editor.slash.photo"  // "Photo"
     case editor_slash_file = "editor.slash.file"  // "File"
+    case editor_slash_math_block = "editor.slash.math_block"  // "Math block"
+    case editor_slash_inline_math = "editor.slash.inline_math"  // "Inline math"
+    case editor_slash_diagram = "editor.slash.diagram"  // "Diagram"
 
     // Editor - `[[` page-link picker (see PageLinkPicker.swift)
     case editor_page_link_title = "editor.page_link.title"  // "Link a page"
@@ -464,6 +467,11 @@ enum L10nKey: String, CaseIterable, Sendable {
     case native_editor_column_move_right = "native.editor.column_move_right"
     case native_editor_math = "native.editor.math"
     case native_editor_diagram = "native.editor.diagram"
+    case native_editor_math_source = "native.editor.math_source"  // "Math source"
+    case native_editor_diagram_source = "native.editor.diagram_source"  // "Diagram source"
+    case native_editor_source_empty = "native.editor.source_empty"  // "Empty source"
+    case native_editor_open_math_source = "native.editor.open_math_source"  // "Open math source"
+    case native_editor_source_gone = "native.editor.source_gone"  // "This source is no longer in the document."
     case native_editor_chip_page = "native.editor.chip_page"  // "Page"
     case native_editor_chip_mention = "native.editor.chip_mention"  // "Mention"
     case native_editor_chip_untitled = "native.editor.chip_untitled"  // "Untitled page"

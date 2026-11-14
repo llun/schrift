@@ -132,6 +132,12 @@ final class NativeInlineObjectTests: NativeEditingTestCase {
                 case .mentionSearch(let disabled, let trigger):
                     try YWrite.mapSet(tx, on: el, key: "disabled", .any([.bool(disabled)]))
                     if let trigger { try YWrite.mapSet(tx, on: el, key: "trigger", .any([.string(trigger)])) }
+                case .math(let source):
+                    if !source.isEmpty {
+                        let text = YType(typeRef: .xmlText)
+                        _ = try YWrite.insertAfter(tx, into: el, after: nil, [.type(text)])
+                        try text.insert(0, source, [:])
+                    }
                 }
             }
         }
@@ -1751,5 +1757,31 @@ final class NativeInlineObjectTests: NativeEditingTestCase {
         XCTAssertLessThanOrEqual(
             chips[0].content.size.width, maxContentWidth + 0.5,
             "inactive cell chip must clamp to column width (\(maxContentWidth)pt), not 320pt fallback")
+    }
+
+    func testS1AccessibilityValueCapsAtTenThousandUTF16WithEllipsis() async throws {
+        // 1. Long plain text (> 10_000 UTF-16) truncates at 10_000 + "…".
+        let longText = String(repeating: "a", count: 10_000 + 5_000)
+        let plainHarness = try await makeHarness([paragraph("p-long", longText)])
+        addTeardownBlock { await plainHarness.close() }
+        host(plainHarness.view)
+        let plainValue = try XCTUnwrap(plainHarness.view.accessibilityValue)
+        XCTAssertEqual(plainValue.utf16.count, 10_000 + 1)
+        XCTAssertTrue(plainValue.hasSuffix("…"))
+
+        // 2. Long run of repeated inline chips caps safely without iterating unboundedly.
+        let chipCount = 4_000
+        let manyChipsState = try makeYDocState { tx, group in
+            var after: YItem?
+            try insertContainer(
+                tx, into: group, after: &after, id: "p-chips", node: "paragraph",
+                children: Array(repeating: .inline(.math(source: "x^2")), count: chipCount))
+        }
+        let chipHarness = try await makeHarness(state: manyChipsState)
+        addTeardownBlock { await chipHarness.close() }
+        host(chipHarness.view)
+        let chipValue = try XCTUnwrap(chipHarness.view.accessibilityValue)
+        XCTAssertLessThanOrEqual(chipValue.utf16.count, 10_000 + 1)
+        XCTAssertTrue(chipValue.hasSuffix("…"))
     }
 }

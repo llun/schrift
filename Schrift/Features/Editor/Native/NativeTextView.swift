@@ -118,10 +118,13 @@ final class NativeTextView: UITextView {
     /// UIKit's own Tab (a tab character) and focus movement.
     override var keyCommands: [UIKeyCommand]? {
         guard inputCoordinator != nil, isEditable else { return super.keyCommands }
-        var commands = [
-            UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(nativeIndent)),
-            UIKeyCommand(input: "\t", modifierFlags: .shift, action: #selector(nativeOutdent)),
-        ]
+        var commands: [UIKeyCommand] = []
+        if inputCoordinator?.sourceKind == nil {
+            commands.append(contentsOf: [
+                UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(nativeIndent)),
+                UIKeyCommand(input: "\t", modifierFlags: .shift, action: #selector(nativeOutdent)),
+            ])
+        }
         // A table cell (PR11a): Escape returns to the document.
         if inputCoordinator?.tableMove != nil {
             commands.append(
@@ -131,10 +134,14 @@ final class NativeTextView: UITextView {
             // ⌘Return: Done (PR11c).
             commands.append(UIKeyCommand(input: "\r", modifierFlags: .command, action: #selector(nativeDone)))
         }
-        // A column (PR12a): Escape returns to the document.
+        // A column (PR12a) or focused source editor (PR14): Escape returns.
         if inputCoordinator?.tableMove == nil, inputCoordinator?.onExit != nil {
             commands.append(
                 UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(nativeEscape)))
+        }
+        // Focused source editor (PR14): ⌘Return closes as Done.
+        if inputCoordinator?.tableMove == nil, inputCoordinator?.onDone != nil {
+            commands.append(UIKeyCommand(input: "\r", modifierFlags: .command, action: #selector(nativeDone)))
         }
         for command in commands { command.wantsPriorityOverSystemBehavior = true }
         return (super.keyCommands ?? []) + commands
@@ -152,7 +159,7 @@ final class NativeTextView: UITextView {
 
     @objc private func nativeDone() {
         guard markedTextRange == nil else { return }
-        _ = inputCoordinator?.tableMove?(.done)
+        if inputCoordinator?.tableMove?(.done) == nil { inputCoordinator?.onDone?() }
     }
 
     /// A table cell's hardware arrows (PR11c) go to the table editor first:
@@ -292,22 +299,58 @@ final class NativeTextView: UITextView {
     /// delegate that draws block chrome (PR05b).
     private(set) var blockControls: NativeBlockControls!
 
+    static let maxAccessibilityValueUTF16 = 10_000
+
     /// VoiceOver reads the text without a folded toggle's children, which
     /// layout also leaves out (PR06b). With nothing folded, the whole text.
     /// A preview block reads as its label ("Image: alt", "Table, 3 by 4"),
-    /// not as an object replacement character (PR06e).
+    /// not as an object replacement character (PR06e), bounded to avoid
+    /// multi-megabyte main-thread copies (PR14).
     override var accessibilityValue: String? {
         get {
             var visible = ""
+            var count = 0
+            var truncated = false
+            func appendText(_ chunk: String) -> Bool {
+                let remaining = Self.maxAccessibilityValueUTF16 - count
+                guard remaining > 0 else {
+                    truncated = true
+                    return false
+                }
+                if chunk.utf16.count <= remaining {
+                    visible += chunk
+                    count += chunk.utf16.count
+                    return true
+                }
+                for character in chunk {
+                    let units = character.utf16.count
+                    if count + units > Self.maxAccessibilityValueUTF16 { break }
+                    visible.append(character)
+                    count += units
+                }
+                truncated = true
+                return false
+            }
             func append(_ range: NSRange) {
-                guard range.length > 0 else { return }
-                textStorage.enumerateAttribute(.attachment, in: range) { value, run, _ in
+                guard range.length > 0, !truncated else { return }
+                textStorage.enumerateAttribute(.attachment, in: range) { value, run, stop in
+                    let chunk: String
                     if let attachment = value as? NativeBlockAttachment {
-                        visible += attachment.content.label
+                        chunk = attachment.content.label
                     } else if let chip = value as? NativeInlineChipAttachment {
-                        visible += Array(repeating: chip.content.accessibilityLabel, count: run.length).joined()
+                        let unit = chip.content.accessibilityLabel
+                        let repeatCount = min(
+                            run.length, max(1, (Self.maxAccessibilityValueUTF16 - count) / max(1, unit.utf16.count) + 1)
+                        )
+                        chunk = Array(repeating: unit, count: repeatCount).joined()
                     } else {
-                        visible += (textStorage.string as NSString).substring(with: run)
+                        let sliceLength = min(run.length, Self.maxAccessibilityValueUTF16 - count + 1)
+                        let subrange = (textStorage.string as NSString).rangeOfComposedCharacterSequences(
+                            for: NSRange(location: run.location, length: min(run.length, sliceLength)))
+                        chunk = (textStorage.string as NSString).substring(with: subrange)
+                    }
+                    if !appendText(chunk) {
+                        stop.pointee = true
                     }
                 }
             }
@@ -315,8 +358,10 @@ final class NativeTextView: UITextView {
             for range in blockControls?.surface?.hiddenRanges ?? [] {
                 append(NSRange(location: location, length: range.location - location))
                 location = NSMaxRange(range)
+                if truncated { break }
             }
             append(NSRange(location: location, length: textStorage.length - location))
+            if truncated { visible += "…" }
             return visible
         }
         set { super.accessibilityValue = newValue }
@@ -414,14 +459,42 @@ final class NativeTextView: UITextView {
         return (uuid, blockID ?? "")
     }
 
+    private func tappableInlineMath(at point: CGPoint) -> (blockID: String, offsetInBlock: Int)? {
+        guard let hit = inlineObjectHit(at: point), case .math = hit.object else { return nil }
+        return blockPosition(atUTF16: hit.offset)
+    }
+
+    private func blockPosition(atUTF16 utf16Offset: Int) -> (blockID: String, offsetInBlock: Int)? {
+        if let surface = blockControls?.surface,
+            let pos = surface.rangeIndex.textPosition(atUTF16: utf16Offset),
+            surface.blocks.indices.contains(pos.position)
+        {
+            return (surface.blocks[pos.position].id, pos.offset)
+        }
+        guard utf16Offset >= 0, utf16Offset < textStorage.length,
+            let blockID = textStorage.attribute(.nativeBlockID, at: utf16Offset, effectiveRange: nil) as? String
+        else { return nil }
+        var blockStart = utf16Offset
+        while blockStart > 0,
+            (textStorage.attribute(.nativeBlockID, at: blockStart - 1, effectiveRange: nil) as? String) == blockID
+        {
+            blockStart -= 1
+        }
+        return (blockID, utf16Offset - blockStart)
+    }
+
     func chipTapShouldBegin(at point: CGPoint) -> Bool {
-        guard blockControls?.onOpenDocument != nil,
-            !isDragging, !isDecelerating,
+        guard !isDragging, !isDecelerating,
             markedTextRange == nil,
-            !hasActiveDragOrLongPress,
-            navigableInterlink(at: point) != nil
+            !hasActiveDragOrLongPress
         else { return false }
-        return true
+        if blockControls?.onOpenDocument != nil, navigableInterlink(at: point) != nil {
+            return true
+        }
+        if blockControls?.onOpenSource != nil, tappableInlineMath(at: point) != nil {
+            return true
+        }
+        return false
     }
 
     private var hasActiveDragOrLongPress: Bool {
@@ -447,36 +520,48 @@ final class NativeTextView: UITextView {
     }
 
     /// Handles a tap at `point` (in this text view's coordinates), invoking
-    /// `blockControls.onOpenDocument` for a resolved interlink chip.
+    /// `blockControls.onOpenDocument` for a resolved interlink chip or
+    /// `blockControls.onOpenSource` for an inline `.math` chip.
     @discardableResult
     func handleChipTap(at point: CGPoint) -> Bool {
-        guard chipTapShouldBegin(at: point),
-            let target = navigableInterlink(at: point),
-            let onOpenDocument = blockControls?.onOpenDocument
-        else { return false }
-        onOpenDocument(target.uuid, target.blockID)
-        return true
+        guard chipTapShouldBegin(at: point) else { return false }
+        if let target = navigableInterlink(at: point), let onOpenDocument = blockControls?.onOpenDocument {
+            onOpenDocument(target.uuid, target.blockID)
+            return true
+        }
+        if let target = tappableInlineMath(at: point), let onOpenSource = blockControls?.onOpenSource {
+            onOpenSource(.inlineMath(blockID: target.blockID, utf16Offset: target.offsetInBlock))
+            return true
+        }
+        return false
     }
 
     private func inlineChipAccessibilityActions() -> [UIAccessibilityCustomAction] {
-        guard let onOpenDocument = blockControls?.onOpenDocument,
-            let target = selectedNavigableInterlink()
-        else { return [] }
-        let name = blockControls?.labels.openLink ?? NativeEditorLabels().openLink
-        return [
-            UIAccessibilityCustomAction(name: name) { _ in
-                onOpenDocument(target.uuid, target.blockID)
-                return true
-            }
-        ]
+        var actions: [UIAccessibilityCustomAction] = []
+        if let onOpenDocument = blockControls?.onOpenDocument, let target = selectedNavigableInterlink() {
+            let name = blockControls?.labels.openLink ?? NativeEditorLabels().openLink
+            actions.append(
+                UIAccessibilityCustomAction(name: name) { _ in
+                    onOpenDocument(target.uuid, target.blockID)
+                    return true
+                })
+        }
+        if let onOpenSource = blockControls?.onOpenSource, let target = selectedInlineMath() {
+            let name = blockControls?.labels.openMathSource ?? NativeEditorLabels().openMathSource
+            actions.append(
+                UIAccessibilityCustomAction(name: name) { _ in
+                    onOpenSource(.inlineMath(blockID: target.blockID, utf16Offset: target.offsetInBlock))
+                    return true
+                })
+        }
+        return actions
     }
 
-    private func selectedNavigableInterlink() -> (uuid: UUID, blockID: String)? {
+    private func candidateInlineChipOffsets() -> [Int] {
         let length = textStorage.length
-        guard length > 0 else { return nil }
+        guard length > 0 else { return [] }
         let range = selectedRange
-        guard range.location != NSNotFound else { return nil }
-
+        guard range.location != NSNotFound else { return [] }
         var candidateOffsets: [Int] = []
         if range.length > 0 {
             let start = max(0, min(range.location, length))
@@ -489,8 +574,11 @@ final class NativeTextView: UITextView {
             if loc < length { candidateOffsets.append(loc) }
             if loc > 0 { candidateOffsets.append(loc - 1) }
         }
+        return candidateOffsets
+    }
 
-        for offset in candidateOffsets {
+    private func selectedNavigableInterlink() -> (uuid: UUID, blockID: String)? {
+        for offset in candidateInlineChipOffsets() {
             guard blockControls?.surface?.isHidden(atUTF16: offset) != true,
                 let inline = textStorage.attribute(.nativeInlineObject, at: offset, effectiveRange: nil)
                     as? NativeInlineObject,
@@ -499,6 +587,19 @@ final class NativeTextView: UITextView {
                 let uuid = UUID(uuidString: docID)
             else { continue }
             return (uuid, blockID ?? "")
+        }
+        return nil
+    }
+
+    private func selectedInlineMath() -> (blockID: String, offsetInBlock: Int)? {
+        for offset in candidateInlineChipOffsets() {
+            guard blockControls?.surface?.isHidden(atUTF16: offset) != true,
+                let inline = textStorage.attribute(.nativeInlineObject, at: offset, effectiveRange: nil)
+                    as? NativeInlineObject,
+                case .math = inline,
+                let target = blockPosition(atUTF16: offset)
+            else { continue }
+            return target
         }
         return nil
     }

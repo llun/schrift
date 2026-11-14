@@ -53,6 +53,9 @@ struct NativeEditorView: View {
     @State private var pendingColumnJump: ColumnJump?
     /// The media block whose inspector is open, and the document's uploads (PR13a).
     @State private var openMedia: NativeMediaRequest?
+    /// The focused source block or inline `<math>` editor currently open (PR14).
+    @State private var openSource: NativeSourceRequest?
+    @State private var lastSource: NativeSourceRequest?
     @State private var uploads: NativeMediaUploads?
     @State private var linkCoordinator = NativeDocumentLinkCoordinator()
 
@@ -74,6 +77,7 @@ struct NativeEditorView: View {
                     onOpenTable: { openTable = NativeTableRequest(id: $0) },
                     onOpenColumns: { openColumns = columnEditor($0) },
                     onOpenMedia: { openMedia = NativeMediaRequest(id: $0) },
+                    onOpenSource: { openSource = $0 },
                     uploadingBlocks: uploads?.uploadingBlocks ?? [], waitingUploads: uploads?.waitingBlocks ?? [],
                     failedUploads: uploads?.failedBlocks ?? [],
                     documentTitle: documentTitle,
@@ -169,11 +173,36 @@ struct NativeEditorView: View {
                 session: session, blockID: request.id, uploads: uploads, serverOrigin: serverOrigin,
                 isOffline: isOffline, onClose: { openMedia = nil })
         }
+        .sheet(
+            item: $openSource,
+            onDismiss: { [session] in
+                if linkCoordinator.pendingDocument == nil, let request = lastSource {
+                    session.input?.focus(after: request)
+                }
+                lastSource = nil
+                flushPendingLinkedDocument()
+            }
+        ) { request in
+            NativeSourceEditorScreen(
+                document: session, request: request, labels: .document(loc),
+                doneTitle: loc[.editor_action_done], goneTitle: loc[.native_editor_source_gone],
+                contentSize: uiContentSizeCategory(for: dynamicTypeSize),
+                onClose: {
+                    lastSource = request
+                    openSource = nil
+                })
+        }
         .onChange(of: session.input?.requestedMedia) { _, id in
             // The slash menu's new media block: its inspector uploads or links the file.
             guard let id else { return }
             session.input?.requestedMedia = nil
             openMedia = NativeMediaRequest(id: id)
+        }
+        .onChange(of: session.input?.requestedSource) { _, request in
+            // The slash menu's new `mathBlock` or inline `<math>` chip opens immediately.
+            guard let request else { return }
+            session.input?.requestedSource = nil
+            openSource = request
         }
         .task(id: ObjectIdentifier(session)) {
             // One uploads object per session: a reopened session (another
@@ -298,7 +327,7 @@ extension NativeEditorView {
     }
 
     private func hasPresentedNavigationCover() -> Bool {
-        openTable != nil || openColumns != nil || openMedia != nil || isPresentingOutline
+        openTable != nil || openColumns != nil || openMedia != nil || openSource != nil || isPresentingOutline
     }
 
     private func dismissNavigationCovers() {
@@ -306,6 +335,8 @@ extension NativeEditorView {
         lastTable = nil
         openTable = nil
         openMedia = nil
+        lastSource = nil
+        openSource = nil
         isPresentingOutline = false
         if let columns = openColumns {
             columns.close()
@@ -545,7 +576,9 @@ extension NativeEditorLabels {
             table: loc[.native_editor_table], tableMore: loc[.native_editor_table_more],
             columns: loc[.native_editor_columns], column: loc[.native_editor_column],
             columnsRotor: loc[.native_editor_columns_rotor], math: loc[.native_editor_math],
-            diagram: loc[.native_editor_diagram], imageExternal: loc[.editor_image_external],
+            diagram: loc[.native_editor_diagram], mathSource: loc[.native_editor_math_source],
+            diagramSource: loc[.native_editor_diagram_source], sourceEmpty: loc[.native_editor_source_empty],
+            openMathSource: loc[.native_editor_open_math_source], imageExternal: loc[.editor_image_external],
             imageExternalA11y: loc[.editor_image_external_a11y], imageOffline: loc[.editor_image_offline],
             imageFailed: loc[.editor_image_failed], mediaEmpty: loc[.native_editor_media_empty],
             mediaUploading: loc[.native_editor_media_uploading],
@@ -572,6 +605,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
     let onOpenTable: (String) -> Void
     let onOpenColumns: (String) -> Void
     var onOpenMedia: ((String) -> Void)? = nil
+    var onOpenSource: ((NativeSourceRequest) -> Void)? = nil
     var uploadingBlocks: Set<String> = []
     var waitingUploads: Set<String> = []
     var failedUploads: Set<String> = []
@@ -600,6 +634,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
         session.textView.blockControls.onOpenTable = onOpenTable
         session.textView.blockControls.onOpenColumns = onOpenColumns
         session.textView.blockControls.onOpenMedia = onOpenMedia
+        session.textView.blockControls.onOpenSource = onOpenSource
         session.textView.blockControls.onOpenDocument = onOpenDocument
         session.textView.blockControls.uploadingBlocks = uploadingBlocks
         session.textView.blockControls.waitingUploads = waitingUploads

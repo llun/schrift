@@ -1,35 +1,42 @@
 import Foundation
 
-/// A BlockNote 0.56 inline leaf element (`content: "none"`) modeled as a
+/// A BlockNote 0.56 inline leaf/plain-content element (`interlinkingLinkInline`,
+/// `userMentionInline`, `mentionSearchInline`, or `math`) modeled as a
 /// 1-UTF-16-unit `\u{FFFC}` atom inside `InlineRun`.
 enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
     case interlink(docID: String, blockID: String?, title: String?, disabled: Bool, trigger: String?)
     case mention(userID: String, fullName: String)
     case mentionSearch(disabled: Bool, trigger: String?)
+    case math(source: String)
 
     static let interlinkingLinkNodeName = "interlinkingLinkInline"
     static let userMentionNodeName = "userMentionInline"
     static let mentionSearchNodeName = "mentionSearchInline"
+    static let mathNodeName = "math"
 
     static let nodeNames: Set<String> = [
         interlinkingLinkNodeName,
         userMentionNodeName,
         mentionSearchNodeName,
+        mathNodeName,
     ]
 
     static let defaultDisplayLimit = 300
     static let maxIdentifierUTF16 = 256
     static let maxLabelUTF16 = 1_000
+    static let maxMathUTF16 = 20_000
 
     private static let interlinkSchemaKeys: Set<String> = ["docId", "blockId", "title", "disabled", "trigger"]
     private static let mentionSchemaKeys: Set<String> = ["userId", "fullName"]
     private static let mentionSearchSchemaKeys: Set<String> = ["disabled", "trigger"]
+    private static let mathSchemaKeys: Set<String> = []
 
     var nodeName: String {
         switch self {
         case .interlink: Self.interlinkingLinkNodeName
         case .mention: Self.userMentionNodeName
         case .mentionSearch: Self.mentionSearchNodeName
+        case .math: Self.mathNodeName
         }
     }
 
@@ -49,27 +56,63 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
             return [("userId", .string(userID)), ("fullName", .string(fullName))]
         case .mentionSearch(let disabled, let trigger):
             return [("disabled", .bool(disabled)), ("trigger", .string(trigger ?? "@"))]
+        case .math:
+            return []
         }
     }
 
-    /// Reads a familiar inline leaf element from its `YType`, returning `nil`
-    /// for unknown element names, elements with any child item (including
-    /// format items), unreadable props, or known attributes of the wrong type.
+    /// Canonical child copies for this inline object: empty for `content: "none"`
+    /// nodes, or zero/one plain unmarked text child for `.math`.
+    var canonicalChildren: [BlockNoteWriter.Copy] {
+        switch self {
+        case .math(let source) where !source.isEmpty:
+            return [.text([.run(InlineRun(source))])]
+        default:
+            return []
+        }
+    }
+
+    /// Reads a familiar inline element from its `YType`, returning `nil`
+    /// for unknown element names, invalid children (any child on `content: "none"`
+    /// nodes, or non-plain/marked/multi-child content on `math`), unreadable
+    /// props, or known attributes of the wrong type.
     static func read(_ element: YType) -> NativeInlineObject? {
         guard case .xmlElement(let node) = element.typeRef, nodeNames.contains(node) else {
             return nil
         }
+        let (props, failure) = YBlockProjection.readProps(element)
+        guard failure == nil else { return nil }
+        if node == mathNodeName {
+            guard let source = readPlainMathSource(element) else { return nil }
+            return read(node: node, props: props, source: source)
+        }
         guard YBlockProjection.children(of: element, includeFormats: true).isEmpty else {
             return nil
         }
-        let (props, failure) = YBlockProjection.readProps(element)
-        guard failure == nil else { return nil }
         return read(node: node, props: props, hasChildren: false)
+    }
+
+    private static func readPlainMathSource(_ element: YType) -> String? {
+        SourceBlock.boundedPlainText(of: element, maxUTF16: maxMathUTF16)
     }
 
     /// Validates and constructs a `NativeInlineObject` from pre-read props.
     static func read(node: String, props: [ProjectedProp], hasChildren: Bool = false) -> NativeInlineObject? {
-        guard !hasChildren else { return nil }
+        read(node: node, props: props, source: hasChildren ? nil : "")
+    }
+
+    /// Child-aware overload for copied `BlockNoteWriter.Copy` inline elements,
+    /// preserving `<math>`'s plain unmarked text child while rejecting children
+    /// on `content: "none"` inline nodes.
+    static func read(node: String, props: [ProjectedProp], children: [BlockNoteWriter.Copy]) -> NativeInlineObject? {
+        if node == mathNodeName {
+            guard let source = SourceBlock.plainText(of: children) else { return nil }
+            return read(node: node, props: props, source: source)
+        }
+        return read(node: node, props: props, hasChildren: !children.isEmpty)
+    }
+
+    private static func read(node: String, props: [ProjectedProp], source: String?) -> NativeInlineObject? {
         var map: [String: YAnyValue] = [:]
         map.reserveCapacity(props.count)
         for prop in props {
@@ -91,7 +134,8 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
 
         switch node {
         case interlinkingLinkNodeName:
-            guard let docID = optionalString("docId"),
+            guard source == "",
+                let docID = optionalString("docId"),
                 let blockID = optionalString("blockId"),
                 let title = optionalString("title"),
                 let disabled = optionalBool("disabled"),
@@ -105,7 +149,8 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
                 trigger: trigger.present ? trigger.value : nil)
 
         case userMentionNodeName:
-            guard let userID = optionalString("userId"),
+            guard source == "",
+                let userID = optionalString("userId"),
                 let fullName = optionalString("fullName")
             else { return nil }
             return .mention(
@@ -113,12 +158,17 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
                 fullName: fullName.value ?? "")
 
         case mentionSearchNodeName:
-            guard let disabled = optionalBool("disabled"),
+            guard source == "",
+                let disabled = optionalBool("disabled"),
                 let trigger = optionalString("trigger")
             else { return nil }
             return .mentionSearch(
                 disabled: disabled.value,
                 trigger: trigger.present ? trigger.value : nil)
+
+        case mathNodeName:
+            guard map.isEmpty, let source else { return nil }
+            return .math(source: source)
 
         default:
             return nil
@@ -133,19 +183,33 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
         pastable(node: node, props: props, hasChildren: hasChildren) != nil
     }
 
+    static func isPastable(node: String, props: [ProjectedProp], children: [BlockNoteWriter.Copy]) -> Bool {
+        pastable(node: node, props: props, children: children) != nil
+    }
+
     /// Returns the validated `NativeInlineObject` for a pastable inline node,
     /// or `nil` when any schema, bound, character, or active-search check fails.
     static func pastable(node: String, props: [ProjectedProp], hasChildren: Bool = false) -> NativeInlineObject? {
+        pastable(node: node, props: props, object: read(node: node, props: props, hasChildren: hasChildren))
+    }
+
+    static func pastable(node: String, props: [ProjectedProp], children: [BlockNoteWriter.Copy]) -> NativeInlineObject?
+    {
+        pastable(node: node, props: props, object: read(node: node, props: props, children: children))
+    }
+
+    private static func pastable(
+        node: String, props: [ProjectedProp], object: NativeInlineObject?
+    ) -> NativeInlineObject? {
         let allowedKeys: Set<String>
         switch node {
         case interlinkingLinkNodeName: allowedKeys = interlinkSchemaKeys
         case userMentionNodeName: allowedKeys = mentionSchemaKeys
         case mentionSearchNodeName: allowedKeys = mentionSearchSchemaKeys
+        case mathNodeName: allowedKeys = mathSchemaKeys
         default: return nil
         }
-        guard props.allSatisfy({ allowedKeys.contains($0.key) }),
-            let object = read(node: node, props: props, hasChildren: hasChildren)
-        else { return nil }
+        guard props.allSatisfy({ allowedKeys.contains($0.key) }), let object else { return nil }
 
         switch object {
         case .interlink(let docID, let blockID, let title, let disabled, let trigger):
@@ -164,10 +228,13 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
             guard disabled else { return nil }
             if let trigger, trigger != "/" && trigger != "@" { return nil }
             return object
+        case .math(let source):
+            guard isPastableText(source, limit: maxMathUTF16) else { return nil }
+            return object
         }
     }
 
-    private static func isPastableText(_ text: String, limit: Int) -> Bool {
+    static func isPastableText(_ text: String, limit: Int) -> Bool {
         text.utf16.count <= limit
             && !text.unicodeScalars.contains {
                 $0.properties.generalCategory == .control || CharacterSet.newlines.contains($0)
@@ -199,6 +266,8 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
         case .mentionSearch(_, let trigger):
             guard let trigger, !trigger.isEmpty else { return "@" }
             return trigger
+        case .math(let source):
+            return source
         }
     }
 
@@ -257,6 +326,8 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
             return Self.clippedDisplayText(label, prefix: "@", limit: limit)
         case .mentionSearch:
             return Self.clippedDisplayText(visibleText(), limit: limit)
+        case .math(let source):
+            return Self.clippedDisplayText(source, limit: limit)
         }
     }
 
@@ -280,6 +351,8 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
             return .mentionSearch(
                 disabled: disabled,
                 trigger: trigger.map { Self.clippedDisplayText($0, limit: 16) })
+        case .math:
+            return self
         }
     }
 

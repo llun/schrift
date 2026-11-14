@@ -204,13 +204,14 @@ final class NativeCompositionSession {
     /// Recovery text is a convenience copy, never committed content: a failed
     /// write must not block typing, and the journal path reports disk failures.
     private func save() {
+        let allRecoveries =
+            recoveries + adopted.keys.sorted { $0.uuidString < $1.uuidString }.flatMap { adopted[$0] ?? [] }
         if let forward {
-            forward(recoveries)
+            forward(allRecoveries)
             return
         }
         guard hasRecoveryStore else { return }
-        port.writeRecoveries(
-            recoveries + adopted.keys.sorted { $0.uuidString < $1.uuidString }.flatMap { adopted[$0] ?? [] })
+        port.writeRecoveries(allRecoveries)
     }
 
     /// The block-relative replacement range of the current selection. Both
@@ -218,13 +219,21 @@ final class NativeCompositionSession {
     /// not a supported composition. An opaque block or one the writer has no
     /// schema for cannot compose either.
     private func replacementTarget(in view: NativeTextView) -> (blockID: String, range: Range<Int>)? {
-        let selection = view.selectedRange
+        var selection = view.selectedRange
         guard selection.location >= 0, selection.length >= 0,
             selection.location <= surface.storage.length,
             selection.length <= surface.storage.length - selection.location,
-            let entry = surface.rangeIndex.entry(atUTF16: selection.location),
-            let position = surface.rangeIndex.position(for: entry.blockID),
-            selection.location >= entry.textRange.location,
+            let entry = surface.rangeIndex.entry(atUTF16: selection.location)
+                ?? surface.rangeIndex.entries.first.flatMap({ SourceTarget.isSourceID($0.blockID) ? $0 : nil }),
+            let position = surface.rangeIndex.position(for: entry.blockID)
+        else { return nil }
+        if SourceTarget.isSourceID(entry.blockID) {
+            let maxEnd = NSMaxRange(entry.textRange)
+            let location = min(selection.location, maxEnd)
+            let end = min(NSMaxRange(selection), maxEnd)
+            selection = NSRange(location: location, length: end - location)
+        }
+        guard selection.location >= entry.textRange.location,
             NSMaxRange(selection) <= NSMaxRange(entry.textRange),
             !AttributedDocumentProjection.isPlaceholder(surface.blocks[position]),
             BlockNoteWriter.nativePropSchemas[surface.blocks[position].node] != nil,

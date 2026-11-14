@@ -450,7 +450,7 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
             [
                 "paragraph", "heading1", "heading2", "heading3", "toggleHeading", "bullet", "numbered", "checklist",
                 "toggleList", "quote", "code", "twoColumns", "threeColumns", "mediaImage", "mediaVideo", "mediaAudio",
-                "mediaFile", "mediaPDF",
+                "mediaFile", "mediaPDF", "mathBlock", "inlineMath", "diagram",
             ],
             "divider waits for a later slice; the toggles are NativeToggleTests', the columns ColumnStructureTests', media NativeMediaTests'"
         )
