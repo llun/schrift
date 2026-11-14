@@ -467,14 +467,14 @@ struct NativeDocumentShellView: View {
             EditorBannerStack(
                 showsOfflineBanner: showsOfflineBanner,
                 hasLocalCopy: viewModel.hasLocalCopy,
-                hasConflict: viewModel.syncConflict != nil,
+                hasConflict: viewModel.visibleNativeSyncConflict != nil,
                 showUpdateAvailable: false,
                 isDocumentPendingDelete: viewModel.isDocumentPendingDelete,
                 errorKey: viewModel.errorKey,
                 errorDetail: viewModel.errorDetail,
                 onTapConflict: {
                     dismissFocusForConflictSheet()
-                    conflictToResolve = viewModel.syncConflict.map(IdentifiedSyncConflict.init)
+                    conflictToResolve = viewModel.visibleNativeSyncConflict.map(IdentifiedSyncConflict.init)
                 },
                 onApplyPendingUpdate: {},
                 onUndoPendingDelete: {
@@ -607,7 +607,7 @@ struct NativeDocumentShellView: View {
             if display == .none {
                 EditorSyncCaptionLabel(
                     hasUnsavedLocalContent: hasUnsaved,
-                    hasConflict: viewModel.syncConflict != nil,
+                    hasConflict: viewModel.visibleNativeSyncConflict != nil,
                     showsOfflineStatus: showsOfflineStatus,
                     controlsOffline: isOffline,
                     saveState: viewModel.saveState,
@@ -622,7 +622,7 @@ struct NativeDocumentShellView: View {
         } else {
             EditorSyncCaptionLabel(
                 hasUnsavedLocalContent: hasUnsaved,
-                hasConflict: viewModel.syncConflict != nil,
+                hasConflict: viewModel.visibleNativeSyncConflict != nil,
                 showsOfflineStatus: showsOfflineStatus,
                 controlsOffline: isOffline,
                 saveState: viewModel.saveState,
@@ -863,7 +863,7 @@ struct NativeDocumentShellView: View {
 
     private func nativeSaveStatus(_ session: NativeEditorSession) -> SaveStatusDisplay {
         if session.hasPendingSave || viewModel.hasPendingNativeTitleEdit { return .savedOnDevice }
-        let hasConflict = viewModel.syncConflict != nil
+        let hasConflict = viewModel.visibleNativeSyncConflict != nil
         return saveStatusDisplay(
             saveState: viewModel.saveState, hasConflict: hasConflict,
             hasUnsavedLocalContent: viewModel.isNativeLocalContentUnsaved(

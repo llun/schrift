@@ -396,6 +396,13 @@ final class EditorViewModel {
         showError(.editor_error_refresh, detail: requestFailureDetail(after: marker, in: diagnostics))
     }
 
+    func recordNativeDiscardError(after marker: Int?) {
+        showError(
+            .editor_error_refresh,
+            detail: saveCoordinator.failureReport(for: documentID)
+                ?? requestFailureDetail(after: marker, in: diagnostics))
+    }
+
     /// Marks the document unavailable (404/403) during a native conflict resolution fetch while
     /// preserving any durable replica/draft for recovery.
     func recordNativeUnavailableError(after marker: Int?) {
@@ -466,6 +473,29 @@ final class EditorViewModel {
     /// live when the coordinator records or clears it).
     var syncConflict: DocumentSaveCoordinator.SyncConflict? {
         saveCoordinator.conflict(for: documentID)
+    }
+
+    /// Whether any native replica or native draft state for this document belongs
+    /// to the currently signed-in account. Returns false for unreadable markers or
+    /// another account's preserved replica so shared devices never surface or act
+    /// on another user's conflict or unsaved-draft indicators.
+    var isNativeStateOwnedByCurrentUser: Bool {
+        let ownership = saveCoordinator.nativeOwnership(documentID: documentID)
+        if case .unreadable = ownership { return false }
+        let scope =
+            ownership.scope
+            ?? saveCoordinator.storedDraft(documentID: documentID)?.replica?.scope
+            ?? saveCoordinator.pendingSave(documentID: documentID)?.replicaRequest?.reference.scope
+        if let scope {
+            return signedInUser.userID == scope.ownerUserID
+        }
+        return true
+    }
+
+    /// Native conflict UI (banner, sync caption, conflict sheet) only exposes a
+    /// conflict when any native state for this document belongs to the active user.
+    var visibleNativeSyncConflict: DocumentSaveCoordinator.SyncConflict? {
+        isNativeStateOwnedByCurrentUser ? syncConflict : nil
     }
 
     // MARK: - Loading
@@ -3843,19 +3873,23 @@ final class EditorViewModel {
         let cached = contentCache.content(for: documentID)
         let currentUserID = signedInUser.userID
         let rawPending = saveCoordinator.pendingSave(documentID: documentID)
-        let pendingSave =
-            includeLocalDrafts
-                && (rawPending?.replicaRequest?.reference.scope.ownerUserID == nil
-                    || rawPending?.replicaRequest?.reference.scope.ownerUserID == currentUserID)
-            ? rawPending
-            : nil
+        let pendingSave: DocumentSaveCoordinator.PendingSave? =
+            if includeLocalDrafts, let currentUserID,
+                rawPending?.replicaRequest?.reference.scope.ownerUserID == currentUserID
+            {
+                rawPending
+            } else {
+                nil
+            }
         let rawDraft = saveCoordinator.storedDraft(documentID: documentID)
-        let storedDraft =
-            includeLocalDrafts
-                && (rawDraft?.replica?.scope.ownerUserID == nil
-                    || rawDraft?.replica?.scope.ownerUserID == currentUserID)
-            ? rawDraft
-            : nil
+        let storedDraft: PendingDraft? =
+            if includeLocalDrafts, let currentUserID,
+                rawDraft?.replica?.scope.ownerUserID == currentUserID
+            {
+                rawDraft
+            } else {
+                nil
+            }
         if lastSyncedAt == nil, pendingSave == nil, storedDraft == nil {
             lastSyncedAt = cached?.syncedAt
         }
@@ -4003,6 +4037,7 @@ final class EditorViewModel {
     /// Whether the native route holds unsaved local work (for status captions and conflict
     /// indicators, where `hasLoadedContent` stays false).
     func isNativeLocalContentUnsaved(sessionHasPendingSave: Bool) -> Bool {
+        guard isNativeStateOwnedByCurrentUser else { return false }
         if hasPendingNativeTitleEdit || sessionHasPendingSave
             || saveCoordinator.pendingSave(documentID: documentID) != nil
         {
@@ -4275,7 +4310,12 @@ final class EditorViewModel {
                 saveCoordinator.storedDraft(documentID: documentID) == discardedDraft
             else { return }
             // The winning body is in hand: now it is safe to cost the user their draft.
-            saveCoordinator.resolveConflictKeepingServer(documentID: documentID)
+            guard saveCoordinator.resolveConflictKeepingServer(documentID: documentID) else {
+                showError(
+                    .editor_error_refresh,
+                    detail: saveCoordinator.failureReport(for: documentID))
+                return
+            }
             installFetched(formatted, leafNesting: leafNesting)
             markAvailableAgain()
             await loadChildren()

@@ -160,7 +160,7 @@ final class ReplicaSaveAdapter {
 
     /// The full Yjs state of a verified raw revision. Read-only: this throwaway
     /// replica never authors, and the checkpoint is never a writer.
-    private static func fullState(_ restored: ReplicaRestore) throws -> Data {
+    static func fullState(_ restored: ReplicaRestore) throws -> Data {
         let doc = YDoc(clientID: 0)
         defer { doc.destroy() }
         try doc.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)

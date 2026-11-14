@@ -402,4 +402,159 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
         f.coordinator.purgeCleanNativeReplicasOnSignOut(ownerUserID: owner)
         XCTAssertNotNil(try f.store.restore(for: f.scope))
     }
+
+    func testPurgeCleanNativeReplicasOnSignOutFailsClosedWhenLeavingOwnerIsUnknown() throws {
+        let f = try fixture()
+        let accountAScope = f.scope
+        let accountBScope = ReplicaScope(
+            serverOrigin: f.client.serverOrigin, ownerUserID: UUID(), org: "docs", documentID: UUID())
+        _ = try f.store.create(for: accountAScope, checkpoint: Data([0, 0]))
+        _ = try f.store.create(for: accountBScope, checkpoint: Data([0, 0]))
+
+        // Sign-out cleared SignedInUserStore first and the caller omitted ownerUserID.
+        SignedInUserStore(userDefaults: f.defaults).clear()
+        f.coordinator.purgeCleanNativeReplicasOnSignOut()
+
+        XCTAssertNotNil(
+            try f.store.restore(for: accountAScope),
+            "unknown leaving owner must fail closed and purge nothing for account A")
+        XCTAssertNotNil(
+            try f.store.restore(for: accountBScope),
+            "unknown leaving owner must fail closed and purge nothing for account B")
+        XCTAssertEqual(
+            f.ownership.owner(documentID: accountAScope.documentID, serverOrigin: f.client.serverOrigin),
+            .owned(accountAScope))
+        XCTAssertEqual(
+            f.ownership.owner(documentID: accountBScope.documentID, serverOrigin: f.client.serverOrigin),
+            .owned(accountBScope))
+    }
+
+    func testBackupExclusionStaysFalseWhileCoordinatorHoldsUnsyncedMetadata() async throws {
+        func isExcluded(_ folder: URL) throws -> Bool? {
+            var mutable = folder
+            mutable.removeCachedResourceValue(forKey: .isExcludedFromBackupKey)
+            return try mutable.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup
+        }
+
+        let suite = "BackupExclusionCoordinator.\(UUID().uuidString)"
+        draftSuiteNames.append(suite)
+        let defaults = UserDefaults(suiteName: suite)!
+        SignedInUserStore(userDefaults: defaults).remember(owner)
+        let replicaDir = cacheDirectory.appendingPathComponent("ReplicaDrafts.\(UUID().uuidString)", isDirectory: true)
+        let ownership = ReplicaOwnershipStore(userDefaults: defaults)
+        let store = ReplicaStore(directory: replicaDir, ownershipStore: ownership)
+        let drafts = PendingDraftStore(userDefaults: defaults)
+        let creates = PendingDocumentCreateStore(userDefaults: defaults)
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        ServerConfigStore(userDefaults: defaults).remember(
+            ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: nil),
+            forServerOrigin: client.serverOrigin)
+        let coordinator = DocumentSaveCoordinator(
+            client: client,
+            draftStore: drafts,
+            replicaStore: store,
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: creates,
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            attachmentStore: PendingAttachmentStore(
+                userDefaults: defaults, directory: cacheDirectory.appendingPathComponent(UUID().uuidString)),
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            backgroundTasks: .noop,
+            isLiveReplicaHeld: { _ in false })
+        coordinator.nativeEditorEnabled = { true }
+
+        // 1. Offline local create (`outbox: []`, seedMarkdown in checkpoint): must stay in backups.
+        let localDoc = coordinator.createLocalDocument(
+            title: "Offline Created", parentID: nil, ownerUserID: owner, seedMarkdown: "Seed body")
+        let localScope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: owner, org: "docs", documentID: localDoc.id)
+        let localFolder = replicaDir.appendingPathComponent(try localScope.directoryName(), isDirectory: true)
+        XCTAssertNotEqual(
+            try isExcluded(localFolder), true,
+            "offline-created replica backing PendingDocumentCreate must stay in backups even with empty outbox")
+
+        // 2. Title-only native edit on a clean signed-in server doc (`outbox: []`, PendingDraft present).
+        let serverDocID = UUID()
+        let serverScope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: owner, org: "docs", documentID: serverDocID)
+        let checkpoint = BlockNoteYjs.encode(
+            [BlockNoteBlock(node: "paragraph", props: [], runs: [InlineRun("Hello")], id: "b1")], clientID: 1)
+        let cleanManifest = try store.create(for: serverScope, checkpoint: checkpoint)
+        let serverFolder = replicaDir.appendingPathComponent(try serverScope.directoryName(), isDirectory: true)
+        XCTAssertEqual(try isExcluded(serverFolder), true, "clean synced replica starts excluded from backup")
+
+        let adapter = ReplicaSaveAdapter(store: store, scope: serverScope)
+        drafts.save(
+            PendingDraft(
+                documentID: serverDocID, title: "Title Only", markdown: "Hello", updatedAt: Date(),
+                replica: ReplicaDraftReference(manifest: cleanManifest, markdown: "Hello")))
+        try coordinator.enqueueReplica(adapter: adapter, title: "Title Only")
+        // Also simulate clearing provisional files on an outbox-empty replica while draft stays queued/saved.
+        try store.writeProvisionalRecoveries([], for: serverScope)
+        XCTAssertNotEqual(
+            try isExcluded(serverFolder), true,
+            "title-only edit backed by PendingDraft must keep replica in backups despite empty outbox/provisional")
+
+        // Wait for the initial enqueue (title-only failing offline) to settle before testing half-landed save.
+        await waitUntil {
+            coordinator.state(for: serverDocID) != .saving
+        }
+
+        // 3. Half-landed save: body PATCH succeeds (acknowledging outbox to []), title PATCH fails.
+        let halfDocID = UUID()
+        let halfScope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: owner, org: "docs", documentID: halfDocID)
+        _ = try store.create(for: halfScope, checkpoint: checkpoint)
+        let ydoc = YDoc(clientID: 2)
+        defer { ydoc.destroy() }
+        try ydoc.applyUpdate(YUpdateDecoder.decode(checkpoint), origin: .remote)
+        let editUpdate = try BlockNoteWriter(doc: ydoc).replaceText(block: "b1", range: 0..<0, with: "Edit ")
+        let halfAdapter = ReplicaSaveAdapter(store: store, scope: halfScope)
+        try halfAdapter.record(
+            NativeEditCommand(id: UUID(), baseRevision: 0, blockID: "b1", range: 0..<0, replacement: "Edit "),
+            update: editUpdate)
+        let halfFolder = replicaDir.appendingPathComponent(try halfScope.directoryName(), isDirectory: true)
+        XCTAssertNotEqual(try isExcluded(halfFolder), true)
+
+        var titleShouldFail = true
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("/config/") {
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+            }
+            if url.contains("/collaboration/ydoc/") {
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
+            if request.httpMethod == "PATCH", url.contains("/documents/") {
+                return titleShouldFail
+                    ? .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+                    : .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil)
+        }
+
+        try coordinator.enqueueReplica(adapter: halfAdapter, title: "Updated Title")
+        await waitUntil {
+            if case .failed = coordinator.state(for: halfDocID) { return true }
+            return false
+        }
+        XCTAssertTrue(try XCTUnwrap(try store.manifest(for: halfScope)).outbox.isEmpty, "body PATCH cleared outbox")
+        XCTAssertNotNil(drafts.draft(for: halfDocID), "half-landed title failure keeps PendingDraft")
+        XCTAssertNotEqual(
+            try isExcluded(halfFolder), true,
+            "half-landed save whose title PATCH failed must keep replica backed up even though outbox is empty")
+
+        // 4. Retry succeeds: draft is removed and folder flips back to excluded from backup.
+        titleShouldFail = false
+        coordinator.retryReplicaDraft(documentID: halfDocID)
+        await waitUntil {
+            if case .saved = coordinator.state(for: halfDocID) { return true }
+            return false
+        }
+        XCTAssertNil(drafts.draft(for: halfDocID))
+        XCTAssertEqual(
+            try isExcluded(halfFolder), true,
+            "replica must exclude from backup only after both outbox and coordinator metadata are clean")
+    }
 }

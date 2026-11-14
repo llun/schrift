@@ -1092,7 +1092,16 @@ final class NativeEditorOpen {
     ) async {
         let coordinator = viewModel.saveCoordinator
         let documentID = viewModel.documentID
-        guard coordinator.conflict(for: documentID) != nil else { return }
+        guard viewModel.visibleNativeSyncConflict != nil else { return }
+        let ownership = coordinator.nativeOwnership(documentID: documentID)
+        if case .unreadable = ownership { return }
+        if let ownerScope = ownership.scope
+            ?? coordinator.storedDraft(documentID: documentID)?.replica?.scope
+            ?? coordinator.pendingSave(documentID: documentID)?.replicaRequest?.reference.scope,
+            ownerScope.ownerUserID != viewModel.signedInUser.userID
+        {
+            return
+        }
         if case .native(let session) = route, session.input != nil {
             if viewModel.hasPendingNativeTitleEdit { session.scheduleSave() }
             session.flushPendingSave()
@@ -1140,7 +1149,11 @@ final class NativeEditorOpen {
                 await closing.value
                 guard !Task.isCancelled else { return }
             }
-            coordinator.resolveConflictKeepingServer(documentID: documentID)
+            guard coordinator.resolveConflictKeepingServer(documentID: documentID) else {
+                viewModel.recordNativeDiscardError(after: diagnosticsMarker)
+                await open(viewModel: viewModel, isOffline: isOffline, canUpdate: canUpdate, canMention: canMention)
+                return
+            }
             if let resolvedState, let account = viewModel.signedInUser.userID {
                 viewModel.applyResolvedServerMetadataForNative(
                     formatted: formatted, leafNesting: leafNesting, installClassicFallback: false)
