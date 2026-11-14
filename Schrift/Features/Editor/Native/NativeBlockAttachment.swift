@@ -151,8 +151,9 @@ enum NativeAttachmentLayout {
             height = 2 * padding + lines * detail + (lines - 1) * lineGap
         case .source(_, let lines, let lineCount):
             let shown = CGFloat(max(1, lines.count))
+            let bodyLine = line(NativeSourcePreview.sourceCardBodyFont(isEmpty: lines.isEmpty, traits: traits))
             height =
-                2 * padding + detail + lineGap + shown * line(sourceFont(traits))
+                2 * padding + detail + lineGap + shown * bodyLine
                 + (lineCount > lines.count ? lineGap + detail : 0)
         case .preserved(_, let summary):
             height = 2 * padding + title + (summary.isEmpty ? 0 : lineGap + detail)
@@ -192,12 +193,15 @@ final class NativeAttachmentView: UIView {
                 ([String(format: labels.column, index + 1, count)]
                     + lines.map { $0.text.isEmpty ? labels.kind($0.node) : $0.text }).joined(separator: ", ")
             }.joined(separator: "; ")
+        } else if case .source(_, let lines, let lineCount) = content.preview {
+            accessibilityValue = NativeSourcePreview.blockAccessibilityValue(
+                lines: lines, lineCount: lineCount, labels: labels)
         }
         build()
         applyTheme()
-        if content.preview.isTable || content.preview.isColumns || isMedia {
+        if content.preview.isTable || content.preview.isColumns || isMedia || content.preview.isSource {
             // The card opens the table editor (PR11a), the column editor
-            // (PR12a) or the media inspector (PR13a).
+            // (PR12a), the media inspector (PR13a), or the source editor (PR14).
             accessibilityTraits = [.button]
             addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(openTable)))
         }
@@ -237,6 +241,8 @@ final class NativeAttachmentView: UIView {
             controls?.onOpenColumns?(content.blockID)
         } else if isMedia {
             controls?.onOpenMedia?(content.blockID)
+        } else if content.preview.isSource {
+            controls?.onOpenSource?(.block(blockID: content.blockID))
         } else {
             controls?.onOpenTable?(content.blockID)
         }
@@ -372,10 +378,13 @@ final class NativeAttachmentView: UIView {
         case .source(let node, let lines, let lineCount):
             pin(padding)
             stack.addArrangedSubview(
-                label(labels.kind(node), primary: false, font: NativeAttachmentLayout.detailFont(traits)))
-            let source = label(
-                lines.joined(separator: "\n"), primary: true, font: NativeAttachmentLayout.sourceFont(traits))
-            source.numberOfLines = NativeBlockPreview.Limits.maxSourceLines
+                label(
+                    NativeSourcePreview.headerLabel(for: node, labels: labels), primary: false,
+                    font: NativeAttachmentLayout.detailFont(traits)))
+            let (bodyText, isEmpty) = NativeSourcePreview.displayBody(lines: lines, labels: labels)
+            let bodyFont = NativeSourcePreview.sourceCardBodyFont(isEmpty: isEmpty, traits: traits)
+            let source = label(bodyText, primary: !isEmpty, font: bodyFont)
+            source.numberOfLines = isEmpty ? 1 : NativeBlockPreview.Limits.maxSourceLines
             source.lineBreakMode = .byTruncatingTail
             stack.addArrangedSubview(source)
             if lineCount > lines.count {
@@ -522,6 +531,10 @@ final class NativeAttachmentView: UIView {
             openTable()
             return true
         }
+        if content.preview.isSource, controls?.onOpenSource != nil {
+            openTable()
+            return true
+        }
         guard loadButton != nil else { return false }
         approveAndLoad()
         return true
@@ -536,6 +549,11 @@ extension NativeBlockPreview {
 
     fileprivate var isColumns: Bool {
         if case .columns = self { return true }
+        return false
+    }
+
+    fileprivate var isSource: Bool {
+        if case .source = self { return true }
         return false
     }
 }

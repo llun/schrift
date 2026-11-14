@@ -89,12 +89,14 @@ enum NativeBlockPreview: Equatable, Sendable {
         case "columnList":
             guard let element else { return .preserved(node: block.node, summary: "") }
             return columns(element)
-        case "mathBlock", "diagram":
-            let source = element.map { text(of: $0, limit: Limits.maxText * Limits.maxSourceLines * 2) } ?? ""
-            let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
-            return .source(
-                node: block.node, lines: lines.prefix(Limits.maxSourceLines).map { clipped(String($0)) },
-                lineCount: lines.count)
+        case "mathBlock",
+            "diagram" where !block.fidelity.isOpaque:
+            if let element, SourceBlock.isFamiliar(element) {
+                return exactSourcePreview(node: block.node, element: element)
+            }
+            let summary = element.map { text(of: $0, limit: Limits.maxText) } ?? ""
+            return .preserved(
+                node: block.node, summary: clipped(summary.replacingOccurrences(of: "\n", with: " ")))
         default:
             let summary = element.map { text(of: $0, limit: Limits.maxText) } ?? ""
             return .preserved(
@@ -129,6 +131,45 @@ enum NativeBlockPreview: Equatable, Sendable {
             }
         }
         return .columns(lines, columnCount: columns.count)
+    }
+
+    /// Reads exact raw lines from a familiar `mathBlock` or `diagram`, preserving
+    /// leading indentation and internal/trailing blank lines. Empty source
+    /// returns `lines: [], lineCount: 0`.
+    private static func exactSourcePreview(node: String, element: YType) -> NativeBlockPreview {
+        let children = YBlockProjection.children(of: element, includeFormats: false)
+        guard let first = children.first, case .type(let text) = first.content, text.typeRef == .xmlText else {
+            return .source(node: node, lines: [], lineCount: 0)
+        }
+        var lines: [[UInt16]] = []
+        var currentLine: [UInt16] = []
+        var lineCount = 1
+        var hasAnyUnit = false
+        for child in YBlockProjection.children(of: text, includeFormats: false) {
+            guard case .string(let units) = child.content else { continue }
+            for unit in units where unit != 0xFFFC {
+                hasAnyUnit = true
+                if unit == 0x0A {
+                    if lines.count < Limits.maxSourceLines {
+                        lines.append(currentLine)
+                        currentLine.removeAll(keepingCapacity: true)
+                    }
+                    lineCount += 1
+                } else if lines.count < Limits.maxSourceLines, currentLine.count < Limits.maxText * 2 {
+                    currentLine.append(unit)
+                }
+            }
+        }
+        guard hasAnyUnit else {
+            return .source(node: node, lines: [], lineCount: 0)
+        }
+        if lines.count < Limits.maxSourceLines {
+            lines.append(currentLine)
+        }
+        return .source(
+            node: node,
+            lines: lines.prefix(Limits.maxSourceLines).map { clipped(String(decoding: $0, as: UTF16.self)) },
+            lineCount: lineCount)
     }
 
     /// Element children, in order (text and other content skipped).

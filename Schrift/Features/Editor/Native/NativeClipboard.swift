@@ -138,7 +138,7 @@ enum NativeClipboard {
         case .mentionSearch:
             return ""
         case .math(let source):
-            return source
+            return strippingObjectReplacementCharacters(source)
         case .interlink(let docID, _, _, let disabled, _):
             guard !disabled else { return "" }
             let origin = NativeInlineObject.trimmingTrailingSlashes(serverOrigin)

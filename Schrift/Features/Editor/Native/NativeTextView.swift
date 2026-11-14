@@ -414,14 +414,42 @@ final class NativeTextView: UITextView {
         return (uuid, blockID ?? "")
     }
 
+    private func tappableInlineMath(at point: CGPoint) -> (blockID: String, offsetInBlock: Int)? {
+        guard let hit = inlineObjectHit(at: point), case .math = hit.object else { return nil }
+        return blockPosition(atUTF16: hit.offset)
+    }
+
+    private func blockPosition(atUTF16 utf16Offset: Int) -> (blockID: String, offsetInBlock: Int)? {
+        if let surface = blockControls?.surface,
+            let pos = surface.rangeIndex.textPosition(atUTF16: utf16Offset),
+            surface.blocks.indices.contains(pos.position)
+        {
+            return (surface.blocks[pos.position].id, pos.offset)
+        }
+        guard utf16Offset >= 0, utf16Offset < textStorage.length,
+            let blockID = textStorage.attribute(.nativeBlockID, at: utf16Offset, effectiveRange: nil) as? String
+        else { return nil }
+        var blockStart = utf16Offset
+        while blockStart > 0,
+            (textStorage.attribute(.nativeBlockID, at: blockStart - 1, effectiveRange: nil) as? String) == blockID
+        {
+            blockStart -= 1
+        }
+        return (blockID, utf16Offset - blockStart)
+    }
+
     func chipTapShouldBegin(at point: CGPoint) -> Bool {
-        guard blockControls?.onOpenDocument != nil,
-            !isDragging, !isDecelerating,
+        guard !isDragging, !isDecelerating,
             markedTextRange == nil,
-            !hasActiveDragOrLongPress,
-            navigableInterlink(at: point) != nil
+            !hasActiveDragOrLongPress
         else { return false }
-        return true
+        if blockControls?.onOpenDocument != nil, navigableInterlink(at: point) != nil {
+            return true
+        }
+        if blockControls?.onOpenSource != nil, tappableInlineMath(at: point) != nil {
+            return true
+        }
+        return false
     }
 
     private var hasActiveDragOrLongPress: Bool {
@@ -447,36 +475,48 @@ final class NativeTextView: UITextView {
     }
 
     /// Handles a tap at `point` (in this text view's coordinates), invoking
-    /// `blockControls.onOpenDocument` for a resolved interlink chip.
+    /// `blockControls.onOpenDocument` for a resolved interlink chip or
+    /// `blockControls.onOpenSource` for an inline `.math` chip.
     @discardableResult
     func handleChipTap(at point: CGPoint) -> Bool {
-        guard chipTapShouldBegin(at: point),
-            let target = navigableInterlink(at: point),
-            let onOpenDocument = blockControls?.onOpenDocument
-        else { return false }
-        onOpenDocument(target.uuid, target.blockID)
-        return true
+        guard chipTapShouldBegin(at: point) else { return false }
+        if let target = navigableInterlink(at: point), let onOpenDocument = blockControls?.onOpenDocument {
+            onOpenDocument(target.uuid, target.blockID)
+            return true
+        }
+        if let target = tappableInlineMath(at: point), let onOpenSource = blockControls?.onOpenSource {
+            onOpenSource(.inlineMath(blockID: target.blockID, utf16Offset: target.offsetInBlock))
+            return true
+        }
+        return false
     }
 
     private func inlineChipAccessibilityActions() -> [UIAccessibilityCustomAction] {
-        guard let onOpenDocument = blockControls?.onOpenDocument,
-            let target = selectedNavigableInterlink()
-        else { return [] }
-        let name = blockControls?.labels.openLink ?? NativeEditorLabels().openLink
-        return [
-            UIAccessibilityCustomAction(name: name) { _ in
-                onOpenDocument(target.uuid, target.blockID)
-                return true
-            }
-        ]
+        var actions: [UIAccessibilityCustomAction] = []
+        if let onOpenDocument = blockControls?.onOpenDocument, let target = selectedNavigableInterlink() {
+            let name = blockControls?.labels.openLink ?? NativeEditorLabels().openLink
+            actions.append(
+                UIAccessibilityCustomAction(name: name) { _ in
+                    onOpenDocument(target.uuid, target.blockID)
+                    return true
+                })
+        }
+        if let onOpenSource = blockControls?.onOpenSource, let target = selectedInlineMath() {
+            let name = blockControls?.labels.openMathSource ?? NativeEditorLabels().openMathSource
+            actions.append(
+                UIAccessibilityCustomAction(name: name) { _ in
+                    onOpenSource(.inlineMath(blockID: target.blockID, utf16Offset: target.offsetInBlock))
+                    return true
+                })
+        }
+        return actions
     }
 
-    private func selectedNavigableInterlink() -> (uuid: UUID, blockID: String)? {
+    private func candidateInlineChipOffsets() -> [Int] {
         let length = textStorage.length
-        guard length > 0 else { return nil }
+        guard length > 0 else { return [] }
         let range = selectedRange
-        guard range.location != NSNotFound else { return nil }
-
+        guard range.location != NSNotFound else { return [] }
         var candidateOffsets: [Int] = []
         if range.length > 0 {
             let start = max(0, min(range.location, length))
@@ -489,8 +529,11 @@ final class NativeTextView: UITextView {
             if loc < length { candidateOffsets.append(loc) }
             if loc > 0 { candidateOffsets.append(loc - 1) }
         }
+        return candidateOffsets
+    }
 
-        for offset in candidateOffsets {
+    private func selectedNavigableInterlink() -> (uuid: UUID, blockID: String)? {
+        for offset in candidateInlineChipOffsets() {
             guard blockControls?.surface?.isHidden(atUTF16: offset) != true,
                 let inline = textStorage.attribute(.nativeInlineObject, at: offset, effectiveRange: nil)
                     as? NativeInlineObject,
@@ -499,6 +542,19 @@ final class NativeTextView: UITextView {
                 let uuid = UUID(uuidString: docID)
             else { continue }
             return (uuid, blockID ?? "")
+        }
+        return nil
+    }
+
+    private func selectedInlineMath() -> (blockID: String, offsetInBlock: Int)? {
+        for offset in candidateInlineChipOffsets() {
+            guard blockControls?.surface?.isHidden(atUTF16: offset) != true,
+                let inline = textStorage.attribute(.nativeInlineObject, at: offset, effectiveRange: nil)
+                    as? NativeInlineObject,
+                case .math = inline,
+                let target = blockPosition(atUTF16: offset)
+            else { continue }
+            return target
         }
         return nil
     }

@@ -60,6 +60,8 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     var serverOrigin: String?
     /// A tap (or VoiceOver action) on an inline page link chip navigates to that document.
     var onOpenDocument: ((UUID, String) -> Void)?
+    /// A tap (or VoiceOver action) on an inline `.math` chip opens the focused source editor.
+    var onOpenSource: ((NativeSourceRequest) -> Void)?
     /// The Row, Column, Cell and Format menus (PR11b), shown while editing.
     let controls = UIStackView()
 
@@ -174,6 +176,9 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
             session.textView.blockControls.documentTitle = documentTitle
             session.textView.blockControls.onOpenDocument = { [weak self] id, blockID in
                 self?.onOpenDocument?(id, blockID)
+            }
+            session.textView.blockControls.onOpenSource = { [weak self] request in
+                self?.onOpenSource?(request)
             }
             let origin =
                 serverOrigin.flatMap { $0.isEmpty ? nil : $0 }
@@ -1259,6 +1264,7 @@ struct TableEditorScreen: UIViewControllerRepresentable {
     var documentTitle: (@MainActor (UUID) -> String?)? = nil
     var serverOrigin: String? = nil
     var onOpenDocument: ((UUID, String) -> Void)? = nil
+    var onOpenSource: ((NativeSourceRequest) -> Void)? = nil
     let onClose: () -> Void
 
     func makeUIViewController(context: Context) -> UINavigationController {
@@ -1270,6 +1276,7 @@ struct TableEditorScreen: UIViewControllerRepresentable {
         editor.documentTitle = documentTitle
         editor.serverOrigin = serverOrigin
         editor.onOpenDocument = onOpenDocument
+        editor.onOpenSource = onOpenSource
         editor.onClose = onClose
         return UINavigationController(rootViewController: editor)
     }
@@ -1279,5 +1286,6 @@ struct TableEditorScreen: UIViewControllerRepresentable {
         editor.documentTitle = documentTitle
         editor.serverOrigin = serverOrigin
         editor.onOpenDocument = onOpenDocument
+        editor.onOpenSource = onOpenSource
     }
 }

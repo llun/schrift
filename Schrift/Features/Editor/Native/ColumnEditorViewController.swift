@@ -37,6 +37,7 @@ final class ColumnEditorModel: Identifiable {
     @ObservationIgnored var onClose: (() -> Void)?
     /// A tap (or VoiceOver action) on an inline page link chip navigates to that document.
     @ObservationIgnored var onOpenDocument: ((UUID, String) -> Void)?
+    @ObservationIgnored var onOpenSource: ((NativeSourceRequest) -> Void)?
     @ObservationIgnored private var loadStarted = false
     /// Where the editor opens (PR12c: a find or outline result in a column):
     /// that column is active with the caret at the block's start.
@@ -130,6 +131,9 @@ final class ColumnEditorModel: Identifiable {
         session.textView.blockControls.onOpenMedia = { [weak self] in self?.openMedia = NativeMediaRequest(id: $0) }
         session.textView.blockControls.onOpenDocument = { [weak self] id, blockID in
             self?.onOpenDocument?(id, blockID)
+        }
+        session.textView.blockControls.onOpenSource = { [weak self] request in
+            self?.onOpenSource?(request)
         }
         // The group's own change reaches every column: its structure may have changed (PR12b).
         session.onApplied = { [weak self] delivery in
@@ -336,6 +340,7 @@ struct ColumnEditorScreen: View {
     var uploads: NativeMediaUploads? = nil
     var documentTitle: (@MainActor (UUID) -> String?)? = nil
     var onOpenDocument: ((UUID, String) -> Void)? = nil
+    var onOpenSource: ((NativeSourceRequest) -> Void)? = nil
     @State private var linkTarget: NativeLinkTarget?
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.docsTheme) private var theme
@@ -398,7 +403,8 @@ struct ColumnEditorScreen: View {
             ColumnTextHost(
                 model: model, contentSize: uiContentSizeCategory(for: dynamicTypeSize), labels: .document(loc),
                 theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline,
-                documentTitle: documentTitle, onOpenDocument: onOpenDocument ?? model.onOpenDocument)
+                documentTitle: documentTitle, onOpenDocument: onOpenDocument ?? model.onOpenDocument,
+                onOpenSource: onOpenSource ?? model.onOpenSource)
         }
         .safeAreaInset(edge: .bottom) {
             if let input = model.activeSession?.input {
@@ -434,6 +440,7 @@ struct ColumnEditorScreen: View {
                     cellLabel: { String(format: loc[.native_editor_table_cell], $0, $1) }, text: { loc[$0] },
                     documentTitle: documentTitle, serverOrigin: serverOrigin,
                     onOpenDocument: onOpenDocument ?? model.onOpenDocument,
+                    onOpenSource: onOpenSource ?? model.onOpenSource,
                     onClose: {
                         model.lastTable = request.id
                         model.openTable = nil
@@ -471,6 +478,7 @@ private struct ColumnTextHost: UIViewRepresentable {
     let isOffline: Bool
     let documentTitle: (@MainActor (UUID) -> String?)?
     var onOpenDocument: ((UUID, String) -> Void)? = nil
+    var onOpenSource: ((NativeSourceRequest) -> Void)? = nil
 
     func makeUIView(context: Context) -> ColumnTextContainer {
         let container = ColumnTextContainer()
@@ -493,6 +501,7 @@ private struct ColumnTextHost: UIViewRepresentable {
             session.textView.blockControls.isOffline = isOffline
             session.textView.blockControls.documentTitle = documentTitle
             session.textView.blockControls.onOpenDocument = onOpenDocument
+            session.textView.blockControls.onOpenSource = onOpenSource
             let presentation = NativeTextPresentation(contentSize: contentSize, labels: labels)
             if container.presentations[ObjectIdentifier(session)] != presentation {
                 container.presentations[ObjectIdentifier(session)] = presentation
