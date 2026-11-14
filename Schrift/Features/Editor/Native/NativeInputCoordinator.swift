@@ -1974,7 +1974,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// Active page-link or `@` mention picker card for the current caret, or
     /// `nil` when suppressed, dismissed, offline-idle, failed, or auto-closed.
     var inlinePicker: NativeInlinePickerPresentation? {
-        guard !compositionOwnsView, let source = inlinePickerSource, let active = activeInlineTrigger else {
+        guard !compositionOwnsView, let active = activeInlineTrigger, let source = inlinePickerSource else {
             return nil
         }
         let key = active.key
@@ -2131,7 +2131,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     func refreshInlinePicker() {
         guard let view, !compositionOwnsView else {
-            activeInlineTrigger = nil
+            if activeInlineTrigger != nil { activeInlineTrigger = nil }
             return
         }
         let range = view.selectedRange
@@ -2172,7 +2172,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             let block, !surface.isHidden(blockID: block.id)
         else {
             slashPageLinkSession = nil
-            activeInlineTrigger = nil
+            if activeInlineTrigger != nil { activeInlineTrigger = nil }
             return
         }
         var slashAnchor: Int?

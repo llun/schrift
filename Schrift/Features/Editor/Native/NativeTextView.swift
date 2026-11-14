@@ -111,6 +111,7 @@ final class NativeTextView: UITextView {
             inputCoordinator.commitComposition(text: text)
             return
         }
+        FileHandle.standardError.write(Data("PR13C2_TV insertText=\(text.debugDescription)\n".utf8))
         inputCoordinator.typeKey(text)
     }
 
@@ -121,7 +122,9 @@ final class NativeTextView: UITextView {
         guard inputCoordinator != nil, isEditable else { return super.keyCommands }
         var commands: [UIKeyCommand] = []
         var registeredEscape = false
-        if inputCoordinator?.claimsInlinePickerKey(.escape) == true {
+        if inputCoordinator?.claimsInlinePickerKey(.escape) == true
+            || inputCoordinator?.inlinePickerSource != nil
+        {
             commands.append(
                 UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(nativeEscape)))
             registeredEscape = true
@@ -204,6 +207,10 @@ final class NativeTextView: UITextView {
     /// cell navigation; a table cell's hardware arrows (PR11c) go to the table
     /// editor next, and anything neither takes is the text view's.
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        FileHandle.standardError.write(
+            Data(
+                "PR13C2_TV pressesBegan count=\(presses.count) key=\(String(describing: presses.first?.key?.keyCode)) mod=\(presses.first?.key?.modifierFlags.rawValue ?? -1)\n"
+                    .utf8))
         if let inputCoordinator, markedTextRange == nil, presses.count == 1,
             let key = presses.first?.key, key.modifierFlags.subtracting([.numericPad]).isEmpty
         {
@@ -267,6 +274,8 @@ final class NativeTextView: UITextView {
     }
 
     @objc private func nativeEscape() {
+        FileHandle.standardError.write(
+            Data("PR13C2_TV nativeEscape marked=\(markedTextRange != nil)\n".utf8))
         guard markedTextRange == nil else { return }
         if inputCoordinator?.handleInlinePickerKey(.escape) == true { return }
         if inputCoordinator?.tableMove?(.exit) == nil { inputCoordinator?.onExit?() }
@@ -352,6 +361,14 @@ final class NativeTextView: UITextView {
         switch NSStringFromSelector(action) {
         case "undo:": return inputCoordinator?.canUndo ?? false
         case "redo:": return inputCoordinator?.canRedo ?? false
+        case "nativeEscape":
+            let allowed =
+                markedTextRange == nil
+                && (inputCoordinator?.claimsInlinePickerKey(.escape) == true
+                    || inputCoordinator?.tableMove != nil
+                    || inputCoordinator?.onExit != nil)
+            FileHandle.standardError.write(Data("PR13C2_TV canPerform nativeEscape=\(allowed)\n".utf8))
+            return allowed
         case "toggleBoldface:", "toggleItalics:", "toggleUnderline:": return false
         default: break
         }

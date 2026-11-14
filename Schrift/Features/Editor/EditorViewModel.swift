@@ -166,9 +166,9 @@ final class EditorViewModel {
     /// decoding Home's lists from `UserDefaults` on every keystroke. Not observed: it is a
     /// memo of on-disk state, refreshed whenever a new search starts.
     @ObservationIgnored private var pageLinkCandidateMemo: PageLinkCandidateMemo?
-    /// Titles primed by native page-link picks so newly inserted chips resolve immediately
-    /// even if cache lookups lag or omit the document.
-    @ObservationIgnored private var recordedNativeDocumentTitles: [UUID: String] = [:]
+    /// Titles primed by native page-link picks, keyed by signed-in owner so one
+    /// account's primed titles are never visible after switching accounts.
+    @ObservationIgnored private var recordedNativeDocumentTitles: [UUID: [UUID: String]] = [:]
     /// The block whose text view holds an input method's uncommitted (marked) text, as its
     /// text view last reported it. While it does, UIKit owns those characters — a model write
     /// is not applied to the view until the composition commits, and the commit then
@@ -3103,11 +3103,13 @@ final class EditorViewModel {
     }
 
     /// Primes an in-memory title for a page picked in the native `[[` or slash
-    /// picker so its chip renders the title on first layout.
+    /// picker under the signed-in owner so its chip renders immediately without
+    /// leaking across accounts.
     func recordNativeDocumentTitle(_ title: String, for targetID: UUID) {
+        guard let ownerUserID = signedInUser.userID else { return }
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        recordedNativeDocumentTitles[targetID] = trimmed
+        recordedNativeDocumentTitles[ownerUserID, default: [:]][targetID] = trimmed
     }
 
     /// Cached title for a linked document within this account's known scope
@@ -3131,7 +3133,10 @@ final class EditorViewModel {
         {
             return title
         }
-        if let recorded = recordedNativeDocumentTitles[targetID], !recorded.isEmpty {
+        if let ownerUserID = signedInUser.userID,
+            let recorded = recordedNativeDocumentTitles[ownerUserID]?[targetID],
+            !recorded.isEmpty
+        {
             return recorded
         }
         return nil
