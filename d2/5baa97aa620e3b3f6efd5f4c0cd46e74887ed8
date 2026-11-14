@@ -1,0 +1,27 @@
+Schrift/Features/Editor/EditorView.swift
+  s_dc239db0cc1c9d::t_74b67a63a7f051 280-282,284-293,309,317,332,334-335,337,340-361,375-376,378,382,385-386,390-392,407-413,415-418,420-421,423-424,433-446,448-449,451-458,460-463,466-469,472-475,480-526,530-588,591-613,616-631,634-637,640-662,665-673,675-703,707-750,754-845,874-892,948-953,955-960,962-966,968-1181,1184-1194,1197,1199-1200,1202-1245,1247-1257,1282-1289,1291-1305,1308-1363
+Schrift/Features/Editor/EditorViewModel.swift
+  s_dc239db0cc1c9d::t_272dd28971b6d9 141-145,377,382-394,1336,3764-3922
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_dc239db0cc1c9d::t_131b610321b051 511-515,733,737,855-864,871-876,879,896,904,939-952,969-1073,1115,1117-1118,1121-1137
+Schrift/Features/Editor/Native/NativeEditorView.swift
+  s_dc239db0cc1c9d::t_f6310ea317cde8 38-52,81-92,95-126,141-144,286-287,289-290,292-296,299,310-315,322,324,348-362,402,412,420,422,672-722,742-744,748-751,754-755,758,778-781,812,824-979
+project.yml
+  s_dc239db0cc1c9d::t_922af13b340880 151-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d25baa97aa620e3b3f6efd5f4c0cd46e74887ed8",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
