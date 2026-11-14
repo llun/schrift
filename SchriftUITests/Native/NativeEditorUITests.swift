@@ -1075,9 +1075,9 @@ final class NativeEditorUITests: XCTestCase {
     }
 
     /// PR13c2: typing `[[Road` opens the page-link picker, selecting a page inserts
-    /// a resolved-title chip without `mentionSearchInline`, Escape keeps `[[` prose
-    /// untouched, and relaunch preserves the chip.
-    func testDoubleBracketPageLinkInsertEscapeAndRelaunch() {
+    /// a resolved-title chip without `mentionSearchInline`, tapping outside dismisses
+    /// the picker leaving `[[` prose untouched, and relaunch preserves the chip.
+    func testDoubleBracketPageLinkInsertDismissAndRelaunch() {
         let app = XCUIApplication()
         app.launchArguments = ["--native-inline-objects", "--reset"]
         app.launch()
@@ -1094,12 +1094,12 @@ final class NativeEditorUITests: XCTestCase {
             "interlink chip renders resolved title: \(text(of: editor))")
         XCTAssertFalse(text(of: editor).contains("[[Road"))
 
-        // Typing `[[Ar` then pressing Escape dismisses the picker and leaves literal prose.
+        // Typing `[[Ar` then tapping outside the picker dismisses it and leaves literal prose.
         editor.typeText(" [[Ar")
         let architecture = app.buttons["Architecture Notes"]
         XCTAssertTrue(architecture.waitForExistence(timeout: 5))
-        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
-        XCTAssertTrue(architecture.waitForNonExistence(timeout: 5), "Escape dismisses page-link picker")
+        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 22, dy: 26)).tap()
+        XCTAssertTrue(architecture.waitForNonExistence(timeout: 5), "Tapping outside dismisses page-link picker")
         XCTAssertTrue(waitForText(of: editor, containing: "[[Ar"))
 
         waitForDurableJournal(in: app)
@@ -1115,9 +1115,9 @@ final class NativeEditorUITests: XCTestCase {
     }
 
     /// PR13c2: `/link` opens Slash "Link a page", picking inserts an interlink chip
-    /// without `/link`, Escape after opening "Link a page" leaves zero zombie chips,
+    /// without `/link`, Backspace on an empty session cancels without zombie chips,
     /// and relaunch preserves the inserted chip.
-    func testSlashLinkPageInsertEscapeAndRelaunch() {
+    func testSlashLinkPageInsertDismissAndRelaunch() {
         let app = XCUIApplication()
         app.launchArguments = ["--native-inline-objects", "--reset"]
         app.launch()
@@ -1138,18 +1138,18 @@ final class NativeEditorUITests: XCTestCase {
             "slash Link a page inserts chip: \(text(of: editor))")
         XCTAssertFalse(text(of: editor).contains("/link"))
 
-        // Start a fresh paragraph, open slash "Link a page", then press Escape: clean paragraph, zero zombies.
+        // Start a fresh paragraph, open slash "Link a page", then press Backspace: clean paragraph, zero zombies.
         editor.typeText("\n/link")
         XCTAssertTrue(slashLink.waitForExistence(timeout: 5))
         slashLink.tap()
         let roadmap = app.buttons["Product Roadmap"]
         XCTAssertTrue(roadmap.waitForExistence(timeout: 5))
-        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
-        XCTAssertTrue(roadmap.waitForNonExistence(timeout: 5), "Escape cancels slash page-link session")
-        let valueAfterEscape = text(of: editor)
-        XCTAssertFalse(valueAfterEscape.contains("/link"), valueAfterEscape)
-        XCTAssertFalse(valueAfterEscape.contains("Mention:"), "zero zombie mentionSearchInline: \(valueAfterEscape)")
-        XCTAssertFalse(valueAfterEscape.contains("\u{FFFC}"), valueAfterEscape)
+        editor.typeText(XCUIKeyboardKey.delete.rawValue)
+        XCTAssertTrue(roadmap.waitForNonExistence(timeout: 5), "Backspace cancels empty slash page-link session")
+        let valueAfterDismiss = text(of: editor)
+        XCTAssertFalse(valueAfterDismiss.contains("/link"), valueAfterDismiss)
+        XCTAssertFalse(valueAfterDismiss.contains("Mention:"), "zero zombie mentionSearchInline: \(valueAfterDismiss)")
+        XCTAssertFalse(valueAfterDismiss.contains("\u{FFFC}"), valueAfterDismiss)
 
         waitForDurableJournal(in: app)
         app.terminate()
@@ -1164,7 +1164,7 @@ final class NativeEditorUITests: XCTestCase {
     }
 
     /// PR13c2: `@ada` fetches mocked accesses, omits `.reader` users, inserts `@Ada Lovelace`,
-    /// ignores `user@example.com`, cancels cleanly on Escape, and survives relaunch.
+    /// ignores `user@example.com`, dismisses cleanly on tap outside, and survives relaunch.
     func testMentionInsertFiltersReadersIgnoresEmailsAndSurvivesRelaunch() {
         let app = XCUIApplication()
         app.launchArguments = ["--native-inline-objects", "--reset"]
@@ -1192,12 +1192,12 @@ final class NativeEditorUITests: XCTestCase {
             waitForText(of: editor, containing: "user@example.com Mention: @Ada Lovelace"),
             "mention chip rendered: \(text(of: editor))")
 
-        // Typing `@grace` then pressing Escape dismisses without writing a chip.
+        // Typing `@grace` then tapping outside the picker dismisses without writing a chip.
         editor.typeText(" @grace")
         let graceRow = app.buttons["editor.mentionPicker.row.bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"]
         XCTAssertTrue(graceRow.waitForExistence(timeout: 5))
-        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
-        XCTAssertTrue(mentionPicker.waitForNonExistence(timeout: 5))
+        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 22, dy: 26)).tap()
+        XCTAssertTrue(mentionPicker.waitForNonExistence(timeout: 5), "Tapping outside dismisses mention picker")
         XCTAssertTrue(waitForText(of: editor, containing: "@grace"))
 
         waitForDurableJournal(in: app)
@@ -1226,16 +1226,16 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(waitForText(of: editor, containing: "@ada"))
     }
 
-    /// PR13c2: `[[`, `@`, and Escape precedence work in both columns and table cells,
-    /// dismissing the picker without closing the sheet, and chips survive relaunch.
-    func testColumnAndTableInlinePickersEscapeAndRelaunch() {
+    /// PR13c2: `[[` and `@` pickers work in both columns and table cells,
+    /// dismissing on tap outside without closing the sheet, and chips survive relaunch.
+    func testColumnAndTableInlinePickersDismissAndRelaunch() {
         let app = XCUIApplication()
         app.launchArguments = ["--native-inline-objects", "--reset"]
         app.launch()
         let editor = app.textViews["nativeEditor.text"]
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
 
-        // 1. Columns: insert interlink + mention, then test Escape does not close column sheet.
+        // 1. Columns: insert interlink + mention, then tapping outside dismisses picker without closing column sheet.
         let columnCard = app.descendants(matching: .any)["nativeEditor.attachment.owned-columns"]
         XCTAssertTrue(columnCard.waitForExistence(timeout: 10))
         columnCard.tap()
@@ -1259,16 +1259,16 @@ final class NativeEditorUITests: XCTestCase {
         firstColumn.typeText(" [[Ar")
         let architecture = app.buttons["Architecture Notes"]
         XCTAssertTrue(architecture.waitForExistence(timeout: 5))
-        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
-        XCTAssertTrue(architecture.waitForNonExistence(timeout: 5), "Escape dismisses column picker")
+        firstColumn.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 20, dy: 24)).tap()
+        XCTAssertTrue(architecture.waitForNonExistence(timeout: 5), "Tapping outside dismisses column picker")
         let columnsDone = app.buttons["nativeEditor.columns.done"]
-        XCTAssertTrue(columnsDone.exists, "Escape must not close the column editor while picker is open")
+        XCTAssertTrue(columnsDone.exists, "Dismissing picker must not close the column editor")
         XCTAssertTrue(waitForText(of: firstColumn, containing: "Page: Product Roadmap"))
         XCTAssertTrue(waitForText(of: firstColumn, containing: "Mention: @Ada Lovelace"))
         columnsDone.tap()
         XCTAssertTrue(columnCard.waitForExistence(timeout: 5))
 
-        // 2. Table: insert interlink + mention in empty cell (1, 1), then Escape keeps table open.
+        // 2. Table: insert interlink + mention in empty cell (1, 1), then tap another cell to dismiss picker.
         let tableCard = app.descendants(matching: .any)["nativeEditor.attachment.owned-table"]
         XCTAssertTrue(tableCard.waitForExistence(timeout: 5))
         tableCard.tap()
@@ -1290,10 +1290,10 @@ final class NativeEditorUITests: XCTestCase {
 
         app.typeText(" [[Ar")
         XCTAssertTrue(architecture.waitForExistence(timeout: 5))
-        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
-        XCTAssertTrue(architecture.waitForNonExistence(timeout: 5), "Escape dismisses table cell picker")
+        app.staticTexts["nativeEditor.table.text.0.0"].tap()
+        XCTAssertTrue(architecture.waitForNonExistence(timeout: 5), "Tapping another cell dismisses table cell picker")
         let tableDone = app.buttons["nativeEditor.table.done"]
-        XCTAssertTrue(tableDone.exists, "Escape must not close the table editor while picker is open")
+        XCTAssertTrue(tableDone.exists, "Dismissing picker must not close the table editor")
         tableDone.tap()
         XCTAssertTrue(tableCard.waitForExistence(timeout: 5))
 
