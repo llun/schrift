@@ -4008,9 +4008,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   rejection in `.inlineMath`), and IME `provisional.json` recovery. `sourceSlashItems` adds
   `mathBlock` and `inlineMath` (both auto-opening `NativeSourceEditor`), and `diagram` (seeding
   `SourceBlock.defaultDiagramSource`).
-  **Tests:** `BlockNoteSourceOracleTests` (12 tests), `DocumentEngineSourceTests` (10 tests),
+  **Tests:** `BlockNoteSourceOracleTests` (13 tests), `DocumentEngineSourceTests` (10 tests),
   `ReplicaSessionSourceTests` (4 tests), `NativeSourcePreviewTests` (7 tests), `NativeSourceEditorTests`
-  (18 tests), and `DocumentEngineBoundaryTests.testCoreYjsAndNativeSourceFilesRespectLayerBoundaries`
+  (21 tests), and `DocumentEngineBoundaryTests.testCoreYjsAndNativeSourceFilesRespectLayerBoundaries`
   (4 tests total in `DocumentEngineBoundaryTests`).
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves

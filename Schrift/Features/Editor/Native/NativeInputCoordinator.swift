@@ -1236,17 +1236,14 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             noticeKey = .native_editor_input_unavailable
             return false
         }
-        // In a scoped source surface, Select All (0..<storage.length) covers the
-        // synthetic trailing newline separator; clamp it to the source text.
+        // In a scoped source surface, Select All (0..<storage.length) and carets
+        // at or after the synthetic trailing newline separator clamp into the source text.
         var range = range
-        if sourceKind != nil, let entry = surface.rangeIndex.entry(atUTF16: range.location) {
-            let maxEnd = NSMaxRange(entry.textRange)
-            if range.location <= maxEnd, NSMaxRange(range) > maxEnd {
-                range = NSRange(location: range.location, length: maxEnd - range.location)
-                if range.length == 0, text.isEmpty {
-                    selection.place(NSRange(location: range.location, length: 0))
-                    return true
-                }
+        if let clamped = clampedSourceRange(range) {
+            range = clamped
+            if range.length == 0, text.isEmpty {
+                selection.place(NSRange(location: range.location, length: 0))
+                return true
             }
         }
         // Within one block's text and without a line break: ordinary typing.
@@ -1390,18 +1387,19 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
         let selection = view.selectedRange
         if selection.length > 0, view.markedTextRange == nil { return replace(range: selection, with: "\n") }
-        guard view.markedTextRange == nil, selection.length == 0,
-            let entry = surface.rangeIndex.entry(atUTF16: selection.location),
+        let effectiveSelection = clampedSourceRange(selection) ?? selection
+        guard view.markedTextRange == nil, effectiveSelection.length == 0,
+            let entry = surface.rangeIndex.entry(atUTF16: effectiveSelection.location),
             let position = surface.rangeIndex.position(for: entry.blockID),
-            selection.location <= NSMaxRange(entry.textRange),
+            effectiveSelection.location <= NSMaxRange(entry.textRange),
             !AttributedDocumentProjection.isPlaceholder(surface.blocks[position])
         else {
             noticeKey = .native_editor_input_unavailable
             return false
         }
         // BlockNote's Enter in a code block inserts a line break in the block.
-        if isCode(entry.blockID) { return replace(range: selection, with: "\n") }
-        let offset = selection.location - entry.textRange.location
+        if isCode(entry.blockID) { return replace(range: effectiveSelection, with: "\n") }
+        let offset = effectiveSelection.location - entry.textRange.location
         // BlockNote's Enter reads whether the toggle (or a toggle parent) is open.
         let open = Set([entry.blockID, surface.blocks[position].parentID].compactMap { $0 }.filter(surface.isExpanded))
         return applyStructural(
@@ -1461,14 +1459,27 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return moveBlock(.outdent)
     }
 
+    /// In a scoped source surface, Select All (`0..<storage.length`) or a caret
+    /// at/after the synthetic trailing newline separator (`storage.length`) is
+    /// clamped into the source text range.
+    private func clampedSourceRange(_ range: NSRange) -> NSRange? {
+        guard sourceKind != nil, let entry = surface.rangeIndex.entries.first else { return nil }
+        let maxEnd = NSMaxRange(entry.textRange)
+        let location = min(range.location, maxEnd)
+        let end = min(NSMaxRange(range), maxEnd)
+        return NSRange(location: location, length: end - location)
+    }
+
     /// Hardware Tab: two spaces in a code block (BlockNote's
     /// `indentLineWithTab`), the next cell in a table, else `indent()`.
     @discardableResult
     func insertTab() -> Bool {
         if let tableMove { return compositionOwnsView ? false : tableMove(.next) || true }
         guard sourceKind != .inlineMath else { return false }
-        guard let view, let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location) else { return false }
-        return isCode(entry.blockID) ? replace(range: view.selectedRange, with: "  ") : indent()
+        guard let view else { return false }
+        let effectiveSelection = clampedSourceRange(view.selectedRange) ?? view.selectedRange
+        guard let entry = surface.rangeIndex.entry(atUTF16: effectiveSelection.location) else { return false }
+        return isCode(entry.blockID) ? replace(range: effectiveSelection, with: "  ") : indent()
     }
 
     private func moveBlock(_ kind: NativeEditCommand.Kind) -> Bool {

@@ -223,13 +223,15 @@ final class NativeCompositionSession {
         guard selection.location >= 0, selection.length >= 0,
             selection.location <= surface.storage.length,
             selection.length <= surface.storage.length - selection.location,
-            let entry = surface.rangeIndex.entry(atUTF16: selection.location),
+            let entry = surface.rangeIndex.entry(atUTF16: selection.location)
+                ?? surface.rangeIndex.entries.first.flatMap({ SourceTarget.isSourceID($0.blockID) ? $0 : nil }),
             let position = surface.rangeIndex.position(for: entry.blockID)
         else { return nil }
-        if SourceTarget.isSourceID(entry.blockID), selection.location <= NSMaxRange(entry.textRange),
-            NSMaxRange(selection) > NSMaxRange(entry.textRange)
-        {
-            selection.length = NSMaxRange(entry.textRange) - selection.location
+        if SourceTarget.isSourceID(entry.blockID) {
+            let maxEnd = NSMaxRange(entry.textRange)
+            let location = min(selection.location, maxEnd)
+            let end = min(NSMaxRange(selection), maxEnd)
+            selection = NSRange(location: location, length: end - location)
         }
         guard selection.location >= entry.textRange.location,
             NSMaxRange(selection) <= NSMaxRange(entry.textRange),

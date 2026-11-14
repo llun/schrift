@@ -1430,18 +1430,21 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
     }
 
     func testC2RequestedSourceSetOnlyOnAppliedNeverOnRefusedOrTwiceOnStaleRetry() async throws {
-        // 1. .refused: slash /mathBlock inside a heading (canFormat == true, engine refuses non-paragraph).
-        let headingBlock = BlockNoteBlock(
-            node: "heading",
-            props: Self.paragraphProps + [("level", .int(1)), ("isToggleable", .bool(false))],
-            runs: [InlineRun("/math")],
-            id: "h1")
-        let refusedHarness = try await makeHarness([headingBlock])
+        // 1. .refused: slash /mathBlock in a paragraph when the engine refuses (non-canonical duplicate ID).
+        let refusedHarness = try await makeHarness([
+            paragraph("p1", "/math"),
+            paragraph("dup", "A"),
+            paragraph("dup", "B"),
+        ])
         addTeardownBlock { await refusedHarness.close() }
         setSelection(refusedHarness, NSRange(location: 5, length: 0))
         let mathItem = try XCTUnwrap(NativeInputCoordinator.slashItems.first { $0.id == "mathBlock" })
-        let refusedApplied = await refusedHarness.run { refusedHarness.input.applySlashItem(mathItem) }
-        XCTAssertFalse(refusedApplied)
+        let refusedPosted = refusedHarness.input.applySlashItem(mathItem)
+        XCTAssertTrue(refusedPosted, "slash command must be posted so the engine actually refuses it")
+        XCTAssertNil(refusedHarness.input.requestedSource, "requestedSource must not be set while command is in flight")
+        await refusedHarness.settle()
+        XCTAssertEqual(refusedHarness.input.lastOutcome, false)
+        XCTAssertEqual(refusedHarness.input.noticeKey, .native_editor_input_unavailable)
         XCTAssertNil(refusedHarness.input.requestedSource, "refused slash command must not set requestedSource")
 
         // 2. .stale then retry -> .applied: requestedSource stays nil until .applied.
@@ -1675,5 +1678,107 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         XCTAssertTrue(
             try harness.store.provisionalRecoveries(for: harness.scope).map(\.text).contains("ok\u{202E}!"))
         editor.close()
+    }
+
+    func testE1CaretAtStorageLengthInSourceEditorClampsToTextEnd() async throws {
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            let mContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            after = try YWrite.insertAfter(tx, into: group, after: after, [.type(mContainer)])
+            try YWrite.mapSet(tx, on: mContainer, key: "id", .any([.string("mx")]))
+            let mEl = YType(typeRef: .xmlElement(nodeName: SourceBlock.mathBlock))
+            try YWrite.insertAfter(tx, into: mContainer, after: nil, [.type(mEl)])
+            let mTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: mEl, after: nil, [.type(mTxt)])
+            try mTxt.insert(0, "abc", nil)
+
+            let pContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            _ = try YWrite.insertAfter(tx, into: group, after: after, [.type(pContainer)])
+            try YWrite.mapSet(tx, on: pContainer, key: "id", .any([.string("px")]))
+            let pEl = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+            try YWrite.insertAfter(tx, into: pContainer, after: nil, [.type(pEl)])
+            let mathEl = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+            try YWrite.insertAfter(tx, into: pEl, after: nil, [.type(mathEl)])
+            let iTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: mathEl, after: nil, [.type(iTxt)])
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+
+        let editor = NativeSourceEditorViewController(document: harness.session, request: .block(blockID: "mx"))
+        let win = hostController(UINavigationController(rootViewController: editor))
+        defer { win.isHidden = true }
+        await waitForSourceLoaded(editor)
+        let sourceSession = try XCTUnwrap(editor.sourceSession)
+        let sourceInput = try XCTUnwrap(sourceSession.input)
+        let tv = sourceSession.textView
+
+        // Caret at storage.length (after trailing separator): typing, pasting, Return, Tab, and IME all clamp to text end.
+        tv.selectedRange = NSRange(location: tv.textStorage.length, length: 0)
+        XCTAssertEqual(tv.selectedRange.location, 4)
+        let typed = await sourceSession.run { sourceInput.replace(range: tv.selectedRange, with: "x") }
+        XCTAssertTrue(typed)
+        XCTAssertNil(sourceInput.noticeKey)
+        XCTAssertEqual(tv.text, "abcx\n")
+        XCTAssertEqual(tv.selectedRange, NSRange(location: 4, length: 0))
+
+        tv.selectedRange = NSRange(location: tv.textStorage.length, length: 0)
+        sourceInput.pasteboard.string = "y"
+        let pasted = await sourceSession.run { sourceInput.pasteFromPasteboard() }
+        XCTAssertTrue(pasted)
+        XCTAssertNil(sourceInput.noticeKey)
+        XCTAssertEqual(tv.text, "abcxy\n")
+
+        tv.selectedRange = NSRange(location: tv.textStorage.length, length: 0)
+        let newline = await sourceSession.run { sourceInput.insertNewline() }
+        XCTAssertTrue(newline)
+        XCTAssertNil(sourceInput.noticeKey)
+        XCTAssertEqual(tv.text, "abcxy\u{2028}\n")
+
+        tv.selectedRange = NSRange(location: tv.textStorage.length, length: 0)
+        let tabbed = await sourceSession.run { sourceInput.insertTab() }
+        XCTAssertTrue(tabbed)
+        XCTAssertNil(sourceInput.noticeKey)
+        XCTAssertEqual(tv.text, "abcxy\u{2028}  \n")
+
+        tv.selectedRange = NSRange(location: tv.textStorage.length, length: 0)
+        tv.setMarkedText("z", selectedRange: NSRange(location: 1, length: 0))
+        XCTAssertNil(sourceInput.noticeKey)
+        XCTAssertTrue(sourceInput.composition.isActive)
+        tv.unmarkText()
+        await sourceSession.settle()
+        XCTAssertEqual(tv.text, "abcxy\u{2028}  z\n")
+
+        // Backspace at storage.length moves cleanly to text end without refusing or deleting text.
+        tv.selectedRange = NSRange(location: tv.textStorage.length, length: 0)
+        sourceInput.deleteKey()
+        await sourceSession.settle()
+        XCTAssertNil(sourceInput.noticeKey)
+        XCTAssertEqual(tv.text, "abcxy\u{2028}  z\n")
+        XCTAssertEqual(tv.selectedRange, NSRange(location: 9, length: 0))
+        editor.close()
+
+        // Empty inlineMath: caret at storage.length (1) types cleanly into offset 0.
+        let inlineEditor = NativeSourceEditorViewController(
+            document: harness.session, request: .inlineMath(blockID: "px", utf16Offset: 0))
+        let inlineWin = hostController(UINavigationController(rootViewController: inlineEditor))
+        defer { inlineWin.isHidden = true }
+        await waitForSourceLoaded(inlineEditor)
+        let inlineSession = try XCTUnwrap(inlineEditor.sourceSession)
+        let inlineInput = try XCTUnwrap(inlineSession.input)
+        let inlineTV = inlineSession.textView
+        XCTAssertEqual(inlineTV.text, "\n")
+        inlineTV.selectedRange = NSRange(location: inlineTV.textStorage.length, length: 0)
+        XCTAssertEqual(inlineTV.selectedRange.location, 1)
+        inlineTV.insertText("a")
+        await inlineSession.settle()
+        XCTAssertNil(inlineInput.noticeKey)
+        XCTAssertEqual(inlineTV.text, "a\n")
+        inlineEditor.close()
+
+        await harness.settle()
+        let xml = await harness.session.replicaDoc { YXMLString.fragment($0) }
+        XCTAssertTrue(xml?.contains("<mathblock>abcxy\n  z</mathblock>") == true, xml ?? "")
+        XCTAssertTrue(xml?.contains("<math>a</math>") == true, xml ?? "")
     }
 }
