@@ -508,7 +508,7 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
         addTeardownBlock { await harness.close() }
         let session = harness.session
         setSelection(harness, NSRange(location: try location(session, "s", 0), length: 0))
-        for character in ["/","d","i","v"] { harness.view.insertText(character) }
+        for character in ["/", "d", "i", "v"] { harness.view.insertText(character) }
         await harness.settle()
         XCTAssertEqual(harness.input.slashMenuQuery, "div")
         let divider = try XCTUnwrap(NativeInputCoordinator.slashItems.first { $0.id == "divider" })
@@ -545,7 +545,8 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
         XCTAssertEqual(endHarness.session.surface.blocks.map(\.node), ["divider", "paragraph"])
         let trailingID = endHarness.session.surface.blocks[1].id
         XCTAssertEqual(
-            endHarness.view.selectedRange, NSRange(location: try location(endHarness.session, trailingID, 0), length: 0))
+            endHarness.view.selectedRange, NSRange(location: try location(endHarness.session, trailingID, 0), length: 0)
+        )
         try await assertConsistent(endHarness, localCommands: 1)
     }
 

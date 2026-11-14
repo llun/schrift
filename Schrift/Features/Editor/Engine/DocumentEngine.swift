@@ -659,7 +659,7 @@ final class DocumentEngine {
         case .undo, .redo:
             throw DocumentEngineError.unsupportedNativeInput  // `applyHistoryStep`
         case .lineBreak, .table, .columns, .insertColumns, .insertMedia, .insertMediaBatch, .insertSourceBlock,
-            .mediaProps, .insertInlineObject, .insertInlineMath, .pasteInline:
+            .insertDivider, .mediaProps, .insertInlineObject, .insertInlineMath, .pasteInline:
             throw DocumentEngineError.unsupportedNativeInput  // cells, tables, groups, media and inline atoms, prepared above
         }
         return (write, caret)

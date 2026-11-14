@@ -77,9 +77,7 @@ final class NativeEditorUITests: XCTestCase {
         app.launchArguments = ["--native-open", "--reset"]
         app.launch()
         let editor = app.textViews["nativeEditor.text"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.025)).tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        focusFirstParagraph(of: editor, in: app)
         editor.typeText("alpha")
         let lines = text(of: editor).components(separatedBy: "\n")
         guard lines.count > 2, let caret = lines[0].range(of: "alpha")?.upperBound else {
@@ -130,7 +128,8 @@ final class NativeEditorUITests: XCTestCase {
         app.launch()
         let editor = app.textViews["nativeEditor.text"]
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        let word = editor.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.025))
+        XCTAssertTrue(editor.waitForStableFrame())
+        let word = firstParagraphCoordinate(of: editor, in: app)
         word.doubleTap()
         let bold = app.buttons["nativeEditor.format.bold"]
         XCTAssertTrue(bold.waitForExistence(timeout: 5))
@@ -583,9 +582,7 @@ final class NativeEditorUITests: XCTestCase {
         app.launchArguments = ["--native-open", "--reset", "--native-tree"]
         app.launch()
         let editor = app.textViews["nativeEditor.text"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.025)).tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        focusFirstParagraph(of: editor, in: app)
         let depths = app.staticTexts["tree.depths"]
         app.buttons["tree.read"].tap()
         XCTAssertEqual(depths.label, "0,0,0")
@@ -615,9 +612,7 @@ final class NativeEditorUITests: XCTestCase {
         app.launchArguments = ["--native-open", "--reset", "--native-tree"]
         app.launch()
         let editor = app.textViews["nativeEditor.text"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.025)).tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        focusFirstParagraph(of: editor, in: app)
         let texts = app.staticTexts["tree.texts"]
         app.buttons["tree.read"].tap()
         XCTAssertEqual(texts.label, "Tree first|Tree second|Owned paragraph 1.")
@@ -818,9 +813,7 @@ final class NativeEditorUITests: XCTestCase {
         app.launchArguments = ["--native-open", "--reset", "--native-ime"]
         app.launch()
         let editor = app.textViews["nativeEditor.text"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.025)).tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        focusFirstParagraph(of: editor, in: app)
         app.buttons["ime.compose"].tap()
         XCTAssertTrue(text(of: editor).contains("にほん"), "UIKit shows the marked text")
         app.buttons["ime.convert"].tap()
@@ -840,7 +833,7 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertEqual(recovered.label, "かな")
         XCTAssertFalse(text(of: editor).contains("かな"), "never inserted silently")
         XCTAssertTrue(text(of: editor).contains("日本"), "the commit was durable")
-        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.025)).tap()
+        focusFirstParagraph(of: editor, in: app)
         app.buttons["nativeEditor.recovery.insert"].tap()
         XCTAssertTrue(text(of: editor).contains("かな"))
         XCTAssertFalse(recovered.exists)
@@ -857,7 +850,8 @@ final class NativeEditorUITests: XCTestCase {
         app.launch()
         let editor = app.textViews["nativeEditor.text"]
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.025)).tap()
+        XCTAssertTrue(editor.waitForStableFrame())
+        firstParagraphCoordinate(of: editor, in: app).tap()
         let keyboard = app.keyboards.firstMatch
         XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
         // The Japanese Romaji keyboard labels its return key 改行.
@@ -908,7 +902,8 @@ final class NativeEditorUITests: XCTestCase {
         app.launch()
         let editor = app.textViews["nativeEditor.text"]
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.025)).tap()
+        XCTAssertTrue(editor.waitForStableFrame())
+        firstParagraphCoordinate(of: editor, in: app).tap()
         let keyboard = app.keyboards.firstMatch
         XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
         let japanese = keyboard.buttons["改行"]
@@ -1099,7 +1094,7 @@ final class NativeEditorUITests: XCTestCase {
         editor.typeText(" [[Ar")
         let architecture = app.buttons["Architecture Notes"]
         XCTAssertTrue(architecture.waitForExistence(timeout: 5))
-        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 22, dy: 26)).tap()
+        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 22, dy: topParagraphY(in: app))).tap()
         XCTAssertTrue(architecture.waitForNonExistence(timeout: 5), "Tapping outside dismisses page-link picker")
         XCTAssertTrue(waitForText(of: editor, containing: "[[Ar"))
 
@@ -1200,7 +1195,7 @@ final class NativeEditorUITests: XCTestCase {
         editor.typeText(" @grace")
         let graceRow = app.buttons["editor.mentionPicker.row.bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"]
         XCTAssertTrue(graceRow.waitForExistence(timeout: 5))
-        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 22, dy: 26)).tap()
+        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 22, dy: topParagraphY(in: app))).tap()
         XCTAssertTrue(mentionPicker.waitForNonExistence(timeout: 5), "Tapping outside dismisses mention picker")
         XCTAssertTrue(waitForText(of: editor, containing: "@grace"))
 
@@ -1340,19 +1335,159 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(waitForText(of: editor, containing: "Page: Product Roadmap"))
 
         // Tap inside the chip laid out at offset 0 of the top paragraph (`textContainerInset` 16,16).
-        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 60, dy: 27)).tap()
+        editor.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 60, dy: topParagraphY(in: app) + 1))
+            .tap()
         let opened = app.staticTexts["inlineObjects.openedDocument"]
         XCTAssertTrue(opened.waitForExistence(timeout: 5), "tapping interlink chip navigates to linked document")
         XCTAssertEqual(opened.label, "Product Roadmap")
     }
 
+    /// G04: `--native-open` opens in Reading mode, toggles Editing mode via `Edit`/`Done`,
+    /// and enters Editing mode when prose is tapped.
+    func testModeHandoffBetweenReadingAndEditing() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-blocks"]
+        app.launch()
+
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(editor.waitForStableFrame())
+
+        let editButton = app.buttons["Edit"]
+        let doneButton = app.buttons["Done"]
+        let boldButton = app.buttons["nativeEditor.format.bold"]
+
+        XCTAssertTrue(editButton.waitForExistence(timeout: 5), "document opens in Reading mode")
+        XCTAssertFalse(boldButton.exists, "formatting bar is hidden in Reading mode")
+
+        editButton.tap()
+        XCTAssertTrue(doneButton.waitForExistence(timeout: 5), "Edit button enters Editing mode")
+        XCTAssertTrue(boldButton.waitForExistence(timeout: 5), "formatting bar shows in Editing mode")
+
+        doneButton.tap()
+        XCTAssertTrue(editButton.waitForExistence(timeout: 5), "Done button returns to Reading mode")
+        XCTAssertFalse(boldButton.exists, "Done hides the formatting bar")
+
+        firstParagraphCoordinate(of: editor, in: app).tap()
+        XCTAssertTrue(doneButton.waitForExistence(timeout: 5), "tapping prose enters Editing mode")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(boldButton.waitForExistence(timeout: 5))
+    }
+
+    /// G05: Ticking a checkbox in Reading mode works without leaving Reading mode,
+    /// and `Hide completed` hides completed checklist items and reveals them again.
+    func testHideCompletedChecklistsInReadingMode() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-blocks"]
+        app.launch()
+
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(editor.waitForStableFrame())
+        XCTAssertTrue(app.buttons["Edit"].waitForExistence(timeout: 5))
+
+        let checkbox = app.buttons["nativeEditor.checkbox.owned-check"]
+        XCTAssertTrue(checkbox.waitForExistence(timeout: 5))
+        checkbox.tap()
+        XCTAssertTrue(waitForValue(of: checkbox, equalTo: "Done", timeout: 5))
+        XCTAssertTrue(app.buttons["Edit"].exists, "toggling checkbox keeps Reading mode")
+        XCTAssertFalse(app.buttons["nativeEditor.format.bold"].exists)
+
+        let hideToggle = app.switches["checklist.hideCompleted"]
+        XCTAssertTrue(hideToggle.waitForExistence(timeout: 5))
+        let switchControl = hideToggle.switches.firstMatch.exists ? hideToggle.switches.firstMatch : hideToggle
+        switchControl.press(forDuration: 0.2)
+
+        XCTAssertTrue(checkbox.waitForNonExistence(timeout: 5), "completed item hides when Hide completed is on")
+        XCTAssertFalse(text(of: editor).contains("Fixture task"))
+
+        switchControl.press(forDuration: 0.2)
+        XCTAssertTrue(checkbox.waitForExistence(timeout: 5), "turning off Hide completed restores the item")
+        XCTAssertTrue(waitForText(of: editor, containing: "Fixture task"))
+    }
+
+    /// G09: Double-tapping a word in Reading mode enters Editing mode with selection,
+    /// and Command+B toggles bold durably across relaunch.
+    func testHardwareCommandBBoldSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset"]
+        app.launch()
+
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(editor.waitForStableFrame())
+
+        firstParagraphCoordinate(of: editor, in: app).doubleTap()
+        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 5))
+        let bold = app.buttons["nativeEditor.format.bold"]
+        XCTAssertTrue(bold.waitForExistence(timeout: 5))
+
+        editor.typeKey("b", modifierFlags: .command)
+        let selected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isSelected == true"), object: bold)
+        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed, "Command+B toggles bold")
+        waitForDurableJournal(in: app)
+        app.terminate()
+
+        app.launchArguments = ["--native-open"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(editor.waitForStableFrame())
+        firstParagraphCoordinate(of: editor, in: app).doubleTap()
+        XCTAssertTrue(bold.waitForExistence(timeout: 5))
+        let persisted = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isSelected == true"), object: bold)
+        XCTAssertEqual(XCTWaiter.wait(for: [persisted], timeout: 5), .completed, "bold survives relaunch")
+    }
+
+    /// G10: `/divider` converts the active paragraph to a divider with a trailing paragraph
+    /// and survives relaunch without entering preserved mode.
+    func testSlashDividerInsertsAndSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset"]
+        app.launch()
+
+        let editor = app.textViews["nativeEditor.text"]
+        focusFirstParagraph(of: editor, in: app)
+        editor.typeText("\n/divider")
+
+        let dividerItem = app.buttons["Divider"]
+        XCTAssertTrue(dividerItem.waitForExistence(timeout: 5), "slash menu offers Divider")
+        dividerItem.tap()
+        XCTAssertTrue(dividerItem.waitForNonExistence(timeout: 5))
+
+        editor.typeText("After rule")
+        XCTAssertTrue(waitForText(of: editor, containing: "\n\nAfter rule"))
+        XCTAssertFalse(app.staticTexts["nativeEditor.preservedNotice"].exists)
+        waitForDurableJournal(in: app)
+        app.terminate()
+
+        app.launchArguments = ["--native-open"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitForText(of: editor, containing: "\n\nAfter rule"))
+        XCTAssertFalse(app.staticTexts["nativeEditor.preservedNotice"].exists)
+    }
+
     private func text(of element: XCUIElement) -> String { element.value as? String ?? "" }
+
+    private func topParagraphY(in app: XCUIApplication) -> CGFloat {
+        app.buttons["Options"].exists ? 140 : 26
+    }
+
+    private func firstParagraphCoordinate(of editor: XCUIElement, in app: XCUIApplication) -> XCUICoordinate {
+        let hasShellHeader = app.buttons["Options"].exists
+        let dy: CGFloat = hasShellHeader ? 140 : max(18, editor.frame.height * 0.025)
+        return editor.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: editor.frame.width * 0.15, dy: dy))
+    }
 
     private func focusTopParagraph(of editor: XCUIElement, in app: XCUIApplication) {
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
         XCTAssertTrue(editor.waitForStableFrame(), "The editor must stop moving before it is tapped")
         XCTAssertTrue(editor.isHittable)
-        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 32, dy: 26)).tap()
+        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 32, dy: topParagraphY(in: app))).tap()
         let keyboard = app.keyboards.firstMatch
         guard keyboard.waitForExistence(timeout: 10), keyboard.waitForStableFrame() else {
             let screen = XCTAttachment(screenshot: app.screenshot())
@@ -1379,11 +1514,7 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
         XCTAssertTrue(editor.waitForStableFrame(), "The editor must stop moving before it is tapped")
         XCTAssertTrue(editor.isHittable)
-        let hasShellHeader = app.buttons["Options"].exists
-        let dy: CGFloat = hasShellHeader ? 140 : max(18, editor.frame.height * 0.025)
-        editor.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: editor.frame.width * 0.15, dy: dy))
-            .tap()
+        firstParagraphCoordinate(of: editor, in: app).tap()
         let keyboard = app.keyboards.firstMatch
         guard keyboard.waitForExistence(timeout: 10), keyboard.waitForStableFrame() else {
             let screen = XCTAttachment(screenshot: app.screenshot())

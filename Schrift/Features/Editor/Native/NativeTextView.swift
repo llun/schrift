@@ -901,7 +901,8 @@ final class NativeTextView: UITextView {
         reorderIfNeeded(ordered, in: self)
 
         var nestedByParent: [ObjectIdentifier: [UIView]] = [:]
-        for container in subviews where container !== headerAccessoryView && container !== footerAccessoryView
+        for container in subviews
+        where container !== headerAccessoryView && container !== footerAccessoryView
             && container !== cursorOverlay
         {
             collectAttachmentViews(in: container, into: &nestedByParent)

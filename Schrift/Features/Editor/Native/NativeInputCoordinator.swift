@@ -1516,7 +1516,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             let ids = [UUID().uuidString, UUID().uuidString]
             return applyStructural(
                 entry.blockID, .insertDivider(ids: ids, removing: 0..<length),
-                refusal: .native_editor_input_unavailable, retry: again { [weak self] in self?.insertNewline() ?? false },
+                refusal: .native_editor_input_unavailable,
+                retry: again { [weak self] in self?.insertNewline() ?? false },
                 readsSelection: true)
         }
         let offset = effectiveSelection.location - entry.textRange.location
@@ -1752,7 +1753,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// without unlocking general text editing.
     var canToggleCheckbox: Bool {
         sourceKind == nil && view != nil && !isFrozen && !isDetached && !compositionOwnsView
-            && (session?.state.writable ?? true)
+            && (session?.isWritable ?? true)
     }
 
     /// Clears transient editing UI state when leaving Editing mode.
@@ -2545,8 +2546,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return applyStructural(
             blockID, .props(props), refusal: .native_editor_input_unavailable,
             keeping: view.isEditable ? view.selectedRange : nil,
-            placement: view.isEditable ? nil : .none,
-            retry: again { [weak self] in self?.setProps(blockID, props, allowWhileReadOnly: allowWhileReadOnly) ?? false })
+            retry: again { [weak self] in
+                self?.setProps(blockID, props, allowWhileReadOnly: allowWhileReadOnly) ?? false
+            },
+            placement: view.isEditable ? nil : Barrier.Placement.none)
     }
 
     private func block(_ blockID: String) -> BlockSnapshot? {

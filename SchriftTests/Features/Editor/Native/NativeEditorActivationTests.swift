@@ -284,13 +284,14 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         defer { env.clean() }
         let scope = try seedReplica(env, typed: "secret body")
         let draftStore = PendingDraftStore(userDefaults: env.defaults)
+        let manifest = try XCTUnwrap(env.replicaStore.manifest(for: scope))
         draftStore.save(
             PendingDraft(
                 documentID: env.model.documentID,
                 title: "Previous Owner Secret Title",
                 markdown: "",
                 updatedAt: Date(),
-                replica: ReplicaDraftReference(scope: scope, revision: 1)
+                replica: ReplicaDraftReference(manifest: manifest, markdown: "")
             ))
         SignedInUserStore(userDefaults: env.defaults).remember(UUID())
         env.model.title = ""
@@ -302,7 +303,9 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
             return XCTFail("a foreign-owned replica must stay preservedUnavailable")
         }
         XCTAssertNotEqual(env.model.title, "Previous Owner Secret Title")
-        XCTAssertNotEqual(env.model.savedTitle, "Previous Owner Secret Title")
+        XCTAssertNotEqual(
+            env.model.nativeEnqueueInputs(cached: nil, draft: nil, fallbackTitle: "").title,
+            "Previous Owner Secret Title")
     }
 
     func testAccountChangeBeforeTheDebouncedSaveRefusesToSend() async throws {
@@ -1171,6 +1174,80 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         let created = await env.model.addSubpage()
         XCTAssertNotNil(created)
         XCTAssertEqual(env.model.mergedSubpages?.count, 2)
+    }
+
+    func testNativeModeHandoffTransitionsEditabilityAndClearsTransientState() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+        let input = try XCTUnwrap(session.input)
+
+        XCTAssertTrue(session.isWritable)
+        XCTAssertFalse(session.textView.isEditable, "opens in Reading mode by default")
+        XCTAssertFalse(input.canEdit)
+        XCTAssertTrue(input.canToggleCheckbox)
+
+        session.setEditing(true)
+        XCTAssertTrue(session.textView.isEditable)
+        XCTAssertTrue(input.canEdit)
+        XCTAssertTrue(input.canFormat)
+
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.textView.insertText("/")
+        _ = await session.settle()
+        XCTAssertEqual(input.slashMenuQuery, "")
+
+        session.setEditing(false)
+        XCTAssertFalse(session.textView.isEditable)
+        XCTAssertFalse(input.canEdit)
+        XCTAssertNil(input.slashMenuQuery)
+        XCTAssertNil(input.activeInlineTrigger)
+        XCTAssertTrue(input.activeMarks.isEmpty)
+
+        session.setExpectedWritable(false)
+        XCTAssertFalse(session.isWritable)
+        XCTAssertFalse(input.canToggleCheckbox)
+        session.setEditing(true)
+        XCTAssertFalse(session.textView.isEditable)
+    }
+
+    func testNativeNewDocumentEntryConsumesFocusOnceAndClearsOnExit() {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let intent = NewDocumentEntryIntent()
+        let model = EditorViewModel(
+            client: env.model.client, documentID: env.documentID, title: "Untitled",
+            saveCoordinator: env.model.saveCoordinator, signedInUser: SignedInUserStore(userDefaults: env.defaults),
+            contentCache: DocumentContentCacheStore(directory: env.directory),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
+            listCache: DocumentCacheStore(userDefaults: env.defaults),
+            entryIntent: intent,
+            availability: OnlineAvailability(userDefaults: env.defaults))
+
+        XCTAssertFalse(model.consumeNativeNewDocumentEntryIfNeeded(canEdit: false))
+        XCTAssertTrue(model.consumeNativeNewDocumentEntryIfNeeded(canEdit: true))
+        XCTAssertFalse(model.consumeNativeInitialTitleFocus(isEditing: false, canEdit: true))
+        XCTAssertTrue(model.consumeNativeInitialTitleFocus(isEditing: true, canEdit: true))
+        XCTAssertFalse(model.consumeNativeInitialTitleFocus(isEditing: true, canEdit: true))
+
+        let secondIntent = NewDocumentEntryIntent()
+        let secondModel = EditorViewModel(
+            client: env.model.client, documentID: env.documentID, title: "Untitled",
+            saveCoordinator: env.model.saveCoordinator, signedInUser: SignedInUserStore(userDefaults: env.defaults),
+            contentCache: DocumentContentCacheStore(directory: env.directory),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
+            listCache: DocumentCacheStore(userDefaults: env.defaults),
+            entryIntent: secondIntent,
+            availability: OnlineAvailability(userDefaults: env.defaults))
+        XCTAssertTrue(secondModel.consumeNativeNewDocumentEntryIfNeeded(canEdit: true))
+        secondModel.clearNativeInitialTitleFocus()
+        XCTAssertFalse(secondModel.consumeNativeInitialTitleFocus(isEditing: true, canEdit: true))
     }
 
     // MARK: - Fixture

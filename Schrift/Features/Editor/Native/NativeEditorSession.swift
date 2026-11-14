@@ -56,6 +56,10 @@ final class NativeEditorSession {
     /// Revision bumped whenever displayed blocks, fold state, or checklist
     /// presentation changes so SwiftUI shells refresh Reading chrome.
     private(set) var presentationRevision: Int = 0
+    /// Whether this surface is currently expected to accept writes (updated
+    /// synchronously on `enableTyping` / `NativeSessionRegistry.setWritable`
+    /// and cleared if the replica downgrades to read-only).
+    private(set) var isWritable: Bool = false
     /// Server origin for interlink clipboard plain-text serialization and
     /// same-origin URL paste-interlink.
     @ObservationIgnored private var interlinkingOrigin: String = ""
@@ -83,6 +87,7 @@ final class NativeEditorSession {
         self.revision = revision
         self.recoveries = recoveries
         self.state = state
+        self.isWritable = state.writable
         surface.surfaceID = surfaceID
         surface.onFoldChange = { [weak view, weak self] in
             view?.blockControls.foldDidChange()
@@ -203,7 +208,10 @@ final class NativeEditorSession {
         session.textView.accessibilityIdentifier = "nativeEditor.table.cell"
         session.consume(attachment.deliveries)
         // The table types while the document does (the replica's one journal).
-        if input != nil, textView.isEditable { session.enableTyping(persist: nil, scheduler: saveScheduler) }
+        if input != nil, textView.isEditable {
+            session.enableTyping(persist: nil, scheduler: saveScheduler)
+            session.setExpectedWritable(isWritable)
+        }
         // One clipboard for the document and its cells (tests use a private one).
         if let pasteboard = input?.pasteboard { session.input?.pasteboard = pasteboard }
         // A cell composition's recovery entries are the document's (PR11c):
@@ -260,7 +268,10 @@ final class NativeEditorSession {
         session.textView.accessibilityIdentifier = "nativeEditor.column"
         session.consume(attachment.deliveries)
         // The column types while the document does (the replica's one journal).
-        if input != nil, textView.isEditable { session.enableTyping(persist: nil, scheduler: saveScheduler) }
+        if input != nil, textView.isEditable {
+            session.enableTyping(persist: nil, scheduler: saveScheduler)
+            session.setExpectedWritable(isWritable)
+        }
         if let pasteboard = input?.pasteboard { session.input?.pasteboard = pasteboard }
         // A column composition's recovery entries are the document's, as a cell's are (PR11c).
         if let document = input?.composition, let cell = session.input?.composition {
@@ -301,7 +312,10 @@ final class NativeEditorSession {
         children.add(session)
         Self.configureSourceTextView(session.textView)
         session.consume(attachment.deliveries)
-        if input != nil, textView.isEditable { session.enableTyping(persist: nil, scheduler: saveScheduler) }
+        if input != nil, textView.isEditable {
+            session.enableTyping(persist: nil, scheduler: saveScheduler)
+            session.setExpectedWritable(isWritable)
+        }
         if let pasteboard = input?.pasteboard { session.input?.pasteboard = pasteboard }
         session.input?.sourceKind = sourceKind
         if let parent = input?.composition, let child = session.input?.composition {
@@ -438,6 +452,12 @@ final class NativeEditorSession {
         }
         let wasWritable = state.writable
         state = delivery.state
+        if state.writable {
+            isWritable = true
+        } else if wasWritable {
+            isWritable = false
+            textView.setNeedsLayout()
+        }
         if let input {
             input.apply(delivery)
             // The replica turned read-only (a reader answer): the view stops
@@ -493,7 +513,10 @@ final class NativeEditorSession {
     ) {
         guard let replica, !isClosed, !hasUnsupportedRoot, input == nil else { return }
         saveScheduler = scheduler
-        if let persist { replica.mailbox.post(.setWritable(persist)) }
+        if let persist {
+            replica.mailbox.post(.setWritable(persist))
+            setExpectedWritable(true)
+        }
         let input = NativeInputCoordinator(
             replica: replica, surfaceID: surfaceID, revision: revision, surface: surface, view: textView,
             recoveries: recoveries, hasRecoveryStore: hasRecoveryStore)
@@ -520,11 +543,19 @@ final class NativeEditorSession {
         saveScheduler?.schedule()
     }
 
+    func setExpectedWritable(_ writable: Bool) {
+        isWritable = writable
+        if !writable {
+            textView.isEditable = false
+        }
+        textView.setNeedsLayout()
+    }
+
     /// Switches this surface between Reading and Editing mode without tearing
     /// down its `NativeInputCoordinator`.
     func setEditing(_ editing: Bool) {
         if editing {
-            guard let input, !input.isFrozen, !input.isDetached, state.writable else {
+            guard let input, !input.isFrozen, !input.isDetached, isWritable else {
                 textView.isEditable = false
                 return
             }
@@ -546,9 +577,8 @@ final class NativeEditorSession {
     /// Updates local Reading-mode checklist hiding without writing Yjs state.
     @discardableResult
     func setChecklistPresentation(hidesCompleted: Bool, settlingIDs: Set<String>) -> Bool {
-        let changed = surface.setChecklistPresentation(hidesCompleted: hidesCompleted, settlingIDs: settlingIDs)
-        presentationRevision &+= 1
-        return changed
+        // `surface.onFoldChange` advances `presentationRevision` when `changed` is true.
+        surface.setChecklistPresentation(hidesCompleted: hidesCompleted, settlingIDs: settlingIDs)
     }
 
     /// A capture that cannot be prepared leaves durable journal bytes nothing
@@ -1188,6 +1218,7 @@ final class NativeEditorOpen {
         // the append succeeded (journal before publication).
         registry.installJournal(adapter, for: scope)
         session.enableTyping(persist: nil, scheduler: scheduler)
+        session.setExpectedWritable(registry.isWritable(scope))
         // Edits an earlier process journaled but never handed over (it ended
         // inside the debounce) have no draft, so no replay pass knows them.
         if coordinator.pendingSave(documentID: documentID) == nil,

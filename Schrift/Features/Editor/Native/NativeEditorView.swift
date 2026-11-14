@@ -87,7 +87,7 @@ struct NativeEditorView: View {
     @State private var revealFocusRequest = 0
 
     private var canEditDocument: Bool {
-        session.input != nil && session.state.writable
+        session.input != nil && session.isWritable
     }
 
     private var isEditing: Bool {
@@ -561,8 +561,8 @@ extension NativeEditorView {
         let delay = DocsMotion.checklistSettleDelay(reduceMotion: reduceMotion)
         let targetSession = session
         checklistSettleTasks[blockID] = Task { @MainActor in
-            if delay > 0 {
-                try? await Task.sleep(for: .seconds(delay))
+            if delay > .zero {
+                try? await Task.sleep(for: delay)
             }
             checklistSettleTasks.removeValue(forKey: blockID)
             guard !Task.isCancelled, targetSession === session else { return }

@@ -300,7 +300,7 @@ struct NativeDocumentShellView: View {
 
     private var canEditNative: Bool {
         if case .native(let session) = route {
-            return session.input != nil && session.state.writable
+            return session.input != nil && session.isWritable
         }
         return false
     }
@@ -406,6 +406,12 @@ struct NativeDocumentShellView: View {
             .onAppear {
                 viewModel.noteEditorAppeared()
             }
+            .onChange(of: nativeSessionIdentity, initial: true) { _, _ in
+                syncNativeEditingForCurrentRoute()
+            }
+            .onChange(of: canEditNative) { _, _ in
+                syncNativeEditingForCurrentRoute()
+            }
             .onChange(of: viewModel.availability.token) { _, _ in
                 if viewModel.availability.isOffline {
                     isPresentingShareSheet = false
@@ -504,7 +510,10 @@ struct NativeDocumentShellView: View {
                         outlineGate.outlineDismissed()
                         if let held = outlineHeldNavigation.takeAfterOutlineDismissed() { perform(held) }
                     },
-                    onScrollInteraction: { subpageSwipe = swipeRevealAfterScrollInteraction(subpageSwipe) }
+                    onScrollInteraction: { subpageSwipe = swipeRevealAfterScrollInteraction(subpageSwipe) },
+                    externalIsEditing: effectiveNativeEditing,
+                    onRequestEdit: enterNativeEditing,
+                    onExitEditing: exitNativeEditing
                 )
             case .preservedUnavailable:
                 preservedUnavailableContent
@@ -552,11 +561,15 @@ struct NativeDocumentShellView: View {
         let peers = presentedPeerCount(peerCount: rawPeers.count, isOffline: isOffline) == nil ? [] : rawPeers
         return EditorDocumentHeader(
             title: viewModel.title,
-            onEditTitle: session.input != nil
+            onEditTitle: effectiveNativeEditing
                 ? { nativeOpen.updateTitle($0, viewModel: viewModel) }
                 : nil,
             reach: reach,
-            peers: peers
+            peers: peers,
+            onConsumeInitialTitleFocus: {
+                viewModel.consumeNativeInitialTitleFocus(
+                    isEditing: effectiveNativeEditing, canEdit: canEditNative)
+            }
         ) {
             nativeHeaderStatus(session: session)
         }
@@ -627,19 +640,30 @@ struct NativeDocumentShellView: View {
             .accessibilityHidden(presentsPagesTree)
         }
         ToolbarItem(placement: .topBarTrailing) {
-            Button {
-            } label: {
-                ToolbarIcon(.edit)
+            if effectiveNativeEditing {
+                Button {
+                    exitNativeEditing()
+                } label: {
+                    ToolbarIcon(.check, filled: true)
+                }
+                .buttonBorderShape(.circle)
+                .accessibilityLabel(loc[.editor_action_done])
+                .accessibilityHidden(presentsPagesTree)
+            } else {
+                Button {
+                    enterNativeEditing()
+                } label: {
+                    ToolbarIcon(.edit)
+                }
+                .disabled(!canEditNative)
+                .buttonBorderShape(.circle)
+                .accessibilityLabel(loc[.editor_action_edit])
+                .accessibilityHidden(presentsPagesTree)
             }
-            // Reading <-> Editing mode handoff lands in Step 2 (G04).
-            .disabled(true)
-            .buttonBorderShape(.circle)
-            .accessibilityLabel(loc[.editor_action_edit])
-            .accessibilityHidden(presentsPagesTree)
         }
         ToolbarSpacer(.fixed, placement: .topBarTrailing)
         if editorToolbarActions(
-            isEditing: false, isLocal: viewModel.isLocalDocument, isOffline: isOffline
+            isEditing: effectiveNativeEditing, isLocal: viewModel.isLocalDocument, isOffline: isOffline
         ).contains(.share) {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -798,6 +822,38 @@ struct NativeDocumentShellView: View {
         viewModel.dismissFocusForSheet()
         if case .native(let session) = route {
             session.textView.resignFirstResponder()
+        }
+    }
+
+    private func enterNativeEditing() {
+        guard canEditNative else { return }
+        if case .native(let session) = route {
+            session.setEditing(true)
+        }
+        isNativeEditing = true
+    }
+
+    private func exitNativeEditing() {
+        if case .native(let session) = route {
+            session.setEditing(false)
+        }
+        isNativeEditing = false
+        viewModel.clearNativeInitialTitleFocus()
+    }
+
+    private func syncNativeEditingForCurrentRoute() {
+        guard canEditNative else {
+            isNativeEditing = false
+            viewModel.clearNativeInitialTitleFocus()
+            return
+        }
+        if viewModel.consumeNativeNewDocumentEntryIfNeeded(canEdit: canEditNative) {
+            if case .native(let session) = route {
+                session.setEditing(true)
+            }
+            isNativeEditing = true
+        } else {
+            isNativeEditing = false
         }
     }
 

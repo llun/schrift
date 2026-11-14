@@ -434,9 +434,14 @@ final class NativeFormattingTests: NativeEditingTestCase {
         for cmd in [boldCmd, italicCmd, underlineCmd, strikeCmd, codeCmd, linkCmd] {
             XCTAssertTrue(harness.view.canPerformAction(try XCTUnwrap(cmd.action), withSender: nil))
         }
-        XCTAssertTrue(harness.view.canPerformAction(#selector(UIResponderStandardEditActions.toggleBoldface(_:)), withSender: nil))
-        XCTAssertTrue(harness.view.canPerformAction(#selector(UIResponderStandardEditActions.toggleItalics(_:)), withSender: nil))
-        XCTAssertTrue(harness.view.canPerformAction(#selector(UIResponderStandardEditActions.toggleUnderline(_:)), withSender: nil))
+        XCTAssertTrue(
+            harness.view.canPerformAction(#selector(UIResponderStandardEditActions.toggleBoldface(_:)), withSender: nil)
+        )
+        XCTAssertTrue(
+            harness.view.canPerformAction(#selector(UIResponderStandardEditActions.toggleItalics(_:)), withSender: nil))
+        XCTAssertTrue(
+            harness.view.canPerformAction(
+                #selector(UIResponderStandardEditActions.toggleUnderline(_:)), withSender: nil))
 
         for (action, key) in [
             (try XCTUnwrap(boldCmd.action), "bold"),
@@ -445,12 +450,15 @@ final class NativeFormattingTests: NativeEditingTestCase {
             (try XCTUnwrap(strikeCmd.action), "strike"),
             (try XCTUnwrap(codeCmd.action), "code"),
         ] {
-            _ = await harness.run { harness.view.perform(action) }
-            XCTAssertEqual(try runs(harness.session, Self.firstID, key), ["Hello"])
+            _ = await harness.run {
+                harness.view.perform(action)
+                return true
+            }
+            XCTAssertEqual(try runs(harness.session, Self.firstID, key), ["First"])
         }
 
         _ = harness.view.perform(try XCTUnwrap(linkCmd.action))
-        XCTAssertEqual(requestedLink?.label, "Hello")
+        XCTAssertEqual(requestedLink?.label, "First")
 
         // Scoped source surfaces and non-editable views reject formatting shortcuts.
         harness.input.sourceKind = .mathBlock

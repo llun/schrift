@@ -208,4 +208,134 @@ final class NativeAccessibilityTests: NativeEditingTestCase {
         XCTAssertEqual(ranges.map { (harness.view.textStorage.string as NSString).substring(with: $0) }, ["Topic"])
         try await assertConsistent(harness, localCommands: 3)
     }
+
+    // MARK: - Reading mode checkbox & accessibility order (G04, G05, G11)
+
+    func testReadingModeCheckboxTogglesWithoutMakingSurfaceEditable() async throws {
+        let harness = try await makeHarness([paragraph("p", "Intro"), check("task", "Buy milk")])
+        addTeardownBlock { await harness.close() }
+        let window = host(harness.view)
+        defer { window.isHidden = true }
+
+        harness.session.setEditing(false)
+        harness.view.layoutIfNeeded()
+
+        XCTAssertFalse(harness.view.isEditable)
+        XCTAssertFalse(harness.input.canEdit)
+        XCTAssertTrue(harness.input.canToggleCheckbox)
+
+        let button = try XCTUnwrap(harness.view.blockControls.checkboxes["task"])
+        XCTAssertTrue(button.isEnabled)
+        XCTAssertFalse(button.accessibilityTraits.contains(.notEnabled))
+
+        button.sendActions(for: .primaryActionTriggered)
+        await harness.settle()
+        harness.view.layoutIfNeeded()
+
+        XCTAssertFalse(harness.view.isEditable, "Reading-mode checkbox tap keeps textView non-editable")
+        XCTAssertFalse(harness.view.isFirstResponder)
+        XCTAssertEqual(button.accessibilityValue, "Done")
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    func testCursorOverlayHidesFromAccessibilityWhenEmptyAndShowsForPeers() async throws {
+        let harness = try await makeHarness([paragraph("p", "Hello world")])
+        addTeardownBlock { await harness.close() }
+        let window = host(harness.view)
+        defer { window.isHidden = true }
+
+        XCTAssertTrue(harness.view.cursorOverlay.accessibilityElementsHidden)
+
+        let awareness = harness.session.installAwareness(localClientID: 1)
+        let position = try await harness.engine {
+            try $0.relativePosition(for: EditorPosition(blockID: "p", offset: 2, assoc: -1))
+        }
+        let cursor = AwarenessCursor(anchor: try XCTUnwrap(position), head: try XCTUnwrap(position))
+        let state = AwarenessClientState(
+            user: CollaborationPeer(clientID: 7, name: "Peer", color: nil),
+            cursor: cursor)
+        awareness.receive([AwarenessClientEntry(clientID: 7, clock: 1, state: state)])
+        for _ in 0..<40 where awareness.places[7] == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        harness.view.layoutIfNeeded()
+        XCTAssertFalse(harness.view.cursorOverlay.accessibilityElementsHidden)
+
+        awareness.receive([AwarenessClientEntry(clientID: 7, clock: 2, state: nil)])
+        harness.view.layoutIfNeeded()
+        XCTAssertTrue(harness.view.cursorOverlay.accessibilityElementsHidden)
+    }
+
+    func testAuxiliarySubviewOrderFollowsDocumentTopToBottomOrder() async throws {
+        let harness = try await makeHarness([
+            check("c1", "First task"),
+            code("code", "let x = 1", language: "swift"),
+            check("c2", "Second task"),
+        ])
+        addTeardownBlock { await harness.close() }
+        let window = host(harness.view)
+        defer { window.isHidden = true }
+
+        let header = UIView(frame: CGRect(x: 0, y: -60, width: 390, height: 60))
+        let footer = UIView(frame: CGRect(x: 0, y: 200, width: 390, height: 60))
+        harness.view.addSubview(header)
+        harness.view.addSubview(footer)
+        harness.view.headerAccessoryView = header
+        harness.view.footerAccessoryView = footer
+        harness.view.setNeedsLayout()
+        harness.view.layoutIfNeeded()
+
+        let c1Button = try XCTUnwrap(harness.view.blockControls.checkboxes["c1"])
+        let codeButton = try XCTUnwrap(harness.view.blockControls.languageButtons["code"])
+        let c2Button = try XCTUnwrap(harness.view.blockControls.checkboxes["c2"])
+        let expected: [UIView] = [header, c1Button, codeButton, c2Button, footer, harness.view.cursorOverlay]
+        let indices = expected.compactMap { harness.view.subviews.firstIndex(of: $0) }
+        XCTAssertEqual(indices.count, expected.count)
+        XCTAssertEqual(indices, indices.sorted(), "auxiliary subviews must appear strictly top-to-bottom")
+    }
+
+    func testTapToEditExcludesHeaderFooterControlsAndLinks() async throws {
+        let linked = BlockNoteBlock(
+            node: "paragraph",
+            props: Self.paragraphProps,
+            runs: [
+                InlineRun("Read docs", marks: [TextMark(key: "link", valueJSON: #"{"href":"https://example.org"}"#)])
+            ],
+            id: "link")
+        let harness = try await makeHarness([linked, check("task", "Task item"), paragraph("prose", "Plain prose")])
+        addTeardownBlock { await harness.close() }
+        let window = host(harness.view)
+        defer { window.isHidden = true }
+
+        var editRequests = 0
+        harness.view.onRequestEdit = { editRequests += 1 }
+        harness.session.setEditing(false)
+
+        let header = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 40))
+        let footer = UIView(frame: CGRect(x: 0, y: 600, width: 390, height: 40))
+        harness.view.addSubview(header)
+        harness.view.addSubview(footer)
+        harness.view.headerAccessoryView = header
+        harness.view.footerAccessoryView = footer
+        harness.view.setNeedsLayout()
+        harness.view.layoutIfNeeded()
+
+        XCTAssertFalse(harness.view.editTapShouldBegin(at: CGPoint(x: 20, y: 20)))
+        XCTAssertFalse(harness.view.editTapShouldBegin(at: CGPoint(x: 20, y: 620)))
+
+        let checkbox = try XCTUnwrap(harness.view.blockControls.checkboxes["task"])
+        XCTAssertFalse(harness.view.editTapShouldBegin(at: checkbox.center))
+
+        let linkLoc = try location(harness.session, "link", 2)
+        let linkPos = try XCTUnwrap(harness.view.position(from: harness.view.beginningOfDocument, offset: linkLoc))
+        let linkCaret = harness.view.caretRect(for: linkPos)
+        XCTAssertFalse(harness.view.editTapShouldBegin(at: CGPoint(x: linkCaret.midX, y: linkCaret.midY)))
+
+        let proseLoc = try location(harness.session, "prose", 2)
+        let prosePos = try XCTUnwrap(harness.view.position(from: harness.view.beginningOfDocument, offset: proseLoc))
+        let proseCaret = harness.view.caretRect(for: prosePos)
+        XCTAssertTrue(harness.view.editTapShouldBegin(at: CGPoint(x: proseCaret.midX, y: proseCaret.midY)))
+        XCTAssertTrue(harness.view.editDoubleTapShouldBegin(at: CGPoint(x: proseCaret.midX, y: proseCaret.midY)))
+        XCTAssertEqual(editRequests, 0)
+    }
 }

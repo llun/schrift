@@ -476,7 +476,8 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
                 let midY = fragment.firstLineMetrics?.midY ?? frame.height / 2
                 let size = DocsSpacing.rowMinHeight
                 let button = checkboxes[id] ?? makeCheckbox(id)
-                configure(checkbox: button, checked: attributes[.nativeChecked] as? Bool == true, enabled: checkboxEnabled)
+                configure(
+                    checkbox: button, checked: attributes[.nativeChecked] as? Bool == true, enabled: checkboxEnabled)
                 // The gutter after the depth's indent (PR06a).
                 let inset = CGFloat(attributes[.nativeDepth] as? Int ?? 0) * gutter(textView)
                 button.frame = CGRect(

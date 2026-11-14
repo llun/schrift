@@ -3803,8 +3803,8 @@ final class EditorViewModel {
         let rawPending = saveCoordinator.pendingSave(documentID: documentID)
         let pendingSave =
             includeLocalDrafts
-                && (rawPending?.replicaRequest?.scope.ownerUserID == nil
-                    || rawPending?.replicaRequest?.scope.ownerUserID == currentUserID)
+                && (rawPending?.replicaRequest?.reference.scope.ownerUserID == nil
+                    || rawPending?.replicaRequest?.reference.scope.ownerUserID == currentUserID)
             ? rawPending
             : nil
         let rawDraft = saveCoordinator.storedDraft(documentID: documentID)
