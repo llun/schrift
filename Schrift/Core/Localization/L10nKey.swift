@@ -307,10 +307,16 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_slash_math_block = "editor.slash.math_block"  // "Math block"
     case editor_slash_inline_math = "editor.slash.inline_math"  // "Inline math"
     case editor_slash_diagram = "editor.slash.diagram"  // "Diagram"
+    case editor_slash_link_page = "editor.slash.link_page"  // "Link a page"
 
     // Editor - `[[` page-link picker (see PageLinkPicker.swift)
     case editor_page_link_title = "editor.page_link.title"  // "Link a page"
     case editor_page_link_empty = "editor.page_link.empty"  // "No matching pages"
+
+    // Editor - `@` mention picker (see NativeInlinePicker.swift)
+    case editor_mention_title = "editor.mention.title"  // "Mention"
+    case editor_mention_empty = "editor.mention.empty"  // "No matching people"
+    case editor_mention_loading = "editor.mention.loading"  // "Loading people…"
 
     // Editor - formatting bar (icon-only buttons; accessibility labels)
     case editor_format_add_block = "editor.format.add_block"  // "Add block"
@@ -475,6 +481,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case native_editor_chip_page = "native.editor.chip_page"  // "Page"
     case native_editor_chip_mention = "native.editor.chip_mention"  // "Mention"
     case native_editor_chip_untitled = "native.editor.chip_untitled"  // "Untitled page"
+    case native_editor_open_link = "native.editor.open_link"  // "Open link"
     case profile_native_editor = "profile.native_editor"
     case profile_native_editor_footer = "profile.native_editor_footer"
     case native_editor_preserved_title = "native.editor.preserved_title"

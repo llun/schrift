@@ -588,6 +588,7 @@ extension NativeEditorLabels {
             chipPage: loc[.native_editor_chip_page],
             chipMention: loc[.native_editor_chip_mention],
             chipUntitled: loc[.native_editor_chip_untitled],
+            openLink: loc[.native_editor_open_link],
             blockMenu: loc[.native_editor_block_actions],
             blockActions: Dictionary(
                 uniqueKeysWithValues: NativeBlockAction.allCases.map { ($0, loc[$0.labelKey]) }))

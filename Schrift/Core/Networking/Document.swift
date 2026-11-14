@@ -39,9 +39,11 @@ struct DocumentAbilities: Codable, Equatable, Hashable {
     var favorite: Bool = false
     var duplicate: Bool = false
     var childrenCreate: Bool = false
+    var mention: Bool = false
 
     enum CodingKeys: String, CodingKey {
-        case update, partialUpdate, destroy, linkConfiguration, accessesManage, favorite, duplicate, childrenCreate
+        case update, partialUpdate, destroy, linkConfiguration, accessesManage, favorite, duplicate, childrenCreate,
+            mention
     }
 
     init() {}
@@ -56,6 +58,7 @@ struct DocumentAbilities: Codable, Equatable, Hashable {
         favorite = try container.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
         duplicate = try container.decodeIfPresent(Bool.self, forKey: .duplicate) ?? false
         childrenCreate = try container.decodeIfPresent(Bool.self, forKey: .childrenCreate) ?? false
+        mention = try container.decodeIfPresent(Bool.self, forKey: .mention) ?? false
     }
 }
 

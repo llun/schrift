@@ -348,8 +348,12 @@ enum Strings_de {
         .editor_slash_math_block: "Formelblock",
         .editor_slash_inline_math: "Inline-Formel",
         .editor_slash_diagram: "Diagramm",
+        .editor_slash_link_page: "Seite verlinken",
         .editor_page_link_title: "Seite verlinken",
         .editor_page_link_empty: "Keine passenden Seiten",
+        .editor_mention_title: "Erwähnung",
+        .editor_mention_empty: "Keine passenden Personen",
+        .editor_mention_loading: "Personen werden geladen…",
         .editor_uploading_file: "Datei wird hochgeladen…",
         .editor_uploading_file_a11y: "Datei wird hochgeladen",
 
@@ -429,6 +433,7 @@ enum Strings_de {
         .native_editor_chip_page: "Seite",
         .native_editor_chip_mention: "Erwähnung",
         .native_editor_chip_untitled: "Unbenannte Seite",
+        .native_editor_open_link: "Link öffnen",
         .native_editor_input_unavailable: "Diese Eingabe wird im nativen Editor noch nicht unterstützt.",
         .native_editor_range_unavailable:
             "Diese Auswahl enthält Inhalte, die der native Editor noch nicht ändern kann.",

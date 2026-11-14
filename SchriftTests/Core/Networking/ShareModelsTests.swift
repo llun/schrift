@@ -21,9 +21,10 @@ final class ShareModelsDecodingTests: XCTestCase {
         XCTAssertEqual(access.user?.email, "camille@example.com")
         XCTAssertEqual(access.user?.fullName, "Camille Moreau")
         XCTAssertEqual(access.role, .administrator)
+        XCTAssertEqual(access.maxRole, .administrator)
     }
 
-    func testDecodesCommenterDocumentAccessRole() throws {
+    func testDecodesCommenterDocumentAccessRoleWithAbsentMaxRole() throws {
         let json = """
             {
                 "id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b",
@@ -35,6 +36,36 @@ final class ShareModelsDecodingTests: XCTestCase {
 
         let access = try JSONDecoder.docsAPI.decode(DocumentAccess.self, from: json)
         XCTAssertEqual(access.role, .commenter)
+        XCTAssertNil(access.maxRole)
+    }
+
+    func testDecodesMaxRoleReaderOverrideAndNullMaxRole() throws {
+        let readerOverride = """
+            {
+                "id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b",
+                "user": {"id": "9c2c2c2c-2c2c-4c2c-9c2c-2c2c2c2c2c2c", "email": "camille@example.com"},
+                "team": "",
+                "role": "editor",
+                "max_role": "reader"
+            }
+            """.data(using: .utf8)!
+        let nullMaxRole = """
+            {
+                "id": "8b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b",
+                "user": {"id": "9c2c2c2c-2c2c-4c2c-9c2c-2c2c2c2c2c2c", "email": "camille@example.com"},
+                "team": "",
+                "role": "editor",
+                "max_role": null
+            }
+            """.data(using: .utf8)!
+
+        let overridden = try JSONDecoder.docsAPI.decode(DocumentAccess.self, from: readerOverride)
+        XCTAssertEqual(overridden.role, .editor)
+        XCTAssertEqual(overridden.maxRole, .reader)
+
+        let nullable = try JSONDecoder.docsAPI.decode(DocumentAccess.self, from: nullMaxRole)
+        XCTAssertEqual(nullable.role, .editor)
+        XCTAssertNil(nullable.maxRole)
     }
 
     func testDecodesLightDocumentAccessWithoutUserIdOrEmail() throws {
