@@ -1227,6 +1227,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             return false
         }
         let text = NativeClipboard.normalizingLineBreaks(text)
+        if sourceKind == .inlineMath, text.contains("\n") {
+            noticeKey = .native_editor_input_unavailable
+            return false
+        }
         // Within one block's text and without a line break: ordinary typing.
         // A code block keeps its line breaks as source. Anything else (a
         // selection across blocks, pasted or dictated lines) is one range command.
@@ -1433,13 +1437,16 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @discardableResult
     func insertTab() -> Bool {
         if let tableMove { return compositionOwnsView ? false : tableMove(.next) || true }
+        guard sourceKind != .inlineMath else { return false }
         guard let view, let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location) else { return false }
         return isCode(entry.blockID) ? replace(range: view.selectedRange, with: "  ") : indent()
     }
 
     private func moveBlock(_ kind: NativeEditCommand.Kind) -> Bool {
         directInsertion = nil
-        guard let view, view.isEditable, !isFrozen, !isDetached, !compositionOwnsView else { return false }
+        guard sourceKind == nil, let view, view.isEditable, !isFrozen, !isDetached, !compositionOwnsView else {
+            return false
+        }
         let selection = view.selectedRange
         guard let entry = surface.rangeIndex.entry(atUTF16: selection.location),
             selection.location <= NSMaxRange(entry.textRange),
@@ -1535,7 +1542,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     }
 
     private var canFormat: Bool {
-        guard let view else { return false }
+        guard sourceKind == nil, let view else { return false }
         return view.isEditable && !isFrozen && !isDetached && !compositionOwnsView
     }
 
@@ -1982,16 +1989,19 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @discardableResult
     func pasteFromPasteboard() -> Bool {
         guard let view, view.isEditable else { return false }
-        if view.selectedRange.length == 0,
-            let payload = pasteboard.data(forPasteboardType: BlockNoteSubtreePayload.pasteboardType)
-        {
-            return pasteBlocks(payload)
-        }
-        if let inlinePayload = pasteboard.data(forPasteboardType: BlockNoteInlinePayload.pasteboardType) {
-            return pasteInline(inlinePayload, replacing: view.selectedRange)
+        if sourceKind == nil {
+            if view.selectedRange.length == 0,
+                let payload = pasteboard.data(forPasteboardType: BlockNoteSubtreePayload.pasteboardType)
+            {
+                return pasteBlocks(payload)
+            }
+            if let inlinePayload = pasteboard.data(forPasteboardType: BlockNoteInlinePayload.pasteboardType) {
+                return pasteInline(inlinePayload, replacing: view.selectedRange)
+            }
         }
         guard let raw = pasteboard.string, !raw.isEmpty else { return false }
-        if view.selectedRange.length == 0,
+        if sourceKind == nil,
+            view.selectedRange.length == 0,
             let pos = surface.rangeIndex.textPosition(atUTF16: view.selectedRange.location),
             let position = pos.position as Int?,
             !AttributedDocumentProjection.isPlaceholder(surface.blocks[position]),

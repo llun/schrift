@@ -557,4 +557,532 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         XCTAssertEqual(harness.input.composition.pendingRecoveries.map(\.text), ["あ"])
         XCTAssertEqual(try harness.store.provisionalRecoveries(for: harness.scope).map(\.text), ["あ"])
     }
+
+    // MARK: - Step 5 Matrix: Unicode, Blank/Multiline/Paste, Marks/IDs, Peer Replace, IME Recovery & Shared Undo
+
+    func testUnicodeSurrogatesBlankMultilineAndPasteGatingInsideSourceEditor() async throws {
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            let mContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            after = try YWrite.insertAfter(tx, into: group, after: after, [.type(mContainer)])
+            try YWrite.mapSet(tx, on: mContainer, key: "id", .any([.string("mx")]))
+            let mEl = YType(typeRef: .xmlElement(nodeName: SourceBlock.mathBlock))
+            try YWrite.insertAfter(tx, into: mContainer, after: nil, [.type(mEl)])
+            let mTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: mEl, after: nil, [.type(mTxt)])
+            try mTxt.insert(0, "𝑎+😀", nil)
+
+            let dContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            after = try YWrite.insertAfter(tx, into: group, after: after, [.type(dContainer)])
+            try YWrite.mapSet(tx, on: dContainer, key: "id", .any([.string("dx")]))
+            let dEl = YType(typeRef: .xmlElement(nodeName: SourceBlock.diagram))
+            try YWrite.insertAfter(tx, into: dContainer, after: nil, [.type(dEl)])
+            let dTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: dEl, after: nil, [.type(dTxt)])
+            try dTxt.insert(0, "graph TD", nil)
+
+            let pContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            _ = try YWrite.insertAfter(tx, into: group, after: after, [.type(pContainer)])
+            try YWrite.mapSet(tx, on: pContainer, key: "id", .any([.string("px")]))
+            let pEl = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+            try YWrite.insertAfter(tx, into: pContainer, after: nil, [.type(pEl)])
+            let math = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+            try YWrite.insertAfter(tx, into: pEl, after: nil, [.type(math)])
+            let iTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: math, after: nil, [.type(iTxt)])
+            try iTxt.insert(0, "𝑏", nil)
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+
+        // 1. mathBlock: surrogate selection replacement, blank/whitespace, multiline indentation, unvalidated syntax,
+        // and structured/URL paste falling back to plain text instead of doomed structural/interlink commands.
+        let mathEditor = NativeSourceEditorViewController(document: harness.session, request: .block(blockID: "mx"))
+        let mathWindow = hostController(UINavigationController(rootViewController: mathEditor))
+        defer { mathWindow.isHidden = true }
+        await waitForSourceLoaded(mathEditor)
+        let mathSession = try XCTUnwrap(mathEditor.sourceSession)
+        let mathInput = try XCTUnwrap(mathSession.input)
+        let mathTV = mathSession.textView
+
+        // Marks, links and indent/outdent must be blocked while editing a scoped source buffer.
+        mathTV.selectedRange = NSRange(location: 0, length: 2)
+        XCTAssertFalse(mathInput.toggleMark("bold"))
+        XCTAssertFalse(mathInput.setColor("textColor", name: "red"))
+        XCTAssertNil(mathInput.linkTarget())
+        XCTAssertFalse(mathInput.indent())
+        XCTAssertFalse(mathInput.outdent())
+
+        // Replace '😀' (UTF-16 [3..<5]) with ZWJ emoji + blank line + unvalidated LaTeX.
+        mathTV.selectedRange = NSRange(location: 3, length: 2)
+        mathTV.insertText("👨‍👩‍👧‍👦\n\n  \\unknown{")
+        await mathSession.settle()
+        XCTAssertEqual(mathTV.text, "𝑎+👨‍👩‍👧‍👦\u{2028}\u{2028}  \\unknown{\n")
+        let mathXML = await harness.session.replicaDoc { YXMLString.fragment($0) }
+        XCTAssertTrue(mathXML?.contains("<mathblock>𝑎+👨‍👩‍👧‍👦\n\n  \\unknown{</mathblock>") == true, mathXML ?? "")
+
+        // Structured subtree payload + plain-text same-origin URL on pasteboard must paste plain text,
+        // NOT try pasteBlocks / pasteInline / interlink on the source surface.
+        let subtreeData = try BlockNoteSubtreePayload.encode([
+            .element("blockContainer", [("id", .string("tmp"))], [.element("paragraph", [], [.text([.run(InlineRun("bad"))])])])
+        ])
+        mathInput.pasteboard.setItems([
+            [
+                BlockNoteSubtreePayload.pasteboardType: subtreeData,
+                "public.utf8-plain-text": "https://example.test/docs/11111111-1111-4111-8111-111111111111",
+            ]
+        ])
+        mathTV.selectedRange = NSRange(location: (mathTV.text as NSString).length, length: 0)
+        let pastedMath = await mathSession.run { mathInput.pasteFromPasteboard() }
+        XCTAssertTrue(pastedMath)
+        XCTAssertTrue(mathTV.text.hasSuffix("https://example.test/docs/11111111-1111-4111-8111-111111111111"))
+
+        mathEditor.close()
+        await harness.settle()
+
+        // 2. inlineMath: astral math, whitespace-only allowed, newlines/Tab/marks/URL-interlink-paste rejected/plain.
+        let inlineEditor = NativeSourceEditorViewController(
+            document: harness.session, request: .inlineMath(blockID: "px", utf16Offset: 0))
+        let inlineWindow = hostController(UINavigationController(rootViewController: inlineEditor))
+        defer { inlineWindow.isHidden = true }
+        await waitForSourceLoaded(inlineEditor)
+        let inlineSession = try XCTUnwrap(inlineEditor.sourceSession)
+        let inlineInput = try XCTUnwrap(inlineSession.input)
+        let inlineTV = inlineSession.textView
+
+        XCTAssertFalse(inlineInput.insertTab(), "inlineMath must not indent or insert tabs")
+        XCTAssertFalse(inlineInput.toggleMark("italic"))
+
+        // Pasting multiline text into inlineMath refuses cleanly instead of attempting a doomed whole-block command.
+        inlineInput.pasteboard.string = "line1\nline2"
+        let pastedNewline = await inlineSession.run { inlineInput.pasteFromPasteboard() }
+        XCTAssertFalse(pastedNewline)
+        XCTAssertEqual(inlineTV.text, "𝑏")
+
+        // Pasting inline payload with a same-origin URL plain-text fallback pastes the plain text inside inlineMath.
+        let inlinePayload = try BlockNoteInlinePayload.encode([[.text([.run(InlineRun("𝑐"))])]])
+        inlineInput.pasteboard.setItems([
+            [
+                BlockNoteInlinePayload.pasteboardType: inlinePayload,
+                "public.utf8-plain-text": " + https://example.test/docs/11111111-1111-4111-8111-111111111111",
+            ]
+        ])
+        inlineTV.selectedRange = NSRange(location: 2, length: 0)
+        let pastedInlinePlain = await inlineSession.run { inlineInput.pasteFromPasteboard() }
+        XCTAssertTrue(pastedInlinePlain)
+        XCTAssertEqual(inlineTV.text, "𝑏 + https://example.test/docs/11111111-1111-4111-8111-111111111111")
+
+        // Blank whitespace-only inline math persists faithfully without crashing or validating.
+        inlineTV.selectedRange = NSRange(location: 0, length: (inlineTV.text as NSString).length)
+        inlineTV.insertText("   ")
+        await inlineSession.settle()
+        inlineEditor.close()
+        await harness.settle()
+
+        let xml = await harness.session.replicaDoc { YXMLString.fragment($0) }
+        XCTAssertTrue(xml?.contains("<math>   </math>") == true, xml ?? "")
+    }
+
+    func testNestedAtomOffsetsAdjacentMarksColumnAndTableEditing() async throws {
+        // Root paragraph: "bold" (bold, 0..4) + <math>x</math> (4..5) + "ital" (italic, 5..9) + @Alice (9..10) + <math>y</math> (10..11)
+        // Plus column with <math>c</math> and multi-paragraph table cell with "**b**" + <math>t</math> + interlink.
+        let interlink = NativeInlineObject.interlink(
+            docID: "22222222-2222-4222-8222-222222222222", blockID: nil, title: "Spec", disabled: false, trigger: "@")
+        // Encode rich-root directly with columnList and table using YDoc XML so all live in one document.
+        let fullState = try makeYDocState { tx, group in
+            // 1. rich-root paragraph
+            var after: YItem?
+            let pContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            after = try YWrite.insertAfter(tx, into: group, after: after, [.type(pContainer)])
+            try YWrite.mapSet(tx, on: pContainer, key: "id", .any([.string("rich-root")]))
+            let pEl = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+            try YWrite.insertAfter(tx, into: pContainer, after: nil, [.type(pEl)])
+            let tBold = YType(typeRef: .xmlText)
+            var pChild = try YWrite.insertAfter(tx, into: pEl, after: nil, [.type(tBold)])
+            try tBold.insert(0, "bold", ["bold": "true"])
+            let m1 = YType(typeRef: .xmlElement(nodeName: "math"))
+            pChild = try YWrite.insertAfter(tx, into: pEl, after: pChild, [.type(m1)])
+            let m1Txt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: m1, after: nil, [.type(m1Txt)])
+            try m1Txt.insert(0, "x", nil)
+            let tItal = YType(typeRef: .xmlText)
+            pChild = try YWrite.insertAfter(tx, into: pEl, after: pChild, [.type(tItal)])
+            try tItal.insert(0, "ital", ["italic": "true"])
+            let m2 = YType(typeRef: .xmlElement(nodeName: "math"))
+            _ = try YWrite.insertAfter(tx, into: pEl, after: pChild, [.type(m2)])
+            let m2Txt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: m2, after: nil, [.type(m2Txt)])
+            try m2Txt.insert(0, "y", nil)
+
+            // 2. table with multi-paragraph cell: p1 plain, p2 bold + <math>t</math> + interlink
+            let tblContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            _ = try YWrite.insertAfter(tx, into: group, after: after, [.type(tblContainer)])
+            try YWrite.mapSet(tx, on: tblContainer, key: "id", .any([.string("tbl")]))
+            let table = YType(typeRef: .xmlElement(nodeName: "table"))
+            try YWrite.insertAfter(tx, into: tblContainer, after: nil, [.type(table)])
+            let row = YType(typeRef: .xmlElement(nodeName: "tableRow"))
+            try YWrite.insertAfter(tx, into: table, after: nil, [.type(row)])
+            let cell = YType(typeRef: .xmlElement(nodeName: "tableCell"))
+            try YWrite.insertAfter(tx, into: row, after: nil, [.type(cell)])
+            try YWrite.mapSet(tx, on: cell, key: "colspan", .any([.int(1)]))
+            try YWrite.mapSet(tx, on: cell, key: "rowspan", .any([.int(1)]))
+            let tp1 = YType(typeRef: .xmlElement(nodeName: "tableParagraph"))
+            let tp1Item = try YWrite.insertAfter(tx, into: cell, after: nil, [.type(tp1)])
+            let tp1Txt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: tp1, after: nil, [.type(tp1Txt)])
+            try tp1Txt.insert(0, "Header", nil)
+            let tp2 = YType(typeRef: .xmlElement(nodeName: "tableParagraph"))
+            _ = try YWrite.insertAfter(tx, into: cell, after: tp1Item, [.type(tp2)])
+            let tp2Bold = YType(typeRef: .xmlText)
+            var tp2Child = try YWrite.insertAfter(tx, into: tp2, after: nil, [.type(tp2Bold)])
+            try tp2Bold.insert(0, "pre", ["bold": "true"])
+            let tm = YType(typeRef: .xmlElement(nodeName: "math"))
+            tp2Child = try YWrite.insertAfter(tx, into: tp2, after: tp2Child, [.type(tm)])
+            let tmTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: tm, after: nil, [.type(tmTxt)])
+            try tmTxt.insert(0, "t", nil)
+            let il = YType(typeRef: .xmlElement(nodeName: interlink.nodeName))
+            _ = try YWrite.insertAfter(tx, into: tp2, after: tp2Child, [.type(il)])
+            try YWrite.mapSet(tx, on: il, key: "docId", .any([.string("22222222-2222-4222-8222-222222222222")]))
+            try YWrite.mapSet(tx, on: il, key: "title", .any([.string("Spec")]))
+            try YWrite.mapSet(tx, on: il, key: "disabled", .any([.bool(false)]))
+            try YWrite.mapSet(tx, on: il, key: "trigger", .any([.string("@")]))
+        }
+
+        let harness = try await makeHarness(state: fullState)
+        addTeardownBlock { await harness.close() }
+
+        // Edit first chip in rich-root (offset 4, after "bold") and verify second chip at offset 9 & surrounding marks.
+        let req1 = NativeSourceRequest.inlineMath(blockID: "rich-root", utf16Offset: 4)
+        let editor1 = NativeSourceEditorViewController(document: harness.session, request: req1)
+        let win1 = hostController(UINavigationController(rootViewController: editor1))
+        defer { win1.isHidden = true }
+        await waitForSourceLoaded(editor1)
+        editor1.sourceSession?.textView.insertText("^2")
+        await editor1.sourceSession?.settle()
+        editor1.close()
+        await harness.settle()
+        harness.input.focus(after: req1)
+        XCTAssertEqual(harness.view.selectedRange, NSRange(location: 5, length: 0))
+
+        // Second chip is still at offset 9 (after "ital" [5..9]).
+        let req2 = NativeSourceRequest.inlineMath(blockID: "rich-root", utf16Offset: 9)
+        let editor2 = NativeSourceEditorViewController(document: harness.session, request: req2)
+        let win2 = hostController(UINavigationController(rootViewController: editor2))
+        defer { win2.isHidden = true }
+        await waitForSourceLoaded(editor2)
+        editor2.sourceSession?.textView.insertText("_0")
+        await editor2.sourceSession?.settle()
+        editor2.close()
+        await harness.settle()
+        harness.input.focus(after: req2)
+        XCTAssertEqual(harness.view.selectedRange, NSRange(location: 10, length: 0))
+
+        let richBlock = try XCTUnwrap(harness.session.surface.blocks.first { $0.id == "rich-root" })
+        XCTAssertEqual(richBlock.runs.map { $0.marks.map(\.key) }, [
+            ["bold"],
+            [],
+            ["italic"],
+            [],
+        ])
+        XCTAssertEqual(richBlock.runs[1].inlineObject, .math(source: "x^2"))
+        XCTAssertEqual(richBlock.runs[3].inlineObject, .math(source: "y_0"))
+
+        // Edit math chip inside multi-paragraph table cell (second tableParagraph) and verify focus + adjacent marks/interlink.
+        let tableEditor = TableEditorViewController(document: harness.session, tableID: "tbl")
+        let tblWindow = hostController(UINavigationController(rootViewController: tableEditor))
+        defer { tblWindow.isHidden = true }
+        await tableEditor.load()
+        for _ in 0..<300 where !tableEditor.isLoaded { try await Task.sleep(for: .milliseconds(10)) }
+        let cellSession = try XCTUnwrap(tableEditor.cellSession)
+        let tp2Block = try XCTUnwrap(cellSession.surface.blocks.dropFirst().first)
+        let cellReq = NativeSourceRequest.inlineMath(blockID: tp2Block.id, utf16Offset: 3)
+        let cellEditor = NativeSourceEditorViewController(document: harness.session, request: cellReq)
+        let cellWin = hostController(UINavigationController(rootViewController: cellEditor))
+        defer { cellWin.isHidden = true }
+        await waitForSourceLoaded(cellEditor)
+        cellEditor.sourceSession?.textView.insertText("*9")
+        await cellEditor.sourceSession?.settle()
+        cellEditor.close()
+        await harness.settle()
+
+        cellSession.input?.focus(after: cellReq)
+        let tp2Entry = try XCTUnwrap(cellSession.surface.rangeIndex.entry(for: tp2Block.id))
+        XCTAssertEqual(cellSession.textView.selectedRange, NSRange(location: tp2Entry.textRange.location + 4, length: 0))
+        let updatedTP2 = try XCTUnwrap(cellSession.surface.blocks.first { $0.id == tp2Block.id })
+        XCTAssertEqual(updatedTP2.runs[0].marks.map(\.key), ["bold"])
+        XCTAssertEqual(updatedTP2.runs[1].inlineObject, .math(source: "t*9"))
+        XCTAssertEqual(updatedTP2.runs[2].inlineObject, interlink)
+    }
+
+    func testPeerReplacementAndUnfamiliarEditWhileSourceEditorIsOpen() async throws {
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            let mContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            after = try YWrite.insertAfter(tx, into: group, after: after, [.type(mContainer)])
+            try YWrite.mapSet(tx, on: mContainer, key: "id", .any([.string("mx")]))
+            let mEl = YType(typeRef: .xmlElement(nodeName: SourceBlock.mathBlock))
+            try YWrite.insertAfter(tx, into: mContainer, after: nil, [.type(mEl)])
+            let mTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: mEl, after: nil, [.type(mTxt)])
+            try mTxt.insert(0, "a+b", nil)
+
+            let pContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            _ = try YWrite.insertAfter(tx, into: group, after: after, [.type(pContainer)])
+            try YWrite.mapSet(tx, on: pContainer, key: "id", .any([.string("px")]))
+            let pEl = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+            try YWrite.insertAfter(tx, into: pContainer, after: nil, [.type(pEl)])
+            let math = YType(typeRef: .xmlElement(nodeName: "math"))
+            try YWrite.insertAfter(tx, into: pEl, after: nil, [.type(math)])
+            let iTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: math, after: nil, [.type(iTxt)])
+            try iTxt.insert(0, "x", nil)
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+
+        // 1. Peer replaces mx's inner element (new element ID while blockContainer ID "mx" stays the same):
+        // NativeSourceEditorViewController auto-dismisses cleanly.
+        var mathClosed = 0
+        let mathEditor = NativeSourceEditorViewController(document: harness.session, request: .block(blockID: "mx"))
+        mathEditor.onClose = { mathClosed += 1 }
+        let mathWindow = hostController(UINavigationController(rootViewController: mathEditor))
+        defer { mathWindow.isHidden = true }
+        await waitForSourceLoaded(mathEditor)
+
+        let peer = YDoc(clientID: 2, gc: true)
+        defer { peer.destroy() }
+        try peer.applyUpdate(YUpdateDecoder.decode(try XCTUnwrap(harness.store.restore(for: harness.scope)?.checkpoint)))
+        let peerWriter = BlockNoteWriter(doc: peer)
+        let replaceUpdate = try peerWriter.transaction { tx in
+            let found = try peerWriter.find("mx")
+            if let old = peerWriter.children(found.container).first {
+                old.delete(tx)
+            }
+            let replacement = YType(typeRef: .xmlElement(nodeName: SourceBlock.mathBlock))
+            try YWrite.insertAfter(tx, into: found.container, after: nil, [.type(replacement)])
+            let t = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: replacement, after: nil, [.type(t)])
+            try t.insert(0, "c+d", nil)
+        }
+        try await harness.session.integrateServerState(replaceUpdate)
+        for _ in 0..<100 where mathClosed == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(mathClosed, 1)
+
+        // 2. Peer applies unfamiliar child (e.g. a mark) inside open inline <math> while IME is active:
+        // stays open during composition, then orphans provisional recovery into provisional.json & dismisses on end.
+        var inlineClosed = 0
+        let inlineEditor = NativeSourceEditorViewController(
+            document: harness.session, request: .inlineMath(blockID: "px", utf16Offset: 0))
+        inlineEditor.onClose = { inlineClosed += 1 }
+        let inlineWindow = hostController(UINavigationController(rootViewController: inlineEditor))
+        defer { inlineWindow.isHidden = true }
+        await waitForSourceLoaded(inlineEditor)
+        let inlineTV = try XCTUnwrap(inlineEditor.sourceSession?.textView)
+        inlineTV.selectedRange = NSRange(location: 1, length: 0)
+        inlineTV.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0))
+
+        let unfamiliarUpdate = try peerWriter.transaction { tx in
+            let pFound = try peerWriter.find("px")
+            guard let mathItem = peerWriter.children(pFound.element).first,
+                case .type(let mathEl) = mathItem.content
+            else { return XCTFail("missing math element") }
+            let nested = YType(typeRef: .xmlElement(nodeName: "userMentionInline"))
+            try YWrite.insertAfter(tx, into: mathEl, after: nil, [.type(nested)])
+        }
+        try await harness.session.integrateServerState(unfamiliarUpdate)
+        XCTAssertEqual(inlineClosed, 0, "does not auto-dismiss while IME composition owns the source view")
+
+        inlineTV.unmarkText()
+        for _ in 0..<100 where inlineClosed == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        await harness.settle()
+        XCTAssertEqual(inlineClosed, 1)
+        XCTAssertEqual(harness.input.composition.pendingRecoveries.map(\.text), ["あ"])
+        XCTAssertEqual(try harness.store.provisionalRecoveries(for: harness.scope).map(\.text), ["あ"])
+    }
+
+    func testInlineMathAndDiagramIMECommitCancelInterruptAndColdRecovery() async throws {
+        // Tests both inline <math> inside a column and diagram at root through cancel, commit, interrupt,
+        // cold restore, and insertRecovery/discardRecovery on the restored main editor.
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            let dContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            after = try YWrite.insertAfter(tx, into: group, after: after, [.type(dContainer)])
+            try YWrite.mapSet(tx, on: dContainer, key: "id", .any([.string("dx")]))
+            let dEl = YType(typeRef: .xmlElement(nodeName: SourceBlock.diagram))
+            try YWrite.insertAfter(tx, into: dContainer, after: nil, [.type(dEl)])
+            let dTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: dEl, after: nil, [.type(dTxt)])
+            try dTxt.insert(0, "flowchart TD", nil)
+
+            let list = YType(typeRef: .xmlElement(nodeName: "columnList"))
+            _ = try YWrite.insertAfter(tx, into: group, after: after, [.type(list)])
+            try YWrite.mapSet(tx, on: list, key: "id", .any([.string("cl")]))
+            for (cid, bid) in [("c1", "cp1"), ("c2", "cp2")] {
+                let col = YType(typeRef: .xmlElement(nodeName: "column"))
+                let prev = YBlockProjection.children(of: list, includeFormats: false).last
+                try YWrite.insertAfter(tx, into: list, after: prev, [.type(col)])
+                try YWrite.mapSet(tx, on: col, key: "id", .any([.string(cid)]))
+                try YWrite.mapSet(tx, on: col, key: "width", .any([.int(1)]))
+                let bc = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+                try YWrite.insertAfter(tx, into: col, after: nil, [.type(bc)])
+                try YWrite.mapSet(tx, on: bc, key: "id", .any([.string(bid)]))
+                let p = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+                try YWrite.insertAfter(tx, into: bc, after: nil, [.type(p)])
+                if cid == "c1" {
+                    let math = YType(typeRef: .xmlElement(nodeName: "math"))
+                    try YWrite.insertAfter(tx, into: p, after: nil, [.type(math)])
+                    let mt = YType(typeRef: .xmlText)
+                    try YWrite.insertAfter(tx, into: math, after: nil, [.type(mt)])
+                    try mt.insert(0, "x", nil)
+                } else {
+                    let pt = YType(typeRef: .xmlText)
+                    try YWrite.insertAfter(tx, into: p, after: nil, [.type(pt)])
+                    try pt.insert(0, "target", nil)
+                }
+            }
+        }
+        let harness = try await makeHarness(state: state)
+
+        // 1. Diagram: cancel and commit clear provisional.json.
+        let diagEditor = NativeSourceEditorViewController(document: harness.session, request: .block(blockID: "dx"))
+        let diagWindow = hostController(UINavigationController(rootViewController: diagEditor))
+        await waitForSourceLoaded(diagEditor)
+        let diagTV = try XCTUnwrap(diagEditor.sourceSession?.textView)
+        diagTV.selectedRange = NSRange(location: 12, length: 0)
+        diagTV.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0))
+        diagTV.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
+        diagTV.unmarkText()
+        await diagEditor.sourceSession?.settle()
+        XCTAssertTrue(try harness.store.provisionalRecoveries(for: harness.scope).isEmpty)
+
+        diagTV.setMarkedText("\nA-->B", selectedRange: NSRange(location: 6, length: 0))
+        diagTV.unmarkText()
+        await diagEditor.sourceSession?.settle()
+        await harness.settle()
+        XCTAssertTrue(try harness.store.provisionalRecoveries(for: harness.scope).isEmpty)
+        diagEditor.close()
+        diagWindow.isHidden = true
+
+        // 2. Column inline <math>: interrupt leaves pending recovery forwarded to main session and stored in provisional.json.
+        let inlineEditor = NativeSourceEditorViewController(
+            document: harness.session, request: .inlineMath(blockID: "cp1", utf16Offset: 0))
+        let inlineWindow = hostController(UINavigationController(rootViewController: inlineEditor))
+        await waitForSourceLoaded(inlineEditor)
+        let inlineTV = try XCTUnwrap(inlineEditor.sourceSession?.textView)
+        inlineTV.selectedRange = NSRange(location: 1, length: 0)
+        inlineTV.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        XCTAssertEqual(try harness.store.provisionalRecoveries(for: harness.scope).map(\.text), ["か"])
+        inlineEditor.close()
+        inlineWindow.isHidden = true
+        await harness.settle()
+        await harness.session.close().value
+
+        // 3. Cold restore surfaces pending recovery on main session and lets the user discard or insert it.
+        let restored = try unwrapped(try await NativeEditorSession.restore(store: harness.store, scope: harness.scope))
+        addTeardownBlock {
+            await restored.close().value
+            try? FileManager.default.removeItem(at: harness.directory)
+            UIPasteboard.remove(withName: harness.pasteboard.name)
+        }
+        restored.enableTyping { command, update in
+            try harness.store.append(
+                update, for: harness.scope, commandID: command.id, baseRevision: command.baseRevision, origin: .local)
+        }
+        XCTAssertEqual(restored.input?.composition.pendingRecoveries.map(\.text), ["か"])
+        XCTAssertEqual(
+            restored.surface.blocks.first(where: { $0.id == "dx" })?.preview,
+            .source(node: "diagram", lines: ["flowchart TD", "A-->B"], lineCount: 2))
+
+        let recovery = try XCTUnwrap(restored.input?.composition.pendingRecoveries.first)
+        restored.input?.discardRecovery(recovery)
+        XCTAssertTrue(restored.input?.composition.pendingRecoveries.isEmpty == true)
+        XCTAssertTrue(try harness.store.provisionalRecoveries(for: harness.scope).isEmpty)
+    }
+
+    func testSharedUndoRedoInsideSourceEditorAndFromParentDocument() async throws {
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            let mContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            after = try YWrite.insertAfter(tx, into: group, after: after, [.type(mContainer)])
+            try YWrite.mapSet(tx, on: mContainer, key: "id", .any([.string("mx")]))
+            let mEl = YType(typeRef: .xmlElement(nodeName: SourceBlock.mathBlock))
+            try YWrite.insertAfter(tx, into: mContainer, after: nil, [.type(mEl)])
+            let mTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: mEl, after: nil, [.type(mTxt)])
+            try mTxt.insert(0, "a", nil)
+
+            let pContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            _ = try YWrite.insertAfter(tx, into: group, after: after, [.type(pContainer)])
+            try YWrite.mapSet(tx, on: pContainer, key: "id", .any([.string("px")]))
+            let pEl = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+            try YWrite.insertAfter(tx, into: pContainer, after: nil, [.type(pEl)])
+            let math = YType(typeRef: .xmlElement(nodeName: "math"))
+            try YWrite.insertAfter(tx, into: pEl, after: nil, [.type(math)])
+            let iTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: math, after: nil, [.type(iTxt)])
+            try iTxt.insert(0, "z", nil)
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+
+        // 1. Inside NativeSourceEditor for mathBlock: edit -> undo -> redo shares the replica history.
+        let mathEditor = NativeSourceEditorViewController(document: harness.session, request: .block(blockID: "mx"))
+        let mathWindow = hostController(UINavigationController(rootViewController: mathEditor))
+        defer { mathWindow.isHidden = true }
+        await waitForSourceLoaded(mathEditor)
+        let mathSession = try XCTUnwrap(mathEditor.sourceSession)
+        let mathInput = try XCTUnwrap(mathSession.input)
+        mathSession.textView.selectedRange = NSRange(location: 1, length: 0)
+        mathSession.textView.insertText("+b")
+        await mathSession.settle()
+        XCTAssertEqual(mathSession.textView.text, "a+b")
+
+        let didUndoInSource = await mathSession.run { mathInput.undo() }
+        XCTAssertTrue(didUndoInSource)
+        XCTAssertEqual(mathSession.textView.text, "a")
+        let didRedoInSource = await mathSession.run { mathInput.redo() }
+        XCTAssertTrue(didRedoInSource)
+        XCTAssertEqual(mathSession.textView.text, "a+b")
+        mathEditor.close()
+        await harness.settle()
+
+        // 2. Undo and redo from the parent document reverses/re-applies the closed source editor's edit,
+        // while preserving concurrent peer changes on another part of the document.
+        let peer = YDoc(clientID: 2, gc: true)
+        defer { peer.destroy() }
+        try peer.applyUpdate(YUpdateDecoder.decode(try XCTUnwrap(harness.store.restore(for: harness.scope)?.checkpoint)))
+        let peerWriter = BlockNoteWriter(doc: peer)
+        let peerUpdate = try peerWriter.transaction { tx in
+            let pFound = try peerWriter.find("px")
+            let note = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: pFound.element, after: nil, [.type(note)])
+            try note.insert(0, " peer", nil)
+        }
+        try await harness.session.integrateServerState(peerUpdate)
+
+        // Edit inline <math> inside source editor, close it, then undo from parent harness.
+        let inlineEditor = NativeSourceEditorViewController(
+            document: harness.session, request: .inlineMath(blockID: "px", utf16Offset: 0))
+        let inlineWindow = hostController(UINavigationController(rootViewController: inlineEditor))
+        defer { inlineWindow.isHidden = true }
+        await waitForSourceLoaded(inlineEditor)
+        inlineEditor.sourceSession?.textView.selectedRange = NSRange(location: 1, length: 0)
+        inlineEditor.sourceSession?.textView.insertText("+1")
+        await inlineEditor.sourceSession?.settle()
+        inlineEditor.close()
+        await harness.settle()
+
+        let didUndoParent = await harness.run { harness.input.undo() }
+        XCTAssertTrue(didUndoParent)
+        let xmlAfterUndo = await harness.session.replicaDoc { YXMLString.fragment($0) }
+        XCTAssertTrue(xmlAfterUndo?.contains("<math>z</math>") == true, xmlAfterUndo ?? "")
+        XCTAssertTrue(xmlAfterUndo?.contains("<mathblock>a+b</mathblock>") == true, xmlAfterUndo ?? "")
+        XCTAssertTrue(xmlAfterUndo?.contains(" peer") == true, "collaborative peer edit stays intact on local undo")
+
+        let didRedoParent = await harness.run { harness.input.redo() }
+        XCTAssertTrue(didRedoParent)
+        let xmlAfterRedo = await harness.session.replicaDoc { YXMLString.fragment($0) }
+        XCTAssertTrue(xmlAfterRedo?.contains("<math>z+1</math>") == true, xmlAfterRedo ?? "")
+    }
 }

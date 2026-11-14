@@ -843,6 +843,339 @@ final class BlockNoteSourceOracleTests: XCTestCase {
         XCTAssertThrowsError(try BlockNoteInlinePayload.decode(newlineInlineData))
     }
 
+    func testUnicodeSurrogatesEmojiAndMidSurrogateHandling() throws {
+        // Astral-plane math symbols (𝑎 = U+1D44E, 2 UTF-16 code units), emoji, ZWJ sequences, CJK and RTL
+        // preserve UTF-16 alignment across Yjs XML, native projection, engine edits and markdown shadow.
+        let initial = "𝑎+😀"
+        let doc = YDoc(clientID: 1, gc: true)
+        defer { doc.destroy() }
+        try populateContainer(doc, id: "m1", node: SourceBlock.mathBlock) { element, tx in
+            let text = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: element, after: nil, [.type(text)])
+            try text.insert(0, initial, nil)
+        }
+        try populateContainer(doc, id: "p1", node: "paragraph") { element, tx in
+            let text = YType(typeRef: .xmlText)
+            var prev = try YWrite.insertAfter(tx, into: element, after: nil, [.type(text)])
+            try text.insert(0, "A ", nil)
+            let math = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+            prev = try YWrite.insertAfter(tx, into: element, after: prev, [.type(math)])
+            let mathText = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: math, after: nil, [.type(mathText)])
+            try mathText.insert(0, "𝑓(𝑏)", nil)
+            let tail = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: element, after: prev, [.type(tail)])
+            try tail.insert(0, " end", nil)
+        }
+
+        // Direct command helper snaps a mid-surrogate UTF-16 range outward rather than splitting UTF-16 pairs.
+        let writer = BlockNoteWriter(doc: doc)
+        let m1Element = try writer.findSource("m1").element
+        try writer.replaceSourceText(in: m1Element, range: 1..<3, with: "𝑐", block: "m1")
+        XCTAssertTrue(YXMLString.fragment(doc).contains("<mathblock>𝑐😀</mathblock>"), "mid-surrogate 1..<3 snaps outward across '𝑎+'")
+
+        // Engine rejects mid-surrogate offsets rather than corrupting UTF-16.
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        defer { engine.detach() }
+        let m1SourceID = try XCTUnwrap(engine.openSource(.block(id: "m1")))
+        // Current source is "𝑐😀": '𝑐' is UTF-16 [0..<2], '😀' is [2..<4].
+        XCTAssertThrowsError(try engine.replaceText(block: m1SourceID, range: 1..<2, with: "x")) { error in
+            XCTAssertEqual(error as? DocumentEngineError, .unsupportedNativeInput)
+        }
+        XCTAssertThrowsError(try engine.replaceText(block: m1SourceID, range: 3..<3, with: "x")) { error in
+            XCTAssertEqual(error as? DocumentEngineError, .unsupportedNativeInput)
+        }
+
+        // Valid surrogate boundaries insert ZWJ family emoji, CJK and RTL cleanly.
+        let complex = "👨‍👩‍👧‍👦 日本語 ا+ب"
+        try engine.replaceText(block: m1SourceID, range: 2..<4, with: complex)
+        let expected = "𝑐" + complex
+        XCTAssertTrue(YXMLString.fragment(doc).contains("<mathblock>\(expected)</mathblock>"))
+        engine.closeSource(m1SourceID)
+        let shadow = try XCTUnwrap(NativeBlockProjection.markdownShadow(doc))
+        XCTAssertTrue(shadow.contains(expected), shadow)
+
+        // Open inline <math> containing surrogate-pair math symbols and verify UTF-16 offset rejection + valid edit.
+        let inlineTarget = try XCTUnwrap(engine.inlineMathTarget(blockID: "p1", utf16Offset: 2))
+        let inlineSourceID = try XCTUnwrap(engine.openSource(inlineTarget))
+        // "𝑓(𝑏)": '𝑓' is [0..<2].
+        XCTAssertThrowsError(try engine.replaceText(block: inlineSourceID, range: 1..<1, with: "z")) { error in
+            XCTAssertEqual(error as? DocumentEngineError, .unsupportedNativeInput)
+        }
+        try engine.replaceText(block: inlineSourceID, range: 2..<6, with: "( 😀 )")
+        engine.closeSource(inlineSourceID)
+        XCTAssertTrue(YXMLString.fragment(doc).contains("<math>𝑓( 😀 )</math>"))
+    }
+
+    func testBlankWhitespaceMultilineAndUnvalidatedSourceHandling() throws {
+        let doc = YDoc(clientID: 1, gc: true)
+        defer { doc.destroy() }
+        try populateContainer(doc, id: "m1", node: SourceBlock.mathBlock) { element, _ in
+            // Missing XmlText child initially: ensurePlainText repairs lazily.
+            _ = element
+        }
+        try populateContainer(doc, id: "d1", node: SourceBlock.diagram) { element, tx in
+            let text = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: element, after: nil, [.type(text)])
+            try text.insert(0, "   \t  ", nil)
+        }
+        try populateContainer(doc, id: "p1", node: "paragraph") { element, tx in
+            let math = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+            try YWrite.insertAfter(tx, into: element, after: nil, [.type(math)])
+        }
+
+        let projected = NativeBlockProjection.project(doc)
+        XCTAssertEqual(projected.blocks.count, 3)
+        XCTAssertTrue(projected.isFullyModeled)
+
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        defer { engine.detach() }
+
+        // Blank, multiline, preserved indentation and invalid syntax all round-trip verbatim without validation.
+        let multilineBrokenLatex = "  \\begin{unclosed}\n\n    \\unknownCommand{123}\n  "
+        let m1SourceID = try XCTUnwrap(engine.openSource(.block(id: "m1")))
+        try engine.replaceText(block: m1SourceID, range: 0..<0, with: multilineBrokenLatex)
+        engine.closeSource(m1SourceID)
+
+        let multilineInvalidMermaid = "\ngraph INVALID --> ???\n    A --> B\n\n"
+        let d1SourceID = try XCTUnwrap(engine.openSource(.block(id: "d1")))
+        try engine.replaceText(block: d1SourceID, range: 0..<6, with: multilineInvalidMermaid)
+        engine.closeSource(d1SourceID)
+
+        // Inline <math> accepts blank/whitespace-only and invalid syntax, but rejects newlines/U+FFFC/control chars.
+        let inlineTarget = try XCTUnwrap(engine.inlineMathTarget(blockID: "p1", utf16Offset: 0))
+        let inlineSourceID = try XCTUnwrap(engine.openSource(inlineTarget))
+        try engine.replaceText(block: inlineSourceID, range: 0..<0, with: "   \\bad{")
+        XCTAssertThrowsError(try engine.replaceText(block: inlineSourceID, range: 0..<0, with: "a\nb")) {
+            XCTAssertEqual($0 as? DocumentEngineError, .unsupportedNativeInput)
+        }
+        XCTAssertThrowsError(try engine.replaceText(block: inlineSourceID, range: 0..<0, with: "a\rb")) {
+            XCTAssertEqual($0 as? DocumentEngineError, .unsupportedNativeInput)
+        }
+        XCTAssertThrowsError(try engine.replaceText(block: inlineSourceID, range: 0..<0, with: "\u{FFFC}")) {
+            XCTAssertEqual($0 as? DocumentEngineError, .unsupportedNativeInput)
+        }
+        XCTAssertThrowsError(try engine.replaceText(block: inlineSourceID, range: 0..<0, with: "x\u{0007}")) {
+            XCTAssertEqual($0 as? DocumentEngineError, .unsupportedNativeInput)
+        }
+        engine.closeSource(inlineSourceID)
+
+        let xml = YXMLString.fragment(doc)
+        XCTAssertTrue(xml.contains("<mathblock>\(multilineBrokenLatex)</mathblock>"), xml)
+        XCTAssertTrue(xml.contains("<diagram>\(multilineInvalidMermaid)</diagram>"), xml)
+        XCTAssertTrue(xml.contains("<math>   \\bad{</math>"), xml)
+
+        // Subtree clipboard validation preserves whitespace-only/invalid mathBlock & diagram source without mutating.
+        let validBlankSubtree = BlockNoteWriter.Copy.element(
+            "blockContainer", [("id", .string("copy1"))],
+            [
+                .element("mathBlock", [], [.text([.run(InlineRun("  \n  \\bad{"))])])
+            ])
+        let encoded = try BlockNoteSubtreePayload.encode([validBlankSubtree])
+        let decoded = try BlockNoteSubtreePayload.validatingPastable(BlockNoteSubtreePayload.decode(encoded))
+        XCTAssertEqual(decoded.count, 1)
+    }
+
+    func testNestedAtomOffsetsNeighbouringMarksAndContainerIDs() throws {
+        // Builds a root paragraph and a multi-paragraph table cell where inline <math> chips sit directly
+        // between bold, italic, link, @mention and interlink atoms, verifying exact UTF-16 offsets,
+        // non-bleeding marks, and stable container/item IDs across slash replacement vs source edits.
+        let defaultProps: [(String, YAnyValue)] = [
+            ("textColor", .string("default")),
+            ("backgroundColor", .string("default")),
+            ("textAlignment", .string("left")),
+        ]
+        let mention = InlineRun(inlineObject: .mention(userID: "u1", fullName: "Alice"))
+        let linkMarks: [(key: String, valueJSON: String)] = [
+            ("link", #"{"href":"https://example.org"}"#),
+            ("italic", "{}"),
+        ]
+        let interlink = NativeInlineObject.interlink(
+            docID: "22222222-2222-4222-8222-222222222222", blockID: nil, title: "Ref", disabled: false, trigger: "@")
+        let blocks: [BlockNoteBlock] = [
+            BlockNoteBlock(
+                node: "paragraph",
+                props: defaultProps,
+                runs: [
+                    InlineRun("bold", marks: [("bold", "{}")]),
+                    InlineRun(inlineObject: .math(source: "x^2")),
+                    InlineRun("ital", marks: [("italic", "{}")]),
+                    mention,
+                    InlineRun(inlineObject: .math(source: "y_0")),
+                    InlineRun(inlineObject: interlink),
+                    InlineRun("lnk", marks: linkMarks),
+                ],
+                id: "rich",
+                children: [
+                    BlockNoteBlock(
+                        node: "bulletListItem",
+                        props: defaultProps,
+                        runs: [InlineRun("child "), InlineRun(inlineObject: .math(source: "c_1"))],
+                        id: "nested-child")
+                ]),
+            BlockNoteBlock(
+                node: "paragraph",
+                props: defaultProps,
+                runs: [],
+                id: "slash-empty"),
+        ]
+        let state = BlockNoteYjs.encode(blocks, clientID: 1)
+        let doc = YDoc(clientID: 1, gc: true)
+        defer { doc.destroy() }
+        try doc.applyUpdate(YUpdateDecoder.decode(state))
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        defer { engine.detach() }
+
+        // "bold" (0..4), chip1 @ 4..5, "ital" (5..9), mention @ 9..10, chip2 @ 10..11, interlink @ 11..12, "lnk" (12..15)
+        let t1 = try XCTUnwrap(engine.inlineMathTarget(blockID: "rich", utf16Offset: 4))
+        let t2 = try XCTUnwrap(engine.inlineMathTarget(blockID: "rich", utf16Offset: 10))
+        XCTAssertNotEqual(t1, t2)
+        XCTAssertNil(engine.inlineMathTarget(blockID: "rich", utf16Offset: 9), "@mention offset must not open as math")
+        XCTAssertNil(engine.inlineMathTarget(blockID: "rich", utf16Offset: 11), "interlink offset must not open as math")
+
+        // Nested child "child " (6 UTF-16) + chip @ 6..7.
+        let nestedTarget = try XCTUnwrap(engine.inlineMathTarget(blockID: "nested-child", utf16Offset: 6))
+
+        // Edit first and nested math; verify IDs and neighbouring marks stay intact and <math> stays mark-free.
+        let sid1 = try XCTUnwrap(engine.openSource(t1))
+        try engine.replaceText(block: sid1, range: 0..<3, with: "z^3")
+        engine.closeSource(sid1)
+
+        let nestedSID = try XCTUnwrap(engine.openSource(nestedTarget))
+        try engine.replaceText(block: nestedSID, range: 0..<3, with: "c_2")
+        engine.closeSource(nestedSID)
+
+        let t1After = try XCTUnwrap(engine.inlineMathTarget(blockID: "rich", utf16Offset: 4))
+        XCTAssertEqual(t1, t1After, "inline math YID stays identical across edits")
+
+        // Insert another inline math between "bold" and first chip (offset 4); existing chip moves to offset 5.
+        try engine.applyStructural(
+            NativeEditCommand(
+                id: UUID(), baseRevision: engine.revision, blockID: "rich",
+                kind: .insertInlineMath(replacing: 4..<4, source: "", trailingSpace: false)),
+            persist: { _ in })
+        XCTAssertNotNil(engine.inlineMathTarget(blockID: "rich", utf16Offset: 4))
+        XCTAssertEqual(engine.inlineMathTarget(blockID: "rich", utf16Offset: 5), t1After)
+
+        // Slash replacement of empty container preserves its blockContainer ID, whereas after non-empty creates a new ID.
+        try engine.applyStructural(
+            NativeEditCommand(
+                id: UUID(), baseRevision: engine.revision, blockID: "slash-empty",
+                kind: .insertSourceBlock(node: SourceBlock.mathBlock, newID: "unused-new", removing: 0..<0)),
+            persist: { _ in })
+        XCTAssertEqual(NativeBlockProjection.project(doc).blocks.first { $0.id == "slash-empty" }?.block.node, SourceBlock.mathBlock)
+
+        try engine.applyStructural(
+            NativeEditCommand(
+                id: UUID(), baseRevision: engine.revision, blockID: "rich",
+                kind: .insertSourceBlock(node: SourceBlock.diagram, newID: "appended-diag", removing: 0..<0)),
+            persist: { _ in })
+        XCTAssertEqual(NativeBlockProjection.project(doc).blocks.first { $0.id == "appended-diag" }?.block.node, SourceBlock.diagram)
+
+        let projected = NativeBlockProjection.project(doc)
+        let rich = try XCTUnwrap(projected.blocks.first { $0.id == "rich" })
+        XCTAssertEqual(rich.block.runs[0].marks.map(\.key), ["bold"])
+        XCTAssertEqual(rich.block.runs[1].inlineObject, .math(source: ""))
+        XCTAssertEqual(rich.block.runs[2].inlineObject, .math(source: "z^3"))
+        XCTAssertTrue(rich.block.runs[1].marks.isEmpty)
+        XCTAssertTrue(rich.block.runs[2].marks.isEmpty)
+        XCTAssertEqual(rich.block.runs[3].marks.map(\.key), ["italic"])
+        XCTAssertTrue(rich.block.runs.last?.marks.contains(where: { $0.key == "link" }) == true)
+    }
+
+    @MainActor
+    func test72ebe1bbStateBinSourceBlocksModeledAndCleanEquivalentsFullyTypable() async throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let stateURL = root.appendingPathComponent(".review/state.bin")
+        guard FileManager.default.fileExists(atPath: stateURL.path) else {
+            throw XCTSkip("optional .review/state.bin capture not present")
+        }
+        let data = try Data(contentsOf: stateURL)
+        let doc = YDoc(clientID: 1, gc: true)
+        defer { doc.destroy() }
+        try doc.applyUpdate(YUpdateDecoder.decode(data), origin: .remote)
+
+        let projected = NativeBlockProjection.project(doc)
+        XCTAssertTrue(projected.isFullyRenderable, "all 72ebe1bb blocks must be renderable (zero opaque)")
+        let mathBlocks = projected.blocks.filter { $0.block.node == SourceBlock.mathBlock }
+        let diagramBlocks = projected.blocks.filter { $0.block.node == SourceBlock.diagram }
+        let inlineMathBlocks = projected.blocks.filter { snapshot in
+            snapshot.block.runs.contains {
+                if case .math? = $0.inlineObject { return true }
+                return false
+            }
+        }
+        XCTAssertFalse(mathBlocks.isEmpty)
+        XCTAssertFalse(diagramBlocks.isEmpty)
+        XCTAssertFalse(inlineMathBlocks.isEmpty)
+        for snapshot in mathBlocks + diagramBlocks + inlineMathBlocks {
+            XCTAssertEqual(snapshot.block.fidelity, .modeled, "\(snapshot.id) should be .modeled")
+        }
+        XCTAssertNil(NativeBlockProjection.markdownShadow(doc), "active interlink gates nil-origin shadow")
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: Self.testOrigin))
+
+        // Every source block and inline math chip in state.bin can be opened and typed through DocumentEngine.
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        defer { engine.detach() }
+        let mSID = try XCTUnwrap(engine.openSource(.block(id: try XCTUnwrap(mathBlocks.first?.id))))
+        try engine.replaceText(block: mSID, range: 0..<0, with: "\\alpha + ")
+        engine.closeSource(mSID)
+
+        let dSID = try XCTUnwrap(engine.openSource(.block(id: try XCTUnwrap(diagramBlocks.first?.id))))
+        try engine.replaceText(block: dSID, range: 0..<0, with: "%% note\n")
+        engine.closeSource(dSID)
+
+        let inlineBlock = try XCTUnwrap(inlineMathBlocks.first)
+        var offset = 0
+        for run in inlineBlock.block.runs {
+            if case .math? = run.inlineObject { break }
+            offset += (run.text as NSString).length
+        }
+        let inlineTarget = try XCTUnwrap(engine.inlineMathTarget(blockID: inlineBlock.id, utf16Offset: offset))
+        let iSID = try XCTUnwrap(engine.openSource(inlineTarget))
+        try engine.replaceText(block: iSID, range: 0..<0, with: "k + ")
+        engine.closeSource(iSID)
+
+        // state.bin itself retains .lossy styling/callout blocks so whole-doc isFullyModeled remains false,
+        // whereas a clean document combining the same source blocks + interlink (without lossy props)
+        // is both isFullyModeled == true and canType == true when inspected with interlinkingOrigin.
+        XCTAssertFalse(projected.isFullyModeled)
+
+        let cleanBlocks: [BlockNoteBlock] = [
+            BlockNoteBlock(
+                node: "paragraph",
+                props: [
+                    ("textColor", .string("default")),
+                    ("backgroundColor", .string("default")),
+                    ("textAlignment", .string("left")),
+                ],
+                runs: [
+                    InlineRun("Link "),
+                    InlineRun(
+                        inlineObject: NativeInlineObject.interlink(
+                            docID: "33333333-3333-4333-8333-333333333333", blockID: nil, title: "Spec",
+                            disabled: false, trigger: "@")),
+                    InlineRun(" and "),
+                    InlineRun(inlineObject: .math(source: "E = mc^2")),
+                ],
+                id: "p-inline"),
+            BlockNoteBlock(node: SourceBlock.mathBlock, props: [], runs: [InlineRun("\\sum_{i=1}^n i")], id: "m-clean"),
+            BlockNoteBlock(node: SourceBlock.diagram, props: [], runs: [InlineRun("flowchart LR\n  A-->B")], id: "d-clean"),
+        ]
+        let cleanState = BlockNoteYjs.encode(cleanBlocks, clientID: 1)
+        let cleanDoc = YDoc(clientID: 1, gc: true)
+        defer { cleanDoc.destroy() }
+        try cleanDoc.applyUpdate(YUpdateDecoder.decode(cleanState))
+        let cleanProjection = NativeBlockProjection.project(cleanDoc)
+        XCTAssertTrue(cleanProjection.isFullyModeled)
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(cleanDoc, interlinkingOrigin: Self.testOrigin))
+
+        let inspectedClean = try await NativeEditorSession.inspect(state: cleanState, interlinkingOrigin: Self.testOrigin)
+        XCTAssertTrue(inspectedClean.canType, "clean document with mathBlock, diagram, inline math and interlink is fully typable")
+        await inspectedClean.close().value
+    }
+
     // MARK: - Helpers
 
     private func decodeDoc(_ base64: String) throws -> YDoc {
@@ -857,10 +1190,19 @@ final class BlockNoteSourceOracleTests: XCTestCase {
     ) throws {
         _ = try doc.transact(local: true) { tx in
             let root = doc.get(BlockNoteYjs.fragmentField)
-            let group = YType(typeRef: .xmlElement(nodeName: "blockGroup"))
-            _ = try YWrite.insertAfter(tx, into: root, after: nil, [.type(group)])
+            let group: YType
+            if let existing = YBlockProjection.children(of: root, includeFormats: false).first,
+                case .type(let g) = existing.content
+            {
+                group = g
+            } else {
+                let g = YType(typeRef: .xmlElement(nodeName: "blockGroup"))
+                _ = try YWrite.insertAfter(tx, into: root, after: nil, [.type(g)])
+                group = g
+            }
+            let afterContainer = YBlockProjection.children(of: group, includeFormats: false).last
             let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
-            _ = try YWrite.insertAfter(tx, into: group, after: nil, [.type(container)])
+            _ = try YWrite.insertAfter(tx, into: group, after: afterContainer, [.type(container)])
             try YWrite.mapSet(tx, on: container, key: "id", .any([.string(id)]))
             let element = YType(typeRef: .xmlElement(nodeName: node))
             _ = try YWrite.insertAfter(tx, into: container, after: nil, [.type(element)])

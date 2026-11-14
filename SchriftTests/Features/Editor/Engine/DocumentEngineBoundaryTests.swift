@@ -63,4 +63,42 @@ final class DocumentEngineBoundaryTests: XCTestCase {
         XCTAssertEqual(deltas.map(\.range), [0..<0])
         XCTAssertEqual(deltas.map(\.replacement), ["Hi "])
     }
+
+    func testCoreYjsAndNativeSourceFilesRespectLayerBoundaries() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let coreYjs = root.appendingPathComponent("Schrift/Core/Yjs")
+        let coreFiles = [
+            "BlockNoteSourceCommands.swift",
+            "NativeInlineObject.swift",
+            "NativeBlockProjection.swift",
+            "YBlockProjection.swift",
+            "NativeExportMarkdown.swift",
+            "BlockNoteSubtreePayload.swift",
+        ]
+        for fileName in coreFiles {
+            let source = try String(contentsOf: coreYjs.appendingPathComponent(fileName), encoding: .utf8)
+            for forbidden in ["import UIKit", "import SwiftUI", "UITextView", "UIView", "NSRange", "NSText", "@MainActor", "DocumentEngine"] {
+                XCTAssertFalse(source.contains(forbidden), "\(fileName) mentions \(forbidden)")
+            }
+        }
+        // BlockNoteWriter has legacy Foundation NSRange adapters, so check it still never touches UIKit/SwiftUI/MainActor.
+        let writerSource = try String(contentsOf: coreYjs.appendingPathComponent("BlockNoteWriter.swift"), encoding: .utf8)
+        for forbidden in ["import UIKit", "import SwiftUI", "UITextView", "UIView", "NSText", "@MainActor", "DocumentEngine"] {
+            XCTAssertFalse(writerSource.contains(forbidden), "BlockNoteWriter.swift mentions \(forbidden)")
+        }
+
+        // PR14 UI/preview files stay strictly behind the replica session boundary (no engine/Yjs types).
+        let native = root.appendingPathComponent("Schrift/Features/Editor/Native")
+        let editorSource = try String(contentsOf: native.appendingPathComponent("NativeSourceEditor.swift"), encoding: .utf8)
+        XCTAssertTrue(editorSource.contains("@MainActor"), "NativeSourceEditor.swift must be @MainActor")
+        for fileName in ["NativeSourcePreview.swift", "NativeSourceEditor.swift"] {
+            let source = try String(contentsOf: native.appendingPathComponent(fileName), encoding: .utf8)
+            for forbidden in ["YDoc", "DocumentEngine", "YUndoManager", "ReplicaHistory"] {
+                XCTAssertNil(
+                    source.range(of: "\\b\(forbidden)\\b", options: .regularExpression),
+                    "\(fileName) names \(forbidden)")
+            }
+        }
+    }
 }
