@@ -111,6 +111,7 @@ final class DocumentSaveCoordinator {
     /// (which stops it being listed as local) and the next successful list fetch.
     private let listCache: DocumentCacheStore
     private let childrenCache: DocumentChildrenCacheStore
+    let serverConfigStore: ServerConfigStore
     /// The server this session is signed in to (`siteOrigin`). Create records carry the
     /// origin they were minted against; it decides what may be **listed and sent**, never
     /// what is protected — see `isPendingCreate` vs `isReplayable`.
@@ -460,6 +461,7 @@ final class DocumentSaveCoordinator {
         self.attachmentCache = attachmentCache
         self.listCache = listCache
         self.childrenCache = childrenCache
+        self.serverConfigStore = ServerConfigStore(userDefaults: listCache.userDefaults)
         self.serverOrigin = serverOrigin
         self.appBuild = appBuild
         self.mediaCheckMaxAttempts = mediaCheckMaxAttempts
@@ -633,6 +635,46 @@ final class DocumentSaveCoordinator {
     /// Marker data is missing or does not decode while replica files exist, so
     /// every document is read-only until the marker is rebuilt.
     var needsOwnershipRepair: Bool { replicaStore.needsOwnershipRepair }
+
+    func noteServerConfig(_ config: ServerConfig) {
+        serverConfigStore.remember(config, forServerOrigin: client.serverOrigin)
+    }
+
+    func cachedServerConfig() -> ServerConfig? {
+        serverConfigStore.config(forServerOrigin: client.serverOrigin)
+    }
+
+    func isCachedDocs6Server() -> Bool {
+        cachedServerConfig()?.usesCollaborationYDocServer == true
+    }
+
+    private func cachedDocs6Org() -> String? {
+        guard let config = cachedServerConfig(), config.usesCollaborationYDocServer else { return nil }
+        return config.collaborationOrg
+    }
+
+    /// Removes clean, synced replica folders for the leaving account/origin while keeping every
+    /// dirty, provisional, conflicted, active, or unreadable replica untouched.
+    func purgeCleanNativeReplicasOnSignOut(ownerUserID: UUID? = nil) {
+        guard !draftStore.holdsUnreadableData,
+            !createStoreUnreadable,
+            !deleteStoreUnreadable,
+            !attachmentStore.holdsUnreadableData,
+            !replicaStore.needsOwnershipRepair
+        else { return }
+        var keeping = Set(draftStore.allDrafts().map(\.documentID))
+        keeping.formUnion(pendingCreates.keys)
+        keeping.formUnion(pendingCreates.values.compactMap(\.syncedServerID))
+        keeping.formUnion(pendingDeletes.keys)
+        keeping.formUnion(inFlight.keys)
+        keeping.formUnion(queued.keys)
+        keeping.formUnion(conflicts.keys)
+        keeping.formUnion(pendingAttachments.values.map(\.documentID))
+        replicaStore.purgeCleanReplicas(
+            serverOrigin: client.serverOrigin,
+            ownerUserID: ownerUserID ?? signedInUser.userID,
+            keepingDocumentIDs: keeping)
+    }
 
     /// Rebuild the owner marker from the scoped manifests on disk. The only
     /// production caller is the Profile recovery row; routine writes never
@@ -886,10 +928,22 @@ final class DocumentSaveCoordinator {
         // nil clock with an empty body when the two have **diverged**, where claiming the
         // observed state would prove the very push the conflict is holding. See
         // `migrateCreatedDocument`.
-        draftStore.save(
-            PendingDraft(
-                documentID: record.localID, title: title, markdown: seedMarkdown,
-                updatedAt: record.createdAt))
+        var draft = PendingDraft(
+            documentID: record.localID, title: title, markdown: seedMarkdown,
+            updatedAt: record.createdAt)
+        if nativeEditorEnabled(), !client.serverOrigin.isEmpty, let org = cachedDocs6Org() {
+            let scope = ReplicaScope(
+                serverOrigin: client.serverOrigin, ownerUserID: ownerUserID, org: org,
+                documentID: record.localID)
+            let checkpoint = MarkdownYjs.encode(markdown: seedMarkdown, serverOrigin: client.serverOrigin)
+            if let manifest = try? replicaStore.create(for: scope, checkpoint: checkpoint) {
+                draft = PendingDraft(
+                    documentID: record.localID, title: title, markdown: seedMarkdown,
+                    updatedAt: record.createdAt,
+                    replica: ReplicaDraftReference(scope: scope, generation: manifest.generation))
+            }
+        }
+        draftStore.save(draft)
         states[record.localID] = .pendingSync
         return localDocument(from: record)
     }
@@ -1367,6 +1421,7 @@ final class DocumentSaveCoordinator {
     /// Runs `scope`'s waiting native records now: an editor began typing into the document, so a
     /// record held back because nothing could write it may land.
     func replayNativeAttachments(scope: ReplicaScope) {
+        guard !isPendingCreate(documentID: scope.documentID) else { return }
         let isCurrent = signInIsCurrent?()
         for record in nativeAttachments(scope: scope) where record.failedAt == nil {
             Task { await runNativeAttachment(record.localID, isCurrent: isCurrent) }
@@ -1753,9 +1808,6 @@ final class DocumentSaveCoordinator {
             // is already guarded on the record still existing — so this guard is about the
             // wasted create, not the write-back.)
             guard let record = pendingCreates[snapshot.localID] else { continue }
-            guard draftStore.draft(for: record.localID)?.replica == nil,
-                record.syncedServerID.flatMap({ draftStore.draft(for: $0)?.replica }) == nil
-            else { continue }
             // **A sub-page waits for its parent to become a real document.** A child created
             // under a parent this device has not yet POSTed carries that parent's *local* id
             // in its own `parentID`, and POSTing it would name `documents/{local-uuid}/
@@ -1992,14 +2044,29 @@ final class DocumentSaveCoordinator {
             // on in memory, unrepairable (that method needs a draft to write to), so the hold
             // is silently lost at the next relaunch.
             if draftStore.draft(for: record.localID) == nil, let orphan = draftStore.draft(for: serverID),
-                orphan.replica == nil,
                 !mayPredateSave(marker), inFlight[serverID] == nil, !hasOpenEditor(documentID: serverID)
             {
-                draftStore.save(
-                    PendingDraft(
-                        documentID: record.localID, title: orphan.title, markdown: orphan.markdown,
-                        updatedAt: orphan.updatedAt, baseline: nil))
-                draftStore.remove(documentID: serverID)
+                if let orphanReplica = orphan.replica {
+                    let serverScope = orphanReplica.scope
+                    let localScope = ReplicaScope(
+                        serverOrigin: serverScope.serverOrigin, ownerUserID: serverScope.ownerUserID,
+                        org: serverScope.org, documentID: record.localID)
+                    if let copied = try? replicaStore.copyReplica(from: serverScope, to: localScope) {
+                        draftStore.save(
+                            PendingDraft(
+                                documentID: record.localID, title: orphan.title, markdown: orphan.markdown,
+                                updatedAt: orphan.updatedAt, baseline: nil,
+                                replica: ReplicaDraftReference(scope: localScope, generation: copied.generation)))
+                        draftStore.remove(documentID: serverID)
+                        try? replicaStore.remove(for: serverScope)
+                    }
+                } else {
+                    draftStore.save(
+                        PendingDraft(
+                            documentID: record.localID, title: orphan.title, markdown: orphan.markdown,
+                            updatedAt: orphan.updatedAt, baseline: nil))
+                    draftStore.remove(documentID: serverID)
+                }
             }
             // **Discharge whatever is left, now that nothing is left to protect.** The guards
             // below establish exactly that: no save may predate the fetch, no screen is
@@ -2198,9 +2265,13 @@ final class DocumentSaveCoordinator {
         // resume reads an already-removed local draft as empty and overwrites good content
         // with "".
         let migrated = draftStore.draft(for: serverID)
-        // Native key/file migration is not a Markdown copy. Preserve both
-        // owners until the native pending-create migration is implemented.
-        guard draft?.replica == nil, migrated?.replica == nil else { return }
+        if let replicaRef = draft?.replica ?? migrated?.replica {
+            migrateNativeCreatedDocument(
+                record, serverID: serverID, replicaRef: replicaRef, draft: draft, migrated: migrated,
+                serverTitle: serverTitle, serverUpdatedAt: serverUpdatedAt, serverMarkdown: serverMarkdown,
+                document: document)
+            return
+        }
         // First **non-nil**, not first non-empty — and that distinction is load-bearing if a
         // second draft remover is ever added. `carriedPush` below keys off
         // `draft == nil && queued[localID] == nil`, which concedes that `draft == nil` with
@@ -2633,6 +2704,93 @@ final class DocumentSaveCoordinator {
         enqueue(documentID: serverID, title: title, markdown: body, baseline: baseline)
     }
 
+    private func migrateNativeCreatedDocument(
+        _ record: PendingDocumentCreate, serverID: UUID, replicaRef: ReplicaDraftReference,
+        draft: PendingDraft?, migrated: PendingDraft?, serverTitle: String?, serverUpdatedAt: Date,
+        serverMarkdown: String, document: Document?
+    ) {
+        let localID = record.localID
+        let localScope = ReplicaScope(
+            serverOrigin: replicaRef.scope.serverOrigin, ownerUserID: replicaRef.scope.ownerUserID,
+            org: replicaRef.scope.org, documentID: localID)
+        let serverScope = ReplicaScope(
+            serverOrigin: replicaRef.scope.serverOrigin, ownerUserID: replicaRef.scope.ownerUserID,
+            org: replicaRef.scope.org, documentID: serverID)
+        guard let copiedManifest = try? replicaStore.copyReplica(from: localScope, to: serverScope) else { return }
+        let serverRef = ReplicaDraftReference(scope: serverScope, generation: copiedManifest.generation)
+        let serverAdapter = ReplicaSaveAdapter(store: replicaStore, scope: serverScope)
+        let fallbackBody = queued[localID]?.markdown ?? draft?.markdown ?? migrated?.markdown ?? ""
+        let prepared = try? serverAdapter.prepare(markdown: fallbackBody, expected: serverRef)
+        let body = prepared?.markdown ?? fallbackBody
+
+        let localTitle = queued[localID]?.title ?? draft?.title ?? migrated?.title
+        let knownToServer = record.postedTitle ?? record.title
+        let title =
+            if let localTitle, localTitle != knownToServer {
+                localTitle
+            } else {
+                serverTitle ?? localTitle ?? record.title
+            }
+        let canonicalBody = syncCanonicalMarkdown(body)
+        let canonicalServer = syncCanonicalMarkdown(serverMarkdown)
+        let diverged = !canonicalServer.isEmpty && canonicalServer != canonicalBody
+        let baseline =
+            diverged
+            ? DraftBaseline(serverUpdatedAt: nil, markdown: "", title: serverTitle)
+            : DraftBaseline(serverUpdatedAt: serverUpdatedAt, markdown: serverMarkdown, title: serverTitle)
+        let carriedPush = (draft == nil && queued[localID] == nil) ? migrated?.lastPushedMarkdown : nil
+        let willAdoptServer =
+            copiedManifest.outbox.isEmpty && canonicalBody.isEmpty && !canonicalServer.isEmpty
+
+        draftStore.save(
+            PendingDraft(
+                documentID: serverID, title: title, markdown: body, updatedAt: Date(),
+                baseline: baseline, lastPushedMarkdown: carriedPush, replica: serverRef))
+        draftStore.remove(documentID: localID)
+        states[localID] = nil
+        clearFailure(localID)
+        queued[localID] = nil
+        settledSaves[localID] = nil
+        lastConfirmedPushMarkdown[localID] = nil
+        knownServerTitles[localID] = nil
+        knownServerTitles[serverID] = serverTitle
+        conflicts[localID] = nil
+        contentCache.remove(documentID: localID)
+        childrenCache.removeDocument(localID)
+        if willAdoptServer { draftStore.remove(documentID: serverID) }
+        if let document {
+            let liveParentID = pendingCreates[localID].map(\.parentID) ?? record.parentID
+            insertIntoListCaches(document, parentID: liveParentID)
+        }
+        for var child in pendingCreates.values.filter({ $0.parentID == localID }) {
+            child.parentID = serverID
+            updatePendingCreate(child)
+        }
+        for var attachment in pendingAttachments.values.filter({ $0.documentID == localID }) {
+            attachment.documentID = serverID
+            updatePendingAttachment(attachment)
+        }
+        try? replicaStore.remove(for: localScope)
+        removePendingCreate(documentID: localID)
+        defer { onDocumentMigrated?(document) }
+
+        if willAdoptServer {
+            clearResolvedConflict(documentID: serverID)
+            states[serverID] = .idle
+            clearFailure(serverID)
+            try? replicaStore.remove(for: serverScope)
+            return
+        }
+        if diverged {
+            lastConfirmedPushMarkdown[serverID] = nil
+            recordConflict(documentID: serverID, serverUpdatedAt: serverUpdatedAt)
+        }
+        if !canonicalServer.isEmpty, canonicalServer == canonicalBody {
+            clearResolvedConflict(documentID: serverID)
+        }
+        try? enqueueReplica(adapter: serverAdapter, title: title, baseline: baseline)
+    }
+
     private func insertIntoListCaches(_ created: Document, parentID: UUID?) {
         // Only into a list that has actually been fetched. `nil` (never cached) is
         // deliberately distinct from a cached empty list — `HomeViewModel` reads exactly that
@@ -2892,7 +3050,6 @@ final class DocumentSaveCoordinator {
         guard adapter.scope.serverOrigin == client.serverOrigin, adapter.scope.ownerUserID == signedInUser.userID
         else { throw ReplicaSaveError.otherServerOrAccount }
         guard !draftStore.holdsUnreadableData else { throw ReplicaSaveError.quarantinedDrafts }
-        guard !isPendingCreate(documentID: id) else { throw ReplicaSaveError.pendingCreate }
         let previous = draftStore.draft(for: id)
         let (request, markdown): (ReplicaSaveRequest, String)
         if let previous {
@@ -3567,7 +3724,9 @@ final class DocumentSaveCoordinator {
             // A native record (PR13b) names no Markdown, so the collection below would delete it:
             // its own run commits or drops it by the block's slot.
             if record.native != nil {
-                if record.ownerUserID == currentUserID { native.append(record.localID) }
+                if record.ownerUserID == currentUserID, !isPendingCreate(documentID: record.documentID) {
+                    native.append(record.localID)
+                }
                 continue
             }
             guard isAttachmentReplayable(record, currentUserID: currentUserID) else { continue }

@@ -104,6 +104,52 @@ extension DocsAPIClient {
         if let route = ContentSaveRoute(config: config) {
             contentSaveRoute = route
         }
+        notifyServerConfig(config)
         return config
+    }
+}
+
+/// Last-known server capabilities (`GET /api/v1.0/config/`) persisted per
+/// `serverOrigin`, so offline local-document creation and offline Docs 6
+/// read-only guards know whether the server runs Docs 6 and its yhub org.
+struct ServerConfigStore: @unchecked Sendable {
+    private static let key = "dev.llun.Schrift.serverConfigs"
+
+    private let userDefaults: UserDefaults
+
+    init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+    }
+
+    func config(forServerOrigin origin: String) -> ServerConfig? {
+        guard !origin.isEmpty else { return nil }
+        return allConfigs()[origin]
+    }
+
+    func remember(_ config: ServerConfig, forServerOrigin origin: String) {
+        guard !origin.isEmpty else { return }
+        var configs = allConfigs()
+        configs[origin] = config
+        if let data = try? JSONEncoder().encode(configs) {
+            userDefaults.set(data, forKey: Self.key)
+        }
+    }
+
+    func clear(forServerOrigin origin: String) {
+        guard !origin.isEmpty else { return }
+        var configs = allConfigs()
+        guard configs.removeValue(forKey: origin) != nil else { return }
+        if configs.isEmpty {
+            userDefaults.removeObject(forKey: Self.key)
+        } else if let data = try? JSONEncoder().encode(configs) {
+            userDefaults.set(data, forKey: Self.key)
+        }
+    }
+
+    private func allConfigs() -> [String: ServerConfig] {
+        guard let data = userDefaults.data(forKey: Self.key),
+            let configs = try? JSONDecoder().decode([String: ServerConfig].self, from: data)
+        else { return [:] }
+        return configs
     }
 }

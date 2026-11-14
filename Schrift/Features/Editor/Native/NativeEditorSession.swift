@@ -777,8 +777,11 @@ final class NativeEditorOpen {
         // A reappearing classic editor keeps its SwiftUI identity and local
         // view state while the optional native eligibility read is in flight.
         switch route {
-        case .loading, .native, .preservedUnavailable: route = .loading
-        case .classic: break
+        case .loading, .native, .preservedUnavailable:
+            route = .loading
+            viewModel.setNativeRouteActive(true)
+        case .classic:
+            viewModel.setNativeRouteActive(false)
         }
         pendingOpen?.finish()
         generation += 1
@@ -799,12 +802,14 @@ final class NativeEditorOpen {
         switch coordinator.nativeOwnership(documentID: viewModel.documentID) {
         case .unreadable:
             viewModel.seedNativeMetadataIfNeeded(includeLocalDrafts: false)
+            viewModel.setNativeRouteActive(true)
             route = .preservedUnavailable
             return
         case .owned(let scope):
             // Another account's unsynced replica is never shown to this one.
             guard scope.ownerUserID == account else {
                 viewModel.seedNativeMetadataIfNeeded(includeLocalDrafts: false)
+                viewModel.setNativeRouteActive(true)
                 route = .preservedUnavailable
                 return
             }
@@ -814,6 +819,7 @@ final class NativeEditorOpen {
                 restored = try await registry.open(store: coordinator.replicaStore, scope: scope, hooks: replicaHooks)
             } catch {
                 guard generation == request else { return }
+                viewModel.setNativeRouteActive(true)
                 route = .preservedUnavailable
                 return
             }
@@ -833,6 +839,7 @@ final class NativeEditorOpen {
                     self.canMention = canMention && !viewModel.isLocalDocument
                     installTyping(session, scope: scope, viewModel: viewModel)
                 }
+                viewModel.setNativeRouteActive(true)
                 route = .native(session)
                 // Offline-first: the replica is on screen before any request.
                 await integrateServerState(
@@ -844,6 +851,7 @@ final class NativeEditorOpen {
             // anywhere and take the unowned route, which re-seeds from the server
             // when typing is possible. Otherwise it stays read-only.
             guard enabled, coordinator.clearNativeOwnership(scope: scope) else {
+                viewModel.setNativeRouteActive(true)
                 route = .preservedUnavailable
                 return
             }
@@ -851,6 +859,7 @@ final class NativeEditorOpen {
             break
         }
         guard canOpen(viewModel, isOffline: isOffline) else {
+            viewModel.setNativeRouteActive(false)
             route = .classic
             return
         }
@@ -864,6 +873,7 @@ final class NativeEditorOpen {
             do {
                 guard !Task.isCancelled else { return }
                 let config = try await viewModel.client.serverConfig()
+                viewModel.saveCoordinator.noteServerConfig(config)
                 guard !Task.isCancelled,
                     self?.canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account)
                         == true,
@@ -971,7 +981,8 @@ final class NativeEditorOpen {
             state: state, scope: scope, viewModel: viewModel, request: request, account: account)
         guard let seeded else { return }
         viewModel.seedNativeMetadataIfNeeded()
-        route = seeded
+        if let seeded { viewModel.setNativeRouteActive(seeded.isNativeActive) }
+        route = seeded ?? route
         if case .native(let session) = seeded {
             self.canMention = (ability?.mention ?? rowCanMention) && !viewModel.isLocalDocument
             startLive(session, scope: scope, config: config, viewModel: viewModel)
