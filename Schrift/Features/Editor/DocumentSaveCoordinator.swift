@@ -4645,6 +4645,7 @@ final class DocumentSaveCoordinator {
                 settledSaves[checkpointed.localID] = nil
                 lastConfirmedPushMarkdown[checkpointed.localID] = nil
                 knownServerTitles[checkpointed.localID] = nil
+                syncBackupExclusion(for: checkpointed.localID)
             }
         }
         if mayRemoveDraft { draftStore.remove(documentID: documentID) }

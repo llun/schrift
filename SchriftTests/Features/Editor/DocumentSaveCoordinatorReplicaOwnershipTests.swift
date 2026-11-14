@@ -483,6 +483,9 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
         let serverFolder = replicaDir.appendingPathComponent(try serverScope.directoryName(), isDirectory: true)
         XCTAssertEqual(try isExcluded(serverFolder), true, "clean synced replica starts excluded from backup")
 
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
         let adapter = ReplicaSaveAdapter(store: store, scope: serverScope)
         drafts.save(
             PendingDraft(
@@ -516,9 +519,13 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
         let halfFolder = replicaDir.appendingPathComponent(try halfScope.directoryName(), isDirectory: true)
         XCTAssertNotEqual(try isExcluded(halfFolder), true)
 
-        var titleShouldFail = true
+        let ownerID = owner.uuidString.lowercased()
+        let titleShouldFail = Locked(true)
         MockURLProtocol.stubHandler = { request in
             let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("/users/me/") {
+                return .init(statusCode: 200, headers: [:], body: Data(#"{"id":"\#(ownerID)"}"#.utf8), error: nil)
+            }
             if url.hasSuffix("/config/") {
                 return .init(
                     statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
@@ -527,8 +534,8 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
                 return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
             }
             if request.httpMethod == "PATCH", url.contains("/documents/") {
-                return titleShouldFail
-                    ? .init(statusCode: 500, headers: [:], body: Data(), error: nil)
+                return titleShouldFail.value
+                    ? .init(statusCode: 400, headers: [:], body: Data(), error: nil)
                     : .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil)
             }
             return .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil)
@@ -546,7 +553,7 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
             "half-landed save whose title PATCH failed must keep replica backed up even though outbox is empty")
 
         // 4. Retry succeeds: draft is removed and folder flips back to excluded from backup.
-        titleShouldFail = false
+        titleShouldFail.value = false
         coordinator.retryReplicaDraft(documentID: halfDocID)
         await waitUntil {
             if case .saved = coordinator.state(for: halfDocID) { return true }

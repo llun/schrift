@@ -1365,7 +1365,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let childrenCache = DocumentChildrenCacheStore(userDefaults: defaults)
         let listCache = DocumentCacheStore(userDefaults: defaults)
-        let registry = NativeEditorSessionRegistry()
+        let registry = NativeSessionRegistry()
 
         func makeCoordinator(isOffline: Bool) -> DocumentSaveCoordinator {
             let availability = OnlineAvailability(connectivity: nil, userDefaults: defaults)
@@ -1405,7 +1405,8 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             contentCache: contentCache, childrenCache: childrenCache, listCache: listCache,
             availability: OnlineAvailability(connectivity: nil, userDefaults: defaults),
             nativeEditorEnabled: { true })
-        let open = NativeEditorOpen(preference: { true }, registry: registry)
+        let open = NativeEditorOpen(preference: { true })
+        open.registry = registry
         await open.open(viewModel: viewModel, isOffline: true, canUpdate: true)
         guard case .native(let session) = open.route else {
             return XCTFail("expected native session for offline-created document")
@@ -1416,13 +1417,14 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
         await session.settle()
         open.flushPendingSave()
         open.close()
-        await waitUntil { offlineCoord.isPendingCreate(documentID: localDoc.id) && drafts.draft(for: localDoc.id) != nil }
+        await waitUntil {
+            offlineCoord.isPendingCreate(documentID: localDoc.id) && drafts.draft(for: localDoc.id) != nil
+        }
 
         // Step 2: Come online, run syncPendingDrafts(), and capture every Yjs PATCH byte.
-        let lock = NSLock()
-        var capturedYjsUpdates: [Data] = []
+        let capturedYjsUpdates = Locked<[Data]>([])
         let serverIDLower = serverID.uuidString.lowercased()
-        stubUsersMeThen { request in
+        stubUsersMeThen(log: RequestRecorder()) { request in
             let url = request.url?.absoluteString ?? ""
             let method = request.httpMethod ?? ""
             if url.hasSuffix("/config/") {
@@ -1440,7 +1442,9 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
                 return .init(statusCode: 201, headers: [:], body: body, error: nil)
             }
             if method == "GET", url.contains("/collaboration/ydoc/") {
-                let emptyState = YStateEncoder.encodeStateAsUpdate(YDoc(clientID: 99)).base64EncodedString()
+                let emptyDoc = YDoc(clientID: 99)
+                defer { emptyDoc.destroy() }
+                let emptyState = (try? YStateEncoder.encodeStateAsUpdate(emptyDoc))?.base64EncodedString() ?? ""
                 return .init(
                     statusCode: 200, headers: ["Content-Type": "application/json"],
                     body: Data(#"{"doc":"\#(emptyState)"}"#.utf8), error: nil)
@@ -1450,9 +1454,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
                     let json = try? JSONSerialization.jsonObject(with: body) as? [String: String],
                     let encoded = json["update"], let raw = Data(base64Encoded: encoded)
                 {
-                    lock.lock()
-                    capturedYjsUpdates.append(raw)
-                    lock.unlock()
+                    capturedYjsUpdates.update { $0.append(raw) }
                 }
                 return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
             }
@@ -1466,17 +1468,13 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
         await onlineCoord.syncPendingDrafts()
 
         await waitUntil {
-            lock.lock()
-            let count = capturedYjsUpdates.count
-            lock.unlock()
+            let count = capturedYjsUpdates.value.count
             return creates.create(for: localDoc.id) == nil
                 && count > 0
                 && drafts.draft(for: self.serverID) == nil
         }
 
-        lock.lock()
-        let updates = capturedYjsUpdates
-        lock.unlock()
+        let updates = capturedYjsUpdates.value
         XCTAssertFalse(updates.isEmpty, "migration must push full Yjs state via PATCH /collaboration/ydoc/")
 
         let serverDoc = YDoc(clientID: 100)
@@ -1490,7 +1488,9 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
         XCTAssertNil(
             serverDoc.store.pendingDs,
             "full Yjs state applied to an empty server YDoc must not leave unapplied pendingDs")
-        let projectedText = NativeBlockProjection.project(serverDoc).blocks.map(\.plainText).joined(separator: "\n")
+        let projectedText = NativeBlockProjection.project(serverDoc).blocks
+            .map { $0.block.runs.map(\.text).joined() }
+            .joined(separator: "\n")
         XCTAssertTrue(
             projectedText.contains("Hello offline world"),
             "empty server YDoc must project offline typed text, got: \(projectedText)")
@@ -1529,10 +1529,9 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             title: "Revived Title", parentID: nil, ownerUserID: user,
             seedMarkdown: "Carried body from deleted doc")
 
-        let lock = NSLock()
-        var capturedYjsUpdates: [Data] = []
+        let capturedYjsUpdates = Locked<[Data]>([])
         let serverIDLower = serverID.uuidString.lowercased()
-        stubUsersMeThen { request in
+        stubUsersMeThen(log: RequestRecorder()) { request in
             let url = request.url?.absoluteString ?? ""
             let method = request.httpMethod ?? ""
             if url.hasSuffix("/config/") {
@@ -1554,9 +1553,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
                     let json = try? JSONSerialization.jsonObject(with: body) as? [String: String],
                     let encoded = json["update"], let raw = Data(base64Encoded: encoded)
                 {
-                    lock.lock()
-                    capturedYjsUpdates.append(raw)
-                    lock.unlock()
+                    capturedYjsUpdates.update { $0.append(raw) }
                 }
                 return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
             }
@@ -1565,15 +1562,11 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
 
         await coord.syncPendingDrafts()
         await waitUntil {
-            lock.lock()
-            let count = capturedYjsUpdates.count
-            lock.unlock()
+            let count = capturedYjsUpdates.value.count
             return creates.create(for: localDoc.id) == nil && count > 0 && drafts.draft(for: self.serverID) == nil
         }
 
-        lock.lock()
-        let updates = capturedYjsUpdates
-        lock.unlock()
+        let updates = capturedYjsUpdates.value
         let serverDoc = YDoc(clientID: 101)
         defer { serverDoc.destroy() }
         for update in updates {
@@ -1581,7 +1574,9 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
         }
         XCTAssertNil(serverDoc.store.pendingStructs)
         XCTAssertNil(serverDoc.store.pendingDs)
-        let projectedText = NativeBlockProjection.project(serverDoc).blocks.map(\.plainText).joined(separator: "\n")
+        let projectedText = NativeBlockProjection.project(serverDoc).blocks
+            .map { $0.block.runs.map(\.text).joined() }
+            .joined(separator: "\n")
         XCTAssertTrue(projectedText.contains("Carried body from deleted doc"))
     }
 
