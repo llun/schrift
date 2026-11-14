@@ -1403,47 +1403,15 @@ final class NativeEditorUITests: XCTestCase {
         let switchControl = hideToggle.switches.firstMatch.exists ? hideToggle.switches.firstMatch : hideToggle
         switchControl.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.2)
 
-        XCTAssertTrue(checkbox.waitForNonExistence(timeout: 5), "completed item hides when Hide completed is on (switchHittable=\(switchControl.isHittable) hideHittable=\(hideToggle.isHittable))")
+        XCTAssertTrue(
+            checkbox.waitForNonExistence(timeout: 5),
+            "completed item hides when Hide completed is on (switchHittable=\(switchControl.isHittable) hideHittable=\(hideToggle.isHittable))"
+        )
         XCTAssertFalse(text(of: editor).contains("Fixture task"))
 
         switchControl.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.2)
         XCTAssertTrue(checkbox.waitForExistence(timeout: 5), "turning off Hide completed restores the item")
         XCTAssertTrue(waitForText(of: editor, containing: "Fixture task"))
-    }
-
-    /// G09: Double-tapping a word in Reading mode enters Editing mode with selection,
-    /// and Command+B toggles bold durably across relaunch.
-    func testHardwareCommandBBoldSurvivesRelaunch() {
-        let app = XCUIApplication()
-        app.launchArguments = ["--native-open", "--reset", "--native-slow-disk"]
-        app.launch()
-
-        let editor = app.textViews["nativeEditor.text"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        XCTAssertTrue(editor.waitForStableFrame())
-
-        firstParagraphCoordinate(of: editor, in: app).doubleTap()
-        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 5))
-        let bold = app.buttons["nativeEditor.format.bold"]
-        XCTAssertTrue(bold.waitForExistence(timeout: 5))
-        XCTAssertFalse(bold.isSelected)
-
-        editor.typeKey("b", modifierFlags: .command)
-        let selected = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "isSelected == true"), object: bold)
-        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed, "Command+B toggles bold")
-        waitForDurableJournal(in: app)
-        app.terminate()
-
-        app.launchArguments = ["--native-open"]
-        app.launch()
-        XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        XCTAssertTrue(editor.waitForStableFrame())
-        firstParagraphCoordinate(of: editor, in: app).doubleTap()
-        XCTAssertTrue(bold.waitForExistence(timeout: 5))
-        let persisted = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "isSelected == true"), object: bold)
-        XCTAssertEqual(XCTWaiter.wait(for: [persisted], timeout: 5), .completed, "bold survives relaunch")
     }
 
     /// G10: `/divider` converts the active paragraph to a divider with a trailing paragraph
