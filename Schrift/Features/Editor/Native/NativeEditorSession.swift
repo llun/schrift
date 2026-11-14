@@ -53,6 +53,13 @@ final class NativeEditorSession {
     private(set) var column: (group: String, id: String)?
     /// A scoped source surface's kind (PR14): `mathBlock`, `diagram`, or inline `math`.
     private(set) var source: NativeSourceKind?
+    /// Revision bumped whenever displayed blocks, fold state, or checklist
+    /// presentation changes so SwiftUI shells refresh Reading chrome.
+    private(set) var presentationRevision: Int = 0
+    /// Whether this surface is currently expected to accept writes (updated
+    /// synchronously on `enableTyping` / `NativeSessionRegistry.setWritable`
+    /// and cleared if the replica downgrades to read-only).
+    private(set) var isWritable: Bool = false
     /// Server origin for interlink clipboard plain-text serialization and
     /// same-origin URL paste-interlink.
     @ObservationIgnored private var interlinkingOrigin: String = ""
@@ -68,7 +75,6 @@ final class NativeEditorSession {
         let surface = NativeTextSurface(blocks: blocks, storage: view.textStorage, traits: view.traitCollection)
         // Folding is the surface's view state; the view lays out around it.
         view.blockControls.surface = surface
-        surface.onFoldChange = { [weak view] in view?.blockControls.foldDidChange() }
         // Toggles open collapsed: lay out without their children from the start.
         if surface.hidden.contains(true) { view.blockControls.foldDidChange() }
         self.textView = view
@@ -81,7 +87,12 @@ final class NativeEditorSession {
         self.revision = revision
         self.recoveries = recoveries
         self.state = state
+        self.isWritable = state.writable
         surface.surfaceID = surfaceID
+        surface.onFoldChange = { [weak view, weak self] in
+            view?.blockControls.foldDidChange()
+            self?.presentationRevision &+= 1
+        }
     }
 
     /// The read-only route (PR01): a one-shot projection, no replica session.
@@ -197,7 +208,10 @@ final class NativeEditorSession {
         session.textView.accessibilityIdentifier = "nativeEditor.table.cell"
         session.consume(attachment.deliveries)
         // The table types while the document does (the replica's one journal).
-        if input != nil, textView.isEditable { session.enableTyping(persist: nil, scheduler: saveScheduler) }
+        if input != nil, textView.isEditable {
+            session.enableTyping(persist: nil, scheduler: saveScheduler)
+            session.setExpectedWritable(isWritable)
+        }
         // One clipboard for the document and its cells (tests use a private one).
         if let pasteboard = input?.pasteboard { session.input?.pasteboard = pasteboard }
         // A cell composition's recovery entries are the document's (PR11c):
@@ -254,7 +268,10 @@ final class NativeEditorSession {
         session.textView.accessibilityIdentifier = "nativeEditor.column"
         session.consume(attachment.deliveries)
         // The column types while the document does (the replica's one journal).
-        if input != nil, textView.isEditable { session.enableTyping(persist: nil, scheduler: saveScheduler) }
+        if input != nil, textView.isEditable {
+            session.enableTyping(persist: nil, scheduler: saveScheduler)
+            session.setExpectedWritable(isWritable)
+        }
         if let pasteboard = input?.pasteboard { session.input?.pasteboard = pasteboard }
         // A column composition's recovery entries are the document's, as a cell's are (PR11c).
         if let document = input?.composition, let cell = session.input?.composition {
@@ -295,7 +312,10 @@ final class NativeEditorSession {
         children.add(session)
         Self.configureSourceTextView(session.textView)
         session.consume(attachment.deliveries)
-        if input != nil, textView.isEditable { session.enableTyping(persist: nil, scheduler: saveScheduler) }
+        if input != nil, textView.isEditable {
+            session.enableTyping(persist: nil, scheduler: saveScheduler)
+            session.setExpectedWritable(isWritable)
+        }
         if let pasteboard = input?.pasteboard { session.input?.pasteboard = pasteboard }
         session.input?.sourceKind = sourceKind
         if let parent = input?.composition, let child = session.input?.composition {
@@ -432,6 +452,12 @@ final class NativeEditorSession {
         }
         let wasWritable = state.writable
         state = delivery.state
+        if state.writable {
+            isWritable = true
+        } else if wasWritable {
+            isWritable = false
+            textView.setNeedsLayout()
+        }
         if let input {
             input.apply(delivery)
             // The replica turned read-only (a reader answer): the view stops
@@ -451,6 +477,7 @@ final class NativeEditorSession {
         if delivery.events.contains(where: { if case .patch = $0 { true } else { false } }) {
             awareness?.documentChanged()
             navigation.documentChanged()
+            presentationRevision &+= 1
         }
         if let token = delivery.drained { drains.removeValue(forKey: token)?.resume() }
         if let result = delivery.result, let id = result.commandID {
@@ -486,7 +513,10 @@ final class NativeEditorSession {
     ) {
         guard let replica, !isClosed, !hasUnsupportedRoot, input == nil else { return }
         saveScheduler = scheduler
-        if let persist { replica.mailbox.post(.setWritable(persist)) }
+        if let persist {
+            replica.mailbox.post(.setWritable(persist))
+            setExpectedWritable(true)
+        }
         let input = NativeInputCoordinator(
             replica: replica, surfaceID: surfaceID, revision: revision, surface: surface, view: textView,
             recoveries: recoveries, hasRecoveryStore: hasRecoveryStore)
@@ -506,6 +536,49 @@ final class NativeEditorSession {
     /// Flush a debounced save now (background, close, a tap on the status).
     func flushPendingSave() {
         saveScheduler?.flush()
+    }
+
+    /// Schedule the debounced native replica save (for example after a title edit).
+    func scheduleSave() {
+        saveScheduler?.schedule()
+    }
+
+    func setExpectedWritable(_ writable: Bool) {
+        isWritable = writable
+        if !writable {
+            textView.isEditable = false
+        }
+        textView.setNeedsLayout()
+    }
+
+    /// Switches this surface between Reading and Editing mode without tearing
+    /// down its `NativeInputCoordinator`.
+    func setEditing(_ editing: Bool) {
+        if editing {
+            guard let input, !input.isFrozen, !input.isDetached, isWritable else {
+                textView.isEditable = false
+                return
+            }
+            textView.isEditable = true
+            input.refreshSelectionMarks()
+        } else {
+            if textView.markedTextRange != nil {
+                textView.unmarkText()
+            }
+            flushPendingSave()
+            if textView.isFirstResponder {
+                textView.resignFirstResponder()
+            }
+            textView.isEditable = false
+            input?.endEditingMode()
+        }
+    }
+
+    /// Updates local Reading-mode checklist hiding without writing Yjs state.
+    @discardableResult
+    func setChecklistPresentation(hidesCompleted: Bool, settlingIDs: Set<String>) -> Bool {
+        // `surface.onFoldChange` advances `presentationRevision` when `changed` is true.
+        surface.setChecklistPresentation(hidesCompleted: hidesCompleted, settlingIDs: settlingIDs)
     }
 
     /// A capture that cannot be prepared leaves durable journal bytes nothing
@@ -623,6 +696,15 @@ final class NativeEditorOpen {
         /// missing or unreadable. Show the preserved read-only explanation;
         /// never open the classic writer over it.
         case preservedUnavailable
+
+        var isNativeActive: Bool {
+            switch self {
+            case .loading, .native, .preservedUnavailable:
+                return true
+            case .classic:
+                return false
+            }
+        }
     }
     private(set) var enabled = false
     private(set) var route: Route
@@ -669,6 +751,7 @@ final class NativeEditorOpen {
     /// Dials the native live socket (PR09a); `EditorView` hands in the app's
     /// manager. Without one (tests, previews) no socket is opened.
     @ObservationIgnored var collaboration: DocumentCollaborationManager?
+    @ObservationIgnored private weak var activeViewModel: EditorViewModel?
 
     init(
         preference: @escaping @MainActor () -> Bool = { NativeEditorPreference.isEnabled() },
@@ -696,6 +779,7 @@ final class NativeEditorOpen {
         // establishes the next safe open or reopen boundary.
         guard !isOpen else { return }
         isOpen = true
+        activeViewModel = viewModel
         enabled = preference()
         self.canUpdate = false
         self.canMention = false
@@ -704,8 +788,11 @@ final class NativeEditorOpen {
         // A reappearing classic editor keeps its SwiftUI identity and local
         // view state while the optional native eligibility read is in flight.
         switch route {
-        case .loading, .native, .preservedUnavailable: route = .loading
-        case .classic: break
+        case .loading, .native, .preservedUnavailable:
+            route = .loading
+            viewModel.setNativeRouteActive(true)
+        case .classic:
+            viewModel.setNativeRouteActive(false)
         }
         pendingOpen?.finish()
         generation += 1
@@ -725,19 +812,25 @@ final class NativeEditorOpen {
         let coordinator = viewModel.saveCoordinator
         switch coordinator.nativeOwnership(documentID: viewModel.documentID) {
         case .unreadable:
+            viewModel.seedNativeMetadataIfNeeded(includeLocalDrafts: false)
+            viewModel.setNativeRouteActive(true)
             route = .preservedUnavailable
             return
         case .owned(let scope):
             // Another account's unsynced replica is never shown to this one.
             guard scope.ownerUserID == account else {
+                viewModel.seedNativeMetadataIfNeeded(includeLocalDrafts: false)
+                viewModel.setNativeRouteActive(true)
                 route = .preservedUnavailable
                 return
             }
+            viewModel.seedNativeMetadataIfNeeded()
             let restored: NativeEditorSession?
             do {
                 restored = try await registry.open(store: coordinator.replicaStore, scope: scope, hooks: replicaHooks)
             } catch {
                 guard generation == request else { return }
+                viewModel.setNativeRouteActive(true)
                 route = .preservedUnavailable
                 return
             }
@@ -757,6 +850,7 @@ final class NativeEditorOpen {
                     self.canMention = canMention && !viewModel.isLocalDocument
                     installTyping(session, scope: scope, viewModel: viewModel)
                 }
+                viewModel.setNativeRouteActive(true)
                 route = .native(session)
                 // Offline-first: the replica is on screen before any request.
                 await integrateServerState(
@@ -768,6 +862,7 @@ final class NativeEditorOpen {
             // anywhere and take the unowned route, which re-seeds from the server
             // when typing is possible. Otherwise it stays read-only.
             guard enabled, coordinator.clearNativeOwnership(scope: scope) else {
+                viewModel.setNativeRouteActive(true)
                 route = .preservedUnavailable
                 return
             }
@@ -775,6 +870,7 @@ final class NativeEditorOpen {
             break
         }
         guard canOpen(viewModel, isOffline: isOffline) else {
+            viewModel.setNativeRouteActive(false)
             route = .classic
             return
         }
@@ -788,6 +884,7 @@ final class NativeEditorOpen {
             do {
                 guard !Task.isCancelled else { return }
                 let config = try await viewModel.client.serverConfig()
+                viewModel.saveCoordinator.noteServerConfig(config)
                 guard !Task.isCancelled,
                     self?.canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account)
                         == true,
@@ -842,21 +939,37 @@ final class NativeEditorOpen {
         guard canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account),
             case .state(let state, let config, let ability) = result
         else {
+            viewModel.setNativeRouteActive(false)
             route = .classic
             return
         }
+        await activateFetchedState(
+            state: state, config: config, ability: ability, viewModel: viewModel, request: request,
+            account: account, canUpdate: canUpdate, fallbackToClassicOnInspectError: true)
+    }
+
+    private func activateFetchedState(
+        state: Data, config: ServerConfig, ability: ServerAbilityAnswer?,
+        viewModel: EditorViewModel, request: Int, account: UUID?, canUpdate: Bool,
+        fallbackToClassicOnInspectError: Bool
+    ) async {
         let session: NativeEditorSession
         do {
             session = try await NativeEditorSession.inspect(
                 state: state, interlinkingOrigin: viewModel.client.serverOrigin)
         } catch {
             guard generation == request else { return }
-            route = .classic
+            if fallbackToClassicOnInspectError {
+                viewModel.setNativeRouteActive(false)
+                route = .classic
+            } else {
+                viewModel.seedNativeMetadataIfNeeded()
+                viewModel.setNativeRouteActive(true)
+                route = .preservedUnavailable
+            }
             return
         }
-        guard !Task.isCancelled, generation == request,
-            canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account)
-        else { return }
+        guard !Task.isCancelled, generation == request, viewModel.signedInUser.userID == account else { return }
         // A document that is not fully projectable, or a reader, stays in PR01's
         // in-memory read-only view and never gains a replica or marker.
         let scope = account.map {
@@ -873,6 +986,8 @@ final class NativeEditorOpen {
         self.canUpdate = verified
         guard enabled, verified, session.canType, let account, let scope, mayType(viewModel) else {
             self.canMention = false
+            viewModel.seedNativeMetadataIfNeeded()
+            viewModel.setNativeRouteActive(true)
             route = .native(session)
             return
         }
@@ -880,6 +995,8 @@ final class NativeEditorOpen {
         let seeded = await seedReplica(
             state: state, scope: scope, viewModel: viewModel, request: request, account: account)
         guard let seeded else { return }
+        viewModel.seedNativeMetadataIfNeeded()
+        viewModel.setNativeRouteActive(seeded.isNativeActive)
         route = seeded
         if case .native(let session) = seeded {
             self.canMention = (ability?.mention ?? rowCanMention) && !viewModel.isLocalDocument
@@ -914,6 +1031,20 @@ final class NativeEditorOpen {
         session.flushPendingSave()
     }
 
+    /// Schedule the debounced native replica save if the active native surface is writable.
+    func scheduleSave() {
+        guard case .native(let session) = route, session.input != nil else { return }
+        session.scheduleSave()
+    }
+
+    /// Updates the document title in native mode and schedules the debounced replica save.
+    func updateTitle(_ text: String, viewModel: EditorViewModel) {
+        guard case .native(let session) = route, session.input != nil else { return }
+        viewModel.updateNativeTitle(text) { [weak self] in
+            self?.scheduleSave()
+        }
+    }
+
     /// The status tap. Never the classic `saveNow`: its fallback is a Markdown
     /// enqueue the owner marker refuses.
     func saveNow(viewModel: EditorViewModel) {
@@ -927,6 +1058,114 @@ final class NativeEditorOpen {
         switch coordinator.state(for: documentID) {
         case .failed, .pendingSync: coordinator.retryReplicaDraft(documentID: documentID)
         case .idle, .saving, .saved: break
+        }
+    }
+
+    /// Native "Keep my version" conflict resolution: flushes any debounced title/body edit into
+    /// the held replica draft, then releases the conflict hold and pushes via
+    /// `DocumentSaveCoordinator.resolveConflictKeepingLocal`.
+    func resolveConflictKeepingMine(viewModel: EditorViewModel) {
+        let coordinator = viewModel.saveCoordinator
+        let documentID = viewModel.documentID
+        guard let conflict = coordinator.conflict(for: documentID) else { return }
+        if case .native(let session) = route, session.input != nil {
+            if viewModel.hasPendingNativeTitleEdit { session.scheduleSave() }
+            session.flushPendingSave()
+        }
+        guard
+            coordinator.pendingSave(documentID: documentID) != nil
+                || coordinator.storedDraft(documentID: documentID) != nil
+        else {
+            coordinator.clearResolvedConflict(documentID: documentID)
+            return
+        }
+        viewModel.advanceNativeBaselineAfterConflict(serverUpdatedAt: conflict.serverUpdatedAt)
+        coordinator.resolveConflictKeepingLocal(documentID: documentID)
+    }
+
+    /// Native "Keep the server version" conflict resolution: fetches the authoritative server state
+    /// first (so offline/4xx/5xx failures leave local replica, draft, and conflict untouched),
+    /// then closes the open replica session, discards local replica/draft/conflict, updates
+    /// title/cache metadata, and reopens cleanly on the server Yjs state (or falls back to classic).
+    func resolveConflictKeepingServer(
+        viewModel: EditorViewModel, isOffline: Bool, canUpdate: Bool, canMention: Bool = false
+    ) async {
+        let coordinator = viewModel.saveCoordinator
+        let documentID = viewModel.documentID
+        guard coordinator.conflict(for: documentID) != nil else { return }
+        if case .native(let session) = route, session.input != nil {
+            if viewModel.hasPendingNativeTitleEdit { session.scheduleSave() }
+            session.flushPendingSave()
+        }
+        viewModel.clearError()
+        guard !viewModel.isLocalDocument else { return }
+        let diagnosticsMarker = viewModel.diagnostics?.marker()
+        let saveMarker = coordinator.saveMarker(documentID: documentID)
+        let titleAtChoice = viewModel.title
+        let discardedDraft = coordinator.storedDraft(documentID: documentID)
+        let discardedSave = coordinator.pendingSave(documentID: documentID)
+        let scope = coordinator.nativeOwnership(documentID: documentID).scope ?? discardedDraft?.replica?.scope
+        let revisionAtChoice = try? scope.flatMap { try coordinator.replicaStore.manifest(for: $0)?.revision }
+        let requestGeneration = generation
+        do {
+            let config = try await viewModel.client.serverConfig()
+            let fetched = try await viewModel.client.formattedContent(documentID: documentID)
+            let (formatted, leafNesting) = await viewModel.recoveringLeafNestingForNative(fetched)
+            let resolvedState: (state: Data, ability: ServerAbilityAnswer?)?
+            if enabled, config.usesCollaborationYDocServer {
+                async let ability = Self.serverAbility(viewModel, asking: canUpdate)
+                let state = try await viewModel.client.collaborationYDocState(
+                    documentID: documentID, org: config.collaborationOrg)
+                resolvedState = (state, await ability)
+            } else {
+                resolvedState = nil
+            }
+            guard !Task.isCancelled, generation == requestGeneration else { return }
+            guard !coordinator.mayPredateSave(saveMarker) else {
+                viewModel.recordNativeRefreshError(after: diagnosticsMarker)
+                return
+            }
+            let currentHasPendingSave: Bool =
+                if case .native(let session) = route { session.hasPendingSave } else { false }
+            let currentRevision = try? scope.flatMap { try coordinator.replicaStore.manifest(for: $0)?.revision }
+            guard !viewModel.hasPendingNativeTitleEdit,
+                viewModel.title == titleAtChoice,
+                !currentHasPendingSave,
+                coordinator.pendingSave(documentID: documentID) == discardedSave,
+                coordinator.storedDraft(documentID: documentID) == discardedDraft,
+                currentRevision == revisionAtChoice
+            else { return }
+            close()
+            if let closing {
+                await closing.value
+                guard !Task.isCancelled else { return }
+            }
+            coordinator.resolveConflictKeepingServer(documentID: documentID)
+            if let resolvedState, let account = viewModel.signedInUser.userID {
+                viewModel.applyResolvedServerMetadataForNative(
+                    formatted: formatted, leafNesting: leafNesting, installClassicFallback: false)
+                isOpen = true
+                generation += 1
+                self.rowCanMention = canMention
+                await activateFetchedState(
+                    state: resolvedState.state, config: config, ability: resolvedState.ability,
+                    viewModel: viewModel, request: generation, account: account, canUpdate: canUpdate,
+                    fallbackToClassicOnInspectError: false)
+                await viewModel.loadChildren()
+            } else {
+                viewModel.applyResolvedServerMetadataForNative(
+                    formatted: formatted, leafNesting: leafNesting, installClassicFallback: true)
+                isOpen = true
+                viewModel.setNativeRouteActive(false)
+                route = .classic
+                await viewModel.loadChildren()
+            }
+        } catch let error as DocsAPIError where error == .notFound || error == .forbidden {
+            guard generation == requestGeneration else { return }
+            viewModel.recordNativeUnavailableError(after: diagnosticsMarker)
+        } catch {
+            guard generation == requestGeneration else { return }
+            viewModel.recordNativeRefreshError(after: diagnosticsMarker)
         }
     }
 
@@ -971,26 +1210,29 @@ final class NativeEditorOpen {
         let signedInUser = viewModel.signedInUser
         let listTitle = viewModel.title
         let registry = self.registry
-        let scheduler = registry.scheduler(for: scope) {
+        let scheduler = registry.scheduler(for: scope) { [weak viewModel] in
             NativeReplicaSaveScheduler(
-                interval: viewModel.autosaveInterval,
-                enqueue: {
-                    // The native view never edits the title. Send the server copy on
-                    // disk (refreshed at each online open) as title and baseline, so
-                    // replay keeps a web rename and checks the body like classic.
-                    // A stored draft keeps its own baseline. `enqueueReplica`
-                    // refuses another account's scope. An unknown account (a login
-                    // handing over its cookies) is not a refusal: the journal is
-                    // durable and the reopen under the known owner hands it over.
+                interval: viewModel?.autosaveInterval ?? .seconds(10),
+                enqueue: { [weak viewModel] in
                     guard signedInUser.userID != nil else { return false }
                     let cached = contentCache.content(for: documentID)
-                    try coordinator.enqueueReplica(
-                        adapter: adapter, title: cached?.title ?? listTitle,
-                        baseline: coordinator.storedDraft(documentID: documentID)?.baseline
-                            ?? cached.map {
-                                DraftBaseline(
-                                    serverUpdatedAt: $0.serverUpdatedAt, markdown: $0.markdown, title: $0.title)
-                            })
+                    let draft = coordinator.storedDraft(documentID: documentID)
+                    let inputs =
+                        viewModel?.nativeEnqueueInputs(
+                            cached: cached, draft: draft, fallbackTitle: listTitle)
+                        ?? (
+                            title: draft?.title
+                                ?? coordinator.knownServerTitle(documentID: documentID)
+                                ?? cached?.title
+                                ?? listTitle,
+                            baseline: draft?.baseline
+                                ?? cached.map {
+                                    DraftBaseline(
+                                        serverUpdatedAt: $0.serverUpdatedAt, markdown: $0.markdown, title: $0.title)
+                                }
+                        )
+                    try coordinator.enqueueReplica(adapter: adapter, title: inputs.title, baseline: inputs.baseline)
+                    viewModel?.markNativeTitleEnqueued(title: inputs.title)
                     return true
                 },
                 onFailure: { [weak registry] error in
@@ -1003,6 +1245,7 @@ final class NativeEditorOpen {
         // the append succeeded (journal before publication).
         registry.installJournal(adapter, for: scope)
         session.enableTyping(persist: nil, scheduler: scheduler)
+        session.setExpectedWritable(registry.isWritable(scope))
         // Edits an earlier process journaled but never handed over (it ended
         // inside the debounce) have no draft, so no replay pass knows them.
         if coordinator.pendingSave(documentID: documentID) == nil,
@@ -1020,13 +1263,16 @@ final class NativeEditorOpen {
         into session: NativeEditorSession, scope: ReplicaScope, viewModel: EditorViewModel, request: Int,
         isOffline: Bool
     ) async {
-        guard enabled, !isOffline, !viewModel.availability.showsOfflineStatus else { return }
+        guard enabled, !isOffline, !viewModel.availability.showsOfflineStatus, !viewModel.isLocalDocument else {
+            return
+        }
         let isCurrent = { [weak self] in
             !Task.isCancelled && self?.generation == request && !session.isClosed
                 && viewModel.signedInUser.userID == scope.ownerUserID
         }
         do {
             let config = try await viewModel.client.serverConfig()
+            viewModel.saveCoordinator.noteServerConfig(config)
             guard isCurrent(), config.usesCollaborationYDocServer, config.collaborationOrg == scope.org else { return }
             let state = try await viewModel.client.collaborationYDocState(
                 documentID: scope.documentID, org: scope.org)
@@ -1102,7 +1348,7 @@ final class NativeEditorOpen {
     private func startLive(
         _ session: NativeEditorSession, scope: ReplicaScope, config: ServerConfig, viewModel: EditorViewModel
     ) {
-        guard session.input != nil, !session.isClosed,
+        guard !viewModel.isLocalDocument, session.input != nil, !session.isClosed,
             nativeLiveCollaborationEligible(
                 nativeEnabled: enabled, liveEnabled: livePreference(),
                 serverSupports: config.supportsNativeLiveCollaboration && config.collaborationOrg == scope.org,
@@ -1168,7 +1414,7 @@ final class NativeEditorOpen {
     private func mayType(_ viewModel: EditorViewModel) -> Bool {
         let coordinator = viewModel.saveCoordinator
         let documentID = viewModel.documentID
-        return !viewModel.isLocalDocument && !viewModel.isDocumentPendingDelete
+        return !viewModel.isDocumentPendingDelete
             && !coordinator.isLiveHeld(documentID: documentID)
             && (coordinator.storedDraft(documentID: documentID).map { $0.replica != nil } ?? true)
     }
@@ -1182,7 +1428,6 @@ final class NativeEditorOpen {
         // route keeps its existing cache/retry controls so it can recover.
         enabled && !isOffline && !viewModel.availability.showsOfflineStatus && !viewModel.isLocalDocument
             && !viewModel.isDocumentPendingDelete
-            && !viewModel.hasPendingNewDocumentEntry
             && !viewModel.isEditing && !viewModel.hasUnsavedLocalContent
             && viewModel.saveCoordinator.storedDraft(documentID: viewModel.documentID) == nil
             && viewModel.saveCoordinator.pendingSave(documentID: viewModel.documentID) == nil
@@ -1190,6 +1435,8 @@ final class NativeEditorOpen {
 
     /// Closing flushes a debounced save before the replica goes away.
     func close() {
+        activeViewModel?.setNativeRouteActive(false)
+        activeViewModel = nil
         isOpen = false
         canUpdate = false
         canMention = false

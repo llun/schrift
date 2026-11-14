@@ -482,6 +482,141 @@ final class NativeTextSurfaceTests: DocumentEngineTestCase {
         surface.applyPatch(BlockPatch([.replaceBlock(blockID: "b1", block: replacement)], origin: .localUser))
         XCTAssertEqual(surface.attachmentGeometry.documentTitles[secondID], "Notes")
     }
+
+    func testHideCompletedChecklistsHidesSubtreesWithoutYjsWrites() async throws {
+        let blocks = [
+            BlockNoteBlock(
+                node: "checkListItem",
+                props: [
+                    ("backgroundColor", .string("default")), ("textColor", .string("default")),
+                    ("textAlignment", .string("left")), ("checked", .bool(true)),
+                ],
+                runs: [InlineRun("Done parent")],
+                id: "c1",
+                children: [
+                    BlockNoteBlock(
+                        node: "checkListItem",
+                        props: [
+                            ("backgroundColor", .string("default")), ("textColor", .string("default")),
+                            ("textAlignment", .string("left")), ("checked", .bool(false)),
+                        ],
+                        runs: [InlineRun("Nested child")],
+                        id: "c1-child"),
+                    BlockNoteBlock(
+                        node: "paragraph",
+                        props: [
+                            ("backgroundColor", .string("default")), ("textColor", .string("default")),
+                            ("textAlignment", .string("left")),
+                        ],
+                        runs: [InlineRun("Nested note")],
+                        id: "c1-note"),
+                ]),
+            BlockNoteBlock(
+                node: "checkListItem",
+                props: [
+                    ("backgroundColor", .string("default")), ("textColor", .string("default")),
+                    ("textAlignment", .string("left")), ("checked", .bool(false)),
+                ],
+                runs: [InlineRun("Open item")],
+                id: "c2"),
+            BlockNoteBlock(
+                node: "paragraph",
+                props: [
+                    ("backgroundColor", .string("default")), ("textColor", .string("default")),
+                    ("textAlignment", .string("left")),
+                ],
+                runs: [InlineRun("Trailing prose")],
+                id: "p1"),
+        ]
+        let session = try await NativeEditorSession.seed(state: BlockNoteYjs.encode(blocks, clientID: 1))
+        addTeardownBlock { await session.close().value }
+        let surface = session.surface
+        let beforeRevision = await session.engine { $0.revision }
+
+        XCTAssertEqual(
+            surface.checklistSummary,
+            NativeTextSurface.NativeChecklistSummary(total: 3, completed: 1, hiddenCompleted: 0, allBlocksHidden: false)
+        )
+
+        let changed = session.setChecklistPresentation(hidesCompleted: true, settlingIDs: [])
+        XCTAssertTrue(changed)
+        XCTAssertEqual(surface.hidden, [true, true, true, false, false])
+        XCTAssertEqual(
+            surface.checklistSummary,
+            NativeTextSurface.NativeChecklistSummary(total: 3, completed: 1, hiddenCompleted: 1, allBlocksHidden: false)
+        )
+        XCTAssertEqual(
+            surface.survivingVisibleBlockID(around: "c1", nextHidesCompleted: true, settlingIDs: []),
+            "c2")
+        XCTAssertEqual(
+            surface.survivingVisibleBlockID(around: "c1-note", nextHidesCompleted: true, settlingIDs: []),
+            "c2")
+        let afterRevision = await session.engine { $0.revision }
+        XCTAssertEqual(afterRevision, beforeRevision, "presentation hiding must write zero Yjs transactions")
+
+        XCTAssertTrue(session.setChecklistPresentation(hidesCompleted: false, settlingIDs: []))
+        XCTAssertEqual(surface.hidden, [false, false, false, false, false])
+        XCTAssertEqual(surface.checklistSummary.hiddenCompleted, 0)
+    }
+
+    func testChecklistSettlingDelayAndAllHiddenState() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("SettlingTests.\(UUID())")
+        let store = ReplicaStore(directory: directory)
+        let scope = ReplicaScope(
+            serverOrigin: "https://docs.example.org", ownerUserID: UUID(), org: "docs", documentID: UUID())
+        let blocks = [
+            BlockNoteBlock(
+                node: "checkListItem",
+                props: [("checked", .bool(true))],
+                runs: [InlineRun("Already done")],
+                id: "c1"),
+            BlockNoteBlock(
+                node: "checkListItem",
+                props: [("checked", .bool(false))],
+                runs: [InlineRun("Last task")],
+                id: "c2",
+                children: [
+                    BlockNoteBlock(node: "paragraph", props: [], runs: [InlineRun("Child note")], id: "c2-child")
+                ]),
+        ]
+        _ = try store.create(for: scope, checkpoint: BlockNoteYjs.encode(blocks, clientID: 1))
+        let restored = try await NativeEditorSession.restore(store: store, scope: scope, editable: true)
+        let session = try XCTUnwrap(restored)
+        addTeardownBlock {
+            await session.close().value
+            try? FileManager.default.removeItem(at: directory)
+        }
+        session.setEditing(false)
+        XCTAssertTrue(session.setChecklistPresentation(hidesCompleted: true, settlingIDs: []))
+        XCTAssertEqual(session.surface.hidden, [true, false, false])
+        XCTAssertFalse(session.surface.checklistSummary.allBlocksHidden)
+
+        var settling = ChecklistSettlingStore<String>()
+        let staleToken = settling.begin("c2")
+        let activeToken = settling.begin("c2")
+        _ = session.setChecklistPresentation(hidesCompleted: true, settlingIDs: settling.ids)
+        let toggled = await session.run { session.input?.toggleCheckbox(blockID: "c2") == true }
+        XCTAssertTrue(toggled)
+
+        // During the settle beat, `c2` stays visible while already checked.
+        XCTAssertTrue(NativeTextSurface.isCheckedChecklist(session.surface.blocks[1]))
+        XCTAssertEqual(session.surface.hidden, [true, false, false])
+        XCTAssertFalse(session.surface.checklistSummary.allBlocksHidden)
+        XCTAssertFalse(settling.finish("c2", token: staleToken), "stale token cannot finish early")
+
+        // After settling completes, `c2` and its child collapse into the all-hidden state.
+        XCTAssertTrue(settling.finish("c2", token: activeToken))
+        XCTAssertTrue(session.setChecklistPresentation(hidesCompleted: true, settlingIDs: settling.ids))
+        XCTAssertEqual(session.surface.hidden, [true, true, true])
+        XCTAssertEqual(
+            session.surface.checklistSummary,
+            NativeTextSurface.NativeChecklistSummary(total: 2, completed: 2, hiddenCompleted: 2, allBlocksHidden: true))
+
+        // Show completed restores visibility for Reading mode.
+        XCTAssertTrue(session.setChecklistPresentation(hidesCompleted: false, settlingIDs: []))
+        XCTAssertFalse(session.surface.checklistSummary.allBlocksHidden)
+        XCTAssertEqual(session.surface.hidden, [false, false, false])
+    }
 }
 
 @MainActor

@@ -411,6 +411,66 @@ final class NativeFormattingTests: NativeEditingTestCase {
                     labels: reopened.surface.labels)))
     }
 
+    // MARK: - Keyboard Shortcuts (G09)
+
+    func testHardwareFormattingShortcutsAndCanPerformAction() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
+        try select(harness, from: (Self.firstID, 0), to: (Self.firstID, 5))
+
+        let commands = try XCTUnwrap(harness.view.keyCommands)
+        func find(_ input: String, _ modifiers: UIKeyModifierFlags) -> UIKeyCommand? {
+            commands.first { $0.input == input && $0.modifierFlags == modifiers }
+        }
+        let boldCmd = try XCTUnwrap(find("b", .command))
+        let italicCmd = try XCTUnwrap(find("i", .command))
+        let underlineCmd = try XCTUnwrap(find("u", .command))
+        let strikeCmd = try XCTUnwrap(find("x", [.command, .shift]))
+        let codeCmd = try XCTUnwrap(find("e", .command))
+        let linkCmd = try XCTUnwrap(find("k", .command))
+
+        var requestedLink: NativeLinkTarget?
+        harness.input.onRequestLinkEdit = { requestedLink = $0 }
+        for cmd in [boldCmd, italicCmd, underlineCmd, strikeCmd, codeCmd, linkCmd] {
+            XCTAssertTrue(harness.view.canPerformAction(try XCTUnwrap(cmd.action), withSender: nil))
+        }
+        XCTAssertTrue(
+            harness.view.canPerformAction(#selector(UIResponderStandardEditActions.toggleBoldface(_:)), withSender: nil)
+        )
+        XCTAssertTrue(
+            harness.view.canPerformAction(#selector(UIResponderStandardEditActions.toggleItalics(_:)), withSender: nil))
+        XCTAssertTrue(
+            harness.view.canPerformAction(
+                #selector(UIResponderStandardEditActions.toggleUnderline(_:)), withSender: nil))
+
+        for (action, key) in [
+            (try XCTUnwrap(boldCmd.action), "bold"),
+            (try XCTUnwrap(italicCmd.action), "italic"),
+            (try XCTUnwrap(underlineCmd.action), "underline"),
+            (try XCTUnwrap(strikeCmd.action), "strike"),
+            (try XCTUnwrap(codeCmd.action), "code"),
+        ] {
+            _ = await harness.run {
+                harness.view.perform(action)
+                return true
+            }
+            XCTAssertEqual(try runs(harness.session, Self.firstID, key), ["First"])
+        }
+
+        _ = harness.view.perform(try XCTUnwrap(linkCmd.action))
+        XCTAssertEqual(requestedLink?.label, "First")
+
+        // Scoped source surfaces and non-editable views reject formatting shortcuts.
+        harness.input.sourceKind = .mathBlock
+        XCTAssertFalse(harness.view.canPerformAction(try XCTUnwrap(boldCmd.action), withSender: nil))
+        XCTAssertFalse(harness.view.canPerformAction(try XCTUnwrap(linkCmd.action), withSender: nil))
+        harness.input.sourceKind = nil
+        harness.view.isEditable = false
+        XCTAssertFalse(harness.view.canPerformAction(try XCTUnwrap(boldCmd.action), withSender: nil))
+        XCTAssertFalse(
+            (harness.view.keyCommands ?? []).contains { $0.input == "b" && $0.modifierFlags == .command })
+    }
+
     // MARK: - Helpers
 
     private func range(_ session: NativeEditorSession, _ id: String, _ offset: Int) throws -> NSRange {

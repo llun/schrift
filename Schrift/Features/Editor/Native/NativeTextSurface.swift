@@ -135,6 +135,12 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     /// Each toggle's direct child count, so a toggle that gains a child opens
     /// (BlockNote's toggle frame `update`).
     private var toggleChildren: [String: Int] = [:]
+    /// Local Reading-mode checklist filter (G05): view presentation only,
+    /// never stored and never written to Yjs.
+    private(set) var hidesCompletedChecklists = false
+    /// Checklist item ids currently within the settle grace window before
+    /// collapsing out of view when `hidesCompletedChecklists` is true.
+    private(set) var settlingChecklistIDs: Set<String> = []
     /// Called after the hidden set changed, once storage editing ended: the
     /// view re-lays out. Never a storage edit.
     var onFoldChange: (() -> Void)?
@@ -490,6 +496,81 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         return ranges
     }
 
+    struct NativeChecklistSummary: Equatable, Sendable {
+        let total: Int
+        let completed: Int
+        let hiddenCompleted: Int
+        let allBlocksHidden: Bool
+
+        var hasChecklists: Bool { total > 0 }
+    }
+
+    static func isCheckedChecklist(_ block: BlockSnapshot) -> Bool {
+        block.node == "checkListItem"
+            && !AttributedDocumentProjection.isPlaceholder(block)
+            && block.props.contains(ProjectedProp(key: "checked", value: .bool(true)))
+    }
+
+    var checklistSummary: NativeChecklistSummary {
+        var total = 0
+        var completed = 0
+        var hiddenCompleted = 0
+        var visibleCount = 0
+        for (position, block) in blocks.enumerated() {
+            let blockHidden = isHidden(position: position)
+            if !blockHidden { visibleCount += 1 }
+            guard block.node == "checkListItem", !AttributedDocumentProjection.isPlaceholder(block) else { continue }
+            total += 1
+            if Self.isCheckedChecklist(block) {
+                completed += 1
+                if hidesCompletedChecklists && blockHidden {
+                    hiddenCompleted += 1
+                }
+            }
+        }
+        return NativeChecklistSummary(
+            total: total,
+            completed: completed,
+            hiddenCompleted: hiddenCompleted,
+            allBlocksHidden: !blocks.isEmpty && visibleCount == 0
+        )
+    }
+
+    /// Updates local Reading-mode checklist hiding (`Hide completed`) without
+    /// modifying document storage or Yjs.
+    @discardableResult
+    func setChecklistPresentation(hidesCompleted: Bool, settlingIDs: Set<String>) -> Bool {
+        guard hidesCompleted != hidesCompletedChecklists || settlingIDs != settlingChecklistIDs else { return false }
+        hidesCompletedChecklists = hidesCompleted
+        settlingChecklistIDs = settlingIDs
+        let changed = refreshFolding()
+        if changed { onFoldChange?() }
+        return changed
+    }
+
+    /// Resolves which visible block should remain anchored at the viewport top
+    /// after applying `nextHidesCompleted`: the next surviving visible block,
+    /// falling back to the nearest earlier surviving visible block.
+    func survivingVisibleBlockID(
+        around anchorBlockID: String?,
+        nextHidesCompleted: Bool,
+        settlingIDs: Set<String>
+    ) -> String? {
+        guard !blocks.isEmpty else { return nil }
+        let nextHidden = computedHiddenFlags(hidesCompleted: nextHidesCompleted, settlingIDs: settlingIDs)
+        guard nextHidden.count == blocks.count else { return nil }
+        let startIndex = anchorBlockID.flatMap { rangeIndex.position(for: $0) } ?? 0
+        if startIndex < blocks.count {
+            for index in startIndex..<blocks.count where !nextHidden[index] {
+                return blocks[index].id
+            }
+            for index in (0..<startIndex).reversed() where !nextHidden[index] {
+                return blocks[index].id
+            }
+        }
+        return nil
+    }
+
     /// Recomputes which blocks are hidden (O(document), only after a non-text
     /// patch or a fold change) and opens a toggle that gained a child. True
     /// when the hidden set changed.
@@ -503,19 +584,33 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
             toggles[block.id] = count
         }
         toggleChildren = toggles
+        let next = computedHiddenFlags(hidesCompleted: hidesCompletedChecklists, settlingIDs: settlingChecklistIDs)
+        defer { hidden = next }
+        return next != hidden
+    }
+
+    private func computedHiddenFlags(hidesCompleted: Bool, settlingIDs: Set<String>) -> [Bool] {
         var next: [Bool] = []
         next.reserveCapacity(blocks.count)
-        // The depth of the outermost collapsed toggle being walked: deeper blocks are hidden.
+        // The depth of the outermost collapsed toggle or hidden completed checklist
+        // item being walked: deeper blocks are hidden with it.
         var folded: Int?
+        var hiddenChecklistDepth: Int?
         for block in blocks {
             if let depth = folded, block.depth <= depth { folded = nil }
-            next.append(folded != nil || focus.map { !$0.contains(block.id) } == true)
+            if let depth = hiddenChecklistDepth, block.depth <= depth { hiddenChecklistDepth = nil }
+            if hiddenChecklistDepth == nil, hidesCompleted, Self.isCheckedChecklist(block),
+                !settlingIDs.contains(block.id)
+            {
+                hiddenChecklistDepth = block.depth
+            }
+            next.append(
+                folded != nil || hiddenChecklistDepth != nil || focus.map { !$0.contains(block.id) } == true)
             if folded == nil, AttributedDocumentProjection.isToggle(block), !expanded.contains(block.id) {
                 folded = block.depth
             }
         }
-        defer { hidden = next }
-        return next != hidden
+        return next
     }
 
     /// A numbered item's number depends on the blocks above it, so an insert,

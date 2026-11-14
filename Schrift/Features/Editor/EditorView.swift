@@ -312,38 +312,38 @@ struct EditorView: View {
     var body: some View {
         Group {
             switch nativeOpen.route {
-            case .loading:
-                ProgressView()
-            case .native(let session):
-                NativeEditorView(
-                    session: session, title: viewModel.title, serverOrigin: serverOrigin,
-                    preservedNotice: nativeOpen.isPreservedReadOnly
-                        ? .native_editor_owned_read_only_body : nil,
-                    saveStatus: session.input == nil ? nil : nativeSaveStatus(session),
-                    saveFailureDetail: viewModel.saveFailureDetail,
-                    saveFailureOffersRetry: viewModel.saveFailureOffersRetry,
-                    onSave: { nativeOpen.saveNow(viewModel: viewModel) }, isOffline: showsOffline,
-                    documentID: viewModel.documentID,
-                    uploadDocumentID: viewModel.isLocalDocument ? nil : viewModel.documentID,
-                    mediaQueue: viewModel.saveCoordinator,
-                    documentTitle: { [viewModel] id in viewModel.cachedDocumentTitle(for: id) },
-                    resolveLinkedDocument: { [viewModel] id in await viewModel.openLinkedDocument(id) },
-                    onOpenDocument: onOpenDocument,
-                    inlinePickerSource: makeInlinePickerSource())
-            case .preservedUnavailable:
-                ContentUnavailableView(
-                    loc[.native_editor_owned_unavailable_title], systemImage: "doc.richtext",
-                    description: Text(loc[.native_editor_owned_unavailable_body]))
             case .classic:
                 ClassicEditorView(
                     viewModel: viewModel, reach: reach, serverHost: serverHost, serverOrigin: serverOrigin,
                     childrenCache: childrenCache, linkRole: linkRole, initialIsFavorite: initialIsFavorite,
                     pinRow: pinRow, isOffline: isOffline, onDeleted: onDeleted,
                     onOpenDocument: onOpenDocument, onCreatedDocument: onCreatedDocument)
+            case .loading, .native, .preservedUnavailable:
+                NativeDocumentShellView(
+                    route: nativeOpen.route,
+                    nativeOpen: nativeOpen,
+                    viewModel: viewModel,
+                    reach: reach,
+                    serverHost: serverHost,
+                    serverOrigin: serverOrigin,
+                    childrenCache: childrenCache,
+                    linkRole: linkRole,
+                    initialIsFavorite: initialIsFavorite,
+                    pinRow: pinRow,
+                    isOffline: isOffline,
+                    onDeleted: onDeleted,
+                    onOpenDocument: onOpenDocument,
+                    onCreatedDocument: onCreatedDocument,
+                    makeInlinePickerSource: makeInlinePickerSource,
+                    onReopenAfterUndo: {
+                        nativeOpen.close()
+                        await openNative()
+                    })
             }
         }
         .task { await openNative() }
         .onDisappear {
+            nativeOpen.flushPendingSave()
             nativeOpen.close()
             mentionLoader?.reset()
         }
@@ -359,6 +359,16 @@ struct EditorView: View {
             }
             guard !offline else { return }
             nativeOpen.refreshInBackground(viewModel: viewModel, isOffline: showsOffline)
+            if case .classic = nativeOpen.route {
+                if viewModel.isNativeBaselineRequiredOffline, !viewModel.isEditing,
+                    !viewModel.hasUnsavedLocalContent
+                {
+                    nativeOpen.close()
+                    Task { await openNative() }
+                }
+            } else {
+                Task { await viewModel.loadChildren() }
+            }
         }
         .onChange(of: liveCollaboration) { _, _ in
             nativeOpen.liveSettingChanged(viewModel: viewModel, isOffline: showsOffline)
@@ -403,6 +413,8 @@ struct EditorView: View {
             canUpdate: pinRow?.abilities.update == true,
             canMention: pinRow?.abilities.mention == true)
         syncMentionLoader()
+        if case .classic = nativeOpen.route { return }
+        await viewModel.loadChildren()
     }
 
     private var currentMentionScope: NativeMentionAccessLoader.Scope {
@@ -448,18 +460,6 @@ struct EditorView: View {
             clearMentionFailure: {
                 loader?.clearFailure()
             })
-    }
-
-    /// The classic status resolver, fed by the coordinator's real save state.
-    /// Debounced journal bytes are on this device but not yet handed over.
-    private func nativeSaveStatus(_ session: NativeEditorSession) -> SaveStatusDisplay {
-        if session.hasPendingSave { return .savedOnDevice }
-        let hasConflict = viewModel.syncConflict != nil
-        return saveStatusDisplay(
-            saveState: viewModel.saveState, hasConflict: hasConflict,
-            hasUnsavedLocalContent: hasConflict
-                && viewModel.saveCoordinator.storedDraft(documentID: viewModel.documentID) != nil,
-            connectionDown: isOffline || viewModel.availability.connectionAppearsDown)
     }
 }
 
@@ -1045,76 +1045,25 @@ private struct ClassicEditorView: View {
     /// `mainContent`, so a banner coming or going animates without also animating the
     /// loading/reading/editing content swap in the same transaction.
     private var bannerStack: some View {
-        VStack(spacing: 0) {
-            if showsOfflineBanner, viewModel.hasLocalCopy {
-                OfflineBanner(note: loc[.editor_offline_local_copy])
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-
-            // Shown while EDITING too, unlike the "Updated" banner. The enqueue-hold parks
-            // an editing session's autosave, so without the pill the user has no affordance
-            // and no signal at all — they would keep typing into content that is silently
-            // not being pushed.
-            if viewModel.syncConflict != nil {
-                Button {
-                    viewModel.dismissFocusForSheet()
-                    conflictToResolve = viewModel.syncConflict.map(IdentifiedSyncConflict.init)
-                } label: {
-                    EditorNoticeLabel(
-                        icon: .warning, title: loc[.editor_conflict_pill], foreground: theme.colors.danger)
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.top, DocsSpacing.spaceXS)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityLabel(loc[.editor_conflict_pill_a11y])
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-
-            if viewModel.updateAvailable, !viewModel.isEditing {
-                Button {
-                    viewModel.applyPendingUpdate()
-                } label: {
-                    EditorNoticeLabel(
-                        icon: .sync, title: loc[.editor_update_available], foreground: theme.colors.textBrand)
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.top, DocsSpacing.spaceXS)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityLabel(loc[.editor_update_available_a11y])
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-
-            // A queued deletion is not a failure, so it is neither drawn in `danger` nor left
-            // without a way out. **This is the only undo affordance that does not depend on
-            // finding a list row**, which matters because the rows are account-scoped while
-            // the gate is not: a tombstone this session cannot see — another account's, or
-            // one whose owner is unknown — would otherwise leave the document permanently
-            // unopenable with nothing anywhere in the app to clear it.
-            if viewModel.isDocumentPendingDelete {
-                pendingDeleteNotice
-            } else if let errorKey = viewModel.errorKey {
-                VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
-                    Text(loc[errorKey])
-                        .font(DocsFont.footnote)
-                        .foregroundStyle(theme.colors.danger)
-                    if let errorDetail = viewModel.errorDetail {
-                        Text(errorDetail)
-                            .font(DocsFont.footnote)
-                            .foregroundStyle(theme.colors.textSecondary)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.top, DocsSpacing.spaceXS)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-        .animation(reduceMotion ? nil : .snappy, value: showsOfflineBanner)
-        .animation(reduceMotion ? nil : .snappy, value: viewModel.syncConflict != nil)
-        .animation(reduceMotion ? nil : .snappy, value: viewModel.updateAvailable)
-        .animation(reduceMotion ? nil : .snappy, value: viewModel.errorKey)
+        EditorBannerStack(
+            showsOfflineBanner: showsOfflineBanner,
+            hasLocalCopy: viewModel.hasLocalCopy,
+            limitedNativeOfflineRead: viewModel.isNativeLimitedOfflineRead
+                || (offlineOverride && viewModel.isNativeBaselineRequiredOffline),
+            hasConflict: viewModel.syncConflict != nil,
+            showUpdateAvailable: viewModel.updateAvailable && !viewModel.isEditing,
+            isDocumentPendingDelete: viewModel.isDocumentPendingDelete,
+            errorKey: viewModel.errorKey,
+            errorDetail: viewModel.errorDetail,
+            onTapConflict: {
+                viewModel.dismissFocusForSheet()
+                conflictToResolve = viewModel.syncConflict.map(IdentifiedSyncConflict.init)
+            },
+            onApplyPendingUpdate: { viewModel.applyPendingUpdate() },
+            onUndoPendingDelete: {
+                viewModel.undoPendingDeleteForThisDocument()
+                Task { await viewModel.load() }
+            })
     }
 
     /// The screen's content column, lifted out of `body` so the long
@@ -1162,24 +1111,6 @@ private struct ClassicEditorView: View {
         // themselves, so it is held while the outline is up like every other presentation.
         .environment(\.attachmentPreview, AttachmentPreviewAction { attachmentPreviewURL = $0 })
         .quickLookPreview(heldForOutline($attachmentPreviewURL))
-    }
-
-    /// Shown instead of the body for a document whose deletion is queued, with the undo beside
-    /// it. Deliberately not `errorKey`/`danger` styling: nothing has failed, the deletion is
-    /// simply waiting — and the button is what keeps this screen from being a dead end.
-    private var pendingDeleteNotice: some View {
-        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
-            Text(loc[.editor_pending_delete])
-                .font(DocsFont.footnote)
-                .foregroundStyle(theme.colors.textSecondary)
-            DocsButton(title: loc[.pending_delete_undo], variant: .secondary, size: .medium) {
-                viewModel.undoPendingDeleteForThisDocument()
-                Task { await viewModel.load() }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, DocsSpacing.gutter)
-        .padding(.top, DocsSpacing.spaceXS)
     }
 
     // MARK: - Editing
@@ -1317,17 +1248,14 @@ private struct ClassicEditorView: View {
     /// surfaces' slots are literally the same view where they say the same
     /// thing.
     private var syncCaptionLabel: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            let caption = currentSyncCaption(now: context.date)
-            SyncCaptionLabel(
-                offersRetry: caption.offersRetry,
-                text: resolvedCaption(caption.text),
-                // The failed-save label only fits the failed caption; a
-                // pending-sync retry falls back to its visible text.
-                retryAccessibilityLabel: caption.text == .key(.editor_sync_save_failed)
-                    ? loc[.editor_sync_save_failed_a11y] : resolvedCaption(caption.text),
-                onRetry: { viewModel.saveNow() })
-        }
+        EditorSyncCaptionLabel(
+            hasUnsavedLocalContent: viewModel.hasUnsavedLocalContent,
+            hasConflict: viewModel.syncConflict != nil,
+            showsOfflineStatus: showsOfflineStatus,
+            controlsOffline: isOffline,
+            saveState: viewModel.saveState,
+            lastSyncedAt: viewModel.lastSyncedAt,
+            onRetry: { viewModel.saveNow() })
     }
 
     private func uploadingBanner(_ message: String, a11y: String) -> some View {
@@ -1703,7 +1631,8 @@ private struct ClassicEditorView: View {
                 viewModel.startEditing()
             }
             .font(DocsFont.body)
-            .foregroundStyle(theme.colors.textBrand)
+            .foregroundStyle(viewModel.canStartEditing ? theme.colors.textBrand : theme.colors.textTertiary)
+            .disabled(!viewModel.canStartEditing)
         }
         .padding(.top, DocsSpacing.spaceLG)
     }
@@ -1770,159 +1699,14 @@ private struct ClassicEditorView: View {
         }
     }
 
-    /// One Subpages row, wrapped in its swipe container.
-    ///
-    /// A method rather than inline in the `ForEach`, matching `PagesTreeDrawer.treeRow`: the
-    /// row needs several derived values, and `let` bindings inside a `ForEach`'s `ViewBuilder`
-    /// defeat its type inference (it falls back to the `Range<Int>` overload and reports the
-    /// failure against the collection, several lines away from the cause).
-    private func subpageRow(_ child: Document) -> some View {
-        // Reading the predicate here registers the `@Observable` dependency, so a sub-page
-        // deleted from its own screen strikes through the moment the user pops back, with no
-        // children refetch — which offline never comes.
-        let isPendingDelete = viewModel.isDeletePending(child)
-        let trimmed = child.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let childTitle = trimmed.isEmpty ? loc[.common_untitled] : trimmed
-        let open: () -> Void = {
-            if isPendingDelete {
-                documentPendingUndo = child
-            } else {
-                navigate(.open(child))
-            }
-        }
-
-        return SwipeRevealRow(
-            id: child.id,
-            state: $subpageSwipe,
-            // No Pin here: `SubpageRow` renders no pinned state, so the action would succeed
-            // with nothing on the row to show for it.
-            actions: documentRowSwipeActions(
-                isPendingDelete: isPendingDelete,
-                isLocalDocument: false,
-                isFavorite: child.isFavorite,
-                offersPin: false,
-                keepLabel: loc[.pending_delete_undo],
-                pinLabel: loc[.options_pin],
-                unpinLabel: loc[.options_unpin],
-                moveLabel: loc[.options_move],
-                deleteLabel: loc[.options_delete],
-                onKeep: { viewModel.undoPendingDelete(child) },
-                onTogglePin: {},
-                onMove: { documentPendingMove = child },
-                onDelete: { subpagePendingDeleteConfirmation = child }),
-            accessibilityLabel: subpageRowAccessibilityLabel(
-                title: childTitle,
-                summary: child.excerpt,
-                childCount: child.numchild,
-                pendingDelete: isPendingDelete,
-                pendingDeleteLabel: loc[.docrow_pending_delete]),
-            onActivate: open
-        ) {
-            SubpageRow(document: child, pendingDelete: isPendingDelete, onOpen: open)
-        }
-    }
-
     private var subpagesSection: some View {
-        // 40pt above the rule, 16pt below it before the header (reference spacing).
-        VStack(alignment: .leading, spacing: 0) {
-            Rectangle()
-                .fill(theme.colors.borderDefault)
-                .frame(height: 1)
-
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: DocsSpacing.space2xs) {
-                    MaterialSymbol(.account_tree, size: 16)
-                        .accessibilityHidden(true)
-                    Text(
-                        (viewModel.mergedSubpages?.isEmpty ?? true)
-                            ? loc[.editor_subpages_title]
-                            : loc.format(.editor_subpages_title_count, viewModel.mergedSubpages?.count ?? 0)
-                    )
-                    .font(DocsFont.footnote.weight(.semibold))
-                    .docsTracking(DocsTypographySpec.footnote, DocsTracking.eyebrow)
-                }
-                .textCase(.uppercase)
-                .foregroundStyle(theme.colors.textTertiary)
-                .padding(.horizontal, DocsSpacing.spaceXS)
-                // The eyebrow hugs the first row (reference 4pt), not a 12pt gap.
-                .padding(.bottom, DocsSpacing.space3xs)
-
-                if let subpages = viewModel.mergedSubpages {
-                    if subpages.isEmpty {
-                        Text(loc[.editor_subpages_empty])
-                            .font(DocsFont.footnote)
-                            .foregroundStyle(theme.colors.textTertiary)
-                            .padding(.horizontal, DocsSpacing.spaceXS)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        VStack(spacing: 0) {
-                            ForEach(subpages) { child in
-                                subpageRow(child)
-                            }
-                        }
-                    }
-                }
-                // nil (never fetched or cached): just the eyebrow — never claim "no subpages".
-
-                // Ungated. Neither being offline nor the parent being unsynced stops this any
-                // more: `addSubpage` mints locally in both cases, and the replay POSTs the
-                // parent before the sub-page that names it. The gate that used to live here
-                // was the whole reason a document created offline offered nothing but a
-                // "Subpages" heading.
-                Button {
-                    Task {
-                        if let child = await viewModel.addSubpage() {
-                            navigate(.created(child))
-                        }
-                    }
-                } label: {
-                    HStack(spacing: DocsSpacing.spaceXS) {
-                        MaterialSymbol(.add, size: 22)
-                        Text(loc[.editor_add_subpage])
-                            .docsScaledFont(size: 15, weight: .semibold, relativeTo: .subheadline)
-                    }
-                    .foregroundStyle(theme.colors.textBrand)
-                    .padding(.horizontal, DocsSpacing.spaceXS)
-                    .padding(.vertical, 10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(viewModel.isAddingSubpage)
-            }
-            .padding(.top, DocsSpacing.spaceBase)
-        }
-        // Tops up to the reference's 40pt gap above Subpages. The body stack
-        // contributes `blockSpacing` (12) and `readingSurface` adds
-        // `headerToBodySpacing - blockSpacing` (12) at the call site, so the
-        // remainder here is measured from `spaceMD` — the 24pt those two make
-        // between them, which is what this stack used to contribute on its own
-        // before the two surfaces were given a shared inter-block gap. Change
-        // either metric and the 40pt has to be re-derived; it is spread across
-        // two files precisely because the *body* gap is now shared and this one
-        // is not.
-        .padding(.top, DocsSpacing.spaceXL - DocsSpacing.spaceMD)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func currentSyncCaption(now: Date) -> SyncCaption {
-        syncCaption(
-            hasUnsavedLocalContent: viewModel.hasUnsavedLocalContent,
-            hasConflict: viewModel.syncConflict != nil,
-            isOffline: showsOfflineStatus,
-            controlsOffline: isOffline,
-            saveState: viewModel.saveState,
-            lastSyncedAt: viewModel.lastSyncedAt,
-            now: now,
-            locale: loc.locale
-        )
-    }
-
-    private func resolvedCaption(_ text: SyncCaptionText) -> String {
-        switch text {
-        case .key(let key): return loc[key]
-        case .syncedAgo(let ago): return loc.format(.editor_sync_ago, ago)
-        }
+        EditorSubpagesSection(
+            viewModel: viewModel,
+            subpageSwipe: $subpageSwipe,
+            documentPendingUndo: $documentPendingUndo,
+            subpagePendingDeleteConfirmation: $subpagePendingDeleteConfirmation,
+            documentPendingMove: $documentPendingMove,
+            onNavigate: navigate)
     }
 
     /// Template images let the native toolbar recognize icon-only actions and

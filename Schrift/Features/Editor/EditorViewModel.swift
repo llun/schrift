@@ -138,6 +138,11 @@ final class EditorViewModel {
     var slashQueryText: String?
     var lastSyncedAt: Date? = nil
     var hasLocalCopy = false
+    /// Native title edits made on-device that the debounced save scheduler has not yet handed
+    /// over to `DocumentSaveCoordinator.enqueueReplica`.
+    private(set) var hasPendingNativeTitleEdit = false
+    /// Server baseline recorded for native saves before any stored draft exists.
+    @ObservationIgnored private var nativeServerBaseline: DraftBaseline?
     var updateAvailable = false
     /// Drives the system photo picker. Set by the slash-menu photo item and the
     /// formatting-bar button; cleared by SwiftUI when the picker dismisses.
@@ -231,11 +236,16 @@ final class EditorViewModel {
     /// The same log the shared client records into — the screen that pushed this one hands
     /// it over. nil in previews and tests, which simply means no detail is offered.
     let diagnostics: APIDiagnosticsLog?
+    private let nativeEditorEnabled: @MainActor () -> Bool
 
     private(set) var isDirty = false
     /// Editing is only allowed once content has loaded — otherwise autosave
     /// would overwrite the whole server document with an empty draft.
     private(set) var hasLoadedContent = false
+    /// True while `NativeEditorOpen` owns this screen (`.loading`, `.native`, or
+    /// `.preservedUnavailable`). Blocks classic `load()`/`revalidate()`/`refresh()`/`apply()`
+    /// from overwriting native state or titles.
+    private(set) var isNativeRouteActive = false
     /// Set once the document is deleted locally. Unlike `becomeUnavailable()`, the
     /// delete path leaves `hasLoadedContent` true, so a late photo insert would
     /// otherwise re-save — and re-draft — a document that no longer exists.
@@ -321,10 +331,12 @@ final class EditorViewModel {
         mediaCheckRetryInterval: Duration = .seconds(1),
         remoteChangeDebounce: Duration = .milliseconds(600),
         diagnostics: APIDiagnosticsLog? = nil,
-        availability: OnlineAvailability = OnlineAvailability()
+        availability: OnlineAvailability = OnlineAvailability(),
+        nativeEditorEnabled: (@MainActor () -> Bool)? = nil
     ) {
         self.client = client
         self.availability = availability
+        self.nativeEditorEnabled = nativeEditorEnabled ?? { saveCoordinator.nativeEditorEnabled() }
         self.documentID = documentID
         self.title = title
         self.saveCoordinator = saveCoordinator
@@ -358,6 +370,10 @@ final class EditorViewModel {
     var isEditing: Bool { mode != .reading }
     var hasPendingNewDocumentEntry: Bool { entryIntent?.isPending == true }
 
+    func setNativeRouteActive(_ active: Bool) {
+        isNativeRouteActive = active
+    }
+
     // MARK: - Error state
 
     /// `errorKey` and `errorDetail` must move together. The detail is only ever rendered
@@ -369,9 +385,22 @@ final class EditorViewModel {
         errorDetail = detail
     }
 
-    private func clearError() {
+    func clearError() {
         errorKey = nil
         errorDetail = nil
+    }
+
+    /// Surfaces an online-refresh error for a native document using the diagnostics marker captured
+    /// before the request started.
+    func recordNativeRefreshError(after marker: Int?) {
+        showError(.editor_error_refresh, detail: requestFailureDetail(after: marker, in: diagnostics))
+    }
+
+    /// Marks the document unavailable (404/403) during a native conflict resolution fetch while
+    /// preserving any durable replica/draft for recovery.
+    func recordNativeUnavailableError(after marker: Int?) {
+        becomeUnavailable()
+        errorDetail = requestFailureDetail(after: marker, in: diagnostics)
     }
 
     /// Caption rule 1: unsaved local content wins over "Synced X ago". A stored
@@ -522,6 +551,10 @@ final class EditorViewModel {
 
     func load() async {
         loadFailedOffline = false
+        if isNativeRouteActive {
+            isLoading = false
+            return
+        }
         // **A document waiting to be deleted is not opened.** Say so and stop — before the
         // local phase, which would otherwise render the body from the draft the undo is
         // holding and let the user edit a document they have thrown away, and before any
@@ -670,6 +703,7 @@ final class EditorViewModel {
         // 404 here is what its own DELETE predicts, and this catch would turn that into the
         // terminal "no longer available", burying an undoable state under a permanent one.
         guard !isDocumentPendingDelete else { return }
+        guard !isNativeRouteActive, !saveCoordinator.isNativeOwned(documentID: documentID) else { return }
         let diagnosticsMarker = diagnostics?.marker()
         do {
             // Snapshot before issuing: only the coordinator's state at *issue*
@@ -689,7 +723,8 @@ final class EditorViewModel {
             let fetched = try await client.formattedContent(documentID: documentID)
             let (formatted, leafNesting) = await recoveringLeafNesting(fetched, availabilityToken: availabilityToken)
             guard generation == revalidationGeneration, !Task.isCancelled,
-                availability.permitsResponse(for: availabilityToken)
+                availability.permitsResponse(for: availabilityToken),
+                !isNativeRouteActive, !saveCoordinator.isNativeOwned(documentID: documentID)
             else { return }
             apply(
                 formatted: formatted, leafNesting: leafNesting,
@@ -788,6 +823,7 @@ final class EditorViewModel {
         // deletion is the same shape for a different reason: the 404 is expected, and
         // reading it as terminal would bury an undoable state under a permanent one.
         guard !isLocalDocument, !isDocumentPendingDelete else { return }
+        guard !isNativeRouteActive, !saveCoordinator.isNativeOwned(documentID: documentID) else { return }
         revalidationGeneration += 1
         let generation = revalidationGeneration
         let diagnosticsMarker = diagnostics?.marker()
@@ -799,7 +835,8 @@ final class EditorViewModel {
             let fetched = try await client.formattedContent(documentID: documentID)
             let (formatted, leafNesting) = await recoveringLeafNesting(fetched, availabilityToken: availabilityToken)
             guard generation == revalidationGeneration, !Task.isCancelled,
-                availability.permitsResponse(for: availabilityToken)
+                availability.permitsResponse(for: availabilityToken),
+                !isNativeRouteActive, !saveCoordinator.isNativeOwned(documentID: documentID)
             else { return }
             apply(
                 formatted: formatted, leafNesting: leafNesting,
@@ -964,6 +1001,9 @@ final class EditorViewModel {
     private func apply(
         formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay, mayPredateLocalSave: Bool
     ) {
+        guard !isNativeRouteActive, !saveCoordinator.isNativeOwned(documentID: documentID),
+            !hasPendingNativeTitleEdit
+        else { return }
         // This fetch raced one of our own saves, so its body may be the one that
         // save just replaced. Take nothing from it — not the body, not the cache
         // entry, and not the server baseline (the early return leaves
@@ -1305,7 +1345,7 @@ final class EditorViewModel {
     /// for a closed open, a sign-out or a deletion never re-caches the body.
     func refreshOfflineCacheForNativeReader(isCurrent: () -> Bool) async throws -> Bool {
         guard !Task.isCancelled, !availability.isOffline, !isLocalDocument, !isDocumentPendingDelete,
-            !isDocumentDiscarded, !hasPendingNewDocumentEntry
+            !isDocumentDiscarded
         else { return false }
         let token = availability.token
         let marker = saveCoordinator.saveMarker(documentID: documentID)
@@ -1315,6 +1355,7 @@ final class EditorViewModel {
             !isDocumentDiscarded, isCurrent(), !saveCoordinator.mayPredateSave(marker)
         else { return false }
         cacheServerCopy(formatted, leafNesting: leafNesting)
+        applyNativeServerContent(formatted: formatted, leafNesting: leafNesting)
         return true
     }
 
@@ -1605,7 +1646,7 @@ final class EditorViewModel {
     /// them risks a destructive full-overwrite save of non-round-trippable content.
     private func install(markdown: String, title contentTitle: String?, syncedAt: Date?) {
         resetComposition()
-        if let contentTitle {
+        if let contentTitle, !hasPendingNativeTitleEdit {
             title = contentTitle
         }
         savedTitle = title
@@ -2053,8 +2094,28 @@ final class EditorViewModel {
     /// even after a successful save removed its draft. The durable owner marker is the
     /// authority; an unreadable marker also answers owned, so the classic writer cannot
     /// guess its way over a replica.
+    /// True when the native editor is enabled against a cached Docs 6 server, no durable
+    /// native replica exists yet, and no classic draft protects prior local classic work.
+    /// Offline opens must stay read-only until an online open fetches the raw Yjs baseline.
+    var isNativeBaselineRequiredOffline: Bool {
+        nativeEditorEnabled()
+            && saveCoordinator.isCachedDocs6Server()
+            && saveCoordinator.nativeOwnership(documentID: documentID) == .none
+            && saveCoordinator.storedDraft(documentID: documentID) == nil
+            && saveCoordinator.pendingSave(documentID: documentID) == nil
+            && !isLocalDocument
+    }
+
+    /// True when an unmigrated Docs 6 document fell back to its classic Markdown cache offline
+    /// while the native editor is enabled, so the banner explains why editing is disabled.
+    var isNativeLimitedOfflineRead: Bool {
+        (availability.isOffline || loadFailedOffline) && isNativeBaselineRequiredOffline && hasLocalCopy
+    }
+
     var canStartEditing: Bool {
-        hasLoadedContent && !saveCoordinator.isNativeOwned(documentID: documentID)
+        hasLoadedContent
+            && !saveCoordinator.isNativeOwned(documentID: documentID)
+            && !((availability.isOffline || loadFailedOffline) && isNativeBaselineRequiredOffline)
     }
 
     /// Called only after initialization/restoration, never from a rerender or reconnect.
@@ -2073,6 +2134,28 @@ final class EditorViewModel {
         guard isEditing, canStartEditing, initialTitleFocusPending else { return false }
         initialTitleFocusPending = false
         return true
+    }
+
+    /// Native Reading ↔ Editing handoff: consumes a newly-created document entry
+    /// intent once so the native editor opens directly in Editing mode and arms
+    /// the one-shot title focus request.
+    func consumeNativeNewDocumentEntryIfNeeded(canEdit: Bool) -> Bool {
+        guard canEdit, !isUnavailable, !isDocumentPendingDelete else { return false }
+        if entryIntent?.consume() == true {
+            initialTitleFocusPending = true
+            return true
+        }
+        return initialTitleFocusPending
+    }
+
+    func consumeNativeInitialTitleFocus(isEditing: Bool, canEdit: Bool) -> Bool {
+        guard isEditing, canEdit, initialTitleFocusPending else { return false }
+        initialTitleFocusPending = false
+        return true
+    }
+
+    func clearNativeInitialTitleFocus() {
+        initialTitleFocusPending = false
     }
 
     func startEditing(focusing blockID: UUID? = nil, focusingTitle: Bool = false) {
@@ -3740,6 +3823,192 @@ final class EditorViewModel {
         guard title != text else { return }
         title = text
         markDirty()
+    }
+
+    // MARK: - Native title & shell metadata
+
+    /// Authoritative title for native replica saves.
+    var currentNativeTitle: String { title }
+
+    /// Seeds native metadata (`title`, cached `subpages`, `lastSyncedAt`, `hasLocalCopy`, and
+    /// initial `nativeServerBaseline`) on native open without invoking classic content loading.
+    ///
+    /// Precedence for the authoritative title:
+    /// pending save -> stored draft -> coordinator's known server title -> cached content -> row title.
+    func seedNativeMetadataIfNeeded(includeLocalDrafts: Bool = true) {
+        if subpages == nil, let cachedChildren = childrenCache.children(for: documentID) {
+            subpages = cachedChildren
+        }
+        hasLocalCopy = true
+        let cached = contentCache.content(for: documentID)
+        let currentUserID = signedInUser.userID
+        let rawPending = saveCoordinator.pendingSave(documentID: documentID)
+        let pendingSave =
+            includeLocalDrafts
+                && (rawPending?.replicaRequest?.reference.scope.ownerUserID == nil
+                    || rawPending?.replicaRequest?.reference.scope.ownerUserID == currentUserID)
+            ? rawPending
+            : nil
+        let rawDraft = saveCoordinator.storedDraft(documentID: documentID)
+        let storedDraft =
+            includeLocalDrafts
+                && (rawDraft?.replica?.scope.ownerUserID == nil
+                    || rawDraft?.replica?.scope.ownerUserID == currentUserID)
+            ? rawDraft
+            : nil
+        if lastSyncedAt == nil, pendingSave == nil, storedDraft == nil {
+            lastSyncedAt = cached?.syncedAt
+        }
+        if nativeServerBaseline == nil, let cached {
+            nativeServerBaseline = DraftBaseline(
+                serverUpdatedAt: cached.serverUpdatedAt, markdown: cached.markdown, title: cached.title)
+        }
+        if !hasPendingNativeTitleEdit,
+            let seededTitle = pendingSave?.title
+                ?? storedDraft?.title
+                ?? saveCoordinator.knownServerTitle(documentID: documentID)
+                ?? cached?.title
+        {
+            title = seededTitle
+            savedTitle = seededTitle
+        }
+    }
+
+    /// Updates `title` for a native-owned document and schedules a debounced native save
+    /// without invoking the classic Markdown dirty/autosave funnel.
+    func updateNativeTitle(_ text: String, scheduleSave: () -> Void) {
+        guard !isDocumentDiscarded, !isDocumentPendingDelete else { return }
+        guard title != text else { return }
+        title = text
+        hasPendingNativeTitleEdit = true
+        scheduleSave()
+    }
+
+    /// Title and baseline handed to `DocumentSaveCoordinator.enqueueReplica` when the native
+    /// debounce fires or flushes.
+    func nativeEnqueueInputs(
+        cached: CachedDocumentContent?, draft: PendingDraft?, fallbackTitle: String
+    ) -> (title: String, baseline: DraftBaseline?) {
+        let effectiveTitle =
+            hasPendingNativeTitleEdit
+            ? title
+            : (draft?.title
+                ?? saveCoordinator.knownServerTitle(documentID: documentID)
+                ?? cached?.title
+                ?? (title.isEmpty ? fallbackTitle : title))
+        let baseline =
+            draft?.baseline
+            ?? nativeServerBaseline
+            ?? cached.map {
+                DraftBaseline(serverUpdatedAt: $0.serverUpdatedAt, markdown: $0.markdown, title: $0.title)
+            }
+        return (effectiveTitle, baseline)
+    }
+
+    /// Clears `hasPendingNativeTitleEdit` once `enqueuedTitle` has been persisted to the
+    /// coordinator, unless a newer edit has already superseded it.
+    func markNativeTitleEnqueued(title enqueuedTitle: String) {
+        if title == enqueuedTitle {
+            hasPendingNativeTitleEdit = false
+        }
+    }
+
+    /// Clears a pending native title flag (for example when closing without flushing or
+    /// adopting a server copy).
+    func clearPendingNativeTitleEdit() {
+        hasPendingNativeTitleEdit = false
+    }
+
+    /// Advances the in-memory native baseline timestamp after "Keep my version" resolves a
+    /// recorded conflict, so subsequent edits do not re-detect the same conflict.
+    func advanceNativeBaselineAfterConflict(serverUpdatedAt: Date) {
+        let existing =
+            nativeServerBaseline
+            ?? contentCache.content(for: documentID).map {
+                DraftBaseline(serverUpdatedAt: $0.serverUpdatedAt, markdown: $0.markdown, title: $0.title)
+            }
+        guard let existing else { return }
+        nativeServerBaseline = DraftBaseline(
+            serverUpdatedAt: serverUpdatedAt, markdown: existing.markdown, title: existing.title,
+            markdownIsLocal: existing.markdownIsLocal)
+    }
+
+    /// Updates coordinator title tracking, baseline, and clean on-screen title after a fresh
+    /// native-reader fetch past `mayPredateSave`.
+    func applyNativeServerContent(formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay) {
+        if let serverTitle = formatted.title {
+            saveCoordinator.noteServerTitle(documentID: documentID, title: serverTitle)
+        }
+        let serverCopy = serverCopyKeepingLeafNesting(
+            fetched: formatted.content ?? "", overlay: leafNesting,
+            known: contentCache.content(for: documentID)?.markdown)
+        // Only advance the native baseline and clean title when no local work protects an
+        // earlier ancestor.
+        guard !hasPendingNativeTitleEdit,
+            saveCoordinator.pendingSave(documentID: documentID) == nil,
+            saveCoordinator.storedDraft(documentID: documentID) == nil,
+            syncConflict == nil
+        else { return }
+        nativeServerBaseline = DraftBaseline(
+            serverUpdatedAt: formatted.updatedAt, markdown: serverCopy, title: formatted.title)
+        lastSyncedAt = Date()
+        if let fetchedTitle = formatted.title, fetchedTitle != title {
+            title = fetchedTitle
+            savedTitle = fetchedTitle
+        }
+    }
+
+    /// Resolves leaf nesting against the block tree for a native conflict-resolution fetch.
+    func recoveringLeafNestingForNative(
+        _ formatted: FormattedDocumentContent
+    ) async -> (FormattedDocumentContent, LeafNestingOverlay) {
+        await recoveringLeafNesting(formatted, availabilityToken: availability.token)
+    }
+
+    /// Installs fresh server metadata and cache after a native "Keep the server version"
+    /// resolution has discarded local replica/draft work.
+    func applyResolvedServerMetadataForNative(
+        formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay, installClassicFallback: Bool
+    ) {
+        hasPendingNativeTitleEdit = false
+        if installClassicFallback {
+            installFetched(formatted, leafNesting: leafNesting)
+            markAvailableAgain()
+            return
+        }
+        let now = Date()
+        let serverCopy = serverCopyKeepingLeafNesting(
+            fetched: formatted.content ?? "", overlay: leafNesting,
+            known: contentCache.content(for: documentID)?.markdown)
+        if let serverTitle = formatted.title {
+            title = serverTitle
+            savedTitle = serverTitle
+            saveCoordinator.noteServerTitle(documentID: documentID, title: serverTitle)
+        }
+        nativeServerBaseline = DraftBaseline(
+            serverUpdatedAt: formatted.updatedAt, markdown: serverCopy, title: formatted.title)
+        contentCache.save(
+            CachedDocumentContent(
+                documentID: documentID,
+                title: formatted.title,
+                markdown: serverCopy,
+                syncedAt: now,
+                serverUpdatedAt: formatted.updatedAt
+            ))
+        hasLocalCopy = true
+        lastSyncedAt = now
+        markAvailableAgain()
+    }
+
+    /// Whether the native route holds unsaved local work (for status captions and conflict
+    /// indicators, where `hasLoadedContent` stays false).
+    func isNativeLocalContentUnsaved(sessionHasPendingSave: Bool) -> Bool {
+        if hasPendingNativeTitleEdit || sessionHasPendingSave
+            || saveCoordinator.pendingSave(documentID: documentID) != nil
+        {
+            return true
+        }
+        return saveCoordinator.storedDraft(documentID: documentID) != nil
     }
 
     // MARK: - Saving

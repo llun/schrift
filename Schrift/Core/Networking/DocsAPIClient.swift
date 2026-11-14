@@ -20,6 +20,7 @@ actor DocsAPIClient {
     /// `ConnectivityMonitor`'s display-only "server unreachable" evidence. Production
     /// default is a no-op.
     private let onTransportOutcome: @Sendable (TransportOutcome, ContinuousClock.Instant) -> Void
+    private let onServerConfig: @Sendable (ServerConfig) -> Void
     /// Set once a server has proved it has no `formatted-content/` route *and* that
     /// `content/` answers, so every later content load skips the detection instead of paying
     /// for it per document. Both halves matter: pinning this to a route that cannot answer
@@ -60,7 +61,8 @@ actor DocsAPIClient {
         cookieProvider: (@Sendable () -> [HTTPCookie])? = nil,
         onSessionExpired: @escaping @Sendable (ContinuousClock.Instant) -> Void = { _ in },
         onRequestFailure: @escaping @Sendable (RequestFailure) -> Void = { _ in },
-        onTransportOutcome: @escaping @Sendable (TransportOutcome, ContinuousClock.Instant) -> Void = { _, _ in }
+        onTransportOutcome: @escaping @Sendable (TransportOutcome, ContinuousClock.Instant) -> Void = { _, _ in },
+        onServerConfig: @escaping @Sendable (ServerConfig) -> Void = { _ in }
     ) {
         self.baseURL = baseURL
         self.session = session
@@ -68,6 +70,11 @@ actor DocsAPIClient {
         self.onSessionExpired = onSessionExpired
         self.onRequestFailure = onRequestFailure
         self.onTransportOutcome = onTransportOutcome
+        self.onServerConfig = onServerConfig
+    }
+
+    func notifyServerConfig(_ config: ServerConfig) {
+        onServerConfig(config)
     }
 
     /// The bare site origin (scheme + host [+ port]) derived from `baseURL`, used

@@ -147,6 +147,16 @@ final class NativeTextView: UITextView {
                 UIKeyCommand(input: "\t", modifierFlags: .shift, action: #selector(nativeOutdent)),
             ])
         }
+        if inputCoordinator?.canFormat == true {
+            commands.append(contentsOf: [
+                UIKeyCommand(input: "b", modifierFlags: .command, action: #selector(nativeBold)),
+                UIKeyCommand(input: "i", modifierFlags: .command, action: #selector(nativeItalic)),
+                UIKeyCommand(input: "u", modifierFlags: .command, action: #selector(nativeUnderline)),
+                UIKeyCommand(input: "x", modifierFlags: [.command, .shift], action: #selector(nativeStrikethrough)),
+                UIKeyCommand(input: "e", modifierFlags: .command, action: #selector(nativeInlineCode)),
+                UIKeyCommand(input: "k", modifierFlags: .command, action: #selector(nativeLink)),
+            ])
+        }
         // A table cell (PR11a): Escape returns to the document.
         if inputCoordinator?.tableMove != nil {
             if !registeredEscape {
@@ -164,8 +174,8 @@ final class NativeTextView: UITextView {
             commands.append(
                 UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(nativeEscape)))
         }
-        // Focused source editor (PR14): ⌘Return closes as Done.
-        if inputCoordinator?.tableMove == nil, inputCoordinator?.onDone != nil {
+        // Focused source editor (PR14) or root Editing mode (G04): ⌘Return closes as Done.
+        if inputCoordinator?.tableMove == nil, isEditable, inputCoordinator?.onDone != nil {
             commands.append(UIKeyCommand(input: "\r", modifierFlags: .command, action: #selector(nativeDone)))
         }
         for command in commands { command.wantsPriorityOverSystemBehavior = true }
@@ -202,6 +212,40 @@ final class NativeTextView: UITextView {
         guard markedTextRange == nil else { return }
         if inputCoordinator?.tableMove?(.done) == nil { inputCoordinator?.onDone?() }
     }
+
+    @objc private func nativeBold() {
+        guard markedTextRange == nil else { return }
+        inputCoordinator?.toggleMark("bold")
+    }
+
+    @objc private func nativeItalic() {
+        guard markedTextRange == nil else { return }
+        inputCoordinator?.toggleMark("italic")
+    }
+
+    @objc private func nativeUnderline() {
+        guard markedTextRange == nil else { return }
+        inputCoordinator?.toggleMark("underline")
+    }
+
+    @objc private func nativeStrikethrough() {
+        guard markedTextRange == nil else { return }
+        inputCoordinator?.toggleMark("strike")
+    }
+
+    @objc private func nativeInlineCode() {
+        guard markedTextRange == nil else { return }
+        inputCoordinator?.toggleMark("code")
+    }
+
+    @objc private func nativeLink() {
+        guard markedTextRange == nil, let inputCoordinator, let target = inputCoordinator.linkTarget() else { return }
+        inputCoordinator.onRequestLinkEdit?(target)
+    }
+
+    @objc override func toggleBoldface(_ sender: Any?) { nativeBold() }
+    @objc override func toggleItalics(_ sender: Any?) { nativeItalic() }
+    @objc override func toggleUnderline(_ sender: Any?) { nativeUnderline() }
 
     /// Active inline pickers claim Escape, Up, Down, and Return ahead of table
     /// cell navigation; a table cell's hardware arrows (PR11c) go to the table
@@ -362,7 +406,13 @@ final class NativeTextView: UITextView {
                     || inputCoordinator?.tableMove != nil
                     || inputCoordinator?.onExit != nil)
             return allowed
-        case "toggleBoldface:", "toggleItalics:", "toggleUnderline:": return false
+        case "toggleBoldface:", "toggleItalics:", "toggleUnderline:",
+            "nativeBold", "nativeItalic", "nativeUnderline", "nativeStrikethrough", "nativeInlineCode":
+            return markedTextRange == nil && (inputCoordinator?.canFormat ?? false)
+        case "nativeLink":
+            return markedTextRange == nil
+                && inputCoordinator?.onRequestLinkEdit != nil
+                && inputCoordinator?.linkTarget() != nil
         case "paste:", "pasteAndMatchStyle:":
             return inputCoordinator?.canPasteFromPasteboard() ?? false
         default: break
@@ -456,6 +506,13 @@ final class NativeTextView: UITextView {
     /// Single-tap recognizer that hit-tests TextKit 2's laid-out glyph segment
     /// frames for resolved inline page link chips in both reader and editor modes.
     let chipTapRecognizer = UITapGestureRecognizer()
+    /// Tap-to-edit recognizers when the document is opened in Reading mode (G04).
+    let editTapRecognizer = UITapGestureRecognizer()
+    let editDoubleTapRecognizer = UITapGestureRecognizer()
+    var onRequestEdit: (() -> Void)?
+    weak var headerAccessoryView: UIView?
+    weak var footerAccessoryView: UIView?
+    private var lastEditTapDate: TimeInterval = 0
 
     /// Hit-tests TextKit 2's laid-out glyph segment frame for a `.nativeInlineObject`
     /// character at `point` (in this text view's coordinates).
@@ -594,6 +651,125 @@ final class NativeTextView: UITextView {
         _ = handleChipTap(at: recognizer.location(in: self))
     }
 
+    func editTapShouldBegin(at point: CGPoint) -> Bool {
+        guard !isEditable else { return false }
+        return canTriggerEditTap(at: point)
+    }
+
+    func editDoubleTapShouldBegin(at point: CGPoint) -> Bool {
+        let withinTransition = Date.timeIntervalSinceReferenceDate - lastEditTapDate < 0.75
+        guard !isEditable || withinTransition else { return false }
+        return canTriggerEditTap(at: point)
+    }
+
+    private func canTriggerEditTap(at point: CGPoint) -> Bool {
+        guard inputCoordinator != nil, onRequestEdit != nil,
+            !isDragging, !isDecelerating,
+            markedTextRange == nil,
+            !hasActiveDragOrLongPress
+        else { return false }
+        if let headerAccessoryView, !headerAccessoryView.isHidden, headerAccessoryView.frame.contains(point) {
+            return false
+        }
+        if let footerAccessoryView, !footerAccessoryView.isHidden, footerAccessoryView.frame.contains(point) {
+            return false
+        }
+        if let hitView = hitTest(point, with: nil) {
+            var current: UIView? = hitView
+            while let view = current {
+                if view === headerAccessoryView || view === footerAccessoryView || view is UIControl
+                    || view is NativeAttachmentView
+                {
+                    return false
+                }
+                if view === self { break }
+                current = view.superview
+            }
+        }
+        if chipTapShouldBegin(at: point) || linkHit(at: point) {
+            return false
+        }
+        return true
+    }
+
+    private func linkHit(at point: CGPoint) -> Bool {
+        guard let layout = textLayoutManager, let content = layout.textContentManager, textStorage.length > 0 else {
+            return false
+        }
+        if layout.textViewportLayoutController.viewportRange == nil {
+            layout.textViewportLayoutController.layoutViewport()
+        }
+        let containerPoint = CGPoint(x: point.x - textContainerInset.left, y: point.y - textContainerInset.top)
+        guard let fragment = layout.textLayoutFragment(for: containerPoint) else { return false }
+        let fragRange = fragment.rangeInElement
+        let startOffset = content.offset(from: content.documentRange.location, to: fragRange.location)
+        let endOffset = content.offset(from: content.documentRange.location, to: fragRange.endLocation)
+        guard startOffset != NSNotFound, endOffset > startOffset else { return false }
+        let clampedEnd = min(endOffset, textStorage.length)
+        guard startOffset < clampedEnd else { return false }
+        guard blockControls?.surface?.isHidden(atUTF16: startOffset) != true else { return false }
+        var hit = false
+        let searchRange = NSRange(location: startOffset, length: clampedEnd - startOffset)
+        textStorage.enumerateAttribute(.link, in: searchRange) { value, attrRange, stop in
+            guard value != nil,
+                let start = content.location(content.documentRange.location, offsetBy: attrRange.location),
+                let end = content.location(start, offsetBy: attrRange.length),
+                let range = NSTextRange(location: start, end: end)
+            else { return }
+            layout.enumerateTextSegments(in: range, type: .standard, options: .rangeNotRequired) { _, frame, _, _ in
+                let viewFrame = frame.offsetBy(dx: self.textContainerInset.left, dy: self.textContainerInset.top)
+                if !frame.isNull, !frame.isEmpty, viewFrame.contains(point) {
+                    hit = true
+                    return false
+                }
+                return true
+            }
+            if hit { stop.pointee = true }
+        }
+        return hit
+    }
+
+    @objc private func handleEditTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        let point = recognizer.location(in: self)
+        guard editTapShouldBegin(at: point) else { return }
+        lastEditTapDate = Date.timeIntervalSinceReferenceDate
+        let pos = closestPosition(to: point)
+        onRequestEdit?()
+        guard isEditable else { return }
+        if !isFirstResponder {
+            _ = becomeFirstResponder()
+        }
+        if let pos {
+            selectedTextRange = textRange(from: pos, to: pos)
+        }
+    }
+
+    @objc private func handleEditDoubleTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        let point = recognizer.location(in: self)
+        guard editDoubleTapShouldBegin(at: point) else { return }
+        if !isEditable {
+            onRequestEdit?()
+        }
+        guard isEditable else { return }
+        if !isFirstResponder {
+            _ = becomeFirstResponder()
+        }
+        if selectedRange.length == 0, let pos = closestPosition(to: point) {
+            let wordRange =
+                tokenizer.rangeEnclosingPosition(
+                    pos, with: .word, inDirection: UITextDirection.storage(.backward))
+                ?? tokenizer.rangeEnclosingPosition(
+                    pos, with: .word, inDirection: UITextDirection.storage(.forward))
+            if let wordRange {
+                selectedTextRange = wordRange
+            } else {
+                selectedTextRange = textRange(from: pos, to: pos)
+            }
+        }
+    }
+
     /// Handles a tap at `point` (in this text view's coordinates), invoking
     /// `blockControls.onOpenDocument` for a resolved interlink chip or
     /// `blockControls.onOpenSource` for an inline `.math` chip.
@@ -688,9 +864,81 @@ final class NativeTextView: UITextView {
         blockControls?.layoutControls()
         // After the viewport settled: collaborators' cursors on screen (PR10).
         cursorOverlay.layout(in: self)
+        orderAuxiliarySubviews()
         mediaDropController?.bringIndicatorsToFront(in: self)
         onLayout?()
         onGeometry?()
+    }
+
+    /// Orders auxiliary subviews top-to-bottom so VoiceOver traverses header,
+    /// visible block controls / attachments, footer, and collaborator overlay
+    /// deterministically without altering TextKit's own text element or rotors.
+    func orderAuxiliarySubviews() {
+        var ordered: [UIView] = []
+        if let headerAccessoryView, headerAccessoryView.superview === self {
+            ordered.append(headerAccessoryView)
+        }
+        var mid: [UIView] = []
+        if let blockControls {
+            mid.append(contentsOf: blockControls.orderedControlViews.filter { $0.superview === self })
+        }
+        for subview in subviews where subview is NativeAttachmentView {
+            mid.append(subview)
+        }
+        mid.sort {
+            if abs($0.frame.minY - $1.frame.minY) > 0.5 {
+                return $0.frame.minY < $1.frame.minY
+            }
+            return $0.frame.minX < $1.frame.minX
+        }
+        ordered.append(contentsOf: mid)
+        if let footerAccessoryView, footerAccessoryView.superview === self {
+            ordered.append(footerAccessoryView)
+        }
+        if cursorOverlay.superview === self {
+            ordered.append(cursorOverlay)
+        }
+        reorderIfNeeded(ordered, in: self)
+
+        var nestedByParent: [ObjectIdentifier: [UIView]] = [:]
+        for container in subviews
+        where container !== headerAccessoryView && container !== footerAccessoryView
+            && container !== cursorOverlay
+        {
+            collectAttachmentViews(in: container, into: &nestedByParent)
+        }
+        for views in nestedByParent.values where views.count > 1 {
+            guard let parent = views.first?.superview else { continue }
+            let sorted = views.sorted {
+                if abs($0.frame.minY - $1.frame.minY) > 0.5 {
+                    return $0.frame.minY < $1.frame.minY
+                }
+                return $0.frame.minX < $1.frame.minX
+            }
+            reorderIfNeeded(sorted, in: parent)
+        }
+    }
+
+    private func collectAttachmentViews(in root: UIView, into map: inout [ObjectIdentifier: [UIView]]) {
+        for child in root.subviews {
+            if child is NativeAttachmentView {
+                map[ObjectIdentifier(root), default: []].append(child)
+            } else {
+                collectAttachmentViews(in: child, into: &map)
+            }
+        }
+    }
+
+    private func reorderIfNeeded(_ desired: [UIView], in parent: UIView) {
+        guard desired.count > 1 else { return }
+        let desiredIDs = Set(desired.map(ObjectIdentifier.init))
+        let current = parent.subviews.filter { desiredIDs.contains(ObjectIdentifier($0)) }
+        guard current.count == desired.count else { return }
+        let alreadyOrdered = zip(current, desired).allSatisfy { $0 === $1 }
+        guard !alreadyOrdered else { return }
+        for view in desired {
+            parent.bringSubviewToFront(view)
+        }
     }
 
     /// After every layout pass: scrolling, size changes (PR10b's reading position).
@@ -739,6 +987,20 @@ final class NativeTextView: UITextView {
         chipTapRecognizer.delaysTouchesEnded = false
         chipTapRecognizer.delegate = blockControls
         addGestureRecognizer(chipTapRecognizer)
+        editTapRecognizer.addTarget(self, action: #selector(handleEditTap(_:)))
+        editTapRecognizer.numberOfTapsRequired = 1
+        editTapRecognizer.cancelsTouchesInView = false
+        editTapRecognizer.delaysTouchesBegan = false
+        editTapRecognizer.delaysTouchesEnded = false
+        editTapRecognizer.delegate = blockControls
+        addGestureRecognizer(editTapRecognizer)
+        editDoubleTapRecognizer.addTarget(self, action: #selector(handleEditDoubleTap(_:)))
+        editDoubleTapRecognizer.numberOfTapsRequired = 2
+        editDoubleTapRecognizer.cancelsTouchesInView = false
+        editDoubleTapRecognizer.delaysTouchesBegan = false
+        editDoubleTapRecognizer.delaysTouchesEnded = false
+        editDoubleTapRecognizer.delegate = blockControls
+        addGestureRecognizer(editDoubleTapRecognizer)
         mediaDropController = NativeMediaDropController(textView: self)
         addInteraction(UIDropInteraction(delegate: mediaDropController))
         textDropDelegate = mediaDropController
