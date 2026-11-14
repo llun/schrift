@@ -460,7 +460,9 @@ struct ColumnEditorScreen: View {
             ColumnTextHost(
                 model: model, contentSize: uiContentSizeCategory(for: dynamicTypeSize), labels: .document(loc),
                 theme: theme, images: images, posters: posters, serverOrigin: serverOrigin, isOffline: isOffline,
-                documentTitle: documentTitle, onOpenDocument: onOpenDocument ?? model.onOpenDocument,
+                uploadingBlocks: uploads?.uploadingBlocks ?? [], waitingUploads: uploads?.waitingBlocks ?? [],
+                failedUploads: uploads?.failedBlocks ?? [], documentTitle: documentTitle,
+                onOpenDocument: onOpenDocument ?? model.onOpenDocument,
                 onOpenSource: onOpenSource ?? model.onOpenSource ?? { model.openSource = $0 })
         }
         .safeAreaInset(edge: .bottom) {
@@ -572,6 +574,9 @@ private struct ColumnTextHost: UIViewRepresentable {
     let posters: VideoPosterLoader?
     let serverOrigin: String
     let isOffline: Bool
+    var uploadingBlocks: Set<String> = []
+    var waitingUploads: Set<String> = []
+    var failedUploads: Set<String> = []
     let documentTitle: (@MainActor (UUID) -> String?)?
     var onOpenDocument: ((UUID, String) -> Void)? = nil
     var onOpenSource: ((NativeSourceRequest) -> Void)? = nil
@@ -596,6 +601,9 @@ private struct ColumnTextHost: UIViewRepresentable {
             session.textView.blockControls.serverOrigin = serverOrigin
             session.input?.serverOrigin = serverOrigin
             session.textView.blockControls.isOffline = isOffline
+            session.textView.blockControls.uploadingBlocks = uploadingBlocks
+            session.textView.blockControls.waitingUploads = waitingUploads
+            session.textView.blockControls.failedUploads = failedUploads
             session.textView.blockControls.documentTitle = documentTitle
             session.textView.blockControls.onOpenDocument = onOpenDocument
             session.textView.blockControls.onOpenSource = { [weak model, weak session, onOpenSource] request in

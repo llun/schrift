@@ -73,6 +73,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         var movesBlock = false
         /// Scoped source surface to open once the command has actually applied (PR14).
         var requestedSource: NativeSourceRequest? = nil
+        /// Invoked once when the barrier settles (`true` on `.applied`, `false`
+        /// when refused, invalidated, failed, or an unretried `.stale`).
+        var onSettled: ((Bool) -> Void)? = nil
     }
     @ObservationIgnored private var barrier: Barrier?
     /// What the deliveries since the barrier was posted showed: a retry and a
@@ -762,6 +765,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             }
             guard let barrier, barrier.id == id else { return }
             self.barrier = nil
+            let onSettled = barrier.onSettled
+            defer { onSettled?(true) }
             endUndoStep()
             noticeKey = nil
             if let requested = barrier.requestedSource {
@@ -807,6 +812,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             if pendingSlashPageLink?.commandID == id { pendingSlashPageLink = nil }
             guard let barrier, barrier.id == id else { return }
             self.barrier = nil
+            let onSettled = barrier.onSettled
             endBarrierSelection(ownEcho: false)
             endUndoStep()
             lastOutcome = false
@@ -817,6 +823,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             } else if let refusal = barrier.refusal {
                 noticeKey = refusal
             }
+            onSettled?(false)
         case .stale(let id):
             if pendingSlashPageLink?.commandID == id { pendingSlashPageLink = nil }
             guard let barrier, barrier.id == id else {
@@ -824,6 +831,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 return
             }
             self.barrier = nil
+            let onSettled = barrier.onSettled
             // A selection the user made meanwhile carries over to the retry.
             let carried = userSelection.flatMap { mapThroughBarrier($0.anchors, from: $0.seen) }
             userSelection = nil
@@ -848,8 +856,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 settleCopies(after: id, applied: false)
                 lastOutcome = false
                 if self.barrier == nil, noticeKey == nil { noticeKey = .native_editor_input_unavailable }
+                onSettled?(false)
             }
         case .invalidated(let epoch, let id):
+            let dropped = (barrier?.id == id) ? barrier?.onSettled : nil
             settleCopies(after: id, applied: false)
             if pendingSlashPageLink?.commandID == id { pendingSlashPageLink = nil }
             if let predicted = surface.predictions.first(where: { $0.commandID == id }) {
@@ -858,12 +868,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             self.epoch = epoch
             lastOutcome = false
             rollBack()
+            dropped?(false)
         case .failed:
+            let dropped = barrier?.onSettled
             barrier = nil
             pendingSlashPageLink = nil
             userSelection = nil
             lastOutcome = false
             stopAfterStorageFailure()
+            dropped?(false)
         case .composition(let id, let result):
             if let id { composition.finish(id) }
             switch result {
@@ -1593,7 +1606,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     private func applyStructural(
         _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, keeping: NSRange? = nil,
         remapping: (blockID: String, offset: Int, length: Int)? = nil, retry: (() -> Bool)? = nil,
-        readsSelection: Bool = false, requestedSource: NativeSourceRequest? = nil
+        readsSelection: Bool = false, requestedSource: NativeSourceRequest? = nil,
+        onSettled: ((Bool) -> Void)? = nil
     ) -> Bool {
         // Folded content is never the target of a command.
         guard !surface.isHidden(blockID: blockID) else {
@@ -1607,13 +1621,44 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // A structural command is its own undo step.
         return postBarrier(
             blockID, kind, refusal: refusal, placement: placement, undoBefore: true, undoAfter: true, retry: retry,
-            readsSelection: readsSelection, requestedSource: requestedSource)
+            readsSelection: readsSelection, requestedSource: requestedSource, onSettled: onSettled)
+    }
+
+    /// Inserts 1..N empty media blocks at `blockID`'s enclosing depth-0 block
+    /// without opening `requestedMedia`. Invokes `onApplied` with the resulting
+    /// block IDs in order on `.applied`, or `[]` if the command does not commit.
+    @discardableResult
+    func insertMediaBatch(
+        nodes: [String], at blockID: String, placement: MediaInsertPlacement,
+        onApplied: (([String]) -> Void)? = nil
+    ) -> Bool {
+        guard canFormat, !nodes.isEmpty, surface.rangeIndex.entry(for: blockID) != nil else { return false }
+        let ids = nodes.map { _ in UUID().uuidString }
+        let paragraphID = UUID().uuidString
+        return applyStructural(
+            blockID,
+            .insertMediaBatch(nodes: nodes, placement: placement, ids: ids, paragraphID: paragraphID),
+            refusal: .native_editor_input_unavailable,
+            retry: again { [weak self] in
+                self?.insertMediaBatch(nodes: nodes, at: blockID, placement: placement, onApplied: onApplied) ?? false
+            },
+            onSettled: { [weak self] applied in
+                guard applied, let self else {
+                    onApplied?([])
+                    return
+                }
+                let inserted =
+                    self.surface.rangeIndex.entry(for: ids[0]) != nil
+                    ? ids
+                    : [blockID] + Array(ids.dropFirst())
+                onApplied?(inserted)
+            })
     }
 
     private func postBarrier(
         _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, placement: Barrier.Placement,
         undoBefore: Bool, undoAfter: Bool, retry: (() -> Bool)?, readsSelection: Bool = false,
-        requestedSource: NativeSourceRequest? = nil
+        requestedSource: NativeSourceRequest? = nil, onSettled: ((Bool) -> Void)? = nil
     ) -> Bool {
         guard barrier == nil else { return false }
         let command = NativeEditCommand(id: UUID(), baseRevision: canonicalRevision, blockID: blockID, kind: kind)
@@ -1626,7 +1671,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         else { return false }
         barrier = Barrier(
             id: command.id, refusal: refusal, placement: placement, retry: retry,
-            origin: readsSelection ? blockSelection() : nil, requestedSource: requestedSource)
+            origin: readsSelection ? blockSelection() : nil, requestedSource: requestedSource,
+            onSettled: onSettled)
         switch kind {
         case .moveUp, .moveDown, .join: barrier?.movesBlock = true
         default: break

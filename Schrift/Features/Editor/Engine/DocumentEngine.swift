@@ -386,6 +386,10 @@ final class DocumentEngine {
         if case .insertMedia(let node, let ids, let removing) = command.kind {
             return try prepareInsertMedia(command, node: node, ids: ids, removing: removing)
         }
+        if case .insertMediaBatch(let nodes, let placement, let ids, let paragraphID) = command.kind {
+            return try prepareInsertMediaBatch(
+                command, nodes: nodes, placement: placement, ids: ids, paragraphID: paragraphID)
+        }
         if case .insertSourceBlock(let node, let newID, let removing) = command.kind {
             return try prepareInsertSourceBlock(command, node: node, newID: newID, removing: removing)
         }
@@ -651,8 +655,8 @@ final class DocumentEngine {
             throw DocumentEngineError.unsupportedNativeInput  // prepared above
         case .undo, .redo:
             throw DocumentEngineError.unsupportedNativeInput  // `applyHistoryStep`
-        case .lineBreak, .table, .columns, .insertColumns, .insertMedia, .insertSourceBlock, .mediaProps,
-            .insertInlineObject, .insertInlineMath, .pasteInline:
+        case .lineBreak, .table, .columns, .insertColumns, .insertMedia, .insertMediaBatch, .insertSourceBlock,
+            .mediaProps, .insertInlineObject, .insertInlineMath, .pasteInline:
             throw DocumentEngineError.unsupportedNativeInput  // cells, tables, groups, media and inline atoms, prepared above
         }
         return (write, caret)
@@ -1339,22 +1343,110 @@ final class DocumentEngine {
             },
             // The caret goes where the web's does: the next block taking text.
             caret: {
-                if trailing { return EditorPosition(blockID: ids[1], offset: 0, assoc: -1) }
                 let media = replacing ? command.blockID : ids[0]
-                let list = self.builder.index.list(of: media)
-                guard let at = self.builder.index.listPosition(of: media) else {
-                    return EditorPosition(blockID: media, offset: 0, assoc: -1)
-                }
-                let next =
-                    list[(at + 1)...].first { id in
-                        guard case .xmlElement(let name)? = self.builder.index.entries[id]?.element?.typeRef else {
-                            return true
-                        }
-                        return !MediaBlock.contentless.contains(name)
-                    } ?? media
-                return EditorPosition(blockID: next, offset: self.textLength(next), assoc: -1)
+                return self.mediaInsertCaret(after: media, trailingParagraphID: trailing ? ids[1] : nil)
             }
         )
+    }
+
+    /// Inserts 1..N empty media blocks at `command.blockID`'s enclosing
+    /// depth-0 block in root `blockGroup` or an open column, optionally replacing
+    /// an empty editable paragraph with item 0 and appending one trailing root
+    /// paragraph when inserting at the end of `group`.
+    private func prepareInsertMediaBatch(
+        _ command: NativeEditCommand, nodes: [String], placement: MediaInsertPlacement, ids: [String],
+        paragraphID: String?
+    ) throws -> PreparedCommand {
+        let index = builder.index
+        guard index.isCanonical, !nodes.isEmpty, nodes.count == ids.count,
+            !index.isTableParagraph(command.blockID), index.openSources[command.blockID] == nil,
+            nodes.allSatisfy({ MediaBlock.nodes.contains($0) && MediaBlock.schemas[$0] != nil })
+        else { throw DocumentEngineError.unsupportedNativeInput }
+
+        let used = usedIDs()
+        guard Set(ids).count == ids.count, ids.allSatisfy({ isUnused($0, in: used) }) else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        if let paragraphID {
+            guard !ids.contains(paragraphID), isUnused(paragraphID, in: used) else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+        }
+
+        guard var current = index.entries[command.blockID] else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        try requireEditableBlock(current.id)
+        while current.depth > 0 {
+            guard let parentID = current.parentID, let parent = index.entries[parentID] else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            try requireEditableBlock(parent.id)
+            current = parent
+        }
+        guard current.depth == 0,
+            index.position[current.id] != nil || index.columnOf[current.id] != nil
+        else { throw DocumentEngineError.unsupportedNativeInput }
+
+        let replacing =
+            placement == .replaceOrAfter
+            && current.id == command.blockID
+            && current.nestedGroup == nil
+            && current.isSimpleContainer
+            && current.isProjectable
+            && !builder.nativeSnapshot(current).block.fidelity.isOpaque
+            && current.element?.typeRef == .xmlElement(nodeName: "paragraph")
+            && !current.hasInlineObjects
+            && (current.isSimpleText || current.element?.length == 0)
+            && current.runs.allSatisfy { $0.text.isEmpty }
+
+        let item = current.containerItem
+        let group = current.group
+        let trailing = placement != .before && writer.needsTrailingParagraph(after: item, in: group)
+        let trailingParagraphID: String?
+        if trailing {
+            let candidate = paragraphID ?? newBlockID()
+            guard !ids.contains(candidate), isUnused(candidate, in: used) else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            trailingParagraphID = candidate
+        } else {
+            trailingParagraphID = nil
+        }
+
+        let targetID = current.id
+        let lastMediaID = (replacing && nodes.count == 1) ? targetID : ids[nodes.count - 1]
+        return (
+            write: {
+                try self.writer.insertMediaBatch(
+                    nodes, at: item, in: group, placement: placement, replacing: replacing, ids: ids,
+                    paragraphID: trailingParagraphID)
+            },
+            caret: {
+                self.mediaInsertCaret(after: lastMediaID, trailingParagraphID: trailingParagraphID)
+            }
+        )
+    }
+
+    /// Caret position after inserting media: the trailing root paragraph when
+    /// one was created, else the end of the next non-contentless sibling in
+    /// `list`, else `mediaID`.
+    private func mediaInsertCaret(after mediaID: String, trailingParagraphID: String?) -> EditorPosition {
+        if let trailingParagraphID {
+            return EditorPosition(blockID: trailingParagraphID, offset: 0, assoc: -1)
+        }
+        let list = builder.index.list(of: mediaID)
+        guard let at = builder.index.listPosition(of: mediaID) else {
+            return EditorPosition(blockID: mediaID, offset: 0, assoc: -1)
+        }
+        let next =
+            list[(at + 1)...].first { id in
+                guard case .xmlElement(let name)? = self.builder.index.entries[id]?.element?.typeRef else {
+                    return true
+                }
+                return !MediaBlock.contentless.contains(name)
+            } ?? mediaID
+        return EditorPosition(blockID: next, offset: textLength(next), assoc: -1)
     }
 
     private func prepareInsertSourceBlock(

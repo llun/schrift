@@ -119,6 +119,20 @@ struct MediaLocation: Equatable, Sendable {
     }
 }
 
+/// Placement mode for inserting a batch of empty media blocks relative to a
+/// resolved depth-0 target block (`blockContainer` in root `blockGroup` or an
+/// open `column`).
+enum MediaInsertPlacement: Equatable, Sendable {
+    /// Replaces an empty editable paragraph in place with item 0 and inserts
+    /// remaining items after it; falls back to inserting all items after a
+    /// non-empty or non-paragraph target.
+    case replaceOrAfter
+    /// Inserts all items immediately before the resolved depth-0 target block.
+    case before
+    /// Inserts all items immediately after the resolved depth-0 target block.
+    case after
+}
+
 extension MediaBlock {
 
     /// Whether a native edit may write `prop` to a `node` block: a key of its
@@ -280,6 +294,73 @@ extension BlockNoteWriter {
                 "blockContainer", [("id", .string(paragraphID))],
                 [.element("paragraph", schemas["paragraph"] ?? [], [])])
             _ = try insertCopy(tx, paragraph, into: rootGroup, after: last ?? media)
+        }
+    }
+
+    /// Inserts one or more empty media blocks at `item` in `group` inside a
+    /// single Yjs transaction.
+    ///
+    /// When `placement == .replaceOrAfter` and `replacing` is true, item 0
+    /// replaces `item`'s existing `paragraph` element in place (preserving
+    /// shared props like `insertMedia`) and items `1...` are inserted after
+    /// `item`. Otherwise all items are inserted either immediately before
+    /// `item` (`.before`) or immediately after `item` (`.after` or
+    /// non-replacing `.replaceOrAfter`). When `paragraphID` is non-nil, an
+    /// empty trailing paragraph is appended at the end of root `blockGroup`.
+    @discardableResult
+    func insertMediaBatch(
+        _ nodes: [String], at item: YItem, in group: YType, placement: MediaInsertPlacement, replacing: Bool,
+        ids: [String], paragraphID: String?
+    ) throws -> Data {
+        guard !nodes.isEmpty, nodes.count == ids.count,
+            case .type(let container) = item.content
+        else { throw Error.unsupportedBlockType(nodes.first ?? "") }
+        for node in nodes {
+            guard MediaBlock.nodes.contains(node), MediaBlock.schemas[node] != nil else {
+                throw Error.unsupportedBlockType(node)
+            }
+        }
+        return try transaction { tx in
+            var cursor: YItem?
+            var startIndex = 0
+            if placement == .replaceOrAfter && replacing {
+                let node = nodes[0]
+                let schema = MediaBlock.schemas[node] ?? []
+                let element = children(container).first
+                guard let element, case .type(let paragraph) = element.content else {
+                    throw Error.malformedBlock(ids[0])
+                }
+                let existing = YBlockProjection.props(of: paragraph) ?? []
+                let props = schema.map { field in
+                    (key: field.key, value: existing.last { $0.key == field.key }?.value ?? field.value)
+                }
+                element.delete(tx)
+                _ = try insertCopy(tx, .element(node, props, []), into: container, after: nil)
+                cursor = item
+                startIndex = 1
+            } else if placement == .before {
+                cursor = item.left
+            } else {
+                cursor = item
+            }
+
+            for index in startIndex..<nodes.count {
+                let node = nodes[index]
+                let blockID = ids[index]
+                let schema = MediaBlock.schemas[node] ?? []
+                let copy = Copy.element("blockContainer", [("id", .string(blockID))], [.element(node, schema, [])])
+                cursor = try insertCopy(tx, copy, into: group, after: cursor)
+            }
+
+            guard let paragraphID else { return }
+            guard let root = doc.share[BlockNoteYjs.fragmentField], let rootGroupItem = children(root).first,
+                case .type(let rootGroup) = rootGroupItem.content
+            else { throw Error.malformedBlock(paragraphID) }
+            let last = children(rootGroup).last
+            let paragraph = Copy.element(
+                "blockContainer", [("id", .string(paragraphID))],
+                [.element("paragraph", schemas["paragraph"] ?? [], [])])
+            _ = try insertCopy(tx, paragraph, into: rootGroup, after: last ?? cursor)
         }
     }
 

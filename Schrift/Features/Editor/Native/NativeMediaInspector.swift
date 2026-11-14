@@ -227,7 +227,7 @@ struct NativeMediaInspector: View {
                     Text(loc[.native_editor_media_upload_waiting]).font(.footnote)
                         .foregroundStyle(theme.colors.textSecondary)
                 }
-            } else if record != nil || uploads?.preparing == blockID {
+            } else if record != nil || uploads?.isPreparing(blockID) == true {
                 Label(labels.mediaUploading, systemImage: "arrow.up.circle")
                     .accessibilityIdentifier("nativeMedia.uploading")
                 if isOffline {

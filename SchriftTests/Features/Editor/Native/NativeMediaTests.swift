@@ -134,4 +134,133 @@ final class NativeMediaTests: NativeEditingTestCase {
         XCTAssertEqual(alt, "From a peer")
         try await assertConsistent(harness, localCommands: 0)
     }
+
+    // MARK: - PR13b.2 Step 3: Batch media insertion
+
+    /// `.insertMediaBatch(..., .replaceOrAfter)` replaces an empty middle
+    /// paragraph with item 0, inserts remaining items after it, places the caret
+    /// on the next editable block, and leaves `requestedMedia` unset.
+    func testInsertMediaBatchReplacesEmptyParagraphAndDoesNotRequestInspector() async throws {
+        let harness = try await makeHarness([
+            paragraph("lead", "Before"),
+            paragraph("q", ""),
+            paragraph("tail", "After"),
+        ])
+        addTeardownBlock { await harness.close() }
+
+        var delivered: [String]?
+        let posted = await harness.run {
+            harness.input.insertMediaBatch(
+                nodes: ["image", "video", "pdf"], at: "q", placement: .replaceOrAfter
+            ) { ids in
+                delivered = ids
+            }
+        }
+        XCTAssertTrue(posted)
+        let blocks = harness.session.surface.blocks
+        XCTAssertEqual(blocks.map(\.node), ["paragraph", "image", "video", "pdf", "paragraph"])
+        XCTAssertNil(harness.input.requestedMedia)
+        let ids = try XCTUnwrap(delivered)
+        XCTAssertEqual(ids.count, 3)
+        XCTAssertEqual(ids[0], "q")
+        XCTAssertEqual(Array(blocks[1...3].map(\.id)), ids)
+        XCTAssertEqual(harness.view.selectedRange.location, try location(harness.session, "tail", 5))
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    /// Non-paragraph and last-block placements: `.before`, `.after` (with one
+    /// trailing root paragraph), and non-replacing `.replaceOrAfter` over text.
+    func testInsertMediaBatchBeforeAfterNonParagraphAndTrailing() async throws {
+        let harness = try await makeHarness([
+            paragraph("lead", "Keep me"),
+            BlockNoteBlock(node: "divider", props: [], runs: [], id: "div", children: []),
+        ])
+        addTeardownBlock { await harness.close() }
+
+        // 1. `.replaceOrAfter` over non-empty "lead" keeps "lead" and inserts after it;
+        // only contentless "div" follows, so one trailing root paragraph is appended.
+        var firstBatch: [String]?
+        let ok1 = await harness.run {
+            harness.input.insertMediaBatch(nodes: ["image", "file"], at: "lead", placement: .replaceOrAfter) {
+                firstBatch = $0
+            }
+        }
+        XCTAssertTrue(ok1)
+        let batch1 = try XCTUnwrap(firstBatch)
+        XCTAssertEqual(batch1.count, 2)
+        XCTAssertFalse(batch1.contains("lead"))
+        XCTAssertEqual(
+            harness.session.surface.blocks.map(\.node), ["paragraph", "image", "file", "divider", "paragraph"])
+        XCTAssertEqual(harness.session.surface.blocks[0].runs.map(\.text).joined(), "Keep me")
+
+        // 2. `.before` non-paragraph "div" inserts before "div" without modifying "div" or adding another paragraph.
+        var secondBatch: [String]?
+        let ok2 = await harness.run {
+            harness.input.insertMediaBatch(nodes: ["audio"], at: "div", placement: .before) {
+                secondBatch = $0
+            }
+        }
+        XCTAssertTrue(ok2)
+        XCTAssertEqual(secondBatch?.count, 1)
+        XCTAssertEqual(
+            harness.session.surface.blocks.map(\.node),
+            ["paragraph", "image", "file", "audio", "divider", "paragraph"])
+
+        // 3. `.after` the last textless block in another harness appends one trailing paragraph and focuses it at offset 0.
+        let tailHarness = try await makeHarness([
+            BlockNoteBlock(node: "divider", props: [], runs: [], id: "divLast", children: [])
+        ])
+        addTeardownBlock { await tailHarness.close() }
+        var thirdBatch: [String]?
+        let ok3 = await tailHarness.run {
+            tailHarness.input.insertMediaBatch(nodes: ["video"], at: "divLast", placement: .after) {
+                thirdBatch = $0
+            }
+        }
+        XCTAssertTrue(ok3)
+        XCTAssertEqual(thirdBatch?.count, 1)
+        let blocks = tailHarness.session.surface.blocks
+        XCTAssertEqual(blocks.map(\.node), ["divider", "video", "paragraph"])
+        let trailing = try XCTUnwrap(blocks.last)
+        XCTAssertEqual(tailHarness.view.selectedRange.location, try location(tailHarness.session, trailing.id, 0))
+        XCTAssertNil(tailHarness.input.requestedMedia)
+        try await assertConsistent(harness, localCommands: 2)
+        try await assertConsistent(tailHarness, localCommands: 1)
+    }
+
+    /// Targeting a nested block (`depth > 0`) walks up to its enclosing
+    /// depth-0 block and inserts the batch at root without nesting media.
+    func testInsertMediaBatchFromNestedBlockWalksUpToDepthZero() async throws {
+        let deep = paragraph("grandchild", "")
+        let child = BlockNoteBlock(
+            node: "bulletListItem", props: paragraph("x", "").props, runs: [InlineRun("Child")], id: "child",
+            children: [deep])
+        let parent = BlockNoteBlock(
+            node: "bulletListItem", props: paragraph("x", "").props, runs: [InlineRun("Parent")], id: "parent",
+            children: [child])
+        let harness = try await makeHarness([parent])
+        addTeardownBlock { await harness.close() }
+
+        var inserted: [String]?
+        let ok = await harness.run {
+            harness.input.insertMediaBatch(nodes: ["image", "video"], at: "grandchild", placement: .replaceOrAfter) {
+                inserted = $0
+            }
+        }
+        XCTAssertTrue(ok)
+        let ids = try XCTUnwrap(inserted)
+        XCTAssertEqual(ids.count, 2)
+        XCTAssertFalse(ids.contains("grandchild"))
+        XCTAssertFalse(ids.contains("parent"))
+        let blocks = harness.session.surface.blocks
+        // Top-level blocks: parent, child, grandchild (depth 0, 1, 2), then two depth-0 media blocks + trailing paragraph.
+        XCTAssertEqual(
+            blocks.map(\.node), ["bulletListItem", "bulletListItem", "paragraph", "image", "video", "paragraph"])
+        XCTAssertEqual(blocks[3].id, ids[0])
+        XCTAssertEqual(blocks[4].id, ids[1])
+        let written = await xml(harness)
+        XCTAssertTrue(written.contains(#"<blockcontainer id="\#(ids[0])">"#))
+        XCTAssertTrue(written.contains(#"<blockcontainer id="\#(ids[1])">"#))
+        try await assertConsistent(harness, localCommands: 1)
+    }
 }
