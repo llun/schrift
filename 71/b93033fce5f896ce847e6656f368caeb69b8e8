@@ -1,0 +1,39 @@
+Schrift/Core/Yjs/BlockNoteMediaCommands.swift
+  s_dc239db0cc1c9d::t_e94712d57564f7 300-331
+Schrift/Features/Editor/EditorViewModel.swift
+  s_dc239db0cc1c9d::t_5806495078bc55 3774,3780-3795,3803-3804
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_dc239db0cc1c9d::t_6fdad26a7f2ec5 396-398,1487-1535
+Schrift/Features/Editor/Native/NativeEditCommand.swift
+  s_dc239db0cc1c9d::t_e9a44f384ac081 90-94,142-143
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_dc239db0cc1c9d::t_04ec1c1b7922c9 733,739,743
+Schrift/Features/Editor/Native/NativeEditorView.swift
+  s_dc239db0cc1c9d::t_c08bd36c89ccc2 285-287
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  s_dc239db0cc1c9d::t_169fa21812fb16 323-324,1506-1517,1739,2047-2057,2094
+Schrift/Features/Editor/Native/NativeTextView.swift
+  s_dc239db0cc1c9d::t_a89536148b2cd4 150-159,216-249,409-415
+SchriftTests/Features/Editor/Native/NativeBlockPresentationTests.swift
+  s_dc239db0cc1c9d::t_10bffb54e40853 452-454,499-502,506-551
+SchriftTests/Features/Editor/Native/NativeEditorActivationTests.swift
+  s_dc239db0cc1c9d::t_311ee476ffc8e0 282-307
+SchriftTests/Features/Editor/Native/NativeFormattingTests.swift
+  s_dc239db0cc1c9d::t_37625964ef1aac 414-465
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "71b93033fce5f896ce847e6656f368caeb69b8e8",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
