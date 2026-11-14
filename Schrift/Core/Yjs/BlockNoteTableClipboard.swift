@@ -105,7 +105,7 @@ enum TableClipboard {
                         case .element(let inlineNode, let inlineProps, let inlineChildren):
                             let projected = inlineProps.map { ProjectedProp(key: $0.key, value: $0.value) }
                             if let object = NativeInlineObject.read(
-                                node: inlineNode, props: projected, hasChildren: !inlineChildren.isEmpty)
+                                node: inlineNode, props: projected, children: inlineChildren)
                             {
                                 runs.append(InlineRun(inlineObject: object))
                             }
@@ -461,6 +461,8 @@ enum TableClipboard {
                 + "\(escape(inline.visibleText, quote: false))</span>"
         case .mentionSearch:
             return "<span data-inline-content-type=\"mentionSearchInline\"></span>"
+        case .math(let source):
+            return "<span data-inline-content-type=\"math\">\(escape(source, quote: false))</span>"
         }
     }
 

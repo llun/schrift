@@ -1150,7 +1150,7 @@ struct TableModel {
         var children: [BlockNoteWriter.Copy] = []
         for run in runs {
             if let object = run.inlineObject {
-                children.append(.element(object.nodeName, object.canonicalProps, []))
+                children.append(.element(object.nodeName, object.canonicalProps, object.canonicalChildren))
                 continue
             }
             for (index, piece) in run.text.components(separatedBy: "\n").enumerated() {

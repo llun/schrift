@@ -168,13 +168,13 @@ final class BlockNoteInlineOracleTests: XCTestCase {
             }
         }
 
-        // Unknown inline node (`math`) remains opaque until PR14.
+        // Unknown inline node remains opaque.
         do {
             let doc = YDoc(clientID: 1, gc: true)
             defer { doc.destroy() }
             try populateBlock(doc, node: "paragraph") { element, tx in
-                let math = YType(typeRef: .xmlElement(nodeName: "math"))
-                try YWrite.insertAfter(tx, into: element, after: nil, [.type(math)])
+                let unknown = YType(typeRef: .xmlElement(nodeName: "unknownInlineChip"))
+                try YWrite.insertAfter(tx, into: element, after: nil, [.type(unknown)])
             }
             XCTAssertEqual(
                 NativeBlockProjection.project(doc).blocks[0].block.fidelity, .opaque(reason: "non-text inline content"))
@@ -328,11 +328,13 @@ final class BlockNoteInlineOracleTests: XCTestCase {
         for snapshot in interlinkBlocks {
             XCTAssertEqual(snapshot.block.fidelity, .modeled, "\(snapshot.id): interlink block must be modeled")
         }
-        XCTAssertFalse(projected.isFullyModeled, "math/diagram blocks stay opaque until PR14")
-        XCTAssertNil(NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: Self.testOrigin))
+        XCTAssertTrue(projected.isFullyRenderable, "interlink, math, and diagram blocks have no opaque nodes")
+        XCTAssertFalse(projected.isFullyModeled, "lossy callout/list-start blocks remain non-modeled")
+        XCTAssertNil(NativeBlockProjection.markdownShadow(doc))
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: Self.testOrigin))
 
         let inspected = try await NativeEditorSession.inspect(state: data, interlinkingOrigin: Self.testOrigin)
-        XCTAssertFalse(inspected.canType, "whole document with opaque math/diagram stays canType == false")
+        XCTAssertFalse(inspected.canType, "lossy callout/list-start blocks still gate whole-document canType")
         await inspected.close().value
     }
 

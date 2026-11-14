@@ -132,6 +132,12 @@ final class NativeInlineObjectTests: NativeEditingTestCase {
                 case .mentionSearch(let disabled, let trigger):
                     try YWrite.mapSet(tx, on: el, key: "disabled", .any([.bool(disabled)]))
                     if let trigger { try YWrite.mapSet(tx, on: el, key: "trigger", .any([.string(trigger)])) }
+                case .math(let source):
+                    if !source.isEmpty {
+                        let text = YType(typeRef: .xmlText)
+                        _ = try YWrite.insertAfter(tx, into: el, after: nil, [.type(text)])
+                        try text.insert(0, source, [:])
+                    }
                 }
             }
         }

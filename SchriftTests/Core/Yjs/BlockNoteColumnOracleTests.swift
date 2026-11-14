@@ -253,9 +253,9 @@ final class BlockNoteColumnOracleTests: XCTestCase {
     }
 
     /// The real test document (`.review/state.bin`, git-ignored) when present:
-    /// its web group (one column holds a captioned image) is preserved and,
-    /// since PR13a, modeled; the document's interlink, math and diagram keep
-    /// it without a shadow.
+    /// its web group (one column holds a captioned image) is preserved and
+    /// modeled alongside interlink, math, and diagram; `markdownShadow` still
+    /// needs `interlinkingOrigin` because of the document's active interlink.
     func testTheRealCaptureGroupIsPreserved() throws {
         let review = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".review")
@@ -273,7 +273,10 @@ final class BlockNoteColumnOracleTests: XCTestCase {
         let native = NativeBlockProjection.project(doc)
         let card = try XCTUnwrap(native.blocks.first { $0.block.node == "columnList" })
         XCTAssertEqual(card.block.fidelity, .modeled)
+        XCTAssertTrue(native.isFullyRenderable)
+        XCTAssertFalse(native.isFullyModeled)
         XCTAssertNil(NativeBlockProjection.markdownShadow(doc))
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: "https://docs.example"))
         // The index is canonical: the document's other blocks are addressable.
         let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
         defer { engine.detach() }

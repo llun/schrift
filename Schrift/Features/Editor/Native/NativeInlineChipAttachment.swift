@@ -10,6 +10,7 @@ struct NativeInlineChipContent: Equatable, Hashable, Sendable {
         case disabledInterlink
         case mention
         case mentionSearch
+        case math
     }
 
     var object: NativeInlineObject
@@ -110,6 +111,13 @@ final class NativeInlineChipAttachment: NSTextAttachment {
             let cleaned = trigger.map { NativeInlineObject.clippedDisplayText($0) }.flatMap { $0.isEmpty ? nil : $0 }
             displayLabel = cleaned ?? "@"
             accessibilityLabel = String(format: labels.named, labels.chipMention, displayLabel)
+        case .math:
+            hasIcon = false
+            kind = .math
+            let clipped = object.clippedVisibleText()
+            displayLabel = clipped.isEmpty ? labels.math : clipped
+            accessibilityLabel =
+                clipped.isEmpty ? labels.math : String(format: labels.named, labels.math, clipped)
         }
 
         let metrics = DocumentLinkChipMetrics(fontSize: font.pointSize)
@@ -228,6 +236,7 @@ enum NativeInlineChipImageCache {
             case .disabledInterlink: (palette.surfaceMuted, palette.textSecondary)
             case .mention: (palette.surfaceMuted, palette.textPrimary)
             case .mentionSearch: (palette.surfaceMuted, palette.textTertiary)
+            case .math: (palette.surfaceMuted, palette.textPrimary)
             }
         let fill = uiColor(fillHex)
         let ink = uiColor(inkHex)

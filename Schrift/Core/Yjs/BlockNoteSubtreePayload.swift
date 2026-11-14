@@ -215,7 +215,7 @@ enum BlockNoteSubtreePayload {
                 guard inlineNodes.contains(node) else { throw Error.malformed }
                 if NativeInlineObject.nodeNames.contains(node) {
                     let projected = props.map { ProjectedProp(key: $0.key, value: $0.value) }
-                    guard NativeInlineObject.read(node: node, props: projected, hasChildren: !children.isEmpty) != nil
+                    guard NativeInlineObject.read(node: node, props: projected, children: children) != nil
                     else { throw Error.malformed }
                 }
                 try inline(children)
@@ -273,13 +273,19 @@ extension BlockNoteSubtreePayload {
                 else { throw Error.malformed }
                 return .element(node, props, children)
             }
+            if SourceBlock.isSource(node) {
+                let projected = props.map { ProjectedProp(key: $0.key, value: $0.value) }
+                guard SourceBlock.isPastable(node: node, props: projected, children: children),
+                    let source = SourceBlock.plainText(of: children)
+                else { throw Error.malformed }
+                let normalized: [BlockNoteWriter.Copy] = source.isEmpty ? [] : [.text([.run(InlineRun(source))])]
+                return .element(node, [], normalized)
+            }
             if NativeInlineObject.nodeNames.contains(node) {
                 let projected = props.map { ProjectedProp(key: $0.key, value: $0.value) }
-                guard
-                    let inline = NativeInlineObject.pastable(
-                        node: node, props: projected, hasChildren: !children.isEmpty)
+                guard let inline = NativeInlineObject.pastable(node: node, props: projected, children: children)
                 else { throw Error.malformed }
-                return .element(node, inline.canonicalProps, [])
+                return .element(node, inline.canonicalProps, inline.canonicalChildren)
             }
             return .element(node, props, try validatingPastable(children))
         }
@@ -359,13 +365,10 @@ enum BlockNoteInlinePayload {
             case .text: return copy
             case .element(let node, let props, let children):
                 let projected = props.map { ProjectedProp(key: $0.key, value: $0.value) }
-                guard
-                    let inline = NativeInlineObject.pastable(
-                        node: node, props: projected, hasChildren: !children.isEmpty)
-                else {
+                guard let inline = NativeInlineObject.pastable(node: node, props: projected, children: children) else {
                     throw BlockNoteSubtreePayload.Error.malformed
                 }
-                return .element(node, inline.canonicalProps, [])
+                return .element(node, inline.canonicalProps, inline.canonicalChildren)
             }
         }
     }
@@ -376,8 +379,7 @@ enum BlockNoteInlinePayload {
             case .text: continue
             case .element(let node, let props, let children):
                 let projected = props.map { ProjectedProp(key: $0.key, value: $0.value) }
-                guard NativeInlineObject.read(node: node, props: projected, hasChildren: !children.isEmpty) != nil
-                else {
+                guard NativeInlineObject.read(node: node, props: projected, children: children) != nil else {
                     throw BlockNoteSubtreePayload.Error.malformed
                 }
             }

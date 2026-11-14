@@ -278,6 +278,18 @@ extension YBlockProjection {
             }
             return ProjectedBlock(id: id, node: node, props: props, runs: [], fidelity: fidelity)
         }
+        // A familiar mathBlock or diagram (PR14) is modeled by the native
+        // projection only: empty props and zero or one plain unmarked XmlText
+        // child. The classic projection keeps it opaque.
+        if nativeMarks, SourceBlock.isSource(node) {
+            if let reason = SourceBlock.unfamiliarReason(node: node, props: props, element: element) {
+                return ProjectedBlock(
+                    id: id, node: node, props: props, runs: [], fidelity: .opaque(reason: "\(node): \(reason)"))
+            }
+            let source = SourceBlock.plainText(of: element) ?? ""
+            let runs = source.isEmpty ? [] : [InlineRun(source)]
+            return ProjectedBlock(id: id, node: node, props: props, runs: runs, fidelity: .modeled)
+        }
         let (rawRuns, runsFailure) = foldInline(
             element, interlinkingOrigin: interlinkingOrigin, readInlineObjects: nativeMarks || inlineObjects)
         if let runsFailure {
