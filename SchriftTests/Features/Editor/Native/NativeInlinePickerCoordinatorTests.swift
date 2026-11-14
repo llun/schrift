@@ -190,9 +190,14 @@ final class NativeInlinePickerCoordinatorTests: NativeEditingTestCase {
             YUpdateDecoder.decode(BlockNoteYjs.encode([paragraph("p", "/link ")], clientID: Self.seedClientID)),
             origin: .localUser)
         let seedEngine = DocumentEngine(doc: seedDoc)
+        defer { seedEngine.detach() }
         let existingChip = NativeInlineObject.interlink(
             docID: existingID.uuidString.lowercased(), blockID: "", title: nil, disabled: false, trigger: "/")
-        _ = try seedEngine.applyStructural(block: "p", .insertInlineObject(existingChip, replacing: 6..<6))
+        _ = try seedEngine.applyStructural(
+            NativeEditCommand(
+                id: UUID(), baseRevision: seedEngine.revision, blockID: "p",
+                kind: .insertInlineObject(existingChip, replacing: 6..<6))
+        ) { _ in }
         let state = try YStateEncoder.encodeStateAsUpdate(seedDoc)
         let harness = try await makeHarness(state: state)
         addTeardownBlock { await harness.close() }
