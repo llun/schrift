@@ -1294,6 +1294,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 hold(.deleteBackward)
                 return true
             }
+            noticeKey = .native_editor_input_busy
+            return false
         }
         // Anything else would read offsets a commit still in flight owns.
         guard !compositionOwnsView else { return false }
@@ -1715,11 +1717,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     }
 
     var canEditForTextDrop: Bool {
-        canEdit
+        canEdit && !isBusy
     }
 
     var canAcceptMediaDrop: Bool {
-        canFormat && tableMove == nil && tableKey == nil && mediaUploads?.canStartAnyUpload == true
+        canFormat && !isBusy && tableMove == nil && tableKey == nil && mediaUploads?.canStartAnyUpload == true
     }
 
     /// Synchronous Edit-menu capability check that avoids reading `UIPasteboard` item contents.
@@ -2570,6 +2572,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         {
             directInsertion = nil
             guard !compositionOwnsView, !isFrozen, !isDetached else { return false }
+            guard !isBusy else {
+                noticeKey = .native_editor_input_busy
+                return false
+            }
             let blockID = surface.blocks[position].id
             let range = pos.offset..<pos.offset
             return applyStructural(
@@ -2591,12 +2597,24 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         _ providers: [(provider: NSItemProvider, kind: NativeMediaDropPaste.PayloadKind)],
         target: MediaDropTarget
     ) -> Bool {
-        guard canAcceptMediaDrop, !providers.isEmpty else { return false }
-        onMediaDropActivate?()
+        guard canFormat, tableMove == nil, tableKey == nil, mediaUploads?.canStartAnyUpload == true, !providers.isEmpty
+        else { return false }
         guard providers.count <= NativeMediaDropPaste.maxItemsPerOperation else {
             noticeKey = .native_editor_media_drop_limit
             return false
         }
+        guard !isBusy else {
+            noticeKey = .native_editor_input_busy
+            return false
+        }
+        guard session != nil, mediaUploads != nil,
+            providers.allSatisfy({ $0.kind.node != nil }),
+            surface.rangeIndex.entry(for: target.blockID) != nil
+        else {
+            noticeKey = .native_editor_input_unavailable
+            return false
+        }
+        onMediaDropActivate?()
         return startMediaTransfer(providers: providers, targetBlockID: target.blockID, placement: target.placement)
     }
 
@@ -2613,7 +2631,14 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             noticeKey = .native_editor_media_upload_offline
             return false
         }
-        guard let target = pasteMediaTarget() else { return false }
+        guard !isBusy else {
+            noticeKey = .native_editor_input_busy
+            return false
+        }
+        guard let target = pasteMediaTarget() else {
+            noticeKey = .native_editor_paste_unavailable
+            return false
+        }
         return startMediaTransfer(providers: providers, targetBlockID: target.blockID, placement: target.placement)
     }
 
@@ -2659,7 +2684,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             }
             Task { @MainActor [weak session, weak mediaUploads] in
                 let stagedItems = await stagedBatch.waitAll()
-                guard let session, !session.isClosed, let mediaUploads, insertedIDs.count == stagedItems.count else {
+                guard let session, !session.isClosed, let mediaUploads else {
                     stagedBatch.cleanupAll()
                     return
                 }
@@ -2684,6 +2709,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             }
         }
         if !posted {
+            if !isFrozen, noticeKey == nil { noticeKey = .native_editor_input_unavailable }
             stagedBatch.cleanupAll()
         }
         return posted
@@ -2695,8 +2721,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     private func pasteBlocks(_ payload: Data) -> Bool {
         directInsertion = nil
         guard let view, !compositionOwnsView, !isFrozen, !isDetached else { return false }
+        guard !isBusy else {
+            noticeKey = .native_editor_input_busy
+            return false
+        }
         let index = surface.rangeIndex
-        guard let entry = index.entry(atUTF16: view.selectedRange.location) ?? index.entries.last else { return false }
+        guard let entry = index.entry(atUTF16: view.selectedRange.location) ?? index.entries.last else {
+            noticeKey = .native_editor_paste_unavailable
+            return false
+        }
         return applyStructural(
             entry.blockID, .insertSubtrees(payload: payload), refusal: .native_editor_paste_unavailable,
             retry: again { [weak self] in self?.pasteBlocks(payload) ?? false }, readsSelection: true)
@@ -2705,6 +2738,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     private func pasteInline(_ payload: Data, replacing range: NSRange) -> Bool {
         directInsertion = nil
         guard view != nil, !compositionOwnsView, !isFrozen, !isDetached else { return false }
+        guard !isBusy else {
+            noticeKey = .native_editor_input_busy
+            return false
+        }
         let index = surface.rangeIndex
         guard let start = index.textPosition(atUTF16: range.location),
             let end = index.textPosition(atUTF16: NSMaxRange(range), isUpperBound: range.length > 0)

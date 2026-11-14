@@ -362,6 +362,14 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
                 frame.height, lineHeight + DocsSpacing.spaceSM, accuracy: 0.5,
                 "\(id): the line is the paragraph style's height, plus the paragraph spacing")
         }
+        if let contentStorage = harness.view.textLayoutManager?.textContentManager as? NSTextContentStorage {
+            for id in ["img", "tbl", "cols", "outro"] {
+                let range = try XCTUnwrap(session.surface.rangeIndex.entry(for: id)).range
+                XCTAssertNil(
+                    harness.view.blockControls.textContentStorage(contentStorage, textParagraphWith: range),
+                    "\(id) is not a document-ending placeholder")
+            }
+        }
     }
 
     /// An image download refreshes its card's height immediately to the decoded
@@ -804,6 +812,58 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         assertS2Consistent(column)
         try await assertConsistent(harness, localCommands: 0)
         XCTAssertEqual(try journalCount(harness), 0)
+    }
+
+    /// A root document ending in a placeholder (no trailing paragraph) must not
+    /// inherit the attachment's `lineHeight` on TextKit 2's trailing empty line.
+    func testRootEndingInPlaceholderDoesNotDoubleTrailingLineHeight() async throws {
+        let harness = try await makeHarness([
+            paragraph("lead", "Lead"),
+            image("img", url: "\(Self.origin)/media/end.png"),
+        ])
+        addTeardownBlock { await harness.close() }
+        let log = FetchLog()
+        let gate = FetchGate()
+        harness.view.blockControls.images = loader(log) { _ in
+            gate.started = true
+            return try await withCheckedThrowingContinuation { continuation in
+                gate.continuation = continuation
+            }
+        }
+        harness.view.blockControls.serverOrigin = Self.origin
+        let window = host(harness.view, height: 900)
+        defer { window.isHidden = true }
+        await waitUntil { gate.started }
+
+        let initialAttachment = try attachment(harness.session, "img")
+        let heightBefore = harness.view.contentSize.height
+        let frameBefore = try fragmentFrame(harness.session, "img")
+        XCTAssertLessThan(
+            frameBefore.height, initialAttachment.content.lineHeight * 1.5,
+            "trailing empty line must not inherit attachment lineHeight even before image load")
+        if let contentStorage = harness.view.textLayoutManager?.textContentManager as? NSTextContentStorage {
+            let leadRange = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "lead")).range
+            let imgRange = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: "img")).range
+            XCTAssertNil(harness.view.blockControls.textContentStorage(contentStorage, textParagraphWith: leadRange))
+            XCTAssertNotNil(harness.view.blockControls.textContentStorage(contentStorage, textParagraphWith: imgRange))
+        }
+        let view = try XCTUnwrap(realized(harness.session, "img"))
+
+        gate.continuation?.resume(returning: testPNGData(width: 200, height: 400))
+        await view.loadTask?.value
+        harness.view.layoutIfNeeded()
+
+        let updatedAttachment = try attachment(harness.session, "img")
+        let frameAfter = try fragmentFrame(harness.session, "img")
+        let delta = updatedAttachment.content.lineHeight - initialAttachment.content.lineHeight
+        XCTAssertGreaterThan(delta, 100)
+        XCTAssertEqual(frameAfter.height - frameBefore.height, delta, accuracy: 1)
+        XCTAssertEqual(
+            harness.view.contentSize.height, heightBefore + delta, accuracy: 1,
+            "before=\(heightBefore) after=\(harness.view.contentSize.height) delta=\(delta) frameBefore=\(frameBefore) frameAfter=\(frameAfter)"
+        )
+        assertS2Consistent(harness.session)
+        try await assertConsistent(harness, localCommands: 0)
     }
 
     /// `MarkdownImageView.matchesSession`: a loader of another server's

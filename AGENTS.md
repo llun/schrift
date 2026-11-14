@@ -3940,10 +3940,11 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   recheck before disk/memory caching, `ImageLoadPolicy` offline/external consent gates), never passing
   remote URLs to `AVURLAsset`; same-origin `"video"` uploads seed `AttachmentCacheStore` at upload
   time.
-  **Batch insertion & uploads:** `BlockNoteWriter.prepareInsertMediaBatch` (`DocumentEngine`,
+  **Batch insertion & uploads:** `DocumentEngine.prepareInsertMediaBatch` (`BlockNoteWriter.insertMediaBatch`,
   `.insertMediaBatch`) inserts `1..N` empty media blocks in one Yjs transaction (replacing an empty
   `depth == 0` paragraph or inserting `.before`/`.after`, walking `depth > 0` targets up to root or
-  column-root, appending a trailing empty paragraph at end of group); `NativeMediaUploads.preparing`
+  column-root, and appending a trailing empty paragraph at the end of root `blockGroup` when no sibling
+  after the insertion target in `group` takes text); `NativeMediaUploads.preparing`
   is `Set<String>` with serialized off-main preparation and `ColumnTextHost` forwards upload states.
   **Drop & paste (`NativeMediaDropPaste`):** Classifies `NSItemProvider` types into `"pdf"`, `"image"`
   (raster only; `.svg` routes to `"file"`), `"video"`, `"audio"`, or `"file"` (excluding bare

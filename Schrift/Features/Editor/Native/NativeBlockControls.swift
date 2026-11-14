@@ -388,27 +388,28 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     }
 
     /// Strips attachment line-height bounds from a document-ending placeholder
-    /// newline so TextKit 2's trailing extra empty line does not inherit the
-    /// attachment's `lineHeight` and double its height inside columns.
+    /// separator newline so TextKit 2's trailing extra empty line does not
+    /// inherit the attachment's `lineHeight` and double its height (at either
+    /// the document root or inside a column).
     func textContentStorage(
         _ textContentStorage: NSTextContentStorage, textParagraphWith range: NSRange
     ) -> NSTextParagraph? {
         guard let attributed = textContentStorage.attributedString,
-            range.length > 0,
+            range.length >= 2,
             NSMaxRange(range) == attributed.length,
             attributed.attribute(.nativePlaceholder, at: range.location, effectiveRange: nil) as? Bool == true
         else { return nil }
-        let slice = NSMutableAttributedString(attributedString: attributed.attributedSubstring(from: range))
-        let lastIndex = slice.length - 1
-        if (slice.string as NSString).character(at: lastIndex) == 0x0A,
-            let style = slice.attribute(.paragraphStyle, at: lastIndex, effectiveRange: nil) as? NSParagraphStyle,
+        let lastOffset = NSMaxRange(range) - 1
+        guard (attributed.string as NSString).character(at: lastOffset) == 0x0A,
+            attributed.attribute(.nativeSeparator, at: lastOffset, effectiveRange: nil) as? Bool == true,
+            let style = attributed.attribute(.paragraphStyle, at: lastOffset, effectiveRange: nil) as? NSParagraphStyle,
             style.minimumLineHeight > 0 || style.maximumLineHeight > 0,
             let separator = style.mutableCopy() as? NSMutableParagraphStyle
-        {
-            separator.minimumLineHeight = 0
-            separator.maximumLineHeight = 0
-            slice.addAttribute(.paragraphStyle, value: separator, range: NSRange(location: lastIndex, length: 1))
-        }
+        else { return nil }
+        let slice = NSMutableAttributedString(attributedString: attributed.attributedSubstring(from: range))
+        separator.minimumLineHeight = 0
+        separator.maximumLineHeight = 0
+        slice.addAttribute(.paragraphStyle, value: separator, range: NSRange(location: slice.length - 1, length: 1))
         return NSTextParagraph(attributedString: slice)
     }
 

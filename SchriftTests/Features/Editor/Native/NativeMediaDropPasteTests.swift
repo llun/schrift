@@ -673,6 +673,48 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
         XCTAssertEqual(queued.native?.fileName, "col.pdf")
     }
 
+    func testOverTenItemsOnInactiveColumnRefusesWithoutActivatingColumn() async throws {
+        let capture = try XCTUnwrap(BlockNoteColumnCaptures.fixtures.first { $0.name == "two" })
+        let seed = try XCTUnwrap(Data(base64Encoded: capture.update))
+        let harness = try await makeHarness(state: seed)
+        addTeardownBlock { await harness.close() }
+        let env = try makeUploadEnv(for: harness, online: false)
+
+        let model = ColumnEditorModel(document: harness.session, groupID: "cl")
+        addTeardownBlock { model.close() }
+        let defaultsSuite = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsSuite))
+        addTeardownBlock { UserDefaults(suiteName: defaultsSuite)?.removePersistentDomain(forName: defaultsSuite) }
+        let loc = LocalizationStore(userDefaults: defaults)
+        loc.language = .english
+        let screen = ColumnEditorScreen(model: model, serverOrigin: Self.origin, uploads: env.uploads).environment(loc)
+        let vc = UIHostingController(rootView: screen)
+        _ = hostInWindow(vc.view)
+
+        await waitForCondition { model.isLoaded && model.columns.count == 2 }
+        XCTAssertTrue(model.activeSession === model.columns[0])
+
+        let col2 = model.columns[1]
+        let col2Controller = try XCTUnwrap(col2.textView.mediaDropController)
+        let col2Interaction = try XCTUnwrap(col2.textView.interactions.compactMap { $0 as? UIDropInteraction }.first)
+        let png = try makePNGData()
+        let elevenItems = (0..<11).map { i in
+            UIDragItem(itemProvider: dataProvider(.png, data: png, name: "img\(i).png"))
+        }
+        let dropSession = StubDropSession(items: elevenItems, location: CGPoint(x: 40, y: 20))
+        let blocksBefore = col2.surface.blocks.map(\.id)
+
+        col2Controller.dropInteraction(col2Interaction, performDrop: dropSession)
+        await col2.settle()
+
+        XCTAssertTrue(
+            model.activeSession === model.columns[0],
+            "refused >10-item drop must not switch active column to target")
+        XCTAssertEqual(col2.input?.noticeKey, .native_editor_media_drop_limit)
+        XCTAssertEqual(col2.surface.blocks.map(\.id), blocksBefore)
+        XCTAssertTrue(env.attachments.allAttachments().isEmpty)
+    }
+
     // MARK: - 8. >50 MB File Limit
 
     func testOversizeFileRefusedBeforeQueueingBytes() async throws {
@@ -1101,6 +1143,92 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
         XCTAssertFalse(stagedContents().isEmpty)
         NativeMediaDropPaste.removeStagingRoot()
         XCTAssertFalse(FileManager.default.fileExists(atPath: stagingRoot.path))
+    }
+
+    // MARK: - 12. C2: Drop & Paste During Structural Barrier
+
+    func testDropAndPasteDuringBarrierNeverSilentlyLoseInput() async throws {
+        NativeMediaDropPaste.removeStagingRoot()
+        addTeardownBlock { NativeMediaDropPaste.removeStagingRoot() }
+        let stagingRoot = NativeMediaDropPaste.stagingRootDirectory()
+
+        let harness = try await makeHarness([paragraph("p1", "Lead"), paragraph("p2", "Tail")])
+        addTeardownBlock { await harness.close() }
+        let env = try makeUploadEnv(for: harness, online: false)
+        _ = hostInWindow(harness.view)
+
+        let pb = privatePasteboard()
+        harness.input.pasteboard = pb
+
+        // Capture a valid BlockNoteSubtreePayload before triggering the barrier.
+        setSelection(harness, NSRange(location: 0, length: harness.view.textStorage.length))
+        harness.input.copySelection()
+        await harness.settle()
+        let subtreePayload = try XCTUnwrap(pb.data(forPasteboardType: BlockNoteSubtreePayload.pasteboardType))
+        let inlinePayload = try BlockNoteInlinePayload.encode([[.text([.run(InlineRun("chip"))])]])
+
+        // Trigger a structural barrier (`insertText("\n")`) without settling yet.
+        setSelection(harness, NSRange(location: try location(harness.session, "p1", 4), length: 0))
+        harness.view.insertText("\n")
+
+        let dropController = try XCTUnwrap(harness.view.mediaDropController)
+        let interaction = try XCTUnwrap(harness.view.interactions.compactMap { $0 as? UIDropInteraction }.first)
+        let png = try makePNGData()
+        let dropSession = StubDropSession(
+            items: [UIDragItem(itemProvider: dataProvider(.png, data: png, name: "busy.png"))],
+            location: CGPoint(x: 80, y: 80))
+
+        // Drop proposal must not promise `.copy` during a barrier, and drop must refuse with notice.
+        XCTAssertFalse(harness.input.canAcceptMediaDrop)
+        XCTAssertFalse(harness.input.canEditForTextDrop)
+        let proposal = dropController.dropInteraction(interaction, sessionDidUpdate: dropSession)
+        XCTAssertEqual(proposal.operation, UIDropOperation.forbidden)
+        XCTAssertFalse(dropController.isShowingDropIndicator)
+
+        dropController.dropInteraction(interaction, performDrop: dropSession)
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_input_busy)
+        XCTAssertTrue(((try? FileManager.default.contentsOfDirectory(atPath: stagingRoot.path)) ?? []).isEmpty)
+
+        // Media paste during barrier refuses with busy notice.
+        harness.input.refuse(.native_editor_input_unavailable)
+        pb.setItems([[UTType.png.identifier: png]])
+        XCTAssertFalse(harness.input.pasteFromPasteboard())
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_input_busy)
+
+        // Subtree block paste during barrier refuses with busy notice.
+        harness.input.refuse(.native_editor_input_unavailable)
+        pb.setItems([[BlockNoteSubtreePayload.pasteboardType: subtreePayload]])
+        XCTAssertFalse(harness.input.pasteFromPasteboard())
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_input_busy)
+
+        // Inline slice paste during barrier refuses with busy notice.
+        harness.input.refuse(.native_editor_input_unavailable)
+        pb.setItems([[BlockNoteInlinePayload.pasteboardType: inlinePayload]])
+        XCTAssertFalse(harness.input.pasteFromPasteboard())
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_input_busy)
+
+        // Same-origin interlink paste during barrier refuses with busy notice.
+        harness.input.refuse(.native_editor_input_unavailable)
+        let docURL = "\(harness.scope.serverOrigin)/docs/\(UUID().uuidString.lowercased())/"
+        pb.setItems([[UTType.utf8PlainText.identifier: docURL]])
+        XCTAssertFalse(harness.input.pasteFromPasteboard())
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_input_busy)
+
+        // Non-caret range replacement during barrier refuses with busy notice.
+        harness.input.refuse(.native_editor_input_unavailable)
+        XCTAssertFalse(harness.input.replace(range: NSRange(location: 0, length: 1), with: "X"))
+        XCTAssertEqual(harness.input.noticeKey, .native_editor_input_busy)
+
+        // Plain-text paste at the caret queues behind the barrier and applies once it settles.
+        pb.setItems([[UTType.utf8PlainText.identifier: "Queued"]])
+        XCTAssertTrue(harness.input.pasteFromPasteboard())
+
+        await harness.settle()
+        XCTAssertEqual(harness.session.surface.blocks.map(\.node), ["paragraph", "paragraph", "paragraph"])
+        XCTAssertEqual(harness.session.surface.blocks[0].visibleText, "Lead")
+        XCTAssertEqual(harness.session.surface.blocks[1].visibleText, "Queued")
+        XCTAssertEqual(harness.session.surface.blocks[2].visibleText, "Tail")
+        XCTAssertTrue(env.attachments.allAttachments().isEmpty)
     }
 
     private func makeMinimal1BitPNG(width: Int, height: Int) -> Data {
