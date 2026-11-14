@@ -128,7 +128,8 @@ struct NativeEditorView: View {
                 NativeTextCanvas(
                     session: session, contentSize: uiContentSizeCategory(for: dynamicTypeSize),
                     labels: .document(loc),
-                    theme: theme, images: images, posters: posters, serverOrigin: serverOrigin, isOffline: isOffline,
+                    theme: theme, loc: loc, images: images, posters: posters, serverOrigin: serverOrigin,
+                    isOffline: isOffline,
                     uploads: uploads,
                     onOpenTable: { openTable = NativeTableRequest(id: $0) },
                     onOpenColumns: { openColumns = columnEditor($0) },
@@ -724,6 +725,7 @@ private struct NativeTextCanvas: UIViewControllerRepresentable {
     let contentSize: UIContentSizeCategory
     let labels: NativeEditorLabels
     let theme: AppTheme
+    let loc: LocalizationStore
     let images: ImageLoader?
     let posters: VideoPosterLoader?
     let serverOrigin: String
@@ -776,8 +778,8 @@ private struct NativeTextCanvas: UIViewControllerRepresentable {
         session.textView.blockControls.documentTitle = documentTitle
         session.navigation.documentTitle = documentTitle
         controller.updateAccessories(
-            header: headerContent?(),
-            footer: footerContent?(),
+            header: headerContent.map { AnyView($0().environment(\.docsTheme, theme).environment(loc)) },
+            footer: footerContent.map { AnyView($0().environment(\.docsTheme, theme).environment(loc)) },
             onScrollInteraction: onScrollInteraction)
         coordinator.update(
             surface: session.surface, input: session.input, textView: session.textView,
@@ -874,9 +876,13 @@ private final class NativeCanvasViewController: UIViewController {
         self.onScrollInteraction = onScrollInteraction
         if let header {
             let wrapped = AnyView(
-                header.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { [weak self] _, _ in
-                    self?.layoutAccessoryViews()
-                }
+                header
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self) {
+                        $0.size.height
+                    } action: { [weak self] _, _ in
+                        Task { @MainActor [weak self] in self?.layoutAccessoryViews() }
+                    }
             )
             if let headerHost {
                 headerHost.rootView = wrapped
@@ -897,9 +903,13 @@ private final class NativeCanvasViewController: UIViewController {
 
         if let footer {
             let wrapped = AnyView(
-                footer.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { [weak self] _, _ in
-                    self?.layoutAccessoryViews()
-                }
+                footer
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self) {
+                        $0.size.height
+                    } action: { [weak self] _, _ in
+                        Task { @MainActor [weak self] in self?.layoutAccessoryViews() }
+                    }
             )
             if let footerHost {
                 footerHost.rootView = wrapped
@@ -959,11 +969,11 @@ private final class NativeCanvasViewController: UIViewController {
         let targetInset = UIEdgeInsets(top: headerHeight, left: 0, bottom: footerHeight, right: 0)
         if textView.contentInset != targetInset {
             let previousAdjustedTop = textView.adjustedContentInset.top
-            let wasAtTop = abs(textView.contentOffset.y + previousAdjustedTop) <= 1
+            let wasAtTop =
+                abs(textView.contentOffset.y + previousAdjustedTop) <= 1
+                || (!didApplyInitialHeaderOffset && abs(textView.contentOffset.y) <= 1)
             textView.contentInset = targetInset
-            if headerHeight > 0, !textView.isDragging, !textView.isDecelerating,
-                !didApplyInitialHeaderOffset || wasAtTop
-            {
+            if headerHeight > 0, !textView.isDragging, !textView.isDecelerating, wasAtTop {
                 didApplyInitialHeaderOffset = true
                 textView.layoutIfNeeded()
                 textView.contentOffset.y = -textView.adjustedContentInset.top

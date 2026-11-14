@@ -3842,6 +3842,20 @@ final class EditorViewModel {
         hasPendingNativeTitleEdit = false
     }
 
+    /// Advances the in-memory native baseline timestamp after "Keep my version" resolves a
+    /// recorded conflict, so subsequent edits do not re-detect the same conflict.
+    func advanceNativeBaselineAfterConflict(serverUpdatedAt: Date) {
+        let existing =
+            nativeServerBaseline
+            ?? contentCache.content(for: documentID).map {
+                DraftBaseline(serverUpdatedAt: $0.serverUpdatedAt, markdown: $0.markdown, title: $0.title)
+            }
+        guard let existing else { return }
+        nativeServerBaseline = DraftBaseline(
+            serverUpdatedAt: serverUpdatedAt, markdown: existing.markdown, title: existing.title,
+            markdownIsLocal: existing.markdownIsLocal)
+    }
+
     /// Updates coordinator title tracking, baseline, and clean on-screen title after a fresh
     /// native-reader fetch past `mayPredateSave`.
     func applyNativeServerContent(formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay) {

@@ -44,9 +44,7 @@ final class NativeEditorUITests: XCTestCase {
         app.launchArguments = ["--native-open", "--reset"]
         app.launch()
         let editor = app.textViews["nativeEditor.text"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.025)).tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        focusFirstParagraph(of: editor, in: app)
         let before = text(of: editor).components(separatedBy: "\n")
         editor.typeText("alpha")
         editor.typeText("\n")
@@ -400,7 +398,10 @@ final class NativeEditorUITests: XCTestCase {
         app.launch()
         let card = app.descendants(matching: .any)["nativeEditor.attachment.owned-columns"]
         XCTAssertTrue(card.waitForExistence(timeout: 10))
-        let outline = app.buttons["nativeEditor.outline"]
+        let options = app.buttons["Options"]
+        XCTAssertTrue(options.waitForExistence(timeout: 5))
+        options.tap()
+        let outline = app.buttons["In this document"]
         XCTAssertTrue(outline.waitForExistence(timeout: 5))
         outline.tap()
         let field = app.textFields["Find in this document"]
@@ -1378,7 +1379,11 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
         XCTAssertTrue(editor.waitForStableFrame(), "The editor must stop moving before it is tapped")
         XCTAssertTrue(editor.isHittable)
-        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.025)).tap()
+        let hasShellHeader = app.buttons["Options"].exists
+        let dy: CGFloat = hasShellHeader ? 140 : max(18, editor.frame.height * 0.025)
+        editor.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: editor.frame.width * 0.15, dy: dy))
+            .tap()
         let keyboard = app.keyboards.firstMatch
         guard keyboard.waitForExistence(timeout: 10), keyboard.waitForStableFrame() else {
             let screen = XCTAttachment(screenshot: app.screenshot())

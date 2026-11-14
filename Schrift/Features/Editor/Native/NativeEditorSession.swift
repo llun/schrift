@@ -972,17 +972,19 @@ final class NativeEditorOpen {
     func resolveConflictKeepingMine(viewModel: EditorViewModel) {
         let coordinator = viewModel.saveCoordinator
         let documentID = viewModel.documentID
-        guard coordinator.conflict(for: documentID) != nil else { return }
+        guard let conflict = coordinator.conflict(for: documentID) else { return }
         if case .native(let session) = route, session.input != nil {
             if viewModel.hasPendingNativeTitleEdit { session.scheduleSave() }
             session.flushPendingSave()
         }
-        guard coordinator.pendingSave(documentID: documentID) != nil
-            || coordinator.storedDraft(documentID: documentID) != nil
+        guard
+            coordinator.pendingSave(documentID: documentID) != nil
+                || coordinator.storedDraft(documentID: documentID) != nil
         else {
             coordinator.clearResolvedConflict(documentID: documentID)
             return
         }
+        viewModel.advanceNativeBaselineAfterConflict(serverUpdatedAt: conflict.serverUpdatedAt)
         coordinator.resolveConflictKeepingLocal(documentID: documentID)
     }
 

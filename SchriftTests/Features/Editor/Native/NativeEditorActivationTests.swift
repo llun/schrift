@@ -924,6 +924,229 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         }
     }
 
+    // MARK: - Step 1: Title saving, conflict resolution, subpages & shell hooks
+
+    func testNativeTitleEditDebouncesAndSavesTitleOnlyThenSurvivesRelaunch() async throws {
+        let env = makeEnvironment(autosaveInterval: .milliseconds(50))
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverTitle = "Original Title"
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        env.model.seedNativeMetadataIfNeeded()
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native = open.route else { return XCTFail("expected a native session") }
+
+        open.updateTitle("Renamed Title", viewModel: env.model)
+        XCTAssertEqual(env.model.title, "Renamed Title")
+
+        await waitUntil { server.titles.contains("Renamed Title") }
+        XCTAssertTrue(
+            server.patchedUpdates.isEmpty, "title-only save with empty body outbox must not emit an empty Yjs PATCH")
+        await waitUntil { self.isSaved(env.model.saveCoordinator.state(for: env.documentID)) }
+
+        // Offline title edit flushes cleanly and survives a relaunch before reconnecting.
+        server.isOffline = true
+        open.updateTitle("Offline Edited Title", viewModel: env.model)
+        open.flushPendingSave()
+        await waitUntil { self.isPendingSync(env.model.saveCoordinator.state(for: env.documentID)) }
+        open.close()
+
+        let relaunched = env.relaunch()
+        let open2 = NativeEditorOpen(preference: { true })
+        defer { open2.close() }
+        relaunched.seedNativeMetadataIfNeeded()
+        XCTAssertEqual(relaunched.title, "Offline Edited Title")
+        server.isOffline = false
+        await open2.open(viewModel: relaunched, isOffline: false, canUpdate: true)
+        await relaunched.saveCoordinator.syncPendingDrafts()
+        await waitUntil { server.titles.contains("Offline Edited Title") }
+        XCTAssertEqual(relaunched.title, "Offline Edited Title")
+    }
+
+    func testNativeTitleAndBodyEditSaveTogether() async throws {
+        let env = makeEnvironment(autosaveInterval: .seconds(30))
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        env.model.seedNativeMetadataIfNeeded()
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText("Lead ")
+        await session.settle()
+        open.updateTitle("Combined Title", viewModel: env.model)
+        open.flushPendingSave()
+
+        await waitUntil { !server.patchedUpdates.isEmpty && server.titles.contains("Combined Title") }
+        await waitUntil { self.isSaved(env.model.saveCoordinator.state(for: env.documentID)) }
+    }
+
+    func testNativeConflictKeepMineAdvancesBaselineAndPushesLocalTitleAndBody() async throws {
+        let env = makeEnvironment(autosaveInterval: .seconds(30))
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverTitle = "Base Title"
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        env.model.seedNativeMetadataIfNeeded()
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+
+        // Produce a queued offline body + title edit against the 2026-11-07 baseline.
+        server.isOffline = true
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText("Local ")
+        await session.settle()
+        open.updateTitle("Local Conflict Title", viewModel: env.model)
+        open.flushPendingSave()
+        await waitUntil { self.isPendingSync(env.model.saveCoordinator.state(for: env.documentID)) }
+
+        // Server advances remotely before our sync runs.
+        server.serverUpdatedAt = "2026-11-08T12:00:00Z"
+        server.serverTitle = "Remote Conflict Title"
+        server.serverContent = "Remote edit"
+        server.isOffline = false
+
+        await env.model.saveCoordinator.syncPendingDrafts()
+        XCTAssertNotNil(env.model.syncConflict)
+        XCTAssertTrue(server.patchedUpdates.isEmpty, "conflict hold must prevent overwriting the server")
+
+        open.resolveConflictKeepingMine(viewModel: env.model)
+        XCTAssertNil(env.model.syncConflict)
+        await waitUntil { !server.patchedUpdates.isEmpty && server.titles.contains("Local Conflict Title") }
+        await waitUntil { self.isSaved(env.model.saveCoordinator.state(for: env.documentID)) }
+        XCTAssertTrue(text(session, block: 0).hasPrefix("Local "))
+        XCTAssertEqual(env.model.title, "Local Conflict Title")
+    }
+
+    func testNativeConflictKeepServerFailureKeepsReplicaAndConflictIntact() async throws {
+        let env = makeEnvironment(autosaveInterval: .seconds(30))
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverTitle = "Base Title"
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        env.model.seedNativeMetadataIfNeeded()
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+
+        server.isOffline = true
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText("Local ")
+        await session.settle()
+        open.updateTitle("Local Title", viewModel: env.model)
+        open.flushPendingSave()
+        await waitUntil { self.isPendingSync(env.model.saveCoordinator.state(for: env.documentID)) }
+
+        server.serverUpdatedAt = "2026-11-08T12:00:00Z"
+        server.serverTitle = "Remote Title"
+        server.serverContent = "Remote edit"
+        server.isOffline = false
+        await env.model.saveCoordinator.syncPendingDrafts()
+        XCTAssertNotNil(env.model.syncConflict)
+
+        server.isOffline = true
+        await open.resolveConflictKeepingServer(viewModel: env.model, isOffline: false, canUpdate: true)
+
+        XCTAssertNotNil(env.model.syncConflict, "failed server fetch must preserve the conflict")
+        XCTAssertNotNil(
+            env.model.saveCoordinator.storedDraft(documentID: env.documentID), "draft stays intact on failure")
+        XCTAssertEqual(env.model.title, "Local Title")
+    }
+
+    func testNativeConflictKeepServerDiscardsReplicaAndReopensOnServerState() async throws {
+        let env = makeEnvironment(autosaveInterval: .seconds(30))
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverTitle = "Base Title"
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        env.model.seedNativeMetadataIfNeeded()
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+
+        server.isOffline = true
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText("Local ")
+        await session.settle()
+        open.updateTitle("Local Title", viewModel: env.model)
+        open.flushPendingSave()
+        await waitUntil { self.isPendingSync(env.model.saveCoordinator.state(for: env.documentID)) }
+
+        let serverBlocks = [
+            BlockNoteBlock(node: "paragraph", props: [], runs: [InlineRun("Server won.")], id: Self.firstID)
+        ]
+        server.mutableState = BlockNoteYjs.encode(serverBlocks, clientID: Self.seedClientID)
+        server.serverUpdatedAt = "2026-11-08T12:00:00Z"
+        server.serverTitle = "Server Won Title"
+        server.serverContent = "Server won."
+        server.isOffline = false
+        await env.model.saveCoordinator.syncPendingDrafts()
+        XCTAssertNotNil(env.model.syncConflict)
+
+        await open.resolveConflictKeepingServer(viewModel: env.model, isOffline: false, canUpdate: true)
+
+        XCTAssertNil(env.model.syncConflict)
+        XCTAssertNil(env.model.saveCoordinator.storedDraft(documentID: env.documentID))
+        guard case .native(let reopened) = open.route else { return XCTFail("expected reopened native session") }
+        XCTAssertEqual(text(reopened, block: 0), "Server won.")
+        XCTAssertEqual(env.model.title, "Server Won Title")
+    }
+
+    func testNativeShellRegistersOpenEditorAndManagesSubpages() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let childID = UUID()
+        let server = ServerStub(owner: owner, state: seedState())
+        server.children = [
+            [
+                "id": childID.uuidString.lowercased(),
+                "title": "Existing child",
+                "excerpt": NSNull(),
+                "abilities": ["update": true],
+                "computed_link_reach": "restricted",
+                "computed_link_role": NSNull(),
+                "created_at": "2026-11-07T10:00:00Z",
+                "creator": NSNull(),
+                "depth": 2,
+                "link_role": "reader",
+                "link_reach": "restricted",
+                "numchild": 0,
+                "path": "00010001",
+                "updated_at": "2026-11-07T10:00:00Z",
+                "user_role": "owner",
+            ]
+        ]
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+
+        env.model.noteEditorAppeared()
+        XCTAssertTrue(env.model.saveCoordinator.hasOpenEditorForTesting(documentID: env.documentID))
+
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native = open.route else { return XCTFail("expected a native session") }
+
+        await env.model.loadChildren()
+        XCTAssertEqual(env.model.mergedSubpages?.map(\.id), [childID])
+
+        let created = await env.model.addSubpage()
+        XCTAssertNotNil(created)
+        XCTAssertEqual(env.model.mergedSubpages?.count, 2)
+    }
+
     // MARK: - Fixture
 
     private func manifestURL(_ env: Environment, _ scope: ReplicaScope) throws -> URL {
@@ -1053,7 +1276,11 @@ private final class ServerStub: @unchecked Sendable {
     let log = RequestRecorder()
     private let lock = NSLock()
     private let owner: UUID
-    private let state: Data
+    private var _state: Data
+    private var _serverTitle = "Fresh server title"
+    private var _serverContent = "First paragraph."
+    private var _serverUpdatedAt = "2026-11-07T10:00:00Z"
+    private var _children: [[String: Any]] = []
     private var _isOffline = false
     private var _collaborationWsUrl: String?
     private var _canUpdate = true
@@ -1068,7 +1295,28 @@ private final class ServerStub: @unchecked Sendable {
 
     init(owner: UUID, state: Data) {
         self.owner = owner
-        self.state = state
+        self._state = state
+    }
+
+    var mutableState: Data {
+        get { locked { _state } }
+        set { locked { _state = newValue } }
+    }
+    var serverTitle: String {
+        get { locked { _serverTitle } }
+        set { locked { _serverTitle = newValue } }
+    }
+    var serverContent: String {
+        get { locked { _serverContent } }
+        set { locked { _serverContent = newValue } }
+    }
+    var serverUpdatedAt: String {
+        get { locked { _serverUpdatedAt } }
+        set { locked { _serverUpdatedAt = newValue } }
+    }
+    var children: [[String: Any]] {
+        get { locked { _children } }
+        set { locked { _children = newValue } }
     }
 
     var isOffline: Bool {
@@ -1149,18 +1397,50 @@ private final class ServerStub: @unchecked Sendable {
                     }
                     return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
                 }
-                let body = try! JSONSerialization.data(withJSONObject: ["doc": state.base64EncodedString()])
+                let body = try! JSONSerialization.data(withJSONObject: ["doc": mutableState.base64EncodedString()])
                 return .init(statusCode: 200, headers: json, body: body, error: nil, releasedBy: stateGate)
             }
             if url.contains("formatted-content") {
                 let id = request.url!.path.split(separator: "/").first { UUID(uuidString: String($0)) != nil }!
                 let object: [String: Any] = [
-                    "id": String(id), "title": "Fresh server title", "content": "First paragraph.",
-                    "created_at": "2026-11-07T10:00:00Z", "updated_at": "2026-11-07T10:00:00Z",
+                    "id": String(id), "title": serverTitle, "content": serverContent,
+                    "created_at": "2026-11-07T10:00:00Z", "updated_at": serverUpdatedAt,
                 ]
                 return .init(
                     statusCode: 200, headers: json, body: try! JSONSerialization.data(withJSONObject: object),
                     error: nil, releasedBy: contentGate)
+            }
+            if url.contains("/children/") {
+                if request.httpMethod == "POST" {
+                    let body =
+                        (try? JSONSerialization.jsonObject(with: bodyData(from: request) ?? Data()))
+                        as? [String: Any]
+                    let child: [String: Any] = [
+                        "id": UUID().uuidString.lowercased(),
+                        "title": (body?["title"] as? String) ?? "",
+                        "excerpt": NSNull(),
+                        "abilities": ["update": true],
+                        "computed_link_reach": "restricted",
+                        "computed_link_role": NSNull(),
+                        "created_at": serverUpdatedAt,
+                        "creator": NSNull(),
+                        "depth": 2,
+                        "link_role": "reader",
+                        "link_reach": "restricted",
+                        "numchild": 0,
+                        "path": "00010002",
+                        "updated_at": serverUpdatedAt,
+                        "user_role": "owner",
+                    ]
+                    locked { _children.append(child) }
+                    return .init(
+                        statusCode: 201, headers: json, body: try! JSONSerialization.data(withJSONObject: child),
+                        error: nil)
+                }
+                let page: [String: Any] = ["count": children.count, "results": children]
+                return .init(
+                    statusCode: 200, headers: json, body: try! JSONSerialization.data(withJSONObject: page),
+                    error: nil)
             }
             if request.httpMethod == "GET", url.hasSuffix("/"),
                 let id = url.split(separator: "/").last.flatMap({ UUID(uuidString: String($0)) })
@@ -1183,11 +1463,11 @@ private final class ServerStub: @unchecked Sendable {
                     break
                 }
                 let detail: [String: Any] = [
-                    "id": (detailID ?? id).uuidString.lowercased(), "title": "Fresh server title", "excerpt": NSNull(),
+                    "id": (detailID ?? id).uuidString.lowercased(), "title": serverTitle, "excerpt": NSNull(),
                     "abilities": ["update": canUpdate], "computed_link_reach": "restricted",
                     "computed_link_role": NSNull(), "created_at": "2026-11-07T10:00:00Z", "creator": NSNull(),
                     "depth": 1, "link_role": "reader", "link_reach": "restricted", "numchild": 0, "path": "0001",
-                    "updated_at": "2026-11-07T10:00:00Z", "user_role": "owner",
+                    "updated_at": serverUpdatedAt, "user_role": "owner",
                 ]
                 return .init(
                     statusCode: 200, headers: json, body: try! JSONSerialization.data(withJSONObject: detail),
