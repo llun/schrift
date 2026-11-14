@@ -97,6 +97,7 @@ final class VideoPosterLoader {
     private let fetch: @MainActor @Sendable (URL, [HTTPCookie]) async throws -> (data: Data, mimeType: String?)
     private let cookieProvider: (URL) -> [HTTPCookie]
     private let scopeProvider: @MainActor () -> ImageCacheScope?
+    private let extractPoster: @Sendable (URL, String?) async -> Data?
     private let now: () -> Date
     private let failureRetention: TimeInterval
     private let scratchDirectory: URL
@@ -123,6 +124,9 @@ final class VideoPosterLoader {
         },
         cookieProvider: @escaping (URL) -> [HTTPCookie] = { HTTPCookieStorage.shared.cookies(for: $0) ?? [] },
         scopeProvider: @escaping @MainActor () -> ImageCacheScope? = { nil },
+        extractPoster: @escaping @Sendable (URL, String?) async -> Data? = { fileURL, mimeType in
+            await VideoPosterLoader.extractJPEGPoster(from: fileURL, mimeType: mimeType)
+        },
         scratchDirectory: URL = VideoPosterLoader.defaultScratchDirectory(),
         failureRetention: TimeInterval = 30,
         now: @escaping () -> Date = Date.init
@@ -132,6 +136,7 @@ final class VideoPosterLoader {
         self.fetch = fetch
         self.cookieProvider = cookieProvider
         self.scopeProvider = scopeProvider
+        self.extractPoster = extractPoster
         self.scratchDirectory = scratchDirectory
         self.failureRetention = failureRetention
         self.now = now
@@ -140,7 +145,7 @@ final class VideoPosterLoader {
     }
 
     /// Inert loader for previews and views without a session container.
-    static func inert() -> VideoPosterLoader { VideoPosterLoader() }
+    static func inert() -> VideoPosterLoader { VideoPosterLoader(cookieProvider: { _ in [] }) }
 
     var scope: ImageCacheScope? { scopeProvider() }
 
@@ -251,7 +256,7 @@ final class VideoPosterLoader {
             inFlight.removeValue(forKey: key)
         }
         revision += 1
-        return image
+        return resolvedScope() == scope ? image : nil
     }
 
     func retry(_ url: URL, allowsNetwork: Bool = true) async -> UIImage? {
@@ -281,7 +286,7 @@ final class VideoPosterLoader {
         scope: ImageCacheScope,
         allowsNetwork: Bool
     ) async -> UIImage? {
-        if Task.isCancelled { return nil }
+        if Task.isCancelled || resolvedScope() != scope { return nil }
         if let cached = poster(for: url) { return cached }
 
         // Priority 1: local file already in AttachmentCacheStore (checks even if
@@ -324,10 +329,11 @@ final class VideoPosterLoader {
         }
 
         // Priority 3: bounded 20 MB download to local file, then AVAssetImageGenerator.
-        let cookies = cookieProvider(url)
+        let sameOrigin = policy == .allow
+        let cookies = sameOrigin ? cookieProvider(url) : []
         do {
             let (data, mimeType) = try await fetch(url, cookies)
-            guard !Task.isCancelled else { return nil }
+            guard !Task.isCancelled, resolvedScope() == scope else { return nil }
             guard data.count <= Self.maxAutoFetchBytes else {
                 oversizeSkipped.insert(key)
                 return nil
@@ -358,7 +364,7 @@ final class VideoPosterLoader {
                 scope: scope
             )
         } catch {
-            if Task.isCancelled { return nil }
+            if Task.isCancelled || resolvedScope() != scope { return nil }
             let nsError = error as NSError
             if nsError.domain == NSURLErrorDomain && nsError.code == URLError.dataLengthExceedsMaximum.rawValue {
                 oversizeSkipped.insert(key)
@@ -380,11 +386,11 @@ final class VideoPosterLoader {
         key: Key,
         scope: ImageCacheScope
     ) async -> UIImage? {
-        guard fileURL.isFileURL else { return nil }
+        guard fileURL.isFileURL, resolvedScope() == scope else { return nil }
         let jpegData = await limiter.withPermit {
-            await Self.extractJPEGPoster(from: fileURL, mimeType: mimeType)
+            await extractPoster(fileURL, mimeType)
         }
-        guard !Task.isCancelled else { return nil }
+        guard !Task.isCancelled, resolvedScope() == scope else { return nil }
         guard let jpegData, let image = displayedImage(from: jpegData) else {
             failedPosters.insert(key)
             return nil

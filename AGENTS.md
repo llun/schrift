@@ -3927,6 +3927,39 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `RootView` sets `nativeSessions` and `signInIsCurrent`; a host without them queues and waits.
   `ReplicaSaveAdapterTests` pins the save binding (a switch after `/users/me/`: no PATCH, pending,
   then sent once current; a switch during the body: no title; a classic save during a switch).
+- **PR13b2 Native media drop, paste, video posters & aspect-ratio refresh (`NativeMediaDropPaste`, `VideoPosterLoader`, `NativeMediaUploads`).**
+  **Aspect-ratio & posters:** `NativeBlockAttachment` (`NativeAttachmentView`) notifies
+  `NativeBlockControls.noteMediaAspectRatioLoaded` on decoded image/video-poster arrival, coalescing
+  `NativeTextSurface.refreshAttachmentGeometry()` for changed URLs/titles without touching Yjs,
+  offset indices, or IME compositions while preserving scroll position across above-viewport loads and
+  approved external URLs across restyles. `NativeBlockPreview` projects shown non-empty `video` blocks
+  as `.video(url:label:previewWidth:)` with a play-badge thumbnail card sizing like `.image` under
+  key `"video-poster:<url>"`. `VideoPosterLoader` extracts JPEG thumbnails off-main via
+  `AVAssetImageGenerator` (concurrency capped at 2) exclusively from local files (`AttachmentCacheStore`
+  fast hit or bounded 20 MB `ImageTransport` fetch, same-origin cookies only, post-await account-scope
+  recheck before disk/memory caching, `ImageLoadPolicy` offline/external consent gates), never passing
+  remote URLs to `AVURLAsset`; same-origin `"video"` uploads seed `AttachmentCacheStore` at upload
+  time.
+  **Batch insertion & uploads:** `BlockNoteWriter.prepareInsertMediaBatch` (`DocumentEngine`,
+  `.insertMediaBatch`) inserts `1..N` empty media blocks in one Yjs transaction (replacing an empty
+  `depth == 0` paragraph or inserting `.before`/`.after`, walking `depth > 0` targets up to root or
+  column-root, appending a trailing empty paragraph at end of group); `NativeMediaUploads.preparing`
+  is `Set<String>` with serialized off-main preparation and `ColumnTextHost` forwards upload states.
+  **Drop & paste (`NativeMediaDropPaste`):** Classifies `NSItemProvider` types into `"pdf"`, `"image"`
+  (raster only; `.svg` routes to `"file"`), `"video"`, `"audio"`, or `"file"` (excluding bare
+  directories and non-file web URLs); enforces text-before-media clipboard precedence (`HTML`/`RTF`
+  with fallback PNG or plain URL stays text, Files `public.file-url` + filename routes as media),
+  `maxItemsPerOperation = 10` (`native_editor_media_drop_limit`), and `attachmentImportByteLimit`
+  (50 MB) checked before reading bytes. `NativeMediaDropController` (`UIDropInteractionDelegate` +
+  `UITextDropDelegate`) on `NativeTextView` synchronously initiates non-backed-up `MediaDropStaging`
+  file/data staging before `performDrop` returns, shows a 2 pt `brandFill` horizontal line or rounded
+  replace border on root/column surfaces (activating the dropped-on column), refuses readers, table
+  cells, source editors, and local unsaved documents (`native_editor_media_upload_offline` on paste),
+  and routes every upload exclusively through `NativeMediaUploads.start` ->
+  `DocumentSaveCoordinator.queueNativeAttachment` (EXIF GPS stripped on images).
+  Tests: `NativeAttachmentLayoutTests`, `VideoPosterTests` (poster extraction, EXIF orientation, disk
+  cache, off-origin cookie isolation, post-fetch/post-extraction scope switches), `NativeMediaTests`,
+  `NativeMediaQueueTests`, `ColumnEditorTests`, and `NativeMediaDropPasteTests`.
 - **PR13c1 Native inline objects: mentions & page links (read/edit/clipboard/navigation).**
   **Model:** `NativeInlineObject` adds `.interlink(docID:blockID:title:disabled:trigger:)`,
   `.mention(userID:fullName:)`, and `.mentionSearch(disabled:trigger:)` on `InlineRun.inlineObject`

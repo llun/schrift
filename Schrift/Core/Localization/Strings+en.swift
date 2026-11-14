@@ -17,6 +17,7 @@ enum Strings_en {
         .native_editor_media_upload_stopped: "Upload failed · tap to retry",
         .native_editor_media_upload_waiting: "Uploads when you're back online.",
         .native_editor_media_upload_queued: "Waiting to upload",
+        .native_editor_media_drop_limit: "Drop up to 10 items at once",
         .native_media_retry_upload: "Retry upload",
         .native_media_discard_upload: "Discard upload",
         .native_media_name: "Name",

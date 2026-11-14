@@ -4,6 +4,7 @@ import UIKit
 /// requests a document-height measurement or forces full-document layout.
 final class NativeTextView: UITextView {
     weak var inputCoordinator: NativeInputCoordinator?
+    private(set) var mediaDropController: NativeMediaDropController!
     /// UIKit's own marked-text application must reach storage directly; the
     /// command path would refuse it as a second writer.
     private(set) var isApplyingMarkedText = false
@@ -362,6 +363,8 @@ final class NativeTextView: UITextView {
                     || inputCoordinator?.onExit != nil)
             return allowed
         case "toggleBoldface:", "toggleItalics:", "toggleUnderline:": return false
+        case "paste:", "pasteAndMatchStyle:":
+            return inputCoordinator?.canPasteFromPasteboard() ?? false
         default: break
         }
         return super.canPerformAction(action, withSender: sender)
@@ -685,6 +688,7 @@ final class NativeTextView: UITextView {
         blockControls?.layoutControls()
         // After the viewport settled: collaborators' cursors on screen (PR10).
         cursorOverlay.layout(in: self)
+        mediaDropController?.bringIndicatorsToFront(in: self)
         onLayout?()
         onGeometry?()
     }
@@ -735,6 +739,9 @@ final class NativeTextView: UITextView {
         chipTapRecognizer.delaysTouchesEnded = false
         chipTapRecognizer.delegate = blockControls
         addGestureRecognizer(chipTapRecognizer)
+        mediaDropController = NativeMediaDropController(textView: self)
+        addInteraction(UIDropInteraction(delegate: mediaDropController))
+        textDropDelegate = mediaDropController
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

@@ -549,6 +549,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case native_editor_media_upload_stopped = "native.editor.media_upload_stopped"  // "Upload failed · tap to retry"
     case native_editor_media_upload_waiting = "native.editor.media_upload_waiting"  // "Uploads when you're back online."
     case native_editor_media_upload_queued = "native.editor.media_upload_queued"  // "Waiting to upload"
+    case native_editor_media_drop_limit = "native.editor.media_drop_limit"  // "Drop up to 10 items at once"
     case native_media_retry_upload = "native.media.retry_upload"  // "Retry upload"
     case native_media_discard_upload = "native.media.discard_upload"  // "Discard upload"
     case native_media_name = "native.media.name"  // "Name"

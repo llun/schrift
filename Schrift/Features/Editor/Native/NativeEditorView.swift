@@ -78,6 +78,7 @@ struct NativeEditorView: View {
                     session: session, contentSize: uiContentSizeCategory(for: dynamicTypeSize),
                     labels: .document(loc),
                     theme: theme, images: images, posters: posters, serverOrigin: serverOrigin, isOffline: isOffline,
+                    uploads: uploads,
                     onOpenTable: { openTable = NativeTableRequest(id: $0) },
                     onOpenColumns: { openColumns = columnEditor($0) },
                     onOpenMedia: { openMedia = NativeMediaRequest(id: $0) },
@@ -624,6 +625,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
     let posters: VideoPosterLoader?
     let serverOrigin: String
     let isOffline: Bool
+    var uploads: NativeMediaUploads? = nil
     let onOpenTable: (String) -> Void
     let onOpenColumns: (String) -> Void
     var onOpenMedia: ((String) -> Void)? = nil
@@ -654,6 +656,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
         session.textView.blockControls.posters = posters
         session.textView.blockControls.serverOrigin = serverOrigin
         session.input?.serverOrigin = serverOrigin
+        session.input?.mediaUploads = uploads
         session.textView.blockControls.isOffline = isOffline
         session.textView.blockControls.onOpenTable = onOpenTable
         session.textView.blockControls.onOpenColumns = onOpenColumns

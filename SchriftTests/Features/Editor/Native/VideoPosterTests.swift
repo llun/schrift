@@ -615,4 +615,122 @@ final class VideoPosterTests: NativeEditingTestCase {
         XCTAssertNil(view.loadTask, "moving out of window cancels in-flight task")
         gate.resumeCanceled()
     }
+
+    func testCookiesSentOnlyForSameOriginAndNeverOffOrigin() async throws {
+        let mp4 = try await Self.makeTestVideoData(width: 160, height: 120)
+        let sessionCookie = try XCTUnwrap(
+            HTTPCookie(properties: [
+                .name: "session",
+                .value: "secret",
+                .domain: "example.test",
+                .path: "/",
+            ]))
+        var sentCookies: [(URL, [HTTPCookie])] = []
+        var cookieQueries: [URL] = []
+        let activeScope = scope()
+
+        let loader = VideoPosterLoader(
+            cache: ImageCacheStore(directory: tempDir("posters")),
+            attachmentCache: AttachmentCacheStore(directory: tempDir("attachments")),
+            fetch: { url, cookies in
+                sentCookies.append((url, cookies))
+                return (mp4, "video/mp4")
+            },
+            cookieProvider: { url in
+                cookieQueries.append(url)
+                return [sessionCookie]
+            },
+            scopeProvider: { activeScope },
+            scratchDirectory: tempDir("scratch")
+        )
+
+        let sameOriginURL = URL(string: "\(Self.origin)/media/same.mp4")!
+        let sameImage = await loader.loadIfNeeded(sameOriginURL)
+        XCTAssertNotNil(sameImage)
+
+        let offOriginURL = URL(string: "https://cdn.other.test/video.mp4")!
+        loader.approve(offOriginURL)
+        let offImage = await loader.loadIfNeeded(offOriginURL)
+        XCTAssertNotNil(offImage)
+
+        XCTAssertEqual(sentCookies.count, 2)
+        XCTAssertEqual(sentCookies[0].0, sameOriginURL)
+        XCTAssertEqual(sentCookies[0].1.map(\.name), ["session"])
+        XCTAssertEqual(sentCookies[1].0, offOriginURL)
+        XCTAssertTrue(sentCookies[1].1.isEmpty, "off-origin approved video must never receive cookies")
+        XCTAssertEqual(cookieQueries, [sameOriginURL], "cookieProvider must not be queried off-origin")
+    }
+
+    func testAccountScopeSwitchDuringFetchDropsBytesAndCachesNothing() async throws {
+        let mp4 = try await Self.makeTestVideoData(width: 160, height: 120)
+        let attachmentURLString =
+            "\(Self.origin)/media/\(Self.documentID.uuidString.lowercased())/attachments/\(Self.fileID.uuidString.lowercased()).mp4"
+        let attachmentURL = URL(string: attachmentURLString)!
+
+        let scopeA = scope(origin: Self.origin)
+        let scopeB = scope(origin: Self.origin)
+        var activeScope = scopeA
+
+        let cache = ImageCacheStore(directory: tempDir("posters"))
+        let attachments = AttachmentCacheStore(directory: tempDir("attachments"))
+        let loader = VideoPosterLoader(
+            cache: cache,
+            attachmentCache: attachments,
+            fetch: { _, _ in
+                activeScope = scopeB
+                return (mp4, "video/mp4")
+            },
+            cookieProvider: { _ in [] },
+            scopeProvider: { activeScope },
+            scratchDirectory: tempDir("scratch")
+        )
+
+        let result = await loader.loadIfNeeded(attachmentURL)
+        XCTAssertNil(result, "stale fetch after account switch must return nil")
+
+        let display = try XCTUnwrap(parseAttachmentLink("[video](\(attachmentURLString))", serverOrigin: Self.origin))
+        XCTAssertNil(attachments.cachedFileURL(for: display), "stale bytes must not populate AttachmentCacheStore")
+        let posterKey = VideoPosterLoader.posterKey(for: attachmentURL)
+        XCTAssertNil(cache.cachedFileURL(forKey: posterKey, scope: scopeA))
+        XCTAssertNil(cache.cachedFileURL(forKey: posterKey, scope: scopeB))
+        XCTAssertNil(loader.poster(for: attachmentURL))
+    }
+
+    func testAccountScopeSwitchDuringExtractionDropsPosterAndCachesNothing() async throws {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8))
+        let testImage = renderer.image { ctx in
+            UIColor.systemBlue.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+        }
+        let jpegData = try XCTUnwrap(testImage.jpegData(compressionQuality: 0.9))
+
+        let videoURL = URL(string: "\(Self.origin)/media/extract-switch.mp4")!
+        let scopeA = scope(origin: Self.origin)
+        let scopeB = scope(origin: Self.origin)
+        var activeScope = scopeA
+
+        let cache = ImageCacheStore(directory: tempDir("posters"))
+        let attachments = AttachmentCacheStore(directory: tempDir("attachments"))
+        let loader = VideoPosterLoader(
+            cache: cache,
+            attachmentCache: attachments,
+            fetch: { _, _ in (Data([0x00, 0x01, 0x02]), "video/mp4") },
+            cookieProvider: { _ in [] },
+            scopeProvider: { activeScope },
+            extractPoster: { _, _ in
+                await MainActor.run { activeScope = scopeB }
+                return jpegData
+            },
+            scratchDirectory: tempDir("scratch")
+        )
+
+        let result = await loader.loadIfNeeded(videoURL)
+        XCTAssertNil(result, "stale extraction after account switch must return nil")
+
+        let posterKey = VideoPosterLoader.posterKey(for: videoURL)
+        XCTAssertNil(cache.cachedFileURL(forKey: posterKey, scope: scopeA), "must not cache poster under stale scopeA")
+        XCTAssertNil(
+            cache.cachedFileURL(forKey: posterKey, scope: scopeB), "must not cache poster under switched scopeB")
+        XCTAssertNil(loader.poster(for: videoURL))
+    }
 }

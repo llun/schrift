@@ -17,6 +17,7 @@ enum Strings_fr {
         .native_editor_media_upload_stopped: "Échec de l’envoi · touchez pour réessayer",
         .native_editor_media_upload_waiting: "Sera envoyé dès que vous serez de nouveau en ligne.",
         .native_editor_media_upload_queued: "En attente d’envoi",
+        .native_editor_media_drop_limit: "Déposez jusqu’à 10 éléments à la fois",
         .native_media_retry_upload: "Réessayer l’envoi",
         .native_media_discard_upload: "Abandonner l’envoi",
         .native_media_name: "Nom",

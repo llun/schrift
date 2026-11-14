@@ -16,6 +16,7 @@ enum Strings_es {
         .native_editor_media_upload_stopped: "Error al subir · toca para reintentar",
         .native_editor_media_upload_waiting: "Se subirá cuando vuelvas a estar en línea.",
         .native_editor_media_upload_queued: "Esperando para subir",
+        .native_editor_media_drop_limit: "Suelta hasta 10 elementos a la vez",
         .native_media_retry_upload: "Reintentar subida",
         .native_media_discard_upload: "Descartar subida",
         .native_media_name: "Nombre",

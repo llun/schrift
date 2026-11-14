@@ -18,6 +18,7 @@ enum Strings_nl {
         .native_editor_media_upload_stopped: "Uploaden mislukt · tik om opnieuw te proberen",
         .native_editor_media_upload_waiting: "Wordt geüpload zodra je weer online bent.",
         .native_editor_media_upload_queued: "Wacht op uploaden",
+        .native_editor_media_drop_limit: "Zet maximaal 10 items tegelijk neer",
         .native_media_retry_upload: "Opnieuw uploaden",
         .native_media_discard_upload: "Upload verwijderen",
         .native_media_name: "Naam",

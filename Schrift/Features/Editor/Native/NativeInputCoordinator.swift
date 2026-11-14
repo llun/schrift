@@ -140,6 +140,12 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// Origin used to recognize same-origin document links on paste and format
     /// interlink plain text when copying.
     @ObservationIgnored var serverOrigin: String = ""
+    /// Owning editor session (root or column) for queued media uploads.
+    @ObservationIgnored weak var session: NativeEditorSession?
+    /// Durable PR13b media upload coordinator for dropped/pasted media.
+    @ObservationIgnored var mediaUploads: NativeMediaUploads?
+    /// Invoked right before a drop applies so multi-column hosts activate the target column.
+    @ObservationIgnored var onMediaDropActivate: (() -> Void)?
     /// An unpredicted IME composition commit (on a block containing inline
     /// objects) waiting for `.composition(.committed)` / `.reset` / `.invalidated`.
     @ObservationIgnored private var pendingCompositionCommit: (id: UUID, blockID: String, text: String)?
@@ -1707,6 +1713,41 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         sourceKind == nil && canEdit
     }
 
+    var canEditForTextDrop: Bool {
+        canEdit
+    }
+
+    var canAcceptMediaDrop: Bool {
+        canFormat && tableMove == nil && tableKey == nil && mediaUploads?.canStartAnyUpload == true
+    }
+
+    /// Synchronous Edit-menu capability check that avoids reading `UIPasteboard` item contents.
+    func canPasteFromPasteboard() -> Bool {
+        guard canEdit else { return false }
+        if tableMove != nil || tableKey != nil {
+            return pasteboard.hasStrings
+                || pasteboard.contains(pasteboardTypes: [
+                    BlockNoteSubtreePayload.pasteboardType,
+                    TableClipboard.htmlType,
+                ])
+        }
+        if sourceKind != nil {
+            return pasteboard.hasStrings
+        }
+        if pasteboard.hasStrings
+            || pasteboard.hasURLs
+            || pasteboard.hasImages
+            || pasteboard.contains(pasteboardTypes: [
+                BlockNoteSubtreePayload.pasteboardType,
+                BlockNoteInlinePayload.pasteboardType,
+                TableClipboard.htmlType,
+            ])
+        {
+            return true
+        }
+        return pasteboard.contains(pasteboardTypes: NativeMediaDropPaste.pasteboardMediaIdentifiers)
+    }
+
     /// Republishes `activeMarks` and the caret's typing attributes (what UIKit
     /// shows marked text with), after a selection change or a patch.
     func refreshSelectionMarks() {
@@ -2499,6 +2540,14 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @discardableResult
     func pasteFromPasteboard() -> Bool {
         guard let view, view.isEditable else { return false }
+        if sourceKind == nil, tableMove == nil, tableKey == nil {
+            switch NativeMediaDropPaste.classifyPasteboard(pasteboard) {
+            case .media(let providers):
+                return pasteMedia(providers)
+            case .textOrPayload, .empty:
+                break
+            }
+        }
         if sourceKind == nil {
             if view.selectedRange.length == 0,
                 let payload = pasteboard.data(forPasteboardType: BlockNoteSubtreePayload.pasteboardType)
@@ -2534,6 +2583,98 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             return false
         }
         return replace(range: view.selectedRange, with: text)
+    }
+
+    @discardableResult
+    func handleMediaDrop(
+        _ providers: [(provider: NSItemProvider, kind: NativeMediaDropPaste.PayloadKind)],
+        target: MediaDropTarget
+    ) -> Bool {
+        guard canAcceptMediaDrop, !providers.isEmpty else { return false }
+        onMediaDropActivate?()
+        guard providers.count <= NativeMediaDropPaste.maxItemsPerOperation else {
+            noticeKey = .native_editor_media_drop_limit
+            return false
+        }
+        return startMediaTransfer(providers: providers, targetBlockID: target.blockID, placement: target.placement)
+    }
+
+    @discardableResult
+    private func pasteMedia(
+        _ providers: [(provider: NSItemProvider, kind: NativeMediaDropPaste.PayloadKind)]
+    ) -> Bool {
+        guard canFormat, tableMove == nil, tableKey == nil, !providers.isEmpty else { return false }
+        guard providers.count <= NativeMediaDropPaste.maxItemsPerOperation else {
+            noticeKey = .native_editor_media_drop_limit
+            return false
+        }
+        guard mediaUploads?.canStartAnyUpload == true else {
+            noticeKey = .native_editor_media_upload_offline
+            return false
+        }
+        guard let target = pasteMediaTarget() else { return false }
+        return startMediaTransfer(providers: providers, targetBlockID: target.blockID, placement: target.placement)
+    }
+
+    private func pasteMediaTarget() -> (blockID: String, placement: MediaInsertPlacement)? {
+        guard let view else { return nil }
+        let entries = surface.rangeIndex.entries
+        let blocks = surface.blocks
+        guard !entries.isEmpty, entries.count == blocks.count else { return nil }
+
+        let anchorUTF16 = NSMaxRange(view.selectedRange)
+        let position =
+            surface.rangeIndex.textPosition(atUTF16: anchorUTF16, isUpperBound: view.selectedRange.length > 0)?.position
+            ?? (entries.count - 1)
+        guard let rootRange = NativeMediaDropPaste.rootBlockRange(at: position, in: blocks) else { return nil }
+
+        let rootBlock = blocks[rootRange.lowerBound]
+        let isEmptySelectedRoot =
+            view.selectedRange.length == 0
+            && rootRange.lowerBound == position
+            && NativeMediaDropPaste.isEmptyRootParagraph(range: rootRange, in: blocks)
+        return (rootBlock.id, isEmptySelectedRoot ? .replaceOrAfter : .after)
+    }
+
+    @discardableResult
+    private func startMediaTransfer(
+        providers: [(provider: NSItemProvider, kind: NativeMediaDropPaste.PayloadKind)],
+        targetBlockID: String,
+        placement: MediaInsertPlacement
+    ) -> Bool {
+        guard canAcceptMediaDrop, let session, let mediaUploads else { return false }
+        let nodes = providers.compactMap { $0.kind.node }
+        guard nodes.count == providers.count, !nodes.isEmpty else { return false }
+
+        // Synchronously initiate `NSItemProvider` staging so UIKit cross-app
+        // security-scoped file representations stay valid across async awaits.
+        let stagedBatch = NativeMediaDropPaste.stage(providers: providers)
+
+        let posted = insertMediaBatch(nodes: nodes, at: targetBlockID, placement: placement) {
+            [weak session, weak mediaUploads] insertedIDs in
+            guard !insertedIDs.isEmpty, let session, let mediaUploads else {
+                stagedBatch.cleanupAll()
+                return
+            }
+            Task { @MainActor in
+                let stagedItems = await stagedBatch.waitAll()
+                guard insertedIDs.count == stagedItems.count else {
+                    stagedBatch.cleanupAll()
+                    return
+                }
+                for (blockID, item) in zip(insertedIDs, stagedItems) {
+                    mediaUploads.start(
+                        item.source,
+                        into: blockID,
+                        slot: MediaBlock.Slot(node: item.node, url: ""),
+                        in: session)
+                }
+            }
+        }
+        if !posted {
+            stagedBatch.cleanupAll()
+        }
+        return posted
     }
 
     /// The payload is untrusted: the engine decodes, bounds and validates it

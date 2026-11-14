@@ -17,6 +17,7 @@ enum Strings_it {
         .native_editor_media_upload_stopped: "Caricamento non riuscito · tocca per riprovare",
         .native_editor_media_upload_waiting: "Verrà caricato quando tornerai online.",
         .native_editor_media_upload_queued: "In attesa di caricamento",
+        .native_editor_media_drop_limit: "Trascina fino a 10 elementi alla volta",
         .native_media_retry_upload: "Riprova caricamento",
         .native_media_discard_upload: "Annulla caricamento",
         .native_media_name: "Nome",
