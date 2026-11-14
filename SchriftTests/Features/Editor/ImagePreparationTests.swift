@@ -1,4 +1,6 @@
+import ImageIO
 import XCTest
+import zlib
 
 @testable import Schrift
 
@@ -65,5 +67,62 @@ final class ImagePreparationTests: XCTestCase {
 
     func testEmptyDataReturnsNil() {
         XCTAssertNil(preparedJPEGData(from: Data()))
+    }
+
+    func testDecompressionBombAbovePixelLimitReturnsNil() throws {
+        // Valid 1-bit grayscale 10,001 x 10,001 PNG (> 100 MP cap) compressing to ~15 KB.
+        let bomb = makeMinimal1BitPNG(width: 10_001, height: 10_001)
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(bomb as CFData, nil))
+        let props = try XCTUnwrap(
+            CGImageSourceCopyPropertiesAtIndex(source, 0, [kCGImageSourceShouldCache: false] as CFDictionary)
+                as? [CFString: Any])
+        XCTAssertEqual(props[kCGImagePropertyPixelWidth] as? Int, 10_001)
+        XCTAssertEqual(props[kCGImagePropertyPixelHeight] as? Int, 10_001)
+
+        XCTAssertNil(preparedJPEGData(from: bomb))
+    }
+
+    private func makeMinimal1BitPNG(width: Int, height: Int) -> Data {
+        func appendChunk(_ type: String, body: Data, to out: inout Data) {
+            var lengthBE = UInt32(body.count).bigEndian
+            out.append(Data(bytes: &lengthBE, count: 4))
+            var typeAndBody = Data(type.utf8)
+            typeAndBody.append(body)
+            out.append(typeAndBody)
+            let crc = typeAndBody.withUnsafeBytes { ptr in
+                crc32(0, ptr.bindMemory(to: Bytef.self).baseAddress, uInt(ptr.count))
+            }
+            var crcBE = UInt32(crc).bigEndian
+            out.append(Data(bytes: &crcBE, count: 4))
+        }
+
+        var png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        var ihdr = Data()
+        var wBE = UInt32(width).bigEndian
+        var hBE = UInt32(height).bigEndian
+        ihdr.append(Data(bytes: &wBE, count: 4))
+        ihdr.append(Data(bytes: &hBE, count: 4))
+        ihdr.append(contentsOf: [1, 0, 0, 0, 0])  // 1-bit grayscale, deflate, standard filter, non-interlaced
+        appendChunk("IHDR", body: ihdr, to: &png)
+
+        let rowBytes = 1 + (width + 7) / 8
+        let raw = Data(count: rowBytes * height)
+        var destLen = compressBound(uLong(raw.count))
+        var compressed = Data(count: Int(destLen))
+        let status = raw.withUnsafeBytes { srcPtr in
+            compressed.withUnsafeMutableBytes { dstPtr in
+                compress2(
+                    dstPtr.bindMemory(to: Bytef.self).baseAddress,
+                    &destLen,
+                    srcPtr.bindMemory(to: Bytef.self).baseAddress,
+                    uLong(raw.count),
+                    Z_BEST_SPEED)
+            }
+        }
+        XCTAssertEqual(status, Z_OK)
+        compressed.count = Int(destLen)
+        appendChunk("IDAT", body: compressed, to: &png)
+        appendChunk("IEND", body: Data(), to: &png)
+        return png
     }
 }

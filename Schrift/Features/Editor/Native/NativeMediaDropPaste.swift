@@ -108,12 +108,17 @@ enum NativeMediaDropPaste {
         let hasFileURL = conforms(provider, to: .fileURL)
         if hasFileURL { return false }
 
-        if conforms(provider, to: .html) || conforms(provider, to: .rtf) || conforms(provider, to: .rtfd) {
+        if conforms(provider, to: .html)
+            || conforms(provider, to: .rtf)
+            || conforms(provider, to: .rtfd)
+            || conforms(provider, to: .flatRTFD)
+            || conforms(provider, to: .webArchive)
+            || conforms(provider, to: .plainText)
+        {
             return true
         }
 
-        let hasPlainOrURL = conforms(provider, to: .plainText) || conforms(provider, to: .url)
-        guard hasPlainOrURL else { return false }
+        guard conforms(provider, to: .url) else { return false }
 
         let hasMediaType =
             conforms(provider, to: .image)
@@ -135,6 +140,21 @@ enum NativeMediaDropPaste {
         }
         if conforms(provider, to: .audio) {
             return .media(node: "audio", isImage: false)
+        }
+        if let ext = provider.suggestedName.map({ ($0 as NSString).pathExtension }),
+            !ext.isEmpty,
+            let suggestedType = UTType(filenameExtension: ext.lowercased())
+        {
+            if suggestedType.conforms(to: .pdf) { return .media(node: "pdf", isImage: false) }
+            if suggestedType.conforms(to: .image), !suggestedType.conforms(to: .svg) {
+                return .media(node: "image", isImage: true)
+            }
+            if suggestedType.conforms(to: .movie) || suggestedType.conforms(to: .video) {
+                return .media(node: "video", isImage: false)
+            }
+            if suggestedType.conforms(to: .audio) {
+                return .media(node: "audio", isImage: false)
+            }
         }
         if conforms(provider, to: .fileURL) || conforms(provider, to: .archive) || hasNonTextDataType(provider) {
             return .file
@@ -221,7 +241,8 @@ enum NativeMediaDropPaste {
                     if exceededByteLimit { throw AttachmentImportError.tooLarge }
                     guard let stagingURL else { throw AttachmentImportError.unreadable }
                     defer { removeStagingURL(stagingURL) }
-                    let file = try loadPickedAttachmentFile(at: stagingURL, byteLimit: attachmentImportByteLimit)
+                    let file = try loadPickedAttachmentFile(
+                        at: stagingURL, byteLimit: attachmentImportByteLimit, allowStagingRoot: true)
                     return file.data
                 }
             }
@@ -229,8 +250,14 @@ enum NativeMediaDropPaste {
                 if exceededByteLimit { throw AttachmentImportError.tooLarge }
                 guard let stagingURL else { throw AttachmentImportError.unreadable }
                 defer { removeStagingURL(stagingURL) }
-                return try loadPickedAttachmentFile(at: stagingURL, byteLimit: attachmentImportByteLimit)
+                return try loadPickedAttachmentFile(
+                    at: stagingURL, byteLimit: attachmentImportByteLimit, allowStagingRoot: true)
             }
+        }
+
+        func cleanupStagingFile() {
+            guard let stagingURL else { return }
+            NativeMediaDropPaste.removeStagingURL(stagingURL)
         }
     }
 
@@ -251,10 +278,16 @@ enum NativeMediaDropPaste {
         }
 
         func finish(index: Int, item: StagedItem) {
+            var removeFileURL: URL?
+            var removeItemDir: URL?
+            var removeBatchDir: URL?
             let toResume: ([StagedItem], [CheckedContinuation<[StagedItem], Never>])? = state.withLock { state in
                 guard state.results.indices.contains(index), state.results[index] == nil else { return nil }
-                if state.cleanedUp, let url = item.stagingURL {
-                    try? FileManager.default.removeItem(at: url)
+                if state.cleanedUp {
+                    removeFileURL = item.stagingURL
+                    removeBatchDir = batchDirectory
+                } else if item.stagingURL == nil {
+                    removeItemDir = batchDirectory.appendingPathComponent("\(index)", isDirectory: true)
                 }
                 state.results[index] = item
                 state.remaining -= 1
@@ -265,6 +298,19 @@ enum NativeMediaDropPaste {
                 let waiters = state.continuations
                 state.continuations.removeAll()
                 return (resolved, waiters)
+            }
+            if let removeFileURL {
+                try? FileManager.default.removeItem(at: removeFileURL)
+            }
+            if let removeItemDir {
+                if let contents = try? FileManager.default.contentsOfDirectory(atPath: removeItemDir.path),
+                    contents.isEmpty
+                {
+                    try? FileManager.default.removeItem(at: removeItemDir)
+                }
+            }
+            if let removeBatchDir {
+                try? FileManager.default.removeItem(at: removeBatchDir)
             }
             if let (resolved, waiters) = toResume {
                 for continuation in waiters {
@@ -306,6 +352,10 @@ enum NativeMediaDropPaste {
         return caches.appendingPathComponent("MediaDropStaging", isDirectory: true)
     }
 
+    static func removeStagingRoot() {
+        try? FileManager.default.removeItem(at: stagingRootDirectory())
+    }
+
     /// Synchronously initiates `NSItemProvider` file/data loads into a
     /// non-backed-up staging directory so cross-app `UIDropSession` security
     /// scopes stay valid before `performDrop` returns.
@@ -319,7 +369,10 @@ enum NativeMediaDropPaste {
         ensureNonBackedUpDirectory(batchDir)
 
         let batch = StagedBatch(count: providers.count, batchDirectory: batchDir)
-        guard !providers.isEmpty else { return batch }
+        guard !providers.isEmpty else {
+            try? FileManager.default.removeItem(at: batchDir)
+            return batch
+        }
 
         for (index, entry) in providers.enumerated() {
             let provider = entry.provider
@@ -330,25 +383,6 @@ enum NativeMediaDropPaste {
             ensureNonBackedUpDirectory(itemDir)
 
             let typeID = preferredTypeIdentifier(for: provider, kind: kind)
-            if typeID == UTType.fileURL.identifier,
-                provider.canLoadObject(ofClass: URL.self)
-            {
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    if let url, url.isFileURL {
-                        let result = stageFromFileURL(
-                            url, node: node, isPhoto: isPhoto, suggestedName: provider.suggestedName,
-                            preferredTypeIdentifier: typeID, destinationDir: itemDir, byteLimit: byteLimit)
-                        if result.stagingURL != nil || result.exceededByteLimit {
-                            batch.finish(index: index, item: result)
-                            return
-                        }
-                    }
-                    loadFileThenData(
-                        provider: provider, typeID: typeID, node: node, isPhoto: isPhoto,
-                        destinationDir: itemDir, byteLimit: byteLimit, index: index, batch: batch)
-                }
-                continue
-            }
             loadFileThenData(
                 provider: provider, typeID: typeID, node: node, isPhoto: isPhoto,
                 destinationDir: itemDir, byteLimit: byteLimit, index: index, batch: batch)
@@ -366,41 +400,62 @@ enum NativeMediaDropPaste {
         index: Int,
         batch: StagedBatch
     ) {
-        provider.loadFileRepresentation(forTypeIdentifier: typeID) { tempURL, _ in
-            if let tempURL {
-                let result = stageFromFileURL(
-                    tempURL, node: node, isPhoto: isPhoto, suggestedName: provider.suggestedName,
-                    preferredTypeIdentifier: typeID, destinationDir: destinationDir, byteLimit: byteLimit)
-                if result.stagingURL != nil || result.exceededByteLimit {
+        if UTType(typeID)?.conforms(to: .fileURL) != true {
+            provider.loadFileRepresentation(forTypeIdentifier: typeID) { tempURL, _ in
+                if let tempURL {
+                    let result = stageFromFileURL(
+                        tempURL, node: node, isPhoto: isPhoto, suggestedName: provider.suggestedName,
+                        preferredTypeIdentifier: typeID, destinationDir: destinationDir, byteLimit: byteLimit)
+                    if result.stagingURL != nil || result.exceededByteLimit {
+                        batch.finish(index: index, item: result)
+                        return
+                    }
+                }
+                loadFileURLOrDataFallback(
+                    provider: provider, typeID: typeID, node: node, isPhoto: isPhoto,
+                    destinationDir: destinationDir, byteLimit: byteLimit, index: index, batch: batch)
+            }
+            return
+        }
+
+        loadFileURLOrDataFallback(
+            provider: provider, typeID: typeID, node: node, isPhoto: isPhoto,
+            destinationDir: destinationDir, byteLimit: byteLimit, index: index, batch: batch)
+    }
+
+    private static func loadFileURLOrDataFallback(
+        provider: NSItemProvider,
+        typeID: String,
+        node: String,
+        isPhoto: Bool,
+        destinationDir: URL,
+        byteLimit: Int,
+        index: Int,
+        batch: StagedBatch
+    ) {
+        // Fallback 1: explicit file-url representation (validated against symlinks & app container).
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
+            provider.canLoadObject(ofClass: URL.self)
+        {
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                if let url, url.isFileURL {
+                    let result = stageFromFileURL(
+                        url, node: node, isPhoto: isPhoto, suggestedName: provider.suggestedName,
+                        preferredTypeIdentifier: typeID, destinationDir: destinationDir, byteLimit: byteLimit)
                     batch.finish(index: index, item: result)
                     return
                 }
+                loadDataFallback(
+                    provider: provider, typeID: typeID, node: node, isPhoto: isPhoto,
+                    destinationDir: destinationDir, byteLimit: byteLimit, index: index, batch: batch)
             }
-
-            // Fallback 1: explicit file-url representation (e.g. Files/Finder item without temp copy).
-            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    if let url, url.isFileURL {
-                        let result = stageFromFileURL(
-                            url, node: node, isPhoto: isPhoto, suggestedName: provider.suggestedName,
-                            preferredTypeIdentifier: typeID, destinationDir: destinationDir, byteLimit: byteLimit)
-                        if result.stagingURL != nil || result.exceededByteLimit {
-                            batch.finish(index: index, item: result)
-                            return
-                        }
-                    }
-                    loadDataFallback(
-                        provider: provider, typeID: typeID, node: node, isPhoto: isPhoto,
-                        destinationDir: destinationDir, byteLimit: byteLimit, index: index, batch: batch)
-                }
-                return
-            }
-
-            // Fallback 2: in-memory bitmap or data representation (e.g. copied UIImage).
-            loadDataFallback(
-                provider: provider, typeID: typeID, node: node, isPhoto: isPhoto,
-                destinationDir: destinationDir, byteLimit: byteLimit, index: index, batch: batch)
+            return
         }
+
+        // Fallback 2: in-memory bitmap or data representation (e.g. copied UIImage).
+        loadDataFallback(
+            provider: provider, typeID: typeID, node: node, isPhoto: isPhoto,
+            destinationDir: destinationDir, byteLimit: byteLimit, index: index, batch: batch)
     }
 
     private static func loadDataFallback(
@@ -414,6 +469,15 @@ enum NativeMediaDropPaste {
         batch: StagedBatch
     ) {
         let dataTypeID = preferredDataTypeIdentifier(for: provider, primary: typeID, isPhoto: isPhoto)
+        guard let dataType = UTType(dataTypeID),
+            !dataType.conforms(to: .url),
+            !dataType.conforms(to: .directory)
+        else {
+            batch.finish(
+                index: index,
+                item: StagedItem(node: node, isPhoto: isPhoto, stagingURL: nil, exceededByteLimit: false))
+            return
+        }
         provider.loadDataRepresentation(forTypeIdentifier: dataTypeID) { data, _ in
             guard let data else {
                 batch.finish(
@@ -456,12 +520,13 @@ enum NativeMediaDropPaste {
         let scoped = sourceURL.startAccessingSecurityScopedResource()
         defer { if scoped { sourceURL.stopAccessingSecurityScopedResource() } }
 
-        let values = try? sourceURL.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
-        if values?.isDirectory == true || sourceURL.hasDirectoryPath {
-            return StagedItem(node: node, isPhoto: isPhoto, stagingURL: nil, exceededByteLimit: false)
-        }
-        if let size = values?.fileSize, size > byteLimit {
+        switch validateRegularImportFile(at: sourceURL, byteLimit: byteLimit, allowStagingRoot: false) {
+        case .valid:
+            break
+        case .tooLarge:
             return StagedItem(node: node, isPhoto: isPhoto, stagingURL: nil, exceededByteLimit: true)
+        case .rejected:
+            return StagedItem(node: node, isPhoto: isPhoto, stagingURL: nil, exceededByteLimit: false)
         }
 
         let fileName = resolvedFileName(
@@ -477,13 +542,16 @@ enum NativeMediaDropPaste {
                 ofItemAtPath: targetURL.path)
             excludeFromBackup(targetURL)
 
-            if let copiedSize = (try? targetURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? nil,
-                copiedSize > byteLimit
-            {
+            switch validateRegularImportFile(at: targetURL, byteLimit: byteLimit, allowStagingRoot: true) {
+            case .valid:
+                return StagedItem(node: node, isPhoto: isPhoto, stagingURL: targetURL, exceededByteLimit: false)
+            case .tooLarge:
                 try? FileManager.default.removeItem(at: targetURL)
                 return StagedItem(node: node, isPhoto: isPhoto, stagingURL: nil, exceededByteLimit: true)
+            case .rejected:
+                try? FileManager.default.removeItem(at: targetURL)
+                return StagedItem(node: node, isPhoto: isPhoto, stagingURL: nil, exceededByteLimit: false)
             }
-            return StagedItem(node: node, isPhoto: isPhoto, stagingURL: targetURL, exceededByteLimit: false)
         } catch {
             try? FileManager.default.removeItem(at: targetURL)
             return StagedItem(node: node, isPhoto: isPhoto, stagingURL: nil, exceededByteLimit: false)
@@ -493,7 +561,9 @@ enum NativeMediaDropPaste {
     private static func preferredTypeIdentifier(for provider: NSItemProvider, kind: PayloadKind) -> String {
         switch kind {
         case .media("pdf", _):
-            return firstMatchingIdentifier(in: provider, conformingTo: .pdf) ?? UTType.pdf.identifier
+            return firstMatchingIdentifier(in: provider, conformingTo: .pdf)
+                ?? firstNonURLDataIdentifier(in: provider)
+                ?? UTType.pdf.identifier
         case .media("image", _):
             let rasterCandidates: [UTType] = [.heic, .jpeg, .png, .gif, .webP, .tiff, .bmp, .image]
             for type in rasterCandidates {
@@ -503,27 +573,36 @@ enum NativeMediaDropPaste {
                     return match
                 }
             }
-            return UTType.image.identifier
+            return firstNonURLDataIdentifier(in: provider) ?? UTType.image.identifier
         case .media("video", _):
             return firstMatchingIdentifier(in: provider, conformingTo: .movie)
                 ?? firstMatchingIdentifier(in: provider, conformingTo: .video)
+                ?? firstNonURLDataIdentifier(in: provider)
                 ?? UTType.movie.identifier
         case .media("audio", _):
-            return firstMatchingIdentifier(in: provider, conformingTo: .audio) ?? UTType.audio.identifier
+            return firstMatchingIdentifier(in: provider, conformingTo: .audio)
+                ?? firstNonURLDataIdentifier(in: provider)
+                ?? UTType.audio.identifier
         case .media(let node, _):
             _ = node
             return provider.registeredTypeIdentifiers.first ?? UTType.data.identifier
         case .file, .ignore:
             if let svg = firstMatchingIdentifier(in: provider, conformingTo: .svg) { return svg }
-            for identifier in provider.registeredTypeIdentifiers {
-                guard let type = UTType(identifier) else { continue }
-                if type.conforms(to: .url) || type.conforms(to: .directory) { continue }
-                if type.conforms(to: .data) || type.conforms(to: .content) || type.conforms(to: .item) {
-                    return identifier
-                }
-            }
-            return provider.registeredTypeIdentifiers.first ?? UTType.data.identifier
+            return firstNonURLDataIdentifier(in: provider)
+                ?? provider.registeredTypeIdentifiers.first
+                ?? UTType.data.identifier
         }
+    }
+
+    private static func firstNonURLDataIdentifier(in provider: NSItemProvider) -> String? {
+        for identifier in provider.registeredTypeIdentifiers {
+            guard let type = UTType(identifier) else { continue }
+            if type.conforms(to: .url) || type.conforms(to: .directory) { continue }
+            if type.conforms(to: .data) || type.conforms(to: .content) || type.conforms(to: .item) {
+                return identifier
+            }
+        }
+        return nil
     }
 
     private static func preferredDataTypeIdentifier(
@@ -531,10 +610,12 @@ enum NativeMediaDropPaste {
         primary: String,
         isPhoto: Bool
     ) -> String {
-        if UTType(primary)?.conforms(to: .fileURL) == true {
-            if isPhoto { return UTType.image.identifier }
+        if UTType(primary)?.conforms(to: .url) == true {
+            if isPhoto, provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                return UTType.image.identifier
+            }
             for identifier in provider.registeredTypeIdentifiers where identifier != primary {
-                if let type = UTType(identifier), !type.conforms(to: .fileURL) {
+                if let type = UTType(identifier), !type.conforms(to: .url), !type.conforms(to: .directory) {
                     return identifier
                 }
             }
@@ -600,10 +681,16 @@ enum NativeMediaDropPaste {
     }
 
     private static func removeStagingURL(_ fileURL: URL) {
-        let parent = fileURL.deletingLastPathComponent()
+        let itemDir = fileURL.deletingLastPathComponent()
+        let batchDir = itemDir.deletingLastPathComponent()
         try? FileManager.default.removeItem(at: fileURL)
-        if let contents = try? FileManager.default.contentsOfDirectory(atPath: parent.path), contents.isEmpty {
-            try? FileManager.default.removeItem(at: parent)
+        if let contents = try? FileManager.default.contentsOfDirectory(atPath: itemDir.path), contents.isEmpty {
+            try? FileManager.default.removeItem(at: itemDir)
+        }
+        if let batchContents = try? FileManager.default.contentsOfDirectory(atPath: batchDir.path),
+            batchContents.isEmpty
+        {
+            try? FileManager.default.removeItem(at: batchDir)
         }
     }
 }

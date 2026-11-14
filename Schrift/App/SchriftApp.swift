@@ -7,6 +7,10 @@ struct SchriftApp: App {
     @State private var localizationStore = LocalizationStore()
     @State private var connectivity = ConnectivityMonitor()
 
+    init() {
+        NativeMediaDropPaste.removeStagingRoot()
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()

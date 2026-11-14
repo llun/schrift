@@ -866,6 +866,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             }
         case .invalidated(let epoch, let id):
             let dropped = (barrier?.id == id) ? barrier?.onSettled : nil
+            if barrier?.id == id { barrier = nil }
             settleCopies(after: id, applied: false)
             if pendingSlashPageLink?.commandID == id { pendingSlashPageLink = nil }
             if let predicted = surface.predictions.first(where: { $0.commandID == id }) {
@@ -2652,23 +2653,34 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
         let posted = insertMediaBatch(nodes: nodes, at: targetBlockID, placement: placement) {
             [weak session, weak mediaUploads] insertedIDs in
-            guard !insertedIDs.isEmpty, let session, let mediaUploads else {
+            guard !insertedIDs.isEmpty, let session, !session.isClosed, let mediaUploads else {
                 stagedBatch.cleanupAll()
                 return
             }
-            Task { @MainActor in
+            Task { @MainActor [weak session, weak mediaUploads] in
                 let stagedItems = await stagedBatch.waitAll()
-                guard insertedIDs.count == stagedItems.count else {
+                guard let session, !session.isClosed, let mediaUploads, insertedIDs.count == stagedItems.count else {
                     stagedBatch.cleanupAll()
                     return
                 }
+                var uploadTasks: [Task<Void, Never>] = []
                 for (blockID, item) in zip(insertedIDs, stagedItems) {
-                    mediaUploads.start(
+                    if let task = mediaUploads.start(
                         item.source,
                         into: blockID,
                         slot: MediaBlock.Slot(node: item.node, url: ""),
-                        in: session)
+                        in: session,
+                        onCleanup: { item.cleanupStagingFile() })
+                    {
+                        uploadTasks.append(task)
+                    } else {
+                        item.cleanupStagingFile()
+                    }
                 }
+                for task in uploadTasks {
+                    await task.value
+                }
+                stagedBatch.cleanupAll()
             }
         }
         if !posted {
@@ -3148,6 +3160,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         directInsertion = nil
         let first = !isFrozen
         isFrozen = true
+        let dropped = barrier?.onSettled
         barrier = nil
         if !surface.predictions.isEmpty || !intents.isEmpty { rollBack() }
         // No delete will be applied and no payload may come: nothing is copied.
@@ -3156,14 +3169,17 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         view?.resignFirstResponder()
         noticeKey = .native_editor_storage_failed
         if first { onFrozen() }
+        dropped?(false)
     }
 
     /// The session closed: nothing more is posted.
     func detach() {
         isDetached = true
+        let dropped = barrier?.onSettled
         barrier = nil
         intents = []
         history.destroy()
+        dropped?(false)
     }
 
     /// A composition this editor cannot support (a multi-block selection, an

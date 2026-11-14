@@ -106,20 +106,29 @@ final class NativeMediaUploads {
     /// `session`'s surface (the document's, or a column's), whose slot is
     /// `slot` now. Nil (and a failure notice) when it cannot start.
     @discardableResult
-    func start(_ source: Source, into blockID: String, slot: MediaBlock.Slot, in session: NativeEditorSession)
-        -> Task<Void, Never>?
-    {
+    func start(
+        _ source: Source,
+        into blockID: String,
+        slot: MediaBlock.Slot,
+        in session: NativeEditorSession,
+        onCleanup: (@Sendable () -> Void)? = nil
+    ) -> Task<Void, Never>? {
         failure = nil
         guard let scope, session.scope == scope else {
+            onCleanup?()
             failure = (blockID, .native_editor_media_upload_offline)
             return nil
         }
-        guard canUpload(blockID) else { return nil }
+        guard canUpload(blockID) else {
+            onCleanup?()
+            return nil
+        }
         preparing.insert(blockID)
         // Never retained across the preparation: a closed editor is gone, not kept alive.
         let target = WeakSession(session: session)
         let previous = preparationTail
         let task = Task { [weak self] in
+            defer { onCleanup?() }
             await previous?.value
             await self?.prepare(source, into: blockID, slot: slot, scope: scope, target: target)
         }
@@ -148,9 +157,9 @@ final class NativeMediaUploads {
                 (fileName, contentType, data) = ("photo.jpg", "image/jpeg", jpeg)
             case .file(let load):
                 guard let file = try await load() else { return }
-                if slot.node == "image" {
-                    // An image block's file is re-encoded like a photo: its
-                    // EXIF (GPS included) never leaves the device.
+                if slot.node == "image" || isNonSVGRasterImageData(file.data) {
+                    // Any raster image (even under-claimed as a generic `.file`) is
+                    // re-encoded without metadata so EXIF/GPS never leaves the device.
                     guard
                         let jpeg = await Task.detached(
                             priority: .userInitiated, operation: { preparedJPEGData(from: file.data) }

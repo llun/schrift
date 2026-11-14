@@ -98,9 +98,9 @@ final class VideoPosterTests: NativeEditingTestCase {
         ]
         for (frameIndex, time) in timestamps.enumerated() {
             var spin = 0
-            while !input.isReadyForMoreMediaData && spin < 500 {
+            while !input.isReadyForMoreMediaData && spin < 1000 {
                 spin += 1
-                await Task.yield()
+                try? await Task.sleep(for: .milliseconds(2))
             }
             var buffer: CVPixelBuffer?
             let status = CVPixelBufferCreate(
@@ -732,5 +732,137 @@ final class VideoPosterTests: NativeEditingTestCase {
         XCTAssertNil(
             cache.cachedFileURL(forKey: posterKey, scope: scopeB), "must not cache poster under switched scopeB")
         XCTAssertNil(loader.poster(for: videoURL))
+    }
+
+    // MARK: - S2 & S3 Security Tests
+
+    func testS2MemoryCacheIsScopedByOriginAndSessionAndSwitchClearsAttachmentCache() async throws {
+        let mp4 = try await Self.makeTestVideoData(width: 160, height: 120)
+        let attachmentURLString =
+            "\(Self.origin)/media/\(Self.documentID.uuidString.lowercased())/attachments/\(Self.fileID.uuidString.lowercased()).mp4"
+        let attachmentURL = URL(string: attachmentURLString)!
+        let display = try XCTUnwrap(parseAttachmentLink("[video](\(attachmentURLString))", serverOrigin: Self.origin))
+
+        let scopeA = ImageCacheScope(serverOrigin: Self.origin, sessionID: "session-a")
+        let scopeB = ImageCacheScope(serverOrigin: Self.origin, sessionID: "session-b")
+        let scopeOtherOrigin = ImageCacheScope(serverOrigin: "https://other.test", sessionID: "session-a")
+        var activeScope = scopeA
+
+        var fetchCount = 0
+        let cache = ImageCacheStore(directory: tempDir("posters"))
+        let attachments = AttachmentCacheStore(directory: tempDir("attachments"))
+        let loader = VideoPosterLoader(
+            cache: cache,
+            attachmentCache: attachments,
+            fetch: { _, _ in
+                fetchCount += 1
+                return (mp4, "video/mp4")
+            },
+            cookieProvider: { _ in [] },
+            scopeProvider: { activeScope },
+            scratchDirectory: tempDir("scratch")
+        )
+
+        let posterA = await loader.loadIfNeeded(attachmentURL)
+        XCTAssertNotNil(posterA)
+        XCTAssertNotNil(loader.poster(for: attachmentURL))
+        XCTAssertNotNil(attachments.cachedFileURL(for: display))
+        XCTAssertEqual(fetchCount, 1)
+
+        // Switching to a different session on the same origin must NOT hit Account A's memory or attachment cache.
+        activeScope = scopeB
+        XCTAssertNil(loader.poster(for: attachmentURL), "memory cache must be isolated by sessionID")
+        XCTAssertNil(attachments.cachedFileURL(for: display), "attachment cache must not persist across scope switch")
+
+        // Switching back to a different origin with the same sessionID also must not hit memory cache.
+        activeScope = scopeA
+        _ = await loader.loadIfNeeded(attachmentURL)
+        XCTAssertNotNil(loader.poster(for: attachmentURL))
+        activeScope = scopeOtherOrigin
+        XCTAssertNil(loader.poster(for: attachmentURL), "memory cache must be isolated by serverOrigin")
+    }
+
+    func testS2AccountScopeSwitchDuringExtractionDoesNotPopulateAttachmentCache() async throws {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8))
+        let testImage = renderer.image { ctx in
+            UIColor.systemGreen.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+        }
+        let jpegData = try XCTUnwrap(testImage.jpegData(compressionQuality: 0.9))
+
+        let attachmentURLString =
+            "\(Self.origin)/media/\(Self.documentID.uuidString.lowercased())/attachments/\(Self.fileID.uuidString.lowercased()).mp4"
+        let attachmentURL = URL(string: attachmentURLString)!
+        let display = try XCTUnwrap(parseAttachmentLink("[video](\(attachmentURLString))", serverOrigin: Self.origin))
+
+        let scopeA = scope(origin: Self.origin)
+        let scopeB = scope(origin: Self.origin)
+        var activeScope = scopeA
+
+        let cache = ImageCacheStore(directory: tempDir("posters"))
+        let attachments = AttachmentCacheStore(directory: tempDir("attachments"))
+        let loader = VideoPosterLoader(
+            cache: cache,
+            attachmentCache: attachments,
+            fetch: { _, _ in (Data([0x00, 0x01, 0x02]), "video/mp4") },
+            cookieProvider: { _ in [] },
+            scopeProvider: { activeScope },
+            extractPoster: { _, _ in
+                await MainActor.run { activeScope = scopeB }
+                return jpegData
+            },
+            scratchDirectory: tempDir("scratch")
+        )
+
+        let result = await loader.loadIfNeeded(attachmentURL)
+        XCTAssertNil(result)
+        XCTAssertNil(
+            attachments.cachedFileURL(for: display),
+            "attachment cache must not be populated before post-extraction scope recheck")
+    }
+
+    func testS3M3U8AndDisallowedMIMETypesNeverTriggerAVAssetFetch() async throws {
+        // 1. AVURLAsset options always forbid all external references and filter MIME types.
+        let hlsOptions = VideoPosterLoader.avURLAssetOptions(mimeType: "application/vnd.apple.mpegurl")
+        XCTAssertEqual(
+            hlsOptions[AVURLAssetReferenceRestrictionsKey] as? UInt,
+            AVAssetReferenceRestrictions.forbidAll.rawValue)
+        XCTAssertNil(hlsOptions[AVURLAssetOverrideMIMETypeKey])
+
+        let mp4Options = VideoPosterLoader.avURLAssetOptions(mimeType: "video/mp4; codecs=\"avc1.42E01E\"")
+        XCTAssertEqual(
+            mp4Options[AVURLAssetReferenceRestrictionsKey] as? UInt,
+            AVAssetReferenceRestrictions.forbidAll.rawValue)
+        XCTAssertEqual(mp4Options[AVURLAssetOverrideMIMETypeKey] as? String, "video/mp4")
+
+        // 2. Cached .m3u8 attachment file must be rejected before AVURLAsset runs.
+        let m3u8URLString =
+            "\(Self.origin)/media/\(Self.documentID.uuidString.lowercased())/attachments/\(Self.fileID.uuidString.lowercased()).m3u8"
+        let m3u8URL = URL(string: m3u8URLString)!
+        let m3u8Display = try XCTUnwrap(parseAttachmentLink("[video](\(m3u8URLString))", serverOrigin: Self.origin))
+        let playlist = Data(
+            """
+            #EXTM3U
+            #EXT-X-TARGETDURATION:10
+            #EXTINF:10.0,
+            https://attacker.example/segment.ts
+            #EXT-X-ENDLIST
+            """.utf8)
+
+        let attachmentDir = tempDir("attachments-m3u8")
+        let attachments = AttachmentCacheStore(directory: attachmentDir)
+        XCTAssertNotNil(attachments.store(playlist, for: m3u8Display))
+
+        let transport = StubTransport { _ in (playlist, "application/vnd.apple.mpegurl") }
+        let (loader, _, _) = makeLoader(scope: scope(), attachmentDir: attachmentDir, transport: transport)
+        let m3u8Result = await loader.loadIfNeeded(m3u8URL)
+        XCTAssertNil(m3u8Result, ".m3u8 in AttachmentCacheStore must never produce a poster")
+
+        // 3. .mp4 URL served with application/vnd.apple.mpegurl MIME type must not override MIME to HLS.
+        let disguisedURL = URL(string: "\(Self.origin)/media/disguised.mp4")!
+        let disguisedTransport = StubTransport { _ in (playlist, "application/vnd.apple.mpegurl") }
+        let (disguisedLoader, _, _) = makeLoader(scope: scope(), transport: disguisedTransport)
+        let disguisedResult = await disguisedLoader.loadIfNeeded(disguisedURL)
+        XCTAssertNil(disguisedResult)
     }
 }

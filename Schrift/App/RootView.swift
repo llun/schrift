@@ -289,6 +289,7 @@ struct RootView: View {
                     // same reason.
                     AttachmentCacheStore().removeAll()
                     ImageCacheStore().removeAll()
+                    NativeMediaDropPaste.removeStagingRoot()
                     // "Continue reading" positions are per-account reading history (they name
                     // blocks of documents only that account could open), not unsynced work.
                     ReadingPositionStore().removeAll()

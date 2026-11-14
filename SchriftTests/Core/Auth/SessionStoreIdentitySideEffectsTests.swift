@@ -226,4 +226,32 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
 
         XCTAssertEqual(store.signInGeneration, afterSignIn + 1)
     }
+
+    func testAccountTransitionsClearAttachmentCacheAndMediaDropStaging() throws {
+        var attachmentClears = 0
+        var stagingClears = 0
+        let store = SessionStore(
+            userDefaults: userDefaults,
+            keychain: FakeKeychainStore(),
+            cookieStorage: FakeCookieStorage(),
+            clearAttachmentCache: { attachmentClears += 1 },
+            clearMediaDropStaging: { stagingClears += 1 })
+
+        try store.signIn(serverURL: serverURL)
+        XCTAssertEqual(attachmentClears, 1)
+        XCTAssertEqual(stagingClears, 1)
+
+        store.noteSessionExpired()
+        store.cancelReauthentication()
+        XCTAssertEqual(attachmentClears, 1, "mere expiry must keep caches")
+        XCTAssertEqual(stagingClears, 1)
+
+        store.noteSessionCookiesReplaced()
+        XCTAssertEqual(attachmentClears, 2)
+        XCTAssertEqual(stagingClears, 2)
+
+        try store.signOut()
+        XCTAssertEqual(attachmentClears, 3)
+        XCTAssertEqual(stagingClears, 3)
+    }
 }

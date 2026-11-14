@@ -103,7 +103,8 @@ final class VideoPosterLoader {
     private let scratchDirectory: URL
     private let limiter = VideoPosterExtractionLimiter(limit: 2)
 
-    private let memory = NSCache<NSURL, UIImage>()
+    private let memory = NSCache<NSString, UIImage>()
+    private var activeScope: ImageCacheScope?
     private var aspectRatios: [Key: CGFloat] = [:]
     private var transportFailures: [Key: Failure] = [:]
     private var oversizeSkipped: Set<Key> = []
@@ -153,8 +154,28 @@ final class VideoPosterLoader {
         guard let scope = scopeProvider(),
             !scope.serverOrigin.isEmpty,
             !scope.sessionID.isEmpty
-        else { return nil }
+        else {
+            if activeScope != nil {
+                activeScope = nil
+                resetForScopeChange()
+            }
+            return nil
+        }
+        if let previous = activeScope, previous != scope {
+            resetForScopeChange()
+        }
+        activeScope = scope
         return scope
+    }
+
+    private func resetForScopeChange() {
+        memory.removeAllObjects()
+        attachmentCache.removeAll()
+        aspectRatios.removeAll()
+        transportFailures.removeAll()
+        oversizeSkipped.removeAll()
+        failedPosters.removeAll()
+        approved.removeAll()
     }
 
     func approve(_ url: URL) {
@@ -168,8 +189,8 @@ final class VideoPosterLoader {
     func poster(for url: URL) -> UIImage? {
         guard let scope = resolvedScope(), isFetchableImageURL(url) else { return nil }
         let key = Key(scope: scope, url: url)
-        let nsURL = memoryKey(for: key)
-        if let image = memory.object(forKey: nsURL) {
+        let cacheKey = memoryKey(for: key)
+        if let image = memory.object(forKey: cacheKey) {
             if aspectRatios[key] == nil, let ratio = imageAspectRatio(of: image.size) {
                 aspectRatios[key] = ratio
             }
@@ -339,29 +360,22 @@ final class VideoPosterLoader {
                 return nil
             }
 
-            if let display = parseAttachmentLink("[video](\(url.absoluteString))", serverOrigin: scope.serverOrigin),
-                let cachedLocalURL = attachmentCache.store(data, for: display)
-            {
-                return await extractAndCachePoster(
-                    fromFileURL: cachedLocalURL,
-                    mimeType: mimeType,
-                    url: url,
-                    key: key,
-                    scope: scope
-                )
-            }
-
             guard let scratchURL = writeScratchFile(data: data, url: url, mimeType: mimeType) else {
                 failedPosters.insert(key)
                 return nil
             }
             defer { try? FileManager.default.removeItem(at: scratchURL) }
+            let attachmentPayload = parseAttachmentLink(
+                "[video](\(url.absoluteString))", serverOrigin: scope.serverOrigin
+            )
+            .map { (display: $0, data: data) }
             return await extractAndCachePoster(
                 fromFileURL: scratchURL,
                 mimeType: mimeType,
                 url: url,
                 key: key,
-                scope: scope
+                scope: scope,
+                attachmentCachePayload: attachmentPayload
             )
         } catch {
             if Task.isCancelled || resolvedScope() != scope { return nil }
@@ -384,7 +398,8 @@ final class VideoPosterLoader {
         mimeType: String?,
         url: URL,
         key: Key,
-        scope: ImageCacheScope
+        scope: ImageCacheScope,
+        attachmentCachePayload: (display: AttachmentDisplay, data: Data)? = nil
     ) async -> UIImage? {
         guard fileURL.isFileURL, resolvedScope() == scope else { return nil }
         let jpegData = await limiter.withPermit {
@@ -394,6 +409,10 @@ final class VideoPosterLoader {
         guard let jpegData, let image = displayedImage(from: jpegData) else {
             failedPosters.insert(key)
             return nil
+        }
+        guard resolvedScope() == scope else { return nil }
+        if let payload = attachmentCachePayload {
+            _ = attachmentCache.store(payload.data, for: payload.display)
         }
         oversizeSkipped.remove(key)
         failedPosters.remove(key)
@@ -409,9 +428,10 @@ final class VideoPosterLoader {
         }
     }
 
-    private func memoryKey(for key: Key) -> NSURL {
-        NSURL(string: "\(key.scope.serverOrigin)|\(key.scope.sessionID)|\(key.url)")
-            ?? NSURL(fileURLWithPath: key.url)
+    private func memoryKey(for key: Key) -> NSString {
+        [key.scope.serverOrigin, key.scope.sessionID, key.url]
+            .map { "\($0.utf8.count):\($0)" }
+            .joined() as NSString
     }
 
     private func writeScratchFile(data: Data, url: URL, mimeType: String?) -> URL? {
@@ -433,18 +453,39 @@ final class VideoPosterLoader {
         }
     }
 
-    private static func sanitizedVideoExtension(url: URL, mimeType: String?) -> String {
-        let allowedExtensions: Set<String> = [
-            "mp4", "mov", "m4v", "webm", "mkv", "avi", "3gp", "3g2", "ts", "mts", "mpeg", "mpg", "ogv",
+    private nonisolated static let allowedVideoExtensions: Set<String> = ["mp4", "m4v", "mov", "webm"]
+    private nonisolated static let allowedVideoMIMETypes: Set<String> = [
+        "video/mp4", "video/x-m4v", "video/quicktime", "video/webm",
+    ]
+
+    private nonisolated static func normalizedAllowedMIMEType(_ mimeType: String?) -> String? {
+        guard let mimeType else { return nil }
+        let base = mimeType.split(separator: ";", maxSplits: 1).first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard let base, allowedVideoMIMETypes.contains(base) else { return nil }
+        return base
+    }
+
+    nonisolated static func avURLAssetOptions(mimeType: String?) -> [String: Any] {
+        var options: [String: Any] = [
+            AVURLAssetReferenceRestrictionsKey: AVAssetReferenceRestrictions.forbidAll.rawValue
         ]
+        if let safeMIME = normalizedAllowedMIMEType(mimeType) {
+            options[AVURLAssetOverrideMIMETypeKey] = safeMIME
+        }
+        return options
+    }
+
+    private static func sanitizedVideoExtension(url: URL, mimeType: String?) -> String {
         let pathExt = url.pathExtension.lowercased()
-        if allowedExtensions.contains(pathExt) {
+        if allowedVideoExtensions.contains(pathExt) {
             return pathExt
         }
-        if let mimeType,
-            let utType = UTType(mimeType: mimeType),
+        if let safeMIME = normalizedAllowedMIMEType(mimeType),
+            let utType = UTType(mimeType: safeMIME),
             let preferred = utType.preferredFilenameExtension?.lowercased(),
-            allowedExtensions.contains(preferred)
+            allowedVideoExtensions.contains(preferred)
         {
             return preferred
         }
@@ -452,12 +493,11 @@ final class VideoPosterLoader {
     }
 
     private nonisolated static func extractJPEGPoster(from fileURL: URL, mimeType: String?) async -> Data? {
-        guard fileURL.isFileURL, !Task.isCancelled else { return nil }
-        var options: [String: Any] = [:]
-        if let mimeType, !mimeType.isEmpty {
-            options[AVURLAssetOverrideMIMETypeKey] = mimeType
-        }
-        let asset = AVURLAsset(url: fileURL, options: options.isEmpty ? nil : options)
+        guard fileURL.isFileURL,
+            !Task.isCancelled,
+            allowedVideoExtensions.contains(fileURL.pathExtension.lowercased())
+        else { return nil }
+        let asset = AVURLAsset(url: fileURL, options: avURLAssetOptions(mimeType: mimeType))
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 1280, height: 1280)

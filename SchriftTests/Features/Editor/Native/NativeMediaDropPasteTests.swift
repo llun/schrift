@@ -3,6 +3,7 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 import XCTest
+import zlib
 
 @testable import Schrift
 
@@ -828,5 +829,321 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
             offlineInteraction, sessionDidUpdate: StubDropSession(items: dragItems))
         XCTAssertEqual(tableProposal.operation, UIDropOperation.forbidden)
         offlineHarness.input.tableMove = nil
+    }
+
+    // MARK: - 11. Security Findings S1, S4, S5, S6 / C1 / C7
+
+    func testS1StageRefusesSymlinksAppContainerAndBundleURLsAndPrefersLoadFileRepresentation() async throws {
+        let dir = try tempDir("s1")
+        let stagingRoot = dir.appendingPathComponent("staging", isDirectory: true)
+
+        // 1. Relative symlink to Library/Preferences via NSItemProvider(contentsOf:) / file-url.
+        let relSymlink = dir.appendingPathComponent("notes.txt")
+        try FileManager.default.createSymbolicLink(
+            atPath: relSymlink.path, withDestinationPath: "../../../../Library/Preferences/dev.llun.Schrift.plist")
+        let relSymlinkProvider = NSItemProvider(object: relSymlink as NSURL)
+
+        // 2. Symlink to a real regular file in tempDir.
+        let realTemp = dir.appendingPathComponent("real.txt")
+        try Data("hello".utf8).write(to: realTemp)
+        let validSymlink = dir.appendingPathComponent("alias.txt")
+        try FileManager.default.createSymbolicLink(at: validSymlink, withDestinationURL: realTemp)
+        let validSymlinkProvider = NSItemProvider(object: validSymlink as NSURL)
+
+        // 3. Direct file inside Library/Caches, Documents, and App Bundle via public.file-url.
+        let cachesDir = try XCTUnwrap(
+            FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first)
+        try FileManager.default.createDirectory(at: cachesDir, withIntermediateDirectories: true)
+        let librarySecret = cachesDir.appendingPathComponent("s1-lib-\(UUID().uuidString).txt")
+        try Data("secret-library".utf8).write(to: librarySecret)
+        addTeardownBlock { try? FileManager.default.removeItem(at: librarySecret) }
+        let libraryProvider = NSItemProvider(object: librarySecret as NSURL)
+
+        let docsDir = try XCTUnwrap(
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first)
+        try FileManager.default.createDirectory(at: docsDir, withIntermediateDirectories: true)
+        let docsSecret = docsDir.appendingPathComponent("s1-doc-\(UUID().uuidString).txt")
+        try Data("secret-docs".utf8).write(to: docsSecret)
+        addTeardownBlock { try? FileManager.default.removeItem(at: docsSecret) }
+        let docsProvider = NSItemProvider(object: docsSecret as NSURL)
+
+        let bundleFile = Bundle.main.bundleURL.appendingPathComponent("Info.plist")
+        let bundleProvider = NSItemProvider(object: bundleFile as NSURL)
+
+        let forbiddenBatch = NativeMediaDropPaste.stage(
+            providers: [
+                (relSymlinkProvider, .file),
+                (validSymlinkProvider, .file),
+                (libraryProvider, .file),
+                (docsProvider, .file),
+                (bundleProvider, .file),
+            ],
+            stagingRoot: stagingRoot)
+        let forbiddenStaged = await forbiddenBatch.waitAll()
+        for (idx, item) in forbiddenStaged.enumerated() {
+            XCTAssertNil(item.stagingURL, "forbidden item \(idx) must not stage")
+            XCTAssertFalse(item.exceededByteLimit, "forbidden item \(idx) must not report oversize")
+        }
+
+        // 4. Provider with BOTH loadFileRepresentation and loadObject(ofClass: URL.self):
+        //    must prefer the system-brokered file representation over the raw file URL.
+        let brokeredFile = dir.appendingPathComponent("brokered.txt")
+        try Data("brokered-safe".utf8).write(to: brokeredFile)
+        let dualProvider = NSItemProvider()
+        dualProvider.suggestedName = "brokered.txt"
+        dualProvider.registerFileRepresentation(
+            forTypeIdentifier: UTType.plainText.identifier,
+            fileOptions: [],
+            visibility: .all
+        ) { completion in
+            completion(brokeredFile, false, nil)
+            return nil
+        }
+        dualProvider.registerObject(librarySecret as NSURL, visibility: .all)
+
+        let dualBatch = NativeMediaDropPaste.stage(
+            providers: [(dualProvider, .file)], stagingRoot: stagingRoot)
+        let dualStaged = await dualBatch.waitAll()
+        let stagedURL = try XCTUnwrap(dualStaged.first?.stagingURL)
+        XCTAssertEqual(try Data(contentsOf: stagedURL), Data("brokered-safe".utf8))
+    }
+
+    func testS4CopiedRichTextFlatRTFDWebArchiveAndTaggedPlainTextNeverUpload() async throws {
+        let harness = try await makeHarness([paragraph("p1", "")])
+        addTeardownBlock { await harness.close() }
+        let env = try makeUploadEnv(for: harness)
+        let pb = privatePasteboard()
+        harness.input.pasteboard = pb
+        let png = try makePNGData()
+
+        // 1. com.apple.flat-rtfd + fallback PNG snapshot -> textOrPayload, 0 uploads.
+        pb.setItems([
+            [
+                UTType.flatRTFD.identifier: Data("rtfd-bytes".utf8),
+                UTType.png.identifier: png,
+            ]
+        ])
+        if case .textOrPayload = NativeMediaDropPaste.classifyPasteboard(pb) {
+        } else {
+            return XCTFail("flatRTFD + PNG must classify as text/payload")
+        }
+        _ = harness.input.pasteFromPasteboard()
+        await harness.settle()
+        XCTAssertTrue(harness.session.surface.blocks.allSatisfy { $0.node == "paragraph" })
+        XCTAssertTrue(env.attachments.allAttachments().isEmpty)
+
+        // 2. com.apple.webarchive + fallback PNG snapshot -> textOrPayload, 0 uploads.
+        pb.setItems([
+            [
+                UTType.webArchive.identifier: Data("webarchive-bytes".utf8),
+                UTType.png.identifier: png,
+            ]
+        ])
+        if case .textOrPayload = NativeMediaDropPaste.classifyPasteboard(pb) {
+        } else {
+            return XCTFail("webArchive + PNG must classify as text/payload")
+        }
+        _ = harness.input.pasteFromPasteboard()
+        await harness.settle()
+        XCTAssertTrue(harness.session.surface.blocks.allSatisfy { $0.node == "paragraph" })
+        XCTAssertTrue(env.attachments.allAttachments().isEmpty)
+
+        // 3. Plain text + custom public.data/plist metadata + PNG preview -> pastes text, 0 uploads.
+        pb.setItems([
+            [
+                UTType.utf8PlainText.identifier: "Copied snippet",
+                UTType.propertyList.identifier: Data("plist-meta".utf8),
+                UTType.png.identifier: png,
+            ]
+        ])
+        if case .textOrPayload = NativeMediaDropPaste.classifyPasteboard(pb) {
+        } else {
+            return XCTFail("plainText + metadata flavors without fileURL must classify as text/payload")
+        }
+        let applied = await harness.run { harness.input.pasteFromPasteboard() }
+        XCTAssertTrue(applied)
+        XCTAssertEqual(harness.session.surface.blocks.map(\.node), ["paragraph"])
+        XCTAssertEqual(harness.session.surface.blocks[0].visibleText, "Copied snippet")
+        XCTAssertTrue(env.attachments.allAttachments().isEmpty)
+    }
+
+    func testS5UnderClaimedImageProviderAndOpaqueFileImageStripEXIFAndBlockBomb() async throws {
+        let gpsJPEG = try makeJPEGWithGPS()
+
+        // 1. Provider claiming only public.data with suggestedName "IMG_1234.JPG" classifies as image.
+        let namedDataProvider = dataProvider(.data, data: gpsJPEG, name: "IMG_1234.JPG")
+        XCTAssertEqual(
+            NativeMediaDropPaste.classifyDropProvider(namedDataProvider),
+            .media(node: "image", isImage: true))
+
+        // 2. Opaque .file drop (no image UTType AND non-image extension ".bin") containing GPS JPEG:
+        //    NativeMediaUploads.prepare sniffs raster image bytes and strips GPS EXIF before queueing.
+        let harness = try await makeHarness([paragraph("p1", "Lead")])
+        addTeardownBlock { await harness.close() }
+        let uploadedData = Locked<Data?>(nil)
+        let env = try makeUploadEnv(for: harness, online: true) { body in
+            uploadedData.value = body
+        }
+        _ = hostInWindow(harness.view)
+
+        let opaqueProvider = dataProvider(.data, data: gpsJPEG, name: "opaque.bin")
+        XCTAssertEqual(NativeMediaDropPaste.classifyDropProvider(opaqueProvider), .file)
+
+        let interaction = try XCTUnwrap(harness.view.interactions.compactMap { $0 as? UIDropInteraction }.first)
+        let dropController = try XCTUnwrap(harness.view.mediaDropController)
+        let dropSession = StubDropSession(
+            items: [UIDragItem(itemProvider: opaqueProvider)],
+            location: CGPoint(x: 80, y: 120))
+        _ = dropController.dropInteraction(interaction, sessionDidUpdate: dropSession)
+        dropController.dropInteraction(interaction, performDrop: dropSession)
+
+        await waitForCondition { uploadedData.value != nil }
+        let body = try XCTUnwrap(uploadedData.value)
+        let startMarker = Data([0xFF, 0xD8, 0xFF])
+        let endMarker = Data([0xFF, 0xD9])
+        let startRange = try XCTUnwrap(body.range(of: startMarker))
+        let endRange = try XCTUnwrap(body.range(of: endMarker, options: .backwards))
+        let jpegSlice = body[startRange.lowerBound..<endRange.upperBound]
+        let uploadedSource = try XCTUnwrap(CGImageSourceCreateWithData(jpegSlice as CFData, nil))
+        let uploadedProps = CGImageSourceCopyPropertiesAtIndex(uploadedSource, 0, nil) as? [CFString: Any]
+        XCTAssertNil(uploadedProps?[kCGImagePropertyGPSDictionary], "GPS EXIF metadata must be stripped even on .file")
+
+        // 3. Opaque .file drop containing a >100 MP decompression bomb fails instead of uploading raw bytes.
+        let bombPNG = makeMinimal1BitPNG(width: 10_001, height: 10_001)
+        let bombProvider = dataProvider(.data, data: bombPNG, name: "bomb.bin")
+        let bombSession = StubDropSession(
+            items: [UIDragItem(itemProvider: bombProvider)],
+            location: CGPoint(x: 80, y: 120))
+        _ = dropController.dropInteraction(interaction, sessionDidUpdate: bombSession)
+        dropController.dropInteraction(interaction, performDrop: bombSession)
+
+        await waitForCondition { env.uploads.failure?.key == .native_editor_media_upload_failed }
+        XCTAssertEqual(env.uploads.failure?.key, .native_editor_media_upload_failed)
+    }
+
+    func testS6C1C7StagedFilesCleanedUpOnEveryExitPath() async throws {
+        NativeMediaDropPaste.removeStagingRoot()
+        addTeardownBlock { NativeMediaDropPaste.removeStagingRoot() }
+        let stagingRoot = NativeMediaDropPaste.stagingRootDirectory()
+
+        func stagedContents() -> [String] {
+            (try? FileManager.default.contentsOfDirectory(atPath: stagingRoot.path)) ?? []
+        }
+
+        let png = try makePNGData()
+
+        // 1. Barrier unsettled -> detach() cleans up staged files and batch directory.
+        let detachHarness = try await makeHarness([paragraph("p1", "Lead")])
+        addTeardownBlock { await detachHarness.close() }
+        _ = try makeUploadEnv(for: detachHarness, online: false)
+        _ = hostInWindow(detachHarness.view)
+        let detachDrop = try XCTUnwrap(detachHarness.view.mediaDropController)
+        let detachInteraction = try XCTUnwrap(
+            detachHarness.view.interactions.compactMap { $0 as? UIDropInteraction }.first)
+        let detachSession = StubDropSession(
+            items: [UIDragItem(itemProvider: dataProvider(.png, data: png, name: "detach.png"))],
+            location: CGPoint(x: 80, y: 80))
+        _ = detachDrop.dropInteraction(detachInteraction, sessionDidUpdate: detachSession)
+        detachDrop.dropInteraction(detachInteraction, performDrop: detachSession)
+        XCTAssertFalse(stagedContents().isEmpty, "staging directory must exist immediately after drop")
+        detachHarness.input.detach()
+        await waitForCondition { stagedContents().isEmpty }
+
+        // 2. Barrier unsettled -> stopAfterStorageFailure() cleans up staged files and batch directory.
+        let failHarness = try await makeHarness([paragraph("p1", "Lead")])
+        addTeardownBlock { await failHarness.close() }
+        _ = try makeUploadEnv(for: failHarness, online: false)
+        _ = hostInWindow(failHarness.view)
+        let failDrop = try XCTUnwrap(failHarness.view.mediaDropController)
+        let failInteraction = try XCTUnwrap(
+            failHarness.view.interactions.compactMap { $0 as? UIDropInteraction }.first)
+        let failSession = StubDropSession(
+            items: [UIDragItem(itemProvider: dataProvider(.png, data: png, name: "fail.png"))],
+            location: CGPoint(x: 80, y: 80))
+        _ = failDrop.dropInteraction(failInteraction, sessionDidUpdate: failSession)
+        failDrop.dropInteraction(failInteraction, performDrop: failSession)
+        XCTAssertFalse(stagedContents().isEmpty)
+        failHarness.input.stopAfterStorageFailure()
+        await waitForCondition { stagedContents().isEmpty }
+
+        // 3. Normal drop success cleans up BOTH staged file AND empty batch UUID directory.
+        let okHarness = try await makeHarness([paragraph("p1", "Lead")])
+        addTeardownBlock { await okHarness.close() }
+        let okEnv = try makeUploadEnv(for: okHarness, online: false)
+        _ = hostInWindow(okHarness.view)
+        let okDrop = try XCTUnwrap(okHarness.view.mediaDropController)
+        let okInteraction = try XCTUnwrap(
+            okHarness.view.interactions.compactMap { $0 as? UIDropInteraction }.first)
+        let okSession = StubDropSession(
+            items: [UIDragItem(itemProvider: dataProvider(.png, data: png, name: "ok.png"))],
+            location: CGPoint(x: 80, y: 80))
+        _ = okDrop.dropInteraction(okInteraction, sessionDidUpdate: okSession)
+        okDrop.dropInteraction(okInteraction, performDrop: okSession)
+        await waitForCondition { !okEnv.attachments.allAttachments().isEmpty && stagedContents().isEmpty }
+        XCTAssertTrue(stagedContents().isEmpty, "empty batch UUID directory must be removed after upload queue")
+
+        // 4. C7: NativeMediaUploads.start returning nil (!canUpload) cleans up staged file immediately.
+        let dir = try tempDir("c7")
+        let stagedFile = dir.appendingPathComponent("orphan.png")
+        try png.write(to: stagedFile)
+        let cleanedUp = Locked(false)
+        let localUploads = NativeMediaUploads(scope: nil, queue: okEnv.coordinator)
+        let nilTask = localUploads.start(
+            .photo { png }, into: "p1", slot: MediaBlock.Slot(node: "image", url: ""),
+            in: okHarness.session, onCleanup: { cleanedUp.value = true })
+        XCTAssertNil(nilTask)
+        XCTAssertTrue(cleanedUp.value, "onCleanup must run when uploads.start returns nil")
+
+        // 5. removeStagingRoot() wipes any leftover staging directory (used on launch & sign-out).
+        let leftoverDir = stagingRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: leftoverDir, withIntermediateDirectories: true)
+        try Data("stale".utf8).write(to: leftoverDir.appendingPathComponent("stale.txt"))
+        XCTAssertFalse(stagedContents().isEmpty)
+        NativeMediaDropPaste.removeStagingRoot()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stagingRoot.path))
+    }
+
+    private func makeMinimal1BitPNG(width: Int, height: Int) -> Data {
+        func appendChunk(_ type: String, body: Data, to out: inout Data) {
+            var lengthBE = UInt32(body.count).bigEndian
+            out.append(Data(bytes: &lengthBE, count: 4))
+            var typeAndBody = Data(type.utf8)
+            typeAndBody.append(body)
+            out.append(typeAndBody)
+            let crc = typeAndBody.withUnsafeBytes { ptr in
+                crc32(0, ptr.bindMemory(to: Bytef.self).baseAddress, uInt(ptr.count))
+            }
+            var crcBE = UInt32(crc).bigEndian
+            out.append(Data(bytes: &crcBE, count: 4))
+        }
+
+        var png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        var ihdr = Data()
+        var wBE = UInt32(width).bigEndian
+        var hBE = UInt32(height).bigEndian
+        ihdr.append(Data(bytes: &wBE, count: 4))
+        ihdr.append(Data(bytes: &hBE, count: 4))
+        ihdr.append(contentsOf: [1, 0, 0, 0, 0])
+        appendChunk("IHDR", body: ihdr, to: &png)
+
+        let rowBytes = 1 + (width + 7) / 8
+        let raw = Data(count: rowBytes * height)
+        var destLen = compressBound(uLong(raw.count))
+        var compressed = Data(count: Int(destLen))
+        let status = raw.withUnsafeBytes { srcPtr in
+            compressed.withUnsafeMutableBytes { dstPtr in
+                compress2(
+                    dstPtr.bindMemory(to: Bytef.self).baseAddress,
+                    &destLen,
+                    srcPtr.bindMemory(to: Bytef.self).baseAddress,
+                    uLong(raw.count),
+                    Z_BEST_SPEED)
+            }
+        }
+        XCTAssertEqual(status, Z_OK)
+        compressed.count = Int(destLen)
+        appendChunk("IDAT", body: compressed, to: &png)
+        appendChunk("IEND", body: Data(), to: &png)
+        return png
     }
 }
