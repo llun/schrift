@@ -27,6 +27,11 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     private(set) var checkboxes: [String: UIButton] = [:]
     private(set) var languageButtons: [String: UIButton] = [:]
     private(set) var toggleButtons: [String: UIButton] = [:]
+    @ObservationIgnored var onToggleCheckbox: ((String) -> Void)?
+
+    var orderedControlViews: [UIView] {
+        Array(checkboxes.values) + Array(languageButtons.values) + Array(toggleButtons.values)
+    }
 
     /// The display theme (a personal preference, never document data). A
     /// change only redraws.
@@ -438,6 +443,7 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         layout.textViewportLayoutController.layoutViewport()
         guard let viewport = layout.textViewportLayoutController.viewportRange else { return }
         let enabled = textView.isEditable && textView.inputCoordinator != nil
+        let checkboxEnabled = textView.inputCoordinator?.canToggleCheckbox == true
         var visibleChecks = Set<String>()
         var visibleCode = Set<String>()
         var visibleToggles = Set<String>()
@@ -470,7 +476,7 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
                 let midY = fragment.firstLineMetrics?.midY ?? frame.height / 2
                 let size = DocsSpacing.rowMinHeight
                 let button = checkboxes[id] ?? makeCheckbox(id)
-                configure(checkbox: button, checked: attributes[.nativeChecked] as? Bool == true, enabled: enabled)
+                configure(checkbox: button, checked: attributes[.nativeChecked] as? Bool == true, enabled: checkboxEnabled)
                 // The gutter after the depth's indent (PR06a).
                 let inset = CGFloat(attributes[.nativeDepth] as? Int ?? 0) * gutter(textView)
                 button.frame = CGRect(
@@ -546,7 +552,13 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         button.isAccessibilityElement = true
         button.accessibilityIdentifier = "nativeEditor.checkbox.\(blockID)"
         button.addAction(
-            UIAction { [weak self] _ in _ = self?.textView?.inputCoordinator?.toggleCheckbox(blockID: blockID) },
+            UIAction { [weak self] _ in
+                if let onToggleCheckbox = self?.onToggleCheckbox {
+                    onToggleCheckbox(blockID)
+                } else {
+                    _ = self?.textView?.inputCoordinator?.toggleCheckbox(blockID: blockID)
+                }
+            },
             for: .primaryActionTriggered)
         textView?.addSubview(button)
         checkboxes[blockID] = button
@@ -649,15 +661,30 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     // MARK: - UIGestureRecognizerDelegate (inline chip taps)
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard let textView, gestureRecognizer === textView.chipTapRecognizer else { return true }
-        return textView.chipTapShouldBegin(at: gestureRecognizer.location(in: textView))
+        guard let textView else { return true }
+        let location = gestureRecognizer.location(in: textView)
+        if gestureRecognizer === textView.chipTapRecognizer {
+            return textView.chipTapShouldBegin(at: location)
+        }
+        if gestureRecognizer === textView.editTapRecognizer {
+            return textView.editTapShouldBegin(at: location)
+        }
+        if gestureRecognizer === textView.editDoubleTapRecognizer {
+            return textView.editDoubleTapShouldBegin(at: location)
+        }
+        return true
     }
 
     func gestureRecognizer(
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
-        guard let textView, gestureRecognizer === textView.chipTapRecognizer else { return false }
+        guard let textView else { return false }
+        let isNativeTap =
+            gestureRecognizer === textView.chipTapRecognizer
+            || gestureRecognizer === textView.editTapRecognizer
+            || gestureRecognizer === textView.editDoubleTapRecognizer
+        guard isNativeTap else { return false }
         if otherGestureRecognizer is UIPanGestureRecognizer || otherGestureRecognizer is UILongPressGestureRecognizer {
             return false
         }

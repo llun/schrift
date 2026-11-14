@@ -53,6 +53,9 @@ final class NativeEditorSession {
     private(set) var column: (group: String, id: String)?
     /// A scoped source surface's kind (PR14): `mathBlock`, `diagram`, or inline `math`.
     private(set) var source: NativeSourceKind?
+    /// Revision bumped whenever displayed blocks, fold state, or checklist
+    /// presentation changes so SwiftUI shells refresh Reading chrome.
+    private(set) var presentationRevision: Int = 0
     /// Server origin for interlink clipboard plain-text serialization and
     /// same-origin URL paste-interlink.
     @ObservationIgnored private var interlinkingOrigin: String = ""
@@ -68,7 +71,6 @@ final class NativeEditorSession {
         let surface = NativeTextSurface(blocks: blocks, storage: view.textStorage, traits: view.traitCollection)
         // Folding is the surface's view state; the view lays out around it.
         view.blockControls.surface = surface
-        surface.onFoldChange = { [weak view] in view?.blockControls.foldDidChange() }
         // Toggles open collapsed: lay out without their children from the start.
         if surface.hidden.contains(true) { view.blockControls.foldDidChange() }
         self.textView = view
@@ -82,6 +84,10 @@ final class NativeEditorSession {
         self.recoveries = recoveries
         self.state = state
         surface.surfaceID = surfaceID
+        surface.onFoldChange = { [weak view, weak self] in
+            view?.blockControls.foldDidChange()
+            self?.presentationRevision &+= 1
+        }
     }
 
     /// The read-only route (PR01): a one-shot projection, no replica session.
@@ -451,6 +457,7 @@ final class NativeEditorSession {
         if delivery.events.contains(where: { if case .patch = $0 { true } else { false } }) {
             awareness?.documentChanged()
             navigation.documentChanged()
+            presentationRevision &+= 1
         }
         if let token = delivery.drained { drains.removeValue(forKey: token)?.resume() }
         if let result = delivery.result, let id = result.commandID {
@@ -511,6 +518,37 @@ final class NativeEditorSession {
     /// Schedule the debounced native replica save (for example after a title edit).
     func scheduleSave() {
         saveScheduler?.schedule()
+    }
+
+    /// Switches this surface between Reading and Editing mode without tearing
+    /// down its `NativeInputCoordinator`.
+    func setEditing(_ editing: Bool) {
+        if editing {
+            guard let input, !input.isFrozen, !input.isDetached, state.writable else {
+                textView.isEditable = false
+                return
+            }
+            textView.isEditable = true
+            input.refreshSelectionMarks()
+        } else {
+            if textView.markedTextRange != nil {
+                textView.unmarkText()
+            }
+            flushPendingSave()
+            if textView.isFirstResponder {
+                textView.resignFirstResponder()
+            }
+            textView.isEditable = false
+            input?.endEditingMode()
+        }
+    }
+
+    /// Updates local Reading-mode checklist hiding without writing Yjs state.
+    @discardableResult
+    func setChecklistPresentation(hidesCompleted: Bool, settlingIDs: Set<String>) -> Bool {
+        let changed = surface.setChecklistPresentation(hidesCompleted: hidesCompleted, settlingIDs: settlingIDs)
+        presentationRevision &+= 1
+        return changed
     }
 
     /// A capture that cannot be prepared leaves durable journal bytes nothing

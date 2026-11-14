@@ -57,6 +57,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             case at(Int)
             /// The selection the history step restored.
             case history
+            /// Leave the selection untouched (used when toggling checkboxes while read-only).
+            case none
         }
         let id: UUID
         let refusal: L10nKey?
@@ -813,6 +815,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 selection.restore(from: resolved)
                 keepSelectionVisible()
                 pendingTypingMarks = nil
+            case .none:
+                break
             }
             noticeKey = nil
         case .refused(let id, let error):
@@ -1640,21 +1644,25 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, keeping: NSRange? = nil,
         remapping: (blockID: String, offset: Int, length: Int)? = nil, retry: (() -> Bool)? = nil,
         readsSelection: Bool = false, requestedSource: NativeSourceRequest? = nil,
-        onSettled: ((Bool) -> Void)? = nil
+        placement: Barrier.Placement? = nil, onSettled: ((Bool) -> Void)? = nil
     ) -> Bool {
         // Folded content is never the target of a command.
         guard !surface.isHidden(blockID: blockID) else {
             if let refusal { noticeKey = refusal }
             return false
         }
-        let placement: Barrier.Placement =
-            if let keeping { .keeping(keeping) } else if let remapping {
+        let resolvedPlacement: Barrier.Placement =
+            if let placement {
+                placement
+            } else if let keeping {
+                .keeping(keeping)
+            } else if let remapping {
                 .remapping(blockID: remapping.blockID, offset: remapping.offset, length: remapping.length)
             } else { .caret }
         // A structural command is its own undo step.
         return postBarrier(
-            blockID, kind, refusal: refusal, placement: placement, undoBefore: true, undoAfter: true, retry: retry,
-            readsSelection: readsSelection, requestedSource: requestedSource, onSettled: onSettled)
+            blockID, kind, refusal: refusal, placement: resolvedPlacement, undoBefore: true, undoAfter: true,
+            retry: retry, readsSelection: readsSelection, requestedSource: requestedSource, onSettled: onSettled)
     }
 
     /// Inserts 1..N empty media blocks at `blockID`'s enclosing depth-0 block
@@ -1738,6 +1746,27 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     var canFormat: Bool {
         sourceKind == nil && canEdit
+    }
+
+    /// Checkboxes remain interactive in Reading mode for writable documents
+    /// without unlocking general text editing.
+    var canToggleCheckbox: Bool {
+        sourceKind == nil && view != nil && !isFrozen && !isDetached && !compositionOwnsView
+            && (session?.state.writable ?? true)
+    }
+
+    /// Clears transient editing UI state when leaving Editing mode.
+    func endEditingMode() {
+        slashMenuQuery = nil
+        slashToken = nil
+        activeInlineTrigger = nil
+        slashPageLinkSession = nil
+        dismissedInlineTrigger = nil
+        inlinePickerHighlight = nil
+        pendingTypingMarks = nil
+        activeMarks = []
+        typingCaret = nil
+        isEditingBlurred = false
     }
 
     var canEditForTextDrop: Bool {
@@ -1951,12 +1980,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     // MARK: - Block props and types
 
     /// Ticks or unticks a checklist item: one durable `checked` prop command
-    /// (BlockNote's `updateBlock`), never a type change. The selection stays.
+    /// (BlockNote's `updateBlock`), never a type change. Selection stays put in
+    /// Editing mode and is left untouched in Reading mode.
     @discardableResult
     func toggleCheckbox(blockID: String) -> Bool {
         guard let block = block(blockID), block.node == "checkListItem" else { return false }
         let checked = block.props.contains(ProjectedProp(key: "checked", value: .bool(true)))
-        return setProps(blockID, [ProjectedProp(key: "checked", value: .bool(!checked))])
+        return setProps(blockID, [ProjectedProp(key: "checked", value: .bool(!checked))], allowWhileReadOnly: true)
     }
 
     /// A code block's language, as one prop command.
@@ -1983,7 +2013,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     /// The slash menu's choice: the "/query" paragraph becomes that block
     /// type, the query removed, as one durable command. Items the native
-    /// editor cannot author yet (divider, photo, file) are not offered.
+    /// editor cannot author yet (photo, file) are not offered.
     @discardableResult
     func applySlashItem(_ item: SlashMenuItem) -> Bool {
         if case .linkPage = item.action {
@@ -2504,16 +2534,19 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     }
 
     /// Unchanged values write nothing; anything else is one validated command.
-    private func setProps(_ blockID: String, _ props: [ProjectedProp]) -> Bool {
-        guard let view, canFormat, let block = block(blockID) else { return false }
+    private func setProps(_ blockID: String, _ props: [ProjectedProp], allowWhileReadOnly: Bool = false) -> Bool {
+        let canWrite = allowWhileReadOnly ? canToggleCheckbox : canFormat
+        guard let view, canWrite, let block = block(blockID) else { return false }
         let defaults = BlockNoteWriter.nativePropSchemas[block.node] ?? []
         func current(_ key: String) -> YAnyValue? {
             block.props.last { $0.key == key }?.value ?? defaults.first { $0.key == key }?.value
         }
         guard props.contains(where: { current($0.key) != $0.value }) else { return true }
         return applyStructural(
-            blockID, .props(props), refusal: .native_editor_input_unavailable, keeping: view.selectedRange,
-            retry: again { [weak self] in self?.setProps(blockID, props) ?? false })
+            blockID, .props(props), refusal: .native_editor_input_unavailable,
+            keeping: view.isEditable ? view.selectedRange : nil,
+            placement: view.isEditable ? nil : .none,
+            retry: again { [weak self] in self?.setProps(blockID, props, allowWhileReadOnly: allowWhileReadOnly) ?? false })
     }
 
     private func block(_ blockID: String) -> BlockSnapshot? {

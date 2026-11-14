@@ -50,6 +50,10 @@ struct NativeEditorView: View {
     var onOutlineAppear: (() -> Void)? = nil
     var onOutlineDismiss: (() -> Void)? = nil
     var onScrollInteraction: (() -> Void)? = nil
+    /// Shell-owned Reading ↔ Editing mode handoff (G04). When nil, defaults to `session.input != nil`.
+    var externalIsEditing: Bool? = nil
+    var onRequestEdit: (() -> Void)? = nil
+    var onExitEditing: (() -> Void)? = nil
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -77,6 +81,48 @@ struct NativeEditorView: View {
     @State private var lastSource: NativeSourceRequest?
     @State private var uploads: NativeMediaUploads?
     @State private var linkCoordinator = NativeDocumentLinkCoordinator()
+    @State private var hidesCompletedChecklists = false
+    @State private var checklistSettling = ChecklistSettlingStore<String>()
+    @State private var checklistSettleTasks: [String: Task<Void, Never>] = [:]
+    @State private var revealFocusRequest = 0
+
+    private var canEditDocument: Bool {
+        session.input != nil && session.state.writable
+    }
+
+    private var isEditing: Bool {
+        externalIsEditing ?? (session.input != nil)
+    }
+
+    private var shouldShowReadingChecklistControls: Bool {
+        !isEditing && !session.hasUnsupportedRoot && session.surface.checklistSummary.hasChecklists
+    }
+
+    private var effectiveHeaderContent: (() -> AnyView)? {
+        guard headerContent != nil || shouldShowReadingChecklistControls else { return nil }
+        let baseHeader = headerContent
+        let showControls = shouldShowReadingChecklistControls
+        let hiddenCount = session.surface.checklistSummary.hiddenCompleted
+        return {
+            AnyView(
+                VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+                    if let baseHeader {
+                        baseHeader()
+                    }
+                    if showControls {
+                        ChecklistReadingControls(
+                            hidesCompleted: Binding(
+                                get: { hidesCompletedChecklists },
+                                set: { setHidesCompleted($0) }),
+                            hiddenCount: hiddenCount,
+                            revealFocusRequest: revealFocusRequest
+                        )
+                        .padding(.horizontal, EditorBlockMetrics.gutter)
+                    }
+                }
+            )
+        }
+    }
 
     private var outlinePresentedBinding: Binding<Bool> {
         externalOutlinePresented ?? $isPresentingOutline
@@ -91,7 +137,9 @@ struct NativeEditorView: View {
     }
 
     var body: some View {
-        Group {
+        let _ = session.presentationRevision
+        let checklistSummary = session.surface.checklistSummary
+        return Group {
             if session.hasUnsupportedRoot || session.surface.blocks.isEmpty {
                 if headerContent != nil || footerContent != nil {
                     ScrollView {
@@ -124,6 +172,19 @@ struct NativeEditorView: View {
                         loc[.editor_empty_title], systemImage: "doc.text",
                         description: Text(loc[.editor_empty_body]))
                 }
+            } else if !isEditing && checklistSummary.allBlocksHidden {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
+                        if let effectiveHeader = effectiveHeaderContent {
+                            effectiveHeader()
+                        }
+                        if let footerContent {
+                            footerContent()
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .scrollDismissesKeyboard(.interactively)
             } else {
                 NativeTextCanvas(
                     session: session, contentSize: uiContentSizeCategory(for: dynamicTypeSize),
@@ -131,24 +192,47 @@ struct NativeEditorView: View {
                     theme: theme, loc: loc, images: images, posters: posters, serverOrigin: serverOrigin,
                     isOffline: isOffline,
                     uploads: uploads,
-                    onOpenTable: { openTable = NativeTableRequest(id: $0) },
-                    onOpenColumns: { openColumns = columnEditor($0) },
-                    onOpenMedia: { openMedia = NativeMediaRequest(id: $0) },
-                    onOpenSource: { openSource = $0 },
+                    onOpenTable: {
+                        requestEditIfWritable()
+                        openTable = NativeTableRequest(id: $0)
+                    },
+                    onOpenColumns: {
+                        requestEditIfWritable()
+                        openColumns = columnEditor($0)
+                    },
+                    onOpenMedia: {
+                        requestEditIfWritable()
+                        openMedia = NativeMediaRequest(id: $0)
+                    },
+                    onOpenSource: {
+                        requestEditIfWritable()
+                        openSource = $0
+                    },
                     uploadingBlocks: uploads?.uploadingBlocks ?? [], waitingUploads: uploads?.waitingBlocks ?? [],
                     failedUploads: uploads?.failedBlocks ?? [],
                     documentTitle: documentTitle,
                     onOpenDocument: { id, _ in openInlineDocument(id) },
                     inlinePickerSource: inlinePickerSource,
-                    headerContent: headerContent,
+                    headerContent: effectiveHeaderContent,
                     footerContent: footerContent,
-                    onScrollInteraction: onScrollInteraction
+                    onScrollInteraction: onScrollInteraction,
+                    onRequestEdit: {
+                        requestEditIfWritable()
+                    },
+                    onToggleCheckbox: { blockID in
+                        handleCheckboxToggle(blockID: blockID)
+                    }
                 )
                 .id(ObjectIdentifier(session))
             }
         }
         // Over the text, above the formatting bar's inset.
         .overlay(alignment: .bottom) { backToTopOffer }
+        .accessibilityActions {
+            if session.navigation.reading?.offersBackToTop == true {
+                Button(loc[.editor_back_to_top]) { session.navigation.backToTop() }
+            }
+        }
         .safeAreaInset(edge: .top) {
             if let preservedNotice {
                 Text(loc[preservedNotice])
@@ -178,7 +262,7 @@ struct NativeEditorView: View {
                         .padding()
                         .accessibilityIdentifier("nativeEditor.inputNotice")
                 }
-                if let input = session.input {
+                if let input = session.input, isEditing {
                     GlassEffectContainer(spacing: DocsSpacing.space2xs) {
                         VStack(spacing: 0) {
                             // The classic menu, offering only what this editor can apply;
@@ -281,9 +365,16 @@ struct NativeEditorView: View {
             guard let mediaQueue else { return }
             uploads = NativeMediaUploads(scope: uploadDocumentID == nil ? nil : session.scope, queue: mediaQueue)
         }
-        .nativeLinkEditing($linkTarget, input: session.input)
+        .nativeLinkEditing($linkTarget, input: isEditing ? session.input : nil)
         .onChange(of: ObjectIdentifier(session), initial: true) { _, _ in
+            cancelAllSettleTasks()
+            checklistSettling.removeAll()
             session.input?.onRequestLinkEdit = { linkTarget = $0 }
+            session.input?.onDone = { onExitEditing?() }
+            syncEditingAndChecklistPresentation(editing: isEditing, scrollSurvivor: false)
+        }
+        .onChange(of: isEditing, initial: false) { _, editing in
+            syncEditingAndChecklistPresentation(editing: editing, scrollSurvivor: true)
         }
         .modifier(
             DocumentOutlinePresentation(
@@ -400,6 +491,103 @@ extension NativeEditorView {
             hasPresentedCover: hasPresentedNavigationCover,
             push: { document in onOpenDocument?(document) }
         )
+    }
+
+    private func requestEditIfWritable() {
+        guard !isEditing, canEditDocument else { return }
+        onRequestEdit?()
+    }
+
+    private func syncEditingAndChecklistPresentation(editing: Bool, scrollSurvivor: Bool) {
+        session.setEditing(editing)
+        if editing {
+            cancelAllSettleTasks()
+            checklistSettling.removeAll()
+            _ = session.setChecklistPresentation(hidesCompleted: false, settlingIDs: [])
+        } else {
+            applyReadingChecklistPresentation(hidesCompleted: hidesCompletedChecklists, scrollSurvivor: scrollSurvivor)
+        }
+    }
+
+    private func setHidesCompleted(_ hides: Bool) {
+        if !hides {
+            cancelAllSettleTasks()
+            checklistSettling.removeAll()
+        }
+        hidesCompletedChecklists = hides
+        guard !isEditing else { return }
+        applyReadingChecklistPresentation(hidesCompleted: hides, scrollSurvivor: hides)
+    }
+
+    private func applyReadingChecklistPresentation(hidesCompleted: Bool, scrollSurvivor: Bool) {
+        let settlingIDs = hidesCompleted ? checklistSettling.ids : []
+        let anchorID = (hidesCompleted && scrollSurvivor) ? session.textView.topVisibleBlockID() : nil
+        let survivorID =
+            (hidesCompleted && scrollSurvivor)
+            ? session.surface.survivingVisibleBlockID(
+                around: anchorID, nextHidesCompleted: hidesCompleted, settlingIDs: settlingIDs)
+            : nil
+        let changed = session.setChecklistPresentation(hidesCompleted: hidesCompleted, settlingIDs: settlingIDs)
+        if changed, let survivorID {
+            session.textView.layoutIfNeeded()
+            _ = session.textView.scroll(toBlock: survivorID, surface: session.surface)
+        }
+    }
+
+    private func handleCheckboxToggle(blockID: String) {
+        guard !isEditing, hidesCompletedChecklists,
+            let position = session.surface.rangeIndex.position(for: blockID),
+            session.surface.blocks.indices.contains(position)
+        else {
+            _ = session.input?.toggleCheckbox(blockID: blockID)
+            return
+        }
+        let wasChecked = NativeTextSurface.isCheckedChecklist(session.surface.blocks[position])
+        guard !wasChecked else {
+            checklistSettleTasks.removeValue(forKey: blockID)?.cancel()
+            checklistSettling.cancel(blockID)
+            _ = session.setChecklistPresentation(hidesCompleted: true, settlingIDs: checklistSettling.ids)
+            _ = session.input?.toggleCheckbox(blockID: blockID)
+            return
+        }
+        checklistSettleTasks.removeValue(forKey: blockID)?.cancel()
+        let token = checklistSettling.begin(blockID)
+        _ = session.setChecklistPresentation(hidesCompleted: true, settlingIDs: checklistSettling.ids)
+        guard session.input?.toggleCheckbox(blockID: blockID) == true else {
+            checklistSettling.cancel(blockID)
+            _ = session.setChecklistPresentation(hidesCompleted: true, settlingIDs: checklistSettling.ids)
+            return
+        }
+        let delay = DocsMotion.checklistSettleDelay(reduceMotion: reduceMotion)
+        let targetSession = session
+        checklistSettleTasks[blockID] = Task { @MainActor in
+            if delay > 0 {
+                try? await Task.sleep(for: .seconds(delay))
+            }
+            checklistSettleTasks.removeValue(forKey: blockID)
+            guard !Task.isCancelled, targetSession === session else { return }
+            guard checklistSettling.finish(blockID, token: token) else { return }
+            guard !isEditing, hidesCompletedChecklists else { return }
+            let anchorID = session.textView.topVisibleBlockID()
+            let survivorID = session.surface.survivingVisibleBlockID(
+                around: anchorID, nextHidesCompleted: true, settlingIDs: checklistSettling.ids)
+            let changed = session.setChecklistPresentation(
+                hidesCompleted: true, settlingIDs: checklistSettling.ids)
+            if changed {
+                revealFocusRequest &+= 1
+                if let survivorID {
+                    session.textView.layoutIfNeeded()
+                    _ = session.textView.scroll(toBlock: survivorID, surface: session.surface)
+                }
+            }
+        }
+    }
+
+    private func cancelAllSettleTasks() {
+        for task in checklistSettleTasks.values {
+            task.cancel()
+        }
+        checklistSettleTasks.removeAll()
     }
 
     private func hasPresentedNavigationCover() -> Bool {
@@ -747,6 +935,8 @@ private struct NativeTextCanvas: UIViewControllerRepresentable {
     var headerContent: (() -> AnyView)? = nil
     var footerContent: (() -> AnyView)? = nil
     var onScrollInteraction: (() -> Void)? = nil
+    var onRequestEdit: (() -> Void)? = nil
+    var onToggleCheckbox: ((String) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -779,6 +969,8 @@ private struct NativeTextCanvas: UIViewControllerRepresentable {
         session.textView.blockControls.waitingUploads = waitingUploads
         session.textView.blockControls.failedUploads = failedUploads
         session.textView.blockControls.documentTitle = documentTitle
+        session.textView.blockControls.onToggleCheckbox = onToggleCheckbox
+        session.textView.onRequestEdit = onRequestEdit
         session.navigation.documentTitle = documentTitle
         controller.updateAccessories(
             header: headerContent.map { AnyView($0().environment(\.docsTheme, theme).environment(loc)) },
@@ -903,6 +1095,7 @@ private final class NativeCanvasViewController: UIViewController {
             headerHost.removeFromParent()
             self.headerHost = nil
         }
+        textView.headerAccessoryView = headerHost?.view
 
         if let footer {
             let wrapped = AnyView(
@@ -930,6 +1123,7 @@ private final class NativeCanvasViewController: UIViewController {
             footerHost.removeFromParent()
             self.footerHost = nil
         }
+        textView.footerAccessoryView = footerHost?.view
 
         layoutAccessoryViews()
     }

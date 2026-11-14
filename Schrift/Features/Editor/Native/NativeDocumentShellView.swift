@@ -289,6 +289,7 @@ struct NativeDocumentShellView: View {
     @State private var pagesTreeViewModel: PagesTreeViewModel
     @State private var optionsViewModel: OptionsViewModel
     @State private var shareViewModel: ShareViewModel
+    @State private var isNativeEditing = false
 
     private var editingToastInset: CGFloat { DocsSpacing.rowMinHeight + DocsSpacing.spaceBase }
     private var isOffline: Bool { offlineOverride || viewModel.availability.isOffline }
@@ -297,11 +298,26 @@ struct NativeDocumentShellView: View {
         offlineOverride || viewModel.availability.isWorkOffline || offlineBannerStatus.value
     }
 
-    private var toastBottomInset: CGFloat {
-        if case .native(let session) = route, session.input != nil {
-            return editingToastInset
+    private var canEditNative: Bool {
+        if case .native(let session) = route {
+            return session.input != nil && session.state.writable
         }
-        return 0
+        return false
+    }
+
+    private var effectiveNativeEditing: Bool {
+        isNativeEditing && canEditNative
+    }
+
+    private var nativeSessionIdentity: ObjectIdentifier? {
+        if case .native(let session) = route {
+            return ObjectIdentifier(session)
+        }
+        return nil
+    }
+
+    private var toastBottomInset: CGFloat {
+        effectiveNativeEditing ? editingToastInset : 0
     }
 
     private var canOpenOutline: Bool {

@@ -2094,6 +2094,28 @@ final class EditorViewModel {
         return true
     }
 
+    /// Native Reading ↔ Editing handoff: consumes a newly-created document entry
+    /// intent once so the native editor opens directly in Editing mode and arms
+    /// the one-shot title focus request.
+    func consumeNativeNewDocumentEntryIfNeeded(canEdit: Bool) -> Bool {
+        guard canEdit, !isUnavailable, !isDocumentPendingDelete else { return false }
+        if entryIntent?.consume() == true {
+            initialTitleFocusPending = true
+            return true
+        }
+        return initialTitleFocusPending
+    }
+
+    func consumeNativeInitialTitleFocus(isEditing: Bool, canEdit: Bool) -> Bool {
+        guard isEditing, canEdit, initialTitleFocusPending else { return false }
+        initialTitleFocusPending = false
+        return true
+    }
+
+    func clearNativeInitialTitleFocus() {
+        initialTitleFocusPending = false
+    }
+
     func startEditing(focusing blockID: UUID? = nil, focusingTitle: Bool = false) {
         liveWrite?.prepareForLocalEdit()
         guard canStartEditing else { return }
