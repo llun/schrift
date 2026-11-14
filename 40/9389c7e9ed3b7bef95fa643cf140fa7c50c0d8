@@ -1,0 +1,61 @@
+Schrift/App/RootView.swift
+  s_dc239db0cc1c9d::t_6906eaf470494e 39,59,67-68,140-153
+Schrift/Core/Localization/Strings+de.swift
+  s_dc239db0cc1c9d::t_5a93d0e2756e0f 87
+Schrift/Core/Localization/Strings+es.swift
+  s_dc239db0cc1c9d::t_b9cc1bdeb005a8 84
+Schrift/Core/Localization/Strings+fr.swift
+  s_dc239db0cc1c9d::t_0a5cd9ae919a79 84
+Schrift/Core/Localization/Strings+it.swift
+  s_dc239db0cc1c9d::t_ac1defe77668df 84
+Schrift/Core/Localization/Strings+nl.swift
+  s_dc239db0cc1c9d::t_c8915babd45b64 86
+Schrift/Core/Localization/Strings+pt.swift
+  s_dc239db0cc1c9d::t_295a41a802115f 84
+Schrift/Core/Localization/Strings+sl.swift
+  s_dc239db0cc1c9d::t_857fa967ddb2f0 90
+Schrift/Core/Localization/Strings+th.swift
+  s_dc239db0cc1c9d::t_1503b2d4c1790c 83
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_dc239db0cc1c9d::t_93bf721e02fd04 81
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_dc239db0cc1c9d::t_e30f3b87e1645d 81
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_dc239db0cc1c9d::t_24485d64658c12 943,1435,1633,2056-2061,2064,2066,2728,2731-2733
+Schrift/Features/Editor/EditorView.swift
+  s_dc239db0cc1c9d::t_43a8a3636166bd 363-368,1051-1052,1634-1635
+Schrift/Features/Editor/EditorViewModel.swift
+  s_dc239db0cc1c9d::t_b149bc0a95e5e1 239,245-248,334-335,339,373-376,554-557,706,726-727,826,838-839,1004-1006,1348,2097-2114,2116-2118
+Schrift/Features/Editor/Native/NativeDocumentShellView.swift
+  s_dc239db0cc1c9d::t_152359628ee015 11,24-28
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_dc239db0cc1c9d::t_224416c2332f04 699-707,940,961,965,988,997-998,1157,1264-1266,1273,1349,1415
+Schrift/Features/Editor/Native/ReplicaStore.swift
+  s_dc239db0cc1c9d::t_2763ce1532f2d3 294-295
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplayMigrationTests.swift
+  s_dc239db0cc1c9d::t_1aea43d83d99dd 984-1321
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplicaOwnershipTests.swift
+  s_dc239db0cc1c9d::t_b5159a9ec38fc6 254-405
+SchriftTests/Features/Editor/Native/NativeEditorLifecycleTests.swift
+  s_dc239db0cc1c9d::t_e401e32d4702b5 371,379-385,387-398,550-738,786-788,809-810,816-817
+SchriftTests/Features/Editor/Native/NativeTextSurfaceTests.swift
+  s_dc239db0cc1c9d::t_060a064af230a5 538-539,546-547
+SchriftTests/Features/Editor/Native/ReplicaStoreTests.swift
+  s_dc239db0cc1c9d::t_1f92e25833a5d0 465-588
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "409389c7e9ed3b7bef95fa643cf140fa7c50c0d8",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
