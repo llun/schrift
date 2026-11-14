@@ -679,8 +679,9 @@ final class NativeTextView: UITextView {
     override func layoutSubviews() {
         // Attachment paragraphs are sized for this width before TextKit lays out.
         blockControls?.updateAttachmentWidth()
-        blockControls?.flushPendingAspectRatioRefresh(requestLayout: false)
+        let anchor = blockControls?.prepareAspectRatioRefresh()
         super.layoutSubviews()
+        blockControls?.completeAspectRatioRefresh(anchor)
         blockControls?.layoutControls()
         // After the viewport settled: collaborators' cursors on screen (PR10).
         cursorOverlay.layout(in: self)

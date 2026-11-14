@@ -639,7 +639,8 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         let screenYAfter = anchorAfter.minY - harness.view.contentOffset.y
         XCTAssertEqual(
             harness.view.contentOffset.y, offsetBefore + expectedDelta, accuracy: 0.5,
-            "imgFragAfter=\(imgFragAfter) anchorBefore=\(anchorBefore) anchorAfter=\(anchorAfter) oldLH=\(oldAttachment.content.lineHeight) newLH=\(newAttachment.content.lineHeight) contentSize=\(harness.view.contentSize)")
+            "imgFragAfter=\(imgFragAfter) anchorBefore=\(anchorBefore) anchorAfter=\(anchorAfter) oldLH=\(oldAttachment.content.lineHeight) newLH=\(newAttachment.content.lineHeight) contentSize=\(harness.view.contentSize)"
+        )
         XCTAssertEqual(screenYAfter, screenYBefore, accuracy: 0.5, "visible content stayed anchored")
         assertS2Consistent(harness.session)
         try await assertConsistent(harness, localCommands: 0)
