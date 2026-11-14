@@ -535,14 +535,16 @@ final class NativeTextSurfaceTests: DocumentEngineTestCase {
 
         XCTAssertEqual(
             surface.checklistSummary,
-            NativeTextSurface.NativeChecklistSummary(total: 3, completed: 1, hiddenCompleted: 0, allBlocksHidden: false))
+            NativeTextSurface.NativeChecklistSummary(total: 3, completed: 1, hiddenCompleted: 0, allBlocksHidden: false)
+        )
 
         let changed = session.setChecklistPresentation(hidesCompleted: true, settlingIDs: [])
         XCTAssertTrue(changed)
         XCTAssertEqual(surface.hidden, [true, true, true, false, false])
         XCTAssertEqual(
             surface.checklistSummary,
-            NativeTextSurface.NativeChecklistSummary(total: 3, completed: 1, hiddenCompleted: 1, allBlocksHidden: false))
+            NativeTextSurface.NativeChecklistSummary(total: 3, completed: 1, hiddenCompleted: 1, allBlocksHidden: false)
+        )
         XCTAssertEqual(
             surface.survivingVisibleBlockID(around: "c1", nextHidesCompleted: true, settlingIDs: []),
             "c2")

@@ -462,6 +462,130 @@ final class ReplicaStoreTests: XCTestCase {
             XCTAssertEqual(next.map(\.revision), [committed + 1], "\(boundary)")
         }
     }
+
+    func testBackupExclusionLifecycleTracksDirtyAndQuarantinedReplicas() throws {
+        let store = store()
+        _ = try store.create(for: scope, checkpoint: baseline)
+        let folder = directory.appendingPathComponent(try scope.directoryName(), isDirectory: true)
+        let isExcluded: () throws -> Bool = {
+            var mutableFolder = folder
+            mutableFolder.removeCachedResourceValue(forKey: .isExcludedFromBackupKey)
+            return try mutableFolder.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true
+        }
+        let rootValues = try directory.resourceValues(forKeys: [.isExcludedFromBackupKey])
+        XCTAssertNotEqual(rootValues.isExcludedFromBackup, true)
+        XCTAssertTrue(try isExcluded(), "fresh clean replica should be excluded from backup")
+
+        // Remote append keeps replica clean and excluded.
+        _ = try store.append(journalBytes(1), for: scope, commandID: UUID(), baseRevision: 0, origin: .remote)
+        XCTAssertTrue(try isExcluded())
+
+        // Local append makes outbox non-empty -> included in backup.
+        _ = try store.append(journalBytes(2), for: scope, commandID: UUID(), baseRevision: 1, origin: .local)
+        XCTAssertFalse(try isExcluded(), "dirty outbox replica must be included in backup")
+
+        // Acknowledging the last outbox batch restores clean exclusion when provisional is clean.
+        let batch = try XCTUnwrap(try store.outbox(for: scope))
+        try store.acknowledge(batch)
+        XCTAssertTrue(try isExcluded(), "cleaned replica should re-exclude from backup")
+
+        // Non-empty provisional composition includes in backup; clearing re-excludes.
+        try store.writeProvisionalRecoveries(
+            [ProvisionalRecovery(commandID: UUID(), blockID: "b1", text: "draft", state: .composing)],
+            for: scope
+        )
+        XCTAssertFalse(try isExcluded(), "non-empty provisional state must be included in backup")
+        try store.writeProvisionalRecoveries([], for: scope)
+        XCTAssertTrue(try isExcluded(), "clearing provisional state should re-exclude from backup")
+
+        // Corrupting a clean replica triggers quarantine on restore and removes backup exclusion.
+        let manifestURL = folder.appendingPathComponent("manifest.json")
+        try Data("not-json".utf8).write(to: manifestURL, options: .atomic)
+        XCTAssertThrowsError(try store.restore(for: scope))
+        XCTAssertFalse(try isExcluded(), "quarantined/damaged replica must be included in backup")
+    }
+
+    @MainActor
+    func testCopyReplicaPreservesCheckpointJournalProvisionalAndOwnershipIdempotently() throws {
+        let (store, ownership) = ownedStore()
+        let destinationScope = ReplicaScope(
+            serverOrigin: scope.serverOrigin,
+            ownerUserID: scope.ownerUserID,
+            org: scope.org,
+            documentID: UUID()
+        )
+        _ = try store.create(for: scope, checkpoint: baseline)
+        let cmd1 = UUID()
+        _ = try store.append(journalBytes(1), for: scope, commandID: cmd1, baseRevision: 0, origin: .local)
+        let provisional = [ProvisionalRecovery(commandID: UUID(), blockID: "b1", text: "typing", state: .orphaned)]
+        try store.writeProvisionalRecoveries(provisional, for: scope)
+
+        let copied = try store.copyReplica(from: scope, to: destinationScope)
+        XCTAssertEqual(copied.revision, 1)
+        XCTAssertEqual(copied.outbox.count, 1)
+        XCTAssertTrue(ownership.isNativeOwned(documentID: destinationScope.documentID))
+
+        let restoredSource = try XCTUnwrap(try store.restore(for: scope))
+        let restoredDest = try XCTUnwrap(try store.restore(for: destinationScope))
+        XCTAssertEqual(restoredDest.checkpoint, restoredSource.checkpoint)
+        XCTAssertEqual(restoredDest.updates, restoredSource.updates)
+        XCTAssertEqual(restoredDest.provisional, provisional)
+
+        // Second copy when destination already exists is idempotent.
+        let idempotent = try store.copyReplica(from: scope, to: destinationScope)
+        XCTAssertEqual(idempotent.revision, 1)
+    }
+
+    @MainActor
+    func testPurgeCleanReplicasKeepsDirtyProvisionalProtectedOtherUserAndUnreadable() throws {
+        let (store, _) = ownedStore()
+        let userID = try XCTUnwrap(scope.ownerUserID)
+        let cleanID = UUID()
+        let dirtyOutboxID = UUID()
+        let provisionalID = UUID()
+        let keptID = UUID()
+        let corruptID = UUID()
+        let otherUserID = UUID()
+
+        let makeScope: (UUID, UUID?) -> ReplicaScope = { docID, owner in
+            ReplicaScope(serverOrigin: self.scope.serverOrigin, ownerUserID: owner, org: "docs", documentID: docID)
+        }
+
+        let cleanScope = makeScope(cleanID, userID)
+        let dirtyScope = makeScope(dirtyOutboxID, userID)
+        let provisionalScope = makeScope(provisionalID, userID)
+        let keptScope = makeScope(keptID, userID)
+        let corruptScope = makeScope(corruptID, userID)
+        let otherUserScope = makeScope(UUID(), otherUserID)
+
+        for s in [cleanScope, dirtyScope, provisionalScope, keptScope, corruptScope, otherUserScope] {
+            _ = try store.create(for: s, checkpoint: baseline)
+        }
+        _ = try store.append(journalBytes(1), for: dirtyScope, commandID: UUID(), baseRevision: 0, origin: .local)
+        try store.writeProvisionalRecoveries(
+            [ProvisionalRecovery(commandID: UUID(), blockID: "b1", text: "uncommitted", state: .composing)],
+            for: provisionalScope
+        )
+        let corruptFolder = directory.appendingPathComponent(try corruptScope.directoryName(), isDirectory: true)
+        try Data("bad".utf8).write(to: corruptFolder.appendingPathComponent("manifest.json"), options: .atomic)
+
+        store.purgeCleanReplicas(
+            serverOrigin: scope.serverOrigin,
+            ownerUserID: userID,
+            keepingDocumentIDs: [keptID]
+        )
+
+        XCTAssertNil(try store.restore(for: cleanScope))
+        XCTAssertNotNil(try store.restore(for: dirtyScope))
+        XCTAssertNotNil(try store.restore(for: provisionalScope))
+        XCTAssertNotNil(try store.restore(for: keptScope))
+        XCTAssertNotNil(try store.restore(for: otherUserScope))
+        var mutableCorruptFolder = corruptFolder
+        mutableCorruptFolder.removeCachedResourceValue(forKey: .isExcludedFromBackupKey)
+        let corruptExcluded = try mutableCorruptFolder.resourceValues(forKeys: [.isExcludedFromBackupKey])
+            .isExcludedFromBackup
+        XCTAssertFalse(corruptExcluded == true, "unreadable replica folder must be preserved and kept backed up")
+    }
 }
 
 /// Two bytes per journal update, so every one is distinct.

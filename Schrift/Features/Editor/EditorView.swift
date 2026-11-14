@@ -360,6 +360,12 @@ struct EditorView: View {
             guard !offline else { return }
             nativeOpen.refreshInBackground(viewModel: viewModel, isOffline: showsOffline)
             if case .classic = nativeOpen.route {
+                if viewModel.isNativeBaselineRequiredOffline, !viewModel.isEditing,
+                    !viewModel.hasUnsavedLocalContent
+                {
+                    nativeOpen.close()
+                    Task { await openNative() }
+                }
             } else {
                 Task { await viewModel.loadChildren() }
             }
@@ -1042,6 +1048,8 @@ private struct ClassicEditorView: View {
         EditorBannerStack(
             showsOfflineBanner: showsOfflineBanner,
             hasLocalCopy: viewModel.hasLocalCopy,
+            limitedNativeOfflineRead: viewModel.isNativeLimitedOfflineRead
+                || (offlineOverride && viewModel.isNativeBaselineRequiredOffline),
             hasConflict: viewModel.syncConflict != nil,
             showUpdateAvailable: viewModel.updateAvailable && !viewModel.isEditing,
             isDocumentPendingDelete: viewModel.isDocumentPendingDelete,
@@ -1623,7 +1631,8 @@ private struct ClassicEditorView: View {
                 viewModel.startEditing()
             }
             .font(DocsFont.body)
-            .foregroundStyle(theme.colors.textBrand)
+            .foregroundStyle(viewModel.canStartEditing ? theme.colors.textBrand : theme.colors.textTertiary)
+            .disabled(!viewModel.canStartEditing)
         }
         .padding(.top, DocsSpacing.spaceLG)
     }

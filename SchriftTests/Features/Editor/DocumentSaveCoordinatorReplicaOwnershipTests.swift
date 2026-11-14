@@ -251,4 +251,156 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
         XCTAssertTrue(f.coordinator.isNativeOwned(documentID: otherDocumentID))
         XCTAssertEqual(f.coordinator.nativeOwnership(documentID: documentID), .unreadable)
     }
+
+    func testPurgeCleanNativeReplicasOnSignOutKeepsProtectedWorkAndPurgesCleanOwned() throws {
+        let suite = "SignOutPurgeTests.\(UUID().uuidString)"
+        draftSuiteNames.append(suite)
+        let defaults = UserDefaults(suiteName: suite)!
+        let drafts = PendingDraftStore(userDefaults: defaults)
+        let createStore = PendingDocumentCreateStore(userDefaults: defaults)
+        let deleteStore = PendingDocumentDeleteStore(userDefaults: defaults)
+        let attachmentStore = PendingAttachmentStore(
+            userDefaults: defaults,
+            directory: cacheDirectory.appendingPathComponent("Attachments", isDirectory: true)
+        )
+        let listCache = DocumentCacheStore(userDefaults: defaults)
+        SignedInUserStore(userDefaults: defaults).remember(owner)
+        let ownership = ReplicaOwnershipStore(userDefaults: ownershipDefaults)
+        let store = ReplicaStore(
+            directory: cacheDirectory.appendingPathComponent("ReplicaDrafts"),
+            ownershipStore: ownership
+        )
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let coordinator = DocumentSaveCoordinator(
+            client: client,
+            draftStore: drafts,
+            replicaStore: store,
+            contentCache: contentCache,
+            createStore: createStore,
+            deleteStore: deleteStore,
+            attachmentStore: attachmentStore,
+            listCache: listCache,
+            backgroundTasks: .noop,
+            nativeEditorEnabled: { true },
+            isLiveReplicaHeld: { _ in true }
+        )
+
+        let checkpoint = BlockNoteYjs.encode(
+            [
+                BlockNoteBlock(
+                    node: "paragraph", props: DocumentEngineTestCase.paragraphProps,
+                    runs: [InlineRun("Clean")], id: "clean")
+            ], clientID: 1)
+
+        let cleanDocID = UUID()
+        let conflictDocID = UUID()
+        let attachmentDocID = UUID()
+        let deleteDocID = UUID()
+        let otherOwnerDocID = UUID()
+
+        let scopeFor: (UUID, UUID) -> ReplicaScope = { docID, user in
+            ReplicaScope(serverOrigin: client.serverOrigin, ownerUserID: user, org: "docs", documentID: docID)
+        }
+
+        let cleanScope = scopeFor(cleanDocID, owner)
+        let conflictScope = scopeFor(conflictDocID, owner)
+        let attachmentScope = scopeFor(attachmentDocID, owner)
+        let deleteScope = scopeFor(deleteDocID, owner)
+        let otherScope = scopeFor(otherOwnerDocID, UUID())
+
+        for s in [cleanScope, conflictScope, attachmentScope, deleteScope, otherScope] {
+            _ = try store.create(for: s, checkpoint: checkpoint)
+        }
+
+        coordinator.recordConflict(documentID: conflictDocID, serverUpdatedAt: Date())
+        coordinator.recordPendingDelete(documentID: deleteDocID, ownerUserID: owner)
+        XCTAssertNotNil(
+            coordinator.queueNativeAttachment(
+                scope: attachmentScope,
+                target: NativeMediaTarget(
+                    org: "docs", blockID: "b1", slot: .image, fileName: "a.png", contentType: "image/png"
+                ),
+                data: Data([1, 2, 3])
+            )
+        )
+        ServerConfigStore(userDefaults: defaults).remember(
+            ServerConfig(
+                version: "6.0.0", releaseDate: nil, serverTime: nil, sentryDsn: nil,
+                environment: nil, features: nil, capabilities: nil, yjs: nil),
+            forServerOrigin: client.serverOrigin
+        )
+        let localDoc = coordinator.createLocalDocument(title: "Local", parentID: nil, ownerUserID: owner)
+        let localScope = scopeFor(localDoc.id, owner)
+
+        // Clear owner right before invoking purge, mirroring sign-out where leaving ownerID is passed explicitly.
+        SignedInUserStore(userDefaults: defaults).clear()
+        coordinator.purgeCleanNativeReplicasOnSignOut(ownerUserID: owner)
+
+        XCTAssertNil(try store.restore(for: cleanScope), "clean replica with no protected state must be purged")
+        XCTAssertNotNil(try store.restore(for: conflictScope), "replica referenced by conflicts must stay")
+        XCTAssertNotNil(try store.restore(for: attachmentScope), "replica with pending attachment must stay")
+        XCTAssertNotNil(try store.restore(for: deleteScope), "replica with pending delete must stay")
+        XCTAssertNotNil(try store.restore(for: localScope), "replica for pending create must stay")
+        XCTAssertNotNil(try store.restore(for: otherScope), "different owner's replica must stay")
+    }
+
+    func testPurgeCleanNativeReplicasOnSignOutFailsClosedWhenAnyMetadataStoreIsUnreadable() throws {
+        let corruptKeys = [
+            "dev.llun.Schrift.pendingDrafts",
+            "dev.llun.Schrift.pendingCreates",
+            "dev.llun.Schrift.pendingDeletes",
+            "dev.llun.Schrift.pendingAttachments",
+        ]
+        for corruptKey in corruptKeys {
+            let suite = "SignOutFailClosed.\(UUID().uuidString)"
+            draftSuiteNames.append(suite)
+            let defaults = UserDefaults(suiteName: suite)!
+            defaults.set(Data([0xff]), forKey: corruptKey)
+
+            let drafts = PendingDraftStore(userDefaults: defaults)
+            let createStore = PendingDocumentCreateStore(userDefaults: defaults)
+            let deleteStore = PendingDocumentDeleteStore(userDefaults: defaults)
+            let attachmentStore = PendingAttachmentStore(
+                userDefaults: defaults,
+                directory: cacheDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            )
+            let listCache = DocumentCacheStore(userDefaults: defaults)
+            SignedInUserStore(userDefaults: defaults).remember(owner)
+            let ownership = ReplicaOwnershipStore(userDefaults: ownershipDefaults)
+            let store = ReplicaStore(
+                directory: cacheDirectory.appendingPathComponent("ReplicaDrafts.\(UUID().uuidString)"),
+                ownershipStore: ownership
+            )
+            let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+            let coordinator = DocumentSaveCoordinator(
+                client: client,
+                draftStore: drafts,
+                replicaStore: store,
+                contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+                createStore: createStore,
+                deleteStore: deleteStore,
+                attachmentStore: attachmentStore,
+                listCache: listCache,
+                backgroundTasks: .noop,
+                isLiveReplicaHeld: { _ in true }
+            )
+            let scope = ReplicaScope(
+                serverOrigin: client.serverOrigin, ownerUserID: owner, org: "docs", documentID: UUID()
+            )
+            _ = try store.create(for: scope, checkpoint: Data([0, 0]))
+            coordinator.purgeCleanNativeReplicasOnSignOut(ownerUserID: owner)
+            XCTAssertNotNil(
+                try store.restore(for: scope),
+                "must fail closed and keep clean replica when \(corruptKey) is unreadable"
+            )
+        }
+
+        // Also fail closed when replicaOwnership itself is unreadable.
+        let f = try fixture()
+        _ = try f.store.create(for: f.scope, checkpoint: Data([0, 0]))
+        ownershipDefaults.set(Data([0xff]), forKey: "dev.llun.Schrift.replicaOwnership")
+        f.coordinator.purgeCleanNativeReplicasOnSignOut(ownerUserID: owner)
+        XCTAssertNotNil(try f.store.restore(for: f.scope))
+    }
 }

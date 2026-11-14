@@ -236,11 +236,16 @@ final class EditorViewModel {
     /// The same log the shared client records into — the screen that pushed this one hands
     /// it over. nil in previews and tests, which simply means no detail is offered.
     let diagnostics: APIDiagnosticsLog?
+    private let nativeEditorEnabled: @MainActor () -> Bool
 
     private(set) var isDirty = false
     /// Editing is only allowed once content has loaded — otherwise autosave
     /// would overwrite the whole server document with an empty draft.
     private(set) var hasLoadedContent = false
+    /// True while `NativeEditorOpen` owns this screen (`.loading`, `.native`, or
+    /// `.preservedUnavailable`). Blocks classic `load()`/`revalidate()`/`refresh()`/`apply()`
+    /// from overwriting native state or titles.
+    private(set) var isNativeRouteActive = false
     /// Set once the document is deleted locally. Unlike `becomeUnavailable()`, the
     /// delete path leaves `hasLoadedContent` true, so a late photo insert would
     /// otherwise re-save — and re-draft — a document that no longer exists.
@@ -326,10 +331,12 @@ final class EditorViewModel {
         mediaCheckRetryInterval: Duration = .seconds(1),
         remoteChangeDebounce: Duration = .milliseconds(600),
         diagnostics: APIDiagnosticsLog? = nil,
-        availability: OnlineAvailability = OnlineAvailability()
+        availability: OnlineAvailability = OnlineAvailability(),
+        nativeEditorEnabled: (@MainActor () -> Bool)? = nil
     ) {
         self.client = client
         self.availability = availability
+        self.nativeEditorEnabled = nativeEditorEnabled ?? { saveCoordinator.nativeEditorEnabled() }
         self.documentID = documentID
         self.title = title
         self.saveCoordinator = saveCoordinator
@@ -362,6 +369,10 @@ final class EditorViewModel {
 
     var isEditing: Bool { mode != .reading }
     var hasPendingNewDocumentEntry: Bool { entryIntent?.isPending == true }
+
+    func setNativeRouteActive(_ active: Bool) {
+        isNativeRouteActive = active
+    }
 
     // MARK: - Error state
 
@@ -540,6 +551,10 @@ final class EditorViewModel {
 
     func load() async {
         loadFailedOffline = false
+        if isNativeRouteActive || saveCoordinator.isNativeOwned(documentID: documentID) {
+            isLoading = false
+            return
+        }
         // **A document waiting to be deleted is not opened.** Say so and stop — before the
         // local phase, which would otherwise render the body from the draft the undo is
         // holding and let the user edit a document they have thrown away, and before any
@@ -688,6 +703,7 @@ final class EditorViewModel {
         // 404 here is what its own DELETE predicts, and this catch would turn that into the
         // terminal "no longer available", burying an undoable state under a permanent one.
         guard !isDocumentPendingDelete else { return }
+        guard !isNativeRouteActive, !saveCoordinator.isNativeOwned(documentID: documentID) else { return }
         let diagnosticsMarker = diagnostics?.marker()
         do {
             // Snapshot before issuing: only the coordinator's state at *issue*
@@ -707,7 +723,8 @@ final class EditorViewModel {
             let fetched = try await client.formattedContent(documentID: documentID)
             let (formatted, leafNesting) = await recoveringLeafNesting(fetched, availabilityToken: availabilityToken)
             guard generation == revalidationGeneration, !Task.isCancelled,
-                availability.permitsResponse(for: availabilityToken)
+                availability.permitsResponse(for: availabilityToken),
+                !isNativeRouteActive, !saveCoordinator.isNativeOwned(documentID: documentID)
             else { return }
             apply(
                 formatted: formatted, leafNesting: leafNesting,
@@ -806,6 +823,7 @@ final class EditorViewModel {
         // deletion is the same shape for a different reason: the 404 is expected, and
         // reading it as terminal would bury an undoable state under a permanent one.
         guard !isLocalDocument, !isDocumentPendingDelete else { return }
+        guard !isNativeRouteActive, !saveCoordinator.isNativeOwned(documentID: documentID) else { return }
         revalidationGeneration += 1
         let generation = revalidationGeneration
         let diagnosticsMarker = diagnostics?.marker()
@@ -817,7 +835,8 @@ final class EditorViewModel {
             let fetched = try await client.formattedContent(documentID: documentID)
             let (formatted, leafNesting) = await recoveringLeafNesting(fetched, availabilityToken: availabilityToken)
             guard generation == revalidationGeneration, !Task.isCancelled,
-                availability.permitsResponse(for: availabilityToken)
+                availability.permitsResponse(for: availabilityToken),
+                !isNativeRouteActive, !saveCoordinator.isNativeOwned(documentID: documentID)
             else { return }
             apply(
                 formatted: formatted, leafNesting: leafNesting,
@@ -982,6 +1001,9 @@ final class EditorViewModel {
     private func apply(
         formatted: FormattedDocumentContent, leafNesting: LeafNestingOverlay, mayPredateLocalSave: Bool
     ) {
+        guard !isNativeRouteActive, !saveCoordinator.isNativeOwned(documentID: documentID),
+            !hasPendingNativeTitleEdit
+        else { return }
         // This fetch raced one of our own saves, so its body may be the one that
         // save just replaced. Take nothing from it — not the body, not the cache
         // entry, and not the server baseline (the early return leaves
@@ -1323,7 +1345,7 @@ final class EditorViewModel {
     /// for a closed open, a sign-out or a deletion never re-caches the body.
     func refreshOfflineCacheForNativeReader(isCurrent: () -> Bool) async throws -> Bool {
         guard !Task.isCancelled, !availability.isOffline, !isLocalDocument, !isDocumentPendingDelete,
-            !isDocumentDiscarded, !hasPendingNewDocumentEntry
+            !isDocumentDiscarded
         else { return false }
         let token = availability.token
         let marker = saveCoordinator.saveMarker(documentID: documentID)
@@ -2072,8 +2094,28 @@ final class EditorViewModel {
     /// even after a successful save removed its draft. The durable owner marker is the
     /// authority; an unreadable marker also answers owned, so the classic writer cannot
     /// guess its way over a replica.
+    /// True when the native editor is enabled against a cached Docs 6 server, no durable
+    /// native replica exists yet, and no classic draft protects prior local classic work.
+    /// Offline opens must stay read-only until an online open fetches the raw Yjs baseline.
+    var isNativeBaselineRequiredOffline: Bool {
+        nativeEditorEnabled()
+            && saveCoordinator.isCachedDocs6Server()
+            && saveCoordinator.nativeOwnership(documentID: documentID) == .none
+            && saveCoordinator.storedDraft(documentID: documentID) == nil
+            && saveCoordinator.pendingSave(documentID: documentID) == nil
+            && !isLocalDocument
+    }
+
+    /// True when an unmigrated Docs 6 document fell back to its classic Markdown cache offline
+    /// while the native editor is enabled, so the banner explains why editing is disabled.
+    var isNativeLimitedOfflineRead: Bool {
+        (availability.isOffline || loadFailedOffline) && isNativeBaselineRequiredOffline && hasLocalCopy
+    }
+
     var canStartEditing: Bool {
-        hasLoadedContent && !saveCoordinator.isNativeOwned(documentID: documentID)
+        hasLoadedContent
+            && !saveCoordinator.isNativeOwned(documentID: documentID)
+            && !((availability.isOffline || loadFailedOffline) && isNativeBaselineRequiredOffline)
     }
 
     /// Called only after initialization/restoration, never from a rerender or reconnect.

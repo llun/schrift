@@ -981,4 +981,342 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             relaunched.coordinator.lastConfirmedPush(documentID: self.serverID) == ""
         }
     }
+
+    func testNativeLocalCreateSeedsLocalScopeHoldsEditsAndMigratesAtomicallyWithChildAndAttachment() async throws {
+        let log = RequestRecorder()
+        let defaultsSuite = "NativeMigrationFull.\(UUID().uuidString)"
+        suiteNames.append(defaultsSuite)
+        let defaults = UserDefaults(suiteName: defaultsSuite)!
+        SignedInUserStore(userDefaults: defaults).remember(user)
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        ServerConfigStore(userDefaults: defaults).remember(
+            ServerConfig(
+                version: "6.0.0", releaseDate: nil, serverTime: nil, sentryDsn: nil,
+                environment: nil, features: nil, capabilities: nil, yjs: nil),
+            forServerOrigin: client.serverOrigin)
+
+        let replicaDir = cacheDirectory.appendingPathComponent("ReplicaDrafts", isDirectory: true)
+        let ownership = ReplicaOwnershipStore(userDefaults: defaults)
+        let drafts = PendingDraftStore(userDefaults: defaults)
+        let creates = PendingDocumentCreateStore(userDefaults: defaults)
+        let attachments = PendingAttachmentStore(
+            userDefaults: defaults,
+            directory: cacheDirectory.appendingPathComponent("Attachments", isDirectory: true))
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        let lists = DocumentCacheStore(userDefaults: defaults)
+        let children = DocumentChildrenCacheStore(userDefaults: defaults)
+
+        let makeCoord: (@escaping @Sendable () -> Bool) -> DocumentSaveCoordinator = { isOnline in
+            let _ = isOnline
+            return DocumentSaveCoordinator(
+                client: client,
+                draftStore: drafts,
+                replicaStore: ReplicaStore(directory: replicaDir, ownershipStore: ownership),
+                contentCache: contentCache,
+                createStore: creates,
+                deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+                attachmentStore: attachments,
+                listCache: lists,
+                childrenCache: children,
+                backgroundTasks: .noop,
+                nativeEditorEnabled: { true })
+        }
+
+        let offlineCoord = makeCoord { false }
+        let localDoc = offlineCoord.createLocalDocument(title: "Offline Local", parentID: nil, ownerUserID: user)
+        let localScope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: user, org: "docs", documentID: localDoc.id)
+        let seeded = try XCTUnwrap(
+            try ReplicaStore(directory: replicaDir, ownershipStore: ownership).restore(for: localScope),
+            "Docs 6 local create must seed an empty BlockNote replica under localScope")
+        XCTAssertTrue(ownership.isNativeOwned(documentID: localDoc.id))
+        XCTAssertEqual(drafts.draft(for: localDoc.id)?.replica?.scope, localScope)
+
+        // Type offline and enqueue onto coordinator without throwing .pendingCreate.
+        let doc = YDoc(clientID: 2)
+        defer { doc.destroy() }
+        try doc.applyUpdate(YUpdateDecoder.decode(seeded.checkpoint), origin: .remote)
+        let blocks = BlockNoteYjs.blocks(from: doc)
+        let firstBlockID = try XCTUnwrap(blocks.first?.id)
+        let update = try BlockNoteWriter(doc: doc).replaceText(block: firstBlockID, range: 0..<0, with: "Offline typed")
+        let localAdapter = ReplicaSaveAdapter(
+            store: ReplicaStore(directory: replicaDir, ownershipStore: ownership), scope: localScope)
+        try localAdapter.record(
+            NativeEditCommand(
+                id: UUID(), baseRevision: 0, blockID: firstBlockID, range: 0..<0, replacement: "Offline typed"),
+            update: update)
+
+        let versionBefore = offlineCoord.pendingCreatesVersion
+        try offlineCoord.enqueueReplica(adapter: localAdapter, title: "Typed Native Title")
+        XCTAssertGreaterThan(offlineCoord.pendingCreatesVersion, versionBefore)
+
+        // Create a child pending create pointing at localDoc.id and queue a native media attachment on localScope.
+        let childDoc = offlineCoord.createLocalDocument(title: "Child Doc", parentID: localDoc.id, ownerUserID: user)
+        XCTAssertNotNil(
+            offlineCoord.queueNativeAttachment(
+                scope: localScope,
+                target: NativeMediaTarget(
+                    org: "docs", blockID: firstBlockID, slot: .image, fileName: "photo.png",
+                    contentType: "image/png"),
+                data: Data([0x89, 0x50, 0x4E, 0x47])))
+
+        // Offline sync attempt fails at POST /documents/ and never leaks localID to document or attachment routes.
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        await offlineCoord.syncPendingDrafts()
+        XCTAssertEqual(log.count(ofMethod: "POST", urlContaining: localDoc.id.uuidString.lowercased()), 0)
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: localDoc.id.uuidString.lowercased()), 0)
+        XCTAssertEqual(log.count(ofMethod: "GET", urlContaining: localDoc.id.uuidString.lowercased()), 0)
+
+        // Now bring the server online and relaunch the coordinator.
+        let childServerID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let localIDLower = localDoc.id.uuidString.lowercased()
+        let serverIDLower = serverID.uuidString.lowercased()
+        let childServerLower = childServerID.uuidString.lowercased()
+        let ydocPatchRecorder = Box<[URL]>([])
+
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let url = request.url?.absoluteString ?? ""
+            let method = request.httpMethod ?? "GET"
+            if url.hasSuffix("users/me/") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data("{\"id\": \"\(self.user.uuidString.lowercased())\"}".utf8), error: nil)
+            }
+            if url.hasSuffix("/config/") {
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+            }
+            if method == "POST", url.hasSuffix("/documents/") {
+                let body = Data(
+                    """
+                    {"id":"\(serverIDLower)","title":"Typed Native Title","content":"",
+                     "created_at":"2026-03-01T12:00:00Z","updated_at":"2026-03-01T12:00:00Z"}
+                    """.utf8)
+                return .init(statusCode: 201, headers: [:], body: body, error: nil)
+            }
+            if method == "POST", url.hasSuffix("/documents/\(serverIDLower)/children/") {
+                let body = Data(
+                    """
+                    {"id":"\(childServerLower)","title":"Child Doc","content":"",
+                     "created_at":"2026-03-01T12:00:00Z","updated_at":"2026-03-01T12:00:00Z"}
+                    """.utf8)
+                return .init(statusCode: 201, headers: [:], body: body, error: nil)
+            }
+            if method == "POST", url.contains("/documents/\(serverIDLower)/attachment-upload/") {
+                return .init(
+                    statusCode: 201, headers: [:],
+                    body: Data(#"{"file":"/api/v1.0/documents/x/media-check/?key=k.png"}"#.utf8), error: nil)
+            }
+            if method == "GET", url.contains("media-check") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data(#"{"status":"ready","file":"/media/k.png"}"#.utf8), error: nil)
+            }
+            if method == "PATCH", url.contains("/collaboration/ydoc/\(serverIDLower)/") {
+                if let u = request.url { ydocPatchRecorder.value.append(u) }
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
+            if method == "GET", url.contains("formatted-content") || url.contains("/documents/\(serverIDLower)/") {
+                let body = Data(
+                    """
+                    {"id":"\(serverIDLower)","title":"Typed Native Title","content":"",
+                     "abilities":{"update":true},
+                     "created_at":"2026-03-01T12:00:00Z","updated_at":"2026-03-01T12:00:00Z"}
+                    """.utf8)
+                return .init(statusCode: 200, headers: [:], body: body, error: nil)
+            }
+            if method == "PATCH", url.contains("/documents/") {
+                return .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil)
+        }
+
+        let relaunched = makeCoord { true }
+        await relaunched.syncPendingDrafts()
+
+        let store = ReplicaStore(directory: replicaDir, ownershipStore: ownership)
+        let serverScope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: user, org: "docs", documentID: serverID)
+
+        await waitUntil {
+            creates.create(for: localDoc.id) == nil
+                && creates.create(for: childDoc.id) == nil
+                && attachments.all().isEmpty
+                && !ydocPatchRecorder.value.isEmpty
+        }
+
+        XCTAssertNil(try store.restore(for: localScope), "local replica folder must be cleaned up after migration")
+        XCTAssertNotNil(try store.restore(for: serverScope), "serverScope replica must exist after migration")
+        XCTAssertTrue(ownership.isNativeOwned(documentID: serverID))
+        XCTAssertFalse(
+            log.requests.contains { $0.url?.absoluteString.contains(localIDLower) == true },
+            "must never send localID to any server endpoint")
+        XCTAssertTrue(
+            log.count(ofMethod: "POST", urlContaining: "/documents/\(serverIDLower)/children/") == 1,
+            "child create must have had its parentID rewritten to serverID")
+        XCTAssertEqual(
+            log.count(ofMethod: "POST", urlContaining: "/documents/\(serverIDLower)/attachment-upload/"), 1,
+            "native attachment must have migrated to serverID before uploading")
+    }
+
+    func testNativeLocalCreateMigrationConflictPreservesLocalReplicaAndDoesNotOverwriteWebAuthor() async throws {
+        let log = RequestRecorder()
+        let defaultsSuite = "NativeMigrationConflict.\(UUID().uuidString)"
+        suiteNames.append(defaultsSuite)
+        let defaults = UserDefaults(suiteName: defaultsSuite)!
+        SignedInUserStore(userDefaults: defaults).remember(user)
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        ServerConfigStore(userDefaults: defaults).remember(
+            ServerConfig(
+                version: "6.0.0", releaseDate: nil, serverTime: nil, sentryDsn: nil,
+                environment: nil, features: nil, capabilities: nil, yjs: nil),
+            forServerOrigin: client.serverOrigin)
+
+        let replicaDir = cacheDirectory.appendingPathComponent("ReplicaDrafts", isDirectory: true)
+        let ownership = ReplicaOwnershipStore(userDefaults: defaults)
+        let drafts = PendingDraftStore(userDefaults: defaults)
+        let creates = PendingDocumentCreateStore(userDefaults: defaults)
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        let coord = DocumentSaveCoordinator(
+            client: client,
+            draftStore: drafts,
+            replicaStore: ReplicaStore(directory: replicaDir, ownershipStore: ownership),
+            contentCache: contentCache,
+            createStore: creates,
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            backgroundTasks: .noop,
+            nativeEditorEnabled: { true })
+
+        let local = coord.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
+        let localScope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: user, org: "docs", documentID: local.id)
+        let store = ReplicaStore(directory: replicaDir, ownershipStore: ownership)
+        let restored = try XCTUnwrap(try store.restore(for: localScope))
+        let ydoc = YDoc(clientID: 2)
+        defer { ydoc.destroy() }
+        try ydoc.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
+        let firstID = try XCTUnwrap(BlockNoteYjs.blocks(from: ydoc).first?.id)
+        let update = try BlockNoteWriter(doc: ydoc).replaceText(block: firstID, range: 0..<0, with: "Local phone edit")
+        let adapter = ReplicaSaveAdapter(store: store, scope: localScope)
+        try adapter.record(
+            NativeEditCommand(
+                id: UUID(), baseRevision: 0, blockID: firstID, range: 0..<0, replacement: "Local phone edit"),
+            update: update)
+        try coord.enqueueReplica(adapter: adapter, title: "Phone Title")
+
+        var record = creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        record.postedTitle = "Untitled document"
+        creates.save(record)
+
+        let webBody = Data(
+            """
+            {"id":"\(serverID.uuidString.lowercased())","title":"Web Author Title",
+             "content":"# Written on the web",
+             "created_at":"2026-03-01T12:00:00Z","updated_at":"2026-03-02T12:00:00Z"}
+            """.utf8)
+        stubUsersMeThen(log: log) { request in
+            if request.url?.absoluteString.hasSuffix("/config/") == true {
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: webBody, error: nil)
+        }
+
+        let relaunched = DocumentSaveCoordinator(
+            client: client,
+            draftStore: drafts,
+            replicaStore: store,
+            contentCache: contentCache,
+            createStore: creates,
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            backgroundTasks: .noop,
+            nativeEditorEnabled: { true })
+        await relaunched.syncPendingDrafts()
+
+        XCTAssertNil(creates.create(for: local.id))
+        XCTAssertNotNil(relaunched.conflict(for: serverID), "conflicting server content must record a conflict")
+        let serverScope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: user, org: "docs", documentID: serverID)
+        let migrated = try XCTUnwrap(try store.restore(for: serverScope))
+        XCTAssertFalse(migrated.updates.isEmpty, "user's local replica edits must survive under serverScope")
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: serverID.uuidString.lowercased()), 0)
+    }
+
+    func testNativeLocalCreateEmptyBodyAdoptsServerAndRemovesLocalReplica() async throws {
+        let log = RequestRecorder()
+        let defaultsSuite = "NativeMigrationAdopt.\(UUID().uuidString)"
+        suiteNames.append(defaultsSuite)
+        let defaults = UserDefaults(suiteName: defaultsSuite)!
+        SignedInUserStore(userDefaults: defaults).remember(user)
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        ServerConfigStore(userDefaults: defaults).remember(
+            ServerConfig(
+                version: "6.0.0", releaseDate: nil, serverTime: nil, sentryDsn: nil,
+                environment: nil, features: nil, capabilities: nil, yjs: nil),
+            forServerOrigin: client.serverOrigin)
+
+        let replicaDir = cacheDirectory.appendingPathComponent("ReplicaDrafts", isDirectory: true)
+        let ownership = ReplicaOwnershipStore(userDefaults: defaults)
+        let drafts = PendingDraftStore(userDefaults: defaults)
+        let creates = PendingDocumentCreateStore(userDefaults: defaults)
+        let coord = DocumentSaveCoordinator(
+            client: client,
+            draftStore: drafts,
+            replicaStore: ReplicaStore(directory: replicaDir, ownershipStore: ownership),
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: creates,
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            backgroundTasks: .noop,
+            nativeEditorEnabled: { true })
+
+        let local = coord.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
+        let localScope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: user, org: "docs", documentID: local.id)
+        var record = creates.create(for: local.id)!
+        record.syncedServerID = serverID
+        record.postedTitle = "Untitled document"
+        creates.save(record)
+
+        let webBody = Data(
+            """
+            {"id":"\(serverID.uuidString.lowercased())","title":"Renamed on web",
+             "content":"# Written on the web",
+             "created_at":"2026-03-01T12:00:00Z","updated_at":"2026-03-02T12:00:00Z"}
+            """.utf8)
+        stubUsersMeThen(log: log) { request in
+            if request.url?.absoluteString.hasSuffix("/config/") == true {
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: webBody, error: nil)
+        }
+
+        let relaunched = DocumentSaveCoordinator(
+            client: client,
+            draftStore: drafts,
+            replicaStore: ReplicaStore(directory: replicaDir, ownershipStore: ownership),
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: creates,
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            backgroundTasks: .noop,
+            nativeEditorEnabled: { true })
+        await relaunched.syncPendingDrafts()
+
+        XCTAssertNil(creates.create(for: local.id))
+        XCTAssertNil(relaunched.conflict(for: serverID))
+        let store = ReplicaStore(directory: replicaDir, ownershipStore: ownership)
+        XCTAssertNil(try store.restore(for: localScope), "local replica must be removed after server adoption")
+        await waitAndConfirmNever {
+            log.count(ofMethod: "PATCH", urlContaining: self.serverID.uuidString.lowercased()) > 0
+        }
+    }
 }

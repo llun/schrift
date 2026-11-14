@@ -81,6 +81,7 @@ enum Strings_pt {
         .versions_offline_explanation: "O histórico de versões está disponível quando estiver online.",
         .editor_offline_unavailable_title: "Indisponível offline",
         .editor_offline_open_online: "Abra este documento online primeiro para guardar uma cópia neste dispositivo.",
+        .editor_offline_read_only_native: "Só leitura offline · abra online para editar",
         .search_error_quick: "Não foi possível carregar o acesso rápido. Tente novamente.",
         .search_error_search: "A pesquisa falhou. Tente novamente.",
 

@@ -83,6 +83,7 @@ enum Strings_nl {
         .versions_offline_explanation: "Versiegeschiedenis is beschikbaar wanneer je online bent.",
         .editor_offline_unavailable_title: "Niet offline beschikbaar",
         .editor_offline_open_online: "Open dit document eerst online om een kopie op dit apparaat op te slaan.",
+        .editor_offline_read_only_native: "Alleen-lezen offline · open online om te bewerken",
         .search_error_quick: "Kan snelle toegang niet laden. Probeer het opnieuw.",
         .search_error_search: "Zoeken mislukt. Probeer het opnieuw.",
 

@@ -8,6 +8,7 @@ struct EditorBannerStack: View {
 
     let showsOfflineBanner: Bool
     let hasLocalCopy: Bool
+    var limitedNativeOfflineRead: Bool = false
     let hasConflict: Bool
     let showUpdateAvailable: Bool
     let isDocumentPendingDelete: Bool
@@ -20,8 +21,11 @@ struct EditorBannerStack: View {
     var body: some View {
         VStack(spacing: 0) {
             if showsOfflineBanner, hasLocalCopy {
-                OfflineBanner(note: loc[.editor_offline_local_copy])
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                OfflineBanner(
+                    note: loc[
+                        limitedNativeOfflineRead ? .editor_offline_read_only_native : .editor_offline_local_copy]
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             if hasConflict {

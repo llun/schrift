@@ -36,6 +36,7 @@ private struct AuthenticatedHomeContainer: View {
     @State private var posters: VideoPosterLoader
     /// Every native replica open in this server session, one per scope (PR08c).
     @State private var nativeSessions: NativeSessionRegistry
+    @State private var signOutTask: Task<Void, Never>?
     let serverURL: URL
     let serverHost: String
     /// `siteOrigin(for: serverURL)` — the origin document images are gated
@@ -55,6 +56,7 @@ private struct AuthenticatedHomeContainer: View {
         // concurrent 401s just re-set the same flag). Its onRequestFailure hook
         // records what the server said about every non-2xx, which the view model
         // below quotes — the same log object, or the detail never arrives.
+        let origin = siteOrigin(for: serverURL) ?? ""
         let diagnostics = APIDiagnosticsLog()
         let client = DocsAPIClient(
             baseURL: serverURL.appendingPathComponent("api/v1.0/"),
@@ -62,9 +64,9 @@ private struct AuthenticatedHomeContainer: View {
                 Task { @MainActor in sessionStore.noteSessionExpired(requestStartedAt: startedAt) }
             },
             onRequestFailure: { failure in diagnostics.record(failure) },
-            onTransportOutcome: { outcome, startedAt in connectivity.report(outcome, startedAt: startedAt) }
+            onTransportOutcome: { outcome, startedAt in connectivity.report(outcome, startedAt: startedAt) },
+            onServerConfig: { config in ServerConfigStore().remember(config, forServerOrigin: origin) }
         )
-        let origin = siteOrigin(for: serverURL) ?? ""
         // The save replay must leave a draft alone while a healthy, writable live replica owns it.
         let collaborationManager = DocumentCollaborationManager(
             serverBaseURL: serverURL,
@@ -135,9 +137,20 @@ private struct AuthenticatedHomeContainer: View {
             // holding account-scoped state re-read it. See `SessionStore.signInGeneration`.
             signInGeneration: sessionStore.signInGeneration,
             onSignOut: {
-                // No replica keeps journaling under the account that is leaving.
-                nativeSessions.closeAll()
-                onSignOut()
+                guard signOutTask == nil else { return }
+                let expectedGeneration = sessionStore.signInGeneration
+                let leavingUserID = SignedInUserStore().userID
+                signOutTask = Task { @MainActor in
+                    defer { signOutTask = nil }
+                    // Drain pending native saves, then close every replica before purging clean ones.
+                    await nativeSessions.drainAll().value
+                    await nativeSessions.closeAll().value
+                    guard sessionStore.signInGeneration == expectedGeneration, sessionStore.isAuthenticated else {
+                        return
+                    }
+                    viewModel.saveCoordinator.purgeCleanNativeReplicasOnSignOut(ownerUserID: leavingUserID)
+                    onSignOut()
+                }
             }
         )
         .onChange(of: workOffline) { _, isOffline in

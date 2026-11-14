@@ -15,7 +15,6 @@ final class StringsCompletenessTests: XCTestCase {
         .theme_specimen_title, .theme_specimen_chip,
         .versions_web_only,
         .native_editor_input_busy,
-        .editor_offline_read_only_native,
     ]
 
     private static let extendedPluralKeys: Set<L10nKey> = [

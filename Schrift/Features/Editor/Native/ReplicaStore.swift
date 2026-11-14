@@ -291,7 +291,8 @@ final class ReplicaStore: Sendable {
         setBackupExcluded(destinationIsClean, on: destinationFolder)
 
         try writeAtomicPayload(
-            checkpointBytes, to: try payloadURL(sourceManifest.checkpoint, in: destinationFolder), in: destinationFolder)
+            checkpointBytes, to: try payloadURL(sourceManifest.checkpoint, in: destinationFolder), in: destinationFolder
+        )
         if !journalPayloads.isEmpty {
             let journalDir = destinationFolder.appendingPathComponent("Journal", isDirectory: true)
             try ensureDirectory(journalDir)

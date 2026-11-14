@@ -696,6 +696,15 @@ final class NativeEditorOpen {
         /// missing or unreadable. Show the preserved read-only explanation;
         /// never open the classic writer over it.
         case preservedUnavailable
+
+        var isNativeActive: Bool {
+            switch self {
+            case .loading, .native, .preservedUnavailable:
+                return true
+            case .classic:
+                return false
+            }
+        }
     }
     private(set) var enabled = false
     private(set) var route: Route
@@ -928,6 +937,7 @@ final class NativeEditorOpen {
         guard canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account),
             case .state(let state, let config, let ability) = result
         else {
+            viewModel.setNativeRouteActive(false)
             route = .classic
             return
         }
@@ -948,9 +958,11 @@ final class NativeEditorOpen {
         } catch {
             guard generation == request else { return }
             if fallbackToClassicOnInspectError {
+                viewModel.setNativeRouteActive(false)
                 route = .classic
             } else {
                 viewModel.seedNativeMetadataIfNeeded()
+                viewModel.setNativeRouteActive(true)
                 route = .preservedUnavailable
             }
             return
@@ -973,6 +985,7 @@ final class NativeEditorOpen {
         guard enabled, verified, session.canType, let account, let scope, mayType(viewModel) else {
             self.canMention = false
             viewModel.seedNativeMetadataIfNeeded()
+            viewModel.setNativeRouteActive(true)
             route = .native(session)
             return
         }
@@ -981,8 +994,8 @@ final class NativeEditorOpen {
             state: state, scope: scope, viewModel: viewModel, request: request, account: account)
         guard let seeded else { return }
         viewModel.seedNativeMetadataIfNeeded()
-        if let seeded { viewModel.setNativeRouteActive(seeded.isNativeActive) }
-        route = seeded ?? route
+        viewModel.setNativeRouteActive(seeded.isNativeActive)
+        route = seeded
         if case .native(let session) = seeded {
             self.canMention = (ability?.mention ?? rowCanMention) && !viewModel.isLocalDocument
             startLive(session, scope: scope, config: config, viewModel: viewModel)
@@ -1141,6 +1154,7 @@ final class NativeEditorOpen {
                 viewModel.applyResolvedServerMetadataForNative(
                     formatted: formatted, leafNesting: leafNesting, installClassicFallback: true)
                 isOpen = true
+                viewModel.setNativeRouteActive(false)
                 route = .classic
                 await viewModel.loadChildren()
             }
@@ -1247,13 +1261,16 @@ final class NativeEditorOpen {
         into session: NativeEditorSession, scope: ReplicaScope, viewModel: EditorViewModel, request: Int,
         isOffline: Bool
     ) async {
-        guard enabled, !isOffline, !viewModel.availability.showsOfflineStatus else { return }
+        guard enabled, !isOffline, !viewModel.availability.showsOfflineStatus, !viewModel.isLocalDocument else {
+            return
+        }
         let isCurrent = { [weak self] in
             !Task.isCancelled && self?.generation == request && !session.isClosed
                 && viewModel.signedInUser.userID == scope.ownerUserID
         }
         do {
             let config = try await viewModel.client.serverConfig()
+            viewModel.saveCoordinator.noteServerConfig(config)
             guard isCurrent(), config.usesCollaborationYDocServer, config.collaborationOrg == scope.org else { return }
             let state = try await viewModel.client.collaborationYDocState(
                 documentID: scope.documentID, org: scope.org)
@@ -1329,7 +1346,7 @@ final class NativeEditorOpen {
     private func startLive(
         _ session: NativeEditorSession, scope: ReplicaScope, config: ServerConfig, viewModel: EditorViewModel
     ) {
-        guard session.input != nil, !session.isClosed,
+        guard !viewModel.isLocalDocument, session.input != nil, !session.isClosed,
             nativeLiveCollaborationEligible(
                 nativeEnabled: enabled, liveEnabled: livePreference(),
                 serverSupports: config.supportsNativeLiveCollaboration && config.collaborationOrg == scope.org,
@@ -1395,7 +1412,7 @@ final class NativeEditorOpen {
     private func mayType(_ viewModel: EditorViewModel) -> Bool {
         let coordinator = viewModel.saveCoordinator
         let documentID = viewModel.documentID
-        return !viewModel.isLocalDocument && !viewModel.isDocumentPendingDelete
+        return !viewModel.isDocumentPendingDelete
             && !coordinator.isLiveHeld(documentID: documentID)
             && (coordinator.storedDraft(documentID: documentID).map { $0.replica != nil } ?? true)
     }
@@ -1409,7 +1426,6 @@ final class NativeEditorOpen {
         // route keeps its existing cache/retry controls so it can recover.
         enabled && !isOffline && !viewModel.availability.showsOfflineStatus && !viewModel.isLocalDocument
             && !viewModel.isDocumentPendingDelete
-            && !viewModel.hasPendingNewDocumentEntry
             && !viewModel.isEditing && !viewModel.hasUnsavedLocalContent
             && viewModel.saveCoordinator.storedDraft(documentID: viewModel.documentID) == nil
             && viewModel.saveCoordinator.pendingSave(documentID: viewModel.documentID) == nil

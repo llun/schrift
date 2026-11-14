@@ -940,7 +940,7 @@ final class DocumentSaveCoordinator {
                 draft = PendingDraft(
                     documentID: record.localID, title: title, markdown: seedMarkdown,
                     updatedAt: record.createdAt,
-                    replica: ReplicaDraftReference(scope: scope, generation: manifest.generation))
+                    replica: ReplicaDraftReference(manifest: manifest, markdown: seedMarkdown))
             }
         }
         draftStore.save(draft)
@@ -1432,6 +1432,7 @@ final class DocumentSaveCoordinator {
     private func isNativeReplayable(_ record: PendingAttachment) -> Bool {
         record.native != nil && record.serverOrigin == client.serverOrigin && record.ownerUserID != nil
             && record.ownerUserID == signedInUser.userID
+            && !isPendingCreate(documentID: record.documentID)
     }
 
     /// One native record's replay, two-phase like the classic one: the slot checked headlessly
@@ -1629,7 +1630,7 @@ final class DocumentSaveCoordinator {
         guard signedInUser.userID == scope.ownerUserID else { return false }
         let cached = contentCache.content(for: scope.documentID)
         let draft = draftStore.draft(for: scope.documentID)
-        guard let title = cached?.title ?? draft?.title else { return false }
+        guard let title = cached?.title ?? draft?.title ?? knownServerTitles[scope.documentID] else { return false }
         try enqueueReplica(
             adapter: ReplicaSaveAdapter(store: replicaStore, scope: scope), title: title,
             baseline: draft?.baseline
@@ -2052,11 +2053,17 @@ final class DocumentSaveCoordinator {
                         serverOrigin: serverScope.serverOrigin, ownerUserID: serverScope.ownerUserID,
                         org: serverScope.org, documentID: record.localID)
                     if let copied = try? replicaStore.copyReplica(from: serverScope, to: localScope) {
+                        let localAdapter = ReplicaSaveAdapter(store: replicaStore, scope: localScope)
+                        let prepared = try? localAdapter.prepare()
+                        let body = prepared?.markdown ?? orphan.markdown
+                        let localRef =
+                            prepared?.request.reference
+                            ?? ReplicaDraftReference(manifest: copied, markdown: body)
                         draftStore.save(
                             PendingDraft(
-                                documentID: record.localID, title: orphan.title, markdown: orphan.markdown,
+                                documentID: record.localID, title: orphan.title, markdown: body,
                                 updatedAt: orphan.updatedAt, baseline: nil,
-                                replica: ReplicaDraftReference(scope: localScope, generation: copied.generation)))
+                                replica: localRef))
                         draftStore.remove(documentID: serverID)
                         try? replicaStore.remove(for: serverScope)
                     }
@@ -2717,11 +2724,13 @@ final class DocumentSaveCoordinator {
             serverOrigin: replicaRef.scope.serverOrigin, ownerUserID: replicaRef.scope.ownerUserID,
             org: replicaRef.scope.org, documentID: serverID)
         guard let copiedManifest = try? replicaStore.copyReplica(from: localScope, to: serverScope) else { return }
-        let serverRef = ReplicaDraftReference(scope: serverScope, generation: copiedManifest.generation)
         let serverAdapter = ReplicaSaveAdapter(store: replicaStore, scope: serverScope)
+        let prepared = try? serverAdapter.prepare()
         let fallbackBody = queued[localID]?.markdown ?? draft?.markdown ?? migrated?.markdown ?? ""
-        let prepared = try? serverAdapter.prepare(markdown: fallbackBody, expected: serverRef)
         let body = prepared?.markdown ?? fallbackBody
+        let serverRef =
+            prepared?.request.reference
+            ?? ReplicaDraftReference(manifest: copiedManifest, markdown: body)
 
         let localTitle = queued[localID]?.title ?? draft?.title ?? migrated?.title
         let knownToServer = record.postedTitle ?? record.title
