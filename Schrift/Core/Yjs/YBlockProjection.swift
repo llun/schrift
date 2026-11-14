@@ -187,11 +187,11 @@ extension YBlockProjection {
     /// block opaque (`"nested children"`), as every classic caller needs.
     static func projectBlock(
         _ containerItem: YItem, interlinkingOrigin: String? = nil, nativeMarks: Bool = false,
-        nestedChildren: Bool = false
+        nestedChildren: Bool = false, inlineObjects: Bool = false
     ) -> ProjectedBlock {
         projectContainer(
             containerItem, interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks,
-            nestedChildren: nestedChildren)
+            nestedChildren: nestedChildren, inlineObjects: inlineObjects)
     }
 
     /// The content element's attributes, sorted, or `nil` when one is
@@ -205,7 +205,8 @@ extension YBlockProjection {
     /// either returns a fully classified block or an `.opaque` one recording
     /// why — never a trap or a thrown error.
     private static func projectContainer(
-        _ containerItem: YItem, interlinkingOrigin: String?, nativeMarks: Bool, nestedChildren: Bool = false
+        _ containerItem: YItem, interlinkingOrigin: String?, nativeMarks: Bool, nestedChildren: Bool = false,
+        inlineObjects: Bool = false
     ) -> ProjectedBlock {
         guard case .type(let containerType) = containerItem.content,
             containerType.typeRef == .xmlElement(nodeName: "blockContainer")
@@ -239,19 +240,20 @@ extension YBlockProjection {
                 {
                     return projectElement(
                         containerChildren[0], id: id, interlinkingOrigin: interlinkingOrigin,
-                        nativeMarks: nativeMarks)
+                        nativeMarks: nativeMarks, inlineObjects: inlineObjects)
                 }
                 return opaqueBlock(id: id, reason: "nested children")
             }
             return opaqueBlock(id: id, reason: "unexpected container shape")
         }
         return projectElement(
-            containerChildren[0], id: id, interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks)
+            containerChildren[0], id: id, interlinkingOrigin: interlinkingOrigin, nativeMarks: nativeMarks,
+            inlineObjects: inlineObjects)
     }
 
     /// The content element's half of `projectContainer`: props, runs and fidelity.
     private static func projectElement(
-        _ elementItem: YItem, id: String, interlinkingOrigin: String?, nativeMarks: Bool
+        _ elementItem: YItem, id: String, interlinkingOrigin: String?, nativeMarks: Bool, inlineObjects: Bool
     ) -> ProjectedBlock {
         guard case .type(let element) = elementItem.content,
             case .xmlElement(let node)? = element.typeRef
@@ -276,7 +278,8 @@ extension YBlockProjection {
             }
             return ProjectedBlock(id: id, node: node, props: props, runs: [], fidelity: fidelity)
         }
-        let (rawRuns, runsFailure) = foldInline(element, interlinkingOrigin: interlinkingOrigin)
+        let (rawRuns, runsFailure) = foldInline(
+            element, interlinkingOrigin: interlinkingOrigin, readInlineObjects: nativeMarks || inlineObjects)
         if let runsFailure {
             return ProjectedBlock(id: id, node: node, props: props, runs: [], fidelity: .opaque(reason: runsFailure))
         }
@@ -319,7 +322,7 @@ extension YBlockProjection {
     /// Every prop the encoder writes is a single-value `.any` map entry; any
     /// entry that isn't fails the whole block, since there is no way to know
     /// what an unreadable attribute might have meant.
-    private static func readProps(_ element: YType) -> (props: [ProjectedProp], failureReason: String?) {
+    static func readProps(_ element: YType) -> (props: [ProjectedProp], failureReason: String?) {
         var props: [ProjectedProp] = []
         for (key, item) in element.map {
             guard !item.deleted else { continue }
@@ -347,7 +350,7 @@ extension YBlockProjection {
     ///
     /// Any other child shape is opaque `"non-text inline content"`.
     private static func foldInline(
-        _ element: YType, interlinkingOrigin: String?
+        _ element: YType, interlinkingOrigin: String?, readInlineObjects: Bool = false
     ) -> (runs: [InlineRun], failureReason: String?) {
         var runs: [InlineRun] = []
         for child in children(of: element, includeFormats: false) {
@@ -356,6 +359,17 @@ extension YBlockProjection {
             }
             if childType.typeRef == .xmlText {
                 guard foldText(childType, into: &runs) else { return ([], "unexpected text content") }
+            } else if readInlineObjects, case .xmlElement(let node)? = childType.typeRef,
+                NativeInlineObject.nodeNames.contains(node)
+            {
+                guard let object = NativeInlineObject.read(childType) else {
+                    return (
+                        [],
+                        node == NativeInlineObject.interlinkingLinkNodeName
+                            ? "interlinkingLink" : "non-text inline content"
+                    )
+                }
+                runs.append(InlineRun(inlineObject: object))
             } else if childType.typeRef == .xmlElement(nodeName: interlinkingLinkNodeName) {
                 guard let (text, href) = projectInterlinkingLink(childType, interlinkingOrigin: interlinkingOrigin)
                 else {
@@ -481,7 +495,7 @@ extension YBlockProjection {
         text: String, marks: [(key: String, valueJSON: String)], to runs: inout [InlineRun]
     ) {
         guard !text.isEmpty else { return }
-        if let last = runs.last, sameMarks(last.marks, marks) {
+        if let last = runs.last, last.inlineObject == nil, sameMarks(last.marks, marks) {
             runs[runs.count - 1] = InlineRun(last.text + text, marks: marks)
         } else {
             runs.append(InlineRun(text, marks: marks))
@@ -506,6 +520,7 @@ extension YBlockProjection {
     private static func scrubUnknownMarks(_ runs: [InlineRun]) -> (runs: [InlineRun], reasons: [String]) {
         var reasons: [String] = []
         let result = runs.map { run -> InlineRun in
+            if run.inlineObject != nil { return run }
             var kept: [(key: String, valueJSON: String)] = []
             for mark in run.marks {
                 if renderableMarkKeys.contains(mark.key) {
@@ -747,10 +762,10 @@ extension YBlockProjection {
     }
 
     private static func classifyCodeBlock(_ props: [ProjectedProp], runs: [InlineRun]) -> ProjectionFidelity {
-        // A code block's content never carries marks in BlockNote — any mark
-        // at all (known or not) means this replica's code block was formatted
-        // in a way the app cannot reproduce as markdown.
-        if runs.count > 1 || runs.contains(where: { !$0.marks.isEmpty }) {
+        // A code block's content never carries marks or inline objects in BlockNote —
+        // any mark or inline atom at all means this replica's code block was
+        // formatted in a way the app cannot reproduce as markdown.
+        if runs.count > 1 || runs.contains(where: { !$0.marks.isEmpty || $0.inlineObject != nil }) {
             return .opaque(reason: "marked code")
         }
         var reasons: [String] = []

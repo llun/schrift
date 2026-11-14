@@ -36,14 +36,14 @@ enum NativeExportMarkdown {
     }
 
     /// The export's Markdown for `nodes`, trimmed as `htmlToMarkdown` trims it.
-    static func markdown(_ nodes: [Node]) -> String? {
-        body(nodes).map(trimmed)
+    static func markdown(_ nodes: [Node], interlinkingOrigin: String? = nil) -> String? {
+        body(nodes, interlinkingOrigin: interlinkingOrigin).map(trimmed)
     }
 
     /// The export's Markdown for `nodes` before that trim: a block's edge
     /// whitespace stays, as it does between other blocks of the document.
-    static func body(_ nodes: [Node]) -> String? {
-        guard let fragment = fragment(nodes) else { return nil }
+    static func body(_ nodes: [Node], interlinkingOrigin: String? = nil) -> String? {
+        guard let fragment = fragment(nodes, interlinkingOrigin: interlinkingOrigin) else { return nil }
         return fragment.map { serialize($0, indent: "", inListItem: false) }.joined()
     }
 
@@ -148,12 +148,12 @@ enum NativeExportMarkdown {
     /// anything else, so the export depends on mark order). Plain cells and
     /// single-paragraph cells are pinned against the exporter
     /// (`BlockNoteTableOracleTests`).
-    static func table(_ grid: TableGrid) -> String? {
+    static func table(_ grid: TableGrid, interlinkingOrigin: String? = nil) -> String? {
         guard grid.isFamiliar, grid.columnCount > 0 else { return nil }
         var cells = Array(repeating: Array(repeating: "", count: grid.columnCount), count: grid.rows.count)
         for row in grid.rows {
             for cell in row {
-                guard let content = cellContent(cell) else { return nil }
+                guard let content = cellContent(cell, interlinkingOrigin: interlinkingOrigin) else { return nil }
                 cells[cell.row][cell.column] = content
             }
         }
@@ -182,8 +182,9 @@ enum NativeExportMarkdown {
         return lines.joined(separator: "\n")
     }
 
-    private static func cellContent(_ cell: TableGrid.Cell) -> String? {
-        inline(blockNoteRuns(cell)).trimmingCharacters(in: jsWhitespace).replacingOccurrences(of: "|", with: "\\|")
+    private static func cellContent(_ cell: TableGrid.Cell, interlinkingOrigin: String?) -> String? {
+        guard let rendered = inline(blockNoteRuns(cell), interlinkingOrigin: interlinkingOrigin) else { return nil }
+        return rendered.trimmingCharacters(in: jsWhitespace).replacingOccurrences(of: "|", with: "\\|")
     }
 
     /// BlockNote 0.56's reading of a cell (`nodeToBlock`), as runs: in each
@@ -197,6 +198,7 @@ enum NativeExportMarkdown {
         enum Item {
             case text(String, Set<String>, [TextMark])
             case link(TextMark, [(text: String, styles: Set<String>, marks: [TextMark])])
+            case inlineObject(NativeInlineObject)
         }
         func style(_ marks: [TextMark]) -> Set<String> { Set(marks.map { $0.key + "=" + $0.valueJSON }) }
         func items(_ runs: [InlineRun]) -> [Item] {
@@ -207,10 +209,15 @@ enum NativeExportMarkdown {
                 case .link(let link, var texts)?:
                     texts[texts.count - 1].text += "\n"
                     items[items.count - 1] = .link(link, texts)
+                case .inlineObject?: items.append(.text("\n", [], []))
                 case nil: items.append(.text("\n", [], []))
                 }
             }
             for run in runs {
+                if let object = run.inlineObject {
+                    items.append(.inlineObject(object))
+                    continue
+                }
                 let marks = run.marks.map { TextMark(key: $0.key, valueJSON: $0.valueJSON) }
                 let link = marks.first { $0.key == "link" }
                 let styles = marks.filter { $0.key != "link" }
@@ -255,6 +262,7 @@ enum NativeExportMarkdown {
             case .text(let text, _, let marks): [InlineRun(text, marks: marks.map { ($0.key, $0.valueJSON) })]
             case .link(let link, let texts):
                 texts.map { InlineRun($0.text, marks: ($0.marks + [link]).map { ($0.key, $0.valueJSON) }) }
+            case .inlineObject(let object): [InlineRun(inlineObject: object)]
             }
         }
     }
@@ -299,13 +307,13 @@ enum NativeExportMarkdown {
     /// it has their tag; children are serialized, their leading lists move into
     /// the last list item, and the rest goes into the block's `<details>` or,
     /// for every other block, after it.
-    private static func fragment(_ nodes: [Node]) -> [Element]? {
+    private static func fragment(_ nodes: [Node], interlinkingOrigin: String?) -> [Element]? {
         var fragment: [Element] = []
         for node in nodes {
             let block = node.block
             // The classic projection's reading: only the blocks it leaves to the native editor may be opaque.
             if case .opaque(let reason) = block.fidelity, !nativeOnlyReasons.contains(reason) { return nil }
-            let content = inline(block.runs)
+            guard let content = inline(block.runs, interlinkingOrigin: interlinkingOrigin) else { return nil }
             var kind: Kind?
             switch block.node {
             case "paragraph": fragment.append(.paragraph(content))
@@ -345,7 +353,9 @@ enum NativeExportMarkdown {
                 }
             }
             guard !node.children.isEmpty else { continue }
-            guard var children = self.fragment(node.children) else { return nil }
+            guard var children = self.fragment(node.children, interlinkingOrigin: interlinkingOrigin) else {
+                return nil
+            }
             if case .list(let ordered, let start, var items)? = fragment.last {
                 while let first = children.first, case .list = first {
                     items[items.count - 1].lists.append(first)
@@ -433,19 +443,38 @@ enum NativeExportMarkdown {
     /// `serializeInlineContent` over the external HTML of `runs`: each run is
     /// one ProseMirror text node wrapped in its own marks, bold outermost, then
     /// italic, strike, code, and its link innermost (`<a>` per text node, so a
-    /// link a mark splits is two links). Nothing is escaped.
-    private static func inline(_ runs: [InlineRun]) -> String {
-        runs.map(styled).joined()
+    /// link a mark splits is two links). Nothing is escaped. Fails closed
+    /// (`nil`) if an enabled non-empty interlink lacks `interlinkingOrigin`.
+    private static func inline(_ runs: [InlineRun], interlinkingOrigin: String?) -> String? {
+        var out = ""
+        for run in runs {
+            guard let part = styled(run, interlinkingOrigin: interlinkingOrigin) else { return nil }
+            out += part
+        }
+        return out
     }
 
-    private static func styled(_ run: InlineRun) -> String {
+    private static func styled(_ run: InlineRun, interlinkingOrigin: String?) -> String? {
+        if let object = run.inlineObject {
+            return inlineObject(object, interlinkingOrigin: interlinkingOrigin)
+        }
         let keys = Set(run.marks.map(\.key))
         // A hard break inside marks: the exporter closes and reopens them
         // around it (`**a**\\` newline `**b**`).
         if !keys.contains("code"), run.text.contains("\n") {
-            return run.text.components(separatedBy: "\n").map {
-                $0.isEmpty ? "" : styled(InlineRun($0, marks: run.marks))
-            }.joined(separator: "\\\n")
+            var pieces: [String] = []
+            for segment in run.text.components(separatedBy: "\n") {
+                if segment.isEmpty {
+                    pieces.append("")
+                } else {
+                    guard
+                        let rendered = styled(
+                            InlineRun(segment, marks: run.marks), interlinkingOrigin: interlinkingOrigin)
+                    else { return nil }
+                    pieces.append(rendered)
+                }
+            }
+            return pieces.joined(separator: "\\\n")
         }
         var text: String
         if keys.contains("code") {
@@ -464,6 +493,22 @@ enum NativeExportMarkdown {
         if keys.contains("italic") { text = emphasis(text, "*") }
         if keys.contains("bold") { text = emphasis(text, "**") }
         return text
+    }
+
+    private static func inlineObject(_ object: NativeInlineObject, interlinkingOrigin: String?) -> String? {
+        switch object {
+        case .mention, .mentionSearch:
+            return ""
+        case .interlink(let docID, _, let title, let disabled, _):
+            guard !disabled, !docID.isEmpty else { return "" }
+            guard let interlinkingOrigin, !interlinkingOrigin.isEmpty,
+                let encodedDocID = NativeInlineObject.encodeURIComponent(docID)
+            else { return nil }
+            let origin = NativeInlineObject.trimmingTrailingSlashes(interlinkingOrigin)
+            guard !origin.isEmpty else { return nil }
+            let label = (title ?? "").isEmpty ? docID : title!
+            return formatLink(label, "\(origin)/docs/\(encodedDocID)/")
+        }
     }
 
     /// `formatLink`: the bare URL when the label is empty, or is the URL and

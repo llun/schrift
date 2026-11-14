@@ -51,6 +51,9 @@ final class NativeEditorSession {
     /// A column surface's column and group (PR12a): its blocks are that
     /// column's. Nil for the document.
     private(set) var column: (group: String, id: String)?
+    /// Server origin for interlink clipboard plain-text serialization and
+    /// same-origin URL paste-interlink.
+    @ObservationIgnored private var interlinkingOrigin: String = ""
 
     private init(
         replica: DocumentReplicaSession?, surfaceID: UUID = UUID(), blocks: [BlockSnapshot], revision: UInt64,
@@ -80,8 +83,10 @@ final class NativeEditorSession {
     }
 
     /// The read-only route (PR01): a one-shot projection, no replica session.
-    static func inspect(state: Data) async throws -> NativeEditorSession {
-        let inspected = try await Task.detached { try DocumentReplicaSession.inspect(state: state) }.value
+    static func inspect(state: Data, interlinkingOrigin: String? = nil) async throws -> NativeEditorSession {
+        let inspected = try await Task.detached {
+            try DocumentReplicaSession.inspect(state: state, interlinkingOrigin: interlinkingOrigin)
+        }.value
         let session = NativeEditorSession(
             replica: nil, blocks: inspected.blocks, revision: 0, hasUnsupportedRoot: inspected.hasUnsupportedRoot,
             canType: inspected.canType, recoveries: [], state: ReplicaState())
@@ -105,11 +110,15 @@ final class NativeEditorSession {
 
     /// The clipboard of table `blockID`'s CellSelection (PR11c), read in
     /// mailbox order (after every edit posted before it).
-    func tableCopy(_ blockID: String, from: TableSlot, to: TableSlot) async -> TableCopy? {
+    func tableCopy(
+        _ blockID: String, from: TableSlot, to: TableSlot, serverOrigin: String? = nil
+    ) async -> TableCopy? {
         guard let replica else { return nil }
         return await withCheckedContinuation { done in
             replica.mailbox.post(
-                .tableCopy(blockID: blockID, from: from, to: to, reply: { done.resume(returning: $0) }))
+                .tableCopy(
+                    blockID: blockID, from: from, to: to, serverOrigin: serverOrigin,
+                    reply: { done.resume(returning: $0) }))
         }
     }
 
@@ -117,9 +126,14 @@ final class NativeEditorSession {
     /// component tests); `enableTyping` gives it a journal.
     /// `clientID` fixes the author (tests compare bytes); nil picks one.
     static func seed(
-        state: Data, clientID: UInt? = nil, gc: Bool = true, hooks: DocumentReplicaSession.Hooks = .init()
+        state: Data, clientID: UInt? = nil, gc: Bool = true, interlinkingOrigin: String? = nil,
+        hooks: DocumentReplicaSession.Hooks = .init()
     ) async throws -> NativeEditorSession {
-        await attach(try await DocumentReplicaSession.seed(state: state, clientID: clientID, gc: gc, hooks: hooks))
+        let session = await attach(
+            try await DocumentReplicaSession.seed(
+                state: state, clientID: clientID, gc: gc, interlinkingOrigin: interlinkingOrigin, hooks: hooks))
+        session.interlinkingOrigin = interlinkingOrigin ?? ""
+        return session
     }
 
     /// Offline restoration never rebuilds rich state from a Markdown shadow:
@@ -146,6 +160,7 @@ final class NativeEditorSession {
             hasUnsupportedRoot: attachment.hasUnsupportedRoot, canType: attachment.canType,
             recoveries: attachment.recoveries, state: attachment.state)
         session.scope = scope
+        session.interlinkingOrigin = scope?.serverOrigin ?? ""
         session.hasRecoveryStore = scope != nil
         session.consume(attachment.deliveries)
         return session
@@ -171,6 +186,7 @@ final class NativeEditorSession {
         session.grid = attachment.grid
         children.add(session)
         session.scope = scope
+        session.interlinkingOrigin = input?.serverOrigin ?? interlinkingOrigin
         session.release = { Task {} }
         session.surface.setFocus([])
         session.textView.isScrollEnabled = false
@@ -230,6 +246,7 @@ final class NativeEditorSession {
             hasUnsupportedRoot: false, canType: attachment.canType, recoveries: [], state: attachment.state)
         session.column = (groupID, columnID)
         session.scope = scope
+        session.interlinkingOrigin = input?.serverOrigin ?? interlinkingOrigin
         session.release = { Task {} }
         children.add(session)
         session.textView.accessibilityIdentifier = "nativeEditor.column"
@@ -364,6 +381,10 @@ final class NativeEditorSession {
         let input = NativeInputCoordinator(
             replica: replica, surfaceID: surfaceID, revision: revision, surface: surface, view: textView,
             recoveries: recoveries, hasRecoveryStore: hasRecoveryStore)
+        let resolvedOrigin =
+            interlinkingOrigin.isEmpty
+            ? (scope?.serverOrigin ?? textView.blockControls.serverOrigin) : interlinkingOrigin
+        input.serverOrigin = resolvedOrigin
         input.onJournaled = { [weak scheduler] in scheduler?.schedule() }
         self.input = input
     }
@@ -703,7 +724,10 @@ final class NativeEditorOpen {
             return
         }
         let session: NativeEditorSession
-        do { session = try await NativeEditorSession.inspect(state: state) } catch {
+        do {
+            session = try await NativeEditorSession.inspect(
+                state: state, interlinkingOrigin: viewModel.client.serverOrigin)
+        } catch {
             guard generation == request else { return }
             route = .classic
             return

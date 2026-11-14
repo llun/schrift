@@ -54,6 +54,12 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     var onClose: (() -> Void)?
     /// Menu titles (the app's localized strings; English in tests).
     var text: (L10nKey) -> String = { Strings_en.table[$0] ?? "" }
+    /// Cached title resolver for linked document chips (read-only display).
+    var documentTitle: (@MainActor (UUID) -> String?)?
+    /// Server origin for same-origin URL paste-interlink and clipboard serialization.
+    var serverOrigin: String?
+    /// A tap (or VoiceOver action) on an inline page link chip navigates to that document.
+    var onOpenDocument: ((UUID, String) -> Void)?
     /// The Row, Column, Cell and Format menus (PR11b), shown while editing.
     let controls = UIStackView()
 
@@ -164,6 +170,17 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
             session.input?.tableMove = { [weak self] in self?.move($0) ?? false }
             session.input?.tableKey = { [weak self] in self?.key($0) ?? false }
             session.textView.isScrollEnabled = false
+            session.textView.blockControls.labels = labels
+            session.textView.blockControls.documentTitle = documentTitle
+            session.textView.blockControls.onOpenDocument = { [weak self] id, blockID in
+                self?.onOpenDocument?(id, blockID)
+            }
+            let origin =
+                serverOrigin.flatMap { $0.isEmpty ? nil : $0 }
+                ?? (document.input?.serverOrigin).flatMap { $0.isEmpty ? nil : $0 }
+                ?? document.textView.blockControls.serverOrigin
+            session.textView.blockControls.serverOrigin = origin
+            session.input?.serverOrigin = origin
             if let awareness = document.awareness { session.showAwareness(awareness) }
         } else {
             grid = await document.tableGrid(tableID, full: true)
@@ -484,8 +501,14 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     /// edit; a cut then empties the cells, as the web's cut does.
     private func copy(_ selection: CellSelection, cut: Bool) async {
         let before = grid
+        let resolvedOrigin =
+            serverOrigin.flatMap { $0.isEmpty ? nil : $0 }
+            ?? (document.input?.serverOrigin).flatMap { $0.isEmpty ? nil : $0 }
+            ?? document.textView.blockControls.serverOrigin
+        let origin = resolvedOrigin.isEmpty ? nil : resolvedOrigin
         guard let input = cellSession?.input,
-            let copied = await document.tableCopy(tableID, from: selection.anchor, to: selection.head)
+            let copied = await document.tableCopy(
+                tableID, from: selection.anchor, to: selection.head, serverOrigin: origin)
         else { return }
         var item: [String: Any] = [TableClipboard.htmlType: copied.html]
         if let plain = copied.plain { item[UTType.utf8PlainText.identifier] = plain }
@@ -506,7 +529,11 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         var cells = pasteboard.data(forPasteboardType: BlockNoteSubtreePayload.pasteboardType).flatMap(
             TableClipboard.cells(payload:))
         if cells == nil, let html = Self.html(pasteboard) { cells = TableClipboard.cells(html: html) }
-        if cells == nil, selection != nil, let text = pasteboard.string, !text.isEmpty {
+        if cells == nil, selection != nil,
+            let raw = pasteboard.string, !raw.isEmpty
+        {
+            let text = NativeClipboard.strippingObjectReplacementCharacters(raw)
+            guard !text.isEmpty else { return false }
             guard !NativeClipboard.isTooLarge(NativeClipboard.normalizingLineBreaks(text)) else {
                 input.refuse(.native_editor_paste_too_large)
                 return true
@@ -889,10 +916,37 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         }
     }
 
+    private func contentWidth(for cell: TableGrid.Cell) -> CGFloat {
+        guard cell.column + cell.colspan < columnOffsets.count else { return 0 }
+        return max(1, columnOffsets[cell.column + cell.colspan] - columnOffsets[cell.column] - Self.padding * 2)
+    }
+
     private func configureText(_ view: TableCellView, _ ref: TableGrid.CellRef) {
         guard let grid else { return }
-        let text = Self.text(paragraphs(ref), cell: grid.cell(ref), traits: traitCollection)
+        let cell = grid.cell(ref)
+        let blocks = paragraphs(ref)
+        let text = Self.text(
+            blocks, cell: cell, traits: traitCollection, labels: labels,
+            geometry: cellGeometry(for: blocks, width: contentWidth(for: cell)))
         if view.label.attributedText != text { view.label.attributedText = text }
+    }
+
+    private func cellGeometry(for paragraphs: [BlockSnapshot], width: CGFloat = 0) -> NativeAttachmentGeometry {
+        var geometry = NativeAttachmentGeometry(width: width)
+        guard let documentTitle else { return geometry }
+        for paragraph in paragraphs {
+            for run in paragraph.runs {
+                guard case .interlink(let docID, _, _, let disabled, _)? = run.inlineObject,
+                    !disabled,
+                    let uuid = UUID(uuidString: docID),
+                    geometry.documentTitles[uuid] == nil,
+                    let title = documentTitle(uuid),
+                    !title.isEmpty
+                else { continue }
+                geometry.documentTitles[uuid] = title
+            }
+        }
+        return geometry
     }
 
     /// The text VoiceOver reads for `element`'s cell, its header and selected
@@ -903,7 +957,8 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         else { return }
         let cell = grid.cell(ref)
         element.accessibilityLabel = cellLabel(cell.row + 1, cell.column + 1)
-        let value = paragraphs(ref).map { $0.runs.map(\.text).joined() }.joined(separator: "\n")
+        let resolver = documentTitle ?? { _ in nil }
+        let value = paragraphs(ref).map { $0.clippedVisibleText(titleForDocument: resolver) }.joined(separator: "\n")
         let peers = (peerMarks[ref] ?? []).map { String(format: labels.peerCursor, $0.name) }
         element.accessibilityValue = ([value] + peers).filter { !$0.isEmpty }.joined(separator: ", ")
         var traits: UIAccessibilityTraits = .staticText
@@ -977,9 +1032,12 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     private func height(_ ref: TableGrid.CellRef, width: CGFloat) -> CGFloat {
         guard let grid else { return Self.minimumRowHeight }
         // A realised cell's label already holds its text (`configureText`).
+        let cellBlocks = paragraphs(ref)
         let text =
             cellViews[ref]?.label.attributedText
-            ?? Self.text(paragraphs(ref), cell: grid.cell(ref), traits: traitCollection)
+            ?? Self.text(
+                cellBlocks, cell: grid.cell(ref), traits: traitCollection, labels: labels,
+                geometry: cellGeometry(for: cellBlocks, width: max(1, width - Self.padding * 2)))
         let key = text.string.hashValue ^ Int(width * 2) ^ (ref == active ? 1 : 0)
         if let cached = cellHeights[ref], cached.key == key { return cached.height }
         var insets = UIEdgeInsets(top: Self.padding, left: Self.padding, bottom: Self.padding, right: Self.padding)
@@ -1108,11 +1166,16 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
 
     /// A cell's paragraphs as the document draws them, bold in a header, in
     /// the cell's alignment and text colour.
-    static func text(_ paragraphs: [BlockSnapshot], cell: TableGrid.Cell, traits: UITraitCollection)
+    static func text(
+        _ paragraphs: [BlockSnapshot], cell: TableGrid.Cell, traits: UITraitCollection,
+        labels: NativeEditorLabels = NativeEditorLabels(),
+        geometry: NativeAttachmentGeometry = NativeAttachmentGeometry()
+    )
         -> NSAttributedString
     {
         let text = NSMutableAttributedString(
-            attributedString: AttributedDocumentProjection.attributedString(blocks: paragraphs, traits: traits))
+            attributedString: AttributedDocumentProjection.attributedString(
+                blocks: paragraphs, traits: traits, labels: labels, geometry: geometry))
         if text.string.hasSuffix("\n") { text.deleteCharacters(in: NSRange(location: text.length - 1, length: 1)) }
         let whole = NSRange(location: 0, length: text.length)
         let alignment: NSTextAlignment =
@@ -1193,6 +1256,9 @@ struct TableEditorScreen: UIViewControllerRepresentable {
     let doneTitle: String
     let cellLabel: (Int, Int) -> String
     let text: (L10nKey) -> String
+    var documentTitle: (@MainActor (UUID) -> String?)? = nil
+    var serverOrigin: String? = nil
+    var onOpenDocument: ((UUID, String) -> Void)? = nil
     let onClose: () -> Void
 
     func makeUIViewController(context: Context) -> UINavigationController {
@@ -1201,9 +1267,17 @@ struct TableEditorScreen: UIViewControllerRepresentable {
         editor.doneTitle = doneTitle
         editor.cellLabel = cellLabel
         editor.text = text
+        editor.documentTitle = documentTitle
+        editor.serverOrigin = serverOrigin
+        editor.onOpenDocument = onOpenDocument
         editor.onClose = onClose
         return UINavigationController(rootViewController: editor)
     }
 
-    func updateUIViewController(_ controller: UINavigationController, context: Context) {}
+    func updateUIViewController(_ controller: UINavigationController, context: Context) {
+        guard let editor = controller.topViewController as? TableEditorViewController else { return }
+        editor.documentTitle = documentTitle
+        editor.serverOrigin = serverOrigin
+        editor.onOpenDocument = onOpenDocument
+    }
 }

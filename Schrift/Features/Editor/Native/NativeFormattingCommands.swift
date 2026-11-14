@@ -113,7 +113,9 @@ enum NativeMarkSelection {
         where !AttributedDocumentProjection.isPlaceholder(blocks[position]) {
             let lower = position == start.position ? start.offset : 0
             let upper = position == end.position ? end.offset : index.entries[position].textRange.length
-            for span in spans(blocks[position].runs) where span.range.overlaps(lower..<max(lower, upper)) {
+            let selection = lower..<max(lower, upper)
+            for (run, span) in zip(blocks[position].runs, spans(blocks[position].runs))
+            where run.inlineObject == nil && span.range.overlaps(selection) {
                 common = common.map { $0.filter(span.marks.contains) } ?? span.marks
             }
         }

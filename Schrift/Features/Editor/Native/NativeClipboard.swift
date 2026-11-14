@@ -22,7 +22,11 @@ enum NativeClipboard {
         else { return nil }
         let blocks = surface.blocks
         let depth = blocks[start.position].depth
-        guard blocks[start.position...end.position].allSatisfy({ $0.depth >= depth }) else { return nil }
+        guard
+            blocks[start.position...end.position].allSatisfy({
+                $0.depth >= depth && $0.node != "tableParagraph" && !TableGrid.isParagraphID($0.id)
+            })
+        else { return nil }
         var next = end.position + 1
         while next < blocks.count, blocks[next].depth > depth {
             guard surface.isHidden(position: next) else { return nil }
@@ -37,7 +41,7 @@ enum NativeClipboard {
     /// Neither does a folded toggle's hidden content (PR06b): copy is what shows.
     /// Nil when nothing copyable is selected, so the pasteboard is left alone.
     @MainActor
-    static func plainText(for range: NSRange, surface: NativeTextSurface) -> String? {
+    static func plainText(for range: NSRange, surface: NativeTextSurface, serverOrigin: String = "") -> String? {
         let index = surface.rangeIndex
         guard range.length > 0, let start = index.textPosition(atUTF16: range.location),
             let end = index.textPosition(atUTF16: NSMaxRange(range), isUpperBound: true)
@@ -49,13 +53,102 @@ enum NativeClipboard {
                 continue
             }
             // The model's text, not the display: a code block's line breaks are "\n".
-            let text = block.runs.map(\.text).joined() as NSString
+            let total = index.entries[position].textRange.length
             let lower = position == start.position ? start.offset : 0
-            let upper = position == end.position ? end.offset : text.length
-            lines.append(text.substring(with: NSRange(location: lower, length: max(0, upper - lower))))
+            let upper = position == end.position ? end.offset : total
+            lines.append(plainText(in: block, range: lower..<max(lower, upper), serverOrigin: serverOrigin))
         }
         let text = lines.joined(separator: "\n")
         return text.isEmpty ? nil : text
+    }
+
+    @MainActor
+    static func touchesInlineObject(_ range: NSRange, surface: NativeTextSurface) -> Bool {
+        let index = surface.rangeIndex
+        guard range.length > 0, let start = index.textPosition(atUTF16: range.location),
+            let end = index.textPosition(atUTF16: NSMaxRange(range), isUpperBound: true)
+        else { return false }
+        for position in start.position...end.position {
+            let block = surface.blocks[position]
+            guard block.hasInlineObjects, !AttributedDocumentProjection.isPlaceholder(block),
+                !surface.isHidden(position: position)
+            else { continue }
+            let lower = position == start.position ? start.offset : 0
+            let upper = position == end.position ? end.offset : index.entries[position].textRange.length
+            let selected = lower..<max(lower, upper)
+            var offset = 0
+            for run in block.runs {
+                let len = (run.text as NSString).length
+                let runRange = offset..<(offset + len)
+                offset += len
+                if run.inlineObject != nil, runRange.overlaps(selected) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    @MainActor
+    static func inlineSlices(for range: NSRange, surface: NativeTextSurface) -> [ReplicaInlineSlice]? {
+        let index = surface.rangeIndex
+        guard range.length > 0, let start = index.textPosition(atUTF16: range.location),
+            let end = index.textPosition(atUTF16: NSMaxRange(range), isUpperBound: true)
+        else { return nil }
+        var slices: [ReplicaInlineSlice] = []
+        for position in start.position...end.position {
+            let block = surface.blocks[position]
+            guard !AttributedDocumentProjection.isPlaceholder(block), !surface.isHidden(position: position) else {
+                continue
+            }
+            let total = index.entries[position].textRange.length
+            let lower = position == start.position ? start.offset : 0
+            let upper = position == end.position ? end.offset : total
+            slices.append(ReplicaInlineSlice(blockID: block.id, range: lower..<max(lower, upper)))
+        }
+        return slices.isEmpty ? nil : slices
+    }
+
+    private static func plainText(in block: BlockSnapshot, range: Range<Int>, serverOrigin: String) -> String {
+        var offset = 0
+        var result = ""
+        for run in block.runs {
+            let runNS = run.text as NSString
+            let length = runNS.length
+            let runEnd = offset + length
+            let sliceLower = max(range.lowerBound, offset)
+            let sliceUpper = min(range.upperBound, runEnd)
+            if sliceLower < sliceUpper {
+                if let inline = run.inlineObject {
+                    result += plainText(for: inline, serverOrigin: serverOrigin)
+                } else {
+                    result += runNS.substring(
+                        with: NSRange(location: sliceLower - offset, length: sliceUpper - sliceLower))
+                }
+            }
+            offset = runEnd
+        }
+        return result
+    }
+
+    private static func plainText(for inline: NativeInlineObject, serverOrigin: String) -> String {
+        switch inline {
+        case .mention:
+            return inline.visibleText
+        case .mentionSearch:
+            return ""
+        case .interlink(let docID, _, _, let disabled, _):
+            guard !disabled else { return "" }
+            let origin = NativeInlineObject.trimmingTrailingSlashes(serverOrigin)
+            if !origin.isEmpty, !docID.isEmpty, let encoded = NativeInlineObject.encodeURIComponent(docID) {
+                return "\(origin)/docs/\(encoded)/"
+            }
+            return inline.visibleText
+        }
+    }
+
+    static func strippingObjectReplacementCharacters(_ text: String) -> String {
+        text.replacingOccurrences(of: "\u{fffc}", with: "")
     }
 
     /// A paste larger than this is refused whole, never written in part. Both

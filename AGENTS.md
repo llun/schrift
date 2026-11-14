@@ -3927,6 +3927,56 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `RootView` sets `nativeSessions` and `signInIsCurrent`; a host without them queues and waits.
   `ReplicaSaveAdapterTests` pins the save binding (a switch after `/users/me/`: no PATCH, pending,
   then sent once current; a switch during the body: no title; a classic save during a switch).
+- **PR13c1 Native inline objects: mentions & page links (read/edit/clipboard/navigation).**
+  **Model:** `NativeInlineObject` adds `.interlink(docID:blockID:title:disabled:trigger:)`,
+  `.mention(userID:fullName:)`, and `.mentionSearch(disabled:trigger:)` on `InlineRun.inlineObject`
+  for BlockNote's `interlinkingLinkInline`, `userMentionInline`, and `mentionSearchInline` Yjs
+  elements (malformed shapes fail closed so classic/preserved fallback still triggers). Projected as
+  `\u{FFFC}` (`NSTextAttachment`) with `NativeInlineChipAttachment` and `.nativeInlineObject`
+  attributes, rendered via `NativeInlineChipImageCache` (light/dark, `AppTheme`, Dynamic Type) and
+  read-only cached title lookup (`NativeEditorView.documentTitle` ->
+  `EditorViewModel.cachedDocumentTitle(for:)`) without touching Yjs.
+  **Shadow:** `NativeBlockProjection.markdownShadow(_:interlinkingOrigin:)` and
+  `NativeExportMarkdown` export enabled interlinks with non-empty `docId` via
+  `formatLink(label, "<origin>/docs/<encodeURIComponent(docId)>/")` (where `label` is `title` if
+  non-empty else `docId`) when `interlinkingOrigin` (`ReplicaScope.serverOrigin`) is set, or `nil`
+  otherwise; disabled/empty-`docId` interlinks, `.mention`, and `.mentionSearch` all export as `""`.
+  `TableGrid.read` keeps tables holding inline objects `.familiar` while marking those paragraphs
+  `TableGrid.Paragraph.isSimpleText == false` (disabling only the `.text` fast path in `PatchBuilder`).
+  **Editing rules:** `AttributedDocumentProjection` inserts mark barriers around each `\u{FFFC}`
+  so adjacent typing never bleeds marks; `NativeInputCoordinator` and `BlockNoteWriter` move/delete
+  each chip as one atomic unit (`insertInlineObject`, `joinBlocks`, `mergeIntoParent` coalesce
+  adjacent `YXmlText`), skip/split range formatting across chips, gate off link-sheet editing when
+  touching an inline object, and preserve IME composition across peer chip updates.
+  **Clipboard:** `NativeClipboard` (`inlineSlices`, `plainText`, `touchesInlineObject`) and
+  `BlockNoteInlinePayload` / `BlockNoteWriter.insertInlineSlice` preserve `.interlink` and
+  `.mention` slices across paragraphs and tables, strip `\u{FFFC}` to visible plain text in code
+  blocks and external pasteboards (`strippingObjectReplacementCharacters`), and convert pasted
+  same-origin doc URLs (`NativeInlineObject.interlink(fromURLString:serverOrigin:)`) into enabled
+  interlink chips.
+  **Navigation:** `DocumentLink.documentLinkAction(forDocumentID:currentDocumentID:)` treats self
+  links as `.alreadyOpen` no-ops and external links as `.openInApp(UUID)`. `NativeTextView.chipTapRecognizer`
+  (with `NativeBlockControls` as `UIGestureRecognizerDelegate`, isolated from superview taps and
+  suppressed during drags/long-press/IME composition) hit-tests TextKit 2 glyph segments
+  (`inlineChipFrame(atUTF16:)`, `navigableInterlink(at:)`) so tapping an enabled `.interlink` chip
+  invokes `onOpenDocument` across document, `ColumnEditorScreen`/`ColumnEditorModel`, and
+  `TableEditorViewController` active cell surfaces without moving caret placement or writing Yjs;
+  tapping mentions, `mentionSearch`, or disabled/empty interlinks does nothing. VoiceOver adds
+  `"Open link"` (`NativeEditorLabels.openLink`) when selection touches an enabled interlink.
+  `NativeEditorView` (`NativeDocumentLinkCoordinator`) resolves via
+  `EditorViewModel.openLinkedDocument(_:)` and dismisses open table/column/media/outline covers
+  before pushing. `NativeDocumentNavigation` expands inline objects in outline/find summaries.
+  **Known limits:** Tapping `@mention` does nothing in PR13c1; `/` and `@` autocomplete pickers,
+  `blockID` scroll-on-open landing, and localized `L10nKey` for `"Open link"` are PR13c2. A table
+  command (header toggle, cell prop) or table copy joins a cell's paragraphs across a chip with no
+  break, as the web does (BlockNote 0.56 `nodeToBlock`).
+  **Tests:** `BlockNoteInlineOracleTests` (11 tests covering captured Yjs oracle parity, shadows,
+  fail-closed parsing, URL parsing, native edits matching web XML, selection boundaries, inline
+  clipboard slices, and collaborative undo/redo) and `NativeInlineObjectTests` (19 tests covering
+  layout parity, Dynamic Type clamping, chip cache, cached title updates, accessibility labels and
+  `"Open link"`, table/column/outline expansion, mark barriers, atomic delete, IME composition,
+  clipboard degradation, same-origin URL paste, TextKit 2 chip tap hit-testing across surfaces, and
+  cover dismissal).
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below

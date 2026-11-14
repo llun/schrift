@@ -80,6 +80,12 @@ struct NativeEditCommand: Equatable, Sendable {
         /// `expecting` is the slot an upload started from: a block whose kind
         /// or url changed since refuses the commit.
         case mediaProps([ProjectedProp], expecting: MediaBlock.Slot? = nil)
+        /// Inserts a typed inline object replacing `replacing` (block or cell
+        /// UTF-16 range, collapsing to `replacing.lowerBound + 1`).
+        case insertInlineObject(NativeInlineObject, replacing: Range<Int>)
+        /// Pastes a decoded inline-slice payload (`BlockNoteInlinePayload`)
+        /// over `range` (`replacement` / `newBlockIDs` in `range`).
+        case pasteInline(payload: Data, range: NativeRangeCommand)
         case undo
         case redo
     }
@@ -114,7 +120,7 @@ struct NativeEditCommand: Equatable, Sendable {
         case .range(let range): return range.replacement
         case .split, .join, .marks, .props, .blockType, .indent, .outdent, .moveUp, .moveDown, .duplicate,
             .deleteBlock, .insertBlock, .insertSubtrees, .lineBreak, .table, .columns, .insertColumns, .insertMedia,
-            .mediaProps, .undo, .redo:
+            .mediaProps, .insertInlineObject, .pasteInline, .undo, .redo:
             return ""
         }
     }

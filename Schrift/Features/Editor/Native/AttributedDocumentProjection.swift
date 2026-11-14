@@ -19,6 +19,9 @@ extension NSAttributedString.Key {
     /// A toggle list item or toggle heading (PR06b): its disclosure button sits
     /// in the gutter. Whether it is folded is view state, never an attribute.
     static let nativeToggle = NSAttributedString.Key("schrift.native.toggle")
+    /// An inline chip (`interlinkingLinkInline`, `userMentionInline`,
+    /// `mentionSearchInline`) attached to a 1-UTF-16-unit `\u{FFFC}` character.
+    static let nativeInlineObject = NSAttributedString.Key("schrift.native.inlineObject")
 }
 
 struct NativeEditorLabels: Equatable {
@@ -62,6 +65,11 @@ struct NativeEditorLabels: Equatable {
     var mediaUploadFailed = Strings_en.table[.native_editor_media_upload_stopped]!
     var mediaUploadWaiting = Strings_en.table[.native_editor_media_upload_queued]!
     var uploadElsewhere = Strings_en.table[.native_editor_upload_elsewhere]!
+    /// Inline chip accessibility labels (PR13c).
+    var chipPage = Strings_en.table[.native_editor_chip_page]!
+    var chipMention = Strings_en.table[.native_editor_chip_mention]!
+    var chipUntitled = Strings_en.table[.native_editor_chip_untitled]!
+    var openLink = "Open link"
     /// The block menu's title and actions (PR06d): the edit menu and VoiceOver.
     var blockMenu = Strings_en.table[.native_editor_block_actions]!
     var blockActions = Dictionary(
@@ -207,6 +215,16 @@ enum AttributedDocumentProjection {
         } else {
             chrome(block, listNumber: listNumber, traits: traits, paragraph: paragraph, into: &base)
             for run in block.runs {
+                if let inline = run.inlineObject {
+                    var attributes = base
+                    let runFont = font(block: block, marks: run.marks.map(\.key), traits: traits)
+                    attributes[.font] = runFont
+                    attributes[.nativeInlineObject] = inline
+                    attributes[.attachment] = NativeInlineChipAttachment.attachment(
+                        for: inline, font: runFont, traits: traits, labels: labels, geometry: geometry)
+                    result.append(NSAttributedString(string: attachmentCharacter, attributes: attributes))
+                    continue
+                }
                 var attributes = base
                 attributes.merge(
                     markAttributes(

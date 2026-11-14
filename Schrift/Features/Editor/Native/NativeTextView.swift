@@ -304,6 +304,8 @@ final class NativeTextView: UITextView {
                 textStorage.enumerateAttribute(.attachment, in: range) { value, run, _ in
                     if let attachment = value as? NativeBlockAttachment {
                         visible += attachment.content.label
+                    } else if let chip = value as? NativeInlineChipAttachment {
+                        visible += Array(repeating: chip.content.accessibilityLabel, count: run.length).joined()
                     } else {
                         visible += (textStorage.string as NSString).substring(with: run)
                     }
@@ -320,11 +322,185 @@ final class NativeTextView: UITextView {
         set { super.accessibilityValue = newValue }
     }
 
-    /// VoiceOver's actions for the caret's block (PR06d): the block menu's
-    /// available actions, computed when VoiceOver asks.
+    /// VoiceOver's actions for the caret's block (PR06d) and any inline page
+    /// link chip touched by the caret/selection (PR13c1).
     override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
-        get { (inputCoordinator?.blockAccessibilityActions() ?? []) + (super.accessibilityCustomActions ?? []) }
+        get {
+            inlineChipAccessibilityActions()
+                + (inputCoordinator?.blockAccessibilityActions() ?? [])
+                + (super.accessibilityCustomActions ?? [])
+        }
         set { super.accessibilityCustomActions = newValue }
+    }
+
+    /// Single-tap recognizer that hit-tests TextKit 2's laid-out glyph segment
+    /// frames for resolved inline page link chips in both reader and editor modes.
+    let chipTapRecognizer = UITapGestureRecognizer()
+
+    /// Hit-tests TextKit 2's laid-out glyph segment frame for a `.nativeInlineObject`
+    /// character at `point` (in this text view's coordinates).
+    func inlineObjectHit(at point: CGPoint) -> (offset: Int, object: NativeInlineObject, frame: CGRect)? {
+        guard let layout = textLayoutManager, let content = layout.textContentManager, textStorage.length > 0 else {
+            return nil
+        }
+        if layout.textViewportLayoutController.viewportRange == nil {
+            layout.textViewportLayoutController.layoutViewport()
+        }
+        let containerPoint = CGPoint(x: point.x - textContainerInset.left, y: point.y - textContainerInset.top)
+        guard let fragment = layout.textLayoutFragment(for: containerPoint) else { return nil }
+        let fragRange = fragment.rangeInElement
+        let startOffset = content.offset(from: content.documentRange.location, to: fragRange.location)
+        let endOffset = content.offset(from: content.documentRange.location, to: fragRange.endLocation)
+        guard startOffset != NSNotFound, endOffset > startOffset else { return nil }
+        let clampedEnd = min(endOffset, textStorage.length)
+        guard startOffset < clampedEnd else { return nil }
+        guard blockControls?.surface?.isHidden(atUTF16: startOffset) != true else { return nil }
+
+        var hit: (offset: Int, object: NativeInlineObject, frame: CGRect)?
+        let searchRange = NSRange(location: startOffset, length: clampedEnd - startOffset)
+        textStorage.enumerateAttribute(.nativeInlineObject, in: searchRange) { value, attrRange, stop in
+            guard let object = value as? NativeInlineObject else { return }
+            for offset in attrRange.location..<NSMaxRange(attrRange) {
+                guard let frame = inlineChipSegmentFrame(atUTF16: offset, layout: layout, content: content) else {
+                    continue
+                }
+                let viewFrame = frame.offsetBy(dx: textContainerInset.left, dy: textContainerInset.top)
+                if viewFrame.contains(point) {
+                    hit = (offset, object, viewFrame)
+                    stop.pointee = true
+                    return
+                }
+            }
+        }
+        return hit
+    }
+
+    /// Returns the laid-out TextKit 2 glyph segment frame (in this text view's
+    /// coordinates) for the inline chip at `offset`.
+    func inlineChipFrame(atUTF16 offset: Int) -> CGRect? {
+        guard let layout = textLayoutManager, let content = layout.textContentManager else { return nil }
+        if layout.textViewportLayoutController.viewportRange == nil {
+            layout.textViewportLayoutController.layoutViewport()
+        }
+        return inlineChipSegmentFrame(atUTF16: offset, layout: layout, content: content)?
+            .offsetBy(dx: textContainerInset.left, dy: textContainerInset.top)
+    }
+
+    private func inlineChipSegmentFrame(
+        atUTF16 offset: Int, layout: NSTextLayoutManager, content: NSTextContentManager
+    ) -> CGRect? {
+        guard offset >= 0, offset < textStorage.length,
+            let start = content.location(content.documentRange.location, offsetBy: offset),
+            let end = content.location(start, offsetBy: 1),
+            let range = NSTextRange(location: start, end: end)
+        else { return nil }
+        var result: CGRect?
+        layout.enumerateTextSegments(in: range, type: .standard, options: .rangeNotRequired) { _, frame, _, _ in
+            if !frame.isNull, !frame.isEmpty {
+                result = frame
+                return false
+            }
+            return true
+        }
+        return result
+    }
+
+    private func navigableInterlink(at point: CGPoint) -> (uuid: UUID, blockID: String)? {
+        guard let hit = inlineObjectHit(at: point),
+            case .interlink(let docID, let blockID, _, let disabled, _) = hit.object,
+            !disabled,
+            let uuid = UUID(uuidString: docID)
+        else { return nil }
+        return (uuid, blockID ?? "")
+    }
+
+    func chipTapShouldBegin(at point: CGPoint) -> Bool {
+        guard blockControls?.onOpenDocument != nil,
+            !isDragging, !isDecelerating,
+            markedTextRange == nil,
+            !hasActiveDragOrLongPress,
+            navigableInterlink(at: point) != nil
+        else { return false }
+        return true
+    }
+
+    private var hasActiveDragOrLongPress: Bool {
+        let localActive = (gestureRecognizers ?? []).contains { recognizer in
+            guard recognizer !== chipTapRecognizer else { return false }
+            let isDragOrPress = recognizer is UIPanGestureRecognizer || recognizer is UILongPressGestureRecognizer
+            return isDragOrPress && (recognizer.state == .began || recognizer.state == .changed)
+        }
+        if localActive { return true }
+        var ancestor = superview
+        while let current = ancestor {
+            if let scroll = current as? UIScrollView, scroll.isDragging || scroll.isDecelerating {
+                return true
+            }
+            ancestor = current.superview
+        }
+        return false
+    }
+
+    @objc private func handleChipTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        _ = handleChipTap(at: recognizer.location(in: self))
+    }
+
+    /// Handles a tap at `point` (in this text view's coordinates), invoking
+    /// `blockControls.onOpenDocument` for a resolved interlink chip.
+    @discardableResult
+    func handleChipTap(at point: CGPoint) -> Bool {
+        guard chipTapShouldBegin(at: point),
+            let target = navigableInterlink(at: point),
+            let onOpenDocument = blockControls?.onOpenDocument
+        else { return false }
+        onOpenDocument(target.uuid, target.blockID)
+        return true
+    }
+
+    private func inlineChipAccessibilityActions() -> [UIAccessibilityCustomAction] {
+        guard let onOpenDocument = blockControls?.onOpenDocument,
+            let target = selectedNavigableInterlink()
+        else { return [] }
+        let name = blockControls?.labels.openLink ?? NativeEditorLabels().openLink
+        return [
+            UIAccessibilityCustomAction(name: name) { _ in
+                onOpenDocument(target.uuid, target.blockID)
+                return true
+            }
+        ]
+    }
+
+    private func selectedNavigableInterlink() -> (uuid: UUID, blockID: String)? {
+        let length = textStorage.length
+        guard length > 0 else { return nil }
+        let range = selectedRange
+        guard range.location != NSNotFound else { return nil }
+
+        var candidateOffsets: [Int] = []
+        if range.length > 0 {
+            let start = max(0, min(range.location, length))
+            let end = max(start, min(NSMaxRange(range), length))
+            if start < end {
+                candidateOffsets.append(contentsOf: start..<end)
+            }
+        } else {
+            let loc = max(0, min(range.location, length))
+            if loc < length { candidateOffsets.append(loc) }
+            if loc > 0 { candidateOffsets.append(loc - 1) }
+        }
+
+        for offset in candidateOffsets {
+            guard blockControls?.surface?.isHidden(atUTF16: offset) != true,
+                let inline = textStorage.attribute(.nativeInlineObject, at: offset, effectiveRange: nil)
+                    as? NativeInlineObject,
+                case .interlink(let docID, let blockID, _, let disabled, _) = inline,
+                !disabled,
+                let uuid = UUID(uuidString: docID)
+            else { continue }
+            return (uuid, blockID ?? "")
+        }
+        return nil
     }
 
     override func layoutSubviews() {
@@ -377,6 +553,13 @@ final class NativeTextView: UITextView {
             bottom: DocsSpacing.spaceLG, right: DocsSpacing.spaceBase)
         accessibilityIdentifier = "nativeEditor.text"
         addSubview(cursorOverlay)
+        chipTapRecognizer.addTarget(self, action: #selector(handleChipTap(_:)))
+        chipTapRecognizer.numberOfTapsRequired = 1
+        chipTapRecognizer.cancelsTouchesInView = false
+        chipTapRecognizer.delaysTouchesBegan = false
+        chipTapRecognizer.delaysTouchesEnded = false
+        chipTapRecognizer.delegate = blockControls
+        addGestureRecognizer(chipTapRecognizer)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

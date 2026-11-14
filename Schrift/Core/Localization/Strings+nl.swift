@@ -415,6 +415,9 @@ enum Strings_nl {
         .native_editor_column_move_right: "Kolom naar rechts",
         .native_editor_math: "Formule",
         .native_editor_diagram: "Diagram",
+        .native_editor_chip_page: "Pagina",
+        .native_editor_chip_mention: "Vermelding",
+        .native_editor_chip_untitled: "Naamloze pagina",
         .native_editor_input_unavailable: "Deze invoer wordt nog niet ondersteund in de native editor.",
         .native_editor_range_unavailable: "Deze selectie bevat inhoud die de native editor nog niet kan wijzigen.",
         .native_editor_paste_too_large:

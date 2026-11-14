@@ -291,4 +291,73 @@ final class TableSelectionTests: NativeEditingTestCase {
         XCTAssertEqual(editor.active, Ref(row: 2, index: 0))
         XCTAssertEqual(g.accessibilityFrameInContainerSpace, editor.frame(of: Ref(row: 2, index: 0)))
     }
+
+    func testTableCopyAndPastePreservesInlineChipsAndUsesServerOrigin() async throws {
+        let chipUpdate = try XCTUnwrap(
+            Data(
+                base64Encoded: try XCTUnwrap(
+                    BlockNoteInlineCaptures.fixtures.first { $0.name == "chipsInTable" }?.update)))
+        let harness = try await makeHarness(state: chipUpdate)
+        addTeardownBlock { await harness.close() }
+        let editor = TableEditorViewController(document: harness.session, tableID: "tbl")
+        editor.serverOrigin = "https://example.test"
+        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+        let window =
+            scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = UINavigationController(rootViewController: editor)
+        window.makeKeyAndVisible()
+        addTeardownBlock { @MainActor in
+            window.endEditing(true)
+            window.isHidden = true
+        }
+        windows.append(window)
+        editor.loadViewIfNeeded()
+        await editor.load()
+        for _ in 0..<300 where !editor.isLoaded { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(editor.isLoaded)
+        let table = try XCTUnwrap(editor.cellSession)
+        addTeardownBlock { await table.close().value }
+
+        // Copy row 0 (interlink + mention).
+        editor.select(.init(anchor: TableSlot(row: 0, column: 0), head: TableSlot(row: 0, column: 1)))
+        table.textView.copy(nil)
+        for _ in 0..<300 where harness.pasteboard.data(forPasteboardType: TableClipboard.htmlType) == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let html = try XCTUnwrap(
+            harness.pasteboard.data(forPasteboardType: TableClipboard.htmlType).flatMap {
+                String(data: $0, encoding: .utf8)
+            })
+        XCTAssertFalse(html.contains("\u{FFFC}"))
+        XCTAssertTrue(html.contains("https://example.test/docs/11111111-1111-4111-8111-111111111111/"))
+        XCTAssertTrue(html.contains("@Ada"))
+
+        let plain = try XCTUnwrap(harness.pasteboard.string)
+        XCTAssertFalse(plain.contains("\u{FFFC}"))
+        XCTAssertTrue(plain.contains("https://example.test/docs/11111111-1111-4111-8111-111111111111/"))
+
+        // Paste row 0 into row 2 using the lossless BlockNoteSubtreePayload: inline chips remain elements.
+        editor.select(.init(anchor: TableSlot(row: 2, column: 0), head: TableSlot(row: 2, column: 1)))
+        let pasted = await table.run { editor.key(.paste) }
+        XCTAssertTrue(pasted)
+        await harness.settle()
+        XCTAssertNil(table.input?.noticeKey)
+        let written = await xml(harness)
+        XCTAssertFalse(written.contains("\u{FFFC}"))
+        let maybeRows = await harness.engine { $0.tableGrid("tbl")?.rows }
+        let rows = try XCTUnwrap(maybeRows)
+        XCTAssertEqual(rows[2][0].runs, rows[0][0].runs)
+        XCTAssertEqual(
+            rows[2][0].runs.compactMap(\.inlineObject),
+            [
+                .interlink(
+                    docID: "11111111-1111-4111-8111-111111111111", blockID: "", title: nil, disabled: false,
+                    trigger: "/")
+            ])
+        XCTAssertEqual(rows[2][1].runs, rows[0][1].runs)
+        XCTAssertEqual(
+            rows[2][1].runs.compactMap(\.inlineObject),
+            [.mention(userID: "user-1", fullName: "Ada")])
+    }
 }

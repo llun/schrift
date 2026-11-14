@@ -35,21 +35,23 @@ struct RelativeEditorPosition {
             entry.isProjectable, position.offset >= 0
         else { throw DocumentEngineError.invalidPosition }
         blockID = position.blockID
+        let units = entry.runs.flatMap { Array($0.text.utf16) }
+        if position.offset > 0, position.offset < units.count,
+            UTF16.isLeadSurrogate(units[position.offset - 1]), UTF16.isTrailSurrogate(units[position.offset])
+        {
+            throw DocumentEngineError.invalidPosition
+        }
         if let text = entry.textType {
             guard UInt(position.offset) <= text.length else { throw DocumentEngineError.invalidPosition }
-            let units = entry.runs.flatMap { Array($0.text.utf16) }
-            if position.offset > 0, position.offset < units.count,
-                UTF16.isLeadSurrogate(units[position.offset - 1]), UTF16.isTrailSurrogate(units[position.offset])
-            {
-                throw DocumentEngineError.invalidPosition
-            }
             relative = try YRelativePosition.fromTypeIndex(text, index: UInt(position.offset), assoc: position.assoc)
             anchor = .text
         } else if let element = entry.element, element.length > 0,
-            element.typeRef == .xmlElement(nodeName: "tableParagraph"), index.isTableParagraph(position.blockID)
+            entry.hasInlineObjects
+                || (element.typeRef == .xmlElement(nodeName: "tableParagraph")
+                    && index.isTableParagraph(position.blockID))
         {
-            // A cell paragraph with hard breaks (PR11b): in the text part that
-            // holds the offset, else between parts.
+            // A mixed-inline block or cell paragraph: in the text part that
+            // holds the offset, else between parts on the element.
             let parts = Self.parts(of: element)
             guard position.offset <= parts.last.map({ $0.start + $0.width }) ?? 0 else {
                 throw DocumentEngineError.invalidPosition
@@ -78,9 +80,9 @@ struct RelativeEditorPosition {
         }
     }
 
-    /// A cell paragraph's countable children with their UTF-16 starts (a
-    /// non-text part, a hard break, is one unit wide).
-    private static func parts(of element: YType) -> [(type: YType, start: Int, width: Int)] {
+    /// A block or cell paragraph's countable children with their UTF-16 starts
+    /// (any non-text part — inline chip or hard break — is one unit wide).
+    static func parts(of element: YType) -> [(type: YType, start: Int, width: Int)] {
         var parts: [(type: YType, start: Int, width: Int)] = []
         var start = 0
         for item in YBlockProjection.children(of: element, includeFormats: false) {
@@ -114,17 +116,22 @@ struct RelativeEditorPosition {
             guard let inText = Int(exactly: absolute.index), !(absolute.type.item?.deleted ?? true) else { return nil }
             if let text = entry.textType, absolute.type === text {
                 offset = inText
-            } else if index.isTableParagraph(blockID), let element = entry.element,
+            } else if entry.isSimpleContainer,
+                entry.hasInlineObjects || index.isTableParagraph(blockID),
+                let element = entry.element,
                 absolute.type.item?.parentType === element,
                 let part = Self.parts(of: element).first(where: { $0.type === absolute.type })
             {
-                // A text part of a cell paragraph (a break came in since).
+                // A text part of a mixed-inline block or cell paragraph.
                 offset = part.start + inText
             } else {
                 return nil
             }
         case .child:
-            guard let element = entry.element, absolute.type === element, let child = Int(exactly: absolute.index)
+            guard entry.isSimpleContainer,
+                entry.textType != nil || entry.hasInlineObjects || index.isTableParagraph(blockID)
+                    || entry.element?.length == 0,
+                let element = entry.element, absolute.type === element, let child = Int(exactly: absolute.index)
             else { return nil }
             offset = Self.parts(of: element).prefix(child).reduce(0) { $0 + $1.width }
         }

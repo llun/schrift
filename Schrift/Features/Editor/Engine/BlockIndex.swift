@@ -27,6 +27,9 @@ struct BlockIndex {
         /// True when the container is simple and the element's only countable
         /// child is an `XmlText`.
         let isSimpleText: Bool
+        /// True when the container is simple and holds at least one familiar
+        /// `NativeInlineObject` leaf (`isSimpleText` stays false).
+        let hasInlineObjects: Bool
         /// True when, at the time the entry was built, the projection read this
         /// block's props and text as-is: a simple container, readable props,
         /// and — when the element is a sole `XmlText` — only strings and marks
@@ -333,20 +336,40 @@ struct BlockIndex {
         guard case .type(let paragraph) = item.content else {
             return Entry(
                 id: id, containerItem: item, container: YType(), element: nil, textType: nil,
-                isSimpleContainer: false, isSimpleText: false, isProjectable: false, runs: [], depth: 0,
-                parentID: nil, group: group, nestedGroup: nil, handle: handle)
+                isSimpleContainer: false, isSimpleText: false, hasInlineObjects: false, isProjectable: false, runs: [],
+                depth: 0, parentID: nil, group: group, nestedGroup: nil, handle: handle)
         }
         let children = countableChildren(of: paragraph)
         var textType: YType?
         if children.count == 1, case .type(let type) = children[0].content, type.typeRef == .xmlText {
             textType = type
         }
-        let isProjectable = YBlockProjection.props(of: paragraph) != nil && textType.map(projectsAsText) != false
+        let propsOK = YBlockProjection.props(of: paragraph) != nil
+        let hasInlineObjects: Bool
+        let isProjectable: Bool
+        let runs: [InlineRun]
+        if let textType {
+            hasInlineObjects = false
+            isProjectable = propsOK && projectsAsText(textType)
+            runs = isProjectable ? (YBlockProjection.textRuns(textType) ?? []) : []
+        } else if children.isEmpty {
+            hasInlineObjects = false
+            isProjectable = propsOK
+            runs = []
+        } else if propsOK, let tableRuns = TableGrid.paragraphRuns(paragraph) {
+            isProjectable = true
+            hasInlineObjects = tableRuns.contains { $0.inlineObject != nil }
+            runs = tableRuns
+        } else {
+            hasInlineObjects = false
+            isProjectable = false
+            runs = []
+        }
         return Entry(
             id: id, containerItem: item, container: paragraph, element: paragraph, textType: textType,
-            isSimpleContainer: true, isSimpleText: textType != nil, isProjectable: isProjectable,
-            runs: isProjectable ? textType.flatMap(YBlockProjection.textRuns) ?? [] : [], depth: 0, parentID: nil,
-            group: group, nestedGroup: nil, handle: handle)
+            isSimpleContainer: true, isSimpleText: textType != nil, hasInlineObjects: hasInlineObjects,
+            isProjectable: isProjectable, runs: runs, depth: 0, parentID: nil, group: group, nestedGroup: nil,
+            handle: handle)
     }
 
     /// Re-reads the whole index, including each block's text for
@@ -448,15 +471,15 @@ struct BlockIndex {
         guard case .type(let container) = item.content else {
             return Entry(
                 id: id, containerItem: item, container: YType(), element: nil, textType: nil,
-                isSimpleContainer: false, isSimpleText: false, isProjectable: false, runs: [], depth: depth,
-                parentID: parentID, group: group, nestedGroup: nil, handle: handle)
+                isSimpleContainer: false, isSimpleText: false, hasInlineObjects: false, isProjectable: false, runs: [],
+                depth: depth, parentID: parentID, group: group, nestedGroup: nil, handle: handle)
         }
         // A column group (PR12a): its own element, atomic, no text of its own.
         if container.typeRef == .xmlElement(nodeName: "columnList") {
             return Entry(
                 id: id, containerItem: item, container: container, element: container, textType: nil,
-                isSimpleContainer: false, isSimpleText: false, isProjectable: false, runs: [], depth: depth,
-                parentID: parentID, group: group, nestedGroup: nil, handle: handle)
+                isSimpleContainer: false, isSimpleText: false, hasInlineObjects: false, isProjectable: false, runs: [],
+                depth: depth, parentID: parentID, group: group, nestedGroup: nil, handle: handle)
         }
         // Counted the way `YBlockProjection` counts children (countable items
         // only), so the fast paths accept exactly the shapes it projects. A
@@ -472,22 +495,56 @@ struct BlockIndex {
         }
         let isSimpleContainer = element != nil && (containerChildren.count == 1 || nestedGroup != nil)
         var textType: YType?
+        var elementChildren: [YItem] = []
         if isSimpleContainer, let element {
-            let elementChildren = Self.countableChildren(of: element)
+            elementChildren = Self.countableChildren(of: element)
             if elementChildren.count == 1, case .type(let type) = elementChildren[0].content,
                 type.typeRef == .xmlText
             {
                 textType = type
             }
         }
-        let isProjectable =
-            isSimpleContainer && element.map { YBlockProjection.props(of: $0) != nil } == true
-            && textType.map(Self.projectsAsText) != false
+        let hasInlineObjects: Bool
+        let isProjectable: Bool
+        let runs: [InlineRun]
+        if let textType {
+            hasInlineObjects = false
+            isProjectable =
+                isSimpleContainer && element.map { YBlockProjection.props(of: $0) != nil } == true
+                && Self.projectsAsText(textType)
+            runs = isProjectable ? (YBlockProjection.textRuns(textType) ?? []) : []
+        } else if isSimpleContainer, let element {
+            if elementChildren.isEmpty {
+                hasInlineObjects = false
+                isProjectable = YBlockProjection.props(of: element) != nil
+                runs = []
+            } else if case .xmlElement(let node)? = element.typeRef,
+                BlockNoteWriter.nativePropSchemas[node] != nil, node != "codeBlock"
+            {
+                let projected = YBlockProjection.projectBlock(item, nativeMarks: true, nestedChildren: true)
+                let hasChips = !projected.fidelity.isOpaque && projected.runs.contains { $0.inlineObject != nil }
+                hasInlineObjects = hasChips
+                isProjectable = hasChips
+                runs = hasChips ? projected.runs : []
+            } else if case .xmlElement("codeBlock")? = element.typeRef {
+                hasInlineObjects = false
+                isProjectable = false
+                runs = []
+            } else {
+                hasInlineObjects = false
+                isProjectable = YBlockProjection.props(of: element) != nil
+                runs = []
+            }
+        } else {
+            hasInlineObjects = false
+            isProjectable = false
+            runs = []
+        }
         return Entry(
             id: id, containerItem: item, container: container, element: element, textType: textType,
-            isSimpleContainer: isSimpleContainer, isSimpleText: textType != nil, isProjectable: isProjectable,
-            runs: isProjectable ? textType.flatMap(YBlockProjection.textRuns) ?? [] : [], depth: depth,
-            parentID: parentID, group: group, nestedGroup: nestedGroup, handle: handle)
+            isSimpleContainer: isSimpleContainer, isSimpleText: textType != nil, hasInlineObjects: hasInlineObjects,
+            isProjectable: isProjectable, runs: runs, depth: depth, parentID: parentID, group: group,
+            nestedGroup: nestedGroup, handle: handle)
     }
 
     /// True when the projection reads this text as runs unchanged: only strings

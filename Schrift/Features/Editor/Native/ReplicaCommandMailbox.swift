@@ -1,6 +1,11 @@
 import Foundation
 import Synchronization
 
+struct ReplicaInlineSlice: Equatable, Sendable {
+    let blockID: String
+    let range: Range<Int>
+}
+
 /// One command a surface sends its replica session (PR08b).
 ///
 /// `predicted` is option A's optimistic typing: the surface already shows it
@@ -70,7 +75,9 @@ enum ReplicaMessage: Sendable {
     /// `full` (PR11c) reads a table past the editing bound, for the viewer.
     case tableGrid(blockID: String, full: Bool = false, reply: @Sendable (TableGrid?) -> Void)
     /// Tables (PR11c): the clipboard of the CellSelection `from`...`to`.
-    case tableCopy(blockID: String, from: TableSlot, to: TableSlot, reply: @Sendable (TableCopy?) -> Void)
+    case tableCopy(
+        blockID: String, from: TableSlot, to: TableSlot, serverOrigin: String? = nil,
+        reply: @Sendable (TableCopy?) -> Void)
     /// Column groups (PR12a): group `blockID` as the replica holds it now.
     case columnGroup(blockID: String, reply: @Sendable (ColumnGroup?) -> Void)
     /// Media (PR13b): where block `blockID` is now, anywhere in the document
@@ -79,6 +86,7 @@ enum ReplicaMessage: Sendable {
     case mediaLocation(blockID: String, reply: @Sendable (MediaLocation??) -> Void)
     case requestAvailability(surfaceID: UUID, blockID: String, candidates: [ReplicaAvailabilityCandidate])
     case copyPayload(surfaceID: UUID, requestID: UUID, blockIDs: [String])
+    case copyInlinePayload(surfaceID: UUID, requestID: UUID, slices: [ReplicaInlineSlice])
     /// Installs the journal (nil makes the session read-only) and the shared
     /// history.
     case setWritable(DocumentReplicaSession.Journal?)
@@ -105,7 +113,7 @@ enum ReplicaMessage: Sendable {
         case .navigation(let reply): reply([])
         case .locate(_, _, let reply): reply(nil)
         case .tableGrid(_, _, let reply): reply(nil)
-        case .tableCopy(_, _, _, let reply): reply(nil)
+        case .tableCopy(_, _, _, _, let reply): reply(nil)
         case .columnGroup(_, let reply): reply(nil)
         case .mediaLocation(_, let reply): reply(nil)
         case .inspect(let body): body(nil, nil, nil)
@@ -198,6 +206,7 @@ struct ReplicaDelivery: Sendable {
     var state: ReplicaState
     var availability: (blockID: String, revision: UInt64, actions: [NativeBlockAction])?
     var clipboard: (requestID: UUID, payload: Data?)?
+    var inlineClipboard: (requestID: UUID, payload: Data?)?
     var drained: UUID?
     var timings: ReplicaTimings?
     var resync: Resync?
@@ -208,7 +217,9 @@ struct ReplicaDelivery: Sendable {
         var kept = self
         kept.events = []
         kept.selection = nil
-        let answers = result != nil || drained != nil || clipboard != nil || availability != nil || resync != nil
+        let answers =
+            result != nil || drained != nil || clipboard != nil || inlineClipboard != nil || availability != nil
+            || resync != nil
         return answers ? kept : nil
     }
 }

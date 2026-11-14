@@ -68,14 +68,16 @@ final class ReplicaSaveAdapter {
             expected.matches(markdown: markdown)
         else { throw ReplicaSaveError.staleReference }
         return try capture(
-            restored, markdown: expected.revision < manifest.revision ? Self.projectedMarkdown(restored) : markdown)
+            restored,
+            markdown: expected.revision < manifest.revision
+                ? Self.projectedMarkdown(restored, interlinkingOrigin: scope.serverOrigin) : markdown)
     }
 
     /// First capture, with no stored draft: the shadow always comes from raw,
     /// so no caller-supplied Markdown is ever stamped as current.
     func prepare() throws -> (request: ReplicaSaveRequest, markdown: String) {
         let restored = try restoreVerified()
-        return try capture(restored, markdown: Self.projectedMarkdown(restored))
+        return try capture(restored, markdown: Self.projectedMarkdown(restored, interlinkingOrigin: scope.serverOrigin))
     }
 
     private func restoreVerified() throws -> ReplicaRestore {
@@ -92,13 +94,13 @@ final class ReplicaSaveAdapter {
 
     /// The compatibility shadow of a verified raw revision. Read-only: this
     /// throwaway replica never authors, and the shadow is never a writer.
-    private static func projectedMarkdown(_ restored: ReplicaRestore) throws -> String {
+    private static func projectedMarkdown(_ restored: ReplicaRestore, interlinkingOrigin: String?) throws -> String {
         let doc = YDoc(clientID: 0)
         defer { doc.destroy() }
         try doc.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
         for update in restored.updates { try doc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote) }
         guard doc.store.pendingStructs == nil, doc.store.pendingDs == nil else { throw ReplicaStoreError.corrupt }
-        guard let markdown = NativeBlockProjection.markdownShadow(doc) else {
+        guard let markdown = NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) else {
             throw ReplicaSaveError.unprojectableShadow
         }
         return markdown

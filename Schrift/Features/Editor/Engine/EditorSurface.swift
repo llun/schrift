@@ -298,6 +298,35 @@ struct BlockSnapshot: Equatable, Sendable {
     var parentID: String?
     /// A non-prose block's bounded preview (PR06e). Display only.
     var preview: NativeBlockPreview?
+    var hasInlineObjects: Bool {
+        runs.contains { $0.inlineObject != nil }
+    }
+
+    var visibleText: String {
+        visibleText(titleForDocument: { _ in nil })
+    }
+
+    func visibleText(titleForDocument: (UUID) -> String?) -> String {
+        guard hasInlineObjects else { return runs.map(\.text).joined() }
+        return runs.map { run in
+            if let inline = run.inlineObject {
+                return inline.visibleText(titleForDocument: titleForDocument)
+            }
+            return run.text
+        }.joined()
+    }
+
+    /// Display-safe visible text where inline objects are bounded and scrubbed
+    /// for UI/accessibility summaries.
+    func clippedVisibleText(titleForDocument: (UUID) -> String? = { _ in nil }) -> String {
+        guard hasInlineObjects else { return runs.map(\.text).joined() }
+        return runs.map { run in
+            if let inline = run.inlineObject {
+                return inline.clippedVisibleText(titleForDocument: titleForDocument)
+            }
+            return run.text
+        }.joined()
+    }
 
     init(
         id: String, node: String, props: [ProjectedProp], runs: [InlineRun], isOpaque: Bool = false, depth: Int = 0,
