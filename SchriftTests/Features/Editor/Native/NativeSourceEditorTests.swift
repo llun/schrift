@@ -624,7 +624,9 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         // Structured subtree payload + plain-text same-origin URL on pasteboard must paste plain text,
         // NOT try pasteBlocks / pasteInline / interlink on the source surface.
         let subtreeData = try BlockNoteSubtreePayload.encode([
-            .element("blockContainer", [("id", .string("tmp"))], [.element("paragraph", [], [.text([.run(InlineRun("bad"))])])])
+            .element(
+                "blockContainer", [("id", .string("tmp"))],
+                [.element("paragraph", [], [.text([.run(InlineRun("bad"))])])])
         ])
         mathInput.pasteboard.setItems([
             [
@@ -632,10 +634,12 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
                 "public.utf8-plain-text": "https://example.test/docs/11111111-1111-4111-8111-111111111111",
             ]
         ])
-        mathTV.selectedRange = NSRange(location: (mathTV.text as NSString).length, length: 0)
+        mathTV.selectedRange = NSRange(location: max(0, (mathTV.text as NSString).length - 1), length: 0)
         let pastedMath = await mathSession.run { mathInput.pasteFromPasteboard() }
         XCTAssertTrue(pastedMath)
-        XCTAssertTrue(mathTV.text.hasSuffix("https://example.test/docs/11111111-1111-4111-8111-111111111111"))
+        XCTAssertTrue(
+            mathTV.text.hasSuffix("https://example.test/docs/11111111-1111-4111-8111-111111111111\n"),
+            mathTV.text ?? "")
 
         mathEditor.close()
         await harness.settle()
@@ -657,7 +661,7 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         inlineInput.pasteboard.string = "line1\nline2"
         let pastedNewline = await inlineSession.run { inlineInput.pasteFromPasteboard() }
         XCTAssertFalse(pastedNewline)
-        XCTAssertEqual(inlineTV.text, "𝑏")
+        XCTAssertEqual(inlineTV.text, "𝑏\n")
 
         // Pasting inline payload with a same-origin URL plain-text fallback pastes the plain text inside inlineMath.
         let inlinePayload = try BlockNoteInlinePayload.encode([[.text([.run(InlineRun("𝑐"))])]])
@@ -670,10 +674,10 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         inlineTV.selectedRange = NSRange(location: 2, length: 0)
         let pastedInlinePlain = await inlineSession.run { inlineInput.pasteFromPasteboard() }
         XCTAssertTrue(pastedInlinePlain)
-        XCTAssertEqual(inlineTV.text, "𝑏 + https://example.test/docs/11111111-1111-4111-8111-111111111111")
+        XCTAssertEqual(inlineTV.text, "𝑏 + https://example.test/docs/11111111-1111-4111-8111-111111111111\n")
 
         // Blank whitespace-only inline math persists faithfully without crashing or validating.
-        inlineTV.selectedRange = NSRange(location: 0, length: (inlineTV.text as NSString).length)
+        inlineTV.selectedRange = NSRange(location: 0, length: max(0, (inlineTV.text as NSString).length - 1))
         inlineTV.insertText("   ")
         await inlineSession.settle()
         inlineEditor.close()
@@ -779,12 +783,14 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         XCTAssertEqual(harness.view.selectedRange, NSRange(location: 10, length: 0))
 
         let richBlock = try XCTUnwrap(harness.session.surface.blocks.first { $0.id == "rich-root" })
-        XCTAssertEqual(richBlock.runs.map { $0.marks.map(\.key) }, [
-            ["bold"],
-            [],
-            ["italic"],
-            [],
-        ])
+        XCTAssertEqual(
+            richBlock.runs.map { $0.marks.map(\.key) },
+            [
+                ["bold"],
+                [],
+                ["italic"],
+                [],
+            ])
         XCTAssertEqual(richBlock.runs[1].inlineObject, .math(source: "x^2"))
         XCTAssertEqual(richBlock.runs[3].inlineObject, .math(source: "y_0"))
 
@@ -808,7 +814,8 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
 
         cellSession.input?.focus(after: cellReq)
         let tp2Entry = try XCTUnwrap(cellSession.surface.rangeIndex.entry(for: tp2Block.id))
-        XCTAssertEqual(cellSession.textView.selectedRange, NSRange(location: tp2Entry.textRange.location + 4, length: 0))
+        XCTAssertEqual(
+            cellSession.textView.selectedRange, NSRange(location: tp2Entry.textRange.location + 4, length: 0))
         let updatedTP2 = try XCTUnwrap(cellSession.surface.blocks.first { $0.id == tp2Block.id })
         XCTAssertEqual(updatedTP2.runs[0].marks.map(\.key), ["bold"])
         XCTAssertEqual(updatedTP2.runs[1].inlineObject, .math(source: "t*9"))
@@ -852,13 +859,13 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
 
         let peer = YDoc(clientID: 2, gc: true)
         defer { peer.destroy() }
-        try peer.applyUpdate(YUpdateDecoder.decode(try XCTUnwrap(harness.store.restore(for: harness.scope)?.checkpoint)))
+        try peer.applyUpdate(
+            YUpdateDecoder.decode(try XCTUnwrap(harness.store.restore(for: harness.scope)?.checkpoint)))
         let peerWriter = BlockNoteWriter(doc: peer)
+        let found = try peerWriter.findSource("mx")
+        let old = peerWriter.children(found.container).first
         let replaceUpdate = try peerWriter.transaction { tx in
-            let found = try peerWriter.find("mx")
-            if let old = peerWriter.children(found.container).first {
-                old.delete(tx)
-            }
+            old?.delete(tx)
             let replacement = YType(typeRef: .xmlElement(nodeName: SourceBlock.mathBlock))
             try YWrite.insertAfter(tx, into: found.container, after: nil, [.type(replacement)])
             let t = YType(typeRef: .xmlText)
@@ -882,11 +889,12 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         inlineTV.selectedRange = NSRange(location: 1, length: 0)
         inlineTV.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0))
 
+        let pFound = try peerWriter.find("px")
+        let mathItem = try XCTUnwrap(peerWriter.children(pFound.element).first)
+        guard case .type(let mathEl) = mathItem.content else {
+            return XCTFail("missing math element")
+        }
         let unfamiliarUpdate = try peerWriter.transaction { tx in
-            let pFound = try peerWriter.find("px")
-            guard let mathItem = peerWriter.children(pFound.element).first,
-                case .type(let mathEl) = mathItem.content
-            else { return XCTFail("missing math element") }
             let nested = YType(typeRef: .xmlElement(nodeName: "userMentionInline"))
             try YWrite.insertAfter(tx, into: mathEl, after: nil, [.type(nested)])
         }
@@ -996,6 +1004,7 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
 
         let recovery = try XCTUnwrap(restored.input?.composition.pendingRecoveries.first)
         restored.input?.discardRecovery(recovery)
+        await restored.settle()
         XCTAssertTrue(restored.input?.composition.pendingRecoveries.isEmpty == true)
         XCTAssertTrue(try harness.store.provisionalRecoveries(for: harness.scope).isEmpty)
     }
@@ -1036,14 +1045,14 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         mathSession.textView.selectedRange = NSRange(location: 1, length: 0)
         mathSession.textView.insertText("+b")
         await mathSession.settle()
-        XCTAssertEqual(mathSession.textView.text, "a+b")
+        XCTAssertEqual(mathSession.textView.text, "a+b\n")
 
         let didUndoInSource = await mathSession.run { mathInput.undo() }
         XCTAssertTrue(didUndoInSource)
-        XCTAssertEqual(mathSession.textView.text, "a")
+        XCTAssertEqual(mathSession.textView.text, "a\n")
         let didRedoInSource = await mathSession.run { mathInput.redo() }
         XCTAssertTrue(didRedoInSource)
-        XCTAssertEqual(mathSession.textView.text, "a+b")
+        XCTAssertEqual(mathSession.textView.text, "a+b\n")
         mathEditor.close()
         await harness.settle()
 
@@ -1051,12 +1060,14 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         // while preserving concurrent peer changes on another part of the document.
         let peer = YDoc(clientID: 2, gc: true)
         defer { peer.destroy() }
-        try peer.applyUpdate(YUpdateDecoder.decode(try XCTUnwrap(harness.store.restore(for: harness.scope)?.checkpoint)))
+        try peer.applyUpdate(
+            YUpdateDecoder.decode(try XCTUnwrap(harness.store.restore(for: harness.scope)?.checkpoint)))
         let peerWriter = BlockNoteWriter(doc: peer)
+        let pFound = try peerWriter.find("px")
+        let afterMath = peerWriter.children(pFound.element).last
         let peerUpdate = try peerWriter.transaction { tx in
-            let pFound = try peerWriter.find("px")
             let note = YType(typeRef: .xmlText)
-            try YWrite.insertAfter(tx, into: pFound.element, after: nil, [.type(note)])
+            try YWrite.insertAfter(tx, into: pFound.element, after: afterMath, [.type(note)])
             try note.insert(0, " peer", nil)
         }
         try await harness.session.integrateServerState(peerUpdate)

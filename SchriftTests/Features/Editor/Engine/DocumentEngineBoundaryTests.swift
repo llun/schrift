@@ -78,19 +78,26 @@ final class DocumentEngineBoundaryTests: XCTestCase {
         ]
         for fileName in coreFiles {
             let source = try String(contentsOf: coreYjs.appendingPathComponent(fileName), encoding: .utf8)
-            for forbidden in ["import UIKit", "import SwiftUI", "UITextView", "UIView", "NSRange", "NSText", "@MainActor", "DocumentEngine"] {
+            for forbidden in [
+                "import UIKit", "import SwiftUI", "UITextView", "UIView", "NSRange", "NSText", "@MainActor",
+                "DocumentEngine",
+            ] {
                 XCTAssertFalse(source.contains(forbidden), "\(fileName) mentions \(forbidden)")
             }
         }
         // BlockNoteWriter has legacy Foundation NSRange adapters, so check it still never touches UIKit/SwiftUI/MainActor.
-        let writerSource = try String(contentsOf: coreYjs.appendingPathComponent("BlockNoteWriter.swift"), encoding: .utf8)
-        for forbidden in ["import UIKit", "import SwiftUI", "UITextView", "UIView", "NSText", "@MainActor", "DocumentEngine"] {
+        let writerSource = try String(
+            contentsOf: coreYjs.appendingPathComponent("BlockNoteWriter.swift"), encoding: .utf8)
+        for forbidden in [
+            "import UIKit", "import SwiftUI", "UITextView", "UIView", "NSText", "@MainActor", "DocumentEngine",
+        ] {
             XCTAssertFalse(writerSource.contains(forbidden), "BlockNoteWriter.swift mentions \(forbidden)")
         }
 
         // PR14 UI/preview files stay strictly behind the replica session boundary (no engine/Yjs types).
         let native = root.appendingPathComponent("Schrift/Features/Editor/Native")
-        let editorSource = try String(contentsOf: native.appendingPathComponent("NativeSourceEditor.swift"), encoding: .utf8)
+        let editorSource = try String(
+            contentsOf: native.appendingPathComponent("NativeSourceEditor.swift"), encoding: .utf8)
         XCTAssertTrue(editorSource.contains("@MainActor"), "NativeSourceEditor.swift must be @MainActor")
         for fileName in ["NativeSourcePreview.swift", "NativeSourceEditor.swift"] {
             let source = try String(contentsOf: native.appendingPathComponent(fileName), encoding: .utf8)

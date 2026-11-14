@@ -137,7 +137,11 @@ final class ColumnEditorModel: Identifiable {
             self?.onOpenDocument?(id, blockID)
         }
         session.textView.blockControls.onOpenSource = { [weak self] request in
-            self?.onOpenSource?(request)
+            if let override = self?.onOpenSource {
+                override(request)
+            } else {
+                self?.openSource = request
+            }
         }
         // The group's own change reaches every column: its structure may have changed (PR12b).
         session.onApplied = { [weak self] delivery in

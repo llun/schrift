@@ -872,7 +872,9 @@ final class BlockNoteSourceOracleTests: XCTestCase {
         let writer = BlockNoteWriter(doc: doc)
         let m1Element = try writer.findSource("m1").element
         try writer.replaceSourceText(in: m1Element, range: 1..<3, with: "𝑐", block: "m1")
-        XCTAssertTrue(YXMLString.fragment(doc).contains("<mathblock>𝑐😀</mathblock>"), "mid-surrogate 1..<3 snaps outward across '𝑎+'")
+        XCTAssertTrue(
+            YXMLString.fragment(doc).contains("<mathblock>𝑐😀</mathblock>"),
+            "mid-surrogate 1..<3 snaps outward across '𝑎+'")
 
         // Engine rejects mid-surrogate offsets rather than corrupting UTF-16.
         let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
@@ -892,8 +894,9 @@ final class BlockNoteSourceOracleTests: XCTestCase {
         let expected = "𝑐" + complex
         XCTAssertTrue(YXMLString.fragment(doc).contains("<mathblock>\(expected)</mathblock>"))
         engine.closeSource(m1SourceID)
-        let shadow = try XCTUnwrap(NativeBlockProjection.markdownShadow(doc))
-        XCTAssertTrue(shadow.contains(expected), shadow)
+        XCTAssertEqual(
+            NativeBlockProjection.project(doc).blocks.first { $0.id == "m1" }?.block.runs, [InlineRun(expected)])
+        XCTAssertEqual(NativeBlockProjection.markdownShadow(doc), "A  end\n")
 
         // Open inline <math> containing surrogate-pair math symbols and verify UTF-16 offset rejection + valid edit.
         let inlineTarget = try XCTUnwrap(engine.inlineMathTarget(blockID: "p1", utf16Offset: 2))
@@ -977,7 +980,7 @@ final class BlockNoteSourceOracleTests: XCTestCase {
     }
 
     func testNestedAtomOffsetsNeighbouringMarksAndContainerIDs() throws {
-        // Builds a root paragraph and a multi-paragraph table cell where inline <math> chips sit directly
+        // Builds a root paragraph (with a nested child) where inline <math> chips sit directly
         // between bold, italic, link, @mention and interlink atoms, verifying exact UTF-16 offsets,
         // non-bleeding marks, and stable container/item IDs across slash replacement vs source edits.
         let defaultProps: [(String, YAnyValue)] = [
@@ -985,44 +988,65 @@ final class BlockNoteSourceOracleTests: XCTestCase {
             ("backgroundColor", .string("default")),
             ("textAlignment", .string("left")),
         ]
-        let mention = InlineRun(inlineObject: .mention(userID: "u1", fullName: "Alice"))
-        let linkMarks: [(key: String, valueJSON: String)] = [
-            ("link", #"{"href":"https://example.org"}"#),
-            ("italic", "{}"),
-        ]
-        let interlink = NativeInlineObject.interlink(
-            docID: "22222222-2222-4222-8222-222222222222", blockID: nil, title: "Ref", disabled: false, trigger: "@")
-        let blocks: [BlockNoteBlock] = [
-            BlockNoteBlock(
-                node: "paragraph",
-                props: defaultProps,
-                runs: [
-                    InlineRun("bold", marks: [("bold", "{}")]),
-                    InlineRun(inlineObject: .math(source: "x^2")),
-                    InlineRun("ital", marks: [("italic", "{}")]),
-                    mention,
-                    InlineRun(inlineObject: .math(source: "y_0")),
-                    InlineRun(inlineObject: interlink),
-                    InlineRun("lnk", marks: linkMarks),
-                ],
-                id: "rich",
-                children: [
-                    BlockNoteBlock(
-                        node: "bulletListItem",
-                        props: defaultProps,
-                        runs: [InlineRun("child "), InlineRun(inlineObject: .math(source: "c_1"))],
-                        id: "nested-child")
-                ]),
-            BlockNoteBlock(
-                node: "paragraph",
-                props: defaultProps,
-                runs: [],
-                id: "slash-empty"),
-        ]
-        let state = BlockNoteYjs.encode(blocks, clientID: 1)
         let doc = YDoc(clientID: 1, gc: true)
         defer { doc.destroy() }
-        try doc.applyUpdate(YUpdateDecoder.decode(state))
+        try populateContainer(
+            doc, id: "rich", node: "paragraph", props: defaultProps,
+            fill: { element, tx in
+                let tBold = YType(typeRef: .xmlText)
+                var prev = try YWrite.insertAfter(tx, into: element, after: nil, [.type(tBold)])
+                try tBold.insert(0, "bold", ["bold": "{}"])
+
+                let m1 = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+                prev = try YWrite.insertAfter(tx, into: element, after: prev, [.type(m1)])
+                let m1Txt = YType(typeRef: .xmlText)
+                try YWrite.insertAfter(tx, into: m1, after: nil, [.type(m1Txt)])
+                try m1Txt.insert(0, "x^2", nil)
+
+                let tItal = YType(typeRef: .xmlText)
+                prev = try YWrite.insertAfter(tx, into: element, after: prev, [.type(tItal)])
+                try tItal.insert(0, "ital", ["italic": "{}"])
+
+                let mention = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.userMentionNodeName))
+                prev = try YWrite.insertAfter(tx, into: element, after: prev, [.type(mention)])
+                try YWrite.mapSet(tx, on: mention, key: "userId", .any([.string("u1")]))
+                try YWrite.mapSet(tx, on: mention, key: "fullName", .any([.string("Alice")]))
+
+                let m2 = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+                prev = try YWrite.insertAfter(tx, into: element, after: prev, [.type(m2)])
+                let m2Txt = YType(typeRef: .xmlText)
+                try YWrite.insertAfter(tx, into: m2, after: nil, [.type(m2Txt)])
+                try m2Txt.insert(0, "y_0", nil)
+
+                let interlink = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.interlinkingLinkNodeName))
+                prev = try YWrite.insertAfter(tx, into: element, after: prev, [.type(interlink)])
+                try YWrite.mapSet(
+                    tx, on: interlink, key: "docId", .any([.string("22222222-2222-4222-8222-222222222222")]))
+                try YWrite.mapSet(tx, on: interlink, key: "blockId", .any([.string("")]))
+                try YWrite.mapSet(tx, on: interlink, key: "title", .any([.string("Ref")]))
+                try YWrite.mapSet(tx, on: interlink, key: "disabled", .any([.bool(false)]))
+                try YWrite.mapSet(tx, on: interlink, key: "trigger", .any([.string("@")]))
+
+                let tLink = YType(typeRef: .xmlText)
+                _ = try YWrite.insertAfter(tx, into: element, after: prev, [.type(tLink)])
+                try tLink.insert(0, "lnk", ["link": #"{"href":"https://example.org"}"#, "italic": "{}"])
+            },
+            nested: { nestedGroup, tx in
+                try Self.appendContainer(
+                    to: nestedGroup, tx: tx, id: "nested-child", node: "bulletListItem", props: defaultProps
+                ) {
+                    childEl, tx in
+                    let childTxt = YType(typeRef: .xmlText)
+                    let prev = try YWrite.insertAfter(tx, into: childEl, after: nil, [.type(childTxt)])
+                    try childTxt.insert(0, "child ", nil)
+                    let m = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+                    _ = try YWrite.insertAfter(tx, into: childEl, after: prev, [.type(m)])
+                    let mTxt = YType(typeRef: .xmlText)
+                    try YWrite.insertAfter(tx, into: m, after: nil, [.type(mTxt)])
+                    try mTxt.insert(0, "c_1", nil)
+                }
+            })
+        try populateContainer(doc, id: "slash-empty", node: "paragraph", props: defaultProps) { _, _ in }
         let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
         defer { engine.detach() }
 
@@ -1031,7 +1055,8 @@ final class BlockNoteSourceOracleTests: XCTestCase {
         let t2 = try XCTUnwrap(engine.inlineMathTarget(blockID: "rich", utf16Offset: 10))
         XCTAssertNotEqual(t1, t2)
         XCTAssertNil(engine.inlineMathTarget(blockID: "rich", utf16Offset: 9), "@mention offset must not open as math")
-        XCTAssertNil(engine.inlineMathTarget(blockID: "rich", utf16Offset: 11), "interlink offset must not open as math")
+        XCTAssertNil(
+            engine.inlineMathTarget(blockID: "rich", utf16Offset: 11), "interlink offset must not open as math")
 
         // Nested child "child " (6 UTF-16) + chip @ 6..7.
         let nestedTarget = try XCTUnwrap(engine.inlineMathTarget(blockID: "nested-child", utf16Offset: 6))
@@ -1063,14 +1088,18 @@ final class BlockNoteSourceOracleTests: XCTestCase {
                 id: UUID(), baseRevision: engine.revision, blockID: "slash-empty",
                 kind: .insertSourceBlock(node: SourceBlock.mathBlock, newID: "unused-new", removing: 0..<0)),
             persist: { _ in })
-        XCTAssertEqual(NativeBlockProjection.project(doc).blocks.first { $0.id == "slash-empty" }?.block.node, SourceBlock.mathBlock)
+        XCTAssertEqual(
+            NativeBlockProjection.project(doc).blocks.first { $0.id == "slash-empty" }?.block.node,
+            SourceBlock.mathBlock)
 
         try engine.applyStructural(
             NativeEditCommand(
                 id: UUID(), baseRevision: engine.revision, blockID: "rich",
                 kind: .insertSourceBlock(node: SourceBlock.diagram, newID: "appended-diag", removing: 0..<0)),
             persist: { _ in })
-        XCTAssertEqual(NativeBlockProjection.project(doc).blocks.first { $0.id == "appended-diag" }?.block.node, SourceBlock.diagram)
+        XCTAssertEqual(
+            NativeBlockProjection.project(doc).blocks.first { $0.id == "appended-diag" }?.block.node,
+            SourceBlock.diagram)
 
         let projected = NativeBlockProjection.project(doc)
         let rich = try XCTUnwrap(projected.blocks.first { $0.id == "rich" })
@@ -1142,37 +1171,57 @@ final class BlockNoteSourceOracleTests: XCTestCase {
         // is both isFullyModeled == true and canType == true when inspected with interlinkingOrigin.
         XCTAssertFalse(projected.isFullyModeled)
 
-        let cleanBlocks: [BlockNoteBlock] = [
-            BlockNoteBlock(
-                node: "paragraph",
-                props: [
-                    ("textColor", .string("default")),
-                    ("backgroundColor", .string("default")),
-                    ("textAlignment", .string("left")),
-                ],
-                runs: [
-                    InlineRun("Link "),
-                    InlineRun(
-                        inlineObject: NativeInlineObject.interlink(
-                            docID: "33333333-3333-4333-8333-333333333333", blockID: nil, title: "Spec",
-                            disabled: false, trigger: "@")),
-                    InlineRun(" and "),
-                    InlineRun(inlineObject: .math(source: "E = mc^2")),
-                ],
-                id: "p-inline"),
-            BlockNoteBlock(node: SourceBlock.mathBlock, props: [], runs: [InlineRun("\\sum_{i=1}^n i")], id: "m-clean"),
-            BlockNoteBlock(node: SourceBlock.diagram, props: [], runs: [InlineRun("flowchart LR\n  A-->B")], id: "d-clean"),
-        ]
-        let cleanState = BlockNoteYjs.encode(cleanBlocks, clientID: 1)
         let cleanDoc = YDoc(clientID: 1, gc: true)
         defer { cleanDoc.destroy() }
-        try cleanDoc.applyUpdate(YUpdateDecoder.decode(cleanState))
+        let defaultProps: [(String, YAnyValue)] = [
+            ("textColor", .string("default")),
+            ("backgroundColor", .string("default")),
+            ("textAlignment", .string("left")),
+        ]
+        try populateContainer(cleanDoc, id: "p-inline", node: "paragraph", props: defaultProps) { element, tx in
+            let t1 = YType(typeRef: .xmlText)
+            var prev = try YWrite.insertAfter(tx, into: element, after: nil, [.type(t1)])
+            try t1.insert(0, "Link ", nil)
+
+            let interlink = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.interlinkingLinkNodeName))
+            prev = try YWrite.insertAfter(tx, into: element, after: prev, [.type(interlink)])
+            try YWrite.mapSet(
+                tx, on: interlink, key: "docId", .any([.string("33333333-3333-4333-8333-333333333333")]))
+            try YWrite.mapSet(tx, on: interlink, key: "blockId", .any([.string("")]))
+            try YWrite.mapSet(tx, on: interlink, key: "title", .any([.string("Spec")]))
+            try YWrite.mapSet(tx, on: interlink, key: "disabled", .any([.bool(false)]))
+            try YWrite.mapSet(tx, on: interlink, key: "trigger", .any([.string("@")]))
+
+            let t2 = YType(typeRef: .xmlText)
+            prev = try YWrite.insertAfter(tx, into: element, after: prev, [.type(t2)])
+            try t2.insert(0, " and ", nil)
+
+            let math = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+            _ = try YWrite.insertAfter(tx, into: element, after: prev, [.type(math)])
+            let mTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: math, after: nil, [.type(mTxt)])
+            try mTxt.insert(0, "E = mc^2", nil)
+        }
+        try populateContainer(cleanDoc, id: "m-clean", node: SourceBlock.mathBlock) { element, tx in
+            let t = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: element, after: nil, [.type(t)])
+            try t.insert(0, "\\sum_{i=1}^n i", nil)
+        }
+        try populateContainer(cleanDoc, id: "d-clean", node: SourceBlock.diagram) { element, tx in
+            let t = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: element, after: nil, [.type(t)])
+            try t.insert(0, "flowchart LR\n  A-->B", nil)
+        }
+        let cleanState = try YStateEncoder.encodeStateAsUpdate(cleanDoc)
         let cleanProjection = NativeBlockProjection.project(cleanDoc)
         XCTAssertTrue(cleanProjection.isFullyModeled)
         XCTAssertNotNil(NativeBlockProjection.markdownShadow(cleanDoc, interlinkingOrigin: Self.testOrigin))
 
-        let inspectedClean = try await NativeEditorSession.inspect(state: cleanState, interlinkingOrigin: Self.testOrigin)
-        XCTAssertTrue(inspectedClean.canType, "clean document with mathBlock, diagram, inline math and interlink is fully typable")
+        let inspectedClean = try await NativeEditorSession.inspect(
+            state: cleanState, interlinkingOrigin: Self.testOrigin)
+        XCTAssertTrue(
+            inspectedClean.canType, "clean document with mathBlock, diagram, inline math and interlink is fully typable"
+        )
         await inspectedClean.close().value
     }
 
@@ -1186,7 +1235,9 @@ final class BlockNoteSourceOracleTests: XCTestCase {
     }
 
     private func populateContainer(
-        _ doc: YDoc, id: String, node: String, fill: (YType, YTransaction) throws -> Void
+        _ doc: YDoc, id: String, node: String, props: [(String, YAnyValue)] = [],
+        fill: (YType, YTransaction) throws -> Void,
+        nested: ((YType, YTransaction) throws -> Void)? = nil
     ) throws {
         _ = try doc.transact(local: true) { tx in
             let root = doc.get(BlockNoteYjs.fragmentField)
@@ -1200,13 +1251,29 @@ final class BlockNoteSourceOracleTests: XCTestCase {
                 _ = try YWrite.insertAfter(tx, into: root, after: nil, [.type(g)])
                 group = g
             }
-            let afterContainer = YBlockProjection.children(of: group, includeFormats: false).last
-            let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
-            _ = try YWrite.insertAfter(tx, into: group, after: afterContainer, [.type(container)])
-            try YWrite.mapSet(tx, on: container, key: "id", .any([.string(id)]))
-            let element = YType(typeRef: .xmlElement(nodeName: node))
-            _ = try YWrite.insertAfter(tx, into: container, after: nil, [.type(element)])
-            try fill(element, tx)
+            try Self.appendContainer(to: group, tx: tx, id: id, node: node, props: props, fill: fill, nested: nested)
+        }
+    }
+
+    private static func appendContainer(
+        to group: YType, tx: YTransaction, id: String, node: String, props: [(String, YAnyValue)] = [],
+        fill: (YType, YTransaction) throws -> Void,
+        nested: ((YType, YTransaction) throws -> Void)? = nil
+    ) throws {
+        let afterContainer = YBlockProjection.children(of: group, includeFormats: false).last
+        let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+        _ = try YWrite.insertAfter(tx, into: group, after: afterContainer, [.type(container)])
+        try YWrite.mapSet(tx, on: container, key: "id", .any([.string(id)]))
+        let element = YType(typeRef: .xmlElement(nodeName: node))
+        let elItem = try YWrite.insertAfter(tx, into: container, after: nil, [.type(element)])
+        for (key, value) in props {
+            try YWrite.mapSet(tx, on: element, key: key, .any([value]))
+        }
+        try fill(element, tx)
+        if let nested {
+            let nestedGroup = YType(typeRef: .xmlElement(nodeName: "blockGroup"))
+            _ = try YWrite.insertAfter(tx, into: container, after: elItem, [.type(nestedGroup)])
+            try nested(nestedGroup, tx)
         }
     }
 }

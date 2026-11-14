@@ -166,27 +166,23 @@ final class DocumentEngine {
             entry.isSimpleText || entry.hasInlineObjects || element.length == 0 || isCellText(entry)
                 || isSourceText(entry),
             // Code and source blocks keep "\n" as a source line break; in prose
-            // or inline math a newline is forbidden/a block break.
-            !replacement.unicodeScalars.contains(where: {
-                $0.value == 0xfffc
-                    || (CharacterSet.newlines.contains($0)
-                        && !((node == "codeBlock" || SourceBlock.isSource(node)) && $0 == "\n"))
-            }),
+            // or inline math a newline is forbidden/a block break. Source buffers
+            // also reject control characters other than `\n` and `\t`.
+            isSourceText(entry)
+                ? SourceBlock.isValidReplacement(replacement, node: node)
+                : !replacement.unicodeScalars.contains(where: {
+                    $0.value == 0xfffc || (CharacterSet.newlines.contains($0) && !(node == "codeBlock" && $0 == "\n"))
+                }),
             !isSourceText(entry) || (marks?.isEmpty != false),
             marks?.allSatisfy({ Self.isMarkValue($0) && $0.valueJSON != "null" }) != false
         else { throw DocumentEngineError.unsupportedNativeInput }
         let isSource = isSourceText(entry)
         let target = isSource ? nil : try textTarget(entry)
         let units = textUnits(entry)
-        func validBoundary(_ offset: Int) -> Bool {
-            guard offset >= 0, offset <= units.count else { return false }
-            return offset == 0 || offset == units.count
-                || !(0xd800...0xdbff).contains(units[offset - 1]) || !(0xdc00...0xdfff).contains(units[offset])
-        }
         guard !entry.isSimpleText || entry.textType?.length == UInt(units.count),
             entry.isSimpleText || entry.hasInlineObjects || element.length == 0 || isCellText(entry) || isSource
                 || units.isEmpty,
-            validBoundary(range.lowerBound), validBoundary(range.upperBound)
+            Self.validSurrogateBoundaries(units, range: range)
         else { throw DocumentEngineError.unsupportedNativeInput }
         nativeCommand = command
         nativeEmission = 0
@@ -1930,11 +1926,9 @@ final class DocumentEngine {
         }
         if isSourceText(entry) {
             guard let element = entry.element, case .xmlElement(let node)? = element.typeRef,
-                !text.unicodeScalars.contains(where: {
-                    $0.value == 0xfffc
-                        || (CharacterSet.newlines.contains($0) && !(SourceBlock.isSource(node) && $0 == "\n"))
-                }),
-                marks?.isEmpty != false
+                SourceBlock.isValidReplacement(text, node: node),
+                marks?.isEmpty != false,
+                Self.validSurrogateBoundaries(textUnits(entry), range: range)
             else { throw DocumentEngineError.unsupportedNativeInput }
             return try writer.replaceSourceText(
                 in: element, range: range, with: text,
@@ -1943,6 +1937,15 @@ final class DocumentEngine {
         return try writer.replaceText(
             in: try textTarget(entry), range: range, with: text,
             marks: marks.map { YTextAttributes($0.map { ($0.key, $0.valueJSON) }) })
+    }
+
+    private static func validSurrogateBoundaries(_ units: [UInt16], range: Range<Int>) -> Bool {
+        func validBoundary(_ offset: Int) -> Bool {
+            guard offset >= 0, offset <= units.count else { return false }
+            return offset == 0 || offset == units.count
+                || !(0xd800...0xdbff).contains(units[offset - 1]) || !(0xdc00...0xdfff).contains(units[offset])
+        }
+        return validBoundary(range.lowerBound) && validBoundary(range.upperBound)
     }
 
     /// Applies marks over a block-relative range. A `"null"` value removes the

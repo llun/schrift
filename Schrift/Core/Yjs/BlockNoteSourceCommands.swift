@@ -77,17 +77,29 @@ enum SourceBlock {
         return text
     }
 
+    /// Whether `text` is valid plain input for `node` (`mathBlock`, `diagram`,
+    /// or inline `math`): no `U+FFFC`, no newlines except `\n` in `mathBlock`/
+    /// `diagram`, and no control scalars other than `\n` and `\t`.
+    static func isValidReplacement(_ text: String, node: String) -> Bool {
+        !text.unicodeScalars.contains { scalar in
+            if scalar.value == 0xFFFC { return true }
+            if CharacterSet.newlines.contains(scalar) {
+                return !(isSource(node) && scalar == "\n")
+            }
+            if scalar.value == 0x09 { return false }
+            // Check Unicode Cc (.control) rather than Foundation's CharacterSet.controlCharacters,
+            // which also includes Cf (.format) scalars like U+200D (ZWJ in emoji sequences).
+            return scalar.properties.generalCategory == .control
+        }
+    }
+
     /// Whether an untrusted pasted `mathBlock` or `diagram` may be inserted:
     /// empty props, plain unmarked text within bounds, no `U+FFFC`, and no
     /// control scalars other than `\n` and `\t`.
     static func isPastable(node: String, props: [ProjectedProp], children: [BlockNoteWriter.Copy]) -> Bool {
         guard nodes.contains(node), props.isEmpty, let source = plainText(of: children) else { return false }
         guard source.utf16.count <= maxSourceUTF16 else { return false }
-        return !source.unicodeScalars.contains { scalar in
-            if scalar.value == 0xFFFC { return true }
-            if scalar.value == 0x0A || scalar.value == 0x09 { return false }
-            return scalar.properties.generalCategory == .control || CharacterSet.controlCharacters.contains(scalar)
-        }
+        return isValidReplacement(source, node: node)
     }
 }
 

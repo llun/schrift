@@ -1541,9 +1541,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return NativeMarkSelection.same(marks, NativeMarkSelection.inherited(runs, at: range.lowerBound)) ? nil : marks
     }
 
-    private var canFormat: Bool {
-        guard sourceKind == nil, let view else { return false }
+    private var canEdit: Bool {
+        guard let view else { return false }
         return view.isEditable && !isFrozen && !isDetached && !compositionOwnsView
+    }
+
+    private var canFormat: Bool {
+        sourceKind == nil && canEdit
     }
 
     /// Republishes `activeMarks` and the caret's typing attributes (what UIKit
@@ -2384,8 +2388,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// read-only, frozen or composing).
     /// The stacks are the session's, mirrored from each delivery; a typed key
     /// still waiting for its append is undoable already (the step follows it).
-    var canUndo: Bool { canFormat && (history.canUndo || !surface.predictions.isEmpty) }
-    var canRedo: Bool { canFormat && history.canRedo && surface.predictions.isEmpty }
+    var canUndo: Bool { canEdit && (history.canUndo || !surface.predictions.isEmpty) }
+    var canRedo: Bool { canEdit && history.canRedo && surface.predictions.isEmpty }
 
     @discardableResult
     func undo() -> Bool { applyHistory(.undo) }
@@ -2398,7 +2402,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// the step stored is shown. Undo and redo are boundaries on both sides.
     private func applyHistory(_ kind: NativeEditCommand.Kind) -> Bool {
         directInsertion = nil
-        guard canFormat else { return false }
+        guard canEdit else { return false }
         return postBarrier(
             "", kind, refusal: nil, placement: .history, undoBefore: true, undoAfter: true,
             retry: again { [weak self] in self?.applyHistory(kind) ?? false })

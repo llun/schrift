@@ -3977,6 +3977,41 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `"Open link"`, table/column/outline expansion, mark barriers, atomic delete, IME composition,
   clipboard degradation, same-origin URL paste, TextKit 2 chip tap hit-testing across surfaces, and
   cover dismissal).
+- **PR14 Native math & diagram blocks + inline math (read/edit/preview/clipboard/recovery).**
+  **Model & Yjs:** `SourceBlock` (`mathBlock`, `diagram`) and `SourceTarget` (`block(id:)`,
+  `inlineMath(blockID:itemID:)`, synthetic surface id `"\(ownerID)\u{2}\(client).\(clock)"`) in
+  `BlockNoteSourceCommands.swift`, plus `NativeInlineObject.math(source:)` (BlockNote `<math>`
+  element with zero props and zero/one plain unmarked `YXmlText` child). Familiar `mathBlock`,
+  `diagram`, and `<math>` shapes project `.modeled`; unfamiliar shapes fail closed to `.opaque` and
+  drop `markdownShadow` (`nil`). Classic projection keeps all three opaque. `BlockNoteSubtreePayload`
+  and `BlockNoteInlinePayload` validate plain unmarked content, preserve `<math>` text on copy/paste,
+  and reject newlines/control chars/`U+FFFC` inside `<math>`.
+  **Shadow:** `NativeBlockProjection.markdownShadow(_:interlinkingOrigin:)` and
+  `NativeExportMarkdown` match Docs' `y-provider` (which omits `@blocknote/math-block` and
+  `@blocknote/diagram-block`), dropping familiar `mathBlock`/`diagram` subtrees (including nested
+  descendants) and exporting `.math` as `""` while preserving surrounding prose, marks, and table cells.
+  **Engine & Replica:** `DocumentEngine`, `BlockIndex`, `PatchBuilder`, `EngineSelection`,
+  `DocumentReplicaSession`, and `NativeEditorSession` add scoped `openSource(_:)` surfaces bound to
+  the source element's `YXmlText` (top-level, nested, column, or table cell), projecting it as a
+  single plain `codeBlock` surface while keeping outer block previews refreshed and isolating outer
+  blocks from text deltas. Awareness (`peerPlace`, `RelativeEditorPosition`) and shared `ReplicaHistory`
+  undo/redo adapt between closed and open source views; peer delete/replacement/unfamiliar edits drop
+  the scoped surface, auto-dismiss `NativeSourceEditorViewController`, and orphan active IME
+  composition into `provisional.json`.
+  **Previews, Input & Focused UI:** `NativeSourcePreview` formats exact source previews (preserving
+  indentation, blank lines, and empty-source labels) with explicit `"Math source"` / `"Diagram source"`
+  headers and Dynamic Type scaling without claiming syntax validation. `NativeSourceEditorViewController`
+  / `NativeSourceEditorScreen` (presented from `NativeEditorView`, `ColumnEditorModel`/`ColumnEditorScreen`,
+  and `TableEditorViewController`) edits live with Done / `Escape` / `⌘Return`, Return = newline in
+  `mathBlock`/`diagram` and exit-after-chip in `.inlineMath`, slash/formatting/link/indent gating in
+  `NativeInputCoordinator` (including plain-text paste fallback inside source buffers and newline
+  rejection in `.inlineMath`), and IME `provisional.json` recovery. `sourceSlashItems` adds
+  `mathBlock`, `inlineMath` (auto-opening `NativeSourceEditor`), and `diagram` (seeding
+  `SourceBlock.defaultDiagramSource`).
+  **Tests:** `BlockNoteSourceOracleTests` (10 tests), `DocumentEngineSourceTests` (7 tests),
+  `ReplicaSessionSourceTests` (3 tests), `NativeSourcePreviewTests` (7 tests), `NativeSourceEditorTests`
+  (13 tests), and `DocumentEngineBoundaryTests.testCoreYjsAndNativeSourceFilesRespectLayerBoundaries`
+  (4 tests total in `DocumentEngineBoundaryTests`).
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below
