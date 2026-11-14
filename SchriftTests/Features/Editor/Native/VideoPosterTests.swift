@@ -62,7 +62,12 @@ final class VideoPosterTests: NativeEditingTestCase {
         transform: CGAffineTransform = .identity,
         fileType: AVFileType = .mp4
     ) async throws -> Data {
-        let ext = fileType == .mov ? "mov" : "mp4"
+        let ext: String =
+            switch fileType {
+            case .mov: "mov"
+            case .mobile3GPP: "3gp"
+            default: "mp4"
+            }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("synth-\(UUID()).\(ext)")
         defer { try? FileManager.default.removeItem(at: url) }
 
@@ -864,5 +869,38 @@ final class VideoPosterTests: NativeEditingTestCase {
         let (disguisedLoader, _, _) = makeLoader(scope: scope(), transport: disguisedTransport)
         let disguisedResult = await disguisedLoader.loadIfNeeded(disguisedURL)
         XCTAssertNil(disguisedResult)
+    }
+
+    func testR3CachedVideoSupportsAdditionalAVFoundationExtensions() async throws {
+        for ext in ["avi", "mkv", "ts", "mpeg", "ogv", "3gp", "mp4", "m4v", "mov", "webm"] {
+            XCTAssertTrue(
+                VideoPosterLoader.isSupportedVideoFileExtension(ext),
+                "extension .\(ext) should be accepted for poster extraction")
+        }
+        for blocked in ["m3u8", "m3u", "pls", "html", "txt", "mp3", ""] {
+            XCTAssertFalse(
+                VideoPosterLoader.isSupportedVideoFileExtension(blocked),
+                "extension .\(blocked) must remain rejected")
+        }
+
+        // End-to-end cached-file path with a real .3gp video in AttachmentCacheStore and real AVAssetImageGenerator.
+        let video3GP = try await Self.makeTestVideoData(width: 160, height: 120, fileType: .mobile3GPP)
+        let url3GPString =
+            "\(Self.origin)/media/\(Self.documentID.uuidString.lowercased())/attachments/\(Self.fileID.uuidString.lowercased()).3gp"
+        let url3GP = URL(string: url3GPString)!
+        let display3GP = try XCTUnwrap(parseAttachmentLink("[video](\(url3GPString))", serverOrigin: Self.origin))
+
+        let attachmentDir = tempDir("attachments-3gp")
+        let attachments = AttachmentCacheStore(directory: attachmentDir)
+        XCTAssertNotNil(attachments.store(video3GP, for: display3GP))
+
+        let transport = StubTransport { _ in
+            XCTFail("cached .3gp video must not hit network")
+            return (Data(), nil)
+        }
+        let (loader, _, _) = makeLoader(scope: scope(), attachmentDir: attachmentDir, transport: transport)
+        let poster = await loader.loadIfNeeded(url3GP, allowsNetwork: false)
+        XCTAssertNotNil(poster, "cached .3gp video must produce a poster frame")
+        XCTAssertTrue(transport.urls.isEmpty)
     }
 }

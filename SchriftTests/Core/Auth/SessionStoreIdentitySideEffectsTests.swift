@@ -254,4 +254,59 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
         XCTAssertEqual(attachmentClears, 3)
         XCTAssertEqual(stagingClears, 3)
     }
+
+    func testRelaunchAfterUnconfirmedCookieHandoverClearsAttachmentCache() throws {
+        let cacheDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SessionStoreS2b-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: cacheDir) }
+
+        let keychain = FakeKeychainStore()
+        let cookies = FakeCookieStorage()
+        let store = SessionStore(
+            userDefaults: userDefaults,
+            keychain: keychain,
+            cookieStorage: cookies,
+            clearAttachmentCache: { AttachmentCacheStore(directory: cacheDir).removeAll() })
+        try store.signIn(serverURL: serverURL)
+
+        let docID = UUID(uuidString: "11111111-2222-4333-8444-555555555555")!
+        let fileID = UUID(uuidString: "66666666-7777-4888-8999-aaaaaaaaaaaa")!
+        let display = try XCTUnwrap(
+            parseAttachmentLink(
+                "[video](\(serverURL.absoluteString)/media/\(docID.uuidString.lowercased())/attachments/\(fileID.uuidString.lowercased()).mp4)",
+                serverOrigin: serverURL.absoluteString))
+
+        // Confirmed session relaunch preserves offline attachment cache.
+        let confirmedCache = AttachmentCacheStore(directory: cacheDir)
+        XCTAssertNotNil(confirmedCache.store(Data("account-a".utf8), for: display))
+        let confirmedRelaunch = SessionStore(
+            userDefaults: userDefaults,
+            keychain: keychain,
+            cookieStorage: cookies,
+            clearAttachmentCache: { AttachmentCacheStore(directory: cacheDir).removeAll() })
+        XCTAssertNotNil(confirmedRelaunch.imageCacheSessionID)
+        XCTAssertNotNil(AttachmentCacheStore(directory: cacheDir).cachedFileURL(for: display))
+
+        // Unconfirmed cookie handover drops the persisted session key; B writes to AttachmentCacheStore before relaunch.
+        confirmedRelaunch.noteSessionCookiesReplaced()
+        let unconfirmedCache = AttachmentCacheStore(directory: cacheDir)
+        XCTAssertNotNil(unconfirmedCache.store(Data("account-b-secret".utf8), for: display))
+        XCTAssertNotNil(unconfirmedCache.cachedFileURL(for: display))
+
+        // Relaunch restores A's cookies and mints a new session key; AttachmentCacheStore MUST be cleared.
+        var clearCount = 0
+        let relaunched = SessionStore(
+            userDefaults: userDefaults,
+            keychain: keychain,
+            cookieStorage: cookies,
+            clearAttachmentCache: {
+                clearCount += 1
+                AttachmentCacheStore(directory: cacheDir).removeAll()
+            })
+        XCTAssertEqual(clearCount, 1)
+        XCTAssertNotNil(relaunched.imageCacheSessionID)
+        XCTAssertNil(
+            AttachmentCacheStore(directory: cacheDir).cachedFileURL(for: display),
+            "relaunch after unconfirmed handover must wipe Account B's unscoped attachment cache")
+    }
 }

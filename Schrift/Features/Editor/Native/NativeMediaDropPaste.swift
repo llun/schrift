@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Synchronization
 import UIKit
@@ -508,53 +509,124 @@ enum NativeMediaDropPaste {
         }
     }
 
-    private static func stageFromFileURL(
+    static func stageFromFileURL(
         _ sourceURL: URL,
         node: String,
         isPhoto: Bool,
         suggestedName: String?,
         preferredTypeIdentifier: String,
         destinationDir: URL,
-        byteLimit: Int
+        byteLimit: Int,
+        onValidated: (() -> Void)? = nil
     ) -> StagedItem {
         let scoped = sourceURL.startAccessingSecurityScopedResource()
         defer { if scoped { sourceURL.stopAccessingSecurityScopedResource() } }
 
-        switch validateRegularImportFile(at: sourceURL, byteLimit: byteLimit, allowStagingRoot: false) {
-        case .valid:
-            break
-        case .tooLarge:
-            return StagedItem(node: node, isPhoto: isPhoto, stagingURL: nil, exceededByteLimit: true)
-        case .rejected:
-            return StagedItem(node: node, isPhoto: isPhoto, stagingURL: nil, exceededByteLimit: false)
+        let rejected = StagedItem(node: node, isPhoto: isPhoto, stagingURL: nil, exceededByteLimit: false)
+        guard sourceURL.isFileURL,
+            !sourceURL.hasDirectoryPath,
+            isAllowedImportSourceURL(sourceURL, allowStagingRoot: false)
+        else {
+            return rejected
         }
+
+        // Open once without following symlinks or blocking on FIFOs/devices.
+        let srcFD = Darwin.open(sourceURL.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard srcFD >= 0 else { return rejected }
+        defer { Darwin.close(srcFD) }
+
+        var st = stat()
+        guard Darwin.fstat(srcFD, &st) == 0,
+            (st.st_mode & S_IFMT) == S_IFREG,
+            st.st_size >= 0
+        else {
+            return rejected
+        }
+        if st.st_size > Int64(byteLimit) {
+            return StagedItem(node: node, isPhoto: isPhoto, stagingURL: nil, exceededByteLimit: true)
+        }
+
+        var pathBuffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        guard Darwin.fcntl(srcFD, F_GETPATH, &pathBuffer) == 0 else { return rejected }
+        pathBuffer[pathBuffer.count - 1] = 0
+        let realPath = String(cString: pathBuffer)
+        guard !realPath.isEmpty else { return rejected }
+        let realURL = URL(fileURLWithPath: realPath)
+        guard isAllowedImportSourceURL(realURL, allowStagingRoot: false) else { return rejected }
+
+        onValidated?()
 
         let fileName = resolvedFileName(
             sourceURL: sourceURL, suggestedName: suggestedName, typeIdentifier: preferredTypeIdentifier, node: node)
         let targetURL = destinationDir.appendingPathComponent(fileName)
-        do {
-            if FileManager.default.fileExists(atPath: targetURL.path) {
-                try FileManager.default.removeItem(at: targetURL)
-            }
-            try FileManager.default.copyItem(at: sourceURL, to: targetURL)
-            try? FileManager.default.setAttributes(
-                [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
-                ofItemAtPath: targetURL.path)
-            excludeFromBackup(targetURL)
 
-            switch validateRegularImportFile(at: targetURL, byteLimit: byteLimit, allowStagingRoot: true) {
-            case .valid:
-                return StagedItem(node: node, isPhoto: isPhoto, stagingURL: targetURL, exceededByteLimit: false)
-            case .tooLarge:
+        let dstFD = Darwin.open(targetURL.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, S_IRUSR | S_IWUSR)
+        guard dstFD >= 0 else { return rejected }
+
+        var dstOpen = true
+        defer {
+            if dstOpen { Darwin.close(dstFD) }
+        }
+
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        var totalBytes = 0
+        while true {
+            let bytesRead = Darwin.read(srcFD, &buffer, buffer.count)
+            if bytesRead < 0 {
+                if errno == EINTR { continue }
+                Darwin.close(dstFD)
+                dstOpen = false
+                try? FileManager.default.removeItem(at: targetURL)
+                return rejected
+            }
+            if bytesRead == 0 { break }
+            if totalBytes + bytesRead > byteLimit {
+                Darwin.close(dstFD)
+                dstOpen = false
                 try? FileManager.default.removeItem(at: targetURL)
                 return StagedItem(node: node, isPhoto: isPhoto, stagingURL: nil, exceededByteLimit: true)
-            case .rejected:
-                try? FileManager.default.removeItem(at: targetURL)
-                return StagedItem(node: node, isPhoto: isPhoto, stagingURL: nil, exceededByteLimit: false)
             }
-        } catch {
+            totalBytes += bytesRead
+
+            var offset = 0
+            while offset < bytesRead {
+                let written = buffer.withUnsafeBytes { raw in
+                    Darwin.write(dstFD, raw.baseAddress!.advanced(by: offset), bytesRead - offset)
+                }
+                if written < 0 {
+                    if errno == EINTR { continue }
+                    Darwin.close(dstFD)
+                    dstOpen = false
+                    try? FileManager.default.removeItem(at: targetURL)
+                    return rejected
+                }
+                if written == 0 {
+                    Darwin.close(dstFD)
+                    dstOpen = false
+                    try? FileManager.default.removeItem(at: targetURL)
+                    return rejected
+                }
+                offset += written
+            }
+        }
+
+        Darwin.close(dstFD)
+        dstOpen = false
+
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: targetURL.path)
+        excludeFromBackup(targetURL)
+
+        switch validateRegularImportFile(at: targetURL, byteLimit: byteLimit, allowStagingRoot: true) {
+        case .valid:
+            return StagedItem(node: node, isPhoto: isPhoto, stagingURL: targetURL, exceededByteLimit: false)
+        case .tooLarge:
             try? FileManager.default.removeItem(at: targetURL)
-            return StagedItem(node: node, isPhoto: isPhoto, stagingURL: nil, exceededByteLimit: false)
+            return StagedItem(node: node, isPhoto: isPhoto, stagingURL: nil, exceededByteLimit: true)
+        case .rejected:
+            try? FileManager.default.removeItem(at: targetURL)
+            return rejected
         }
     }
 

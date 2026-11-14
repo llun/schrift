@@ -943,6 +943,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
     }
 
+    private var hasActiveBarrier: Bool {
+        barrier != nil
+    }
+
     /// Something is in flight that the next key must wait for (a resolved
     /// composition's own delivery included: held keys go after its text).
     private var isBusy: Bool {
@@ -1266,7 +1270,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// `marks`, when given, is the complete mark set the text carries (a link
     /// edit); otherwise typing takes the marks at the caret.
     @discardableResult
-    func replace(range: NSRange, with text: String, marks: [TextMark]? = nil) -> Bool {
+    func replace(
+        range: NSRange, with text: String, marks: [TextMark]? = nil, holdWhenBusy: Bool = true
+    ) -> Bool {
         directInsertion = nil
         guard let view, view.isEditable, !isFrozen, !isDetached else { return false }
         guard range.length != 0 || !text.isEmpty else { return false }
@@ -1278,7 +1284,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // and deleting the character before it are held like keys.
         // Typing over a selection is held the same way and replays over the
         // selection then current.
-        if isBusy {
+        if isBusy, holdWhenBusy {
             if range == view.selectedRange, !text.isEmpty {
                 hold(.insert(text))
                 return true
@@ -1358,14 +1364,18 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         let caret = NSRange(location: range.location + text.utf16.count, length: 0)
         // Typing continues one undo step only from where typing left the caret.
         let undoBefore = view.selectedRange != typingCaret
-        guard barrier == nil, !awaitsReset else { return false }
-        guard canPredict(surface.blocks[position], blockRange, text, typed) else {
+        guard barrier == nil, !holdWhenBusy || !awaitsReset else { return false }
+        guard holdWhenBusy || (pendingCompositionCommit == nil && !awaitsReset),
+            canPredict(surface.blocks[position], blockRange, text, typed)
+        else {
             // The engine's own validation decides: shown on its result.
             return postBarrier(
                 entry.blockID, .replace(range: blockRange, replacement: text, marks: typed),
                 refusal: .native_editor_input_unavailable, placement: .at(caret.location), undoBefore: undoBefore,
                 undoAfter: false,
-                retry: again(at: range) { [weak self] in self?.replace(range: $0, with: text, marks: marks) ?? false })
+                retry: again(at: range) { [weak self] in
+                    self?.replace(range: $0, with: text, marks: marks, holdWhenBusy: holdWhenBusy) ?? false
+                })
         }
         let command = NativeEditCommand(
             id: UUID(), baseRevision: canonicalRevision, blockID: entry.blockID, range: blockRange,
@@ -1717,7 +1727,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     }
 
     var canEditForTextDrop: Bool {
-        canEdit && !isBusy
+        canEdit
     }
 
     var canAcceptMediaDrop: Bool {
@@ -2512,7 +2522,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @discardableResult
     func cutSelection() -> Bool {
         // A delete held behind a barrier would leave its copy unwritten.
-        guard !isBusy else {
+        guard !hasActiveBarrier else {
             noticeKey = .native_editor_input_busy
             return false
         }
@@ -2528,7 +2538,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // ordered), written once the delete is applied.
         let copy = copy(text: text, blocks: blocks, inlineSlices: slices)
         let before = lastCommandID
-        guard replace(range: view.selectedRange, with: ""), lastCommandID != before, let delete = lastCommandID else {
+        guard replace(range: view.selectedRange, with: "", holdWhenBusy: false),
+            lastCommandID != before,
+            let delete = lastCommandID
+        else {
             pendingCopies[copy] = nil
             return false
         }
@@ -2572,7 +2585,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         {
             directInsertion = nil
             guard !compositionOwnsView, !isFrozen, !isDetached else { return false }
-            guard !isBusy else {
+            guard !hasActiveBarrier else {
                 noticeKey = .native_editor_input_busy
                 return false
             }
@@ -2721,7 +2734,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     private func pasteBlocks(_ payload: Data) -> Bool {
         directInsertion = nil
         guard let view, !compositionOwnsView, !isFrozen, !isDetached else { return false }
-        guard !isBusy else {
+        guard !hasActiveBarrier else {
             noticeKey = .native_editor_input_busy
             return false
         }
@@ -2738,7 +2751,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     private func pasteInline(_ payload: Data, replacing range: NSRange) -> Bool {
         directInsertion = nil
         guard view != nil, !compositionOwnsView, !isFrozen, !isDetached else { return false }
-        guard !isBusy else {
+        guard !hasActiveBarrier else {
             noticeKey = .native_editor_input_busy
             return false
         }

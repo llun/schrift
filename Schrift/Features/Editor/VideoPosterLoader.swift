@@ -453,10 +453,37 @@ final class VideoPosterLoader {
         }
     }
 
-    private nonisolated static let allowedVideoExtensions: Set<String> = ["mp4", "m4v", "mov", "webm"]
+    private nonisolated static let blockedPlaylistExtensions: Set<String> = [
+        "m3u", "m3u8", "pls", "xspf", "mpd", "asx", "smil",
+    ]
+    private nonisolated static let supportedVideoContainerExtensions: Set<String> = [
+        "mp4", "m4v", "mov", "webm", "avi", "mkv", "ts", "mts", "m2ts",
+        "mpeg", "mpg", "ogv", "3gp", "3g2", "flv", "wmv", "asf", "divx",
+    ]
     private nonisolated static let allowedVideoMIMETypes: Set<String> = [
         "video/mp4", "video/x-m4v", "video/quicktime", "video/webm",
+        "video/3gpp", "video/3gpp2", "video/x-msvideo", "video/avi",
+        "video/x-matroska", "video/mp2t", "video/mpeg", "video/ogg",
+        "video/x-flv", "video/x-ms-wmv",
     ]
+
+    nonisolated static func isSupportedVideoFileExtension(_ fileExtension: String) -> Bool {
+        let ext = fileExtension.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !ext.isEmpty, !blockedPlaylistExtensions.contains(ext) else { return false }
+
+        let types = UTType.types(tag: ext, tagClass: .filenameExtension, conformingTo: nil)
+        if types.contains(where: { $0.conforms(to: .playlist) || $0.conforms(to: .m3uPlaylist) }) {
+            return false
+        }
+        if types.contains(where: { $0.conforms(to: .movie) || $0.conforms(to: .video) }) {
+            return true
+        }
+        let avTypes = Set(AVURLAsset.audiovisualTypes().map(\.rawValue))
+        if types.contains(where: { avTypes.contains($0.identifier) && !$0.conforms(to: .audio) }) {
+            return true
+        }
+        return supportedVideoContainerExtensions.contains(ext)
+    }
 
     private nonisolated static func normalizedAllowedMIMEType(_ mimeType: String?) -> String? {
         guard let mimeType else { return nil }
@@ -479,13 +506,13 @@ final class VideoPosterLoader {
 
     private static func sanitizedVideoExtension(url: URL, mimeType: String?) -> String {
         let pathExt = url.pathExtension.lowercased()
-        if allowedVideoExtensions.contains(pathExt) {
+        if isSupportedVideoFileExtension(pathExt) {
             return pathExt
         }
         if let safeMIME = normalizedAllowedMIMEType(mimeType),
             let utType = UTType(mimeType: safeMIME),
             let preferred = utType.preferredFilenameExtension?.lowercased(),
-            allowedVideoExtensions.contains(preferred)
+            isSupportedVideoFileExtension(preferred)
         {
             return preferred
         }
@@ -495,7 +522,7 @@ final class VideoPosterLoader {
     private nonisolated static func extractJPEGPoster(from fileURL: URL, mimeType: String?) async -> Data? {
         guard fileURL.isFileURL,
             !Task.isCancelled,
-            allowedVideoExtensions.contains(fileURL.pathExtension.lowercased())
+            isSupportedVideoFileExtension(fileURL.pathExtension)
         else { return nil }
         let asset = AVURLAsset(url: fileURL, options: avURLAssetOptions(mimeType: mimeType))
         let generator = AVAssetImageGenerator(asset: asset)

@@ -1,3 +1,4 @@
+import Darwin
 import ImageIO
 import SwiftUI
 import UIKit
@@ -1178,9 +1179,9 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
             items: [UIDragItem(itemProvider: dataProvider(.png, data: png, name: "busy.png"))],
             location: CGPoint(x: 80, y: 80))
 
-        // Drop proposal must not promise `.copy` during a barrier, and drop must refuse with notice.
+        // Drop proposal must not promise `.copy` for media during a barrier, while text drop remains enabled.
         XCTAssertFalse(harness.input.canAcceptMediaDrop)
-        XCTAssertFalse(harness.input.canEditForTextDrop)
+        XCTAssertTrue(harness.input.canEditForTextDrop)
         let proposal = dropController.dropInteraction(interaction, sessionDidUpdate: dropSession)
         XCTAssertEqual(proposal.operation, UIDropOperation.forbidden)
         XCTAssertFalse(dropController.isShowingDropIndicator)
@@ -1229,6 +1230,183 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
         XCTAssertEqual(harness.session.surface.blocks[1].visibleText, "Queued")
         XCTAssertEqual(harness.session.surface.blocks[2].visibleText, "Tail")
         XCTAssertTrue(env.attachments.allAttachments().isEmpty)
+    }
+
+    func testS1bStageFromFileURLRefusesFIFOAndSymlinkedParentDirAndStreamsSingleFD() throws {
+        let dir = try tempDir("s1b")
+        let stagingRoot = dir.appendingPathComponent("staging", isDirectory: true)
+        let destDir = stagingRoot.appendingPathComponent("batch/0", isDirectory: true)
+        try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
+
+        // 1. FIFO source must be refused without blocking.
+        let fifoURL = dir.appendingPathComponent("pipe.txt")
+        XCTAssertEqual(Darwin.mkfifo(fifoURL.path, 0o600), 0)
+        let fifoResult = NativeMediaDropPaste.stageFromFileURL(
+            fifoURL,
+            node: "file",
+            isPhoto: false,
+            suggestedName: "pipe.txt",
+            preferredTypeIdentifier: UTType.plainText.identifier,
+            destinationDir: destDir,
+            byteLimit: 1024)
+        XCTAssertNil(fifoResult.stagingURL)
+        XCTAssertFalse(fifoResult.exceededByteLimit)
+
+        // 2. Source reached through a symlinked parent dir pointing into Library/Caches must be refused.
+        let cachesDir = try XCTUnwrap(
+            FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first)
+        let secretDir = cachesDir.appendingPathComponent("s1b-secret-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: secretDir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: secretDir) }
+        let secretFile = secretDir.appendingPathComponent("secret.txt")
+        try Data("secret-from-library".utf8).write(to: secretFile)
+
+        let staticParentLink = dir.appendingPathComponent("static-parent-link", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: staticParentLink, withDestinationURL: secretDir)
+        let staticLinkResult = NativeMediaDropPaste.stageFromFileURL(
+            staticParentLink.appendingPathComponent("secret.txt"),
+            node: "file",
+            isPhoto: false,
+            suggestedName: "secret.txt",
+            preferredTypeIdentifier: UTType.plainText.identifier,
+            destinationDir: destDir,
+            byteLimit: 1024)
+        XCTAssertNil(staticLinkResult.stagingURL)
+        XCTAssertFalse(staticLinkResult.exceededByteLimit)
+
+        // 3. TOCTOU parent-directory symlink swap between validation and copy/stream:
+        //    even if the parent symlink is swapped to `secretDir` after validation,
+        //    streaming from the already-opened validated fd must never read `secret-from-library`.
+        let safeDir = dir.appendingPathComponent("safe-parent", isDirectory: true)
+        try FileManager.default.createDirectory(at: safeDir, withIntermediateDirectories: true)
+        try Data("safe-content".utf8).write(to: safeDir.appendingPathComponent("secret.txt"))
+
+        let swapLink = dir.appendingPathComponent("swap-parent", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: swapLink, withDestinationURL: safeDir)
+        let swapResult = NativeMediaDropPaste.stageFromFileURL(
+            swapLink.appendingPathComponent("secret.txt"),
+            node: "file",
+            isPhoto: false,
+            suggestedName: "secret.txt",
+            preferredTypeIdentifier: UTType.plainText.identifier,
+            destinationDir: destDir,
+            byteLimit: 1024,
+            onValidated: {
+                try? FileManager.default.removeItem(at: swapLink)
+                try? FileManager.default.createSymbolicLink(at: swapLink, withDestinationURL: secretDir)
+            })
+        let stagedURL = try XCTUnwrap(swapResult.stagingURL)
+        let stagedData = try Data(contentsOf: stagedURL)
+        XCTAssertEqual(stagedData, Data("safe-content".utf8))
+        XCTAssertNotEqual(stagedData, Data("secret-from-library".utf8))
+
+        var st = stat()
+        XCTAssertEqual(Darwin.lstat(stagedURL.path, &st), 0)
+        XCTAssertEqual(st.st_mode & 0o777, 0o600, "staged file must have 0600 permissions")
+        let resourceValues = try stagedURL.resourceValues(forKeys: [.isExcludedFromBackupKey])
+        XCTAssertEqual(resourceValues.isExcludedFromBackup, true)
+        let attrs = try FileManager.default.attributesOfItem(atPath: stagedURL.path)
+        if let protection = attrs[.protectionKey] as? FileProtectionType {
+            XCTAssertEqual(protection, .completeUntilFirstUserAuthentication)
+        }
+
+        // 4. Streaming byte cap refuses a file that grows past byteLimit after fstat.
+        let growDir = stagingRoot.appendingPathComponent("batch/grow", isDirectory: true)
+        try FileManager.default.createDirectory(at: growDir, withIntermediateDirectories: true)
+        let growingFile = safeDir.appendingPathComponent("grow.txt")
+        try Data("1234".utf8).write(to: growingFile)
+        let growResult = NativeMediaDropPaste.stageFromFileURL(
+            growingFile,
+            node: "file",
+            isPhoto: false,
+            suggestedName: "grow.txt",
+            preferredTypeIdentifier: UTType.plainText.identifier,
+            destinationDir: growDir,
+            byteLimit: 8,
+            onValidated: {
+                if let handle = try? FileHandle(forUpdating: growingFile) {
+                    try? handle.seekToEnd()
+                    try? handle.write(contentsOf: Data("567890".utf8))
+                    try? handle.close()
+                }
+            })
+        XCTAssertNil(growResult.stagingURL)
+        XCTAssertTrue(growResult.exceededByteLimit)
+        XCTAssertTrue(((try? FileManager.default.contentsOfDirectory(atPath: growDir.path)) ?? []).isEmpty)
+
+        // 4. Planted target symlink in destinationDir is refused by O_CREAT|O_EXCL|O_NOFOLLOW.
+        let plantedDir = stagingRoot.appendingPathComponent("batch/1", isDirectory: true)
+        try FileManager.default.createDirectory(at: plantedDir, withIntermediateDirectories: true)
+        let victim = dir.appendingPathComponent("victim.txt")
+        try Data("untouched".utf8).write(to: victim)
+        try FileManager.default.createSymbolicLink(
+            at: plantedDir.appendingPathComponent("safe.txt"), withDestinationURL: victim)
+        let safeSource = safeDir.appendingPathComponent("safe.txt")
+        try Data("overwrite".utf8).write(to: safeSource)
+        let plantedResult = NativeMediaDropPaste.stageFromFileURL(
+            safeSource,
+            node: "file",
+            isPhoto: false,
+            suggestedName: "safe.txt",
+            preferredTypeIdentifier: UTType.plainText.identifier,
+            destinationDir: plantedDir,
+            byteLimit: 1024)
+        XCTAssertNil(plantedResult.stagingURL)
+        XCTAssertEqual(try Data(contentsOf: victim), Data("untouched".utf8))
+    }
+
+    func testR2TextDropProposalRemainsCopyAndHoldsTextDuringBarrier() async throws {
+        let harness = try await makeHarness([paragraph("p1", "Lead")])
+        addTeardownBlock { await harness.close() }
+        _ = hostInWindow(harness.view)
+
+        let dropController = try XCTUnwrap(harness.view.mediaDropController)
+        let textProvider = NSItemProvider(object: "Dropped" as NSString)
+        let textSession = StubDropSession(
+            items: [UIDragItem(itemProvider: textProvider)],
+            location: CGPoint(x: 80, y: 80))
+        let dropPos = harness.view.beginningOfDocument
+        let textDropRequest = StubTextDropRequest(
+            dropPosition: dropPos,
+            dropSession: textSession,
+            isSameView: false,
+            suggestedProposal: UITextDropProposal(operation: .copy))
+
+        // Trigger a structural barrier without settling yet.
+        setSelection(harness, NSRange(location: 4, length: 0))
+        harness.view.insertText("\n")
+
+        XCTAssertTrue(harness.input.canEditForTextDrop)
+        let textProposal = dropController.textDroppableView(harness.view, proposalForDrop: textDropRequest)
+        XCTAssertEqual(textProposal.operation, .copy)
+
+        // Text drop at the caret holds the text behind the barrier and replays on settle.
+        XCTAssertTrue(harness.input.replace(range: harness.view.selectedRange, with: "Dropped"))
+        XCTAssertNil(harness.input.noticeKey)
+
+        await harness.settle()
+        XCTAssertEqual(harness.session.surface.blocks.map(\.visibleText), ["Lead", "Dropped"])
+    }
+
+    @MainActor
+    private final class StubTextDropRequest: NSObject, UITextDropRequest {
+        let dropPosition: UITextPosition
+        let dropSession: any UIDropSession
+        let isSameView: Bool
+        let suggestedProposal: UITextDropProposal
+
+        init(
+            dropPosition: UITextPosition,
+            dropSession: any UIDropSession,
+            isSameView: Bool,
+            suggestedProposal: UITextDropProposal
+        ) {
+            self.dropPosition = dropPosition
+            self.dropSession = dropSession
+            self.isSameView = isSameView
+            self.suggestedProposal = suggestedProposal
+            super.init()
+        }
     }
 
     private func makeMinimal1BitPNG(width: Int, height: Int) -> Data {

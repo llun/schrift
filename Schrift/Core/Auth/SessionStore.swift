@@ -124,7 +124,12 @@ final class SessionStore {
             imageCacheSessionID = namespace
             // State initializers can run again while SwiftUI constructs a view. A redundant
             // defaults write invalidates AppStorage and can keep the first scene rendering.
-            if existing == nil { userDefaults.set(namespace.uuidString, forKey: Self.imageCacheSessionKey) }
+            if existing == nil {
+                // An unconfirmed cookie handover clears the persisted key until /users/me/ confirms;
+                // if the app relaunches before confirmation, wipe any unscoped attachments left by it.
+                clearAttachmentCache()
+                userDefaults.set(namespace.uuidString, forKey: Self.imageCacheSessionKey)
+            }
             // A session stored by a build that predates the ThisDeviceOnly
             // accessibility class would otherwise keep the weaker one for as long
             // as it stays valid — which is indefinitely, since nothing re-saves
