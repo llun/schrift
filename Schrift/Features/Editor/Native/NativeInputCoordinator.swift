@@ -71,6 +71,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         /// A move or a join, which may take the caret's block to another
         /// column (PR12c); a column or table command never does.
         var movesBlock = false
+        /// Scoped source surface to open once the command has actually applied (PR14).
+        var requestedSource: NativeSourceRequest? = nil
     }
     @ObservationIgnored private var barrier: Barrier?
     /// What the deliveries since the barrier was posted showed: a retry and a
@@ -715,6 +717,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             self.barrier = nil
             endUndoStep()
             noticeKey = nil
+            if let requested = barrier.requestedSource {
+                requestedSource = requested
+            }
             if endBarrierSelection(ownEcho: true) { return }
             switch barrier.placement {
             case .caret:
@@ -1231,6 +1236,19 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             noticeKey = .native_editor_input_unavailable
             return false
         }
+        // In a scoped source surface, Select All (0..<storage.length) covers the
+        // synthetic trailing newline separator; clamp it to the source text.
+        var range = range
+        if sourceKind != nil, let entry = surface.rangeIndex.entry(atUTF16: range.location) {
+            let maxEnd = NSMaxRange(entry.textRange)
+            if range.location <= maxEnd, NSMaxRange(range) > maxEnd {
+                range = NSRange(location: range.location, length: maxEnd - range.location)
+                if range.length == 0, text.isEmpty {
+                    selection.place(NSRange(location: range.location, length: 0))
+                    return true
+                }
+            }
+        }
         // Within one block's text and without a line break: ordinary typing.
         // A code block keeps its line breaks as source. Anything else (a
         // selection across blocks, pasted or dictated lines) is one range command.
@@ -1301,7 +1319,18 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             }),
             marks?.allSatisfy({ $0.valueJSON != "null" }) != false
         else { return false }
+        if let sourceKind {
+            guard SourceBlock.isValidReplacement(text, node: sourceKind.nodeName),
+                marks?.isEmpty != false
+            else { return false }
+        }
         let units = Array(block.runs.map(\.text).joined().utf16)
+        if let sourceKind {
+            let maxUTF16 = sourceKind.maxUTF16
+            guard text.utf16.count <= maxUTF16,
+                units.count - range.count <= maxUTF16 - text.utf16.count
+            else { return false }
+        }
         func boundary(_ offset: Int) -> Bool {
             guard offset >= 0, offset <= units.count else { return false }
             return offset == 0 || offset == units.count
@@ -1483,7 +1512,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     private func applyStructural(
         _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, keeping: NSRange? = nil,
         remapping: (blockID: String, offset: Int, length: Int)? = nil, retry: (() -> Bool)? = nil,
-        readsSelection: Bool = false
+        readsSelection: Bool = false, requestedSource: NativeSourceRequest? = nil
     ) -> Bool {
         // Folded content is never the target of a command.
         guard !surface.isHidden(blockID: blockID) else {
@@ -1497,12 +1526,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // A structural command is its own undo step.
         return postBarrier(
             blockID, kind, refusal: refusal, placement: placement, undoBefore: true, undoAfter: true, retry: retry,
-            readsSelection: readsSelection)
+            readsSelection: readsSelection, requestedSource: requestedSource)
     }
 
     private func postBarrier(
         _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, placement: Barrier.Placement,
-        undoBefore: Bool, undoAfter: Bool, retry: (() -> Bool)?, readsSelection: Bool = false
+        undoBefore: Bool, undoAfter: Bool, retry: (() -> Bool)?, readsSelection: Bool = false,
+        requestedSource: NativeSourceRequest? = nil
     ) -> Bool {
         guard barrier == nil else { return false }
         let command = NativeEditCommand(id: UUID(), baseRevision: canonicalRevision, blockID: blockID, kind: kind)
@@ -1515,7 +1545,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         else { return false }
         barrier = Barrier(
             id: command.id, refusal: refusal, placement: placement, retry: retry,
-            origin: readsSelection ? blockSelection() : nil)
+            origin: readsSelection ? blockSelection() : nil, requestedSource: requestedSource)
         switch kind {
         case .moveUp, .moveDown, .join: barrier?.movesBlock = true
         default: break
@@ -1769,23 +1799,21 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             let newID = UUID().uuidString
             let replaces = text(of: surface.blocks[position]).utf16.count == token.count
             let insertedID = replaces ? entry.blockID : newID
-            let posted = applyStructural(
+            return applyStructural(
                 entry.blockID, .insertSourceBlock(node: node, newID: newID, removing: token),
                 refusal: .native_editor_input_unavailable,
-                retry: again { [weak self] in self?.applySlashItem(item) ?? false }, readsSelection: true)
-            if posted, node == SourceBlock.mathBlock { requestedSource = .block(blockID: insertedID) }
-            return posted
+                retry: again { [weak self] in self?.applySlashItem(item) ?? false }, readsSelection: true,
+                requestedSource: node == SourceBlock.mathBlock ? .block(blockID: insertedID) : nil)
         }
         if case .inlineMath = item.action {
             guard let view, canFormat, view.selectedRange.length == 0, let token = slashToken,
                 let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location)
             else { return false }
-            let posted = applyStructural(
+            return applyStructural(
                 entry.blockID, .insertInlineMath(replacing: token, source: "", trailingSpace: true),
                 refusal: .native_editor_input_unavailable,
-                retry: again { [weak self] in self?.applySlashItem(item) ?? false }, readsSelection: true)
-            if posted { requestedSource = .inlineMath(blockID: entry.blockID, utf16Offset: token.lowerBound) }
-            return posted
+                retry: again { [weak self] in self?.applySlashItem(item) ?? false }, readsSelection: true,
+                requestedSource: .inlineMath(blockID: entry.blockID, utf16Offset: token.lowerBound))
         }
         // A media block (PR13a): in place of the emptied paragraph or after
         // it, then its inspector (`requestedMedia`) uploads or links the file.
@@ -2320,15 +2348,37 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             return true
         }
         surface.holdForComposition(false)
+        let commitText = sourceKind == nil ? commit.text : NativeClipboard.normalizingLineBreaks(commit.text)
+        if let sourceKind {
+            let currentLength = surface.rangeIndex.entry(for: commit.blockID)?.textRange.length ?? commit.range.upperBound
+            let limit = sourceKind.maxUTF16
+            let validCharacters = SourceBlock.isValidReplacement(commitText, node: sourceKind.nodeName)
+            let withinLimit =
+                commitText.utf16.count <= limit
+                && (currentLength - commit.range.count) <= limit - commitText.utf16.count
+            guard validCharacters, withinLimit else {
+                composition.finish(commit.id)
+                _ = post(.compositionCancel(surfaceID: surfaceID))
+                if let entry = surface.rangeIndex.entry(for: commit.blockID) {
+                    selection.place(
+                        NSRange(
+                            location: entry.textRange.location + min(commit.range.lowerBound, entry.textRange.length),
+                            length: 0))
+                }
+                noticeKey = withinLimit ? .native_editor_input_unavailable : .native_editor_paste_too_large
+                releaseComposition()
+                return false
+            }
+        }
         guard !isBusy, intents.isEmpty else {
             // Behind held input the commit is held like a key, in order (the
             // session's composition is cancelled); a full queue keeps it as recovery.
             composition.finish(commit.id)
             _ = post(.compositionCancel(surfaceID: surfaceID))
             if intents.count < Self.maxIntents {
-                hold(.insert(commit.text))
+                hold(.insert(commitText))
             } else {
-                composition.recover(commit.text, blockID: commit.blockID)
+                composition.recover(commitText, blockID: commit.blockID)
             }
             releaseComposition()
             return true
@@ -2340,17 +2390,17 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             let position = surface.rangeIndex.position(for: commit.blockID)
         {
             if surface.blocks[position].hasInlineObjects {
-                pendingCompositionCommit = (id: commit.id, blockID: commit.blockID, text: commit.text)
+                pendingCompositionCommit = (id: commit.id, blockID: commit.blockID, text: commitText)
                 selection.place(
                     NSRange(location: entry.textRange.location + commit.range.lowerBound, length: 0))
             } else {
                 let runs = surface.blocks[position].runs
                 let caret = NSRange(
-                    location: entry.textRange.location + commit.range.lowerBound + commit.text.utf16.count, length: 0)
+                    location: entry.textRange.location + commit.range.lowerBound + commitText.utf16.count, length: 0)
                 asOneKeyboardChange {
                     surface.predict(
                         NativeTextSurface.Prediction(
-                            commandID: commit.id, blockID: commit.blockID, range: commit.range, text: commit.text,
+                            commandID: commit.id, blockID: commit.blockID, range: commit.range, text: commitText,
                             marks: NativeMarkSelection.inherited(runs, at: commit.range.lowerBound)))
                     selection.place(caret)
                 }
@@ -2359,7 +2409,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 if barrier != nil {
                     barrierShown.append(
                         Shown(
-                            deltas: [(commit.blockID, [TextDelta(range: commit.range, replacement: commit.text)])],
+                            deltas: [(commit.blockID, [TextDelta(range: commit.range, replacement: commitText)])],
                             replaced: [], reset: false))
                     userSelection = blockSelection().map { ($0, barrierShown.count) }
                 }
@@ -2367,7 +2417,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
         lastCommandID = commit.id
         // A post that fails stops authoring; the rollback keeps the text.
-        _ = post(.compositionCommit(surfaceID: surfaceID, epoch: epoch, commandID: commit.id, text: commit.text))
+        _ = post(.compositionCommit(surfaceID: surfaceID, epoch: epoch, commandID: commit.id, text: commitText))
         releaseComposition()
         return true
     }

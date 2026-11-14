@@ -104,6 +104,12 @@ final class ColumnEditorModel: Identifiable {
         }
     }
 
+    func activate(session: NativeEditorSession) {
+        if let index = columns.firstIndex(where: { $0 === session }), active != index {
+            active = index
+        }
+    }
+
     /// The column showing the block a column moved out, now that one does,
     /// takes the caret in it and types the held keys there. A delivery to
     /// another column that does not show it ends the wait (the block left
@@ -136,11 +142,13 @@ final class ColumnEditorModel: Identifiable {
         session.textView.blockControls.onOpenDocument = { [weak self] id, blockID in
             self?.onOpenDocument?(id, blockID)
         }
-        session.textView.blockControls.onOpenSource = { [weak self] request in
-            if let override = self?.onOpenSource {
+        session.textView.blockControls.onOpenSource = { [weak self, weak session] request in
+            guard let self else { return }
+            if let session { self.activate(session: session) }
+            if let override = self.onOpenSource {
                 override(request)
             } else {
-                self?.openSource = request
+                self.openSource = request
             }
         }
         // The group's own change reaches every column: its structure may have changed (PR12b).
@@ -541,7 +549,10 @@ private struct ColumnTextHost: UIViewRepresentable {
             session.textView.blockControls.isOffline = isOffline
             session.textView.blockControls.documentTitle = documentTitle
             session.textView.blockControls.onOpenDocument = onOpenDocument
-            session.textView.blockControls.onOpenSource = onOpenSource
+            session.textView.blockControls.onOpenSource = { [weak model, weak session, onOpenSource] request in
+                if let session { model?.activate(session: session) }
+                onOpenSource?(request)
+            }
             let presentation = NativeTextPresentation(contentSize: contentSize, labels: labels)
             if container.presentations[ObjectIdentifier(session)] != presentation {
                 container.presentations[ObjectIdentifier(session)] = presentation

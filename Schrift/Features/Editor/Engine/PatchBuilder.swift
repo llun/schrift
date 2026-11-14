@@ -141,7 +141,9 @@ struct PatchBuilder {
                     let element = block.element, YBlockProjection.props(of: element) != nil,
                     let deltas = Self.textDeltas(events[oid], text: type),
                     let runs = YBlockProjection.textRuns(type),
-                    !index.isSourceText(id) || runs.allSatisfy({ $0.marks.isEmpty }),
+                    !index.isSourceText(id)
+                        || (runs.allSatisfy({ $0.marks.isEmpty })
+                            && Self.isEditableSourceRuns(runs, kind: index.sourceKind(id))),
                     TextDelta.apply(deltas, to: block.runs) == runs
                 {
                     textDeltas[id] = deltas
@@ -478,12 +480,28 @@ struct PatchBuilder {
             generation: index.generation)
     }
 
+    private static func isEditableSourceRuns(_ runs: [InlineRun], kind: NativeSourceKind?) -> Bool {
+        guard let kind else { return false }
+        var totalUTF16 = 0
+        let limit = kind.maxUTF16
+        for run in runs {
+            totalUTF16 += run.text.utf16.count
+            if totalUTF16 > limit || run.text.unicodeScalars.contains("\u{FFFC}") {
+                return false
+            }
+        }
+        return true
+    }
+
     static func sourceSnapshot(_ entry: BlockIndex.Entry) -> NativeBlockSnapshot {
         let isInlineMath = entry.element?.typeRef == .xmlElement(nodeName: NativeInlineObject.mathNodeName)
         let node = isInlineMath ? "paragraph" : "codeBlock"
-        let plain = entry.element.flatMap { element -> String? in
-            if isInlineMath { return NativeInlineObject.read(element)?.visibleText }
-            return SourceBlock.plainText(of: element)
+        let limit = isInlineMath ? NativeInlineObject.maxMathUTF16 : SourceBlock.maxSourceUTF16
+        let plain: String? = entry.element.flatMap { element in
+            guard let text = SourceBlock.boundedPlainText(of: element, maxUTF16: limit),
+                !text.unicodeScalars.contains("\u{FFFC}")
+            else { return nil }
+            return text
         }
         let runs: [InlineRun] = (plain?.isEmpty == false) ? [InlineRun(plain!)] : []
         let block = ProjectedBlock(

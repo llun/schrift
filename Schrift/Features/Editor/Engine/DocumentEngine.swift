@@ -169,7 +169,7 @@ final class DocumentEngine {
             // or inline math a newline is forbidden/a block break. Source buffers
             // also reject control characters other than `\n` and `\t`.
             isSourceText(entry)
-                ? SourceBlock.isValidReplacement(replacement, node: node)
+                ? true
                 : !replacement.unicodeScalars.contains(where: {
                     $0.value == 0xfffc || (CharacterSet.newlines.contains($0) && !(node == "codeBlock" && $0 == "\n"))
                 }),
@@ -178,12 +178,16 @@ final class DocumentEngine {
         else { throw DocumentEngineError.unsupportedNativeInput }
         let isSource = isSourceText(entry)
         let target = isSource ? nil : try textTarget(entry)
-        let units = textUnits(entry)
-        guard !entry.isSimpleText || entry.textType?.length == UInt(units.count),
-            entry.isSimpleText || entry.hasInlineObjects || element.length == 0 || isCellText(entry) || isSource
-                || units.isEmpty,
-            Self.validSurrogateBoundaries(units, range: range)
-        else { throw DocumentEngineError.unsupportedNativeInput }
+        if isSource {
+            try validateSourceReplacement(entry, node: node, range: range, with: replacement, marks: marks)
+        } else {
+            let units = textUnits(entry)
+            guard !entry.isSimpleText || entry.textType?.length == UInt(units.count),
+                entry.isSimpleText || entry.hasInlineObjects || element.length == 0 || isCellText(entry)
+                    || units.isEmpty,
+                Self.validSurrogateBoundaries(units, range: range)
+            else { throw DocumentEngineError.unsupportedNativeInput }
+        }
         nativeCommand = command
         nativeEmission = 0
         selectionBeforeCommand = selection
@@ -762,7 +766,10 @@ final class DocumentEngine {
         } catch {
             throw DocumentEngineError.unsupportedNativeInput
         }
-        let totalUTF16 = lines.reduce(0) { $0 + Self.utf16Count(of: $1) }
+        let totalUTF16 = lines.reduce(0) { sum, line in
+            let lineCount = Self.payloadUTF16Count(of: line)
+            return sum > NativeClipboard.maxPasteUTF16 ? sum : sum + lineCount
+        }
         guard totalUTF16 <= NativeClipboard.maxPasteUTF16, lines.count <= NativeClipboard.maxPasteLines else {
             throw DocumentEngineError.payloadTooLarge
         }
@@ -879,6 +886,27 @@ final class DocumentEngine {
             case .element:
                 total += 1
             }
+        }
+        return total
+    }
+
+    /// Recursive payload UTF-16 budget including inline `<math>` child text,
+    /// matching `BlockNoteTableCommands.textSize`.
+    private static func payloadUTF16Count(of copies: [BlockNoteWriter.Copy]) -> Int {
+        var total = 0
+        for copy in copies {
+            switch copy {
+            case .text(let values):
+                for value in values {
+                    switch value {
+                    case .run(let run): total += run.text.utf16.count
+                    case .embed: total += 1
+                    }
+                }
+            case .element(_, _, let children):
+                total += 1 + payloadUTF16Count(of: children)
+            }
+            if total > NativeClipboard.maxPasteUTF16 { return total }
         }
         return total
     }
@@ -1925,11 +1953,10 @@ final class DocumentEngine {
             throw DocumentEngineError.unsupportedNativeInput
         }
         if isSourceText(entry) {
-            guard let element = entry.element, case .xmlElement(let node)? = element.typeRef,
-                SourceBlock.isValidReplacement(text, node: node),
-                marks?.isEmpty != false,
-                Self.validSurrogateBoundaries(textUnits(entry), range: range)
-            else { throw DocumentEngineError.unsupportedNativeInput }
+            guard let element = entry.element, case .xmlElement(let node)? = element.typeRef else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            try validateSourceReplacement(entry, node: node, range: range, with: text, marks: marks)
             return try writer.replaceSourceText(
                 in: element, range: range, with: text,
                 block: SourceTarget.ownerID(of: entry.id) ?? entry.id)
@@ -1937,6 +1964,22 @@ final class DocumentEngine {
         return try writer.replaceText(
             in: try textTarget(entry), range: range, with: text,
             marks: marks.map { YTextAttributes($0.map { ($0.key, $0.valueJSON) }) })
+    }
+
+    private func validateSourceReplacement(
+        _ entry: BlockIndex.Entry, node: String, range: Range<Int>, with text: String, marks: [TextMark]? = nil
+    ) throws {
+        guard SourceBlock.isValidReplacement(text, node: node), marks?.isEmpty != false else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        let units = textUnits(entry)
+        guard Self.validSurrogateBoundaries(units, range: range) else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        let resultingLength = units.count - range.count + text.utf16.count
+        guard resultingLength <= SourceBlock.maxEditableUTF16(for: node) else {
+            throw DocumentEngineError.payloadTooLarge
+        }
     }
 
     private static func validSurrogateBoundaries(_ units: [UInt16], range: Range<Int>) -> Bool {
@@ -2232,12 +2275,7 @@ final class DocumentEngine {
                 if let entry = builder.index.entries[blockID], isSourceText(entry), let element = entry.element,
                     case .xmlElement(let node)? = element.typeRef
                 {
-                    guard
-                        !text.unicodeScalars.contains(where: {
-                            $0.value == 0xfffc
-                                || (CharacterSet.newlines.contains($0) && !(SourceBlock.isSource(node) && $0 == "\n"))
-                        })
-                    else { throw DocumentEngineError.unsupportedNativeInput }
+                    try validateSourceReplacement(entry, node: node, range: range, with: text)
                     try writer.replaceSourceText(
                         in: element, range: range, with: text,
                         block: SourceTarget.ownerID(of: blockID) ?? blockID)

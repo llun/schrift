@@ -460,7 +460,8 @@ struct BlockIndex {
                 containerChildren.dropFirst().count <= 1,
                 let props = YBlockProjection.props(of: element),
                 SourceBlock.unfamiliarReason(node: node, props: props, element: element) == nil,
-                let plainText = SourceBlock.plainText(of: element)
+                let plainText = SourceBlock.boundedPlainText(of: element, maxUTF16: SourceBlock.maxSourceUTF16),
+                !plainText.unicodeScalars.contains("\u{FFFC}")
             else { return nil }
             let handle =
                 entries[id]?.handle
@@ -474,7 +475,9 @@ struct BlockIndex {
                 let child = Self.countableChildren(of: owner.element).first(where: { $0.id == itemID }),
                 case .type(let mathElement) = child.content,
                 mathElement.typeRef == .xmlElement(nodeName: NativeInlineObject.mathNodeName),
-                case .math(let source)? = NativeInlineObject.read(mathElement)
+                let source = SourceBlock.boundedPlainText(
+                    of: mathElement, maxUTF16: NativeInlineObject.maxMathUTF16),
+                !source.unicodeScalars.contains("\u{FFFC}")
             else { return nil }
             return ResolvedSource(
                 itemID: itemID, containerItem: owner.containerItem, container: owner.container, element: mathElement,
@@ -744,19 +747,12 @@ struct BlockIndex {
         let runs: [InlineRun]
         if isSimpleContainer, let element, case .xmlElement(let node)? = element.typeRef, SourceBlock.isSource(node) {
             // Outer mathBlock/diagram renders as a preview card (never `.text` deltas):
-            // keep `textType` nil while keeping familiarity/plainText accurate.
+            // keep `textType` nil and `runs` empty here; `YBlockProjection` supplies
+            // the bounded outer text when projecting snapshots.
             textType = nil
             hasInlineObjects = false
-            let props = YBlockProjection.props(of: element)
-            if let props, SourceBlock.unfamiliarReason(node: node, props: props, element: element) == nil,
-                let plainText = SourceBlock.plainText(of: element)
-            {
-                isProjectable = true
-                runs = plainText.isEmpty ? [] : [InlineRun(plainText)]
-            } else {
-                isProjectable = false
-                runs = []
-            }
+            isProjectable = SourceBlock.isFamiliar(element)
+            runs = []
         } else if let textType {
             hasInlineObjects = false
             isProjectable =

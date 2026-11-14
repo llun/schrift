@@ -299,22 +299,56 @@ final class NativeTextView: UITextView {
     /// delegate that draws block chrome (PR05b).
     private(set) var blockControls: NativeBlockControls!
 
+    static let maxAccessibilityValueUTF16 = 10_000
+
     /// VoiceOver reads the text without a folded toggle's children, which
     /// layout also leaves out (PR06b). With nothing folded, the whole text.
     /// A preview block reads as its label ("Image: alt", "Table, 3 by 4"),
-    /// not as an object replacement character (PR06e).
+    /// not as an object replacement character (PR06e), bounded to avoid
+    /// multi-megabyte main-thread copies (PR14).
     override var accessibilityValue: String? {
         get {
             var visible = ""
+            var count = 0
+            var truncated = false
+            func appendText(_ chunk: String) -> Bool {
+                let remaining = Self.maxAccessibilityValueUTF16 - count
+                guard remaining > 0 else {
+                    truncated = true
+                    return false
+                }
+                if chunk.utf16.count <= remaining {
+                    visible += chunk
+                    count += chunk.utf16.count
+                    return true
+                }
+                for character in chunk {
+                    let units = character.utf16.count
+                    if count + units > Self.maxAccessibilityValueUTF16 { break }
+                    visible.append(character)
+                    count += units
+                }
+                truncated = true
+                return false
+            }
             func append(_ range: NSRange) {
-                guard range.length > 0 else { return }
-                textStorage.enumerateAttribute(.attachment, in: range) { value, run, _ in
+                guard range.length > 0, !truncated else { return }
+                textStorage.enumerateAttribute(.attachment, in: range) { value, run, stop in
+                    let chunk: String
                     if let attachment = value as? NativeBlockAttachment {
-                        visible += attachment.content.label
+                        chunk = attachment.content.label
                     } else if let chip = value as? NativeInlineChipAttachment {
-                        visible += Array(repeating: chip.content.accessibilityLabel, count: run.length).joined()
+                        let unit = chip.content.accessibilityLabel
+                        let repeatCount = min(run.length, max(1, (Self.maxAccessibilityValueUTF16 - count) / max(1, unit.utf16.count) + 1))
+                        chunk = Array(repeating: unit, count: repeatCount).joined()
                     } else {
-                        visible += (textStorage.string as NSString).substring(with: run)
+                        let sliceLength = min(run.length, Self.maxAccessibilityValueUTF16 - count + 1)
+                        let subrange = (textStorage.string as NSString).rangeOfComposedCharacterSequences(
+                            for: NSRange(location: run.location, length: min(run.length, sliceLength)))
+                        chunk = (textStorage.string as NSString).substring(with: subrange)
+                    }
+                    if !appendText(chunk) {
+                        stop.pointee = true
                     }
                 }
             }
@@ -322,8 +356,10 @@ final class NativeTextView: UITextView {
             for range in blockControls?.surface?.hiddenRanges ?? [] {
                 append(NSRange(location: location, length: range.location - location))
                 location = NSMaxRange(range)
+                if truncated { break }
             }
             append(NSRange(location: location, length: textStorage.length - location))
+            if truncated { visible += "…" }
             return visible
         }
         set { super.accessibilityValue = newValue }

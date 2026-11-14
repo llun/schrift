@@ -25,6 +25,7 @@ enum NativeClipboard {
         guard
             blocks[start.position...end.position].allSatisfy({
                 $0.depth >= depth && $0.node != "tableParagraph" && !TableGrid.isParagraphID($0.id)
+                    && !SourceTarget.isSourceID($0.id)
             })
         else { return nil }
         var next = end.position + 1

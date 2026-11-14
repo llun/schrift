@@ -671,7 +671,11 @@ actor DocumentReplicaSession {
             // A boundary refusal leaves the engine composing; end it. A failed
             // append keeps the entry on disk.
             if engine.isComposing { try? engine.compositionCancelled() }
-            deliver(to: surfaceID, result: .composition(commandID: commandID, .failed), selection: true)
+            if engine.nativeWriteFailed {
+                deliver(to: surfaceID, result: .composition(commandID: commandID, .failed), selection: true)
+            } else {
+                invalidate(surfaceID, commandID: commandID)
+            }
         }
     }
 

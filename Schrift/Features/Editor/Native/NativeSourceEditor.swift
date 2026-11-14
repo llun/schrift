@@ -114,7 +114,9 @@ final class NativeSourceEditorViewController: UIViewController {
 
         if textView.isEditable {
             let end = session.surface.rangeIndex.entries.first.map { NSMaxRange($0.textRange) } ?? 0
-            textView.selectedRange = NSRange(location: end, length: 0)
+            // Avoid synchronous full-document TextKit layout down to the tail on very large source blocks.
+            let location = end > NativeInlineObject.maxMathUTF16 ? 0 : end
+            textView.selectedRange = NSRange(location: location, length: 0)
             session.input?.textViewDidChangeSelection(textView)
             _ = textView.becomeFirstResponder()
         } else {

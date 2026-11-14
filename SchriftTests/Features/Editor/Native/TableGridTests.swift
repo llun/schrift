@@ -109,7 +109,7 @@ final class TableGridTests: XCTestCase {
             Self.row([
                 .element(
                     "tableCell", [],
-                    [.element("tableParagraph", [], [.text("Hi "), .element("math", [], [])])])
+                    [.element("tableParagraph", [], [.text("Hi "), .element("footnote", [], [])])])
             ])
         ])
         defer { doc.destroy() }

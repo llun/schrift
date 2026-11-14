@@ -63,6 +63,67 @@ enum SourceBlock {
         return result
     }
 
+    /// Reads the plain unmarked text of a familiar `mathBlock`, `diagram`, or
+    /// `math` element up to `maxUTF16` UTF-16 code units; returns `nil` when
+    /// unfamiliar or longer than `maxUTF16`.
+    static func boundedPlainText(of element: YType, maxUTF16: Int) -> String? {
+        guard case .xmlElement(let node)? = element.typeRef,
+            isSource(node) || node == NativeInlineObject.mathNodeName,
+            let props = YBlockProjection.props(of: element), props.isEmpty
+        else { return nil }
+        let items = YBlockProjection.children(of: element, includeFormats: true)
+        if items.isEmpty { return "" }
+        guard items.count == 1, case .type(let text) = items[0].content, text.typeRef == .xmlText,
+            text.map.values.allSatisfy(\.deleted), text.length <= UInt(maxUTF16)
+        else { return nil }
+        var units: [UInt16] = []
+        units.reserveCapacity(Int(text.length))
+        for child in YBlockProjection.children(of: text, includeFormats: true) {
+            guard case .string(let chunk) = child.content else { return nil }
+            if units.count + chunk.count > maxUTF16 { return nil }
+            units += chunk
+        }
+        return String(decoding: units, as: UTF16.self)
+    }
+
+    /// Reads a display-bounded, single-line, scrubbed summary from a `mathBlock`,
+    /// `diagram`, or `math` element without materializing multi-megabyte strings.
+    static func clippedDisplayText(of element: YType, limit: Int = NativeInlineObject.defaultDisplayLimit) -> String {
+        guard limit > 0 else { return "" }
+        let items = YBlockProjection.children(of: element, includeFormats: false)
+        guard let first = items.first, case .type(let text) = first.content, text.typeRef == .xmlText else {
+            return ""
+        }
+        let maxReadUnits = max(limit * 8, 2_048)
+        var units: [UInt16] = []
+        units.reserveCapacity(min(Int(text.length), maxReadUnits))
+        var truncatedEarly = false
+        for child in YBlockProjection.children(of: text, includeFormats: false) {
+            guard case .string(let chunk) = child.content else { continue }
+            let remaining = maxReadUnits - units.count
+            if chunk.count > remaining {
+                units += chunk.prefix(remaining)
+                if let last = units.last, UTF16.isLeadSurrogate(last) { units.removeLast() }
+                truncatedEarly = true
+                break
+            }
+            units += chunk
+        }
+        let clipped = NativeInlineObject.clippedDisplayText(String(decoding: units, as: UTF16.self), limit: limit)
+        if truncatedEarly, !clipped.hasSuffix("…") {
+            return clipped + "…"
+        }
+        return clipped
+    }
+
+    static func maxEditableUTF16(for node: String) -> Int {
+        node == NativeInlineObject.mathNodeName ? NativeInlineObject.maxMathUTF16 : maxSourceUTF16
+    }
+
+    static func isEditableSource(_ text: String, node: String) -> Bool {
+        text.utf16.count <= maxEditableUTF16(for: node) && !text.unicodeScalars.contains("\u{FFFC}")
+    }
+
     /// Extracts plain unmarked text from copied children of a `mathBlock`,
     /// `diagram`, or `math` element; `nil` when any child is an element,
     /// embed, marked run, or multiple text nodes.
@@ -79,9 +140,14 @@ enum SourceBlock {
 
     /// Whether `text` is valid plain input for `node` (`mathBlock`, `diagram`,
     /// or inline `math`): no `U+FFFC`, no newlines except `\n` in `mathBlock`/
-    /// `diagram`, and no control scalars other than `\n` and `\t`.
+    /// `diagram`, and no control scalars other than `\n` and `\t` (inline `math`
+    /// matches `NativeInlineObject.isPastableText`, also rejecting `\t` and bidi
+    /// overrides).
     static func isValidReplacement(_ text: String, node: String) -> Bool {
-        !text.unicodeScalars.contains { scalar in
+        if node == NativeInlineObject.mathNodeName {
+            return NativeInlineObject.isPastableText(text, limit: Int.max)
+        }
+        return !text.unicodeScalars.contains { scalar in
             if scalar.value == 0xFFFC { return true }
             if CharacterSet.newlines.contains(scalar) {
                 return !(isSource(node) && scalar == "\n")
@@ -108,6 +174,21 @@ enum NativeSourceKind: Equatable, Hashable, Sendable {
     case mathBlock
     case diagram
     case inlineMath
+
+    var nodeName: String {
+        switch self {
+        case .mathBlock: SourceBlock.mathBlock
+        case .diagram: SourceBlock.diagram
+        case .inlineMath: NativeInlineObject.mathNodeName
+        }
+    }
+
+    var maxUTF16: Int {
+        switch self {
+        case .mathBlock, .diagram: SourceBlock.maxSourceUTF16
+        case .inlineMath: NativeInlineObject.maxMathUTF16
+        }
+    }
 }
 
 /// Identifies a source surface target: a top-level/nested/column source block

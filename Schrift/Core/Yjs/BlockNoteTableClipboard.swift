@@ -135,7 +135,17 @@ enum TableClipboard {
         for row in cells {
             for cell in row {
                 for run in cell.runs {
-                    units += run.text.utf16.count
+                    let runUnits = run.text.utf16.count
+                    let mathUnits: Int =
+                        if case .math(let source)? = run.inlineObject {
+                            source.utf16.count
+                        } else {
+                            0
+                        }
+                    let (sum1, ov1) = units.addingReportingOverflow(runUnits)
+                    let (sum2, ov2) = sum1.addingReportingOverflow(mathUnits)
+                    if ov1 || ov2 || sum2 > NativeClipboard.maxPasteUTF16 { return true }
+                    units = sum2
                     lines += run.text.utf16.lazy.filter { $0 == 0x0A }.count
                 }
             }

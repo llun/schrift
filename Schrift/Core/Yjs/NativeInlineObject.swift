@@ -98,6 +98,12 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
         guard items.count == 1, case .type(let text) = items[0].content, text.typeRef == .xmlText,
             text.map.values.allSatisfy(\.deleted)
         else { return nil }
+        if text.length > UInt(maxMathUTF16) {
+            for child in YBlockProjection.children(of: text, includeFormats: true) {
+                guard case .string = child.content else { return nil }
+            }
+            return SourceBlock.clippedDisplayText(of: element)
+        }
         var result = ""
         for child in YBlockProjection.children(of: text, includeFormats: true) {
             guard case .string(let units) = child.content else { return nil }
@@ -244,7 +250,7 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
         }
     }
 
-    private static func isPastableText(_ text: String, limit: Int) -> Bool {
+    static func isPastableText(_ text: String, limit: Int) -> Bool {
         text.utf16.count <= limit
             && !text.unicodeScalars.contains {
                 $0.properties.generalCategory == .control || CharacterSet.newlines.contains($0)

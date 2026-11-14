@@ -327,6 +327,7 @@ final class NativeEditorSession {
             else { return nil }
             let kind: NativeSourceKind = node == SourceBlock.mathBlock ? .mathBlock : .diagram
             let text = block.runs.map(\.text).joined()
+            guard SourceBlock.isEditableSource(text, node: node) else { return nil }
             let snapshot = BlockSnapshot(
                 id: blockID, node: "codeBlock", props: [],
                 runs: text.isEmpty ? [] : [InlineRun(text)], isOpaque: false)
@@ -341,6 +342,9 @@ final class NativeEditorSession {
             var cursor = 0
             for run in block.runs {
                 if cursor == utf16Offset, case .math(let src)? = run.inlineObject {
+                    guard SourceBlock.isEditableSource(src, node: NativeInlineObject.mathNodeName) else {
+                        return nil
+                    }
                     let snapshot = BlockSnapshot(
                         id: blockID, node: "paragraph", props: [],
                         runs: src.isEmpty ? [] : [InlineRun(src)], isOpaque: false)

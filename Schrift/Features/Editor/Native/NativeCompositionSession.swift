@@ -219,13 +219,19 @@ final class NativeCompositionSession {
     /// not a supported composition. An opaque block or one the writer has no
     /// schema for cannot compose either.
     private func replacementTarget(in view: NativeTextView) -> (blockID: String, range: Range<Int>)? {
-        let selection = view.selectedRange
+        var selection = view.selectedRange
         guard selection.location >= 0, selection.length >= 0,
             selection.location <= surface.storage.length,
             selection.length <= surface.storage.length - selection.location,
             let entry = surface.rangeIndex.entry(atUTF16: selection.location),
-            let position = surface.rangeIndex.position(for: entry.blockID),
-            selection.location >= entry.textRange.location,
+            let position = surface.rangeIndex.position(for: entry.blockID)
+        else { return nil }
+        if SourceTarget.isSourceID(entry.blockID), selection.location <= NSMaxRange(entry.textRange),
+            NSMaxRange(selection) > NSMaxRange(entry.textRange)
+        {
+            selection.length = NSMaxRange(entry.textRange) - selection.location
+        }
+        guard selection.location >= entry.textRange.location,
             NSMaxRange(selection) <= NSMaxRange(entry.textRange),
             !AttributedDocumentProjection.isPlaceholder(surface.blocks[position]),
             BlockNoteWriter.nativePropSchemas[surface.blocks[position].node] != nil,
