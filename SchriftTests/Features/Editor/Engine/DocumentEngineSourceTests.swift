@@ -35,13 +35,16 @@ final class DocumentEngineSourceTests: DocumentEngineTestCase {
             [
                 BlockNoteBlock(
                     node: "paragraph", props: Self.paragraphProps,
-                    runs: [InlineRun("See "), InlineRun(inlineObject: .math(source: "x^2")), InlineRun(" here")],
+                    runs: [InlineRun("See  here")],
                     id: "p"),
                 mathBlock("mx", "a + b"),
                 diagramBlock("dx", "graph TD"),
             ],
             clientID: 1)
         defer { doc.destroy() }
+        let seedWriter = BlockNoteWriter(doc: doc)
+        try seedWriter.insertInlineMath(
+            in: try seedWriter.find("p"), replacing: 4..<4, source: "x^2", trailingSpace: false)
         let surface = HeadlessSurface(blocks: projection(doc))
         let engine = DocumentEngine(doc: doc, surface: surface)
 
@@ -72,7 +75,7 @@ final class DocumentEngineSourceTests: DocumentEngineTestCase {
         // Formatting marks and U+FFFC refused in all source targets.
         XCTAssertThrowsError(
             try engine.replaceText(
-                block: mxID, range: 0..<1, with: "z", marks: [TextMark(key: "bold", valueJSON: "true")])
+                block: mxID, range: 0..<1, with: "z", marks: [TextMark(key: "bold", valueJSON: "{}")])
         ) { XCTAssertEqual($0 as? DocumentEngineError, .unsupportedNativeInput) }
         XCTAssertThrowsError(try engine.replaceText(block: inlineID, range: 0..<0, with: "\u{fffc}")) {
             XCTAssertEqual($0 as? DocumentEngineError, .unsupportedNativeInput)
@@ -84,7 +87,7 @@ final class DocumentEngineSourceTests: DocumentEngineTestCase {
             .marks(
                 NativeMarkCommand(
                     startOffset: 0, endBlockID: mxID, endOffset: 1,
-                    attributes: [TextMark(key: "bold", valueJSON: "true")])),
+                    attributes: [TextMark(key: "bold", valueJSON: "{}")])),
             .lineBreak(offset: 1),
             .blockType(node: "paragraph", props: [], removing: 0..<0),
             .insertSourceBlock(node: SourceBlock.mathBlock, newID: "s2", removing: 0..<0),
@@ -192,13 +195,9 @@ final class DocumentEngineSourceTests: DocumentEngineTestCase {
             let sid = try XCTUnwrap(engine.openSource(.block(id: "mx")))
 
             try engine.compositionBegan(blockID: sid, at: 1)
-            let update = try peer.transact { tx in
-                _ = tx
-                let writer = BlockNoteWriter(doc: peer)
-                let target = try writer.findSource("mx")
-                try writer.deleteBlock(target.item, id: "mx")
-            }
-            _ = peerEngine
+            let writer = BlockNoteWriter(doc: peer)
+            let target = try writer.findSource("mx")
+            let update = try writer.deleteBlock(target.item, id: "mx")
             try local.applyUpdate(YUpdateDecoder.decode(update), origin: .remote)
 
             let result = try engine.compositionCommitted(text: "z", commandID: UUID()) { _, _ in }
@@ -206,9 +205,13 @@ final class DocumentEngineSourceTests: DocumentEngineTestCase {
             XCTAssertNil(engine.sourceSnapshot(sid))
             XCTAssertTrue(
                 surface.appliedPatches.flatMap(\.changes).contains {
+                    if case .reset(let blocks) = $0 {
+                        return !blocks.contains { $0.id == sid || $0.id == "mx" }
+                    }
                     if case .remove(let ids) = $0 { return ids.contains(sid) }
                     return false
                 })
+            XCTAssertFalse(surface.blocks.contains { $0.id == sid || $0.id == "mx" })
         }
 
         // 2. Peer replaces mathBlock's inner element with a brand new mathBlock item under same container id.
@@ -223,8 +226,8 @@ final class DocumentEngineSourceTests: DocumentEngineTestCase {
             let engine = DocumentEngine(doc: local, surface: surface)
             let sid = try XCTUnwrap(engine.openSource(.block(id: "mx")))
 
-            let update = try peer.transact { tx in
-                let writer = BlockNoteWriter(doc: peer)
+            let writer = BlockNoteWriter(doc: peer)
+            let update = try writer.transaction { tx in
                 let old = try writer.findSource("mx")
                 old.element.item?.delete(tx)
                 let replacement = YType(typeRef: .xmlElement(nodeName: SourceBlock.mathBlock))
@@ -249,16 +252,14 @@ final class DocumentEngineSourceTests: DocumentEngineTestCase {
                 [
                     BlockNoteBlock(
                         node: "paragraph", props: Self.paragraphProps,
-                        runs: [InlineRun(inlineObject: .math(source: "a"))], id: "p")
+                        runs: [], id: "p")
                 ],
                 clientID: 1)
-            let peer = try makeDoc(
-                [
-                    BlockNoteBlock(
-                        node: "paragraph", props: Self.paragraphProps,
-                        runs: [InlineRun(inlineObject: .math(source: "a"))], id: "p")
-                ],
-                clientID: 2)
+            let seedWriter = BlockNoteWriter(doc: local)
+            try seedWriter.insertInlineMath(
+                in: try seedWriter.find("p"), replacing: 0..<0, source: "a", trailingSpace: false)
+            let peer = YDoc(clientID: 2, gc: true)
+            try peer.applyUpdate(YUpdateDecoder.decode(try YStateEncoder.encodeStateAsUpdate(local)))
             defer {
                 local.destroy()
                 peer.destroy()
@@ -269,15 +270,15 @@ final class DocumentEngineSourceTests: DocumentEngineTestCase {
             let sid = try XCTUnwrap(engine.openSource(.inlineMath(blockID: "p", itemID: itemID)))
 
             let peerMathItem = try inlineMathItemID(in: peer, blockID: "p")
-            let update = try peer.transact { _ in
-                let writer = BlockNoteWriter(doc: peer)
+            let writer = BlockNoteWriter(doc: peer)
+            let update = try writer.transaction { _ in
                 let p = try writer.find("p")
                 guard let child = writer.children(p.element).first(where: { $0.id == peerMathItem }),
                     case .type(let mathEl) = child.content,
                     let textItem = writer.children(mathEl).first,
                     case .type(let xmlText) = textItem.content
                 else { return }
-                try xmlText.format(0, 1, ["bold": true])
+                try xmlText.format(0, 1, ["bold": "true"])
             }
             try local.applyUpdate(YUpdateDecoder.decode(update), origin: .remote)
 
@@ -295,12 +296,15 @@ final class DocumentEngineSourceTests: DocumentEngineTestCase {
             [
                 BlockNoteBlock(
                     node: "paragraph", props: Self.paragraphProps,
-                    runs: [InlineRun("Ab"), InlineRun(inlineObject: .math(source: "xyz")), InlineRun("cd")],
+                    runs: [InlineRun("Abcd")],
                     id: "p"),
                 mathBlock("mx", "e = mc^2"),
             ],
             clientID: 1)
         defer { doc.destroy() }
+        let seedWriter = BlockNoteWriter(doc: doc)
+        try seedWriter.insertInlineMath(
+            in: try seedWriter.find("p"), replacing: 2..<2, source: "xyz", trailingSpace: false)
         let surface = HeadlessSurface(blocks: projection(doc))
         let engine = DocumentEngine(doc: doc, surface: surface)
         let history = ReplicaHistory(doc: doc, engine: engine)
@@ -313,7 +317,7 @@ final class DocumentEngineSourceTests: DocumentEngineTestCase {
                 anchor: EditorPosition(blockID: mxID, offset: 2),
                 head: EditorPosition(blockID: mxID, offset: 2)))
         let openRel = try XCTUnwrap(engine.awarenessPosition(EditorPosition(blockID: mxID, offset: 2)))
-        XCTAssertEqual(engine.peerPlace(openRel), .text(EditorPosition(blockID: mxID, offset: 2, assoc: 0)))
+        XCTAssertEqual(engine.peerPlace(openRel), .text(EditorPosition(blockID: mxID, offset: 2, assoc: -1)))
 
         try engine.replaceText(block: mxID, range: 2..<2, with: "+1")
         XCTAssertEqual(engine.sourceSnapshot(mxID)?.first?.runs, [InlineRun("e +1= mc^2")])
@@ -342,7 +346,7 @@ final class DocumentEngineSourceTests: DocumentEngineTestCase {
                 anchor: EditorPosition(blockID: inlineID, offset: 3),
                 head: EditorPosition(blockID: inlineID, offset: 3)))
         let inlineRel = try XCTUnwrap(engine.awarenessPosition(EditorPosition(blockID: inlineID, offset: 3)))
-        XCTAssertEqual(engine.peerPlace(inlineRel), .text(EditorPosition(blockID: inlineID, offset: 3, assoc: 0)))
+        XCTAssertEqual(engine.peerPlace(inlineRel), .text(EditorPosition(blockID: inlineID, offset: 3, assoc: -1)))
 
         try engine.replaceText(block: inlineID, range: 3..<3, with: "+1")
         engine.closeSource(inlineID)
@@ -385,7 +389,7 @@ final class DocumentEngineSourceTests: DocumentEngineTestCase {
 
         let sid = try XCTUnwrap(engine.openSource(.block(id: "mx")))
         let rel = try XCTUnwrap(engine.awarenessPosition(EditorPosition(blockID: sid, offset: 1)))
-        XCTAssertEqual(engine.peerPlace(rel), .text(EditorPosition(blockID: sid, offset: 1, assoc: 0)))
+        XCTAssertEqual(engine.peerPlace(rel), .text(EditorPosition(blockID: sid, offset: 1, assoc: -1)))
 
         try engine.replaceText(block: sid, range: 3..<3, with: "+1")
         XCTAssertEqual(engine.sourceSnapshot(sid)?.first?.runs, [InlineRun("x^2+1")])

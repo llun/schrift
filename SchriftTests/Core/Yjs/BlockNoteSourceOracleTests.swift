@@ -333,13 +333,27 @@ final class BlockNoteSourceOracleTests: XCTestCase {
 
         func firstTableParagraphID(tableID: String, engine: DocumentEngine, doc: YDoc) throws -> String {
             let writer = BlockNoteWriter(doc: doc)
-            let tbl = try writer.find(tableID)
-            for row in writer.children(tbl.element) {
-                guard case .type(let rowType) = row.content else { continue }
-                for cell in writer.children(rowType) {
-                    guard case .type(let cellType) = cell.content else { continue }
-                    if let paragraphItem = writer.children(cellType).first {
-                        return TableGrid.paragraphID(table: tableID, item: paragraphItem.id)
+            guard let root = doc.share[BlockNoteYjs.fragmentField] else {
+                throw NSError(domain: "BlockNoteSourceOracleTests", code: 2)
+            }
+            for item in writer.children(root) {
+                guard case .type(let group) = item.content else { continue }
+                for blockItem in writer.children(group) {
+                    guard case .type(let container) = blockItem.content,
+                        container.typeRef == .xmlElement(nodeName: "blockContainer"),
+                        BlockIndex.blockID(of: container) == tableID,
+                        let first = writer.children(container).first,
+                        case .type(let tableElement) = first.content,
+                        tableElement.typeRef == .xmlElement(nodeName: "table")
+                    else { continue }
+                    for row in writer.children(tableElement) {
+                        guard case .type(let rowType) = row.content else { continue }
+                        for cell in writer.children(rowType) {
+                            guard case .type(let cellType) = cell.content else { continue }
+                            if let paragraphItem = writer.children(cellType).first {
+                                return TableGrid.paragraphID(table: tableID, item: paragraphItem.id)
+                            }
+                        }
                     }
                 }
             }
@@ -372,7 +386,7 @@ final class BlockNoteSourceOracleTests: XCTestCase {
             let blocks = NativeBlockProjection.project(doc, interlinkingOrigin: Self.testOrigin).blocks.map(
                 BlockSnapshot.init)
             let surface = HeadlessSurface(blocks: blocks)
-            let engine = DocumentEngine(doc: doc, surface: surface, interlinkingOrigin: Self.testOrigin)
+            let engine = DocumentEngine(doc: doc, surface: surface)
             try perform(engine, doc, surface)
             XCTAssertEqual(YXMLString.fragment(doc), capture.xml, "\(name): xml mismatch")
             let shadow = try XCTUnwrap(
@@ -389,15 +403,15 @@ final class BlockNoteSourceOracleTests: XCTestCase {
         try runEngineEdit("typeIntoMathBlock") { engine, _, surface in
             let sid = try XCTUnwrap(engine.openSource(.block(id: "mx")))
             let len = engine.sourceSnapshot(sid)?.first?.runs.map(\.text).joined().utf16.count ?? 0
-            try engine.replaceText(block: sid, range: len..<len, with: "+1")
+            try engine.replaceText(block: sid, range: len..<len, with: " + y^2")
             guard case .source(let node, let lines, _)? = surface.blocks.first(where: { $0.id == "mx" })?.preview
             else { return XCTFail("expected source preview update") }
             XCTAssertEqual(node, SourceBlock.mathBlock)
-            XCTAssertEqual(lines, ["x^2+1"])
+            XCTAssertEqual(lines, ["x^2 + y^2"])
         }
         try runEngineEdit("typeIntoMathBlockEmpty") { engine, _, _ in
             let sid = try XCTUnwrap(engine.openSource(.block(id: "mx")))
-            try engine.replaceText(block: sid, range: 0..<0, with: "y = x")
+            try engine.replaceText(block: sid, range: 0..<0, with: "\\alpha")
         }
         try runEngineEdit("typeIntoDiagram") { engine, _, _ in
             let sid = try XCTUnwrap(engine.openSource(.block(id: "dx")))
@@ -406,7 +420,7 @@ final class BlockNoteSourceOracleTests: XCTestCase {
         }
         try runEngineEdit("typeIntoDiagramEmpty") { engine, _, _ in
             let sid = try XCTUnwrap(engine.openSource(.block(id: "dx")))
-            try engine.replaceText(block: sid, range: 0..<0, with: "graph TD\n  A-->B")
+            try engine.replaceText(block: sid, range: 0..<0, with: "graph LR")
         }
         try runEngineEdit("typeIntoInlineMath") { engine, doc, _ in
             let itemID = try firstInlineMathItemID(blockID: "p", engine: engine, doc: doc)
@@ -479,14 +493,17 @@ final class BlockNoteSourceOracleTests: XCTestCase {
             try engine.applyStructural(
                 NativeEditCommand(
                     id: UUID(), baseRevision: engine.revision, blockID: "cl",
-                    kind: .columns(.remove(index: 0), expecting: 2))
+                    kind: .columns(.remove(index: 0), expecting: nil))
             ) { _ in }
         }
         try runEngineEdit("boldAcrossInlineMath") { engine, _, _ in
             try engine.applyStructural(
                 NativeEditCommand(
                     id: UUID(), baseRevision: engine.revision, blockID: "p",
-                    kind: .marks(NativeRangeMarks(startOffset: 0, endOffset: 14, attributes: ["bold": "true"])))
+                    kind: .marks(
+                        NativeMarkCommand(
+                            startOffset: 0, endBlockID: "p", endOffset: 14,
+                            attributes: [TextMark(key: "bold", valueJSON: "{}")])))
             ) { _ in }
         }
         try runEngineEdit("turnInlineMathParagraphIntoHeading") { engine, _, _ in
@@ -506,7 +523,7 @@ final class BlockNoteSourceOracleTests: XCTestCase {
             try engine.applyStructural(
                 NativeEditCommand(
                     id: UUID(), baseRevision: engine.revision, blockID: "p",
-                    kind: .split(offset: 8, newID: "1", open: nil))
+                    kind: .split(offset: 8, newID: "1", open: []))
             ) { _ in }
         }
         try runEngineEdit("slashMathBlockOnEmptyParagraph") { engine, _, _ in

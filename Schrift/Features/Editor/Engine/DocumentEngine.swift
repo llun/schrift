@@ -694,6 +694,8 @@ final class DocumentEngine {
             )
         case .insertInlineObject(let object, let range):
             return try prepareInsertInlineObject(command, object, replacing: range)
+        case .insertInlineMath(let range, let source, let trailingSpace):
+            return try prepareInsertInlineMath(command, replacing: range, source: source, trailingSpace: trailingSpace)
         case .pasteInline(let payload, let range):
             return try preparePasteInline(command, payload: payload, range: range)
         default:
@@ -1914,8 +1916,23 @@ final class DocumentEngine {
     @discardableResult
     func replaceText(block: String, range: Range<Int>, with text: String, marks: [TextMark]? = nil) throws -> Data {
         try requireEditableBlock(block)
+        guard builder.index.isCanonical, let entry = builder.index.entries[block] else {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+        if isSourceText(entry) {
+            guard let element = entry.element, case .xmlElement(let node)? = element.typeRef,
+                !text.unicodeScalars.contains(where: {
+                    $0.value == 0xfffc
+                        || (CharacterSet.newlines.contains($0) && !(SourceBlock.isSource(node) && $0 == "\n"))
+                }),
+                marks?.isEmpty != false
+            else { throw DocumentEngineError.unsupportedNativeInput }
+            return try writer.replaceSourceText(
+                in: element, range: range, with: text,
+                block: SourceTarget.ownerID(of: entry.id) ?? entry.id)
+        }
         return try writer.replaceText(
-            block: block, range: range, with: text,
+            in: try textTarget(entry), range: range, with: text,
             marks: marks.map { YTextAttributes($0.map { ($0.key, $0.valueJSON) }) })
     }
 

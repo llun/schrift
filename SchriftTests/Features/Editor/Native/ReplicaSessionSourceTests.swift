@@ -16,17 +16,15 @@ final class ReplicaSessionSourceTests: NativeEditingTestCase {
         init(_ stream: AsyncStream<ReplicaDelivery>) {
             task = Task {
                 for await delivery in stream {
-                    lock.lock()
-                    items.append(delivery)
-                    lock.unlock()
+                    lock.withLock {
+                        items.append(delivery)
+                    }
                 }
             }
         }
 
         var deliveries: [ReplicaDelivery] {
-            lock.lock()
-            defer { lock.unlock() }
-            return items
+            lock.withLock { items }
         }
 
         func cancel() {
@@ -49,7 +47,7 @@ final class ReplicaSessionSourceTests: NativeEditingTestCase {
         let replica = try XCTUnwrap(harness.session.replica)
 
         let sourceSurfaceID = UUID()
-        let attachment = try await unwrapped(await replica.attach(surfaceID: sourceSurfaceID, source: .block(id: "mx")))
+        let attachment = try unwrapped(await replica.attach(surfaceID: sourceSurfaceID, source: .block(id: "mx")))
         XCTAssertEqual(attachment.blocks.count, 1)
         let syntheticID = try XCTUnwrap(attachment.blocks.first?.id)
         XCTAssertTrue(SourceTarget.isSourceID(syntheticID))
@@ -120,7 +118,7 @@ final class ReplicaSessionSourceTests: NativeEditingTestCase {
         let replica = try XCTUnwrap(harness.session.replica)
 
         let sourceSurfaceID = UUID()
-        let attachment = try await unwrapped(await replica.attach(surfaceID: sourceSurfaceID, source: .block(id: "mx")))
+        let attachment = try unwrapped(await replica.attach(surfaceID: sourceSurfaceID, source: .block(id: "mx")))
         let syntheticID = try XCTUnwrap(attachment.blocks.first?.id)
         let collector = DeliveryCollector(attachment.deliveries)
         defer { collector.cancel() }
@@ -210,27 +208,39 @@ final class ReplicaSessionSourceTests: NativeEditingTestCase {
 
         // Open table surface AND inline math source inside cell 0's tableParagraph concurrently.
         let tableSurfaceID = UUID()
-        let tableAttachment = try await unwrapped(await replica.attach(surfaceID: tableSurfaceID, table: "tbl"))
+        let tableAttachment = try unwrapped(await replica.attach(surfaceID: tableSurfaceID, table: "tbl"))
         let firstCellID = try XCTUnwrap(tableAttachment.blocks.first?.id)
         let tableCollector = DeliveryCollector(tableAttachment.deliveries)
         defer { tableCollector.cancel() }
 
-        let mathItemID = try await unwrapped(
-            harness.session.replicaDoc { doc -> YID? in
+        let mathItemID = try unwrapped(
+            await harness.session.replicaDoc { doc -> YID? in
                 let writer = BlockNoteWriter(doc: doc)
-                guard let tbl = try? writer.find("tbl") else { return nil }
-                for row in writer.children(tbl.element) {
-                    guard case .type(let rowType) = row.content else { continue }
-                    for cell in writer.children(rowType) {
-                        guard case .type(let cellType) = cell.content,
-                            let paraItem = writer.children(cellType).first,
-                            case .type(let paraType) = paraItem.content
+                guard let root = doc.share[BlockNoteYjs.fragmentField] else { return nil }
+                for item in writer.children(root) {
+                    guard case .type(let group) = item.content else { continue }
+                    for blockItem in writer.children(group) {
+                        guard case .type(let container) = blockItem.content,
+                            container.typeRef == .xmlElement(nodeName: "blockContainer"),
+                            BlockIndex.blockID(of: container) == "tbl",
+                            let first = writer.children(container).first,
+                            case .type(let tblElement) = first.content,
+                            tblElement.typeRef == .xmlElement(nodeName: "table")
                         else { continue }
-                        for child in writer.children(paraType) {
-                            if case .type(let type) = child.content,
-                                type.typeRef == .xmlElement(nodeName: NativeInlineObject.mathNodeName)
-                            {
-                                return child.id
+                        for row in writer.children(tblElement) {
+                            guard case .type(let rowType) = row.content else { continue }
+                            for cell in writer.children(rowType) {
+                                guard case .type(let cellType) = cell.content,
+                                    let paraItem = writer.children(cellType).first,
+                                    case .type(let paraType) = paraItem.content
+                                else { continue }
+                                for child in writer.children(paraType) {
+                                    if case .type(let type) = child.content,
+                                        type.typeRef == .xmlElement(nodeName: NativeInlineObject.mathNodeName)
+                                    {
+                                        return child.id
+                                    }
+                                }
                             }
                         }
                     }
@@ -239,7 +249,7 @@ final class ReplicaSessionSourceTests: NativeEditingTestCase {
             } ?? nil)
 
         let sourceSurfaceID = UUID()
-        let sourceAttachment = try await unwrapped(
+        let sourceAttachment = try unwrapped(
             await replica.attach(
                 surfaceID: sourceSurfaceID, source: .inlineMath(blockID: firstCellID, itemID: mathItemID)))
         let syntheticID = try XCTUnwrap(sourceAttachment.blocks.first?.id)
