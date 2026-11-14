@@ -282,6 +282,9 @@ struct NativeEditorView: View {
             uploads = NativeMediaUploads(scope: uploadDocumentID == nil ? nil : session.scope, queue: mediaQueue)
         }
         .nativeLinkEditing($linkTarget, input: session.input)
+        .onChange(of: ObjectIdentifier(session), initial: true) { _, _ in
+            session.input?.onRequestLinkEdit = { linkTarget = $0 }
+        }
         .modifier(
             DocumentOutlinePresentation(
                 isPresented: outlinePresentedBinding, focusesFind: outlineFocusesFindBinding.wrappedValue,

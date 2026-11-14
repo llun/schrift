@@ -449,10 +449,9 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
             NativeInputCoordinator.slashItems.map(\.id),
             [
                 "paragraph", "heading1", "heading2", "heading3", "toggleHeading", "bullet", "numbered", "checklist",
-                "toggleList", "quote", "code", "twoColumns", "threeColumns", "mediaImage", "mediaVideo", "mediaAudio",
-                "mediaFile", "mediaPDF", "mathBlock", "inlineMath", "diagram",
-            ],
-            "divider waits for a later slice; the toggles are NativeToggleTests', the columns ColumnStructureTests', media NativeMediaTests'"
+                "toggleList", "quote", "code", "divider", "twoColumns", "threeColumns", "mediaImage", "mediaVideo",
+                "mediaAudio", "mediaFile", "mediaPDF", "mathBlock", "inlineMath", "diagram",
+            ]
         )
         for (itemID, node, level) in expected {
             let harness = try await makeHarness([paragraph("p", "Above"), paragraph("s", "")])
@@ -497,11 +496,57 @@ final class NativeBlockPresentationTests: NativeEditingTestCase {
         }
         setSelection(harness, NSRange(location: try location(session, "s", 1), length: 0))
         XCTAssertEqual(harness.input.slashMenuQuery, "")
-        // An item the native editor cannot apply yet is refused, not approximated.
-        let divider = try XCTUnwrap(allSlashMenuItems.first { $0.id == "divider" })
-        let appliedDivider = await harness.run { harness.input.applySlashItem(divider) }
-        XCTAssertFalse(appliedDivider)
+        // An item the native editor cannot apply (classic-only attachment) is refused, not approximated.
+        let file = try XCTUnwrap(allSlashMenuItems.first { $0.id == "file" })
+        let appliedFile = await harness.run { harness.input.applySlashItem(file) }
+        XCTAssertFalse(appliedFile)
         try await assertConsistent(harness, localCommands: 0)
+    }
+
+    func testSlashDividerInsertsDividerAndTrailingParagraph() async throws {
+        let harness = try await makeHarness([paragraph("p", "Above"), paragraph("s", "")])
+        addTeardownBlock { await harness.close() }
+        let session = harness.session
+        setSelection(harness, NSRange(location: try location(session, "s", 0), length: 0))
+        for character in ["/","d","i","v"] { harness.view.insertText(character) }
+        await harness.settle()
+        XCTAssertEqual(harness.input.slashMenuQuery, "div")
+        let divider = try XCTUnwrap(NativeInputCoordinator.slashItems.first { $0.id == "divider" })
+        let applied = await harness.run { harness.input.applySlashItem(divider) }
+        XCTAssertTrue(applied)
+        XCTAssertEqual(session.surface.blocks.map(\.node), ["paragraph", "divider", "paragraph"])
+        let trailingID = session.surface.blocks[2].id
+        XCTAssertEqual(harness.view.selectedRange, NSRange(location: try location(session, trailingID, 0), length: 0))
+        XCTAssertNil(harness.input.slashMenuQuery)
+        try await assertConsistent(harness, localCommands: 5)
+    }
+
+    func testDividerEnterShortcutsConvertOnReturn() async throws {
+        for shortcut in ["---", "***", "___"] {
+            let harness = try await makeHarness([paragraph("p", shortcut), paragraph("after", "Next")])
+            addTeardownBlock { await harness.close() }
+            let session = harness.session
+            setSelection(harness, NSRange(location: try location(session, "p", 3), length: 0))
+            let converted = await harness.run { harness.input.insertNewline() }
+            XCTAssertTrue(converted, shortcut)
+            XCTAssertEqual(session.surface.blocks.map(\.node), ["divider", "paragraph"], shortcut)
+            XCTAssertEqual(text(of: session.surface.blocks[1]), "Next", shortcut)
+            XCTAssertEqual(
+                harness.view.selectedRange, NSRange(location: try location(session, "after", 0), length: 0), shortcut)
+            try await assertConsistent(harness, localCommands: 1)
+            await harness.close()
+        }
+        // On the last block, Return after "---" inserts a trailing paragraph and focuses it.
+        let endHarness = try await makeHarness([paragraph("p", "---")])
+        addTeardownBlock { await endHarness.close() }
+        setSelection(endHarness, NSRange(location: try location(endHarness.session, "p", 3), length: 0))
+        let convertedAtEnd = await endHarness.run { endHarness.input.insertNewline() }
+        XCTAssertTrue(convertedAtEnd)
+        XCTAssertEqual(endHarness.session.surface.blocks.map(\.node), ["divider", "paragraph"])
+        let trailingID = endHarness.session.surface.blocks[1].id
+        XCTAssertEqual(
+            endHarness.view.selectedRange, NSRange(location: try location(endHarness.session, trailingID, 0), length: 0))
+        try await assertConsistent(endHarness, localCommands: 1)
     }
 
     /// "/" typed in front of existing text: the choice consumes only the

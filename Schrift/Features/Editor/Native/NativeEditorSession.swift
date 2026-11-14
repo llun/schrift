@@ -730,16 +730,17 @@ final class NativeEditorOpen {
         let coordinator = viewModel.saveCoordinator
         switch coordinator.nativeOwnership(documentID: viewModel.documentID) {
         case .unreadable:
-            viewModel.seedNativeMetadataIfNeeded()
+            viewModel.seedNativeMetadataIfNeeded(includeLocalDrafts: false)
             route = .preservedUnavailable
             return
         case .owned(let scope):
-            viewModel.seedNativeMetadataIfNeeded()
             // Another account's unsynced replica is never shown to this one.
             guard scope.ownerUserID == account else {
+                viewModel.seedNativeMetadataIfNeeded(includeLocalDrafts: false)
                 route = .preservedUnavailable
                 return
             }
+            viewModel.seedNativeMetadataIfNeeded()
             let restored: NativeEditorSession?
             do {
                 restored = try await registry.open(store: coordinator.replicaStore, scope: scope, hooks: replicaHooks)

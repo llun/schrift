@@ -147,6 +147,16 @@ final class NativeTextView: UITextView {
                 UIKeyCommand(input: "\t", modifierFlags: .shift, action: #selector(nativeOutdent)),
             ])
         }
+        if inputCoordinator?.canFormat == true {
+            commands.append(contentsOf: [
+                UIKeyCommand(input: "b", modifierFlags: .command, action: #selector(nativeBold)),
+                UIKeyCommand(input: "i", modifierFlags: .command, action: #selector(nativeItalic)),
+                UIKeyCommand(input: "u", modifierFlags: .command, action: #selector(nativeUnderline)),
+                UIKeyCommand(input: "x", modifierFlags: [.command, .shift], action: #selector(nativeStrikethrough)),
+                UIKeyCommand(input: "e", modifierFlags: .command, action: #selector(nativeInlineCode)),
+                UIKeyCommand(input: "k", modifierFlags: .command, action: #selector(nativeLink)),
+            ])
+        }
         // A table cell (PR11a): Escape returns to the document.
         if inputCoordinator?.tableMove != nil {
             if !registeredEscape {
@@ -202,6 +212,40 @@ final class NativeTextView: UITextView {
         guard markedTextRange == nil else { return }
         if inputCoordinator?.tableMove?(.done) == nil { inputCoordinator?.onDone?() }
     }
+
+    @objc private func nativeBold() {
+        guard markedTextRange == nil else { return }
+        inputCoordinator?.toggleMark("bold")
+    }
+
+    @objc private func nativeItalic() {
+        guard markedTextRange == nil else { return }
+        inputCoordinator?.toggleMark("italic")
+    }
+
+    @objc private func nativeUnderline() {
+        guard markedTextRange == nil else { return }
+        inputCoordinator?.toggleMark("underline")
+    }
+
+    @objc private func nativeStrikethrough() {
+        guard markedTextRange == nil else { return }
+        inputCoordinator?.toggleMark("strike")
+    }
+
+    @objc private func nativeInlineCode() {
+        guard markedTextRange == nil else { return }
+        inputCoordinator?.toggleMark("code")
+    }
+
+    @objc private func nativeLink() {
+        guard markedTextRange == nil, let inputCoordinator, let target = inputCoordinator.linkTarget() else { return }
+        inputCoordinator.onRequestLinkEdit?(target)
+    }
+
+    @objc override func toggleBoldface(_ sender: Any?) { nativeBold() }
+    @objc override func toggleItalics(_ sender: Any?) { nativeItalic() }
+    @objc override func toggleUnderline(_ sender: Any?) { nativeUnderline() }
 
     /// Active inline pickers claim Escape, Up, Down, and Return ahead of table
     /// cell navigation; a table cell's hardware arrows (PR11c) go to the table
@@ -362,7 +406,13 @@ final class NativeTextView: UITextView {
                     || inputCoordinator?.tableMove != nil
                     || inputCoordinator?.onExit != nil)
             return allowed
-        case "toggleBoldface:", "toggleItalics:", "toggleUnderline:": return false
+        case "toggleBoldface:", "toggleItalics:", "toggleUnderline:",
+            "nativeBold", "nativeItalic", "nativeUnderline", "nativeStrikethrough", "nativeInlineCode":
+            return markedTextRange == nil && (inputCoordinator?.canFormat ?? false)
+        case "nativeLink":
+            return markedTextRange == nil
+                && inputCoordinator?.onRequestLinkEdit != nil
+                && inputCoordinator?.linkTarget() != nil
         case "paste:", "pasteAndMatchStyle:":
             return inputCoordinator?.canPasteFromPasteboard() ?? false
         default: break

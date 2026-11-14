@@ -3771,15 +3771,28 @@ final class EditorViewModel {
     ///
     /// Precedence for the authoritative title:
     /// pending save -> stored draft -> coordinator's known server title -> cached content -> row title.
-    func seedNativeMetadataIfNeeded() {
+    func seedNativeMetadataIfNeeded(includeLocalDrafts: Bool = true) {
         if subpages == nil, let cachedChildren = childrenCache.children(for: documentID) {
             subpages = cachedChildren
         }
         hasLocalCopy = true
         let cached = contentCache.content(for: documentID)
-        if lastSyncedAt == nil, saveCoordinator.pendingSave(documentID: documentID) == nil,
-            saveCoordinator.storedDraft(documentID: documentID) == nil
-        {
+        let currentUserID = signedInUser.userID
+        let rawPending = saveCoordinator.pendingSave(documentID: documentID)
+        let pendingSave =
+            includeLocalDrafts
+                && (rawPending?.replicaRequest?.scope.ownerUserID == nil
+                    || rawPending?.replicaRequest?.scope.ownerUserID == currentUserID)
+            ? rawPending
+            : nil
+        let rawDraft = saveCoordinator.storedDraft(documentID: documentID)
+        let storedDraft =
+            includeLocalDrafts
+                && (rawDraft?.replica?.scope.ownerUserID == nil
+                    || rawDraft?.replica?.scope.ownerUserID == currentUserID)
+            ? rawDraft
+            : nil
+        if lastSyncedAt == nil, pendingSave == nil, storedDraft == nil {
             lastSyncedAt = cached?.syncedAt
         }
         if nativeServerBaseline == nil, let cached {
@@ -3787,8 +3800,8 @@ final class EditorViewModel {
                 serverUpdatedAt: cached.serverUpdatedAt, markdown: cached.markdown, title: cached.title)
         }
         if !hasPendingNativeTitleEdit,
-            let seededTitle = saveCoordinator.pendingSave(documentID: documentID)?.title
-                ?? saveCoordinator.storedDraft(documentID: documentID)?.title
+            let seededTitle = pendingSave?.title
+                ?? storedDraft?.title
                 ?? saveCoordinator.knownServerTitle(documentID: documentID)
                 ?? cached?.title
         {

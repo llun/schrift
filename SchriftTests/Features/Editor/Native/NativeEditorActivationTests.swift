@@ -279,6 +279,32 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         guard case .preservedUnavailable = open.route else { return XCTFail("the new account must not see it") }
     }
 
+    func testMismatchedOwnerDoesNotSeedAnotherAccountsDraftTitle() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let scope = try seedReplica(env, typed: "secret body")
+        let draftStore = PendingDraftStore(userDefaults: env.defaults)
+        draftStore.save(
+            PendingDraft(
+                documentID: env.model.documentID,
+                title: "Previous Owner Secret Title",
+                markdown: "",
+                updatedAt: Date(),
+                replica: ReplicaDraftReference(scope: scope, revision: 1)
+            ))
+        SignedInUserStore(userDefaults: env.defaults).remember(UUID())
+        env.model.title = ""
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: true, canUpdate: true)
+        guard case .preservedUnavailable = open.route else {
+            return XCTFail("a foreign-owned replica must stay preservedUnavailable")
+        }
+        XCTAssertNotEqual(env.model.title, "Previous Owner Secret Title")
+        XCTAssertNotEqual(env.model.savedTitle, "Previous Owner Secret Title")
+    }
+
     func testAccountChangeBeforeTheDebouncedSaveRefusesToSend() async throws {
         let env = makeEnvironment()
         defer { env.clean() }

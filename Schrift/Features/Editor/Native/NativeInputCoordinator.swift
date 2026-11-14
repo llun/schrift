@@ -320,6 +320,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @ObservationIgnored var onExit: (() -> Void)?
     /// Focused source editor (PR14): ⌘Return closes.
     @ObservationIgnored var onDone: (() -> Void)?
+    /// Opens the link sheet for `⌘K` / Edit menu link action.
+    @ObservationIgnored var onRequestLinkEdit: ((NativeLinkTarget) -> Void)?
     /// When editing a scoped source surface (PR14), identifies `mathBlock`,
     /// `diagram`, or inline `math`.
     @ObservationIgnored var sourceKind: NativeSourceKind?
@@ -1501,6 +1503,18 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
         // BlockNote's Enter in a code block inserts a line break in the block.
         if isCode(entry.blockID) { return replace(range: effectiveSelection, with: "\n") }
+        let block = surface.blocks[position]
+        // Plain `---`, `***`, `___` + Return converts the paragraph into a divider.
+        if block.node == "paragraph", tableMove == nil, sourceKind == nil,
+            let match = detectEnterShortcut(text: text(of: block)), match.kind == .divider
+        {
+            let length = text(of: block).utf16.count
+            let ids = [UUID().uuidString, UUID().uuidString]
+            return applyStructural(
+                entry.blockID, .insertDivider(ids: ids, removing: 0..<length),
+                refusal: .native_editor_input_unavailable, retry: again { [weak self] in self?.insertNewline() ?? false },
+                readsSelection: true)
+        }
         let offset = effectiveSelection.location - entry.textRange.location
         // BlockNote's Enter reads whether the toggle (or a toggle parent) is open.
         let open = Set([entry.blockID, surface.blocks[position].parentID].compactMap { $0 }.filter(surface.isExpanded))
@@ -1722,7 +1736,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return view.isEditable && !isFrozen && !isDetached && !compositionOwnsView
     }
 
-    private var canFormat: Bool {
+    var canFormat: Bool {
         sourceKind == nil && canEdit
     }
 
@@ -2030,6 +2044,17 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             if posted { requestedMedia = replaces ? entry.blockID : ids[0] }
             return posted
         }
+        // A column (PR12a) / divider (G10): the engine decides replace or insert after.
+        if case .convert(.divider) = item.action {
+            guard let view, canFormat, view.selectedRange.length == 0, let token = slashToken,
+                let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location)
+            else { return false }
+            let ids = [UUID().uuidString, UUID().uuidString]
+            return applyStructural(
+                entry.blockID, .insertDivider(ids: ids, removing: token),
+                refusal: .native_editor_input_unavailable,
+                retry: again { [weak self] in self?.applySlashItem(item) ?? false }, readsSelection: true)
+        }
         // A column group (PR12b): the engine decides replace or insert after; one id spare either way.
         if case .columns(let count) = item.action {
             guard let view, canFormat, view.selectedRange.length == 0, let token = slashToken,
@@ -2066,7 +2091,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// The slash items this editor can apply, in the classic menu's order,
     /// with the native-only toggles after Heading 3 and the checklist.
     static let slashItems =
-        allSlashMenuItems.filter { slashType($0.action) != nil }.flatMap { item in
+        allSlashMenuItems.filter { $0.action == .convert(.divider) || slashType($0.action) != nil }.flatMap { item in
             switch item.id {
             case "heading3": [item, toggleHeadingSlashItem]
             case "checklist": [item, toggleListSlashItem]

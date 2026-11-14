@@ -393,6 +393,9 @@ final class DocumentEngine {
         if case .insertSourceBlock(let node, let newID, let removing) = command.kind {
             return try prepareInsertSourceBlock(command, node: node, newID: newID, removing: removing)
         }
+        if case .insertDivider(let ids, let removing) = command.kind {
+            return try prepareInsertDivider(command, ids: ids, removing: removing)
+        }
         if case .mediaProps(let props, let expecting) = command.kind {
             return try prepareMediaProps(command, props: props, expecting: expecting)
         }
@@ -1478,6 +1481,55 @@ final class DocumentEngine {
                 }
             },
             caret: { EditorPosition(blockID: insertedID, offset: 0, assoc: -1) }
+        )
+    }
+
+    private func prepareInsertDivider(
+        _ command: NativeEditCommand, ids: [String], removing: Range<Int>
+    ) throws -> PreparedCommand {
+        let index = builder.index
+        let (paragraph, units) = try structuralTarget(command.blockID)
+        guard paragraph == "paragraph", let entry = index.entries[command.blockID],
+            ids.count == 2, ids[0] != ids[1],
+            removing.lowerBound <= removing.upperBound,
+            Self.isBoundary(removing.lowerBound, in: units),
+            Self.isBoundary(removing.upperBound, in: units),
+            ids.allSatisfy({ [used = usedIDs()] in isUnused($0, in: used) })
+        else { throw DocumentEngineError.unsupportedNativeInput }
+        let replacing = units.count == removing.count
+        let item = entry.containerItem
+        let group = entry.group
+        let trailing = writer.needsTrailingParagraph(after: item, in: group)
+        let dividerID = replacing ? command.blockID : ids[0]
+        return (
+            write: {
+                try self.writer.transaction { _ in
+                    if !removing.isEmpty, !replacing {
+                        try self.writer.replaceText(
+                            in: try self.writer.indexedTarget(item, id: command.blockID), range: removing, with: "")
+                    }
+                    try self.writer.insertDivider(
+                        at: item, in: group, replacing: replacing, blockID: ids[0],
+                        paragraphID: trailing ? ids[1] : nil)
+                }
+            },
+            caret: {
+                if trailing {
+                    return EditorPosition(blockID: ids[1], offset: 0, assoc: -1)
+                }
+                let list = self.builder.index.list(of: dividerID)
+                guard let at = self.builder.index.listPosition(of: dividerID) else {
+                    return EditorPosition(blockID: dividerID, offset: 0, assoc: -1)
+                }
+                let next =
+                    list[(at + 1)...].first { id in
+                        guard case .xmlElement(let name)? = self.builder.index.entries[id]?.element?.typeRef else {
+                            return true
+                        }
+                        return !MediaBlock.contentless.contains(name)
+                    } ?? dividerID
+                return EditorPosition(blockID: next, offset: 0, assoc: -1)
+            }
         )
     }
 
