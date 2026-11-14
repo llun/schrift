@@ -150,6 +150,34 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// The "/query" token the menu's choice removes: from the paragraph's
     /// start to the caret. Text after the caret is the user's and stays.
     @ObservationIgnored private var slashToken: Range<Int>?
+    /// Shared page-link & mention candidate source across document, column, and
+    /// table native editors (PR13c2).
+    @ObservationIgnored var inlinePickerSource: NativeInlinePickerSource? {
+        didSet { refreshInlinePicker() }
+    }
+    struct ActiveInlineTrigger: Equatable {
+        let blockID: String
+        let trigger: NativeInlineTrigger
+
+        var key: InlineTriggerKey {
+            InlineTriggerKey(blockID: blockID, kind: trigger.kind, anchor: trigger.anchor)
+        }
+    }
+    private struct SlashPageLinkSession: Equatable {
+        let blockID: String
+        var anchor: Int
+    }
+    private struct InlinePickerHighlight: Equatable {
+        let key: InlineTriggerKey
+        let query: String
+        let index: Int
+    }
+    private(set) var activeInlineTrigger: ActiveInlineTrigger?
+    private var slashPageLinkSession: SlashPageLinkSession?
+    @ObservationIgnored private var pendingSlashPageLink: (commandID: UUID, blockID: String, anchor: Int)?
+    private var dismissedInlineTrigger: InlineTriggerKey?
+    private var inlinePickerHighlight: InlinePickerHighlight?
+    private var isEditingBlurred = false
     /// A toggle at a caret (ProseMirror's stored marks): the marks the next
     /// typed text carries. Nothing is written until text is typed, and a
     /// selection change drops it.
@@ -522,6 +550,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             for event in delivery.events {
                 switch event {
                 case .patch(let patch, let settled):
+                    if patch.nativeCommand?.surfaceID != surfaceID {
+                        adjustSlashPageLinkSession(for: patch)
+                    }
                     if patch.changes.contains(where: { if case .text = $0 { false } else { true } })
                         || patch.nativeCommand?.surfaceID != surfaceID
                     {
@@ -713,6 +744,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             if journaled { onJournaled() }
             surface.confirm(id)
             settleCopies(after: id, applied: true)
+            if let pending = pendingSlashPageLink, pending.commandID == id {
+                pendingSlashPageLink = nil
+                slashPageLinkSession = SlashPageLinkSession(blockID: pending.blockID, anchor: pending.anchor)
+            }
             guard let barrier, barrier.id == id else { return }
             self.barrier = nil
             endUndoStep()
@@ -757,6 +792,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             noticeKey = nil
         case .refused(let id, let error):
             settleCopies(after: id, applied: false)
+            if pendingSlashPageLink?.commandID == id { pendingSlashPageLink = nil }
             guard let barrier, barrier.id == id else { return }
             self.barrier = nil
             endBarrierSelection(ownEcho: false)
@@ -770,6 +806,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 noticeKey = refusal
             }
         case .stale(let id):
+            if pendingSlashPageLink?.commandID == id { pendingSlashPageLink = nil }
             guard let barrier, barrier.id == id else {
                 settleCopies(after: id, applied: false)
                 return
@@ -802,6 +839,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             }
         case .invalidated(let epoch, let id):
             settleCopies(after: id, applied: false)
+            if pendingSlashPageLink?.commandID == id { pendingSlashPageLink = nil }
             if let predicted = surface.predictions.first(where: { $0.commandID == id }) {
                 barrierOnly.insert(predicted.blockID)
             }
@@ -810,6 +848,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             rollBack()
         case .failed:
             barrier = nil
+            pendingSlashPageLink = nil
             userSelection = nil
             lastOutcome = false
             stopAfterStorageFailure()
@@ -974,6 +1013,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         guard let view else { return }
         var range = view.selectedRange
         if range.length == 0 {
+            if cancelEmptySlashPageLinkOnBackspace(caretLocation: range.location) { return }
             // A block start is structural (PR04a): a join or a reset to a
             // paragraph, else a quiet no-op. Every other caret takes the command
             // path, which refuses the document-end boundary's separator with a notice.
@@ -1091,12 +1131,22 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return false
     }
 
+    func textViewDidBeginEditing(_ textView: UITextView) {
+        isEditingBlurred = false
+        refreshInlinePicker()
+    }
+
     /// Focus loss normally reaches `unmarkText` first, which commits like
     /// UIKit. A composition still active here was never confirmed: end it
     /// without writing and keep its text as an explicit recovery entry.
     func textViewDidEndEditing(_ textView: UITextView) {
         // An allowance for a keystroke that never arrived ends with editing.
         directInsertion = nil
+        isEditingBlurred = true
+        slashPageLinkSession = nil
+        pendingSlashPageLink = nil
+        inlinePickerHighlight = nil
+        activeInlineTrigger = nil
         guard composition.isActive else { return }
         view?.dropMarkedText()
         composition.interrupt()
@@ -1215,6 +1265,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         }
         // Anything else would read offsets a commit still in flight owns.
         guard !compositionOwnsView else { return false }
+        // Backspace on an empty slash-initiated page search cancels the session
+        // without deleting the preceding character or joining blocks.
+        if text.isEmpty, range.length == 1, view.selectedRange == NSRange(location: NSMaxRange(range), length: 0),
+            cancelEmptySlashPageLinkOnBackspace(caretLocation: NSMaxRange(range))
+        {
+            return false
+        }
         // The software keyboard deletes the separator before a block start
         // through the delegate or UITextInput `replace`, not `deleteBackward`:
         // it is the same boundary Backspace.
@@ -1373,6 +1430,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             view.dropMarkedText()
             return commitComposition()
         }
+        if !compositionOwnsView, commitHighlightedInlinePicker() { return true }
         // In a table, Return moves to the cell below (no-op on the last row).
         if let tableMove, !compositionOwnsView { return tableMove(.below) || true }
         // A commit still in flight owns the view: Return waits like any key.
@@ -1618,6 +1676,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             slashToken.map { String(decoding: Array(text(of: block).utf16)[1..<$0.upperBound], as: UTF16.self) }
         }
         if query != slashMenuQuery { slashMenuQuery = query }
+        refreshInlinePicker(block: block, caretOffset: caretOffset, marks: marks, selectionRange: range)
         guard range.length == 0, let block else { return }
         var typing = view.typingAttributes
         for key in [NSAttributedString.Key.underlineStyle, .strikethroughStyle, .backgroundColor] { typing[key] = nil }
@@ -1801,6 +1860,24 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// editor cannot author yet (divider, photo, file) are not offered.
     @discardableResult
     func applySlashItem(_ item: SlashMenuItem) -> Bool {
+        if case .linkPage = item.action {
+            guard inlinePickerSource?.canInsertPageLink() == true,
+                let view, canFormat, view.selectedRange.length == 0, let token = slashToken,
+                let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location)
+            else { return false }
+            let docRange = NSRange(location: entry.textRange.location + token.lowerBound, length: token.count)
+            let anchor = token.lowerBound
+            let beforeBarrier = barrier?.id
+            let beforeCommand = lastCommandID
+            guard replace(range: docRange, with: "", marks: []) else { return false }
+            if barrier != nil, lastCommandID != beforeCommand, let commandID = lastCommandID {
+                pendingSlashPageLink = (commandID: commandID, blockID: entry.blockID, anchor: anchor)
+            } else if beforeBarrier == nil {
+                slashPageLinkSession = SlashPageLinkSession(blockID: entry.blockID, anchor: anchor)
+                refreshInlinePicker()
+            }
+            return true
+        }
         // A source block (`mathBlock`/`diagram`) or inline `<math>` chip (PR14).
         if case .source(let node) = item.action {
             guard let view, canFormat, view.selectedRange.length == 0, let token = slashToken,
@@ -1885,6 +1962,313 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             default: [item]
             }
         } + [twoColumnsSlashItem, threeColumnsSlashItem] + mediaSlashItems + sourceSlashItems
+
+    /// Slash items offered for this surface, adding `"Link a page"` when
+    /// `inlinePickerSource?.canInsertPageLink()` is enabled.
+    var slashItems: [SlashMenuItem] {
+        Self.slashItems + (inlinePickerSource?.canInsertPageLink() == true ? [linkPageSlashItem] : [])
+    }
+
+    // MARK: - Inline pickers (PR13c2)
+
+    /// Active page-link or `@` mention picker card for the current caret, or
+    /// `nil` when suppressed, dismissed, offline-idle, failed, or auto-closed.
+    var inlinePicker: NativeInlinePickerPresentation? {
+        guard !compositionOwnsView, let source = inlinePickerSource, let active = activeInlineTrigger else {
+            return nil
+        }
+        let key = active.key
+        let query = active.trigger.query
+        switch active.trigger.kind {
+        case .pageLink, .slashPageLink:
+            guard source.canInsertPageLink() else { return nil }
+            let matches = rankedPageLinkCandidates(
+                query: query, documents: source.pageLinkCandidates(), excluding: source.excludedDocumentID)
+            if shouldAutoCloseInlinePicker(query: query, matchCount: matches.count) { return nil }
+            let index =
+                inlinePickerHighlight.flatMap { $0.key == key && $0.query == query ? $0.index : nil } ?? 0
+            return .pageLink(
+                PageLinkPickerState(
+                    query: query, matches: matches,
+                    highlightedIndex: min(max(0, index), max(0, matches.count - 1))))
+        case .mention:
+            guard source.canMention() else { return nil }
+            switch source.mentionState() {
+            case .idle, .failed:
+                return nil
+            case .loading:
+                return .mention(
+                    NativeMentionPickerState(query: query, isLoading: true, matches: [], highlightedIndex: 0))
+            case .loaded(let candidates):
+                let matches = rankedMentionCandidates(query: query, candidates: candidates)
+                if shouldAutoCloseInlinePicker(query: query, matchCount: matches.count, isLoading: false) {
+                    return nil
+                }
+                let index =
+                    inlinePickerHighlight.flatMap { $0.key == key && $0.query == query ? $0.index : nil } ?? 0
+                return .mention(
+                    NativeMentionPickerState(
+                        query: query, isLoading: false, matches: matches,
+                        highlightedIndex: min(max(0, index), max(0, matches.count - 1))))
+            }
+        }
+    }
+
+    var hasActiveInlinePicker: Bool { inlinePicker != nil }
+    var hasHighlightedInlinePicker: Bool { inlinePicker?.hasHighlightedSelection == true }
+
+    func claimsInlinePickerKey(_ key: NativeInlinePickerKey) -> Bool {
+        guard !compositionOwnsView, let picker = inlinePicker else { return false }
+        return inlinePickerClaims(key, matchCount: picker.matchCount)
+    }
+
+    @discardableResult
+    func handleInlinePickerKey(_ key: NativeInlinePickerKey) -> Bool {
+        guard !compositionOwnsView, let active = activeInlineTrigger, let picker = inlinePicker,
+            inlinePickerClaims(key, matchCount: picker.matchCount)
+        else { return false }
+        switch key {
+        case .escape:
+            if active.trigger.kind == .slashPageLink {
+                slashPageLinkSession = nil
+            } else {
+                dismissedInlineTrigger = active.key
+            }
+            inlinePickerHighlight = nil
+            activeInlineTrigger = nil
+            return true
+        case .up, .down:
+            let current: Int =
+                switch picker {
+                case .pageLink(let state): state.highlightedIndex
+                case .mention(let state): state.highlightedIndex
+                }
+            let next = movedInlinePickerHighlight(current, by: key, count: picker.matchCount)
+            inlinePickerHighlight = InlinePickerHighlight(
+                key: active.key, query: active.trigger.query, index: next)
+            return true
+        }
+    }
+
+    @discardableResult
+    func commitHighlightedInlinePicker() -> Bool {
+        guard !compositionOwnsView, let picker = inlinePicker else { return false }
+        switch picker {
+        case .pageLink(let state):
+            guard let document = state.highlighted else { return false }
+            return selectPageLink(document)
+        case .mention(let state):
+            guard let candidate = state.highlighted else { return false }
+            return selectMention(candidate)
+        }
+    }
+
+    @discardableResult
+    func selectPageLink(_ document: Document) -> Bool {
+        directInsertion = nil
+        guard canEdit, let source = inlinePickerSource, source.canInsertPageLink(),
+            let active = activeInlineTrigger,
+            active.trigger.kind == .pageLink || active.trigger.kind == .slashPageLink,
+            let entry = surface.rangeIndex.entry(for: active.blockID),
+            active.trigger.range.upperBound <= entry.textRange.length
+        else { return false }
+        let trimmedTitle = (document.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedTitle.isEmpty {
+            source.onRecordDocumentTitle(document.id, trimmedTitle)
+            surface.recordDocumentTitle(trimmedTitle, for: document.id)
+        }
+        let chip = NativeInlineObject.interlink(
+            docID: document.id.uuidString.lowercased(), blockID: "", title: nil, disabled: false, trigger: "/")
+        let docRange = NSRange(
+            location: entry.textRange.location + active.trigger.range.lowerBound,
+            length: active.trigger.range.count)
+        guard insertInlineObject(chip, at: docRange) else { return false }
+        slashPageLinkSession = nil
+        inlinePickerHighlight = nil
+        activeInlineTrigger = nil
+        return true
+    }
+
+    @discardableResult
+    func selectMention(_ candidate: MentionCandidate) -> Bool {
+        directInsertion = nil
+        guard canEdit, let source = inlinePickerSource, source.canMention(),
+            let active = activeInlineTrigger,
+            active.trigger.kind == .mention,
+            let entry = surface.rangeIndex.entry(for: active.blockID),
+            active.trigger.range.upperBound <= entry.textRange.length
+        else { return false }
+        let chip = NativeInlineObject.mention(userID: candidate.userID, fullName: candidate.fullName)
+        let docRange = NSRange(
+            location: entry.textRange.location + active.trigger.range.lowerBound,
+            length: active.trigger.range.count)
+        guard insertInlineObject(chip, at: docRange) else { return false }
+        inlinePickerHighlight = nil
+        activeInlineTrigger = nil
+        return true
+    }
+
+    private func insertInlineObject(_ object: NativeInlineObject, at docRange: NSRange) -> Bool {
+        guard canEdit,
+            let start = surface.rangeIndex.textPosition(atUTF16: docRange.location),
+            let end = surface.rangeIndex.textPosition(
+                atUTF16: NSMaxRange(docRange), isUpperBound: docRange.length > 0),
+            start.position == end.position
+        else { return false }
+        let position = start.position
+        let block = surface.blocks[position]
+        guard !AttributedDocumentProjection.isPlaceholder(block), !surface.isHidden(position: position) else {
+            return false
+        }
+        let blockRange = start.offset..<end.offset
+        return applyStructural(
+            block.id, .insertInlineObject(object, replacing: blockRange),
+            refusal: .native_editor_input_unavailable,
+            retry: again(at: docRange) { [weak self] mapped in
+                self?.insertInlineObject(object, at: mapped) ?? false
+            })
+    }
+
+    func refreshInlinePicker() {
+        guard let view, !compositionOwnsView else {
+            activeInlineTrigger = nil
+            return
+        }
+        let range = view.selectedRange
+        let index = surface.rangeIndex
+        var block: BlockSnapshot?
+        var caretOffset = 0
+        if range.length == 0, let caret = index.textPosition(atUTF16: range.location),
+            !AttributedDocumentProjection.isPlaceholder(surface.blocks[caret.position])
+        {
+            block = surface.blocks[caret.position]
+            caretOffset = caret.offset
+        }
+        refreshInlinePicker(block: block, caretOffset: caretOffset, marks: activeMarks, selectionRange: range)
+    }
+
+    private func refreshInlinePicker(
+        block: BlockSnapshot?, caretOffset: Int, marks: [TextMark], selectionRange: NSRange
+    ) {
+        if let dismissed = dismissedInlineTrigger {
+            let dismissedBlock = surface.blocks.first {
+                $0.id == dismissed.blockID && !AttributedDocumentProjection.isPlaceholder($0)
+            }
+            if dismissedBlock.map({ !hasInlineOpener(in: $0, key: dismissed) }) ?? true {
+                dismissedInlineTrigger = nil
+            }
+        }
+        if let source = inlinePickerSource, case .failed(let failedKey) = source.mentionState() {
+            let failedBlock = surface.blocks.first {
+                $0.id == failedKey.blockID && !AttributedDocumentProjection.isPlaceholder($0)
+            }
+            if failedBlock.map({ !hasInlineOpener(in: $0, key: failedKey) }) ?? true {
+                source.clearMentionFailure()
+            }
+        }
+        if view?.isFirstResponder == true { isEditingBlurred = false }
+        guard let source = inlinePickerSource, canEdit, sourceKind == nil, !isEditingBlurred,
+            selectionRange.length == 0, slashToken == nil,
+            let block, !surface.isHidden(blockID: block.id)
+        else {
+            slashPageLinkSession = nil
+            activeInlineTrigger = nil
+            return
+        }
+        var slashAnchor: Int?
+        if let session = slashPageLinkSession {
+            if session.blockID == block.id && caretOffset >= session.anchor {
+                slashAnchor = session.anchor
+            } else {
+                slashPageLinkSession = nil
+            }
+        }
+        var detected = nativeInlineTrigger(
+            in: block, caret: caretOffset, slashSessionAnchor: slashAnchor, activeMarks: marks)
+        if slashPageLinkSession != nil, detected?.kind != .slashPageLink {
+            slashPageLinkSession = nil
+        }
+        if let trigger = detected {
+            switch trigger.kind {
+            case .pageLink, .slashPageLink:
+                if !source.canInsertPageLink() {
+                    detected = nil
+                    slashPageLinkSession = nil
+                }
+            case .mention:
+                if !source.canMention() { detected = nil }
+            }
+        }
+        if let trigger = detected {
+            let key = InlineTriggerKey(blockID: block.id, kind: trigger.kind, anchor: trigger.anchor)
+            if dismissedInlineTrigger == key { detected = nil }
+        }
+        if let trigger = detected {
+            let next = ActiveInlineTrigger(blockID: block.id, trigger: trigger)
+            if activeInlineTrigger != next {
+                if activeInlineTrigger?.key != next.key || activeInlineTrigger?.trigger.query != next.trigger.query {
+                    inlinePickerHighlight = nil
+                }
+                activeInlineTrigger = next
+            }
+            if trigger.kind == .mention {
+                let key = next.key
+                switch source.mentionState() {
+                case .idle:
+                    source.requestMentions(key)
+                case .failed(let failedKey) where failedKey != key:
+                    source.requestMentions(key)
+                default:
+                    break
+                }
+            }
+        } else if activeInlineTrigger != nil {
+            activeInlineTrigger = nil
+            inlinePickerHighlight = nil
+        }
+    }
+
+    private func cancelEmptySlashPageLinkOnBackspace(caretLocation: Int) -> Bool {
+        guard !compositionOwnsView, sourceKind == nil,
+            let session = slashPageLinkSession,
+            let entry = surface.rangeIndex.entry(atUTF16: caretLocation),
+            entry.blockID == session.blockID,
+            caretLocation - entry.textRange.location == session.anchor
+        else { return false }
+        slashPageLinkSession = nil
+        inlinePickerHighlight = nil
+        refreshInlinePicker()
+        return true
+    }
+
+    private func adjustSlashPageLinkSession(for patch: BlockPatch) {
+        guard var session = slashPageLinkSession else { return }
+        for change in patch.changes {
+            switch change {
+            case .text(let id, let deltas) where id == session.blockID:
+                guard let mapped = TextDelta.rebase(range: session.anchor..<session.anchor, assoc: 1, through: deltas)
+                else {
+                    slashPageLinkSession = nil
+                    return
+                }
+                session.anchor = mapped.lowerBound
+            case .replaceBlock(let id, let newBlock) where id == session.blockID:
+                if block(id).map(text(of:)) != text(of: newBlock) {
+                    slashPageLinkSession = nil
+                    return
+                }
+            case .remove(let ids) where ids.contains(session.blockID):
+                slashPageLinkSession = nil
+                return
+            case .reset:
+                slashPageLinkSession = nil
+                return
+            default:
+                break
+            }
+        }
+        slashPageLinkSession = session
+    }
 
     private static func slashType(_ action: SlashMenuAction) -> (node: String, props: [ProjectedProp])? {
         if case .toggle(let heading) = action {
@@ -2342,7 +2726,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         guard let view, view.isEditable, !isFrozen, !isDetached else { return false }
         directInsertion = nil
         let began = composition.begin(markedText: markedText)
-        if began { noticeKey = nil }
+        if began {
+            noticeKey = nil
+            activeInlineTrigger = nil
+        }
         return began
     }
 

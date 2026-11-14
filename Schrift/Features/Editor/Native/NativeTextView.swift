@@ -115,10 +115,29 @@ final class NativeTextView: UITextView {
     }
 
     /// Tab and Shift-Tab nest and unnest the block, as in BlockNote, ahead of
-    /// UIKit's own Tab (a tab character) and focus movement.
+    /// UIKit's own Tab (a tab character) and focus movement. Active inline pickers
+    /// claim Escape, Up, Down, and Return ahead of slash, table, and exit commands.
     override var keyCommands: [UIKeyCommand]? {
         guard inputCoordinator != nil, isEditable else { return super.keyCommands }
         var commands: [UIKeyCommand] = []
+        var registeredEscape = false
+        if inputCoordinator?.claimsInlinePickerKey(.escape) == true {
+            commands.append(
+                UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(nativeEscape)))
+            registeredEscape = true
+        }
+        if inputCoordinator?.claimsInlinePickerKey(.up) == true {
+            commands.append(
+                UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: [], action: #selector(nativePickerUp)))
+        }
+        if inputCoordinator?.claimsInlinePickerKey(.down) == true {
+            commands.append(
+                UIKeyCommand(input: UIKeyCommand.inputDownArrow, modifierFlags: [], action: #selector(nativePickerDown))
+            )
+        }
+        if inputCoordinator?.hasHighlightedInlinePicker == true {
+            commands.append(UIKeyCommand(input: "\r", modifierFlags: [], action: #selector(nativePickerReturn)))
+        }
         if inputCoordinator?.sourceKind == nil {
             commands.append(contentsOf: [
                 UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(nativeIndent)),
@@ -127,15 +146,18 @@ final class NativeTextView: UITextView {
         }
         // A table cell (PR11a): Escape returns to the document.
         if inputCoordinator?.tableMove != nil {
-            commands.append(
-                UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(nativeEscape)))
+            if !registeredEscape {
+                commands.append(
+                    UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(nativeEscape)))
+                registeredEscape = true
+            }
             // Shift-Return: a hard break in the cell (PR11b).
             commands.append(UIKeyCommand(input: "\r", modifierFlags: .shift, action: #selector(nativeLineBreak)))
             // ⌘Return: Done (PR11c).
             commands.append(UIKeyCommand(input: "\r", modifierFlags: .command, action: #selector(nativeDone)))
         }
         // A column (PR12a) or focused source editor (PR14): Escape returns.
-        if inputCoordinator?.tableMove == nil, inputCoordinator?.onExit != nil {
+        if inputCoordinator?.tableMove == nil, inputCoordinator?.onExit != nil, !registeredEscape {
             commands.append(
                 UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(nativeEscape)))
         }
@@ -145,6 +167,22 @@ final class NativeTextView: UITextView {
         }
         for command in commands { command.wantsPriorityOverSystemBehavior = true }
         return (super.keyCommands ?? []) + commands
+    }
+
+    @objc private func nativePickerUp() {
+        guard markedTextRange == nil else { return }
+        _ = inputCoordinator?.handleInlinePickerKey(.up)
+    }
+
+    @objc private func nativePickerDown() {
+        guard markedTextRange == nil else { return }
+        _ = inputCoordinator?.handleInlinePickerKey(.down)
+    }
+
+    @objc private func nativePickerReturn() {
+        guard markedTextRange == nil else { return }
+        if inputCoordinator?.commitHighlightedInlinePicker() == true { return }
+        inputCoordinator?.typeKey("\n")
     }
 
     @objc private func nativeIndent() {
@@ -162,11 +200,35 @@ final class NativeTextView: UITextView {
         if inputCoordinator?.tableMove?(.done) == nil { inputCoordinator?.onDone?() }
     }
 
-    /// A table cell's hardware arrows (PR11c) go to the table editor first:
-    /// Shift-arrows grow a CellSelection past the cell's edge, and an arrow at
-    /// the edge moves to the next cell (prosemirror-tables' `arrow` and
-    /// `shiftArrow`). Anything it does not take is the text view's.
+    /// Active inline pickers claim Escape, Up, Down, and Return ahead of table
+    /// cell navigation; a table cell's hardware arrows (PR11c) go to the table
+    /// editor next, and anything neither takes is the text view's.
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if let inputCoordinator, markedTextRange == nil, presses.count == 1,
+            let key = presses.first?.key, key.modifierFlags.subtracting([.numericPad]).isEmpty
+        {
+            switch key.keyCode {
+            case .keyboardEscape where inputCoordinator.claimsInlinePickerKey(.escape):
+                _ = inputCoordinator.handleInlinePickerKey(.escape)
+                handledPresses.formUnion(presses.map(ObjectIdentifier.init))
+                return
+            case .keyboardUpArrow where inputCoordinator.claimsInlinePickerKey(.up):
+                _ = inputCoordinator.handleInlinePickerKey(.up)
+                handledPresses.formUnion(presses.map(ObjectIdentifier.init))
+                return
+            case .keyboardDownArrow where inputCoordinator.claimsInlinePickerKey(.down):
+                _ = inputCoordinator.handleInlinePickerKey(.down)
+                handledPresses.formUnion(presses.map(ObjectIdentifier.init))
+                return
+            case .keyboardReturnOrEnter, .keyboardReturn:
+                if inputCoordinator.hasHighlightedInlinePicker, inputCoordinator.commitHighlightedInlinePicker() {
+                    handledPresses.formUnion(presses.map(ObjectIdentifier.init))
+                    return
+                }
+            default:
+                break
+            }
+        }
         if let handler = inputCoordinator?.tableKey, markedTextRange == nil, presses.count == 1,
             let key = presses.first?.key, key.modifierFlags.subtracting([.shift, .numericPad]).isEmpty
         {
@@ -206,6 +268,7 @@ final class NativeTextView: UITextView {
 
     @objc private func nativeEscape() {
         guard markedTextRange == nil else { return }
+        if inputCoordinator?.handleInlinePickerKey(.escape) == true { return }
         if inputCoordinator?.tableMove?(.exit) == nil { inputCoordinator?.onExit?() }
     }
 

@@ -49,6 +49,16 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     /// Cached title for a linked document UUID, used only for inline interlink
     /// chip display without modifying Yjs.
     var documentTitle: (@MainActor (UUID) -> String?)?
+    /// Titles recorded immediately upon picker selection so the first layout pass
+    /// renders the page title even when `documentTitle` is unset or lags.
+    private var recordedDocumentTitles: [UUID: String] = [:]
+
+    func recordDocumentTitle(_ title: String, for documentID: UUID) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        recordedDocumentTitles[documentID] = trimmed
+        attachmentGeometry.documentTitles[documentID] = trimmed
+    }
     /// Replica-backed surfaces use the owner's settled projection to validate
     /// fast patches. Value-only fixtures may omit this callback.
     private let reprojectBlock: ((String) -> BlockSnapshot?)?
@@ -650,13 +660,12 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     // MARK: Attachment geometry (PR06e)
 
     private func collectDocumentTitles(from block: BlockSnapshot, into titles: inout [UUID: String]) {
-        guard let documentTitle else { return }
         for run in block.runs {
             guard case .interlink(let docID, _, _, let disabled, _)? = run.inlineObject,
                 !disabled,
                 let uuid = UUID(uuidString: docID),
                 titles[uuid] == nil,
-                let title = documentTitle(uuid),
+                let title = documentTitle?(uuid) ?? recordedDocumentTitles[uuid],
                 !title.isEmpty
             else { continue }
             titles[uuid] = title

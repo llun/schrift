@@ -293,5 +293,23 @@ enum BlockNoteInlineCaptures {
             update: "AQUCAIcBAwMWaW50ZXJsaW5raW5nTGlua0lubGluZSgAAgAFZG9jSWQBdyQxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEoAAIAB2Jsb2NrSWQBdwVzZWMtMSgAAgAIZGlzYWJsZWQBeSgAAgAHdHJpZ2dlcgF3AS8A",
             xml: #"<blockgroup><blockcontainer id="p"><paragraph backgroundColor="default" textAlignment="left" textColor="default">see <interlinkinglinkinline blockId="sec-1" disabled="false" docId="11111111-1111-4111-8111-111111111111" trigger="/"></interlinkinglinkinline></paragraph></blockcontainer></blockgroup>"#,
             markdown: #"see [11111111-1111-4111-8111-111111111111](https://docs.example/docs/11111111-1111-4111-8111-111111111111/)\#n"#, result: #"ok"#),
+        Edit(
+            name: "replaceQueryWithInterlink",
+            seed: "AQkBAAcBDmRvY3VtZW50LXN0b3JlAwpibG9ja0dyb3VwBwABAAMOYmxvY2tDb250YWluZXIHAAEBAwlwYXJhZ3JhcGgHAAECBgQAAQMPU2VlIFtbU3BlYyBoZXJlKAABAg9iYWNrZ3JvdW5kQ29sb3IBdwdkZWZhdWx0KAABAgl0ZXh0Q29sb3IBdwdkZWZhdWx0KAABAg10ZXh0QWxpZ25tZW50AXcEbGVmdCgAAQECaWQBdwFwAA==",
+            update: "AQcCAIcBAwMWaW50ZXJsaW5raW5nTGlua0lubGluZSgAAgAFZG9jSWQBdyQxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEoAAIAB2Jsb2NrSWQBdwAoAAIACGRpc2FibGVkAXkoAAIAB3RyaWdnZXIBdwEvhwIABgQAAgUFIGhlcmUBAQEICw==",
+            xml: #"<blockgroup><blockcontainer id="p"><paragraph backgroundColor="default" textAlignment="left" textColor="default">See <interlinkinglinkinline blockId="" disabled="false" docId="11111111-1111-4111-8111-111111111111" trigger="/"></interlinkinglinkinline> here</paragraph></blockcontainer></blockgroup>"#,
+            markdown: #"See [11111111-1111-4111-8111-111111111111](https://docs.example/docs/11111111-1111-4111-8111-111111111111/) here\#n"#, result: #"ok"#),
+        Edit(
+            name: "replaceQueryWithMention",
+            seed: "AQkBAAcBDmRvY3VtZW50LXN0b3JlAwpibG9ja0dyb3VwBwABAAMOYmxvY2tDb250YWluZXIHAAEBAwlwYXJhZ3JhcGgHAAECBgQAAQMOY2MgQGFkYSBwbGVhc2UoAAECD2JhY2tncm91bmRDb2xvcgF3B2RlZmF1bHQoAAECCXRleHRDb2xvcgF3B2RlZmF1bHQoAAECDXRleHRBbGlnbm1lbnQBdwRsZWZ0KAABAQJpZAF3AXAA",
+            update: "AQUCAIcBAwMRdXNlck1lbnRpb25JbmxpbmUoAAIABnVzZXJJZAF3JGFhYWFhYWFhLWFhYWEtNGFhYS04YWFhLWFhYWFhYWFhYWFhYSgAAgAIZnVsbE5hbWUBdwxBZGEgTG92ZWxhY2WHAgAGBAACAwcgcGxlYXNlAQEBBws=",
+            xml: #"<blockgroup><blockcontainer id="p"><paragraph backgroundColor="default" textAlignment="left" textColor="default">cc <usermentioninline fullName="Ada Lovelace" userId="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"></usermentioninline> please</paragraph></blockcontainer></blockgroup>"#,
+            markdown: #"cc  please\#n"#, result: #"ok"#),
+        Edit(
+            name: "replaceBoldQueryWithMention",
+            seed: "AQsBAAcBDmRvY3VtZW50LXN0b3JlAwpibG9ja0dyb3VwBwABAAMOYmxvY2tDb250YWluZXIHAAEBAwlwYXJhZ3JhcGgHAAECBgYAAQMEYm9sZAJ7fYQBBAdjYyBAYWRhhgELBGJvbGQEbnVsbCgAAQIPYmFja2dyb3VuZENvbG9yAXcHZGVmYXVsdCgAAQIJdGV4dENvbG9yAXcHZGVmYXVsdCgAAQINdGV4dEFsaWdubWVudAF3BGxlZnQoAAEBAmlkAXcBcAA=",
+            update: "AQMCAIcBAwMRdXNlck1lbnRpb25JbmxpbmUoAAIABnVzZXJJZAF3JGFhYWFhYWFhLWFhYWEtNGFhYS04YWFhLWFhYWFhYWFhYWFhYSgAAgAIZnVsbE5hbWUBdwxBZGEgTG92ZWxhY2UBAQEIBA==",
+            xml: #"<blockgroup><blockcontainer id="p"><paragraph backgroundColor="default" textAlignment="left" textColor="default"><bold>cc </bold><usermentioninline fullName="Ada Lovelace" userId="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"></usermentioninline></paragraph></blockcontainer></blockgroup>"#,
+            markdown: #"**cc**\#n"#, result: #"ok"#),
     ]
 }
