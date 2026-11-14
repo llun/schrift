@@ -528,6 +528,155 @@ final class ColumnEditorTests: NativeEditingTestCase {
         XCTAssertEqual(model.openSource, req)
         XCTAssertTrue(model.activeSession === rightSession)
     }
+
+    // MARK: - PR13c2 Step 4: Column inline pickers
+
+    @MainActor
+    private final class PickerSourceBox {
+        var canInsertPageLink = true
+        var pageLinks: [Schrift.Document] = []
+        var excludedDocumentID = UUID(uuidString: "00000000-0000-4000-8000-000000000099")!
+        var recordedTitles: [(UUID, String)] = []
+        var canMention = true
+        var mentionState: NativeInlinePickerSource.MentionAccessState = .idle
+
+        func makeSource() -> NativeInlinePickerSource {
+            NativeInlinePickerSource(
+                canInsertPageLink: { self.canInsertPageLink },
+                pageLinkCandidates: { self.pageLinks },
+                excludedDocumentID: excludedDocumentID,
+                onRecordDocumentTitle: { id, title in
+                    self.recordedTitles.append((id, title))
+                },
+                canMention: { self.canMention },
+                mentionState: { self.mentionState },
+                requestMentions: { _ in })
+        }
+    }
+
+    private func makePickerDocument(id: UUID, title: String) -> Schrift.Document {
+        Schrift.Document(
+            id: id, title: title, excerpt: nil, abilities: DocumentAbilities(),
+            linkReach: .restricted, linkRole: .reader, isFavorite: false,
+            depth: 1, numchild: 0, path: "0001",
+            createdAt: Date(timeIntervalSince1970: 1_000),
+            updatedAt: Date(timeIntervalSince1970: 1_000),
+            userRole: nil, creator: nil)
+    }
+
+    func testColumnInlinePickersInsertPageLinkSlashLinkAndMentionWithTitlePropagation() async throws {
+        let roadID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let notesID = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        let ada = MentionCandidate(userID: "user-ada", fullName: "Ada Lovelace", shortName: "Ada", email: nil)
+        let source = PickerSourceBox()
+        source.pageLinks = [
+            makePickerDocument(id: roadID, title: "Product Roadmap"),
+            makePickerDocument(id: notesID, title: "Architecture Notes"),
+        ]
+        source.mentionState = .loaded([ada])
+
+        let harness = try await makeHarness(state: try fixture("two"))
+        addTeardownBlock { await harness.close() }
+
+        let model = ColumnEditorModel(document: harness.session, groupID: "cl")
+        model.inlinePickerSource = source.makeSource()
+        addTeardownBlock { model.close() }
+
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let loc = LocalizationStore(userDefaults: defaults)
+        loc.language = .french
+        let host = UIHostingController(
+            rootView: ColumnEditorScreen(
+                model: model, serverOrigin: "https://docs.example",
+                inlinePickerSource: model.inlinePickerSource
+            )
+            .environment(loc))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        window.rootViewController = host
+        window.isHidden = false
+        windows.append(window)
+        for _ in 0..<200 where !(model.isLoaded && model.columns.count == 2) {
+            host.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(model.columns.count, 2)
+
+        let col1 = model.columns[0]
+        let input1 = try XCTUnwrap(col1.input)
+        XCTAssertEqual(col1.textView.blockControls.labels.openLink, Strings_fr.table[.native_editor_open_link])
+        XCTAssertTrue(input1.slashItems.contains { $0.action == .linkPage })
+
+        // 1. `[[` page link in column 1 inserts interlink and propagates title to column 1, column 2, and parent document.
+        setSelection(col1, NSRange(location: try location(col1, "a", 9), length: 0))
+        XCTAssertTrue(input1.replace(range: col1.textView.selectedRange, with: " [[Road"))
+        await col1.settle()
+        guard case .pageLink(let pagePicker)? = input1.inlinePicker else {
+            return XCTFail("expected [[ picker in column")
+        }
+        XCTAssertEqual(pagePicker.matches.map(\.id), [roadID])
+
+        // Escape dismisses picker without closing ColumnEditorModel.
+        let escapeCommand = try XCTUnwrap(
+            col1.textView.keyCommands?.first { $0.input == UIKeyCommand.inputEscape && $0.modifierFlags == [] })
+        col1.textView.perform(escapeCommand.action)
+        XCTAssertNil(input1.inlinePicker)
+        XCTAssertFalse(model.isClosed)
+
+        // Retype `[[Road` and commit via Return.
+        XCTAssertTrue(input1.replace(range: col1.textView.selectedRange, with: " [[Road"))
+        await col1.settle()
+        let committedPageLink = await col1.run { input1.commitHighlightedInlinePicker() }
+        XCTAssertTrue(committedPageLink)
+        XCTAssertNil(input1.inlinePicker)
+        XCTAssertEqual(source.recordedTitles.map(\.0), [roadID])
+        XCTAssertEqual(col1.surface.attachmentGeometry.documentTitles[roadID], "Product Roadmap")
+        XCTAssertEqual(model.columns[1].surface.attachmentGeometry.documentTitles[roadID], "Product Roadmap")
+        XCTAssertEqual(harness.session.surface.attachmentGeometry.documentTitles[roadID], "Product Roadmap")
+
+        // 2. `@` mention in column 1 inserts userMentionInline.
+        XCTAssertTrue(input1.replace(range: col1.textView.selectedRange, with: " @ada"))
+        await col1.settle()
+        guard case .mention(let mentionPicker)? = input1.inlinePicker else {
+            return XCTFail("expected @ mention picker in column")
+        }
+        XCTAssertEqual(mentionPicker.matches.map(\.userID), ["user-ada"])
+        let committedMention = await col1.run { input1.commitHighlightedInlinePicker() }
+        XCTAssertTrue(committedMention)
+
+        // 3. `/link` in column 2 inserts interlink cleanly without leaving `/link` or mentionSearchInline.
+        model.active = 1
+        let col2 = model.columns[1]
+        let input2 = try XCTUnwrap(col2.input)
+        setSelection(col2, NSRange(location: try location(col2, "c", 0), length: 0))
+        XCTAssertTrue(input2.replace(range: NSRange(location: try location(col2, "c", 0), length: 10), with: "/link"))
+        await col2.settle()
+        XCTAssertEqual(input2.slashMenuQuery, "link")
+        let appliedSlashLink = await col2.run { input2.applySlashItem(linkPageSlashItem) }
+        XCTAssertTrue(appliedSlashLink)
+        guard case .pageLink = input2.inlinePicker else {
+            return XCTFail("expected slash page-link picker in column 2")
+        }
+        XCTAssertTrue(input2.replace(range: col2.textView.selectedRange, with: "arch"))
+        await col2.settle()
+        let committedSlashPageLink = await col2.run { input2.commitHighlightedInlinePicker() }
+        XCTAssertTrue(committedSlashPageLink)
+        XCTAssertEqual(harness.session.surface.attachmentGeometry.documentTitles[notesID], "Architecture Notes")
+
+        await harness.settle()
+        let xml = await self.xml(harness)
+        XCTAssertFalse(xml.lowercased().contains("mentionsearchinline"))
+        XCTAssertTrue(xml.contains(#"docId="\#(roadID.uuidString.lowercased())""#))
+        XCTAssertTrue(xml.contains(#"userId="user-ada""#))
+        XCTAssertTrue(xml.contains(#"docId="\#(notesID.uuidString.lowercased())""#))
+        XCTAssertEqual(
+            try block(col2, "c").runs,
+            [
+                InlineRun(
+                    inlineObject: .interlink(
+                        docID: notesID.uuidString.lowercased(), blockID: "", title: nil, disabled: false, trigger: "/"
+                    ))
+            ])
+    }
 }
 
 extension ColumnEditorTests {

@@ -154,6 +154,8 @@ struct NativeEditorView: View {
                 cellLabel: { String(format: loc[.native_editor_table_cell], $0, $1) }, text: { loc[$0] },
                 documentTitle: documentTitle,
                 serverOrigin: serverOrigin,
+                isOffline: isOffline,
+                inlinePickerSource: inlinePickerSource,
                 onOpenDocument: { id, _ in openInlineDocument(id) },
                 onClose: {
                     lastTable = request.id
@@ -172,7 +174,8 @@ struct NativeEditorView: View {
         ) { model in
             ColumnEditorScreen(
                 model: model, serverOrigin: serverOrigin, isOffline: isOffline, uploads: uploads,
-                documentTitle: documentTitle, onOpenDocument: { id, _ in openInlineDocument(id) })
+                documentTitle: documentTitle, inlinePickerSource: inlinePickerSource,
+                onOpenDocument: { id, _ in openInlineDocument(id) })
         }
         .sheet(
             item: $openMedia,
@@ -311,6 +314,7 @@ extension NativeEditorView {
         _ groupID: String, target: (column: String, block: String)? = nil
     ) -> ColumnEditorModel {
         let model = ColumnEditorModel(document: session, groupID: groupID, target: target)
+        model.inlinePickerSource = inlinePickerSource
         model.onOpenDocument = { id, _ in openInlineDocument(id) }
         model.onClose = { [navigation = session.navigation] in
             navigation.columnEditorClosed()
