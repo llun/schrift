@@ -44,20 +44,61 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
     /// requests, consent and the offline cache). Nil issues no request: image
     /// previews stay placeholders.
     var images: ImageLoader? {
-        didSet { if images !== oldValue { connectAspectRatios() } }
+        didSet {
+            if images !== oldValue {
+                clearApprovedExternalMedia()
+                connectAspectRatios()
+            }
+        }
     }
 
     /// The document's server origin (`siteOrigin(for: serverURL)`). Images
     /// load only through a loader whose session is this server's, as the
     /// classic `MarkdownImageView.matchesSession` requires.
     var serverOrigin = "" {
-        didSet { if serverOrigin != oldValue { connectAspectRatios() } }
+        didSet {
+            if serverOrigin != oldValue {
+                clearApprovedExternalMedia()
+                connectAspectRatios()
+            }
+        }
     }
 
     /// `images`, only while its session belongs to this document's server.
     var sessionImages: ImageLoader? {
         guard let images, images.scope?.serverOrigin == serverOrigin else { return nil }
         return images
+    }
+
+    /// External media URLs consented by the user during this view session,
+    /// retained across attachment restyles and `NSCache` evictions until the
+    /// session, loader, or server origin changes.
+    private var approvedExternalURLs: Set<String> = []
+    private var approvedExternalScope: ImageCacheScope?
+    private var pendingAspectRatioRefresh = false
+    private var aspectRatioRefreshTask: Task<Void, Never>?
+
+    private func clearApprovedExternalMedia() {
+        approvedExternalURLs.removeAll()
+        approvedExternalScope = nil
+    }
+
+    private func syncApprovedExternalScope() {
+        let scope = sessionImages?.scope
+        if approvedExternalScope != scope {
+            approvedExternalURLs.removeAll()
+            approvedExternalScope = scope
+        }
+    }
+
+    func isExternalMediaApproved(_ key: String) -> Bool {
+        syncApprovedExternalScope()
+        return approvedExternalURLs.contains(key)
+    }
+
+    func approveExternalMedia(_ key: String) {
+        syncApprovedExternalScope()
+        approvedExternalURLs.insert(key)
     }
 
     private func connectAspectRatios() {
@@ -68,6 +109,86 @@ final class NativeBlockControls: NSObject, @preconcurrency NSTextLayoutManagerDe
         surface?.aspectRatio = { [weak self] url in
             guard let loader = self?.sessionImages else { return nil }
             return URL(string: url).flatMap { loader.aspectRatio(for: $0) }
+        }
+        surface?.refreshAttachmentGeometry()
+    }
+
+    /// Coalesces decoded image aspect-ratio updates onto a single main-actor
+    /// pass, compensating scroll offset for any off-screen cards strictly above
+    /// the visible viewport before refreshing attachment geometry.
+    func noteMediaAspectRatioLoaded(for key: String) {
+        guard surface != nil else { return }
+        pendingAspectRatioRefresh = true
+        textView?.setNeedsLayout()
+        guard aspectRatioRefreshTask == nil else { return }
+        aspectRatioRefreshTask = Task { @MainActor [weak self] in
+            self?.flushPendingAspectRatioRefresh(requestLayout: true)
+        }
+    }
+
+    func flushPendingAspectRatioRefresh(requestLayout: Bool = true) {
+        guard pendingAspectRatioRefresh else { return }
+        pendingAspectRatioRefresh = false
+        aspectRatioRefreshTask?.cancel()
+        aspectRatioRefreshTask = nil
+        applyMediaAspectRatioRefresh(requestLayout: requestLayout)
+    }
+
+    private func applyMediaAspectRatioRefresh(requestLayout: Bool) {
+        guard let surface, let textView else { return }
+        var aboveViewport: [(position: Int, oldLineHeight: CGFloat)] = []
+        if textView.panGestureRecognizer.isEnabled,
+            textView.contentOffset.y > 0,
+            !textView.isTracking,
+            !textView.isDecelerating,
+            let layout = textView.textLayoutManager,
+            let content = layout.textContentManager
+        {
+            let visibleMinY = textView.bounds.minY + textView.adjustedContentInset.top
+            for (position, block) in surface.blocks.enumerated() {
+                guard AttributedDocumentProjection.isPlaceholder(block),
+                    case .image(let url, _, _)? = block.preview,
+                    !surface.isHidden(position: position),
+                    let targetRatio = surface.aspectRatio?(url),
+                    surface.attachmentGeometry.aspectRatios[url] != targetRatio,
+                    surface.rangeIndex.entries.indices.contains(position)
+                else { continue }
+                let entry = surface.rangeIndex.entries[position]
+                guard entry.range.location < surface.storage.length,
+                    let oldAttachment = surface.storage.attribute(
+                        .attachment, at: entry.range.location, effectiveRange: nil) as? NativeBlockAttachment,
+                    let location = content.location(content.documentRange.location, offsetBy: entry.range.location),
+                    let fragment = layout.textLayoutFragment(for: location),
+                    fragment.layoutFragmentFrame.height > 0
+                else { continue }
+                let fragmentMaxY = fragment.layoutFragmentFrame.maxY + textView.textContainerInset.top
+                if fragmentMaxY <= visibleMinY {
+                    aboveViewport.append((position: position, oldLineHeight: oldAttachment.content.lineHeight))
+                }
+            }
+        }
+
+        surface.refreshAttachmentGeometry()
+
+        if !aboveViewport.isEmpty {
+            var deltaY: CGFloat = 0
+            for item in aboveViewport {
+                guard surface.rangeIndex.entries.indices.contains(item.position) else { continue }
+                let location = surface.rangeIndex.entries[item.position].range.location
+                guard location < surface.storage.length,
+                    let newAttachment = surface.storage.attribute(
+                        .attachment, at: location, effectiveRange: nil) as? NativeBlockAttachment
+                else { continue }
+                deltaY += newAttachment.content.lineHeight - item.oldLineHeight
+            }
+            if deltaY != 0 {
+                let minOffsetY = -textView.adjustedContentInset.top
+                textView.contentOffset.y = max(minOffsetY, textView.contentOffset.y + deltaY)
+            }
+        }
+
+        if requestLayout {
+            textView.setNeedsLayout()
         }
     }
 

@@ -1,11 +1,11 @@
 import UIKit
 
-/// The layout inputs of attachment paragraphs (PR06e): the text container's
-/// usable width and the image aspect ratios known when the surface last
-/// restyled. Plain values, so a fresh projection with the same geometry
-/// equals storage. A download never changes it: the loaded image fills the
-/// box reserved for it, and its ratio applies from the next restyle (a width
-/// or Dynamic Type change, or the next open), so nothing below it moves.
+/// The layout inputs of attachment paragraphs (PR06e / PR13b2): the text
+/// container's usable width, cached document titles, and the image aspect
+/// ratios known when the surface last restyled. Plain values, so a fresh
+/// projection with the same geometry equals storage. When an image decodes
+/// asynchronously, only the affected attachment paragraph(s) are refreshed
+/// in place without touching Yjs.
 struct NativeAttachmentGeometry: Equatable {
     /// Before the first layout pass the view has no width yet.
     static let fallbackWidth: CGFloat = 320
@@ -162,9 +162,10 @@ enum NativeAttachmentLayout {
     }
 }
 
-/// A read-only preview card. Its size never changes after creation: a
-/// loaded image is fitted into the reserved box. Built with frames, laid out
-/// in `layoutSubviews`, so it costs nothing until TextKit realises it.
+/// A read-only preview card. Built with frames, laid out in `layoutSubviews`,
+/// so it costs nothing until TextKit realises it. When an image finishes
+/// decoding, it notifies `controls` so the card's height refreshes to the
+/// image's aspect ratio.
 @MainActor
 final class NativeAttachmentView: UIView {
     let content: NativeAttachmentContent
@@ -450,7 +451,17 @@ final class NativeAttachmentView: UIView {
         // `MarkdownImageView.matchesSession`: a loader of another server's
         // session shows nothing and requests nothing, as if offline.
         guard let loader = controls.sessionImages else { return showStatus(labels.imageOffline) }
-        if let image = loader.image(for: url) { return show(image) }
+        let ratioKey = url.absoluteString
+        if controls.isExternalMediaApproved(ratioKey) {
+            loader.approve(url)
+        }
+        if let image = loader.image(for: url) {
+            show(image)
+            if controls.surface?.attachmentGeometry.aspectRatios[ratioKey] != loader.aspectRatio(for: url) {
+                controls.noteMediaAspectRatioLoaded(for: ratioKey)
+            }
+            return
+        }
         let scope = loader.scope
         loadTask = Task { [weak self, loader] in
             let image = await loader.loadIfNeeded(url, allowsNetwork: !controls.isOffline)
@@ -461,7 +472,13 @@ final class NativeAttachmentView: UIView {
             guard controls.sessionImages === loader, loader.scope == scope else {
                 return self.showStatus(self.labels.imageOffline)
             }
-            if let image { return self.show(image) }
+            if let image {
+                self.show(image)
+                if controls.surface?.attachmentGeometry.aspectRatios[ratioKey] != loader.aspectRatio(for: url) {
+                    controls.noteMediaAspectRatioLoaded(for: ratioKey)
+                }
+                return
+            }
             switch loader.state(for: url) {
             case .requiresConsent: self.showConsent(host: url.host ?? url.absoluteString)
             case .unavailableOffline: self.showStatus(self.labels.imageOffline)
@@ -511,6 +528,7 @@ final class NativeAttachmentView: UIView {
     /// The tap: consent for this exact URL in this session, then the load.
     func approveAndLoad() {
         guard let url = imageURL, let loader = controls?.sessionImages else { return }
+        controls?.approveExternalMedia(url.absoluteString)
         loader.approve(url)
         loadButton?.removeFromSuperview()
         loadButton = nil

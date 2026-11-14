@@ -190,16 +190,28 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         var urls: [URL] = []
     }
 
+    @MainActor
+    private final class FetchGate {
+        var started = false
+        var continuation: CheckedContinuation<Data, Error>?
+    }
+
     /// A loader whose transport is this closure: no request leaves the test.
-    private func loader(_ log: FetchLog, data: Data = testPNGData(width: 400, height: 200)) -> ImageLoader {
+    private func loader(
+        _ log: FetchLog, data: Data = testPNGData(width: 400, height: 200),
+        decodedCache: NSCache<NSURL, UIImage>? = nil,
+        fetch: (@MainActor @Sendable (URL) async throws -> Data)? = nil
+    ) -> ImageLoader {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         cleanup.append(directory)
         nonisolated(unsafe) let log = log
         return ImageLoader(
             scopeProvider: { ImageCacheScope(serverOrigin: Self.origin, sessionID: "native-attachments") },
             cache: ImageCacheStore(directory: directory),
+            decodedCache: decodedCache,
             fetch: { url, _ in
                 log.urls.append(url)
+                if let fetch { return try await fetch(url) }
                 return data
             }, cookieProvider: { _ in [] })
     }
@@ -350,10 +362,11 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         }
     }
 
-    /// An image download fills the reserved box: bounds, intrinsic size,
-    /// storage and every fragment below stay put (no scroll jump), and no Yjs
-    /// is written. The remembered ratio applies at the next width change.
-    func testImageLoadKeepsItsBoxAndRatioAppliesOnTheNextWidth() async throws {
+    /// An image download refreshes its card's height immediately to the decoded
+    /// aspect ratio (S2-consistent), shifts blocks below without moving
+    /// `contentOffset`, writes zero Yjs/journal entries, never enters a reload
+    /// loop, and keeps updating cleanly across width changes.
+    func testImageLoadRefreshesHeightImmediatelyAndAppliesAcrossWidths() async throws {
         let harness = try await makeHarness(state: everyFamily())
         addTeardownBlock { await harness.close() }
         let session = harness.session
@@ -368,29 +381,40 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
         let view = try XCTUnwrap(realized(session, "img"))
         let below = try fragmentFrame(session, "vid")
         let offset = harness.view.contentOffset
-        let storage = NSAttributedString(attributedString: harness.view.textStorage)
         await view.loadTask?.value
         harness.view.layoutIfNeeded()
 
+        let usable = session.surface.attachmentGeometry.usableWidth
+        let expectedHeight = ceil(usable / 2)
         XCTAssertEqual(log.urls, [URL(string: "\(Self.origin)/media/photo.png")!], "same origin loads on render")
-        XCTAssertNotNil(view.imageView?.image)
-        XCTAssertEqual(view.intrinsicContentSize, before.content.size)
-        XCTAssertEqual(try attachment(session, "img"), before)
-        XCTAssertTrue(harness.view.textStorage.isEqual(to: storage), "a download never restyles storage")
-        XCTAssertEqual(try fragmentFrame(session, "vid"), below, "the block below does not move")
-        XCTAssertEqual(harness.view.contentOffset, offset)
+        let refreshedAttachment = try attachment(session, "img")
+        XCTAssertEqual(refreshedAttachment.content.size.width, usable)
+        XCTAssertEqual(refreshedAttachment.content.size.height, expectedHeight)
+        let refreshedView = try XCTUnwrap(realized(session, "img"))
+        XCTAssertNotNil(refreshedView.imageView?.image)
+        XCTAssertEqual(refreshedView.intrinsicContentSize, refreshedAttachment.content.size)
+        XCTAssertEqual(refreshedView.bounds.size, refreshedAttachment.content.size)
+        XCTAssertNil(refreshedView.loadTask, "no second fetch after restyle")
+        XCTAssertEqual(log.urls.count, 1, "no reload loop")
+        XCTAssertEqual(
+            try fragmentFrame(session, "vid").minY - below.minY,
+            expectedHeight - NativeAttachmentLayout.placeholderImageHeight,
+            accuracy: 0.5,
+            "the block below shifts by the exact height delta")
+        XCTAssertEqual(harness.view.contentOffset, offset, "visible card expands in place")
         assertS2Consistent(session)
 
-        // Rotation / split view: the cached ratio (2:1) now sizes the box.
+        // Rotation / split view: the cached ratio (2:1) sizes the new width too.
         harness.view.frame.size.width = 320
         harness.view.layoutIfNeeded()
-        let usable =
+        let usable320 =
             320 - harness.view.textContainerInset.left - harness.view.textContainerInset.right
             - 2 * harness.view.textContainer.lineFragmentPadding
-        XCTAssertEqual(session.surface.attachmentGeometry.width, usable.rounded(.down))
+        XCTAssertEqual(session.surface.attachmentGeometry.width, usable320.rounded(.down))
         let after = try attachment(session, "img")
-        XCTAssertEqual(after.content.size.width, usable.rounded(.down))
-        XCTAssertEqual(after.content.size.height, ceil(usable.rounded(.down) / 2))
+        XCTAssertEqual(after.content.size.width, usable320.rounded(.down))
+        XCTAssertEqual(after.content.size.height, ceil(usable320.rounded(.down) / 2))
+        XCTAssertEqual(log.urls.count, 1, "width change reuses cache without refetch")
         assertS2Consistent(session)
         try await assertConsistent(harness, localCommands: 0)
         XCTAssertEqual(try journalCount(harness), 0)
@@ -459,10 +483,323 @@ final class NativeAttachmentLayoutTests: NativeEditingTestCase {
 
         button.sendActions(for: .primaryActionTriggered)
         await view.loadTask?.value
+        harness.view.layoutIfNeeded()
         XCTAssertEqual(log.urls, [URL(string: url)!], "one request, after the tap")
-        XCTAssertNotNil(view.imageView?.image)
-        XCTAssertNil(view.loadButton)
-        XCTAssertEqual(view.intrinsicContentSize, size)
+        let refreshed = try XCTUnwrap(realized(harness.session, "ext"))
+        XCTAssertNotNil(refreshed.imageView?.image)
+        XCTAssertNil(refreshed.loadButton)
+        XCTAssertTrue(harness.view.blockControls.isExternalMediaApproved(url))
+        let expectedHeight = ceil(harness.session.surface.attachmentGeometry.usableWidth / 2)
+        XCTAssertNotEqual(size.height, expectedHeight)
+        XCTAssertEqual(refreshed.intrinsicContentSize.height, expectedHeight)
+        XCTAssertEqual(try attachment(harness.session, "ext").content.size.height, expectedHeight)
+        XCTAssertEqual(log.urls.count, 1, "no reload loop after restyle")
+        assertS2Consistent(harness.session)
+        try await assertConsistent(harness, localCommands: 0)
+        XCTAssertEqual(try journalCount(harness), 0)
+    }
+
+    /// Consented external URLs survive attachment restyles and `NSCache` eviction
+    /// in the same view session, and clear when `serverOrigin` or `images` changes.
+    func testExternalImageConsentSurvivesCacheEvictionAndClearsOnSessionChange() async throws {
+        let url = "https://elsewhere.example/cat.png"
+        let harness = try await makeHarness([paragraph("p", "Before"), image("ext", url: url, caption: "A cat")])
+        addTeardownBlock { await harness.close() }
+        let log = FetchLog()
+        let decodedCache = NSCache<NSURL, UIImage>()
+        harness.view.blockControls.images = loader(log, decodedCache: decodedCache)
+        harness.view.blockControls.serverOrigin = Self.origin
+        let window = host(harness.view)
+        defer { window.isHidden = true }
+        let initial = try XCTUnwrap(realized(harness.session, "ext"))
+        await initial.loadTask?.value
+        let button = try XCTUnwrap(initial.loadButton)
+        button.sendActions(for: .primaryActionTriggered)
+        await initial.loadTask?.value
+        harness.view.layoutIfNeeded()
+        XCTAssertEqual(log.urls.count, 1)
+
+        // Evict decoded bitmap and force a new view via width change: stays approved, hits disk cache.
+        decodedCache.removeAllObjects()
+        harness.view.frame.size.width = 320
+        harness.view.layoutIfNeeded()
+        let remounted = try XCTUnwrap(realized(harness.session, "ext"))
+        await remounted.loadTask?.value
+        harness.view.layoutIfNeeded()
+        XCTAssertTrue(harness.view.blockControls.isExternalMediaApproved(url))
+        XCTAssertNil(remounted.loadButton)
+        XCTAssertNotNil(remounted.imageView?.image)
+        XCTAssertEqual(log.urls.count, 1, "disk cache satisfies re-decode without network")
+
+        // Changing serverOrigin or loader clears retained consent.
+        harness.view.blockControls.serverOrigin = "https://other.example"
+        XCTAssertFalse(harness.view.blockControls.isExternalMediaApproved(url))
+    }
+
+    /// While IME composition holds storage (`holdsComposition == true`), an image
+    /// load defers height restyling until composition ends, never cancelling marked text.
+    func testImageLoadDefersHeightRefreshDuringIMEComposition() async throws {
+        let url = "\(Self.origin)/media/ime.png"
+        let harness = try await makeHarness([paragraph("p", "Hi"), image("img", url: url)])
+        addTeardownBlock { await harness.close() }
+        let log = FetchLog()
+        let gate = FetchGate()
+        harness.view.blockControls.images = loader(log) { _ in
+            gate.started = true
+            return try await withCheckedThrowingContinuation { continuation in
+                gate.continuation = continuation
+            }
+        }
+        harness.view.blockControls.serverOrigin = Self.origin
+        let window = host(harness.view)
+        defer { window.isHidden = true }
+        await waitUntil { gate.started }
+
+        // Begin IME composition in the paragraph before the image finishes decoding.
+        harness.view.selectedRange = NSRange(location: 2, length: 0)
+        harness.view.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0))
+        XCTAssertNotNil(harness.view.markedTextRange)
+
+        gate.continuation?.resume(returning: testPNGData(width: 400, height: 200))
+        let view = try XCTUnwrap(realized(harness.session, "img"))
+        await view.loadTask?.value
+        harness.view.layoutIfNeeded()
+
+        XCTAssertNotNil(harness.view.markedTextRange, "image decode must not cancel marked text")
+        XCTAssertNil(harness.session.surface.attachmentGeometry.aspectRatios[url])
+        var composingAttachment: NativeBlockAttachment?
+        harness.view.textStorage.enumerateAttribute(
+            .attachment, in: NSRange(location: 0, length: harness.view.textStorage.length)
+        ) { value, _, stop in
+            if let found = value as? NativeBlockAttachment, found.content.blockID == "img" {
+                composingAttachment = found
+                stop.pointee = true
+            }
+        }
+        XCTAssertEqual(
+            composingAttachment?.content.size.height,
+            NativeAttachmentLayout.placeholderImageHeight,
+            "storage restyle stays deferred while composing")
+
+        // Commit composition: deferred height refresh runs right after composition releases.
+        harness.view.unmarkText()
+        await harness.settle()
+        harness.view.layoutIfNeeded()
+        let expectedHeight = ceil(harness.session.surface.attachmentGeometry.usableWidth / 2)
+        XCTAssertEqual(try attachment(harness.session, "img").content.size.height, expectedHeight)
+        XCTAssertEqual(try block(harness.session, "p").runs.map(\.text).joined(), "Hiか")
+        assertS2Consistent(harness.session)
+        try await assertConsistent(harness, localCommands: 1)
+    }
+
+    /// An off-screen image strictly above the visible viewport compensates
+    /// `contentOffset.y` by `(newLineHeight - oldLineHeight)` so visible reading
+    /// content stays anchored in place.
+    func testAboveViewportImageLoadCompensatesScrollOffset() async throws {
+        var docBlocks: [BlockNoteBlock] = [image("imgTop", url: "\(Self.origin)/media/top.png")]
+        for index in 0..<30 {
+            docBlocks.append(paragraph("p\(index)", "Paragraph \(index) with enough text for stable layout"))
+        }
+        let harness = try await makeHarness(docBlocks)
+        addTeardownBlock { await harness.close() }
+        let log = FetchLog()
+        let gate = FetchGate()
+        harness.view.blockControls.images = loader(log) { _ in
+            gate.started = true
+            return try await withCheckedThrowingContinuation { continuation in
+                gate.continuation = continuation
+            }
+        }
+        harness.view.blockControls.serverOrigin = Self.origin
+        let window = host(harness.view, height: 400)
+        defer { window.isHidden = true }
+        await waitUntil { gate.started }
+
+        let oldAttachment = try attachment(harness.session, "imgTop")
+        let topView = try XCTUnwrap(realized(harness.session, "imgTop"))
+
+        // Scroll down so imgTop lies strictly above the viewport while p6 is visible inside it.
+        harness.view.contentOffset = CGPoint(x: 0, y: 240)
+        harness.view.layoutIfNeeded()
+        let anchorID = "p6"
+        let anchorBefore = try fragmentFrame(harness.session, anchorID)
+        let screenYBefore = anchorBefore.minY - harness.view.contentOffset.y
+        let offsetBefore = harness.view.contentOffset.y
+
+        // Tall portrait image (200x400 -> ratio 0.5 -> height capped at maxImageHeight = 640).
+        gate.continuation?.resume(returning: testPNGData(width: 200, height: 400))
+        await topView.loadTask?.value
+        harness.view.layoutIfNeeded()
+
+        let newAttachment = try attachment(harness.session, "imgTop")
+        let expectedDelta = newAttachment.content.lineHeight - oldAttachment.content.lineHeight
+        XCTAssertGreaterThan(expectedDelta, 100)
+        let anchorAfter = try fragmentFrame(harness.session, anchorID)
+        let imgFragAfter = try fragmentFrame(harness.session, "imgTop")
+        let screenYAfter = anchorAfter.minY - harness.view.contentOffset.y
+        XCTAssertEqual(
+            harness.view.contentOffset.y, offsetBefore + expectedDelta, accuracy: 0.5,
+            "imgFragAfter=\(imgFragAfter) anchorBefore=\(anchorBefore) anchorAfter=\(anchorAfter) oldLH=\(oldAttachment.content.lineHeight) newLH=\(newAttachment.content.lineHeight) contentSize=\(harness.view.contentSize)")
+        XCTAssertEqual(screenYAfter, screenYBefore, accuracy: 0.5, "visible content stayed anchored")
+        assertS2Consistent(harness.session)
+        try await assertConsistent(harness, localCommands: 0)
+        XCTAssertEqual(try journalCount(harness), 0)
+    }
+
+    /// Multiple images finishing in the same session refresh accurately, never
+    /// loop, and pre-cached ratios apply on `.insert` / `.replaceBlock` first frame.
+    func testMultipleImageLoadsAndPreCachedPatchApplyFirstFrameHeight() async throws {
+        let urlA = "\(Self.origin)/media/a.png"
+        let urlB = "\(Self.origin)/media/b.png"
+        let harness = try await makeHarness([
+            paragraph("intro", "Start"),
+            image("imgA", url: urlA),
+            image("imgB", url: urlB),
+        ])
+        addTeardownBlock { await harness.close() }
+        let log = FetchLog()
+        let imgLoader = loader(log, data: testPNGData(width: 400, height: 200))
+        harness.view.blockControls.images = imgLoader
+        harness.view.blockControls.serverOrigin = Self.origin
+        let window = host(harness.view, height: 900)
+        defer { window.isHidden = true }
+
+        let viewA = try XCTUnwrap(realized(harness.session, "imgA"))
+        let viewB = try XCTUnwrap(realized(harness.session, "imgB"))
+        await viewA.loadTask?.value
+        await viewB.loadTask?.value
+        harness.view.layoutIfNeeded()
+
+        let usable = harness.session.surface.attachmentGeometry.usableWidth
+        let expectedHeight = ceil(usable / 2)
+        XCTAssertEqual(try attachment(harness.session, "imgA").content.size.height, expectedHeight)
+        XCTAssertEqual(try attachment(harness.session, "imgB").content.size.height, expectedHeight)
+        XCTAssertEqual(Set(log.urls).count, 2)
+        XCTAssertEqual(log.urls.count, 2, "each image fetched exactly once")
+        assertS2Consistent(harness.session)
+
+        // Pre-cached URL inserted or replaced via surface patch renders at its true height on the first frame.
+        let inserted = BlockSnapshot(
+            id: "imgC", node: "image", props: [], runs: [],
+            preview: .image(url: urlA, alt: "", previewWidth: nil))
+        harness.session.surface.applyPatch(
+            BlockPatch([.insert(after: "imgB", blocks: [inserted])], origin: .other))
+        XCTAssertEqual(try attachment(harness.session, "imgC").content.size.height, expectedHeight)
+        let placeholderD = BlockSnapshot(id: "imgD", node: "paragraph", props: [], runs: [])
+        harness.session.surface.applyPatch(
+            BlockPatch([.insert(after: "imgC", blocks: [placeholderD])], origin: .other))
+        let replacedD = BlockSnapshot(
+            id: "imgD", node: "image", props: [], runs: [],
+            preview: .image(url: urlB, alt: "", previewWidth: nil))
+        harness.session.surface.applyPatch(
+            BlockPatch([.replaceBlock(blockID: "imgD", block: replacedD)], origin: .other))
+        XCTAssertEqual(try attachment(harness.session, "imgD").content.size.height, expectedHeight)
+        XCTAssertEqual(try journalCount(harness), 0)
+    }
+
+    /// An image loading inside a column editor refreshes its card height and
+    /// propagates the updated height to `ColumnTextContainer.contentSize`.
+    func testImageLoadInsideColumnPropagatesHeightToColumnContainer() async throws {
+        let stateData = try state(
+            [paragraph("lead", "Lead")],
+            inserting: [
+                (
+                    after: "lead",
+                    node: .element(
+                        "columnList", [("id", .string("cl"))],
+                        [
+                            .element(
+                                "column", [("id", .string("c1")), ("width", .int(1))],
+                                [
+                                    container(
+                                        "c1-p",
+                                        .element(
+                                            "paragraph", Self.paragraphProps.map { ($0.key, $0.value) },
+                                            [.text("Column text")])),
+                                    container(
+                                        "c1-img",
+                                        .element(
+                                            "image",
+                                            [
+                                                ("backgroundColor", .string("default")), ("caption", .string("")),
+                                                ("name", .string("col.png")), ("showPreview", .bool(true)),
+                                                ("textAlignment", .string("left")),
+                                                ("url", .string("\(Self.origin)/media/col.png")),
+                                            ], [])),
+                                ]),
+                            .element(
+                                "column", [("id", .string("c2")), ("width", .int(1))],
+                                [
+                                    container(
+                                        "c2-p",
+                                        .element(
+                                            "paragraph", Self.paragraphProps.map { ($0.key, $0.value) },
+                                            [.text("Right")]))
+                                ]),
+                        ])
+                )
+            ])
+        let harness = try await makeHarness(state: stateData)
+        addTeardownBlock { await harness.close() }
+        let model = ColumnEditorModel(document: harness.session, groupID: "cl")
+        addTeardownBlock { model.close() }
+        await model.load()
+        XCTAssertEqual(model.columns.count, 2)
+        let column = model.columns[0]
+
+        let log = FetchLog()
+        let gate = FetchGate()
+        column.textView.blockControls.images = loader(log) { _ in
+            gate.started = true
+            return try await withCheckedThrowingContinuation { continuation in
+                gate.continuation = continuation
+            }
+        }
+        column.textView.blockControls.serverOrigin = Self.origin
+
+        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+        let window = scene.map { UIWindow(windowScene: $0) } ?? UIWindow()
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+        window.traitOverrides.horizontalSizeClass = .compact
+        let containerView = ColumnTextContainer(frame: window.bounds)
+        window.addSubview(containerView)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        containerView.show(
+            model.columns.map(\.textView), widths: model.group?.columns.map { $0.width ?? 1 } ?? [], active: 0)
+        for _ in 0..<3 { containerView.layoutIfNeeded() }
+
+        await waitUntil { gate.started }
+        let initialAttachment = try attachment(column, "c1-img")
+        let imgFrameBefore = try fragmentFrame(column, "c1-img")
+        XCTAssertEqual(initialAttachment.content.size.height, NativeAttachmentLayout.placeholderImageHeight)
+        let columnHeightBefore = column.textView.contentSize.height
+        let containerHeightBefore = containerView.contentSize.height
+        let view = try XCTUnwrap(realized(column, "c1-img"))
+
+        // Tall 200x400 image expands card height from 160 to 640 (or box / 0.5).
+        gate.continuation?.resume(returning: testPNGData(width: 200, height: 400))
+        await view.loadTask?.value
+        for _ in 0..<3 {
+            column.textView.layoutIfNeeded()
+            containerView.layoutIfNeeded()
+        }
+
+        let updatedAttachment = try attachment(column, "c1-img")
+        let expectedHeight = min(
+            NativeAttachmentLayout.maxImageHeight,
+            ceil(column.surface.attachmentGeometry.usableWidth / 0.5))
+        XCTAssertEqual(updatedAttachment.content.size.height, expectedHeight)
+        let delta = updatedAttachment.content.lineHeight - initialAttachment.content.lineHeight
+        let imgFrameAfter = try fragmentFrame(column, "c1-img")
+        XCTAssertGreaterThan(delta, 100)
+        XCTAssertEqual(
+            column.textView.contentSize.height, columnHeightBefore + delta, accuracy: 1,
+            "before=\(columnHeightBefore) containerBefore=\(containerHeightBefore) imgFrameBefore=\(imgFrameBefore) imgFrameAfter=\(imgFrameAfter) attSize=\(updatedAttachment.content.size) bounds=\(column.textView.bounds) tcSize=\(column.textView.textContainer.size) c2=\(model.columns[1].textView.contentSize) storage=\(String(reflecting: column.textView.textStorage.string)) blocks=\(column.surface.blocks.map(\.id))"
+        )
+        XCTAssertEqual(containerView.contentSize.height, containerHeightBefore + delta, accuracy: 1)
+        assertS2Consistent(column)
+        try await assertConsistent(harness, localCommands: 0)
         XCTAssertEqual(try journalCount(harness), 0)
     }
 

@@ -43,8 +43,8 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     private(set) var attachmentGeometry = NativeAttachmentGeometry()
     private var pendingAttachmentWidth: CGFloat?
     private var pendingGeometryRefresh = false
-    /// An image URL's remembered aspect ratio (the image loader's), read only
-    /// when the geometry is recomputed: a download never restyles storage.
+    /// An image URL's remembered aspect ratio (the image loader's), consulted
+    /// when attachment geometry is computed or refreshed.
     var aspectRatio: (@MainActor (String) -> CGFloat?)?
     /// Cached title for a linked document UUID, used only for inline interlink
     /// chip display without modifying Yjs.
@@ -275,6 +275,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                 let fresh = inserted.filter { seen.insert($0.id).inserted }
                 guard !fresh.isEmpty else { continue }
                 cacheDocumentTitles(from: fresh)
+                cacheAspectRatios(from: fresh)
                 let position = after.flatMap { rangeIndex.position(for: $0) }.map { $0 + 1 } ?? 0
                 let offset =
                     position < rangeIndex.entries.count ? rangeIndex.entries[position].range.location : storage.length
@@ -656,6 +657,22 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
 
     // MARK: Attachment geometry (PR06e)
 
+    private func cacheAspectRatios(from blocks: [BlockSnapshot]) {
+        guard let aspectRatio else { return }
+        var ratios = attachmentGeometry.aspectRatios
+        for block in blocks {
+            guard AttributedDocumentProjection.isPlaceholder(block),
+                case .image(let url, _, _)? = block.preview,
+                ratios[url] == nil,
+                let ratio = aspectRatio(url)
+            else { continue }
+            ratios[url] = ratio
+        }
+        if ratios != attachmentGeometry.aspectRatios {
+            attachmentGeometry.aspectRatios = ratios
+        }
+    }
+
     private func cacheDocumentTitles(from blocks: [BlockSnapshot]) {
         var titles = attachmentGeometry.documentTitles
         for block in blocks {
@@ -695,7 +712,8 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     }
 
     /// Recomputes cached image aspect ratios and linked document titles without
-    /// changing the width or writing to Yjs.
+    /// changing the width or writing to Yjs, restyling only the blocks whose
+    /// ratio or linked document title changed.
     func refreshAttachmentGeometry() {
         guard !holdsComposition else {
             pendingGeometryRefresh = true
@@ -704,11 +722,42 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         pendingGeometryRefresh = false
         let next = geometry(width: attachmentGeometry.width)
         guard next != attachmentGeometry else { return }
+        let changedRatioURLs = changedKeys(from: attachmentGeometry.aspectRatios, to: next.aspectRatios)
+        let changedTitleIDs = changedKeys(from: attachmentGeometry.documentTitles, to: next.documentTitles)
         attachmentGeometry = next
-        let positions = blocks.indices.filter {
-            AttributedDocumentProjection.isPlaceholder(blocks[$0]) || blocks[$0].hasInlineObjects
+        let positions = blocks.indices.filter { position in
+            let block = blocks[position]
+            if AttributedDocumentProjection.isPlaceholder(block),
+                case .image(let url, _, _)? = block.preview,
+                changedRatioURLs.contains(url)
+            {
+                return true
+            }
+            if block.hasInlineObjects, !changedTitleIDs.isEmpty {
+                return block.runs.contains { run in
+                    guard case .interlink(let docID, _, _, let disabled, _)? = run.inlineObject,
+                        !disabled,
+                        let uuid = UUID(uuidString: docID)
+                    else { return false }
+                    return changedTitleIDs.contains(uuid)
+                }
+            }
+            return false
         }
         restyleAttachments(positions: positions)
+    }
+
+    private func changedKeys<Key: Hashable, Value: Equatable>(
+        from old: [Key: Value], to new: [Key: Value]
+    ) -> Set<Key> {
+        var changed = Set<Key>()
+        for (key, value) in old where new[key] != value {
+            changed.insert(key)
+        }
+        for (key, value) in new where old[key] != value {
+            changed.insert(key)
+        }
+        return changed
     }
 
     /// The text container's usable width changed (first layout, rotation,
@@ -753,6 +802,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
             shownRetexted.insert(block.id)
         }
         cacheDocumentTitles(from: [block])
+        cacheAspectRatios(from: [block])
         storage.replaceCharacters(
             in: rangeIndex.entries[position].range,
             with: rendered(block, at: position))
