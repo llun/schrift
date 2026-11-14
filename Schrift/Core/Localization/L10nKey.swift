@@ -371,6 +371,9 @@ enum L10nKey: String, CaseIterable, Sendable {
     case editor_image_loading_named_a11y = "editor.image.loading_named_a11y"  // "Loading image: %@"
     case editor_image_external = "editor.image.external"  // "External image · Tap to load"
     case editor_image_external_a11y = "editor.image.external_a11y"  // "External image from %@. Tap to load."
+    case editor_video_offline = "editor.video.offline"  // "Video available when online"
+    case editor_video_external = "editor.video.external"  // "External video · tap to load"
+    case editor_video_external_a11y = "editor.video.external_a11y"  // "External video from %@. Tap to load."
 
     // Editor - file attachment cards (AttachmentCardView). The file's name is
     // document content and is never localized; these are the state line beneath
@@ -546,6 +549,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case native_editor_media_upload_stopped = "native.editor.media_upload_stopped"  // "Upload failed · tap to retry"
     case native_editor_media_upload_waiting = "native.editor.media_upload_waiting"  // "Uploads when you're back online."
     case native_editor_media_upload_queued = "native.editor.media_upload_queued"  // "Waiting to upload"
+    case native_editor_media_drop_limit = "native.editor.media_drop_limit"  // "Drop up to 10 items at once"
     case native_media_retry_upload = "native.media.retry_upload"  // "Retry upload"
     case native_media_discard_upload = "native.media.discard_upload"  // "Discard upload"
     case native_media_name = "native.media.name"  // "Name"

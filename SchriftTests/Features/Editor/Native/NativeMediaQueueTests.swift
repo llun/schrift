@@ -969,4 +969,121 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
         XCTAssertEqual(uploads.failure?.key, .native_editor_media_upload_dropped)
         XCTAssertTrue(app.coordinator.nativeAttachments(scope: app.device.scope).isEmpty)
     }
+
+    /// Concurrent `uploads.start(...)` calls for multiple blocks mark all
+    /// targets as preparing/uploading immediately, serialize off-main byte
+    /// preparation so only one buffer is decoded at a time, and queue every
+    /// item through `queueNativeAttachment` with GPS metadata stripped.
+    func testMultiItemUploadsPrepareSeriallyAndQueueEveryBlock() async throws {
+        let server = Server()
+        server.canUpdate.value = true
+        let app = launch(try makeDevice(), server: server)
+        let editor = try await openEditor(app)
+        let uploads = NativeMediaUploads(scope: app.device.scope, queue: app.coordinator)
+        XCTAssertTrue(uploads.canStartAnyUpload)
+
+        // Seed 3 real empty media blocks via `.insertMediaBatch` so the upload commits end-to-end.
+        var batchIDs: [String] = []
+        _ = await editor.run {
+            editor.input?.insertMediaBatch(nodes: ["image", "image", "pdf"], at: "mx", placement: .after) {
+                batchIDs = $0
+            } ?? false
+        }
+        await editor.settle()
+        XCTAssertEqual(batchIDs.count, 3)
+        let (m1, m2, m3) = (batchIDs[0], batchIDs[1], batchIDs[2])
+
+        final class Tracker: @unchecked Sendable {
+            private let lock = NSLock()
+            var active = 0
+            var maxActive = 0
+            var order: [String] = []
+            func enter(_ id: String) {
+                lock.lock()
+                defer { lock.unlock() }
+                active += 1
+                maxActive = max(maxActive, active)
+                order.append(id)
+            }
+            func leave() {
+                lock.lock()
+                defer { lock.unlock() }
+                active -= 1
+            }
+        }
+        let tracker = Tracker()
+        let firstEntered = Latch()
+        let releaseFirst = Latch()
+        let gpsImage = testJPEGDataWithGPSMetadata(width: 60, height: 40)
+        XCTAssertNotNil(testImageProperties(of: gpsImage)?[kCGImagePropertyGPSDictionary])
+
+        server.gate.value = MockURLProtocol.ResponseGate()
+
+        let t1 = uploads.start(
+            .photo {
+                tracker.enter("m1")
+                firstEntered.open()
+                await releaseFirst.passing()
+                defer { tracker.leave() }
+                return gpsImage
+            }, into: m1, slot: slot, in: editor)
+        let t2 = uploads.start(
+            .file {
+                tracker.enter("m2")
+                defer { tracker.leave() }
+                return PreparedAttachmentFile(fileName: "two.JPG", contentType: "image/jpeg", data: gpsImage)
+            }, into: m2, slot: slot, in: editor)
+        let t3 = uploads.start(
+            .file {
+                tracker.enter("m3")
+                defer { tracker.leave() }
+                return PreparedAttachmentFile(
+                    fileName: "notes.pdf", contentType: "application/pdf", data: Data("%PDF-1.4\n".utf8))
+            }, into: m3, slot: MediaBlock.Slot(node: "pdf", url: ""), in: editor)
+
+        XCTAssertEqual(uploads.uploadingBlocks, Set([m1, m2, m3]))
+        XCTAssertTrue(uploads.isPreparing(m1))
+        XCTAssertTrue(uploads.isPreparing(m2))
+        XCTAssertTrue(uploads.isPreparing(m3))
+        XCTAssertFalse(uploads.canUpload(m1))
+        XCTAssertTrue(uploads.canUpload("m4"))
+
+        await firstEntered.passing()
+        // Wait briefly to confirm m2 and m3 stay blocked behind m1's preparation.
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(tracker.maxActive, 1)
+        XCTAssertEqual(tracker.order, ["m1"])
+
+        releaseFirst.open()
+        await t1?.value
+        await t2?.value
+        await t3?.value
+
+        XCTAssertNil(uploads.failure)
+        XCTAssertEqual(tracker.maxActive, 1)
+        XCTAssertEqual(tracker.order, ["m1", "m2", "m3"])
+        XCTAssertTrue(uploads.preparing.isEmpty)
+
+        let m1Record = try XCTUnwrap(uploads.record(m1))
+        let m2Record = try XCTUnwrap(uploads.record(m2))
+        let m3Record = try XCTUnwrap(uploads.record(m3))
+        XCTAssertEqual(m1Record.native?.fileName, "photo.jpg")
+        XCTAssertEqual(m2Record.native?.fileName, "two.jpg")
+        XCTAssertEqual(m3Record.native?.fileName, "notes.pdf")
+        XCTAssertNil(
+            testImageProperties(of: try XCTUnwrap(app.device.attachments.data(for: m1Record.localID)))?[
+                kCGImagePropertyGPSDictionary])
+        XCTAssertNil(
+            testImageProperties(of: try XCTUnwrap(app.device.attachments.data(for: m2Record.localID)))?[
+                kCGImagePropertyGPSDictionary])
+
+        server.gate.value?.open()
+        await waitUntil { app.coordinator.nativeAttachments(scope: app.device.scope).isEmpty }
+        await editor.settle()
+        for id in [m1, m2, m3] {
+            let block = try XCTUnwrap(editor.surface.blocks.first { $0.id == id })
+            XCTAssertEqual(MediaBlock.string("url", in: block.props), Self.mediaURL)
+        }
+        await editor.close().value
+    }
 }

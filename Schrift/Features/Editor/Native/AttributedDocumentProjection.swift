@@ -63,6 +63,9 @@ struct NativeEditorLabels: Equatable {
     var imageExternalA11y = Strings_en.table[.editor_image_external_a11y]!
     var imageOffline = Strings_en.table[.editor_image_offline]!
     var imageFailed = Strings_en.table[.editor_image_failed]!
+    var videoExternal = Strings_en.table[.editor_video_external]!
+    var videoExternalA11y = Strings_en.table[.editor_video_external_a11y]!
+    var videoOffline = Strings_en.table[.editor_video_offline]!
     /// A media card's states (PR13a): no url yet, ours uploading, a peer's upload.
     var mediaEmpty = Strings_en.table[.native_editor_media_empty]!
     var mediaUploading = Strings_en.table[.native_editor_media_uploading]!
@@ -126,6 +129,7 @@ enum AttributedDocumentProjection {
         }
         switch preview(for: block) {
         case .image(_, let alt, _): return named(labels.image, alt)
+        case .video(_, let label, _): return named(labels.kind("video"), label)
         case .file(let node, let name, _): return named(labels.kind(node), name)
         case .table(_, let rows, let columns): return String(format: labels.table, rows, columns)
         case .columns(_, let count): return String(format: labels.columns, count)
@@ -260,7 +264,11 @@ enum AttributedDocumentProjection {
         let width =
             geometry.usableWidth - scaledGutter(traits) * CGFloat(block.depth)
         var ratio: CGFloat?
-        if case .image(let url, _, _) = preview { ratio = geometry.aspectRatios[url] }
+        switch preview {
+        case .image(let url, _, _): ratio = geometry.aspectRatios[url]
+        case .video(let url, _, _): ratio = geometry.aspectRatios[VideoPosterLoader.posterKey(for: url)]
+        default: break
+        }
         let descent = ceil(-separator.descender)
         let size = NativeAttachmentLayout.size(
             for: preview, width: width, traits: traits, aspectRatio: ratio,

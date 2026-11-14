@@ -142,6 +142,10 @@ final class ColumnEditorModel: Identifiable {
         guard let session = await document.openColumn(group: groupID, column: columnID) else { return nil }
         session.input?.onExit = { [weak self] in self?.close() }
         session.input?.inlinePickerSource = columnPickerSource()
+        session.input?.onMediaDropActivate = { [weak self, weak session] in
+            guard let self, let session else { return }
+            self.activate(session: session)
+        }
         session.textView.blockControls.onOpenTable = { [weak self] in self?.openTable = NativeTableRequest(id: $0) }
         session.textView.blockControls.onOpenMedia = { [weak self] in self?.openMedia = NativeMediaRequest(id: $0) }
         session.textView.blockControls.onOpenDocument = { [weak self] id, blockID in
@@ -394,6 +398,7 @@ struct ColumnEditorScreen: View {
     @Environment(\.docsTheme) private var theme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(ImageLoader.self) private var images: ImageLoader?
+    @Environment(VideoPosterLoader.self) private var posters: VideoPosterLoader?
 
     var body: some View {
         NavigationStack {
@@ -458,13 +463,22 @@ struct ColumnEditorScreen: View {
             }
             ColumnTextHost(
                 model: model, contentSize: uiContentSizeCategory(for: dynamicTypeSize), labels: .document(loc),
-                theme: theme, images: images, serverOrigin: serverOrigin, isOffline: isOffline,
-                documentTitle: documentTitle, onOpenDocument: onOpenDocument ?? model.onOpenDocument,
+                theme: theme, images: images, posters: posters, serverOrigin: serverOrigin, isOffline: isOffline,
+                uploads: uploads,
+                uploadingBlocks: uploads?.uploadingBlocks ?? [], waitingUploads: uploads?.waitingBlocks ?? [],
+                failedUploads: uploads?.failedBlocks ?? [], documentTitle: documentTitle,
+                onOpenDocument: onOpenDocument ?? model.onOpenDocument,
                 onOpenSource: onOpenSource ?? model.onOpenSource ?? { model.openSource = $0 })
         }
         .safeAreaInset(edge: .bottom) {
             if let input = model.activeSession?.input {
                 VStack(spacing: 0) {
+                    if model.openMedia == nil, let failure = uploads?.failure {
+                        Text(loc[failure.key])
+                            .font(.footnote)
+                            .padding()
+                            .accessibilityIdentifier("nativeEditor.mediaNotice")
+                    }
                     if let key = input.noticeKey {
                         Text(loc[key])
                             .font(.footnote)
@@ -568,8 +582,13 @@ private struct ColumnTextHost: UIViewRepresentable {
     let labels: NativeEditorLabels
     let theme: AppTheme
     let images: ImageLoader?
+    let posters: VideoPosterLoader?
     let serverOrigin: String
     let isOffline: Bool
+    var uploads: NativeMediaUploads? = nil
+    var uploadingBlocks: Set<String> = []
+    var waitingUploads: Set<String> = []
+    var failedUploads: Set<String> = []
     let documentTitle: (@MainActor (UUID) -> String?)?
     var onOpenDocument: ((UUID, String) -> Void)? = nil
     var onOpenSource: ((NativeSourceRequest) -> Void)? = nil
@@ -590,9 +609,14 @@ private struct ColumnTextHost: UIViewRepresentable {
             session.textView.blockControls.theme = theme
             session.textView.blockControls.labels = labels
             session.textView.blockControls.images = images
+            session.textView.blockControls.posters = posters
             session.textView.blockControls.serverOrigin = serverOrigin
             session.input?.serverOrigin = serverOrigin
+            session.input?.mediaUploads = uploads
             session.textView.blockControls.isOffline = isOffline
+            session.textView.blockControls.uploadingBlocks = uploadingBlocks
+            session.textView.blockControls.waitingUploads = waitingUploads
+            session.textView.blockControls.failedUploads = failedUploads
             session.textView.blockControls.documentTitle = documentTitle
             session.textView.blockControls.onOpenDocument = onOpenDocument
             session.textView.blockControls.onOpenSource = { [weak model, weak session, onOpenSource] request in

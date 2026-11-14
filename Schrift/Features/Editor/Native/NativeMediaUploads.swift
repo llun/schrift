@@ -33,8 +33,11 @@ final class NativeMediaUploads {
         case file(@Sendable () async throws -> PreparedAttachmentFile?)
     }
 
-    /// The block whose bytes are being prepared, before they are queued.
-    private(set) var preparing: String?
+    /// Blocks whose bytes are being prepared, before they are queued.
+    private(set) var preparing: Set<String> = []
+    /// Serializes off-main byte preparation so multi-item batches only keep one
+    /// decoded image or file buffer in memory at a time.
+    @ObservationIgnored private var preparationTail: Task<Void, Never>?
     /// The last failure, for the block it was for.
     private(set) var failure: (blockID: String, key: L10nKey)?
     /// The document's replica scope (its server id and account); nil for a
@@ -58,7 +61,7 @@ final class NativeMediaUploads {
     /// (offline, or nothing may write the document yet: review Y3), or failed.
     enum State { case uploading, waiting, failed }
 
-    var uploadingBlocks: Set<String> { blocks(.uploading).union(preparing.map { [$0] } ?? []) }
+    var uploadingBlocks: Set<String> { blocks(.uploading).union(preparing) }
     var waitingBlocks: Set<String> { blocks(.waiting) }
     var failedBlocks: Set<String> { blocks(.failed) }
 
@@ -74,8 +77,16 @@ final class NativeMediaUploads {
             queue.nativeAttachments(scope: scope).filter { state(of: $0) == wanted }.compactMap(\.native?.blockID))
     }
 
+    /// Whether `blockID` is currently preparing its upload bytes before queueing.
+    func isPreparing(_ blockID: String) -> Bool { preparing.contains(blockID) }
+
+    /// Whether the coordinator currently backs a server document that can accept uploads.
+    var canStartAnyUpload: Bool { documentID != nil }
+
     /// Whether an upload into `blockID` can start now (a server document, none under way for it).
-    func canUpload(_ blockID: String) -> Bool { documentID != nil && preparing == nil && record(blockID) == nil }
+    func canUpload(_ blockID: String) -> Bool {
+        documentID != nil && !preparing.contains(blockID) && record(blockID) == nil
+    }
 
     func clearFailure() { failure = nil }
 
@@ -95,27 +106,41 @@ final class NativeMediaUploads {
     /// `session`'s surface (the document's, or a column's), whose slot is
     /// `slot` now. Nil (and a failure notice) when it cannot start.
     @discardableResult
-    func start(_ source: Source, into blockID: String, slot: MediaBlock.Slot, in session: NativeEditorSession)
-        -> Task<Void, Never>?
-    {
+    func start(
+        _ source: Source,
+        into blockID: String,
+        slot: MediaBlock.Slot,
+        in session: NativeEditorSession,
+        onCleanup: (@Sendable () -> Void)? = nil
+    ) -> Task<Void, Never>? {
         failure = nil
         guard let scope, session.scope == scope else {
+            onCleanup?()
             failure = (blockID, .native_editor_media_upload_offline)
             return nil
         }
-        guard canUpload(blockID) else { return nil }
-        preparing = blockID
+        guard canUpload(blockID) else {
+            onCleanup?()
+            return nil
+        }
+        preparing.insert(blockID)
         // Never retained across the preparation: a closed editor is gone, not kept alive.
         let target = WeakSession(session: session)
-        return Task { [weak self] in
+        let previous = preparationTail
+        let task = Task { [weak self] in
+            defer { onCleanup?() }
+            await previous?.value
             await self?.prepare(source, into: blockID, slot: slot, scope: scope, target: target)
         }
+        preparationTail = task
+        return task
     }
 
     private func prepare(
         _ source: Source, into blockID: String, slot: MediaBlock.Slot, scope: ReplicaScope, target: WeakSession
     ) async {
-        defer { preparing = nil }
+        defer { preparing.remove(blockID) }
+        guard !Task.isCancelled else { return }
         let fileName: String
         let contentType: String
         let data: Data
@@ -132,9 +157,9 @@ final class NativeMediaUploads {
                 (fileName, contentType, data) = ("photo.jpg", "image/jpeg", jpeg)
             case .file(let load):
                 guard let file = try await load() else { return }
-                if slot.node == "image" {
-                    // An image block's file is re-encoded like a photo: its
-                    // EXIF (GPS included) never leaves the device.
+                if slot.node == "image" || isNonSVGRasterImageData(file.data) {
+                    // Any raster image (even under-claimed as a generic `.file`) is
+                    // re-encoded without metadata so EXIF/GPS never leaves the device.
                     guard
                         let jpeg = await Task.detached(
                             priority: .userInitiated, operation: { preparedJPEGData(from: file.data) }

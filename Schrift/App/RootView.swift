@@ -33,6 +33,7 @@ private struct AuthenticatedHomeContainer: View {
     @State private var collaboration: DocumentCollaborationManager
     @State private var attachments: AttachmentLoader
     @State private var images: ImageLoader
+    @State private var posters: VideoPosterLoader
     /// Every native replica open in this server session, one per scope (PR08c).
     @State private var nativeSessions: NativeSessionRegistry
     let serverURL: URL
@@ -108,12 +109,13 @@ private struct AuthenticatedHomeContainer: View {
         // App-scoped for the same reason the manager is: the same attachment can
         // be on screen in more than one place, and one owner is what gives
         // in-flight de-duplication and a single authority over the disk cache.
+        let scopeProvider: @MainActor () -> ImageCacheScope? = {
+            guard sessionStore.isAuthenticated, let namespace = sessionStore.imageCacheSessionID else { return nil }
+            return ImageCacheScope(serverOrigin: origin, sessionID: namespace)
+        }
         _attachments = State(initialValue: AttachmentLoader(client: client, serverOrigin: origin))
-        _images = State(
-            initialValue: ImageLoader(scopeProvider: {
-                guard sessionStore.isAuthenticated, let namespace = sessionStore.imageCacheSessionID else { return nil }
-                return ImageCacheScope(serverOrigin: origin, sessionID: namespace)
-            }))
+        _images = State(initialValue: ImageLoader(scopeProvider: scopeProvider))
+        _posters = State(initialValue: VideoPosterLoader(scopeProvider: scopeProvider))
         self.serverURL = serverURL
         serverHost = serverURL.host ?? ""
         serverOrigin = origin
@@ -227,6 +229,7 @@ private struct AuthenticatedHomeContainer: View {
         .environment(nativeSessions)
         .environment(attachments)
         .environment(images)
+        .environment(posters)
         .task {
             // Learn whether this deployment runs the collaboration server, so the
             // availability gate can open once the toggle is on, and our own
@@ -286,6 +289,7 @@ struct RootView: View {
                     // same reason.
                     AttachmentCacheStore().removeAll()
                     ImageCacheStore().removeAll()
+                    NativeMediaDropPaste.removeStagingRoot()
                     // "Continue reading" positions are per-account reading history (they name
                     // blocks of documents only that account could open), not unsynced work.
                     ReadingPositionStore().removeAll()

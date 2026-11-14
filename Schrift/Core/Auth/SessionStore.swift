@@ -31,6 +31,8 @@ final class SessionStore {
     /// would name the previous account on the new one's screen.
     private let cachedUser: CurrentUserCacheStore
     private let clearImageCache: () -> Void
+    private let clearAttachmentCache: () -> Void
+    private let clearMediaDropStaging: () -> Void
     var imageCacheScope: String? { imageCacheSessionID?.uuidString }
 
     private(set) var serverURL: URL?
@@ -97,9 +99,13 @@ final class SessionStore {
         cookieStorage: CookieStoring = HTTPCookieStorage.shared,
         signedInUser: SignedInUserStore? = nil,
         clearImageCache: @escaping () -> Void = { ImageCacheStore().removeAll() },
+        clearAttachmentCache: @escaping () -> Void = { AttachmentCacheStore().removeAll() },
+        clearMediaDropStaging: @escaping () -> Void = { NativeMediaDropPaste.removeStagingRoot() },
         now: @escaping () -> ContinuousClock.Instant = { ContinuousClock.now }
     ) {
         self.clearImageCache = clearImageCache
+        self.clearAttachmentCache = clearAttachmentCache
+        self.clearMediaDropStaging = clearMediaDropStaging
         self.now = now
         self.userDefaults = userDefaults
         self.keychain = keychain
@@ -118,7 +124,12 @@ final class SessionStore {
             imageCacheSessionID = namespace
             // State initializers can run again while SwiftUI constructs a view. A redundant
             // defaults write invalidates AppStorage and can keep the first scene rendering.
-            if existing == nil { userDefaults.set(namespace.uuidString, forKey: Self.imageCacheSessionKey) }
+            if existing == nil {
+                // An unconfirmed cookie handover clears the persisted key until /users/me/ confirms;
+                // if the app relaunches before confirmation, wipe any unscoped attachments left by it.
+                clearAttachmentCache()
+                userDefaults.set(namespace.uuidString, forKey: Self.imageCacheSessionKey)
+            }
             // A session stored by a build that predates the ThisDeviceOnly
             // accessibility class would otherwise keep the weaker one for as long
             // as it stays valid — which is indefinitely, since nothing re-saves
@@ -236,6 +247,8 @@ final class SessionStore {
         // namespace memory-only until signIn saves the matching cookies.
         userDefaults.removeObject(forKey: Self.imageCacheSessionKey)
         clearImageCache()
+        clearAttachmentCache()
+        clearMediaDropStaging()
         signedInUser.clear()
         // The account's displayed profile goes with the id — it is *displayed* before any
         // fetch, so a kept entry would name the previous account on the new one's screen.

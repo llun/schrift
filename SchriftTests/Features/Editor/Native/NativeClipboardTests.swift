@@ -566,4 +566,109 @@ final class NativeClipboardTests: NativeEditingTestCase {
         XCTAssertEqual(try link(at: 12), URL(string: "mailto:a@example.test"))
         XCTAssertEqual(try block(harness.session, "p").runs.filter { $0.marks.contains { $0.key == "link" } }.count, 4)
     }
+
+    func testR1BlockInlineCutAndInterlinkPasteQueueWhenBusyWithoutActiveBarrier() async throws {
+        func makeGated(_ disk: Latch) async throws -> Harness {
+            let interrupt: @Sendable (ReplicaStore.Operation, ReplicaStore.Boundary) throws -> Void = {
+                operation, boundary in
+                if operation == .append, boundary == .payloadWritten { disk.pass() }
+            }
+            let harness = try await makeHarness(interrupt: interrupt)
+            addTeardownBlock {
+                disk.open()
+                await harness.close()
+            }
+            return harness
+        }
+
+        // Capture a valid subtree payload once.
+        let seedHarness = try await makeHarness()
+        addTeardownBlock { await seedHarness.close() }
+        try caret(seedHarness, Self.firstID, 0)
+        let copiedResult = await seedHarness.run { seedHarness.input.performBlockAction(.copy) }
+        XCTAssertTrue(copiedResult)
+        let subtreePayload = try XCTUnwrap(seedHarness.pasteboard.data(forPasteboardType: payloadType))
+        let inlinePayload = try BlockNoteInlinePayload.encode([[.text([.run(InlineRun("chip"))])]])
+
+        // 1. Subtree block paste queues behind 32 predictions (isBusy == true, barrier == nil).
+        do {
+            let disk = Latch()
+            let harness = try await makeGated(disk)
+            try caret(harness, Self.firstID, 0)
+            for _ in 0..<NativeInputCoordinator.maxPendingTyping { harness.view.insertText("a") }
+            await waitUntil { disk.waiting == 1 }
+            harness.pasteboard.setItems([[payloadType: subtreePayload]])
+            XCTAssertTrue(harness.input.pasteFromPasteboard())
+            XCTAssertNil(harness.input.noticeKey)
+            disk.open()
+            await harness.settle()
+            XCTAssertEqual(harness.session.surface.blocks.count, 4)
+            try await assertConsistent(harness, localCommands: NativeInputCoordinator.maxPendingTyping + 1)
+        }
+
+        // 2. Inline slice paste queues behind 32 predictions.
+        do {
+            let disk = Latch()
+            let harness = try await makeGated(disk)
+            try caret(harness, Self.firstID, 0)
+            for _ in 0..<NativeInputCoordinator.maxPendingTyping { harness.view.insertText("b") }
+            await waitUntil { disk.waiting == 1 }
+            harness.pasteboard.setItems([[BlockNoteInlinePayload.pasteboardType: inlinePayload]])
+            XCTAssertTrue(harness.input.pasteFromPasteboard())
+            XCTAssertNil(harness.input.noticeKey)
+            disk.open()
+            await harness.settle()
+            XCTAssertTrue(texts(harness.session)[0].contains("chip"))
+            try await assertConsistent(harness, localCommands: NativeInputCoordinator.maxPendingTyping + 1)
+        }
+
+        // 3. Interlink paste queues behind 32 predictions.
+        do {
+            let disk = Latch()
+            let harness = try await makeGated(disk)
+            try caret(harness, Self.firstID, 0)
+            for _ in 0..<NativeInputCoordinator.maxPendingTyping { harness.view.insertText("c") }
+            await waitUntil { disk.waiting == 1 }
+            let docURL = "\(harness.scope.serverOrigin)/docs/\(UUID().uuidString.lowercased())/"
+            harness.pasteboard.setItems([[UTType.utf8PlainText.identifier: docURL]])
+            XCTAssertTrue(harness.input.pasteFromPasteboard())
+            XCTAssertNil(harness.input.noticeKey)
+            disk.open()
+            await harness.settle()
+            let hasInterlink = try block(harness.session, Self.firstID).runs.contains { $0.inlineObject != nil }
+            XCTAssertTrue(hasInterlink)
+            try await assertConsistent(harness, localCommands: NativeInputCoordinator.maxPendingTyping + 1)
+        }
+
+        // 4. Cut selection queues behind 32 predictions without holding `.deleteBackward` or refusing.
+        do {
+            let disk = Latch()
+            let harness = try await makeGated(disk)
+            try caret(harness, Self.firstID, 0)
+            for _ in 0..<NativeInputCoordinator.maxPendingTyping { harness.view.insertText("d") }
+            await waitUntil { disk.waiting == 1 }
+            let thirdStart = try location(harness.session, Self.thirdID, 0)
+            setSelection(harness, NSRange(location: thirdStart, length: 5))
+            XCTAssertTrue(harness.input.cutSelection())
+            XCTAssertNil(harness.input.noticeKey)
+            disk.open()
+            await harness.settle()
+            XCTAssertEqual(harness.pasteboard.string, "Third")
+            XCTAssertEqual(texts(harness.session).last, " paragraph.")
+            try await assertConsistent(harness, localCommands: NativeInputCoordinator.maxPendingTyping + 1)
+        }
+
+        // 5. Active barrier still refuses cut with busy notice.
+        do {
+            let disk = Latch()
+            let harness = try await makeGated(disk)
+            try caret(harness, Self.firstID, 5)
+            harness.view.insertText("\n")
+            setSelection(harness, NSRange(location: try location(harness.session, Self.thirdID, 0), length: 5))
+            XCTAssertFalse(harness.input.cutSelection())
+            XCTAssertEqual(harness.input.noticeKey, .native_editor_input_busy)
+            disk.open()
+            await harness.settle()
+        }
+    }
 }

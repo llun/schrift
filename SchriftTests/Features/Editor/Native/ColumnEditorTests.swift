@@ -677,6 +677,104 @@ final class ColumnEditorTests: NativeEditingTestCase {
                     ))
             ])
     }
+
+    /// `ColumnEditorScreen` forwards `uploads.uploadingBlocks`, `waitingBlocks`,
+    /// and `failedBlocks` to every column's `blockControls`, and `.insertMediaBatch`
+    /// from a nested block inside a column walks up to depth 0 of that column.
+    func testColumnEditorForwardsUploadStatesAndInsertsMediaBatchAtColumnRoot() async throws {
+        let harness = try await makeHarness(state: try fixture("two"))
+        addTeardownBlock { await harness.close() }
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let storeSuite = "ColumnEditorUploadTests.\(UUID().uuidString)"
+        let storeDefaults = try XCTUnwrap(UserDefaults(suiteName: storeSuite))
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: dir)
+            UserDefaults(suiteName: storeSuite)?.removePersistentDomain(forName: storeSuite)
+        }
+        let scope = harness.scope
+        let origin = scope.serverOrigin
+        let client = DocsAPIClient(
+            baseURL: URL(string: origin + "/api/v1.0/")!, session: MockURLProtocol.makeSession(),
+            cookieProvider: { [] })
+        let attachments = PendingAttachmentStore(
+            userDefaults: storeDefaults, directory: dir.appendingPathComponent("bytes"))
+        let queue = DocumentSaveCoordinator(
+            client: client, draftStore: PendingDraftStore(userDefaults: storeDefaults),
+            replicaStore: ReplicaStore(directory: dir.appendingPathComponent("replicas")),
+            contentCache: DocumentContentCacheStore(directory: dir.appendingPathComponent("cache")),
+            createStore: PendingDocumentCreateStore(userDefaults: storeDefaults),
+            attachmentStore: attachments, listCache: DocumentCacheStore(userDefaults: storeDefaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: storeDefaults), serverOrigin: origin,
+            backgroundTasks: .noop)
+        let uploads = NativeMediaUploads(scope: scope, queue: queue)
+
+        let model = ColumnEditorModel(document: harness.session, groupID: "cl")
+        addTeardownBlock { model.close() }
+
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let loc = LocalizationStore(userDefaults: defaults)
+        loc.language = .english
+        let host = UIHostingController(
+            rootView: ColumnEditorScreen(
+                model: model, serverOrigin: origin, uploads: uploads
+            )
+            .environment(loc))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        window.rootViewController = host
+        window.isHidden = false
+        windows.append(window)
+        for _ in 0..<200 where !(model.isLoaded && model.columns.count == 2) {
+            host.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(model.columns.count, 2)
+
+        let col1 = model.columns[0]
+        // `.insertMediaBatch` targeting `b2` (depth 1 inside `b` in column 1) walks up to depth 0 in column 1.
+        let input1 = try XCTUnwrap(col1.input)
+        var inserted: [String]?
+        let ok = await col1.run {
+            input1.insertMediaBatch(nodes: ["image", "video"], at: "b2", placement: .replaceOrAfter) {
+                inserted = $0
+            }
+        }
+        XCTAssertTrue(ok)
+        let ids = try XCTUnwrap(inserted)
+        XCTAssertEqual(ids.count, 2)
+        XCTAssertEqual(col1.surface.blocks.map(\.node), ["paragraph", "bulletListItem", "paragraph", "image", "video"])
+        XCTAssertEqual(col1.surface.blocks[3].id, ids[0])
+        XCTAssertEqual(col1.surface.blocks[4].id, ids[1])
+
+        // Start a held upload on `ids[0]` and confirm `ColumnTextHost` forwards `uploadingBlocks` into the card.
+        let slot = MediaBlock.Slot(node: "image", url: "")
+        let gatedTask = uploads.start(
+            .file { () async throws -> PreparedAttachmentFile? in
+                try await Task.sleep(for: .seconds(30))
+                return nil
+            }, into: ids[0], slot: slot, in: col1)
+        XCTAssertNotNil(gatedTask)
+        addTeardownBlock { gatedTask?.cancel() }
+
+        let uploadingLabel = try XCTUnwrap(Strings_en.table[.native_editor_media_uploading])
+        func labels(in root: UIView) -> [String] {
+            var out: [String] = []
+            if let l = root as? UILabel, let text = l.text { out.append(text) }
+            for sub in root.subviews { out.append(contentsOf: labels(in: sub)) }
+            return out
+        }
+        for _ in 0..<100
+        where
+            !(col1.textView.blockControls.uploadingBlocks.contains(ids[0])
+            && labels(in: col1.textView).contains(uploadingLabel))
+        {
+            host.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(col1.textView.blockControls.uploadingBlocks.contains(ids[0]))
+        XCTAssertTrue(labels(in: col1.textView).contains(uploadingLabel))
+    }
 }
 
 extension ColumnEditorTests {

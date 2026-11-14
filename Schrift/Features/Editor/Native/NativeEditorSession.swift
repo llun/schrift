@@ -490,6 +490,7 @@ final class NativeEditorSession {
         let input = NativeInputCoordinator(
             replica: replica, surfaceID: surfaceID, revision: revision, surface: surface, view: textView,
             recoveries: recoveries, hasRecoveryStore: hasRecoveryStore)
+        input.session = self
         let resolvedOrigin =
             interlinkingOrigin.isEmpty
             ? (scope?.serverOrigin ?? textView.blockControls.serverOrigin) : interlinkingOrigin

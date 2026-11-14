@@ -73,6 +73,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         var movesBlock = false
         /// Scoped source surface to open once the command has actually applied (PR14).
         var requestedSource: NativeSourceRequest? = nil
+        /// Invoked once when the barrier settles (`true` on `.applied`, `false`
+        /// when refused, invalidated, failed, or an unretried `.stale`).
+        var onSettled: ((Bool) -> Void)? = nil
     }
     @ObservationIgnored private var barrier: Barrier?
     /// What the deliveries since the barrier was posted showed: a retry and a
@@ -137,6 +140,12 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// Origin used to recognize same-origin document links on paste and format
     /// interlink plain text when copying.
     @ObservationIgnored var serverOrigin: String = ""
+    /// Owning editor session (root or column) for queued media uploads.
+    @ObservationIgnored weak var session: NativeEditorSession?
+    /// Durable PR13b media upload coordinator for dropped/pasted media.
+    @ObservationIgnored var mediaUploads: NativeMediaUploads?
+    /// Invoked right before a drop applies so multi-column hosts activate the target column.
+    @ObservationIgnored var onMediaDropActivate: (() -> Void)?
     /// An unpredicted IME composition commit (on a block containing inline
     /// objects) waiting for `.composition(.committed)` / `.reset` / `.invalidated`.
     @ObservationIgnored private var pendingCompositionCommit: (id: UUID, blockID: String, text: String)?
@@ -762,6 +771,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             }
             guard let barrier, barrier.id == id else { return }
             self.barrier = nil
+            let onSettled = barrier.onSettled
+            defer { onSettled?(true) }
             endUndoStep()
             noticeKey = nil
             if let requested = barrier.requestedSource {
@@ -807,6 +818,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             if pendingSlashPageLink?.commandID == id { pendingSlashPageLink = nil }
             guard let barrier, barrier.id == id else { return }
             self.barrier = nil
+            let onSettled = barrier.onSettled
             endBarrierSelection(ownEcho: false)
             endUndoStep()
             lastOutcome = false
@@ -817,6 +829,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             } else if let refusal = barrier.refusal {
                 noticeKey = refusal
             }
+            onSettled?(false)
         case .stale(let id):
             if pendingSlashPageLink?.commandID == id { pendingSlashPageLink = nil }
             guard let barrier, barrier.id == id else {
@@ -824,6 +837,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 return
             }
             self.barrier = nil
+            let onSettled = barrier.onSettled
             // A selection the user made meanwhile carries over to the retry.
             let carried = userSelection.flatMap { mapThroughBarrier($0.anchors, from: $0.seen) }
             userSelection = nil
@@ -848,8 +862,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 settleCopies(after: id, applied: false)
                 lastOutcome = false
                 if self.barrier == nil, noticeKey == nil { noticeKey = .native_editor_input_unavailable }
+                onSettled?(false)
             }
         case .invalidated(let epoch, let id):
+            let dropped = (barrier?.id == id) ? barrier?.onSettled : nil
+            if barrier?.id == id { barrier = nil }
             settleCopies(after: id, applied: false)
             if pendingSlashPageLink?.commandID == id { pendingSlashPageLink = nil }
             if let predicted = surface.predictions.first(where: { $0.commandID == id }) {
@@ -858,12 +875,15 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             self.epoch = epoch
             lastOutcome = false
             rollBack()
+            dropped?(false)
         case .failed:
+            let dropped = barrier?.onSettled
             barrier = nil
             pendingSlashPageLink = nil
             userSelection = nil
             lastOutcome = false
             stopAfterStorageFailure()
+            dropped?(false)
         case .composition(let id, let result):
             if let id { composition.finish(id) }
             switch result {
@@ -921,6 +941,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         if let view {
             selection.place(NSRange(location: min(view.selectedRange.location, surface.storage.length), length: 0))
         }
+    }
+
+    private var hasActiveBarrier: Bool {
+        barrier != nil
     }
 
     /// Something is in flight that the next key must wait for (a resolved
@@ -1246,7 +1270,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// `marks`, when given, is the complete mark set the text carries (a link
     /// edit); otherwise typing takes the marks at the caret.
     @discardableResult
-    func replace(range: NSRange, with text: String, marks: [TextMark]? = nil) -> Bool {
+    func replace(
+        range: NSRange, with text: String, marks: [TextMark]? = nil, holdWhenBusy: Bool = true
+    ) -> Bool {
         directInsertion = nil
         guard let view, view.isEditable, !isFrozen, !isDetached else { return false }
         guard range.length != 0 || !text.isEmpty else { return false }
@@ -1258,7 +1284,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // and deleting the character before it are held like keys.
         // Typing over a selection is held the same way and replays over the
         // selection then current.
-        if isBusy {
+        if isBusy, holdWhenBusy {
             if range == view.selectedRange, !text.isEmpty {
                 hold(.insert(text))
                 return true
@@ -1274,6 +1300,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 hold(.deleteBackward)
                 return true
             }
+            noticeKey = .native_editor_input_busy
+            return false
         }
         // Anything else would read offsets a commit still in flight owns.
         guard !compositionOwnsView else { return false }
@@ -1336,14 +1364,18 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         let caret = NSRange(location: range.location + text.utf16.count, length: 0)
         // Typing continues one undo step only from where typing left the caret.
         let undoBefore = view.selectedRange != typingCaret
-        guard barrier == nil, !awaitsReset else { return false }
-        guard canPredict(surface.blocks[position], blockRange, text, typed) else {
+        guard barrier == nil, !holdWhenBusy || !awaitsReset else { return false }
+        guard holdWhenBusy || (pendingCompositionCommit == nil && !awaitsReset),
+            canPredict(surface.blocks[position], blockRange, text, typed)
+        else {
             // The engine's own validation decides: shown on its result.
             return postBarrier(
                 entry.blockID, .replace(range: blockRange, replacement: text, marks: typed),
                 refusal: .native_editor_input_unavailable, placement: .at(caret.location), undoBefore: undoBefore,
                 undoAfter: false,
-                retry: again(at: range) { [weak self] in self?.replace(range: $0, with: text, marks: marks) ?? false })
+                retry: again(at: range) { [weak self] in
+                    self?.replace(range: $0, with: text, marks: marks, holdWhenBusy: holdWhenBusy) ?? false
+                })
         }
         let command = NativeEditCommand(
             id: UUID(), baseRevision: canonicalRevision, blockID: entry.blockID, range: blockRange,
@@ -1593,7 +1625,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     private func applyStructural(
         _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, keeping: NSRange? = nil,
         remapping: (blockID: String, offset: Int, length: Int)? = nil, retry: (() -> Bool)? = nil,
-        readsSelection: Bool = false, requestedSource: NativeSourceRequest? = nil
+        readsSelection: Bool = false, requestedSource: NativeSourceRequest? = nil,
+        onSettled: ((Bool) -> Void)? = nil
     ) -> Bool {
         // Folded content is never the target of a command.
         guard !surface.isHidden(blockID: blockID) else {
@@ -1607,13 +1640,44 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // A structural command is its own undo step.
         return postBarrier(
             blockID, kind, refusal: refusal, placement: placement, undoBefore: true, undoAfter: true, retry: retry,
-            readsSelection: readsSelection, requestedSource: requestedSource)
+            readsSelection: readsSelection, requestedSource: requestedSource, onSettled: onSettled)
+    }
+
+    /// Inserts 1..N empty media blocks at `blockID`'s enclosing depth-0 block
+    /// without opening `requestedMedia`. Invokes `onApplied` with the resulting
+    /// block IDs in order on `.applied`, or `[]` if the command does not commit.
+    @discardableResult
+    func insertMediaBatch(
+        nodes: [String], at blockID: String, placement: MediaInsertPlacement,
+        onApplied: (([String]) -> Void)? = nil
+    ) -> Bool {
+        guard canFormat, !nodes.isEmpty, surface.rangeIndex.entry(for: blockID) != nil else { return false }
+        let ids = nodes.map { _ in UUID().uuidString }
+        let paragraphID = UUID().uuidString
+        return applyStructural(
+            blockID,
+            .insertMediaBatch(nodes: nodes, placement: placement, ids: ids, paragraphID: paragraphID),
+            refusal: .native_editor_input_unavailable,
+            retry: again { [weak self] in
+                self?.insertMediaBatch(nodes: nodes, at: blockID, placement: placement, onApplied: onApplied) ?? false
+            },
+            onSettled: { [weak self] applied in
+                guard applied, let self else {
+                    onApplied?([])
+                    return
+                }
+                let inserted =
+                    self.surface.rangeIndex.entry(for: ids[0]) != nil
+                    ? ids
+                    : [blockID] + Array(ids.dropFirst())
+                onApplied?(inserted)
+            })
     }
 
     private func postBarrier(
         _ blockID: String, _ kind: NativeEditCommand.Kind, refusal: L10nKey?, placement: Barrier.Placement,
         undoBefore: Bool, undoAfter: Bool, retry: (() -> Bool)?, readsSelection: Bool = false,
-        requestedSource: NativeSourceRequest? = nil
+        requestedSource: NativeSourceRequest? = nil, onSettled: ((Bool) -> Void)? = nil
     ) -> Bool {
         guard barrier == nil else { return false }
         let command = NativeEditCommand(id: UUID(), baseRevision: canonicalRevision, blockID: blockID, kind: kind)
@@ -1626,7 +1690,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         else { return false }
         barrier = Barrier(
             id: command.id, refusal: refusal, placement: placement, retry: retry,
-            origin: readsSelection ? blockSelection() : nil, requestedSource: requestedSource)
+            origin: readsSelection ? blockSelection() : nil, requestedSource: requestedSource,
+            onSettled: onSettled)
         switch kind {
         case .moveUp, .moveDown, .join: barrier?.movesBlock = true
         default: break
@@ -1659,6 +1724,41 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     private var canFormat: Bool {
         sourceKind == nil && canEdit
+    }
+
+    var canEditForTextDrop: Bool {
+        canEdit
+    }
+
+    var canAcceptMediaDrop: Bool {
+        canFormat && !isBusy && tableMove == nil && tableKey == nil && mediaUploads?.canStartAnyUpload == true
+    }
+
+    /// Synchronous Edit-menu capability check that avoids reading `UIPasteboard` item contents.
+    func canPasteFromPasteboard() -> Bool {
+        guard canEdit else { return false }
+        if tableMove != nil || tableKey != nil {
+            return pasteboard.hasStrings
+                || pasteboard.contains(pasteboardTypes: [
+                    BlockNoteSubtreePayload.pasteboardType,
+                    TableClipboard.htmlType,
+                ])
+        }
+        if sourceKind != nil {
+            return pasteboard.hasStrings
+        }
+        if pasteboard.hasStrings
+            || pasteboard.hasURLs
+            || pasteboard.hasImages
+            || pasteboard.contains(pasteboardTypes: [
+                BlockNoteSubtreePayload.pasteboardType,
+                BlockNoteInlinePayload.pasteboardType,
+                TableClipboard.htmlType,
+            ])
+        {
+            return true
+        }
+        return pasteboard.contains(pasteboardTypes: NativeMediaDropPaste.pasteboardMediaIdentifiers)
     }
 
     /// Republishes `activeMarks` and the caret's typing attributes (what UIKit
@@ -2422,7 +2522,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @discardableResult
     func cutSelection() -> Bool {
         // A delete held behind a barrier would leave its copy unwritten.
-        guard !isBusy else {
+        guard !hasActiveBarrier else {
             noticeKey = .native_editor_input_busy
             return false
         }
@@ -2438,7 +2538,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // ordered), written once the delete is applied.
         let copy = copy(text: text, blocks: blocks, inlineSlices: slices)
         let before = lastCommandID
-        guard replace(range: view.selectedRange, with: ""), lastCommandID != before, let delete = lastCommandID else {
+        guard replace(range: view.selectedRange, with: "", holdWhenBusy: false),
+            lastCommandID != before,
+            let delete = lastCommandID
+        else {
             pendingCopies[copy] = nil
             return false
         }
@@ -2453,6 +2556,14 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @discardableResult
     func pasteFromPasteboard() -> Bool {
         guard let view, view.isEditable else { return false }
+        if sourceKind == nil, tableMove == nil, tableKey == nil {
+            switch NativeMediaDropPaste.classifyPasteboard(pasteboard) {
+            case .media(let providers):
+                return pasteMedia(providers)
+            case .textOrPayload, .empty:
+                break
+            }
+        }
         if sourceKind == nil {
             if view.selectedRange.length == 0,
                 let payload = pasteboard.data(forPasteboardType: BlockNoteSubtreePayload.pasteboardType)
@@ -2474,6 +2585,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         {
             directInsertion = nil
             guard !compositionOwnsView, !isFrozen, !isDetached else { return false }
+            guard !hasActiveBarrier else {
+                noticeKey = .native_editor_input_busy
+                return false
+            }
             let blockID = surface.blocks[position].id
             let range = pos.offset..<pos.offset
             return applyStructural(
@@ -2490,14 +2605,144 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         return replace(range: view.selectedRange, with: text)
     }
 
+    @discardableResult
+    func handleMediaDrop(
+        _ providers: [(provider: NSItemProvider, kind: NativeMediaDropPaste.PayloadKind)],
+        target: MediaDropTarget
+    ) -> Bool {
+        guard canFormat, tableMove == nil, tableKey == nil, mediaUploads?.canStartAnyUpload == true, !providers.isEmpty
+        else { return false }
+        guard providers.count <= NativeMediaDropPaste.maxItemsPerOperation else {
+            noticeKey = .native_editor_media_drop_limit
+            return false
+        }
+        guard !isBusy else {
+            noticeKey = .native_editor_input_busy
+            return false
+        }
+        guard session != nil, mediaUploads != nil,
+            providers.allSatisfy({ $0.kind.node != nil }),
+            surface.rangeIndex.entry(for: target.blockID) != nil
+        else {
+            noticeKey = .native_editor_input_unavailable
+            return false
+        }
+        onMediaDropActivate?()
+        return startMediaTransfer(providers: providers, targetBlockID: target.blockID, placement: target.placement)
+    }
+
+    @discardableResult
+    private func pasteMedia(
+        _ providers: [(provider: NSItemProvider, kind: NativeMediaDropPaste.PayloadKind)]
+    ) -> Bool {
+        guard canFormat, tableMove == nil, tableKey == nil, !providers.isEmpty else { return false }
+        guard providers.count <= NativeMediaDropPaste.maxItemsPerOperation else {
+            noticeKey = .native_editor_media_drop_limit
+            return false
+        }
+        guard mediaUploads?.canStartAnyUpload == true else {
+            noticeKey = .native_editor_media_upload_offline
+            return false
+        }
+        guard !isBusy else {
+            noticeKey = .native_editor_input_busy
+            return false
+        }
+        guard let target = pasteMediaTarget() else {
+            noticeKey = .native_editor_paste_unavailable
+            return false
+        }
+        return startMediaTransfer(providers: providers, targetBlockID: target.blockID, placement: target.placement)
+    }
+
+    private func pasteMediaTarget() -> (blockID: String, placement: MediaInsertPlacement)? {
+        guard let view else { return nil }
+        let entries = surface.rangeIndex.entries
+        let blocks = surface.blocks
+        guard !entries.isEmpty, entries.count == blocks.count else { return nil }
+
+        let anchorUTF16 = NSMaxRange(view.selectedRange)
+        let position =
+            surface.rangeIndex.textPosition(atUTF16: anchorUTF16, isUpperBound: view.selectedRange.length > 0)?.position
+            ?? (entries.count - 1)
+        guard let rootRange = NativeMediaDropPaste.rootBlockRange(at: position, in: blocks) else { return nil }
+
+        let rootBlock = blocks[rootRange.lowerBound]
+        let isEmptySelectedRoot =
+            view.selectedRange.length == 0
+            && rootRange.lowerBound == position
+            && NativeMediaDropPaste.isEmptyRootParagraph(range: rootRange, in: blocks)
+        return (rootBlock.id, isEmptySelectedRoot ? .replaceOrAfter : .after)
+    }
+
+    @discardableResult
+    private func startMediaTransfer(
+        providers: [(provider: NSItemProvider, kind: NativeMediaDropPaste.PayloadKind)],
+        targetBlockID: String,
+        placement: MediaInsertPlacement
+    ) -> Bool {
+        guard canAcceptMediaDrop, let session, let mediaUploads else { return false }
+        let nodes = providers.compactMap { $0.kind.node }
+        guard nodes.count == providers.count, !nodes.isEmpty else { return false }
+
+        // Synchronously initiate `NSItemProvider` staging so UIKit cross-app
+        // security-scoped file representations stay valid across async awaits.
+        let stagedBatch = NativeMediaDropPaste.stage(providers: providers)
+
+        let posted = insertMediaBatch(nodes: nodes, at: targetBlockID, placement: placement) {
+            [weak session, weak mediaUploads] insertedIDs in
+            guard !insertedIDs.isEmpty, let session, !session.isClosed, let mediaUploads else {
+                stagedBatch.cleanupAll()
+                return
+            }
+            Task { @MainActor [weak session, weak mediaUploads] in
+                let stagedItems = await stagedBatch.waitAll()
+                guard let session, !session.isClosed, let mediaUploads else {
+                    stagedBatch.cleanupAll()
+                    return
+                }
+                var uploadTasks: [Task<Void, Never>] = []
+                for (blockID, item) in zip(insertedIDs, stagedItems) {
+                    if let task = mediaUploads.start(
+                        item.source,
+                        into: blockID,
+                        slot: MediaBlock.Slot(node: item.node, url: ""),
+                        in: session,
+                        onCleanup: { item.cleanupStagingFile() })
+                    {
+                        uploadTasks.append(task)
+                    } else {
+                        item.cleanupStagingFile()
+                    }
+                }
+                for task in uploadTasks {
+                    await task.value
+                }
+                stagedBatch.cleanupAll()
+            }
+        }
+        if !posted {
+            if !isFrozen, noticeKey == nil { noticeKey = .native_editor_input_unavailable }
+            stagedBatch.cleanupAll()
+        }
+        return posted
+    }
+
     /// The payload is untrusted: the engine decodes, bounds and validates it
     /// and mints its ids; a too-large refusal (`.payloadTooLarge`) gets its own
     /// notice.
     private func pasteBlocks(_ payload: Data) -> Bool {
         directInsertion = nil
         guard let view, !compositionOwnsView, !isFrozen, !isDetached else { return false }
+        guard !hasActiveBarrier else {
+            noticeKey = .native_editor_input_busy
+            return false
+        }
         let index = surface.rangeIndex
-        guard let entry = index.entry(atUTF16: view.selectedRange.location) ?? index.entries.last else { return false }
+        guard let entry = index.entry(atUTF16: view.selectedRange.location) ?? index.entries.last else {
+            noticeKey = .native_editor_paste_unavailable
+            return false
+        }
         return applyStructural(
             entry.blockID, .insertSubtrees(payload: payload), refusal: .native_editor_paste_unavailable,
             retry: again { [weak self] in self?.pasteBlocks(payload) ?? false }, readsSelection: true)
@@ -2506,6 +2751,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     private func pasteInline(_ payload: Data, replacing range: NSRange) -> Bool {
         directInsertion = nil
         guard view != nil, !compositionOwnsView, !isFrozen, !isDetached else { return false }
+        guard !hasActiveBarrier else {
+            noticeKey = .native_editor_input_busy
+            return false
+        }
         let index = surface.rangeIndex
         guard let start = index.textPosition(atUTF16: range.location),
             let end = index.textPosition(atUTF16: NSMaxRange(range), isUpperBound: range.length > 0)
@@ -2961,6 +3210,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         directInsertion = nil
         let first = !isFrozen
         isFrozen = true
+        let dropped = barrier?.onSettled
         barrier = nil
         if !surface.predictions.isEmpty || !intents.isEmpty { rollBack() }
         // No delete will be applied and no payload may come: nothing is copied.
@@ -2969,14 +3219,17 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         view?.resignFirstResponder()
         noticeKey = .native_editor_storage_failed
         if first { onFrozen() }
+        dropped?(false)
     }
 
     /// The session closed: nothing more is posted.
     func detach() {
         isDetached = true
+        let dropped = barrier?.onSettled
         barrier = nil
         intents = []
         history.destroy()
+        dropped?(false)
     }
 
     /// A composition this editor cannot support (a multi-block selection, an

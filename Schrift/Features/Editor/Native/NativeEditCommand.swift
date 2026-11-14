@@ -76,6 +76,13 @@ struct NativeEditCommand: Equatable, Sendable {
         /// in place of the emptied paragraph or after it; `ids` are the new
         /// block's and the trailing paragraph's (either may go unused).
         case insertMedia(node: String, ids: [String], removing: Range<Int>)
+        /// Inserts 1..N empty media blocks in one Yjs transaction relative to
+        /// `command.blockID`'s enclosing depth-0 block (PR13b.2). `ids` has
+        /// `nodes.count` block IDs (`ids[0]` goes unused when item 0 replaces an
+        /// empty paragraph in place); `paragraphID` is the optional trailing
+        /// root paragraph ID.
+        case insertMediaBatch(
+            nodes: [String], placement: MediaInsertPlacement, ids: [String], paragraphID: String?)
         /// The slash menu's mathBlock / diagram items (PR14), on the "/query"
         /// paragraph: removes `removing` and replaces the emptied paragraph
         /// (preserving its id) or inserts a new source block with `newID` after it.
@@ -127,7 +134,8 @@ struct NativeEditCommand: Equatable, Sendable {
         case .range(let range): return range.replacement
         case .split, .join, .marks, .props, .blockType, .indent, .outdent, .moveUp, .moveDown, .duplicate,
             .deleteBlock, .insertBlock, .insertSubtrees, .lineBreak, .table, .columns, .insertColumns, .insertMedia,
-            .insertSourceBlock, .mediaProps, .insertInlineObject, .insertInlineMath, .pasteInline, .undo, .redo:
+            .insertMediaBatch, .insertSourceBlock, .mediaProps, .insertInlineObject, .insertInlineMath, .pasteInline,
+            .undo, .redo:
             return ""
         }
     }

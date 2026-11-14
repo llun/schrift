@@ -38,7 +38,13 @@ actor ImageDataClient {
     /// Immutable cookies captured by the session-scoped loader. A redirect
     /// re-applies only snapshot cookies eligible for its destination path.
     func data(for url: URL, cookies: [HTTPCookie], byteLimit: Int = ImageDataClient.maximumBytes) async throws -> Data {
-        try await data(
+        try await responseData(for: url, cookies: cookies, byteLimit: byteLimit).data
+    }
+
+    func responseData(
+        for url: URL, cookies: [HTTPCookie], byteLimit: Int = ImageDataClient.maximumBytes
+    ) async throws -> (data: Data, mimeType: String?) {
+        try await responseData(
             for: url,
             cookieProvider: { destination in
                 cookies.filter { imageCookieApplies($0, to: destination) }
@@ -52,12 +58,12 @@ actor ImageDataClient {
         } else {
             provider = { _ in [] }
         }
-        return try await data(for: url, cookieProvider: provider, byteLimit: Self.maximumBytes)
+        return try await responseData(for: url, cookieProvider: provider, byteLimit: Self.maximumBytes).data
     }
 
-    private func data(for url: URL, cookieProvider: @escaping @Sendable (URL) -> [HTTPCookie], byteLimit: Int)
-        async throws -> Data
-    {
+    private func responseData(
+        for url: URL, cookieProvider: @escaping @Sendable (URL) -> [HTTPCookie], byteLimit: Int
+    ) async throws -> (data: Data, mimeType: String?) {
         guard let origin = siteOrigin(for: url), url.user == nil, url.password == nil, byteLimit > 0 else {
             throw URLError(.unsupportedURL)
         }
@@ -73,21 +79,21 @@ actor ImageDataClient {
             stream.task.cancel()
             throw URLError(.badServerResponse)
         }
-        guard response.expectedContentLength <= Int64(min(Self.maximumBytes, byteLimit)) else {
+        guard response.expectedContentLength <= Int64(byteLimit) else {
             stream.task.cancel()
             throw URLError(.dataLengthExceedsMaximum)
         }
         var data = Data()
         do {
             for try await byte in stream {
-                guard data.count < min(Self.maximumBytes, byteLimit) else { throw URLError(.dataLengthExceedsMaximum) }
+                guard data.count < byteLimit else { throw URLError(.dataLengthExceedsMaximum) }
                 data.append(byte)
             }
         } catch {
             stream.task.cancel()
             throw error
         }
-        return data
+        return (data, http.mimeType)
     }
 }
 

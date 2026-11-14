@@ -82,6 +82,122 @@ func attachmentContentType(forFileExtension fileExtension: String) -> String {
     return mime
 }
 
+enum ValidatedImportFile {
+    case valid
+    case tooLarge
+    case rejected
+}
+
+private func isPath(_ path: String, insideRoot rootPath: String) -> Bool {
+    let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+    return path == rootPath || path.hasPrefix(prefix)
+}
+
+private func isURL(_ candidate: URL, inside root: URL) -> Bool {
+    let candidatePaths = [
+        candidate.standardizedFileURL.path,
+        candidate.resolvingSymlinksInPath().standardizedFileURL.path,
+    ]
+    let rootPaths = [
+        root.standardizedFileURL.path,
+        root.resolvingSymlinksInPath().standardizedFileURL.path,
+    ]
+    return candidatePaths.contains { cPath in
+        rootPaths.contains { rPath in isPath(cPath, insideRoot: rPath) }
+    }
+}
+
+private func isURLFullyInside(_ candidate: URL, root: URL) -> Bool {
+    let rawCandidate = candidate.standardizedFileURL.path
+    let resolvedCandidate = candidate.resolvingSymlinksInPath().standardizedFileURL.path
+    let rawRoot = root.standardizedFileURL.path
+    let resolvedRoot = root.resolvingSymlinksInPath().standardizedFileURL.path
+    let rawMatches = isPath(rawCandidate, insideRoot: rawRoot) || isPath(rawCandidate, insideRoot: resolvedRoot)
+    let resolvedMatches =
+        isPath(resolvedCandidate, insideRoot: rawRoot) || isPath(resolvedCandidate, insideRoot: resolvedRoot)
+    return rawMatches && resolvedMatches
+}
+
+/// Refuses files inside the app bundle, `Library/`, `Documents/`, or
+/// `MediaDropStaging` (unless `allowStagingRoot` is explicitly enabled for
+/// reading a previously staged drop/paste copy).
+func isAllowedImportSourceURL(_ url: URL, allowStagingRoot: Bool = false) -> Bool {
+    guard url.isFileURL else { return false }
+    let stagingRoot = NativeMediaDropPaste.stagingRootDirectory()
+    if allowStagingRoot, isURLFullyInside(url, root: stagingRoot) {
+        return true
+    }
+
+    let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+    var forbiddenRoots: [URL] = [
+        Bundle.main.bundleURL,
+        home.appendingPathComponent("Library", isDirectory: true),
+        home.appendingPathComponent("Documents", isDirectory: true),
+        stagingRoot,
+    ]
+    forbiddenRoots.append(contentsOf: FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask))
+    forbiddenRoots.append(contentsOf: FileManager.default.urls(for: .documentDirectory, in: .userDomainMask))
+
+    return !forbiddenRoots.contains { isURL(url, inside: $0) }
+}
+
+/// Validates that `url` is an allowed, non-symlink regular file within `byteLimit`.
+func validateRegularImportFile(
+    at url: URL,
+    byteLimit: Int,
+    allowStagingRoot: Bool = false
+) -> ValidatedImportFile {
+    guard url.isFileURL, !url.hasDirectoryPath, isAllowedImportSourceURL(url, allowStagingRoot: allowStagingRoot) else {
+        return .rejected
+    }
+    var fresh = URL(fileURLWithPath: url.path)
+    fresh.removeAllCachedResourceValues()
+    guard
+        let values = try? fresh.resourceValues(forKeys: [
+            .isSymbolicLinkKey, .isRegularFileKey, .isDirectoryKey, .fileSizeKey,
+        ]),
+        values.isSymbolicLink != true,
+        values.isRegularFile == true,
+        values.isDirectory != true
+    else {
+        return .rejected
+    }
+    if let size = values.fileSize, size > byteLimit {
+        return .tooLarge
+    }
+    return .valid
+}
+
+private func readRegularFileBytes(at url: URL, byteLimit: Int) throws -> Data {
+    let fd = Darwin.open(url.path, O_RDONLY | O_NOFOLLOW)
+    guard fd >= 0 else { throw AttachmentImportError.unreadable }
+    defer { Darwin.close(fd) }
+
+    var st = stat()
+    guard Darwin.fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG else {
+        throw AttachmentImportError.unreadable
+    }
+    if st.st_size > Int64(byteLimit) {
+        throw AttachmentImportError.tooLarge
+    }
+
+    var data = Data()
+    var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+    while true {
+        let count = Darwin.read(fd, &buffer, buffer.count)
+        if count < 0 {
+            if errno == EINTR { continue }
+            throw AttachmentImportError.unreadable
+        }
+        if count == 0 { break }
+        if data.count + count > byteLimit {
+            throw AttachmentImportError.tooLarge
+        }
+        data.append(buffer, count: count)
+    }
+    return data
+}
+
 /// Reads a file the system picker handed us, refusing an oversized one *before*
 /// its bytes are read.
 ///
@@ -89,25 +205,24 @@ func attachmentContentType(forFileExtension fileExtension: String) -> String {
 /// in a security scope. Both the size probe and the read can fail for reasons
 /// the user can act on (a file that has moved, an iCloud item not downloaded),
 /// which is why they surface as `unreadable` rather than as a nil.
-func loadPickedAttachmentFile(at url: URL, byteLimit: Int = attachmentImportByteLimit) throws
-    -> PreparedAttachmentFile
-{
+func loadPickedAttachmentFile(
+    at url: URL,
+    byteLimit: Int = attachmentImportByteLimit,
+    allowStagingRoot: Bool = false
+) throws -> PreparedAttachmentFile {
     let scoped = url.startAccessingSecurityScopedResource()
     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
 
-    // Two guards for one rule, and the pair is deliberate. The first refuses
-    // without reading, which is the point — a 2 GB pick should not be loaded
-    // into memory to discover it is too big. The second is the backstop for a
-    // url whose size the file system declines to report, where there is no
-    // choice but to read first. They are indistinguishable from outside (same
-    // error, same inputs), so no test can tell them apart; what a test can pin
-    // is that the limit holds either way, which `AttachmentPreparationTests`
-    // does.
-    let reportedSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? nil
-    if let reportedSize, reportedSize > byteLimit { throw AttachmentImportError.tooLarge }
+    switch validateRegularImportFile(at: url, byteLimit: byteLimit, allowStagingRoot: allowStagingRoot) {
+    case .valid:
+        break
+    case .tooLarge:
+        throw AttachmentImportError.tooLarge
+    case .rejected:
+        throw AttachmentImportError.unreadable
+    }
 
-    guard let data = try? Data(contentsOf: url) else { throw AttachmentImportError.unreadable }
-    guard data.count <= byteLimit else { throw AttachmentImportError.tooLarge }
+    let data = try readRegularFileBytes(at: url, byteLimit: byteLimit)
 
     return PreparedAttachmentFile(
         fileName: sanitizedAttachmentFileName(url.lastPathComponent),

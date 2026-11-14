@@ -154,4 +154,42 @@ final class AttachmentPreparationTests: XCTestCase {
             XCTFail("unexpected error: \(error)")
         }
     }
+
+    func testSymlinksAndContainerFilesAreRefused() throws {
+        let target = try write(Data("secret".utf8), named: "target.txt")
+        let validSymlink = directory.appendingPathComponent("link.txt")
+        try FileManager.default.createSymbolicLink(at: validSymlink, withDestinationURL: target)
+
+        let danglingSymlink = directory.appendingPathComponent("dangling.txt")
+        try FileManager.default.createSymbolicLink(
+            atPath: danglingSymlink.path, withDestinationPath: "../../../../Library/Preferences/missing.plist")
+
+        let bigTarget = directory.appendingPathComponent("big.bin")
+        FileManager.default.createFile(atPath: bigTarget.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: bigTarget)
+        try handle.truncate(atOffset: 4096)
+        try handle.close()
+        let bigSymlink = directory.appendingPathComponent("big-link.bin")
+        try FileManager.default.createSymbolicLink(at: bigSymlink, withDestinationURL: bigTarget)
+
+        let cachesDir = try XCTUnwrap(
+            FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first)
+        try FileManager.default.createDirectory(at: cachesDir, withIntermediateDirectories: true)
+        let containerFile = cachesDir.appendingPathComponent("container-\(UUID().uuidString).txt")
+        try Data("private".utf8).write(to: containerFile)
+        addTeardownBlock { try? FileManager.default.removeItem(at: containerFile) }
+
+        let bundleFile = Bundle.main.bundleURL.appendingPathComponent("Info.plist")
+
+        for forbidden in [validSymlink, danglingSymlink, bigSymlink, containerFile, bundleFile] {
+            do {
+                _ = try loadPickedAttachmentFile(at: forbidden, byteLimit: 1024)
+                XCTFail("expected AttachmentImportError.unreadable for \(forbidden.path)")
+            } catch let error as AttachmentImportError {
+                XCTAssertEqual(error, .unreadable, "unexpected error for \(forbidden.path)")
+            } catch {
+                XCTFail("unexpected error for \(forbidden.path): \(error)")
+            }
+        }
+    }
 }

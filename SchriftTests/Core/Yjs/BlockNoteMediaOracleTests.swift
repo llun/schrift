@@ -539,4 +539,148 @@ final class BlockNoteMediaOracleTests: XCTestCase {
         XCTAssertNil(NativeBlockProjection.markdownShadow(doc))
         XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: "https://docs.example"))
     }
+
+    // MARK: - PR13b.2 Step 3: Batch media insertion
+
+    /// Single-item `.insertMediaBatch(..., placement: .replaceOrAfter)` matches
+    /// BlockNote's web XML and Markdown captures byte-for-byte.
+    func testInsertMediaBatchSingleItemMatchesWebCaptures() throws {
+        func verify(
+            _ name: String, openColumns: Bool = false, targetID: String, node: String, ids: [String],
+            paragraphID: String
+        ) throws {
+            let capture = try XCTUnwrap(BlockNoteMediaCaptures.edits.first { $0.name == name }, name)
+            let doc = try doc(capture.seed, clientID: 2)
+            defer { doc.destroy() }
+            let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+            defer { engine.detach() }
+            if openColumns { XCTAssertTrue(engine.openColumns("cl"), name) }
+            try apply(
+                engine, targetID,
+                .insertMediaBatch(nodes: [node], placement: .replaceOrAfter, ids: ids, paragraphID: paragraphID))
+            XCTAssertEqual(YXMLString.fragment(doc), capture.xml, name)
+            assertShadow(doc, capture.markdown, name)
+            XCTAssertFalse(engine.nativeWriteFailed, name)
+            XCTAssertTrue(NativeBlockProjection.project(doc).isFullyModeled, name)
+        }
+
+        for node in ["image", "video", "audio", "file", "pdf"] {
+            try verify("\(node)SlashEmpty", targetID: "q", node: node, ids: ["spare"], paragraphID: "spare2")
+            try verify("\(node)SlashAfterText", targetID: "lead", node: node, ids: ["1"], paragraphID: "spare")
+        }
+        try verify("imageSlashLastEmpty", targetID: "q", node: "image", ids: ["spare"], paragraphID: "1")
+        try verify("imageSlashLastText", targetID: "lead", node: "image", ids: ["1"], paragraphID: "2")
+        try verify("imageSlashBeforeDivider", targetID: "q", node: "image", ids: ["spare"], paragraphID: "1")
+        try verify("imageSlashBeforeDividerLast", targetID: "q", node: "image", ids: ["spare"], paragraphID: "1")
+        try verify(
+            "imageSlashInColumn", openColumns: true, targetID: "q", node: "image", ids: ["spare"], paragraphID: "1")
+        try verify(
+            "imageSlashInColumnLast", openColumns: true, targetID: "q", node: "image", ids: ["spare"], paragraphID: "1")
+    }
+
+    /// Multi-item `.insertMediaBatch` writes canonical BlockNote XML (including
+    /// shared-prop replacement on item 0, `.before` / `.after`, depth > 0
+    /// ancestor walk, and a single trailing root paragraph) with full shadow.
+    func testInsertMediaBatchMultiBlockParityAndRefusals() throws {
+        // 1. Replace empty paragraph "q" with image ("q"), video ("v1"), file ("f1").
+        let emptyCapture = try XCTUnwrap(BlockNoteMediaCaptures.edits.first { $0.name == "imageSlashEmpty" })
+        do {
+            let doc = try doc(emptyCapture.seed, clientID: 2)
+            defer { doc.destroy() }
+            let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+            defer { engine.detach() }
+            try apply(
+                engine, "q",
+                .insertMediaBatch(
+                    nodes: ["image", "video", "file"], placement: .replaceOrAfter, ids: ["spare", "v1", "f1"],
+                    paragraphID: "pEnd"))
+            let xml = YXMLString.fragment(doc)
+            XCTAssertFalse(xml.contains("spare"))
+            XCTAssertFalse(xml.contains("pEnd"))
+            XCTAssertTrue(
+                xml.contains(#"<blockcontainer id="q"><image "#)
+                    && xml.contains(#"<blockcontainer id="v1"><video "#)
+                    && xml.contains(#"<blockcontainer id="f1"><file "#),
+                xml)
+            XCTAssertTrue(NativeBlockProjection.project(doc).isFullyModeled)
+            XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc))
+        }
+
+        // 2. `.before` "lead" in `imageSlashLastText` inserts in order before "lead" with no extra trailing paragraph.
+        let lastTextCapture = try XCTUnwrap(BlockNoteMediaCaptures.edits.first { $0.name == "imageSlashLastText" })
+        do {
+            let doc = try doc(lastTextCapture.seed, clientID: 2)
+            defer { doc.destroy() }
+            let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+            defer { engine.detach() }
+            try apply(
+                engine, "lead",
+                .insertMediaBatch(
+                    nodes: ["image", "pdf"], placement: .before, ids: ["m1", "m2"], paragraphID: "pEnd"))
+            let ids = NativeBlockProjection.project(doc).blocks.map(\.block.id)
+            XCTAssertEqual(ids, ["m1", "m2", "lead"])
+            XCTAssertTrue(NativeBlockProjection.project(doc).isFullyModeled)
+            XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc))
+        }
+
+        // 3. `depth > 0` target in `imageSlashNestedEmpty` walks up to the enclosing depth-0 ancestor.
+        let nestedCapture = try XCTUnwrap(BlockNoteMediaCaptures.edits.first { $0.name == "imageSlashNestedEmpty" })
+        do {
+            let doc = try doc(nestedCapture.seed, clientID: 2)
+            defer { doc.destroy() }
+            let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+            defer { engine.detach() }
+            try apply(
+                engine, "q",
+                .insertMediaBatch(
+                    nodes: ["image", "audio"], placement: .replaceOrAfter, ids: ["m1", "m2"], paragraphID: "pEnd"))
+            let projected = NativeBlockProjection.project(doc)
+            XCTAssertEqual(projected.blocks.filter { $0.block.id == "m1" || $0.block.id == "m2" }.map(\.depth), [0, 0])
+            XCTAssertTrue(projected.isFullyModeled)
+            XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc))
+        }
+
+        // 4. Paragraph with children (`imageSlashWithChildren`): never replaced in place, inserts after at depth 0.
+        let childrenCapture = try XCTUnwrap(BlockNoteMediaCaptures.edits.first { $0.name == "imageSlashWithChildren" })
+        do {
+            let doc = try doc(childrenCapture.seed, clientID: 2)
+            defer { doc.destroy() }
+            let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+            defer { engine.detach() }
+            try apply(
+                engine, "q",
+                .insertMediaBatch(
+                    nodes: ["image", "video"], placement: .replaceOrAfter, ids: ["m1", "m2"], paragraphID: "pEnd"))
+            let projected = NativeBlockProjection.project(doc)
+            XCTAssertEqual(projected.blocks.first { $0.block.id == "q" }?.block.node, "paragraph")
+            XCTAssertEqual(projected.blocks.filter { $0.block.id == "m1" || $0.block.id == "m2" }.map(\.depth), [0, 0])
+            XCTAssertTrue(projected.isFullyModeled)
+            XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc))
+        }
+
+        // 5. Refusals: invalid inputs write zero bytes.
+        do {
+            let doc = try doc(emptyCapture.seed, clientID: 2)
+            defer { doc.destroy() }
+            let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+            defer { engine.detach() }
+            let before = YXMLString.fragment(doc)
+            let invalidKinds: [NativeEditCommand.Kind] = [
+                .insertMediaBatch(nodes: [], placement: .after, ids: [], paragraphID: nil),
+                .insertMediaBatch(nodes: ["image", "video"], placement: .after, ids: ["only1"], paragraphID: nil),
+                .insertMediaBatch(
+                    nodes: ["image", "video"], placement: .after, ids: ["dup", "dup"], paragraphID: nil),
+                .insertMediaBatch(nodes: ["image"], placement: .after, ids: ["q"], paragraphID: nil),
+                .insertMediaBatch(nodes: ["paragraph"], placement: .after, ids: ["m1"], paragraphID: nil),
+                .insertMediaBatch(nodes: [MediaBlock.uploadLoader], placement: .after, ids: ["m1"], paragraphID: nil),
+                .insertMediaBatch(nodes: ["image"], placement: .after, ids: ["same"], paragraphID: "same"),
+            ]
+            for kind in invalidKinds {
+                let cmd = command(engine, "q", kind)
+                XCTAssertFalse(engine.canApplyStructural(cmd))
+                XCTAssertThrowsError(try engine.applyStructural(cmd, persist: { _ in }))
+            }
+            XCTAssertEqual(YXMLString.fragment(doc), before)
+        }
+    }
 }
