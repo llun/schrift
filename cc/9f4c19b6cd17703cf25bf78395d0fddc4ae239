@@ -1,0 +1,33 @@
+Schrift/Features/Editor/EditorView.swift
+  s_dc239db0cc1c9d::t_4aa03a1fb47409 300,331-332,346-349,356-359,367,371-391,396,402-450
+Schrift/Features/Editor/EditorViewModel.swift
+  s_dc239db0cc1c9d::t_27989684c7f122 169-171,3078,3081-3097,3105-3112,3134-3136
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_dc239db0cc1c9d::t_7180ede707a65c 638-640,645-648,651-652,691-693,700-701,756,868,871,874,883-886,897,900,1037,1041,1044-1046,1068,1072,1077-1082,1085-1088,1090-1093,1146,1193-1195
+Schrift/Features/Editor/Native/NativeEditorView.swift
+  s_dc239db0cc1c9d::t_26ccf53fe48a5a 36-37,86-87,124-137,272-274,627,659-661,668,670-687,690
+Schrift/Features/Editor/Native/NativeMentionAccessLoader.swift
+  s_dc239db0cc1c9d::t_f60e57c7881fa8 1-128
+Schrift/Features/Editor/Native/NativeMentionPickerView.swift
+  s_dc239db0cc1c9d::t_e919a1c5c9d763 1-236
+SchriftTests/Features/Editor/Native/NativeEditorInlinePickerViewTests.swift
+  s_dc239db0cc1c9d::t_904a4f75fc2a03 1-644
+SchriftTests/Features/Editor/Native/NativeMentionAccessLoaderTests.swift
+  s_dc239db0cc1c9d::t_96fbcfe80d44f8 1-256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cc9f4c19b6cd17703cf25bf78395d0fddc4ae239",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
