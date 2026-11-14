@@ -1004,6 +1004,7 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     private func refreshLabels() {
         liveBlocks = Dictionary(
             (cellSession?.surface.blocks ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        lastResolvedInterlinkTitles = currentResolvedInterlinkTitles()
         for (ref, view) in cellViews { configureText(view, ref) }
     }
 
@@ -1361,7 +1362,6 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         recordedDocumentTitles[documentID] = safeTitle
         document.surface.recordDocumentTitle(safeTitle, for: documentID)
         cellSession?.surface.recordDocumentTitle(safeTitle, for: documentID)
-        lastResolvedInterlinkTitles = currentResolvedInterlinkTitles()
         cellHeights.removeAll()
         refreshLabels()
         layoutGrid()
@@ -1617,7 +1617,13 @@ private struct TableEditorRepresentable: UIViewControllerRepresentable {
         editor.localizationStore = loc
         if let inlinePickerSource, !context.coordinator.installedInlinePickerSource {
             context.coordinator.installedInlinePickerSource = true
-            editor.inlinePickerSource = inlinePickerSource
+            if editor.cellSession?.input == nil {
+                editor.inlinePickerSource = inlinePickerSource
+            } else {
+                Task { @MainActor [weak editor] in
+                    editor?.inlinePickerSource = inlinePickerSource
+                }
+            }
         }
         editor.onOpenDocument = onOpenDocument
         editor.onOpenSource = onOpenSource

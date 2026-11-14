@@ -503,34 +503,45 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// Every queued patch and result first; then what acts on the display
     /// they reached: a failure that waited, stale retries, held keys. Nothing
     /// is applied while a reset asked for is still on its way.
-    private func drain() {
+    private func drain(forceSelectionRefresh: Bool = false) {
         guard resyncsAsked == 0 else { return }
         let deliveries = queued
         queued = []
-        for delivery in deliveries { applyNow(delivery) }
+        var needsSelectionRefresh = forceSelectionRefresh
+        for delivery in deliveries {
+            if applyNow(delivery) { needsSelectionRefresh = true }
+        }
         if failsAfterComposition {
             failsAfterComposition = false
             stopAfterStorageFailure()
+            needsSelectionRefresh = true
         }
         let stale = staleAfterDrain
         staleAfterDrain = []
+        if !stale.isEmpty { needsSelectionRefresh = true }
         asOneKeyboardChange(if: !stale.isEmpty) {
             for id in stale { handle(.stale(commandID: id), selection: nil) }
         }
-        refreshSelectionMarks()
+        if needsSelectionRefresh { refreshSelectionMarks() }
         replayIntents()
     }
 
     /// Marked text ended: storage is the model's again, and what waited applies.
     private func releaseComposition() {
         surface.holdForComposition(false)
-        drain()
+        drain(forceSelectionRefresh: true)
         keepSelectionVisible()
     }
 
     /// Applies one delivery: its patches in order, then its result, as one
     /// keyboard change.
-    private func applyNow(_ delivery: ReplicaDelivery) {
+    @discardableResult
+    private func applyNow(_ delivery: ReplicaDelivery) -> Bool {
+        let becameDetached = delivery.state.detached && !isDetached
+        let becameFrozen = delivery.state.frozen && !isFrozen
+        let needsRefresh =
+            !delivery.events.isEmpty || delivery.result != nil || delivery.resync != nil
+            || becameDetached || becameFrozen
         // Only what can move storage or the caret is a keyboard text change:
         // this surface's own keystroke echoes and drain markers are not.
         let changes =
@@ -629,7 +640,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             pendingCopies[inlineClipboard.requestID]?.payload = .some(inlineClipboard.payload)
             flushCopies()
         }
-        refreshSelectionMarks()
+        if needsRefresh { refreshSelectionMarks() }
+        return needsRefresh
     }
 
     /// A block-relative point as a document offset, clamped to its block's text.
