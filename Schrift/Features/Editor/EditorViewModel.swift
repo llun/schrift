@@ -166,6 +166,9 @@ final class EditorViewModel {
     /// decoding Home's lists from `UserDefaults` on every keystroke. Not observed: it is a
     /// memo of on-disk state, refreshed whenever a new search starts.
     @ObservationIgnored private var pageLinkCandidateMemo: PageLinkCandidateMemo?
+    /// Titles primed by native page-link picks so newly inserted chips resolve immediately
+    /// even if cache lookups lag or omit the document.
+    @ObservationIgnored private var recordedNativeDocumentTitles: [UUID: String] = [:]
     /// The block whose text view holds an input method's uncommitted (marked) text, as its
     /// text view last reported it. While it does, UIKit owns those characters — a model write
     /// is not applied to the view until the composition commits, and the commit then
@@ -3072,16 +3075,39 @@ final class EditorViewModel {
         if let memo = pageLinkCandidateMemo, memo.key == key {
             cached = memo.documents
         } else {
-            let homeLists = signedInUser.userID.map { listCache.documents(fetchedFor: $0) } ?? []
-            let parents = Set([documentID] + (subpages ?? []).map(\.id) + homeLists.map(\.id))
-            cached = homeLists + childrenCache.children(ofParents: parents)
+            cached = accountScopedCachedDocuments()
             pageLinkCandidateMemo = PageLinkCandidateMemo(key: key, documents: cached)
         }
+        return filterAvailablePageLinkCandidates(cached: cached)
+    }
+
+    /// Account-scoped page candidates (`subpages`, signed-in Home lists, and their
+    /// cached children) for the native `[[` and slash `"Link a page"` pickers,
+    /// excluding this document and pending creates/deletes.
+    func nativePageLinkCandidates() -> [Document] {
+        filterAvailablePageLinkCandidates(cached: accountScopedCachedDocuments()).filter { $0.id != documentID }
+    }
+
+    private func accountScopedCachedDocuments() -> [Document] {
+        let homeLists = signedInUser.userID.map { listCache.documents(fetchedFor: $0) } ?? []
+        let parents = Set([documentID] + (subpages ?? []).map(\.id) + homeLists.map(\.id))
+        return homeLists + childrenCache.children(ofParents: parents)
+    }
+
+    private func filterAvailablePageLinkCandidates(cached: [Document]) -> [Document] {
         // `subpages` is live state, so it is merged on every read rather than memoized, and
         // first: it is the freshest copy of the documents it holds.
         return ((subpages ?? []) + cached).filter {
             !saveCoordinator.isPendingCreate(documentID: $0.id) && !saveCoordinator.isPendingDelete(documentID: $0.id)
         }
+    }
+
+    /// Primes an in-memory title for a page picked in the native `[[` or slash
+    /// picker so its chip renders the title on first layout.
+    func recordNativeDocumentTitle(_ title: String, for targetID: UUID) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        recordedNativeDocumentTitles[targetID] = trimmed
     }
 
     /// Cached title for a linked document within this account's known scope
@@ -3104,6 +3130,9 @@ final class EditorViewModel {
             let title = child.title, !title.isEmpty
         {
             return title
+        }
+        if let recorded = recordedNativeDocumentTitles[targetID], !recorded.isEmpty {
+            return recorded
         }
         return nil
     }

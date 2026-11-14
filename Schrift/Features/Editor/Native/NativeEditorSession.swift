@@ -635,14 +635,21 @@ final class NativeEditorOpen {
     private let livePreference: @MainActor () -> Bool
     /// The open's `abilities.update`, another input of that gate.
     private var canUpdate = false
+    /// Whether `abilities.mention` is granted for this open document session.
+    private(set) var canMention = false
+    private var rowCanMention = false
     /// Bumped by every open and close (including the close a sign-in change
     /// forces), so an awaited fetch, restore or save result is dropped once
     /// the open that asked for it is gone.
     private var generation = 0
+    private struct ServerAbilityAnswer: Sendable {
+        let writer: Bool?
+        let mention: Bool?
+    }
     private enum OpenResult: Sendable {
         case classic
-        /// `ability`: the server's `abilities.update` (nil: not asked, or no answer).
-        case state(Data, config: ServerConfig, ability: Bool?)
+        /// `ability`: the server's `abilities.update` and `abilities.mention` (nil: not asked, or no answer).
+        case state(Data, config: ServerConfig, ability: ServerAbilityAnswer?)
     }
     private var pendingOpen: AsyncStream<OpenResult>.Continuation?
     /// The reopen and reconnect work `EditorView` starts outside its `.task`;
@@ -681,13 +688,17 @@ final class NativeEditorOpen {
 
     /// `canUpdate` is the document's `abilities.update`; missing metadata
     /// fails closed to the read-only view.
-    func open(viewModel: EditorViewModel, isOffline: Bool, canUpdate: Bool = false) async {
+    func open(
+        viewModel: EditorViewModel, isOffline: Bool, canUpdate: Bool = false, canMention: Bool = false
+    ) async {
         // A repeated call while visible must not swap a focused editor. Close
         // establishes the next safe open or reopen boundary.
         guard !isOpen else { return }
         isOpen = true
         enabled = preference()
         self.canUpdate = false
+        self.canMention = false
+        self.rowCanMention = canMention
         isPreservedReadOnly = false
         // A reappearing classic editor keeps its SwiftUI identity and local
         // view state while the optional native eligibility read is in flight.
@@ -742,6 +753,7 @@ final class NativeEditorOpen {
                     // Typing starts from the row at once; an online open's
                     // integration asks the server and downgrades a reader.
                     self.canUpdate = true
+                    self.canMention = canMention && !viewModel.isLocalDocument
                     installTyping(session, scope: scope, viewModel: viewModel)
                 }
                 route = .native(session)
@@ -853,12 +865,13 @@ final class NativeEditorOpen {
         }
         // A writer answer lifts a remembered denial on every route (review R2), the unowned one
         // included: the next headless commit and the live gate may trust the server again.
-        if ability == true, let scope { viewModel.saveCoordinator.clearNativeReader(scope) }
+        if ability?.writer == true, let scope { viewModel.saveCoordinator.clearNativeReader(scope) }
         // A denial a headless media commit learned (review Z2d) is a reader answer here too.
         let denied = scope.map { viewModel.saveCoordinator.isNativeReader($0) } ?? false
-        let verified = canUpdate && ability != false && !denied
+        let verified = canUpdate && ability?.writer != false && !denied
         self.canUpdate = verified
         guard enabled, verified, session.canType, let account, let scope, mayType(viewModel) else {
+            self.canMention = false
             route = .native(session)
             return
         }
@@ -867,7 +880,10 @@ final class NativeEditorOpen {
             state: state, scope: scope, viewModel: viewModel, request: request, account: account)
         guard let seeded else { return }
         route = seeded
-        if case .native(let session) = seeded { startLive(session, scope: scope, config: config, viewModel: viewModel) }
+        if case .native(let session) = seeded {
+            self.canMention = (ability?.mention ?? rowCanMention) && !viewModel.isLocalDocument
+            startLive(session, scope: scope, config: config, viewModel: viewModel)
+        }
     }
 
     /// Reconnect: merge the fetched raw state into the open durable owner.
@@ -878,10 +894,10 @@ final class NativeEditorOpen {
     }
 
     /// A sign-in change: close, then open again in a task the next close cancels.
-    func reopen(viewModel: EditorViewModel, isOffline: Bool, canUpdate: Bool) {
+    func reopen(viewModel: EditorViewModel, isOffline: Bool, canUpdate: Bool, canMention: Bool = false) {
         close()
         reopenTask = Task { [weak self] in
-            await self?.open(viewModel: viewModel, isOffline: isOffline, canUpdate: canUpdate)
+            await self?.open(viewModel: viewModel, isOffline: isOffline, canUpdate: canUpdate, canMention: canMention)
         }
     }
 
@@ -1018,13 +1034,16 @@ final class NativeEditorOpen {
             guard isCurrent() else { return }
             let ability = canUpdate ? await Self.serverAbility(viewModel) : nil
             guard isCurrent() else { return }
-            if ability == false {
+            if ability?.writer == false {
                 // The row was stale: every surface of the scope stops writing
                 // (a key typed meanwhile becomes a recovery entry) and no socket opens.
                 becomeReader(scope, coordinator: viewModel.saveCoordinator)
-            } else if ability == true {
+            } else if ability?.writer == true {
                 // The server says writer: an earlier remembered denial no longer holds.
                 viewModel.saveCoordinator.clearNativeReader(scope)
+                if let serverMention = ability?.mention {
+                    self.canMention = serverMention && !viewModel.isLocalDocument
+                }
             } else if viewModel.saveCoordinator.isNativeReader(scope) {
                 // No answer and a headless media commit's denial stands (review Z2d): this open
                 // is a reader too, so nothing dials a socket for it. It recovers on reopen.
@@ -1046,26 +1065,32 @@ final class NativeEditorOpen {
     /// timeout, a captive portal) keeps the row, and the server still
     /// refuses a real reader's save. A row that says reader is never asked.
     private static func serverSaysReader(_ viewModel: EditorViewModel, asking: Bool) async -> Bool {
-        await serverAbility(viewModel, asking: asking) == false
+        await serverAbility(viewModel, asking: asking)?.writer == false
     }
 
     /// `serverAbility`, asked only when the row says writer: nil when it was not asked.
-    private static func serverAbility(_ viewModel: EditorViewModel, asking: Bool) async -> Bool? {
+    private static func serverAbility(_ viewModel: EditorViewModel, asking: Bool) async -> ServerAbilityAnswer? {
         guard asking else { return nil }
         return await serverAbility(viewModel)
     }
 
-    /// The server's `abilities.update` for the document: nil when it did not
-    /// answer (offline, a 5xx, a timeout, a missing route, an unreadable body,
-    /// an expired session). A 403, an API 404, any other answer about the
-    /// document and an answer naming another document are a reader answer
-    /// (review Z2c, R1, as the headless gate reads them).
-    private static func serverAbility(_ viewModel: EditorViewModel) async -> Bool? {
+    /// The server's `abilities.update` and `abilities.mention` for the document:
+    /// nil when it did not answer (offline, a 5xx, a timeout, a missing route,
+    /// an unreadable body, an expired session). A 403, an API 404, any other
+    /// answer about the document and an answer naming another document are a
+    /// reader answer (review Z2c, R1, as the headless gate reads them).
+    private static func serverAbility(_ viewModel: EditorViewModel) async -> ServerAbilityAnswer {
         do {
             let document = try await viewModel.client.document(documentID: viewModel.documentID)
-            return DocumentAbilityAnswer.classify(document, asked: viewModel.documentID).writer
+            let writer = DocumentAbilityAnswer.classify(document, asked: viewModel.documentID).writer == true
+            return ServerAbilityAnswer(
+                writer: writer,
+                mention: writer ? document.abilities.mention : false)
         } catch {
-            return DocumentAbilityAnswer.classify(error).writer
+            let reader = DocumentAbilityAnswer.classify(error) == .reader
+            return ServerAbilityAnswer(
+                writer: reader ? false : nil,
+                mention: reader ? false : nil)
         }
     }
 
@@ -1118,6 +1143,7 @@ final class NativeEditorOpen {
     /// what is journaled stays for HTTP) and no socket stays open.
     private func becomeReader(_ scope: ReplicaScope, coordinator: DocumentSaveCoordinator) {
         canUpdate = false
+        canMention = false
         // No headless media commit trusts a cached `update: true` for this scope again (review Y1).
         coordinator.noteNativeReader(scope)
         registry.setWritable(nil, for: scope)
@@ -1164,6 +1190,9 @@ final class NativeEditorOpen {
     /// Closing flushes a debounced save before the replica goes away.
     func close() {
         isOpen = false
+        canUpdate = false
+        canMention = false
+        rowCanMention = false
         generation += 1
         reopenTask?.cancel()
         reopenTask = nil
