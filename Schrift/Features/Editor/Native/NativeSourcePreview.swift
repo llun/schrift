@@ -2,15 +2,25 @@ import UIKit
 
 /// Presentation and accessibility request for opening a source block (`mathBlock`,
 /// `diagram`) or an inline `math` chip in the focused source editor (PR14).
-enum NativeSourceRequest: Equatable, Hashable, Sendable {
+enum NativeSourceRequest: Equatable, Hashable, Sendable, Identifiable {
     case block(blockID: String)
     case inlineMath(blockID: String, utf16Offset: Int)
+
+    var id: Self { self }
 }
 
 /// Exact source preview formatting, typography, and accessibility labels for
 /// `mathBlock`, `diagram`, and inline `math` chips. Never renders math or
 /// diagrams and never makes syntax-validity claims.
 enum NativeSourcePreview {
+    /// Explicit "source" title for the focused source editor (PR14).
+    static func editorTitle(for kind: NativeSourceKind, labels: NativeEditorLabels) -> String {
+        switch kind {
+        case .mathBlock, .inlineMath: labels.mathSource
+        case .diagram: labels.diagramSource
+        }
+    }
+
     /// Explicit "source" header label for a `.source` preview card.
     static func headerLabel(for node: String, labels: NativeEditorLabels) -> String {
         switch node {

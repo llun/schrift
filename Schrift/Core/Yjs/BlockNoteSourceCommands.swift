@@ -91,6 +91,13 @@ enum SourceBlock {
     }
 }
 
+/// Identifies which source surface kind is open (`mathBlock`, `diagram`, or inline `math`).
+enum NativeSourceKind: Equatable, Hashable, Sendable {
+    case mathBlock
+    case diagram
+    case inlineMath
+}
+
 /// Identifies a source surface target: a top-level/nested/column source block
 /// (`mathBlock`/`diagram`) or an inline `<math>` element inside a block.
 enum SourceTarget: Equatable, Hashable, Sendable {

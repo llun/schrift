@@ -53,6 +53,14 @@ struct PatchBuilder {
         return [BlockSnapshot(Self.sourceSnapshot(entry))]
     }
 
+    func inlineMathTarget(blockID: String, utf16Offset: Int) -> SourceTarget? {
+        index.inlineMathTarget(blockID: blockID, utf16Offset: utf16Offset)
+    }
+
+    func sourceKind(_ id: String) -> NativeSourceKind? {
+        index.sourceKind(id)
+    }
+
     mutating func build(_ transaction: YTransaction) -> BlockPatch {
         let origin = BlockPatchOrigin(transaction.origin)
         // Open tables (PR11a): their paragraph lists before this transaction.

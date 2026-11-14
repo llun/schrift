@@ -118,10 +118,13 @@ final class NativeTextView: UITextView {
     /// UIKit's own Tab (a tab character) and focus movement.
     override var keyCommands: [UIKeyCommand]? {
         guard inputCoordinator != nil, isEditable else { return super.keyCommands }
-        var commands = [
-            UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(nativeIndent)),
-            UIKeyCommand(input: "\t", modifierFlags: .shift, action: #selector(nativeOutdent)),
-        ]
+        var commands: [UIKeyCommand] = []
+        if inputCoordinator?.sourceKind == nil {
+            commands.append(contentsOf: [
+                UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(nativeIndent)),
+                UIKeyCommand(input: "\t", modifierFlags: .shift, action: #selector(nativeOutdent)),
+            ])
+        }
         // A table cell (PR11a): Escape returns to the document.
         if inputCoordinator?.tableMove != nil {
             commands.append(
@@ -131,10 +134,14 @@ final class NativeTextView: UITextView {
             // ⌘Return: Done (PR11c).
             commands.append(UIKeyCommand(input: "\r", modifierFlags: .command, action: #selector(nativeDone)))
         }
-        // A column (PR12a): Escape returns to the document.
+        // A column (PR12a) or focused source editor (PR14): Escape returns.
         if inputCoordinator?.tableMove == nil, inputCoordinator?.onExit != nil {
             commands.append(
                 UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(nativeEscape)))
+        }
+        // Focused source editor (PR14): ⌘Return closes as Done.
+        if inputCoordinator?.tableMove == nil, inputCoordinator?.onDone != nil {
+            commands.append(UIKeyCommand(input: "\r", modifierFlags: .command, action: #selector(nativeDone)))
         }
         for command in commands { command.wantsPriorityOverSystemBehavior = true }
         return (super.keyCommands ?? []) + commands
@@ -152,7 +159,7 @@ final class NativeTextView: UITextView {
 
     @objc private func nativeDone() {
         guard markedTextRange == nil else { return }
-        _ = inputCoordinator?.tableMove?(.done)
+        if inputCoordinator?.tableMove?(.done) == nil { inputCoordinator?.onDone?() }
     }
 
     /// A table cell's hardware arrows (PR11c) go to the table editor first:

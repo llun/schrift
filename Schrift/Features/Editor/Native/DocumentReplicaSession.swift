@@ -68,6 +68,8 @@ actor DocumentReplicaSession {
         var grid: TableGrid? = nil
         /// A column surface's group when it attached (PR12a); nil otherwise.
         var columnGroup: ColumnGroup? = nil
+        /// A source surface's kind when it attached (PR14); nil otherwise.
+        var sourceKind: NativeSourceKind? = nil
     }
 
     /// Unseen changes a surface keeps for rebasing (the "remote ring").
@@ -338,7 +340,17 @@ actor DocumentReplicaSession {
         if selectionOwner == nil { selectionOwner = surfaceID }
         return Attachment(
             blocks: blocks, revision: engine.revision, hasUnsupportedRoot: hasUnsupportedRoot,
-            canType: canType, recoveries: [], state: state, deliveries: stream)
+            canType: canType, recoveries: [], state: state, deliveries: stream,
+            sourceKind: engine.sourceKind(sourceID))
+    }
+
+    /// Resolves the inline `<math>` chip at `utf16Offset` inside `blockID`
+    /// (prose, column block, or table paragraph) and attaches a scoped source surface.
+    func attach(surfaceID: UUID, inlineMathIn blockID: String, utf16Offset: Int) -> Attachment? {
+        guard !isClosed, let target = engine.inlineMathTarget(blockID: blockID, utf16Offset: utf16Offset) else {
+            return nil
+        }
+        return attach(surfaceID: surfaceID, source: target)
     }
 
     /// A column surface (PR12a): column `columnID` of group `groupID`, its

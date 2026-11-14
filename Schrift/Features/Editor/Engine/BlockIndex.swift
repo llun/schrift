@@ -365,6 +365,45 @@ struct BlockIndex {
         }
     }
 
+    /// Resolves an inline `<math>` chip at `utf16Offset` in `blockID` (including
+    /// column blocks and table paragraphs) to its `SourceTarget`.
+    func inlineMathTarget(blockID: String, utf16Offset: Int) -> SourceTarget? {
+        guard isCanonical, !isSourceText(blockID), utf16Offset >= 0,
+            let owner = findInlineOwner(blockID: blockID)
+        else { return nil }
+        var cursor = 0
+        for child in Self.countableChildren(of: owner.element) {
+            guard case .type(let type) = child.content else { continue }
+            if type.typeRef == .xmlText {
+                guard let width = Int(exactly: type.length) else { return nil }
+                cursor += width
+            } else if case .xmlElement(let node)? = type.typeRef {
+                if cursor == utf16Offset, node == NativeInlineObject.mathNodeName,
+                    case .math? = NativeInlineObject.read(type)
+                {
+                    return .inlineMath(blockID: blockID, itemID: child.id)
+                }
+                if node == "hardBreak" || NativeInlineObject.nodeNames.contains(node) {
+                    cursor += 1
+                }
+            }
+            if cursor > utf16Offset { return nil }
+        }
+        return nil
+    }
+
+    func sourceKind(_ id: String) -> NativeSourceKind? {
+        guard isSourceText(id), let element = entries[id]?.element,
+            case .xmlElement(let node)? = element.typeRef
+        else { return nil }
+        switch node {
+        case SourceBlock.mathBlock: return .mathBlock
+        case SourceBlock.diagram: return .diagram
+        case NativeInlineObject.mathNodeName: return .inlineMath
+        default: return nil
+        }
+    }
+
     @discardableResult
     private mutating func refreshSource(id: String, open: OpenSource) -> String? {
         closeSource(id)

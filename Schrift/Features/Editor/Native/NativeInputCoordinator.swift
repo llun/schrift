@@ -277,8 +277,13 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// Backspace at a paragraph's start does nothing (BlockNote keeps the
     /// cell). Returns whether the key was handled.
     @ObservationIgnored var tableMove: ((TableMove) -> Bool)?
-    /// A column surface (PR12a): Escape returns to the document.
+    /// A column surface (PR12a) or focused source editor (PR14): Escape returns.
     @ObservationIgnored var onExit: (() -> Void)?
+    /// Focused source editor (PR14): ⌘Return closes.
+    @ObservationIgnored var onDone: (() -> Void)?
+    /// When editing a scoped source surface (PR14), identifies `mathBlock`,
+    /// `diagram`, or inline `math`.
+    @ObservationIgnored var sourceKind: NativeSourceKind?
 
     /// Shows the cell made of `blockIDs` (a table surface) and selects its
     /// text, as prosemirror-tables' `goToNextCell` does; a cell of several
@@ -368,6 +373,18 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             asOneKeyboardChange { selection.place(caret) }
         }
         view.becomeFirstResponder()
+    }
+
+    /// Back from the focused source editor (PR14): places the caret after a
+    /// source block card or immediately after an inline `<math>` chip.
+    func focus(after request: NativeSourceRequest) {
+        switch request {
+        case .block(let blockID):
+            focus(after: blockID)
+        case .inlineMath(let blockID, let utf16Offset):
+            focus(at: blockID, offset: utf16Offset + 1)
+            view?.becomeFirstResponder()
+        }
     }
 
     /// The caret (or a selection) in `blockID` at `offset` (PR12c: a jump
@@ -970,7 +987,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         // delegate; this covers UIKit paths that do, so Return routes once.
         if Self.isNewline(text), view?.isApplyingMarkedText != true {
             // Return over a selection replaces it with a block break.
-            if range.length == 0 || composition.isActive {
+            if range.length == 0 || composition.isActive || sourceKind == .inlineMath {
                 typeKey("\n")
             } else {
                 _ = replace(range: range, with: "\n")
@@ -1053,7 +1070,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 noticeKey = .native_editor_input_unavailable
                 return false
             }
-            if range.length == 0 || composition.isActive {
+            if range.length == 0 || composition.isActive || sourceKind == .inlineMath {
                 typeKey("\n")
             } else {
                 _ = replace(range: range, with: "\n")
@@ -1333,6 +1350,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             hold(.insert("\n"))
             return true
         }
+        // Inline math (PR14): Return exits back to the document/cell after the chip.
+        if sourceKind == .inlineMath {
+            onExit?()
+            return true
+        }
         let selection = view.selectedRange
         if selection.length > 0, view.markedTextRange == nil { return replace(range: selection, with: "\n") }
         guard view.markedTextRange == nil, selection.length == 0,
@@ -1373,8 +1395,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @discardableResult
     func deleteBackwardAtBlockStart() -> Bool {
         directInsertion = nil
-        // BlockNote keeps a cell's paragraphs: Backspace at a start does nothing.
-        if tableMove != nil { return true }
+        // BlockNote keeps a cell's paragraphs and scoped source surfaces: Backspace at a start does nothing.
+        if tableMove != nil || sourceKind != nil { return true }
         guard let view, view.isEditable, !isFrozen, !isDetached,
             !compositionOwnsView, view.selectedRange.length == 0,
             isBlockStart(view.selectedRange.location),
@@ -1539,7 +1561,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 pendingTypingMarks ?? NativeMarkSelection.typing(surface.blocks[caret.position].runs, at: caret.offset)
         }
         if marks != activeMarks { activeMarks = marks }
-        slashToken = block.flatMap { Self.slashToken(in: $0, caret: caretOffset) }
+        slashToken = sourceKind == nil ? block.flatMap { Self.slashToken(in: $0, caret: caretOffset) } : nil
         let query = block.flatMap { block in
             slashToken.map { String(decoding: Array(text(of: block).utf16)[1..<$0.upperBound], as: UTF16.self) }
         }
@@ -1727,6 +1749,33 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// editor cannot author yet (divider, photo, file) are not offered.
     @discardableResult
     func applySlashItem(_ item: SlashMenuItem) -> Bool {
+        // A source block (`mathBlock`/`diagram`) or inline `<math>` chip (PR14).
+        if case .source(let node) = item.action {
+            guard let view, canFormat, view.selectedRange.length == 0, let token = slashToken,
+                let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location),
+                let position = surface.rangeIndex.position(for: entry.blockID)
+            else { return false }
+            let newID = UUID().uuidString
+            let replaces = text(of: surface.blocks[position]).utf16.count == token.count
+            let insertedID = replaces ? entry.blockID : newID
+            let posted = applyStructural(
+                entry.blockID, .insertSourceBlock(node: node, newID: newID, removing: token),
+                refusal: .native_editor_input_unavailable,
+                retry: again { [weak self] in self?.applySlashItem(item) ?? false }, readsSelection: true)
+            if posted, node == SourceBlock.mathBlock { requestedSource = .block(blockID: insertedID) }
+            return posted
+        }
+        if case .inlineMath = item.action {
+            guard let view, canFormat, view.selectedRange.length == 0, let token = slashToken,
+                let entry = surface.rangeIndex.entry(atUTF16: view.selectedRange.location)
+            else { return false }
+            let posted = applyStructural(
+                entry.blockID, .insertInlineMath(replacing: token, source: "", trailingSpace: true),
+                refusal: .native_editor_input_unavailable,
+                retry: again { [weak self] in self?.applySlashItem(item) ?? false }, readsSelection: true)
+            if posted { requestedSource = .inlineMath(blockID: entry.blockID, utf16Offset: token.lowerBound) }
+            return posted
+        }
         // A media block (PR13a): in place of the emptied paragraph or after
         // it, then its inspector (`requestedMedia`) uploads or links the file.
         if case .media(let node) = item.action {
@@ -1785,7 +1834,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             case "checklist": [item, toggleListSlashItem]
             default: [item]
             }
-        } + [twoColumnsSlashItem, threeColumnsSlashItem] + mediaSlashItems
+        } + [twoColumnsSlashItem, threeColumnsSlashItem] + mediaSlashItems + sourceSlashItems
 
     private static func slashType(_ action: SlashMenuAction) -> (node: String, props: [ProjectedProp])? {
         if case .toggle(let heading) = action {
@@ -1818,6 +1867,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// The media block the slash menu just made, for its inspector; the view
     /// clears it once presented.
     var requestedMedia: String?
+    /// The source block or inline math chip the slash menu just made, for its
+    /// focused source editor; the view clears it once presented.
+    var requestedSource: NativeSourceRequest?
 
     /// Media block `blockID` as the surface shows it (a preview card), or nil.
     func mediaBlock(_ blockID: String) -> BlockSnapshot? {

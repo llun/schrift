@@ -51,6 +51,8 @@ final class NativeEditorSession {
     /// A column surface's column and group (PR12a): its blocks are that
     /// column's. Nil for the document.
     private(set) var column: (group: String, id: String)?
+    /// A scoped source surface's kind (PR14): `mathBlock`, `diagram`, or inline `math`.
+    private(set) var source: NativeSourceKind?
     /// Server origin for interlink clipboard plain-text serialization and
     /// same-origin URL paste-interlink.
     @ObservationIgnored private var interlinkingOrigin: String = ""
@@ -260,6 +262,95 @@ final class NativeEditorSession {
             cell.forward = { [weak document] in document?.adopt($0, from: source) }
         }
         return session
+    }
+
+    /// A focused source surface over a `mathBlock`, `diagram`, or inline `<math>`
+    /// chip (PR14). Settles any pending mailbox command on this surface before
+    /// attaching so newly inserted slash items resolve immediately.
+    func openSource(_ request: NativeSourceRequest) async -> NativeEditorSession? {
+        guard !isClosed, source == nil else { return nil }
+        guard let replica else {
+            return openInspectedSource(request)
+        }
+        // A slash command posted just before opening runs asynchronously in the
+        // replica mailbox; draining first ensures the new target exists in Yjs.
+        await settle()
+        guard !isClosed else { return nil }
+        let surfaceID = UUID()
+        let attachment: DocumentReplicaSession.Attachment?
+        switch request {
+        case .block(let blockID):
+            attachment = await replica.attach(surfaceID: surfaceID, source: .block(id: blockID))
+        case .inlineMath(let blockID, let utf16Offset):
+            attachment = await replica.attach(surfaceID: surfaceID, inlineMathIn: blockID, utf16Offset: utf16Offset)
+        }
+        guard let attachment, let sourceKind = attachment.sourceKind, !isClosed else { return nil }
+        let session = NativeEditorSession(
+            replica: replica, surfaceID: surfaceID, blocks: attachment.blocks, revision: attachment.revision,
+            hasUnsupportedRoot: false, canType: attachment.canType, recoveries: [], state: attachment.state)
+        session.source = sourceKind
+        session.scope = scope
+        session.interlinkingOrigin = input?.serverOrigin ?? interlinkingOrigin
+        session.release = { Task {} }
+        children.add(session)
+        Self.configureSourceTextView(session.textView)
+        session.consume(attachment.deliveries)
+        if input != nil, textView.isEditable { session.enableTyping(persist: nil, scheduler: saveScheduler) }
+        if let pasteboard = input?.pasteboard { session.input?.pasteboard = pasteboard }
+        session.input?.sourceKind = sourceKind
+        if let parent = input?.composition, let child = session.input?.composition {
+            let forwardID = UUID()
+            child.forward = { [weak parent] in parent?.adopt($0, from: forwardID) }
+        }
+        return session
+    }
+
+    private func openInspectedSource(_ request: NativeSourceRequest) -> NativeEditorSession? {
+        let allBlocks = surface.blocks + inspectedColumns.values.flatMap(\.blocks).flatMap { $0 }
+        switch request {
+        case .block(let blockID):
+            guard let block = allBlocks.first(where: { $0.id == blockID }),
+                case .source(let node, let text, true) = block.preview
+            else { return nil }
+            let kind: NativeSourceKind = node == SourceBlock.mathBlock ? .mathBlock : .diagram
+            let snapshot = BlockSnapshot(
+                id: blockID, node: "codeBlock", props: [],
+                runs: text.isEmpty ? [] : [InlineRun(text)], isOpaque: false)
+            let session = NativeEditorSession(
+                replica: nil, blocks: [snapshot], revision: 0, hasUnsupportedRoot: false, canType: false,
+                recoveries: [], state: ReplicaState())
+            session.source = kind
+            Self.configureSourceTextView(session.textView)
+            return session
+        case .inlineMath(let blockID, let utf16Offset):
+            guard let block = allBlocks.first(where: { $0.id == blockID }) else { return nil }
+            var cursor = 0
+            for run in block.runs {
+                if cursor == utf16Offset, case .math(let src)? = run.inlineObject {
+                    let snapshot = BlockSnapshot(
+                        id: blockID, node: "paragraph", props: [],
+                        runs: src.isEmpty ? [] : [InlineRun(src)], isOpaque: false)
+                    let session = NativeEditorSession(
+                        replica: nil, blocks: [snapshot], revision: 0, hasUnsupportedRoot: false, canType: false,
+                        recoveries: [], state: ReplicaState())
+                    session.source = .inlineMath
+                    Self.configureSourceTextView(session.textView)
+                    return session
+                }
+                cursor += run.text.utf16.count
+            }
+            return nil
+        }
+    }
+
+    private static func configureSourceTextView(_ textView: NativeTextView) {
+        textView.accessibilityIdentifier = "nativeEditor.source.text"
+        textView.autocorrectionType = .no
+        textView.spellCheckingType = .no
+        textView.autocapitalizationType = .none
+        textView.smartQuotesType = .no
+        textView.smartDashesType = .no
+        textView.smartInsertDeleteType = .no
     }
 
     /// The delivery consumer: every delivery, in order, on the main actor.

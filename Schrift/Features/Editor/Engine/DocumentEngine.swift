@@ -1088,6 +1088,15 @@ final class DocumentEngine {
         builder.sourceSnapshot(id)
     }
 
+    func inlineMathTarget(blockID: String, utf16Offset: Int) -> SourceTarget? {
+        guard !isDetached else { return nil }
+        return builder.inlineMathTarget(blockID: blockID, utf16Offset: utf16Offset)
+    }
+
+    func sourceKind(_ id: String) -> NativeSourceKind? {
+        builder.sourceKind(id)
+    }
+
     // MARK: - Column group structure (PR12b)
 
     /// Fresh block ids for blocks the engine adds itself (a column a move

@@ -204,13 +204,14 @@ final class NativeCompositionSession {
     /// Recovery text is a convenience copy, never committed content: a failed
     /// write must not block typing, and the journal path reports disk failures.
     private func save() {
+        let allRecoveries =
+            recoveries + adopted.keys.sorted { $0.uuidString < $1.uuidString }.flatMap { adopted[$0] ?? [] }
         if let forward {
-            forward(recoveries)
+            forward(allRecoveries)
             return
         }
         guard hasRecoveryStore else { return }
-        port.writeRecoveries(
-            recoveries + adopted.keys.sorted { $0.uuidString < $1.uuidString }.flatMap { adopted[$0] ?? [] })
+        port.writeRecoveries(allRecoveries)
     }
 
     /// The block-relative replacement range of the current selection. Both
