@@ -601,6 +601,7 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertEqual(text(of: editor), before, "a move never changes the text")
         app.buttons["tree.read"].tap()
         XCTAssertEqual(depths.label, "0,1,0", "the journal restores the nesting")
+        focusFirstParagraph(of: editor, in: app)
         XCTAssertTrue(app.buttons["nativeEditor.format.indent"].waitForExistence(timeout: 5), "still typeable")
     }
 
@@ -1195,7 +1196,9 @@ final class NativeEditorUITests: XCTestCase {
         editor.typeText(" @grace")
         let graceRow = app.buttons["editor.mentionPicker.row.bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"]
         XCTAssertTrue(graceRow.waitForExistence(timeout: 5))
-        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 22, dy: topParagraphY(in: app))).tap()
+        // Line 2 wraps `@grace` near `topParagraphY`; tap the start of line 1 (`user@example.com`).
+        let firstLineY = app.buttons["Options"].exists ? 112 : topParagraphY(in: app)
+        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 22, dy: firstLineY)).tap()
         XCTAssertTrue(mentionPicker.waitForNonExistence(timeout: 5), "Tapping outside dismisses mention picker")
         XCTAssertTrue(waitForText(of: editor, containing: "@grace"))
 
@@ -1368,6 +1371,7 @@ final class NativeEditorUITests: XCTestCase {
         doneButton.tap()
         XCTAssertTrue(editButton.waitForExistence(timeout: 5), "Done button returns to Reading mode")
         XCTAssertFalse(boldButton.exists, "Done hides the formatting bar")
+        XCTAssertTrue(editor.waitForStableFrame())
 
         firstParagraphCoordinate(of: editor, in: app).tap()
         XCTAssertTrue(doneButton.waitForExistence(timeout: 5), "tapping prose enters Editing mode")
@@ -1397,12 +1401,12 @@ final class NativeEditorUITests: XCTestCase {
         let hideToggle = app.switches["checklist.hideCompleted"]
         XCTAssertTrue(hideToggle.waitForExistence(timeout: 5))
         let switchControl = hideToggle.switches.firstMatch.exists ? hideToggle.switches.firstMatch : hideToggle
-        switchControl.press(forDuration: 0.2)
+        switchControl.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.2)
 
-        XCTAssertTrue(checkbox.waitForNonExistence(timeout: 5), "completed item hides when Hide completed is on")
+        XCTAssertTrue(checkbox.waitForNonExistence(timeout: 5), "completed item hides when Hide completed is on (switchHittable=\(switchControl.isHittable) hideHittable=\(hideToggle.isHittable))")
         XCTAssertFalse(text(of: editor).contains("Fixture task"))
 
-        switchControl.press(forDuration: 0.2)
+        switchControl.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.2)
         XCTAssertTrue(checkbox.waitForExistence(timeout: 5), "turning off Hide completed restores the item")
         XCTAssertTrue(waitForText(of: editor, containing: "Fixture task"))
     }
@@ -1411,7 +1415,7 @@ final class NativeEditorUITests: XCTestCase {
     /// and Command+B toggles bold durably across relaunch.
     func testHardwareCommandBBoldSurvivesRelaunch() {
         let app = XCUIApplication()
-        app.launchArguments = ["--native-open", "--reset"]
+        app.launchArguments = ["--native-open", "--reset", "--native-slow-disk"]
         app.launch()
 
         let editor = app.textViews["nativeEditor.text"]
@@ -1422,6 +1426,7 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 5))
         let bold = app.buttons["nativeEditor.format.bold"]
         XCTAssertTrue(bold.waitForExistence(timeout: 5))
+        XCTAssertFalse(bold.isSelected)
 
         editor.typeKey("b", modifierFlags: .command)
         let selected = XCTNSPredicateExpectation(
@@ -1445,7 +1450,7 @@ final class NativeEditorUITests: XCTestCase {
     /// and survives relaunch without entering preserved mode.
     func testSlashDividerInsertsAndSurvivesRelaunch() {
         let app = XCUIApplication()
-        app.launchArguments = ["--native-open", "--reset"]
+        app.launchArguments = ["--native-open", "--reset", "--native-slow-disk"]
         app.launch()
 
         let editor = app.textViews["nativeEditor.text"]
@@ -1478,7 +1483,12 @@ final class NativeEditorUITests: XCTestCase {
 
     private func firstParagraphCoordinate(of editor: XCUIElement, in app: XCUIApplication) -> XCUICoordinate {
         let hasShellHeader = app.buttons["Options"].exists
-        let dy: CGFloat = hasShellHeader ? 140 : max(18, editor.frame.height * 0.025)
+        let dy: CGFloat =
+            if hasShellHeader {
+                app.switches["checklist.hideCompleted"].exists ? 180 : 140
+            } else {
+                max(18, editor.frame.height * 0.025)
+            }
         return editor.coordinate(withNormalizedOffset: .zero)
             .withOffset(CGVector(dx: editor.frame.width * 0.15, dy: dy))
     }

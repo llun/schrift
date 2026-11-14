@@ -1189,13 +1189,14 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         let input = try XCTUnwrap(session.input)
 
         XCTAssertTrue(session.isWritable)
-        XCTAssertFalse(session.textView.isEditable, "opens in Reading mode by default")
-        XCTAssertFalse(input.canEdit)
+        session.setEditing(false)
+        XCTAssertFalse(session.textView.isEditable, "Reading mode keeps textView non-editable")
+        XCTAssertFalse(input.canEditForTextDrop)
         XCTAssertTrue(input.canToggleCheckbox)
 
         session.setEditing(true)
         XCTAssertTrue(session.textView.isEditable)
-        XCTAssertTrue(input.canEdit)
+        XCTAssertTrue(input.canEditForTextDrop)
         XCTAssertTrue(input.canFormat)
 
         session.textView.selectedRange = NSRange(location: 0, length: 0)
@@ -1205,7 +1206,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
 
         session.setEditing(false)
         XCTAssertFalse(session.textView.isEditable)
-        XCTAssertFalse(input.canEdit)
+        XCTAssertFalse(input.canEditForTextDrop)
         XCTAssertNil(input.slashMenuQuery)
         XCTAssertNil(input.activeInlineTrigger)
         XCTAssertTrue(input.activeMarks.isEmpty)
@@ -1223,11 +1224,11 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         let intent = NewDocumentEntryIntent()
         let model = EditorViewModel(
             client: env.model.client, documentID: env.documentID, title: "Untitled",
-            saveCoordinator: env.model.saveCoordinator, signedInUser: SignedInUserStore(userDefaults: env.defaults),
+            saveCoordinator: env.model.saveCoordinator, entryIntent: intent,
+            signedInUser: SignedInUserStore(userDefaults: env.defaults),
             contentCache: DocumentContentCacheStore(directory: env.directory),
             childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
             listCache: DocumentCacheStore(userDefaults: env.defaults),
-            entryIntent: intent,
             availability: OnlineAvailability(userDefaults: env.defaults))
 
         XCTAssertFalse(model.consumeNativeNewDocumentEntryIfNeeded(canEdit: false))
@@ -1239,11 +1240,11 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         let secondIntent = NewDocumentEntryIntent()
         let secondModel = EditorViewModel(
             client: env.model.client, documentID: env.documentID, title: "Untitled",
-            saveCoordinator: env.model.saveCoordinator, signedInUser: SignedInUserStore(userDefaults: env.defaults),
+            saveCoordinator: env.model.saveCoordinator, entryIntent: secondIntent,
+            signedInUser: SignedInUserStore(userDefaults: env.defaults),
             contentCache: DocumentContentCacheStore(directory: env.directory),
             childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
             listCache: DocumentCacheStore(userDefaults: env.defaults),
-            entryIntent: secondIntent,
             availability: OnlineAvailability(userDefaults: env.defaults))
         XCTAssertTrue(secondModel.consumeNativeNewDocumentEntryIfNeeded(canEdit: true))
         secondModel.clearNativeInitialTitleFocus()

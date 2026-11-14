@@ -535,14 +535,14 @@ final class NativeTextSurfaceTests: DocumentEngineTestCase {
 
         XCTAssertEqual(
             surface.checklistSummary,
-            NativeChecklistSummary(total: 3, completed: 1, hiddenCompleted: 0, allBlocksHidden: false))
+            NativeTextSurface.NativeChecklistSummary(total: 3, completed: 1, hiddenCompleted: 0, allBlocksHidden: false))
 
         let changed = session.setChecklistPresentation(hidesCompleted: true, settlingIDs: [])
         XCTAssertTrue(changed)
         XCTAssertEqual(surface.hidden, [true, true, true, false, false])
         XCTAssertEqual(
             surface.checklistSummary,
-            NativeChecklistSummary(total: 3, completed: 1, hiddenCompleted: 1, allBlocksHidden: false))
+            NativeTextSurface.NativeChecklistSummary(total: 3, completed: 1, hiddenCompleted: 1, allBlocksHidden: false))
         XCTAssertEqual(
             surface.survivingVisibleBlockID(around: "c1", nextHidesCompleted: true, settlingIDs: []),
             "c2")
@@ -578,7 +578,8 @@ final class NativeTextSurfaceTests: DocumentEngineTestCase {
                 ]),
         ]
         _ = try store.create(for: scope, checkpoint: BlockNoteYjs.encode(blocks, clientID: 1))
-        let session = try XCTUnwrap(try await NativeEditorSession.restore(store: store, scope: scope, editable: true))
+        let restored = try await NativeEditorSession.restore(store: store, scope: scope, editable: true)
+        let session = try XCTUnwrap(restored)
         addTeardownBlock {
             await session.close().value
             try? FileManager.default.removeItem(at: directory)
@@ -607,7 +608,7 @@ final class NativeTextSurfaceTests: DocumentEngineTestCase {
         XCTAssertEqual(session.surface.hidden, [true, true, true])
         XCTAssertEqual(
             session.surface.checklistSummary,
-            NativeChecklistSummary(total: 2, completed: 2, hiddenCompleted: 2, allBlocksHidden: true))
+            NativeTextSurface.NativeChecklistSummary(total: 2, completed: 2, hiddenCompleted: 2, allBlocksHidden: true))
 
         // Show completed restores visibility for Reading mode.
         XCTAssertTrue(session.setChecklistPresentation(hidesCompleted: false, settlingIDs: []))

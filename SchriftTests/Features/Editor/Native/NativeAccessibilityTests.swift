@@ -221,7 +221,7 @@ final class NativeAccessibilityTests: NativeEditingTestCase {
         harness.view.layoutIfNeeded()
 
         XCTAssertFalse(harness.view.isEditable)
-        XCTAssertFalse(harness.input.canEdit)
+        XCTAssertFalse(harness.input.canEditForTextDrop)
         XCTAssertTrue(harness.input.canToggleCheckbox)
 
         let button = try XCTUnwrap(harness.view.blockControls.checkboxes["task"])
@@ -235,7 +235,7 @@ final class NativeAccessibilityTests: NativeEditingTestCase {
         XCTAssertFalse(harness.view.isEditable, "Reading-mode checkbox tap keeps textView non-editable")
         XCTAssertFalse(harness.view.isFirstResponder)
         XCTAssertEqual(button.accessibilityValue, "Done")
-        try await assertConsistent(harness, localCommands: 1)
+        try await assertConsistent(harness, localCommands: 1, expectedEditable: false)
     }
 
     func testCursorOverlayHidesFromAccessibilityWhenEmptyAndShowsForPeers() async throws {
@@ -246,22 +246,24 @@ final class NativeAccessibilityTests: NativeEditingTestCase {
 
         XCTAssertTrue(harness.view.cursorOverlay.accessibilityElementsHidden)
 
-        let awareness = harness.session.installAwareness(localClientID: 1)
-        let position = try await harness.engine {
-            try $0.relativePosition(for: EditorPosition(blockID: "p", offset: 2, assoc: -1))
-        }
-        let cursor = AwarenessCursor(anchor: try XCTUnwrap(position), head: try XCTUnwrap(position))
-        let state = AwarenessClientState(
-            user: CollaborationPeer(clientID: 7, name: "Peer", color: nil),
-            cursor: cursor)
-        awareness.receive([AwarenessClientEntry(clientID: 7, clock: 1, state: state)])
+        let awareness = NativeAwarenessController(replica: try XCTUnwrap(harness.session.replica))
+        harness.session.showAwareness(awareness)
+        let position = try await unwrapped(
+            harness.engine { $0.awarenessPosition(EditorPosition(blockID: "p", offset: 2, assoc: -1)) })
+        let cursor = AwarenessCursor(anchor: position, head: position)
+        let stateJSON = LocalAwarenessState(name: "Peer", color: "#000000", cursor: cursor)
+            .json(wireProtocol: .yWebSocket)
+        awareness.receive([AwarenessEntry(clientID: 7, clock: 1, stateJSON: stateJSON)])
         for _ in 0..<40 where awareness.places[7] == nil {
             try await Task.sleep(for: .milliseconds(10))
         }
         harness.view.layoutIfNeeded()
         XCTAssertFalse(harness.view.cursorOverlay.accessibilityElementsHidden)
 
-        awareness.receive([AwarenessClientEntry(clientID: 7, clock: 2, state: nil)])
+        awareness.receive([AwarenessEntry(clientID: 7, clock: 2, stateJSON: "null")])
+        for _ in 0..<40 where !awareness.places.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         harness.view.layoutIfNeeded()
         XCTAssertTrue(harness.view.cursorOverlay.accessibilityElementsHidden)
     }
@@ -299,7 +301,7 @@ final class NativeAccessibilityTests: NativeEditingTestCase {
             node: "paragraph",
             props: Self.paragraphProps,
             runs: [
-                InlineRun("Read docs", marks: [TextMark(key: "link", valueJSON: #"{"href":"https://example.org"}"#)])
+                InlineRun("Read docs", marks: [(key: "link", valueJSON: #"{"href":"https://example.org"}"#)])
             ],
             id: "link")
         let harness = try await makeHarness([linked, check("task", "Task item"), paragraph("prose", "Plain prose")])
