@@ -82,6 +82,15 @@ struct BlockIndex {
     private(set) var openTables: [String: [String]] = [:]
     /// A table paragraph's element → its id, for `blockID(for:)`.
     private var paragraphIDs: [ObjectIdentifier: String] = [:]
+    /// Open source surfaces (`syntheticID` → target + expected element item id), for `rebuild()`.
+    private(set) var openSources: [String: OpenSource] = [:]
+    /// A source element (`mathBlock`, `diagram`, or inline `math`) → its synthetic id, for `blockID(for:)`.
+    private var sourceElementIDs: [ObjectIdentifier: String] = [:]
+
+    struct OpenSource: Equatable, Sendable {
+        let target: SourceTarget
+        let elementItemID: YID
+    }
     /// Column groups the native column editor opened (PR12a), by group id:
     /// their column ids in order. Every block of every column is an entry
     /// (`entries`), addressed like any block, but never in `order`: the
@@ -132,6 +141,10 @@ struct BlockIndex {
     func blockID(for type: YType) -> String? {
         var current: YType? = type
         while let candidate = current {
+            // An open source element is its own scoped text target (PR14).
+            if let sourceID = sourceElementIDs[ObjectIdentifier(candidate)], entries[sourceID]?.element === candidate {
+                return sourceID
+            }
             // An open table's paragraph is its own text target (PR11a).
             if candidate.typeRef == .xmlElement(nodeName: "tableParagraph"),
                 let id = paragraphIDs[ObjectIdentifier(candidate)], entries[id]?.element === candidate
@@ -168,6 +181,10 @@ struct BlockIndex {
 
     /// Re-reads one block after a change. O(block), never O(document).
     mutating func refresh(_ id: String) {
+        if let open = openSources[id] {
+            refreshSource(id: id, open: open)
+            return
+        }
         guard let entry = entries[id] else { return }
         if isTableParagraph(id) {
             entries[id] = Self.paragraphEntry(
@@ -329,6 +346,175 @@ struct BlockIndex {
         return true
     }
 
+    // MARK: - Open source targets (PR14)
+
+    func isSourceText(_ id: String) -> Bool {
+        openSources[id] != nil
+    }
+
+    @discardableResult
+    mutating func openSource(_ target: SourceTarget) -> String? {
+        guard isCanonical else { return nil }
+        return indexSource(target, expectingItemID: nil)
+    }
+
+    mutating func closeSource(_ id: String) {
+        guard openSources.removeValue(forKey: id) != nil else { return }
+        if let element = entries.removeValue(forKey: id)?.element {
+            sourceElementIDs.removeValue(forKey: ObjectIdentifier(element))
+        }
+    }
+
+    @discardableResult
+    private mutating func refreshSource(id: String, open: OpenSource) -> String? {
+        closeSource(id)
+        return indexSource(open.target, expectingItemID: open.elementItemID)
+    }
+
+    @discardableResult
+    private mutating func indexSource(_ target: SourceTarget, expectingItemID: YID?) -> String? {
+        guard let resolved = resolveSourceTarget(target) else { return nil }
+        if let expectingItemID, resolved.itemID != expectingItemID { return nil }
+        let syntheticID = target.syntheticID(elementItemID: resolved.itemID)
+        let children = Self.countableChildren(of: resolved.element)
+        let textType: YType?
+        if children.count == 1, case .type(let text) = children[0].content, text.typeRef == .xmlText {
+            textType = text
+        } else {
+            textType = nil
+        }
+        let runs: [InlineRun] = resolved.plainText.isEmpty ? [] : [InlineRun(resolved.plainText)]
+        entries[syntheticID] = Entry(
+            id: syntheticID, containerItem: resolved.containerItem, container: resolved.container,
+            element: resolved.element, textType: textType, isSimpleContainer: true, isSimpleText: textType != nil,
+            hasInlineObjects: false, isProjectable: true, runs: runs, depth: 0, parentID: nil, group: resolved.group,
+            nestedGroup: nil, handle: resolved.handle)
+        sourceElementIDs[ObjectIdentifier(resolved.element)] = syntheticID
+        openSources[syntheticID] = OpenSource(target: target, elementItemID: resolved.itemID)
+        return syntheticID
+    }
+
+    private struct ResolvedSource {
+        let itemID: YID
+        let containerItem: YItem
+        let container: YType
+        let element: YType
+        let group: YType
+        let handle: NativeBlockHandle
+        let plainText: String
+    }
+
+    private func resolveSourceTarget(_ target: SourceTarget) -> ResolvedSource? {
+        switch target {
+        case .block(let id):
+            guard !isTableParagraph(id), !isSourceText(id),
+                let found = findContainer(id: id),
+                case .type(let container) = found.containerItem.content
+            else { return nil }
+            let containerChildren = Self.countableChildren(of: container)
+            guard let first = containerChildren.first, case .type(let element) = first.content,
+                case .xmlElement(let node)? = element.typeRef, SourceBlock.isSource(node),
+                containerChildren.dropFirst().allSatisfy({ item in
+                    guard case .type(let extra) = item.content else { return false }
+                    return extra.typeRef == .xmlElement(nodeName: "blockGroup")
+                }),
+                containerChildren.dropFirst().count <= 1,
+                let props = YBlockProjection.props(of: element),
+                SourceBlock.unfamiliarReason(node: node, props: props, element: element) == nil,
+                let plainText = SourceBlock.plainText(of: element)
+            else { return nil }
+            let handle =
+                entries[id]?.handle
+                ?? NativeBlockHandle(generation: generation, itemID: found.containerItem.id, stringID: id)
+            return ResolvedSource(
+                itemID: first.id, containerItem: found.containerItem, container: container, element: element,
+                group: found.group, handle: handle, plainText: plainText)
+        case .inlineMath(let blockID, let itemID):
+            guard !isSourceText(blockID), let owner = findInlineOwner(blockID: blockID) else { return nil }
+            guard
+                let child = Self.countableChildren(of: owner.element).first(where: { $0.id == itemID }),
+                case .type(let mathElement) = child.content,
+                mathElement.typeRef == .xmlElement(nodeName: NativeInlineObject.mathNodeName),
+                case .math(let source)? = NativeInlineObject.read(mathElement)
+            else { return nil }
+            return ResolvedSource(
+                itemID: itemID, containerItem: owner.containerItem, container: owner.container, element: mathElement,
+                group: owner.group, handle: owner.handle, plainText: source)
+        }
+    }
+
+    private func findInlineOwner(
+        blockID: String
+    ) -> (containerItem: YItem, container: YType, element: YType, group: YType, handle: NativeBlockHandle)? {
+        if let entry = entries[blockID], let element = entry.element, entry.containerItem.deleted == false {
+            return (entry.containerItem, entry.container, element, entry.group, entry.handle)
+        }
+        if TableGrid.isParagraphID(blockID), let tableID = TableGrid.tableID(ofParagraph: blockID),
+            let found = findContainer(id: tableID), case .type(let container) = found.containerItem.content,
+            let first = Self.countableChildren(of: container).first, case .type(let table) = first.content,
+            table.typeRef == .xmlElement(nodeName: "table"), TableGrid.read(table).isFamiliar
+        {
+            for row in YBlockProjection.children(of: table, includeFormats: false) {
+                guard case .type(let rowType) = row.content else { continue }
+                for cell in YBlockProjection.children(of: rowType, includeFormats: false) {
+                    guard case .type(let cellType) = cell.content else { continue }
+                    for paragraph in YBlockProjection.children(of: cellType, includeFormats: false) {
+                        guard case .type(let paragraphType) = paragraph.content,
+                            paragraph.id != YID(client: 0, clock: 0) || !paragraph.deleted,
+                            TableGrid.paragraphID(table: tableID, item: paragraph.id) == blockID
+                        else { continue }
+                        let handle = NativeBlockHandle(generation: generation, itemID: paragraph.id, stringID: blockID)
+                        return (paragraph, paragraphType, paragraphType, cellType, handle)
+                    }
+                }
+            }
+            return nil
+        }
+        if let found = findContainer(id: blockID), case .type(let container) = found.containerItem.content,
+            let first = Self.countableChildren(of: container).first, case .type(let element) = first.content,
+            element.typeRef != .xmlElement(nodeName: "blockGroup")
+        {
+            let handle = NativeBlockHandle(
+                generation: generation, itemID: found.containerItem.id, stringID: blockID)
+            return (found.containerItem, container, element, found.group, handle)
+        }
+        return nil
+    }
+
+    private func findContainer(id: String) -> (containerItem: YItem, group: YType)? {
+        if let entry = entries[id], !isTableParagraph(id), !isSourceText(id), !entry.containerItem.deleted {
+            return (entry.containerItem, entry.group)
+        }
+        guard let rootGroup = rootGroupType() else { return nil }
+        for listItem in Self.countableChildren(of: rootGroup) {
+            guard case .type(let list) = listItem.content, list.typeRef == .xmlElement(nodeName: "columnList") else {
+                continue
+            }
+            for columnItem in Self.countableChildren(of: list) {
+                guard case .type(let column) = columnItem.content, column.typeRef == .xmlElement(nodeName: "column")
+                else { continue }
+                if let found = findContainer(id: id, in: column, depth: 0) { return found }
+            }
+        }
+        return nil
+    }
+
+    private func findContainer(id: String, in group: YType, depth: Int) -> (containerItem: YItem, group: YType)? {
+        for item in Self.countableChildren(of: group) {
+            guard case .type(let container) = item.content else { continue }
+            if container.typeRef == .xmlElement(nodeName: "blockContainer"), Self.blockID(of: container) == id {
+                return (item, group)
+            }
+            if container.typeRef == .xmlElement(nodeName: "blockContainer"), depth < NativeBlockProjection.maxDepth,
+                let nested = NativeBlockProjection.nestedGroup(of: container),
+                let found = findContainer(id: id, in: nested, depth: depth + 1)
+            {
+                return found
+            }
+        }
+        return nil
+    }
+
     /// A table paragraph as a root-level text block: its element is its own
     /// container, and it is projectable when it is one plain `XmlText` (or
     /// empty), the shape typing addresses.
@@ -391,9 +577,13 @@ struct BlockIndex {
         columnOrders = [:]
         columnOf = [:]
         columnPosition = [:]
-        // Open tables and column groups survive a rebuild, re-read (or
-        // emptied) from the new tree. Groups first: a column's table is one
-        // of their blocks.
+        let sources = openSources
+        openSources = [:]
+        sourceElementIDs = [:]
+        // Open tables, column groups, and source surfaces survive a rebuild,
+        // re-read (or dropped) from the new tree. Groups first: a column's
+        // table or source is one of their blocks; tables next: an inline math
+        // inside a table cell uses its paragraph id.
         defer {
             for group in groups {
                 openGroups[group] = []
@@ -403,6 +593,11 @@ struct BlockIndex {
                 openTables[table] = []
                 // A shape the index cannot mirror addresses no cell.
                 if isCanonical { indexTable(table) }
+            }
+            if isCanonical {
+                for (_, open) in sources {
+                    _ = indexSource(open.target, expectingItemID: open.elementItemID)
+                }
             }
         }
         guard let root else { return }
@@ -447,9 +642,10 @@ struct BlockIndex {
                 type.typeRef == .xmlElement(nodeName: "blockContainer")
                     || type.typeRef == .xmlElement(nodeName: "columnList"),
                 let id = blockID(of: type), !id.isEmpty, seen.insert(id).inserted,
-                // U+0001 is the cell paragraph ids' separator (PR11a): a block
-                // spelling one could pose as a table paragraph.
-                !id.unicodeScalars.contains("\u{1}")
+                // U+0001 and U+0002 are synthetic cell/source ids' separators:
+                // a block spelling either could pose as a scoped target.
+                !id.unicodeScalars.contains("\u{1}"),
+                !id.unicodeScalars.contains("\u{2}")
             else { return false }
         }
         return true
@@ -507,7 +703,22 @@ struct BlockIndex {
         let hasInlineObjects: Bool
         let isProjectable: Bool
         let runs: [InlineRun]
-        if let textType {
+        if isSimpleContainer, let element, case .xmlElement(let node)? = element.typeRef, SourceBlock.isSource(node) {
+            // Outer mathBlock/diagram renders as a preview card (never `.text` deltas):
+            // keep `textType` nil while keeping familiarity/plainText accurate.
+            textType = nil
+            hasInlineObjects = false
+            let props = YBlockProjection.props(of: element)
+            if let props, SourceBlock.unfamiliarReason(node: node, props: props, element: element) == nil,
+                let plainText = SourceBlock.plainText(of: element)
+            {
+                isProjectable = true
+                runs = plainText.isEmpty ? [] : [InlineRun(plainText)]
+            } else {
+                isProjectable = false
+                runs = []
+            }
+        } else if let textType {
             hasInlineObjects = false
             isProjectable =
                 isSimpleContainer && element.map { YBlockProjection.props(of: $0) != nil } == true

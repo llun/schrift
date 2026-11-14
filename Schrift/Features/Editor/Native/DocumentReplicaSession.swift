@@ -120,6 +120,9 @@ actor DocumentReplicaSession {
         /// column's blocks and the group's own changes, nothing else. Nil for
         /// a document surface, which never sees a column's blocks.
         var column: (group: String, id: String)?
+        /// A scoped source surface's target and synthetic block id (PR14): it
+        /// sees only that source block's snapshot/deltas and nothing else.
+        var source: (target: SourceTarget, id: String)?
         var epoch: UInt64 = 0
         var selectionSeq: UInt64 = 0
         var unseen: [Unseen] = []
@@ -293,8 +296,10 @@ actor DocumentReplicaSession {
             canType: canType, recoveries: recoveries, state: state, deliveries: stream, grid: grid)
     }
 
-    /// A surface's whole projection: the document, a table's paragraphs or a column's blocks.
-    private func projection(for table: String?, column: String? = nil) -> [BlockSnapshot] {
+    /// A surface's whole projection: the document, a table's paragraphs, a
+    /// column's blocks, or a scoped source target.
+    private func projection(for table: String?, column: String? = nil, source: String? = nil) -> [BlockSnapshot] {
+        if let source { return engine.sourceSnapshot(source) ?? [] }
         if let column { return engine.columnBlocks(column) ?? [] }
         guard let table else { return NativeBlockProjection.project(doc).blocks.map(BlockSnapshot.init) }
         return engine.tableParagraphs(table) ?? []
@@ -304,6 +309,37 @@ actor DocumentReplicaSession {
     private var openTables: [String: Int] = [:]
     /// Open column groups by block id, with how many column surfaces show each.
     private var openGroups: [String: Int] = [:]
+    /// Open source targets by synthetic block id, with target and surface count.
+    private var openSources: [String: (target: SourceTarget, count: Int)] = [:]
+
+    /// A scoped source surface (PR14): `mathBlock`, `diagram`, or inline `math`
+    /// opened under its synthetic `"\(ownerID)\u{2}client.clock"` id, seeing only
+    /// its own deliveries. Nil (nothing attached) when missing or unfamiliar.
+    func attach(surfaceID: UUID, source target: SourceTarget) -> Attachment? {
+        hooks.onReplicaWork?()
+        if loop == nil { loop = Task { await self.run() } }
+        guard !isClosed, let sourceID = engine.openSource(target) else { return nil }
+        let blocks = projection(for: nil, source: sourceID)
+        guard !blocks.isEmpty else {
+            if openSources[sourceID] == nil { engine.closeSource(sourceID) }
+            return nil
+        }
+        if var existing = openSources[sourceID] {
+            existing.count += 1
+            openSources[sourceID] = existing
+        } else {
+            openSources[sourceID] = (target: target, count: 1)
+        }
+        let (stream, continuation) = AsyncStream<ReplicaDelivery>.makeStream(
+            bufferingPolicy: .bufferingOldest(Self.deliveryBound + 1))
+        var surface = SurfaceState(deliveries: continuation, table: nil)
+        surface.source = (target, sourceID)
+        surfaces[surfaceID] = surface
+        if selectionOwner == nil { selectionOwner = surfaceID }
+        return Attachment(
+            blocks: blocks, revision: engine.revision, hasUnsupportedRoot: hasUnsupportedRoot,
+            canType: canType, recoveries: [], state: state, deliveries: stream)
+    }
 
     /// A column surface (PR12a): column `columnID` of group `groupID`, its
     /// blocks opened as text targets, and only their deliveries after this.
@@ -474,6 +510,7 @@ actor DocumentReplicaSession {
             }
             if let table = surface.table { closeTable(table) }
             if let column = surface.column { closeColumns(column.group) }
+            if let source = surface.source { closeSource(source.id) }
         case .close:
             close()
         case .inspect(let body):
@@ -713,12 +750,35 @@ actor DocumentReplicaSession {
         engine = graph.engine
         sink = graph.sink
         history = journal == nil ? nil : ReplicaHistory(doc: doc, engine: engine)
-        // The new engine's index opens the groups and tables surfaces show again.
+        // The new engine's index opens the groups, tables and sources surfaces show again.
         for group in openGroups.keys { engine.openColumns(group) }
         for table in openTables.keys { engine.openTable(table) }
+        for (id, entry) in openSources {
+            if engine.openSource(entry.target) != id { openSources.removeValue(forKey: id) }
+        }
         for id in surfaces.keys {
             surfaces[id]?.composing = nil
             resync(id)
+        }
+    }
+
+    /// The last source surface of `sourceID` left: close its scoped entry and
+    /// refresh the owning card, column or table paragraph preview once.
+    private func closeSource(_ sourceID: String) {
+        guard var entry = openSources[sourceID] else { return }
+        entry.count -= 1
+        guard entry.count <= 0 else {
+            openSources[sourceID] = entry
+            return
+        }
+        openSources.removeValue(forKey: sourceID)
+        engine.closeSource(sourceID)
+        let owner = entry.target.ownerID
+        if let snapshot = engine.nativeSnapshot(for: owner) {
+            var patch = BlockPatch([.replaceBlock(blockID: owner, block: snapshot)], origin: .other)
+            if let column = engine.column(of: owner) { patch.columns[owner] = column }
+            sink.applyPatch(patch)
+            deliver(to: nil)
         }
     }
 
@@ -762,10 +822,12 @@ actor DocumentReplicaSession {
     /// blocks and its group's own changes (a structure signal, which its
     /// surface ignores), and a reset as its column's.
     private func events(_ events: [ReplicaDelivery.Event], for surface: SurfaceState) -> [ReplicaDelivery.Event] {
+        if let source = surface.source { return sourceEvents(events, sourceID: source.id) }
         if let column = surface.column { return columnEvents(events, column: column) }
-        // The spelling is sound here: a canonical index refuses a block id
-        // holding U+0001, and a non-canonical one only ever delivers `.reset`.
+        // The spelling is sound here: a canonical index refuses block ids
+        // holding U+0001 or U+0002, and a non-canonical one only delivers `.reset`.
         func shown(_ id: String) -> Bool {
+            guard !SourceTarget.isSourceID(id) else { return false }
             guard let table = surface.table else { return !TableGrid.isParagraphID(id) }
             return id == table || TableGrid.tableID(ofParagraph: id) == table && TableGrid.isParagraphID(id)
         }
@@ -776,9 +838,12 @@ actor DocumentReplicaSession {
                     if !patch.columns.isEmpty || !patch.removedColumns.isEmpty { return true }
                     return patch.changes.contains { change in
                         switch change {
-                        case .text(let id, _), .props(let id, _), .replaceBlock(let id, _): TableGrid.isParagraphID(id)
-                        case .remove(let ids): ids.contains(where: TableGrid.isParagraphID)
-                        case .insert(_, let blocks): blocks.contains { TableGrid.isParagraphID($0.id) }
+                        case .text(let id, _), .props(let id, _), .replaceBlock(let id, _):
+                            TableGrid.isParagraphID(id) || SourceTarget.isSourceID(id)
+                        case .remove(let ids):
+                            ids.contains { TableGrid.isParagraphID($0) || SourceTarget.isSourceID($0) }
+                        case .insert(_, let blocks):
+                            blocks.contains { TableGrid.isParagraphID($0.id) || SourceTarget.isSourceID($0.id) }
                         case .reset: false
                         }
                     }
@@ -804,6 +869,31 @@ actor DocumentReplicaSession {
                 case .reset:
                     guard let table = surface.table else { return change }
                     return .reset(engine.tableParagraphs(table) ?? [])
+                }
+            }
+            return patch.isEmpty ? nil : .patch(patch, settled: settled)
+        }
+    }
+
+    /// A source surface's events (PR14): only its synthetic block id's
+    /// changes, and a reset re-read as its single snapshot (or empty when gone).
+    private func sourceEvents(_ events: [ReplicaDelivery.Event], sourceID: String) -> [ReplicaDelivery.Event] {
+        events.compactMap { event in
+            guard case .patch(var patch, let settled) = event else { return event }
+            patch.columns = [:]
+            patch.removedColumns = [:]
+            patch.changes = patch.changes.compactMap { change in
+                switch change {
+                case .text(let id, _), .props(let id, _), .replaceBlock(let id, _):
+                    return id == sourceID ? change : nil
+                case .remove(let ids):
+                    let kept = ids.filter { $0 == sourceID }
+                    return kept.isEmpty ? nil : .remove(blockIDs: kept)
+                case .insert(let after, let blocks):
+                    let kept = blocks.filter { $0.id == sourceID }
+                    return kept.isEmpty ? nil : .insert(after: after, blocks: kept)
+                case .reset:
+                    return .reset(engine.sourceSnapshot(sourceID) ?? [])
                 }
             }
             return patch.isEmpty ? nil : .patch(patch, settled: settled)
@@ -945,7 +1035,7 @@ actor DocumentReplicaSession {
         surface.droppedThrough = engine.revision
         surfaces[surfaceID] = surface
         for delivery in held { send(delivery, to: surfaceID) }
-        let blocks = projection(for: surface.table, column: surface.column?.id)
+        let blocks = projection(for: surface.table, column: surface.column?.id, source: surface.source?.id)
         var reset = ReplicaDelivery(
             revision: engine.revision, events: [.patch(BlockPatch([.reset(blocks)], origin: .other), settled: [:])],
             state: state)

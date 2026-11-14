@@ -426,11 +426,12 @@ final class TableEditorTests: NativeEditingTestCase {
     }
 
     func testAnUnfamiliarTableIsPreservedAndOpensReadOnly() async throws {
-        // Inline math in a cell: a node 11a does not read.
+        // Unfamiliar inline element in a cell: a node the editor does not read
+        // (`<math>` became modeled in PR14).
         let update = try peerUpdate("styled") { _, tx, table in
             let paragraph = try XCTUnwrap(self.element(table, [2, 1, 0]))
-            let math = YType(typeRef: .xmlElement(nodeName: "math"))
-            try YWrite.insertAfter(tx, into: paragraph, after: nil, [.type(math)])
+            let unknown = YType(typeRef: .xmlElement(nodeName: "unknownInline"))
+            try YWrite.insertAfter(tx, into: paragraph, after: nil, [.type(unknown)])
         }
         let doc = YDoc(clientID: 3, gc: true)
         try doc.applyUpdate(YUpdateDecoder.decode(try fixture("styled")))

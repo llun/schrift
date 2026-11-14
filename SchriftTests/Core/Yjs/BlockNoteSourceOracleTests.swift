@@ -327,6 +327,271 @@ final class BlockNoteSourceOracleTests: XCTestCase {
         XCTAssertEqual(covered, Set(BlockNoteSourceCaptures.edits.map(\.name)))
     }
 
+    @MainActor
+    func testAllWebSourceAndInlineMathEditsThroughEngineMatchXMLAndShadow() throws {
+        var covered: Set<String> = []
+
+        func firstTableParagraphID(tableID: String, engine: DocumentEngine, doc: YDoc) throws -> String {
+            let writer = BlockNoteWriter(doc: doc)
+            let tbl = try writer.find(tableID)
+            for row in writer.children(tbl.element) {
+                guard case .type(let rowType) = row.content else { continue }
+                for cell in writer.children(rowType) {
+                    guard case .type(let cellType) = cell.content else { continue }
+                    if let paragraphItem = writer.children(cellType).first {
+                        return TableGrid.paragraphID(table: tableID, item: paragraphItem.id)
+                    }
+                }
+            }
+            throw NSError(domain: "BlockNoteSourceOracleTests", code: 2)
+        }
+
+        func firstInlineMathItemID(blockID: String, engine: DocumentEngine, doc: YDoc) throws -> YID {
+            let writer = BlockNoteWriter(doc: doc)
+            let block = try writer.find(blockID)
+            guard
+                let item = writer.children(block.element).first(where: {
+                    guard case .type(let type) = $0.content else { return false }
+                    return type.typeRef == .xmlElement(nodeName: NativeInlineObject.mathNodeName)
+                })
+            else {
+                throw NSError(domain: "BlockNoteSourceOracleTests", code: 1)
+            }
+            return item.id
+        }
+
+        func runEngineEdit(
+            _ name: String,
+            exactShadow: Bool = true,
+            perform: (DocumentEngine, YDoc, HeadlessSurface) throws -> Void
+        ) throws {
+            let capture = try XCTUnwrap(BlockNoteSourceCaptures.edits.first { $0.name == name }, "missing \(name)")
+            covered.insert(name)
+            let doc = try decodeDoc(capture.seed)
+            defer { doc.destroy() }
+            let blocks = NativeBlockProjection.project(doc, interlinkingOrigin: Self.testOrigin).blocks.map(
+                BlockSnapshot.init)
+            let surface = HeadlessSurface(blocks: blocks)
+            let engine = DocumentEngine(doc: doc, surface: surface, interlinkingOrigin: Self.testOrigin)
+            try perform(engine, doc, surface)
+            XCTAssertEqual(YXMLString.fragment(doc), capture.xml, "\(name): xml mismatch")
+            let shadow = try XCTUnwrap(
+                NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: Self.testOrigin),
+                "\(name): expected shadow")
+            XCTAssertEqual(
+                syncCanonicalMarkdown(shadow), syncCanonicalMarkdown(capture.markdown),
+                "\(name): syncCanonicalMarkdown mismatch")
+            if exactShadow {
+                XCTAssertEqual(shadow, capture.markdown, "\(name): exact shadow mismatch")
+            }
+        }
+
+        try runEngineEdit("typeIntoMathBlock") { engine, _, surface in
+            let sid = try XCTUnwrap(engine.openSource(.block(id: "mx")))
+            let len = engine.sourceSnapshot(sid)?.first?.runs.map(\.text).joined().utf16.count ?? 0
+            try engine.replaceText(block: sid, range: len..<len, with: "+1")
+            guard case .source(let node, let lines, _)? = surface.blocks.first(where: { $0.id == "mx" })?.preview
+            else { return XCTFail("expected source preview update") }
+            XCTAssertEqual(node, SourceBlock.mathBlock)
+            XCTAssertEqual(lines, ["x^2+1"])
+        }
+        try runEngineEdit("typeIntoMathBlockEmpty") { engine, _, _ in
+            let sid = try XCTUnwrap(engine.openSource(.block(id: "mx")))
+            try engine.replaceText(block: sid, range: 0..<0, with: "y = x")
+        }
+        try runEngineEdit("typeIntoDiagram") { engine, _, _ in
+            let sid = try XCTUnwrap(engine.openSource(.block(id: "dx")))
+            let len = engine.sourceSnapshot(sid)?.first?.runs.map(\.text).joined().utf16.count ?? 0
+            try engine.replaceText(block: sid, range: len..<len, with: "\n  B-->C")
+        }
+        try runEngineEdit("typeIntoDiagramEmpty") { engine, _, _ in
+            let sid = try XCTUnwrap(engine.openSource(.block(id: "dx")))
+            try engine.replaceText(block: sid, range: 0..<0, with: "graph TD\n  A-->B")
+        }
+        try runEngineEdit("typeIntoInlineMath") { engine, doc, _ in
+            let itemID = try firstInlineMathItemID(blockID: "p", engine: engine, doc: doc)
+            let sid = try XCTUnwrap(engine.openSource(.inlineMath(blockID: "p", itemID: itemID)))
+            let len = engine.sourceSnapshot(sid)?.first?.runs.map(\.text).joined().utf16.count ?? 0
+            try engine.replaceText(block: sid, range: len..<len, with: "+b^2")
+        }
+        try runEngineEdit("typeIntoInlineMathEmpty") { engine, doc, _ in
+            let itemID = try firstInlineMathItemID(blockID: "p", engine: engine, doc: doc)
+            let sid = try XCTUnwrap(engine.openSource(.inlineMath(blockID: "p", itemID: itemID)))
+            try engine.replaceText(block: sid, range: 0..<0, with: "x")
+        }
+        try runEngineEdit("replaceMathBlockContent") { engine, _, _ in
+            let sid = try XCTUnwrap(engine.openSource(.block(id: "mx")))
+            let len = engine.sourceSnapshot(sid)?.first?.runs.map(\.text).joined().utf16.count ?? 0
+            try engine.replaceText(block: sid, range: 0..<len, with: "\\frac{a}{b}")
+        }
+        try runEngineEdit("replaceDiagramContent") { engine, _, _ in
+            let sid = try XCTUnwrap(engine.openSource(.block(id: "dx")))
+            let len = engine.sourceSnapshot(sid)?.first?.runs.map(\.text).joined().utf16.count ?? 0
+            try engine.replaceText(block: sid, range: 0..<len, with: "sequenceDiagram\n  A->>B: Ok")
+        }
+        try runEngineEdit("replaceInlineMathContent") { engine, doc, _ in
+            let itemID = try firstInlineMathItemID(blockID: "p", engine: engine, doc: doc)
+            let sid = try XCTUnwrap(engine.openSource(.inlineMath(blockID: "p", itemID: itemID)))
+            let len = engine.sourceSnapshot(sid)?.first?.runs.map(\.text).joined().utf16.count ?? 0
+            try engine.replaceText(block: sid, range: 0..<len, with: "c\\cdot d")
+        }
+        try runEngineEdit("replaceParagraphAcrossInlineMath") { engine, _, _ in
+            try engine.replaceText(block: "p", range: 1..<4, with: "X")
+        }
+        try runEngineEdit("emptyMathBlock") { engine, _, _ in
+            let sid = try XCTUnwrap(engine.openSource(.block(id: "mx")))
+            let len = engine.sourceSnapshot(sid)?.first?.runs.map(\.text).joined().utf16.count ?? 0
+            try engine.replaceText(block: sid, range: 0..<len, with: "")
+        }
+        try runEngineEdit("emptyDiagram") { engine, _, _ in
+            let sid = try XCTUnwrap(engine.openSource(.block(id: "dx")))
+            let len = engine.sourceSnapshot(sid)?.first?.runs.map(\.text).joined().utf16.count ?? 0
+            try engine.replaceText(block: sid, range: 0..<len, with: "")
+        }
+        try runEngineEdit("emptyInlineMath") { engine, doc, _ in
+            let itemID = try firstInlineMathItemID(blockID: "p", engine: engine, doc: doc)
+            let sid = try XCTUnwrap(engine.openSource(.inlineMath(blockID: "p", itemID: itemID)))
+            let len = engine.sourceSnapshot(sid)?.first?.runs.map(\.text).joined().utf16.count ?? 0
+            try engine.replaceText(block: sid, range: 0..<len, with: "")
+        }
+        try runEngineEdit("deleteMathBlock") { engine, _, _ in
+            try engine.applyStructural(
+                NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: "mx", kind: .deleteBlock)
+            ) { _ in }
+        }
+        try runEngineEdit("deleteDiagram") { engine, _, _ in
+            try engine.applyStructural(
+                NativeEditCommand(id: UUID(), baseRevision: engine.revision, blockID: "dx", kind: .deleteBlock)
+            ) { _ in }
+        }
+        try runEngineEdit("deleteInlineMath") { engine, _, _ in
+            try engine.replaceText(block: "p", range: 7..<8, with: "")
+        }
+        try runEngineEdit("deleteInlineMathBetweenBold") { engine, _, _ in
+            try engine.replaceText(block: "p", range: 5..<6, with: "")
+        }
+        try runEngineEdit("deleteInlineMathInTableCell") { engine, doc, _ in
+            XCTAssertTrue(engine.openTable("tbl"))
+            let tpID = try firstTableParagraphID(tableID: "tbl", engine: engine, doc: doc)
+            try engine.replaceText(block: tpID, range: 2..<3, with: "")
+        }
+        try runEngineEdit("deleteColumnMathBlockDropsColumnList") { engine, _, _ in
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "cl",
+                    kind: .columns(.remove(index: 0), expecting: 2))
+            ) { _ in }
+        }
+        try runEngineEdit("boldAcrossInlineMath") { engine, _, _ in
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "p",
+                    kind: .marks(NativeRangeMarks(startOffset: 0, endOffset: 14, attributes: ["bold": "true"])))
+            ) { _ in }
+        }
+        try runEngineEdit("turnInlineMathParagraphIntoHeading") { engine, _, _ in
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "p",
+                    kind: .blockType(
+                        node: "heading",
+                        props: [
+                            ProjectedProp(key: "level", value: .int(2)),
+                            ProjectedProp(key: "isToggleable", value: .bool(false)),
+                        ],
+                        removing: 0..<0))
+            ) { _ in }
+        }
+        try runEngineEdit("splitAfterInlineMath") { engine, _, _ in
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "p",
+                    kind: .split(offset: 8, newID: "1", open: nil))
+            ) { _ in }
+        }
+        try runEngineEdit("slashMathBlockOnEmptyParagraph") { engine, _, _ in
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "p",
+                    kind: .insertSourceBlock(node: SourceBlock.mathBlock, newID: "unused", removing: 0..<0))
+            ) { _ in }
+        }
+        try runEngineEdit("slashMathBlockOnStyledEmptyParagraph") { engine, _, _ in
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "p",
+                    kind: .insertSourceBlock(node: SourceBlock.mathBlock, newID: "unused", removing: 0..<0))
+            ) { _ in }
+        }
+        try runEngineEdit("slashMathBlockAfterNonEmptyParagraph") { engine, _, _ in
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "p",
+                    kind: .insertSourceBlock(node: SourceBlock.mathBlock, newID: "1", removing: 0..<0))
+            ) { _ in }
+        }
+        try runEngineEdit("slashMathBlockNestedInToggle", exactShadow: false) { engine, _, _ in
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "tp",
+                    kind: .insertSourceBlock(node: SourceBlock.mathBlock, newID: "unused", removing: 0..<0))
+            ) { _ in }
+        }
+        try runEngineEdit("slashDiagramOnEmptyParagraph") { engine, _, _ in
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "p",
+                    kind: .insertSourceBlock(node: SourceBlock.diagram, newID: "unused", removing: 0..<0))
+            ) { _ in }
+        }
+        try runEngineEdit("slashDiagramOnStyledEmptyParagraph") { engine, _, _ in
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "p",
+                    kind: .insertSourceBlock(node: SourceBlock.diagram, newID: "unused", removing: 0..<0))
+            ) { _ in }
+        }
+        try runEngineEdit("slashDiagramAfterNonEmptyParagraph") { engine, _, _ in
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "p",
+                    kind: .insertSourceBlock(node: SourceBlock.diagram, newID: "1", removing: 0..<0))
+            ) { _ in }
+        }
+        try runEngineEdit("slashInlineMathInEmptyParagraph") { engine, _, _ in
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "p",
+                    kind: .insertInlineMath(replacing: 0..<0))
+            ) { _ in }
+        }
+        try runEngineEdit("slashInlineMathInMiddle") { engine, _, _ in
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "p",
+                    kind: .insertInlineMath(replacing: 6..<6))
+            ) { _ in }
+        }
+        try runEngineEdit("slashInlineMathAtEnd") { engine, _, _ in
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "p",
+                    kind: .insertInlineMath(replacing: 4..<4))
+            ) { _ in }
+        }
+        try runEngineEdit("slashInlineMathInTableCell") { engine, doc, _ in
+            XCTAssertTrue(engine.openTable("tbl"))
+            let tpID = try firstTableParagraphID(tableID: "tbl", engine: engine, doc: doc)
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: tpID,
+                    kind: .insertInlineMath(replacing: 4..<4))
+            ) { _ in }
+        }
+
+        XCTAssertEqual(covered, Set(BlockNoteSourceCaptures.edits.map(\.name)))
+    }
+
     func testInvalidAndUnfamiliarSourceShapesFailClosed() throws {
         // 1. Extra prop on mathBlock / diagram stays opaque and nil shadow.
         for node in [SourceBlock.mathBlock, SourceBlock.diagram] {

@@ -96,6 +96,29 @@ enum SourceBlock {
 enum SourceTarget: Equatable, Hashable, Sendable {
     case block(id: String)
     case inlineMath(blockID: String, itemID: YID)
+
+    /// Separates the owning block/paragraph id from the source element's item
+    /// id (`client.clock`) in scoped source surface block ids (PR14).
+    static let separator = "\u{2}"
+
+    var ownerID: String {
+        switch self {
+        case .block(let id), .inlineMath(let id, _): id
+        }
+    }
+
+    func syntheticID(elementItemID: YID) -> String {
+        "\(ownerID)\(Self.separator)\(elementItemID.client).\(elementItemID.clock)"
+    }
+
+    static func isSourceID(_ id: String) -> Bool {
+        id.unicodeScalars.contains("\u{2}")
+    }
+
+    static func ownerID(of id: String) -> String? {
+        guard let range = id.range(of: separator) else { return nil }
+        return String(id[..<range.lowerBound])
+    }
 }
 
 // MARK: - Writes

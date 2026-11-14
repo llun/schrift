@@ -43,11 +43,24 @@ struct PatchBuilder {
 
     mutating func closeColumns(_ id: String) { index.closeColumns(id) }
 
+    @discardableResult
+    mutating func openSource(_ target: SourceTarget) -> String? { index.openSource(target) }
+
+    mutating func closeSource(_ id: String) { index.closeSource(id) }
+
+    func sourceSnapshot(_ id: String) -> [BlockSnapshot]? {
+        guard index.isSourceText(id), let entry = index.entries[id] else { return nil }
+        return [BlockSnapshot(Self.sourceSnapshot(entry))]
+    }
+
     mutating func build(_ transaction: YTransaction) -> BlockPatch {
         let origin = BlockPatchOrigin(transaction.origin)
         // Open tables (PR11a): their paragraph lists before this transaction.
         let previousTables = index.openTables
         var changedTables: Set<String> = []
+        // Open source surfaces (PR14): their synthetic ids before this transaction.
+        let previousSources = index.openSources
+        var changedSources: Set<String> = []
         // Open column groups (PR12a): which column each block was in.
         let previousColumnOf = index.columnOf
         let rootAppeared = index.resolveRoot()
@@ -67,6 +80,27 @@ struct PatchBuilder {
             if !touched.contains(id) { touched.append(id) }
         }
 
+        func touchSourceOwner(_ ownerID: String, element: YType?) {
+            if index.entries[ownerID] != nil {
+                touch(ownerID)
+                structural.insert(ownerID)
+                if let table = TableGrid.tableID(ofParagraph: ownerID) { changedTables.insert(table) }
+                return
+            }
+            var ancestor = element?.item?.parentType
+            while let candidate = ancestor {
+                if candidate.typeRef == .xmlElement(nodeName: "blockContainer")
+                    || candidate.typeRef == .xmlElement(nodeName: "columnList"),
+                    let ancestorID = BlockIndex.blockID(of: candidate), index.entries[ancestorID] != nil
+                {
+                    touch(ancestorID)
+                    structural.insert(ancestorID)
+                    return
+                }
+                ancestor = candidate.item?.parentType
+            }
+        }
+
         for case let oid? in transaction.changedOrder {
             guard let entry = transaction.changed[oid] else { continue }
             visitedTypes += 1
@@ -81,6 +115,10 @@ struct PatchBuilder {
                 guard let id = index.blockID(for: type) else { continue }
                 touch(id)
                 if index.openTables[id] != nil { changedTables.insert(id) }
+                if let openSource = index.openSources[id] {
+                    changedSources.insert(id)
+                    touchSourceOwner(openSource.target.ownerID, element: index.entries[id]?.element)
+                }
                 // The narrowed rule: only a simple container whose element is
                 // exactly this XmlText may take the fast path.
                 // `isProjectable` is the pre-transaction state (the entry was
@@ -95,6 +133,7 @@ struct PatchBuilder {
                     let element = block.element, YBlockProjection.props(of: element) != nil,
                     let deltas = Self.textDeltas(events[oid], text: type),
                     let runs = YBlockProjection.textRuns(type),
+                    !index.isSourceText(id) || runs.allSatisfy({ $0.marks.isEmpty }),
                     TextDelta.apply(deltas, to: block.runs) == runs
                 {
                     textDeltas[id] = deltas
@@ -150,6 +189,16 @@ struct PatchBuilder {
             }
             guard let id = index.blockID(for: type) else { continue }
             touch(id)
+            // An open source element (`mathBlock`, `diagram`, or inline `math`):
+            // child text creation/removal or attribute changes re-validate the
+            // open source and refresh its owning card/paragraph.
+            if let openSource = index.openSources[id] {
+                changedSources.insert(id)
+                if entry.subs.contains(nil) { treeChanged = true }
+                structural.insert(id)
+                touchSourceOwner(openSource.target.ownerID, element: type)
+                continue
+            }
             // A table paragraph's element changed (its first text, a break,
             // an attribute): rebuild that paragraph. Anything else inside an
             // open table re-reads its paragraph list below.
@@ -307,10 +356,41 @@ struct PatchBuilder {
             }
         }
 
+        // Open source surfaces (PR14): re-validate touched sources (or all of
+        // them on a tree change); any that disappeared or became unfamiliar are
+        // removed so the source editor sees peer deletion/replacement.
+        let sources = treeChanged ? Set(previousSources.keys) : changedSources
+        var goneSources: [String] = []
+        for sourceID in sources.sorted() {
+            if !treeChanged { index.refresh(sourceID) }
+            if let entry = index.entries[sourceID], index.isSourceText(sourceID) {
+                if textDeltas[sourceID] == nil,
+                    !changes.contains(where: {
+                        if case .replaceBlock(let id, _) = $0 { return id == sourceID }
+                        return false
+                    })
+                {
+                    changes.append(.replaceBlock(blockID: sourceID, block: snapshot(entry)))
+                }
+            } else {
+                goneSources.append(sourceID)
+            }
+        }
+        if !goneSources.isEmpty {
+            let goneSet = Set(goneSources)
+            changes.removeAll { change in
+                switch change {
+                case .text(let id, _), .props(let id, _), .replaceBlock(let id, _): goneSet.contains(id)
+                default: false
+                }
+            }
+            changes.insert(.remove(blockIDs: goneSources), at: 0)
+        }
+
         // A tree change already rebuilt the index; anything else leaves its
         // entries valid, so it never pays for a rebuild.
         if !treeChanged {
-            for id in touched { index.refresh(id) }
+            for id in touched where !sources.contains(id) { index.refresh(id) }
         }
         var patch = BlockPatch(changes, origin: origin)
         if !previousColumnOf.isEmpty || !index.columnOf.isEmpty { tagColumns(&patch, previous: previousColumnOf) }
@@ -383,10 +463,25 @@ struct PatchBuilder {
     /// One block at its indexed depth and parent, as the tree projection
     /// reads it. O(block); not counted (the engine's own reads use it).
     func nativeSnapshot(_ entry: BlockIndex.Entry) -> NativeBlockSnapshot {
+        if index.isSourceText(entry.id) { return Self.sourceSnapshot(entry) }
         if index.isTableParagraph(entry.id) { return Self.paragraphSnapshot(entry) }
         return NativeBlockProjection.projectBlock(
             entry.containerItem, depth: entry.depth, parent: entry.parentID.flatMap { index.entries[$0]?.handle },
             generation: index.generation)
+    }
+
+    static func sourceSnapshot(_ entry: BlockIndex.Entry) -> NativeBlockSnapshot {
+        let isInlineMath = entry.element?.typeRef == .xmlElement(nodeName: NativeInlineObject.mathNodeName)
+        let node = isInlineMath ? "paragraph" : "codeBlock"
+        let plain = entry.element.flatMap { element -> String? in
+            if isInlineMath { return NativeInlineObject.read(element)?.visibleText }
+            return SourceBlock.plainText(of: element)
+        }
+        let runs: [InlineRun] = (plain?.isEmpty == false) ? [InlineRun(plain!)] : []
+        let block = ProjectedBlock(
+            id: entry.id, node: node, props: [], runs: runs,
+            fidelity: plain == nil ? .opaque(reason: "source") : .modeled)
+        return NativeBlockSnapshot(handle: entry.handle, block: block, depth: 0, parentHandle: nil)
     }
 
     /// An open table's paragraph as the table surface shows it: a plain

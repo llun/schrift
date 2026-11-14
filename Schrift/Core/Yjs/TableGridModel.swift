@@ -168,7 +168,9 @@ struct TableGrid: Equatable, Sendable {
         "\(table)\u{1}\(item.client).\(item.clock)"
     }
 
-    static func isParagraphID(_ id: String) -> Bool { id.contains("\u{1}") }
+    static func isParagraphID(_ id: String) -> Bool {
+        id.contains("\u{1}") && !SourceTarget.isSourceID(id)
+    }
 
     /// The table a cell paragraph id belongs to.
     static func tableID(ofParagraph id: String) -> String? {

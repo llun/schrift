@@ -76,6 +76,10 @@ struct NativeEditCommand: Equatable, Sendable {
         /// in place of the emptied paragraph or after it; `ids` are the new
         /// block's and the trailing paragraph's (either may go unused).
         case insertMedia(node: String, ids: [String], removing: Range<Int>)
+        /// The slash menu's mathBlock / diagram items (PR14), on the "/query"
+        /// paragraph: removes `removing` and replaces the emptied paragraph
+        /// (preserving its id) or inserts a new source block with `newID` after it.
+        case insertSourceBlock(node: String, newID: String, removing: Range<Int>)
         /// A media block's props (PR13a): BlockNote's `updateBlock`.
         /// `expecting` is the slot an upload started from: a block whose kind
         /// or url changed since refuses the commit.
@@ -83,6 +87,9 @@ struct NativeEditCommand: Equatable, Sendable {
         /// Inserts a typed inline object replacing `replacing` (block or cell
         /// UTF-16 range, collapsing to `replacing.lowerBound + 1`).
         case insertInlineObject(NativeInlineObject, replacing: Range<Int>)
+        /// Inserts an inline `<math>` element replacing `replacing` (plus an
+        /// optional trailing space for BlockNote's slash menu).
+        case insertInlineMath(replacing: Range<Int>, source: String = "", trailingSpace: Bool = true)
         /// Pastes a decoded inline-slice payload (`BlockNoteInlinePayload`)
         /// over `range` (`replacement` / `newBlockIDs` in `range`).
         case pasteInline(payload: Data, range: NativeRangeCommand)
@@ -120,7 +127,7 @@ struct NativeEditCommand: Equatable, Sendable {
         case .range(let range): return range.replacement
         case .split, .join, .marks, .props, .blockType, .indent, .outdent, .moveUp, .moveDown, .duplicate,
             .deleteBlock, .insertBlock, .insertSubtrees, .lineBreak, .table, .columns, .insertColumns, .insertMedia,
-            .mediaProps, .insertInlineObject, .pasteInline, .undo, .redo:
+            .insertSourceBlock, .mediaProps, .insertInlineObject, .insertInlineMath, .pasteInline, .undo, .redo:
             return ""
         }
     }
