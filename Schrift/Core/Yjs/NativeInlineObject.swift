@@ -93,23 +93,7 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
     }
 
     private static func readPlainMathSource(_ element: YType) -> String? {
-        let items = YBlockProjection.children(of: element, includeFormats: true)
-        if items.isEmpty { return "" }
-        guard items.count == 1, case .type(let text) = items[0].content, text.typeRef == .xmlText,
-            text.map.values.allSatisfy(\.deleted)
-        else { return nil }
-        if text.length > UInt(maxMathUTF16) {
-            for child in YBlockProjection.children(of: text, includeFormats: true) {
-                guard case .string = child.content else { return nil }
-            }
-            return SourceBlock.clippedDisplayText(of: element)
-        }
-        var result = ""
-        for child in YBlockProjection.children(of: text, includeFormats: true) {
-            guard case .string(let units) = child.content else { return nil }
-            result += String(decoding: units, as: UTF16.self)
-        }
-        return result
+        SourceBlock.boundedPlainText(of: element, maxUTF16: maxMathUTF16)
     }
 
     /// Validates and constructs a `NativeInlineObject` from pre-read props.
@@ -367,8 +351,8 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
             return .mentionSearch(
                 disabled: disabled,
                 trigger: trigger.map { Self.clippedDisplayText($0, limit: 16) })
-        case .math(let source):
-            return .math(source: Self.clippedDisplayText(source, limit: limit))
+        case .math:
+            return self
         }
     }
 

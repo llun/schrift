@@ -286,15 +286,8 @@ extension YBlockProjection {
                 return ProjectedBlock(
                     id: id, node: node, props: props, runs: [], fidelity: .opaque(reason: "\(node): \(reason)"))
             }
-            let runs: [InlineRun]
-            if let source = SourceBlock.boundedPlainText(of: element, maxUTF16: SourceBlock.maxSourceUTF16),
-                !source.unicodeScalars.contains("\u{FFFC}")
-            {
-                runs = source.isEmpty ? [] : [InlineRun(source)]
-            } else {
-                let clipped = SourceBlock.clippedDisplayText(of: element)
-                runs = clipped.isEmpty ? [] : [InlineRun(clipped)]
-            }
+            let source = SourceBlock.boundedPlainText(of: element, maxUTF16: SourceBlock.maxSourceUTF16) ?? ""
+            let runs = source.isEmpty ? [] : [InlineRun(source)]
             return ProjectedBlock(id: id, node: node, props: props, runs: runs, fidelity: .modeled)
         }
         let (rawRuns, runsFailure) = foldInline(

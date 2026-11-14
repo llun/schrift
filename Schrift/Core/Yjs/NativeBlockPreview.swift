@@ -89,9 +89,8 @@ enum NativeBlockPreview: Equatable, Sendable {
         case "columnList":
             guard let element else { return .preserved(node: block.node, summary: "") }
             return columns(element)
-        case "mathBlock",
-            "diagram" where !block.fidelity.isOpaque:
-            if let element, SourceBlock.isFamiliar(element) {
+        case "mathBlock", "diagram":
+            if !block.fidelity.isOpaque, let element, SourceBlock.isFamiliar(element) {
                 return exactSourcePreview(node: block.node, element: element)
             }
             let summary = element.map { text(of: $0, limit: Limits.maxText) } ?? ""

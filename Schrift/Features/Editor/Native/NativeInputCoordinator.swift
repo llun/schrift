@@ -2348,17 +2348,21 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             return true
         }
         surface.holdForComposition(false)
-        let commitText = sourceKind == nil ? commit.text : NativeClipboard.normalizingLineBreaks(commit.text)
+        var commitText = sourceKind == nil ? commit.text : NativeClipboard.normalizingLineBreaks(commit.text)
+        if sourceKind == .inlineMath {
+            commitText = commitText.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\t", with: " ")
+        }
         if let sourceKind {
             let currentLength =
                 surface.rangeIndex.entry(for: commit.blockID)?.textRange.length ?? commit.range.upperBound
             let limit = sourceKind.maxUTF16
             let validCharacters = SourceBlock.isValidReplacement(commitText, node: sourceKind.nodeName)
+            let remainingLength = max(0, currentLength - commit.range.count)
             let withinLimit =
-                commitText.utf16.count <= limit
-                && (currentLength - commit.range.count) <= limit - commitText.utf16.count
+                commitText.utf16.count <= limit && remainingLength <= limit - commitText.utf16.count
             guard validCharacters, withinLimit else {
                 composition.finish(commit.id)
+                composition.recover(commitText, blockID: commit.blockID)
                 _ = post(.compositionCancel(surfaceID: surfaceID))
                 if let entry = surface.rangeIndex.entry(for: commit.blockID) {
                     selection.place(

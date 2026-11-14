@@ -34,8 +34,13 @@ enum SourceBlock {
             return "content"
         }
         guard text.map.values.allSatisfy(\.deleted) else { return "content" }
+        guard text.length <= UInt(maxSourceUTF16) else { return "size" }
+        var total = 0
         for child in YBlockProjection.children(of: text, includeFormats: true) {
-            guard case .string = child.content else { return "marked" }
+            guard case .string(let chunk) = child.content else { return "marked" }
+            if chunk.contains(0xFFFC) { return "content" }
+            total += chunk.count
+            if total > maxSourceUTF16 { return "size" }
         }
         return nil
     }
@@ -79,41 +84,11 @@ enum SourceBlock {
         var units: [UInt16] = []
         units.reserveCapacity(Int(text.length))
         for child in YBlockProjection.children(of: text, includeFormats: true) {
-            guard case .string(let chunk) = child.content else { return nil }
+            guard case .string(let chunk) = child.content, !chunk.contains(0xFFFC) else { return nil }
             if units.count + chunk.count > maxUTF16 { return nil }
             units += chunk
         }
         return String(decoding: units, as: UTF16.self)
-    }
-
-    /// Reads a display-bounded, single-line, scrubbed summary from a `mathBlock`,
-    /// `diagram`, or `math` element without materializing multi-megabyte strings.
-    static func clippedDisplayText(of element: YType, limit: Int = NativeInlineObject.defaultDisplayLimit) -> String {
-        guard limit > 0 else { return "" }
-        let items = YBlockProjection.children(of: element, includeFormats: false)
-        guard let first = items.first, case .type(let text) = first.content, text.typeRef == .xmlText else {
-            return ""
-        }
-        let maxReadUnits = max(limit * 8, 2_048)
-        var units: [UInt16] = []
-        units.reserveCapacity(min(Int(text.length), maxReadUnits))
-        var truncatedEarly = false
-        for child in YBlockProjection.children(of: text, includeFormats: false) {
-            guard case .string(let chunk) = child.content else { continue }
-            let remaining = maxReadUnits - units.count
-            if chunk.count > remaining {
-                units += chunk.prefix(remaining)
-                if let last = units.last, UTF16.isLeadSurrogate(last) { units.removeLast() }
-                truncatedEarly = true
-                break
-            }
-            units += chunk
-        }
-        let clipped = NativeInlineObject.clippedDisplayText(String(decoding: units, as: UTF16.self), limit: limit)
-        if truncatedEarly, !clipped.hasSuffix("…") {
-            return clipped + "…"
-        }
-        return clipped
     }
 
     static func maxEditableUTF16(for node: String) -> Int {

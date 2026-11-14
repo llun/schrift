@@ -1248,27 +1248,26 @@ final class BlockNoteSourceOracleTests: XCTestCase {
             try text.insert(0, hugeMathText, nil)
         }
 
-        let projected = NativeBlockProjection.project(doc)
+        let projected = NativeBlockProjection.project(doc, inlineObjects: true)
         let byID = Dictionary(uniqueKeysWithValues: projected.blocks.map { ($0.id, $0) })
 
         let hugeBlock = try XCTUnwrap(byID["m-huge"])
-        XCTAssertEqual(hugeBlock.block.fidelity, .modeled)
-        let projectedHugeText = hugeBlock.block.runs.map(\.text).joined()
-        XCTAssertLessThanOrEqual(projectedHugeText.count, NativeInlineObject.defaultDisplayLimit + 1)
-        XCTAssertTrue(projectedHugeText.hasSuffix("…"))
-        XCTAssertFalse(projectedHugeText.contains("\n"))
+        XCTAssertTrue(hugeBlock.block.fidelity.isOpaque)
+        XCTAssertTrue(hugeBlock.block.runs.isEmpty)
+        guard case .preserved? = hugeBlock.preview else { return XCTFail("expected .preserved preview for m-huge") }
 
         let fffcBlock = try XCTUnwrap(byID["d-fffc"])
-        XCTAssertEqual(fffcBlock.block.fidelity, .modeled)
-        XCTAssertEqual(fffcBlock.block.runs.map(\.text).joined(), "graphTD")
+        XCTAssertTrue(fffcBlock.block.fidelity.isOpaque)
+        XCTAssertTrue(fffcBlock.block.runs.isEmpty)
+        guard case .preserved? = fffcBlock.preview else { return XCTFail("expected .preserved preview for d-fffc") }
 
         let hugeMathBlock = try XCTUnwrap(byID["p-huge-math"])
-        if case .math(let clippedSource)? = hugeMathBlock.block.runs.first?.inlineObject {
-            XCTAssertLessThanOrEqual(clippedSource.count, NativeInlineObject.defaultDisplayLimit + 1)
-            XCTAssertTrue(clippedSource.hasSuffix("…"))
-        } else {
-            XCTFail("expected modeled inline math")
+        XCTAssertTrue(hugeMathBlock.block.fidelity.isOpaque)
+        XCTAssertTrue(hugeMathBlock.block.runs.isEmpty)
+        guard case .preserved? = hugeMathBlock.preview else {
+            return XCTFail("expected .preserved preview for p-huge-math")
         }
+        XCTAssertNil(NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: Self.testOrigin))
 
         // BlockSnapshot.clippedVisibleText() clips direct oversized source snapshots (hasInlineObjects == false).
         let directSnapshot = BlockSnapshot(
@@ -1277,6 +1276,128 @@ final class BlockNoteSourceOracleTests: XCTestCase {
         let clipped = directSnapshot.clippedVisibleText()
         XCTAssertLessThanOrEqual(clipped.count, NativeInlineObject.defaultDisplayLimit + 1)
         XCTAssertTrue(clipped.hasSuffix("…"))
+    }
+
+    func testR1OversizedInlineMathInTableOrProseIsOpaqueAndNeverRoundTrippedOrCopied() throws {
+        let hugeMath = String(repeating: "x", count: NativeInlineObject.maxMathUTF16 + 50)
+        let hugeBlockText = String(repeating: "z", count: SourceBlock.maxSourceUTF16 + 50)
+        let doc = YDoc(clientID: 1, gc: true)
+        defer { doc.destroy() }
+        var mathItemID: YID?
+
+        // Paragraph with oversized <math>, oversized mathBlock, and table whose cell contains oversized <math>.
+        try populateContainer(doc, id: "p-huge", node: "paragraph") { element, tx in
+            let math = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+            let item = try YWrite.insertAfter(tx, into: element, after: nil, [.type(math)])
+            mathItemID = item?.id
+            let text = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: math, after: nil, [.type(text)])
+            try text.insert(0, hugeMath, nil)
+        }
+        try populateContainer(doc, id: "m-huge", node: SourceBlock.mathBlock) { element, tx in
+            let text = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: element, after: nil, [.type(text)])
+            try text.insert(0, hugeBlockText, nil)
+        }
+        try populateContainer(doc, id: "tbl-huge", node: "table") { table, tx in
+            for r in 0..<2 {
+                let row = YType(typeRef: .xmlElement(nodeName: "tableRow"))
+                let prevRow = YBlockProjection.children(of: table, includeFormats: false).last
+                _ = try YWrite.insertAfter(tx, into: table, after: prevRow, [.type(row)])
+                for c in 0..<2 {
+                    let cell = YType(typeRef: .xmlElement(nodeName: "tableCell"))
+                    let prevCell = YBlockProjection.children(of: row, includeFormats: false).last
+                    _ = try YWrite.insertAfter(tx, into: row, after: prevCell, [.type(cell)])
+                    let para = YType(typeRef: .xmlElement(nodeName: "tableParagraph"))
+                    _ = try YWrite.insertAfter(tx, into: cell, after: nil, [.type(para)])
+                    if r == 0 && c == 0 {
+                        let math = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+                        try YWrite.insertAfter(tx, into: para, after: nil, [.type(math)])
+                        let text = YType(typeRef: .xmlText)
+                        try YWrite.insertAfter(tx, into: math, after: nil, [.type(text)])
+                        try text.insert(0, hugeMath, nil)
+                    } else {
+                        let text = YType(typeRef: .xmlText)
+                        try YWrite.insertAfter(tx, into: para, after: nil, [.type(text)])
+                        try text.insert(0, "cell-\(r)-\(c)", nil)
+                    }
+                }
+            }
+        }
+
+        let beforeXML = YXMLString.fragment(doc)
+        let surface = HeadlessSurface()
+        let engine = DocumentEngine(doc: doc, surface: surface)
+
+        // Projection & engine treat oversized paragraph, mathBlock, and table as unfamiliar/opaque.
+        XCTAssertFalse(engine.tableGrid("tbl-huge")?.isFamiliar ?? true)
+        XCTAssertEqual(engine.tableGrid("tbl-huge")?.familiarity, .unfamiliar("unexpected cell content"))
+        XCTAssertFalse(engine.openTable("tbl-huge"))
+        XCTAssertNil(engine.tableCopy("tbl-huge", from: TableSlot(row: 0, column: 0), to: TableSlot(row: 1, column: 1)))
+        XCTAssertNil(engine.openSource(.block(id: "m-huge")))
+        XCTAssertNil(engine.openSource(.inlineMath(blockID: "p-huge", itemID: try XCTUnwrap(mathItemID))))
+
+        // Preview and runs contain no clipped display string or NativeInlineObject.math(source:).
+        let projected = NativeBlockProjection.project(doc, inlineObjects: true)
+        let byID = Dictionary(uniqueKeysWithValues: projected.blocks.map { ($0.id, $0) })
+        let pSnapshot = try XCTUnwrap(byID["p-huge"])
+        XCTAssertTrue(pSnapshot.block.fidelity.isOpaque)
+        XCTAssertTrue(pSnapshot.block.runs.isEmpty)
+        guard case .preserved? = pSnapshot.preview else { return XCTFail("expected .preserved preview for p-huge") }
+        let mSnapshot = try XCTUnwrap(byID["m-huge"])
+        XCTAssertTrue(mSnapshot.block.fidelity.isOpaque)
+        XCTAssertTrue(mSnapshot.block.runs.isEmpty)
+        guard case .preserved? = mSnapshot.preview else { return XCTFail("expected .preserved preview for m-huge") }
+        if case .table(let cells, _, _)? = byID["tbl-huge"]?.preview {
+            let cellSummary = cells[0][0]
+            XCTAssertFalse(cellSummary.contains(String(repeating: "x", count: 100)), cellSummary)
+        }
+
+        // Lossy table mutations and structural copy/edit on opaque targets are refused and preserve Yjs verbatim.
+        XCTAssertThrowsError(
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "tbl-huge", kind: .table(.toggleHeaderRow)),
+                persist: { _ in }))
+        XCTAssertThrowsError(
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "tbl-huge",
+                    kind: .table(.setCellProp(key: "textColor", value: "red", slots: [TableSlot(row: 0, column: 0)]))
+                ),
+                persist: { _ in }))
+        XCTAssertThrowsError(
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "p-huge",
+                    kind: .replace(range: 0..<0, replacement: "!")),
+                persist: { _ in }))
+        XCTAssertThrowsError(
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "m-huge",
+                    kind: .replace(range: 0..<0, replacement: "!")),
+                persist: { _ in }))
+        XCTAssertThrowsError(
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "tbl-huge", kind: .table(.toggleHeaderColumn)),
+                persist: { _ in }))
+        XCTAssertThrowsError(
+            try engine.applyStructural(
+                NativeEditCommand(
+                    id: UUID(), baseRevision: engine.revision, blockID: "tbl-huge",
+                    kind: .table(.clear(from: TableSlot(row: 0, column: 0), to: TableSlot(row: 0, column: 0)))),
+                persist: { _ in }))
+        XCTAssertNil(engine.inlinePayload([ReplicaInlineSlice(blockID: "p-huge", range: 0..<1)]))
+        let writer = BlockNoteWriter(doc: doc)
+        let pCopy = try writer.snapshot(try writer.find("p-huge").container, block: "p-huge", depth: 0)
+        let mCopy = try writer.snapshot(try writer.findSource("m-huge").container, block: "m-huge", depth: 0)
+        XCTAssertThrowsError(try BlockNoteSubtreePayload.validatingPastable([pCopy]))
+        XCTAssertThrowsError(try BlockNoteSubtreePayload.validatingPastable([mCopy]))
+
+        let afterXML = YXMLString.fragment(doc)
+        XCTAssertEqual(afterXML, beforeXML)
     }
 
     func testS3InlineMathTabAndBidiValidation() {

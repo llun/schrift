@@ -24,7 +24,10 @@ struct NativeNavigationEntry: Equatable, Sendable {
             block.hasInlineObjects
             ? block.runs.map { run in
                 guard let inline = run.inlineObject else { return run }
-                return InlineRun(inlineObject: inline.clippedForDisplay())
+                if case .interlink = inline {
+                    return InlineRun(inlineObject: inline.clippedForDisplay())
+                }
+                return InlineRun(inline.clippedVisibleText())
             } : []
         if block.node == "heading", case .int(let level)? = block.props.first(where: { $0.key == "level" })?.value {
             self.level = level

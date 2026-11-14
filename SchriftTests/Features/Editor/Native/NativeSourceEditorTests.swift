@@ -1157,16 +1157,33 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
             win.isHidden = true
         }
 
-        // 3. Read-only inspect session clips oversized blocks safely instead of loading 200k+ chars.
+        // 3. Read-only inspect session also treats oversized blocks and inline math as unfamiliar/opaque
+        // (never opens them or exposes clipped text), while editable m-large still opens read-only.
         let inspected = try await NativeEditorSession.inspect(state: state)
         addTeardownBlock { await inspected.close().value }
-        let roEditor = NativeSourceEditorViewController(document: inspected, request: .block(blockID: "m-huge"))
-        let roWin = hostController(UINavigationController(rootViewController: roEditor))
-        defer { roWin.isHidden = true }
-        await waitForSourceLoaded(roEditor)
-        let roText = try XCTUnwrap(roEditor.sourceSession?.textView.text)
-        XCTAssertLessThanOrEqual(roText.count, NativeInlineObject.defaultDisplayLimit + 2)
-        roEditor.close()
+        for req: NativeSourceRequest in [
+            .block(blockID: "m-huge"),
+            .block(blockID: "d-fffc"),
+            .inlineMath(blockID: "p-huge", utf16Offset: 0),
+        ] {
+            let roGone = NativeSourceEditorViewController(document: inspected, request: req)
+            let roWin = hostController(UINavigationController(rootViewController: roGone))
+            await waitForSourceLoaded(roGone)
+            XCTAssertTrue(roGone.isGone, "\(req)")
+            XCTAssertNil(roGone.sourceSession, "\(req)")
+            roWin.isHidden = true
+        }
+        let roLarge = NativeSourceEditorViewController(document: inspected, request: .block(blockID: "m-large"))
+        let roLargeWin = hostController(UINavigationController(rootViewController: roLarge))
+        defer { roLargeWin.isHidden = true }
+        await waitForSourceLoaded(roLarge)
+        XCTAssertFalse(roLarge.isGone)
+        let roLargeTV = try XCTUnwrap(roLarge.sourceSession?.textView)
+        XCTAssertFalse(roLargeTV.isEditable)
+        XCTAssertEqual(
+            roLarge.sourceSession?.surface.blocks.first?.runs.map(\.text).joined().utf16.count,
+            NativeInlineObject.maxMathUTF16 + 1)
+        roLarge.close()
     }
 
     func testS2SourceCoordinatorNormalizesLineBreaksAndCancelsDisallowedCompositionWithoutFreezing() async throws {
@@ -1220,14 +1237,14 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         XCTAssertTrue(mathTV.isEditable)
         XCTAssertEqual(mathInput.noticeKey, .native_editor_input_unavailable)
         XCTAssertFalse(mathTV.text.contains("bad"))
-        XCTAssertTrue(try harness.store.provisionalRecoveries(for: harness.scope).isEmpty)
+        XCTAssertEqual(try harness.store.provisionalRecoveries(for: harness.scope).map(\.text), ["bad\u{001B}"])
 
         mathTV.insertText("!")
         await mathSession.settle()
         XCTAssertTrue(mathTV.text.contains("!"), mathTV.text ?? "")
         mathEditor.close()
 
-        // 2. inlineMath cancels cleanly on \n and on oversized IME commit without freezing.
+        // 2. inlineMath normalizes \n and \t to space on IME commit and keeps still-refused overflow recoverable.
         let inlineEditor = NativeSourceEditorViewController(
             document: harness.session, request: .inlineMath(blockID: "px", utf16Offset: 0))
         let inlineWin = hostController(UINavigationController(rootViewController: inlineEditor))
@@ -1243,8 +1260,7 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         await inlineSession.settle()
         XCTAssertFalse(inlineInput.isFrozen)
         XCTAssertTrue(inlineTV.isEditable)
-        XCTAssertEqual(inlineInput.noticeKey, .native_editor_input_unavailable)
-        XCTAssertTrue(try harness.store.provisionalRecoveries(for: harness.scope).isEmpty)
+        XCTAssertTrue(inlineTV.text.hasPrefix("a b"), inlineTV.text ?? "")
 
         inlineTV.selectedRange = NSRange(location: 0, length: 0)
         inlineTV.setMarkedText("123456", selectedRange: NSRange(location: 6, length: 0))
@@ -1253,9 +1269,10 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         XCTAssertFalse(inlineInput.isFrozen)
         XCTAssertTrue(inlineTV.isEditable)
         XCTAssertEqual(inlineInput.noticeKey, .native_editor_paste_too_large)
-        XCTAssertTrue(try harness.store.provisionalRecoveries(for: harness.scope).isEmpty)
+        XCTAssertTrue(
+            try harness.store.provisionalRecoveries(for: harness.scope).map(\.text).contains("123456"))
 
-        // Subsequent valid IME commit of 5 chars fits within maxMathUTF16 and succeeds.
+        // Subsequent valid IME commit of 2 chars fits within remaining maxMathUTF16 and succeeds.
         inlineTV.selectedRange = NSRange(location: 0, length: 0)
         inlineTV.setMarkedText("ok", selectedRange: NSRange(location: 2, length: 0))
         inlineTV.unmarkText()
@@ -1472,5 +1489,191 @@ final class NativeSourceEditorTests: NativeEditingTestCase {
         XCTAssertNil(deleteHarness.input.requestedSource)
         await deleteHarness.settle()
         XCTAssertNil(deleteHarness.input.requestedSource)
+    }
+
+    func testR1R2OversizedSourcesShowAsPreservedNeverCutCopiedLossilyOrOpened() async throws {
+        let oversizedBlock = String(repeating: "z", count: SourceBlock.maxSourceUTF16 + 25)
+        let oversizedMath = String(repeating: "x", count: NativeInlineObject.maxMathUTF16 + 25)
+        let state = try makeYDocState { tx, group in
+            var after: YItem?
+            for (id, node, value) in [
+                ("m-huge", SourceBlock.mathBlock, oversizedBlock),
+                ("d-huge", SourceBlock.diagram, oversizedBlock),
+            ] {
+                let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+                after = try YWrite.insertAfter(tx, into: group, after: after, [.type(container)])
+                try YWrite.mapSet(tx, on: container, key: "id", .any([.string(id)]))
+                let el = YType(typeRef: .xmlElement(nodeName: node))
+                try YWrite.insertAfter(tx, into: container, after: nil, [.type(el)])
+                let txt = YType(typeRef: .xmlText)
+                try YWrite.insertAfter(tx, into: el, after: nil, [.type(txt)])
+                try txt.insert(0, value, nil)
+            }
+
+            let pContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            after = try YWrite.insertAfter(tx, into: group, after: after, [.type(pContainer)])
+            try YWrite.mapSet(tx, on: pContainer, key: "id", .any([.string("p-huge")]))
+            let pEl = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+            try YWrite.insertAfter(tx, into: pContainer, after: nil, [.type(pEl)])
+            let mathEl = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+            try YWrite.insertAfter(tx, into: pEl, after: nil, [.type(mathEl)])
+            let mTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: mathEl, after: nil, [.type(mTxt)])
+            try mTxt.insert(0, oversizedMath, nil)
+
+            let tContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            after = try YWrite.insertAfter(tx, into: group, after: after, [.type(tContainer)])
+            try YWrite.mapSet(tx, on: tContainer, key: "id", .any([.string("tbl-huge")]))
+            let tEl = YType(typeRef: .xmlElement(nodeName: "table"))
+            try YWrite.insertAfter(tx, into: tContainer, after: nil, [.type(tEl)])
+            var prevRow: YItem?
+            for r in 0..<2 {
+                let row = YType(typeRef: .xmlElement(nodeName: "tableRow"))
+                prevRow = try YWrite.insertAfter(tx, into: tEl, after: prevRow, [.type(row)])
+                var prevCell: YItem?
+                for c in 0..<2 {
+                    let cell = YType(typeRef: .xmlElement(nodeName: "tableCell"))
+                    prevCell = try YWrite.insertAfter(tx, into: row, after: prevCell, [.type(cell)])
+                    let para = YType(typeRef: .xmlElement(nodeName: "tableParagraph"))
+                    _ = try YWrite.insertAfter(tx, into: cell, after: nil, [.type(para)])
+                    if r == 0 && c == 0 {
+                        let cellMath = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+                        _ = try YWrite.insertAfter(tx, into: para, after: nil, [.type(cellMath)])
+                        let cmTxt = YType(typeRef: .xmlText)
+                        _ = try YWrite.insertAfter(tx, into: cellMath, after: nil, [.type(cmTxt)])
+                        try cmTxt.insert(0, oversizedMath, nil)
+                    } else {
+                        let cTxt = YType(typeRef: .xmlText)
+                        _ = try YWrite.insertAfter(tx, into: para, after: nil, [.type(cTxt)])
+                        try cTxt.insert(0, "c\(r)\(c)", nil)
+                    }
+                }
+            }
+
+            let tail = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            _ = try YWrite.insertAfter(tx, into: group, after: after, [.type(tail)])
+            try YWrite.mapSet(tx, on: tail, key: "id", .any([.string("p-tail")]))
+            let tailEl = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+            _ = try YWrite.insertAfter(tx, into: tail, after: nil, [.type(tailEl)])
+            let tailTxt = YType(typeRef: .xmlText)
+            _ = try YWrite.insertAfter(tx, into: tailEl, after: nil, [.type(tailTxt)])
+            try tailTxt.insert(0, "tail", nil)
+        }
+
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+        let beforeXML = await harness.session.replicaDoc { YXMLString.fragment($0) }
+
+        // Surface blocks and attachments treat all oversized targets as preserved/opaque without inline chips.
+        for id in ["m-huge", "d-huge", "p-huge"] {
+            let block = try XCTUnwrap(harness.session.surface.blocks.first { $0.id == id }, id)
+            XCTAssertTrue(block.isOpaque, id)
+            XCTAssertTrue(block.runs.isEmpty, id)
+            guard case .preserved? = block.preview else { return XCTFail("expected .preserved preview for \(id)") }
+        }
+        XCTAssertTrue(inlineChipLocations(in: harness.view.attributedText).isEmpty)
+
+        // Selection across opaque / oversized blocks never copies clipped text or cuts anything.
+        for id in ["m-huge", "d-huge", "p-huge", "tbl-huge"] {
+            let entry = try XCTUnwrap(harness.session.surface.rangeIndex.entry(for: id), id)
+            setSelection(harness, entry.range)
+            harness.input.pasteboard.items = []
+            harness.input.copySelection()
+            XCTAssertNil(harness.input.pasteboard.string, id)
+            let cutResult = await harness.run { harness.input.cutSelection() }
+            XCTAssertFalse(cutResult, id)
+        }
+
+        // Table containing oversized <math> opens read-only with no cell editor or table copy.
+        let openedTable = await harness.session.openTable("tbl-huge")
+        XCTAssertNil(openedTable)
+        let tableEditor = TableEditorViewController(document: harness.session, tableID: "tbl-huge")
+        let tableWin = hostController(tableEditor)
+        defer { tableWin.isHidden = true }
+        await tableEditor.load()
+        XCTAssertNil(tableEditor.cellSession)
+        XCTAssertEqual(tableEditor.grid?.familiarity, .unfamiliar("unexpected cell content"))
+
+        // Opening any oversized block or inline math refuses in both edit and read-only inspect modes.
+        let inspected = try await NativeEditorSession.inspect(state: state)
+        addTeardownBlock { await inspected.close().value }
+        for session in [harness.session, inspected] {
+            for req: NativeSourceRequest in [
+                .block(blockID: "m-huge"),
+                .block(blockID: "d-huge"),
+                .inlineMath(blockID: "p-huge", utf16Offset: 0),
+            ] {
+                let vc = NativeSourceEditorViewController(document: session, request: req)
+                let win = hostController(UINavigationController(rootViewController: vc))
+                await waitForSourceLoaded(vc)
+                XCTAssertTrue(vc.isGone, "\(req)")
+                XCTAssertNil(vc.sourceSession, "\(req)")
+                win.isHidden = true
+            }
+        }
+
+        let afterXML = await harness.session.replicaDoc { YXMLString.fragment($0) }
+        XCTAssertEqual(afterXML, beforeXML)
+    }
+
+    func testR3InlineMathNormalizesNewlineAndTabAndKeepsRefusedCommitsRecoverable() async throws {
+        let initialInline = String(repeating: "x", count: NativeInlineObject.maxMathUTF16 - 5)
+        let state = try makeYDocState { tx, group in
+            let pContainer = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            _ = try YWrite.insertAfter(tx, into: group, after: nil, [.type(pContainer)])
+            try YWrite.mapSet(tx, on: pContainer, key: "id", .any([.string("px")]))
+            let pEl = YType(typeRef: .xmlElement(nodeName: "paragraph"))
+            try YWrite.insertAfter(tx, into: pContainer, after: nil, [.type(pEl)])
+            let mathEl = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
+            try YWrite.insertAfter(tx, into: pEl, after: nil, [.type(mathEl)])
+            let iTxt = YType(typeRef: .xmlText)
+            try YWrite.insertAfter(tx, into: mathEl, after: nil, [.type(iTxt)])
+            try iTxt.insert(0, initialInline, nil)
+        }
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+
+        let editor = NativeSourceEditorViewController(
+            document: harness.session, request: .inlineMath(blockID: "px", utf16Offset: 0))
+        let win = hostController(UINavigationController(rootViewController: editor))
+        defer { win.isHidden = true }
+        await waitForSourceLoaded(editor)
+        let sourceSession = try XCTUnwrap(editor.sourceSession)
+        let sourceInput = try XCTUnwrap(sourceSession.input)
+        let tv = sourceSession.textView
+
+        // 1. IME / dictation commit with \n, \r\n, \u{2028}, and \t normalizes each to a space and commits cleanly.
+        tv.selectedRange = NSRange(location: 0, length: 0)
+        tv.setMarkedText("a\nb\tc", selectedRange: NSRange(location: 5, length: 0))
+        tv.unmarkText()
+        await sourceSession.settle()
+        XCTAssertEqual(sourceInput.composition.pendingRecoveries, [])
+        XCTAssertTrue(try harness.store.provisionalRecoveries(for: harness.scope).isEmpty)
+        XCTAssertTrue(tv.text.hasPrefix("a b c"), tv.text ?? "")
+
+        // 2. Remaining capacity is now 0; an overflow IME commit refuses cleanly and preserves the composed text.
+        tv.selectedRange = NSRange(location: 0, length: 0)
+        tv.setMarkedText("overflow", selectedRange: NSRange(location: 8, length: 0))
+        tv.unmarkText()
+        await sourceSession.settle()
+        XCTAssertFalse(sourceInput.isFrozen)
+        XCTAssertTrue(tv.isEditable)
+        XCTAssertEqual(sourceInput.noticeKey, .native_editor_paste_too_large)
+        XCTAssertTrue(sourceInput.composition.pendingRecoveries.map(\.text).contains("overflow"))
+        XCTAssertTrue(
+            try harness.store.provisionalRecoveries(for: harness.scope).map(\.text).contains("overflow"))
+
+        // 3. Disallowed scalar commits (bidi format, control char) refuse and keep text recoverable without freezing.
+        tv.selectedRange = NSRange(location: 0, length: 5)
+        tv.setMarkedText("ok\u{202E}!", selectedRange: NSRange(location: 4, length: 0))
+        tv.unmarkText()
+        await sourceSession.settle()
+        XCTAssertFalse(sourceInput.isFrozen)
+        XCTAssertTrue(tv.isEditable)
+        XCTAssertEqual(sourceInput.noticeKey, .native_editor_input_unavailable)
+        XCTAssertTrue(sourceInput.composition.pendingRecoveries.map(\.text).contains("ok\u{202E}!"))
+        XCTAssertTrue(
+            try harness.store.provisionalRecoveries(for: harness.scope).map(\.text).contains("ok\u{202E}!"))
+        editor.close()
     }
 }
