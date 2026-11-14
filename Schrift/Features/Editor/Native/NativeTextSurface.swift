@@ -49,6 +49,15 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     /// Cached title for a linked document UUID, used only for inline interlink
     /// chip display without modifying Yjs.
     var documentTitle: (@MainActor (UUID) -> String?)?
+    /// Titles recorded immediately upon picker selection so the first layout pass
+    /// renders the page title even when `documentTitle` is unset or lags.
+    private var recordedDocumentTitles: [UUID: String] = [:]
+
+    func recordDocumentTitle(_ title: String, for documentID: UUID) {
+        guard let safeTitle = NativeInlineObject.clippedNonEmptyDisplayText(title) else { return }
+        recordedDocumentTitles[documentID] = safeTitle
+        attachmentGeometry.documentTitles[documentID] = safeTitle
+    }
     /// Replica-backed surfaces use the owner's settled projection to validate
     /// fast patches. Value-only fixtures may omit this callback.
     private let reprojectBlock: ((String) -> BlockSnapshot?)?
@@ -265,9 +274,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                 var seen = existing
                 let fresh = inserted.filter { seen.insert($0.id).inserted }
                 guard !fresh.isEmpty else { continue }
-                for block in fresh {
-                    collectDocumentTitles(from: block, into: &attachmentGeometry.documentTitles)
-                }
+                cacheDocumentTitles(from: fresh)
                 let position = after.flatMap { rangeIndex.position(for: $0) }.map { $0 + 1 } ?? 0
                 let offset =
                     position < rangeIndex.entries.count ? rangeIndex.entries[position].range.location : storage.length
@@ -649,14 +656,23 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
 
     // MARK: Attachment geometry (PR06e)
 
+    private func cacheDocumentTitles(from blocks: [BlockSnapshot]) {
+        var titles = attachmentGeometry.documentTitles
+        for block in blocks {
+            collectDocumentTitles(from: block, into: &titles)
+        }
+        if titles != attachmentGeometry.documentTitles {
+            attachmentGeometry.documentTitles = titles
+        }
+    }
+
     private func collectDocumentTitles(from block: BlockSnapshot, into titles: inout [UUID: String]) {
-        guard let documentTitle else { return }
         for run in block.runs {
             guard case .interlink(let docID, _, _, let disabled, _)? = run.inlineObject,
                 !disabled,
                 let uuid = UUID(uuidString: docID),
                 titles[uuid] == nil,
-                let title = documentTitle(uuid),
+                let title = documentTitle?(uuid) ?? recordedDocumentTitles[uuid],
                 !title.isEmpty
             else { continue }
             titles[uuid] = title
@@ -736,7 +752,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         if blocks[position].runs.map(\.text).joined() != block.runs.map(\.text).joined() {
             shownRetexted.insert(block.id)
         }
-        collectDocumentTitles(from: block, into: &attachmentGeometry.documentTitles)
+        cacheDocumentTitles(from: [block])
         storage.replaceCharacters(
             in: rangeIndex.entries[position].range,
             with: rendered(block, at: position))

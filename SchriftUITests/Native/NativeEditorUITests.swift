@@ -1074,7 +1074,300 @@ final class NativeEditorUITests: XCTestCase {
             "revealed cards were estimated at their final height: \(startHeight) -> \(endHeight)")
     }
 
+    /// PR13c2: typing `[[Road` opens the page-link picker, selecting a page inserts
+    /// a resolved-title chip without `mentionSearchInline`, tapping outside dismisses
+    /// the picker leaving `[[` prose untouched, and relaunch preserves the chip.
+    func testDoubleBracketPageLinkInsertDismissAndRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-inline-objects", "--reset"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        focusTopParagraph(of: editor, in: app)
+
+        editor.typeText("See [[Road")
+        let roadmap = app.buttons["Product Roadmap"]
+        XCTAssertTrue(roadmap.waitForExistence(timeout: 5), "page-link picker offers Product Roadmap")
+        roadmap.tap()
+        XCTAssertTrue(roadmap.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(
+            waitForText(of: editor, containing: "See Page: Product Roadmap"),
+            "interlink chip renders resolved title: \(text(of: editor))")
+        XCTAssertFalse(text(of: editor).contains("[[Road"))
+
+        // Typing `[[Ar` then tapping outside the picker dismisses it and leaves literal prose.
+        editor.typeText(" [[Ar")
+        let architecture = app.buttons["Architecture Notes"]
+        XCTAssertTrue(architecture.waitForExistence(timeout: 5))
+        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 22, dy: 26)).tap()
+        XCTAssertTrue(architecture.waitForNonExistence(timeout: 5), "Tapping outside dismisses page-link picker")
+        XCTAssertTrue(waitForText(of: editor, containing: "[[Ar"))
+
+        waitForDurableJournal(in: app)
+        app.terminate()
+
+        app.launchArguments = ["--native-inline-objects"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            waitForText(of: editor, containing: "See Page: Product Roadmap"),
+            "relaunch keeps the interlink chip and resolved title: \(text(of: editor))")
+        XCTAssertTrue(text(of: editor).contains("[[Ar"))
+    }
+
+    /// PR13c2: `/link` opens Slash "Link a page", picking inserts an interlink chip
+    /// without `/link`, Backspace on an empty session cancels without zombie chips,
+    /// and relaunch preserves the inserted chip.
+    func testSlashLinkPageInsertDismissAndRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-inline-objects", "--reset"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        focusTopParagraph(of: editor, in: app)
+
+        editor.typeText("/link")
+        let slashLink = app.buttons["Link a page"]
+        XCTAssertTrue(slashLink.waitForExistence(timeout: 5), "slash menu offers Link a page")
+        slashLink.tap()
+
+        let architecture = app.buttons["Architecture Notes"]
+        XCTAssertTrue(architecture.waitForExistence(timeout: 5), "page-link picker opens after consuming /link")
+        architecture.tap()
+        XCTAssertTrue(architecture.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(
+            waitForText(of: editor, containing: "Page: Architecture Notes"),
+            "slash Link a page inserts chip: \(text(of: editor))")
+        XCTAssertFalse(text(of: editor).contains("/link"))
+
+        // Start a fresh paragraph, open slash "Link a page", then press Backspace: clean paragraph, zero zombies.
+        editor.typeText("\n/link")
+        XCTAssertTrue(slashLink.waitForExistence(timeout: 5))
+        slashLink.tap()
+        let roadmap = app.buttons["Product Roadmap"]
+        XCTAssertTrue(roadmap.waitForExistence(timeout: 5))
+        editor.typeText(XCUIKeyboardKey.delete.rawValue)
+        XCTAssertTrue(roadmap.waitForNonExistence(timeout: 5), "Backspace cancels empty slash page-link session")
+        let valueAfterDismiss = text(of: editor)
+        XCTAssertFalse(valueAfterDismiss.contains("/link"), valueAfterDismiss)
+        XCTAssertFalse(valueAfterDismiss.contains("Mention:"), "zero zombie mentionSearchInline: \(valueAfterDismiss)")
+        XCTAssertFalse(valueAfterDismiss.contains("[["), valueAfterDismiss)
+        XCTAssertEqual(
+            valueAfterDismiss.components(separatedBy: "Page:").count - 1, 1,
+            "expected exactly one Page: chip: \(valueAfterDismiss)")
+
+        waitForDurableJournal(in: app)
+        app.terminate()
+
+        app.launchArguments = ["--native-inline-objects"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            waitForText(of: editor, containing: "Page: Architecture Notes"),
+            "relaunch keeps slash-inserted interlink chip: \(text(of: editor))")
+        XCTAssertFalse(text(of: editor).contains("Mention:"))
+    }
+
+    /// PR13c2: `@ada` fetches mocked accesses, omits `.reader` users, inserts `@Ada Lovelace`,
+    /// ignores `user@example.com`, dismisses cleanly on tap outside, and survives relaunch.
+    func testMentionInsertFiltersReadersIgnoresEmailsAndSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-inline-objects", "--reset"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        focusTopParagraph(of: editor, in: app)
+
+        let mentionPicker = app.descendants(matching: .any)["editor.mentionPicker"]
+        editor.typeText("user@example.com ")
+        XCTAssertFalse(mentionPicker.waitForExistence(timeout: 1.5), "email mid-word must not open mention picker")
+
+        editor.typeText("@ada")
+        XCTAssertTrue(mentionPicker.waitForExistence(timeout: 5), "mention picker opens after whitespace")
+        let adaRow = app.buttons["editor.mentionPicker.row.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]
+        XCTAssertTrue(adaRow.waitForExistence(timeout: 5))
+        XCTAssertFalse(
+            app.buttons["editor.mentionPicker.row.cccccccc-cccc-4ccc-8ccc-cccccccccccc"].exists,
+            "reader access must be excluded")
+        XCTAssertFalse(
+            app.buttons["editor.mentionPicker.row.dddddddd-dddd-4ddd-8ddd-dddddddddddd"].exists,
+            "max_role=reader access must be excluded")
+        adaRow.tap()
+        XCTAssertTrue(mentionPicker.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(
+            waitForText(of: editor, containing: "user@example.com Mention: @Ada Lovelace"),
+            "mention chip rendered: \(text(of: editor))")
+
+        // Typing `@grace` then tapping outside the picker dismisses without writing a chip.
+        editor.typeText(" @grace")
+        let graceRow = app.buttons["editor.mentionPicker.row.bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"]
+        XCTAssertTrue(graceRow.waitForExistence(timeout: 5))
+        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 22, dy: 26)).tap()
+        XCTAssertTrue(mentionPicker.waitForNonExistence(timeout: 5), "Tapping outside dismisses mention picker")
+        XCTAssertTrue(waitForText(of: editor, containing: "@grace"))
+
+        waitForDurableJournal(in: app)
+        app.terminate()
+
+        app.launchArguments = ["--native-inline-objects"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            waitForText(of: editor, containing: "user@example.com Mention: @Ada Lovelace"),
+            "relaunch keeps mention chip: \(text(of: editor))")
+        XCTAssertTrue(text(of: editor).contains("@grace"))
+    }
+
+    /// PR13c2: when `abilities.mention == false`, `@` stays plain text and never opens the mention picker.
+    func testNoMentionAbilitySuppressesMentionPicker() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-inline-objects", "--native-inline-objects-no-mention", "--reset"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        focusTopParagraph(of: editor, in: app)
+
+        editor.typeText("@ada")
+        let mentionPicker = app.descendants(matching: .any)["editor.mentionPicker"]
+        XCTAssertFalse(mentionPicker.waitForExistence(timeout: 1.5))
+        XCTAssertTrue(waitForText(of: editor, containing: "@ada"))
+    }
+
+    /// PR13c2: `[[` and `@` pickers work in both columns and table cells,
+    /// dismissing on tap outside without closing the sheet, and chips survive relaunch.
+    func testColumnAndTableInlinePickersDismissAndRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-inline-objects", "--reset"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+
+        // 1. Columns: insert interlink + mention, then tapping outside dismisses picker without closing column sheet.
+        let columnCard = app.descendants(matching: .any)["nativeEditor.attachment.owned-columns"]
+        XCTAssertTrue(columnCard.waitForExistence(timeout: 10))
+        columnCard.tap()
+        let firstColumn = app.textViews["nativeEditor.column.0"]
+        XCTAssertTrue(firstColumn.waitForExistence(timeout: 5))
+        firstColumn.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+
+        firstColumn.typeText(" [[Road")
+        let roadmap = app.buttons["Product Roadmap"]
+        XCTAssertTrue(roadmap.waitForExistence(timeout: 5))
+        roadmap.tap()
+        XCTAssertTrue(roadmap.waitForNonExistence(timeout: 5))
+
+        firstColumn.typeText(" @ada")
+        let adaRow = app.buttons["editor.mentionPicker.row.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]
+        XCTAssertTrue(adaRow.waitForExistence(timeout: 5))
+        adaRow.tap()
+        XCTAssertTrue(adaRow.waitForNonExistence(timeout: 5))
+
+        firstColumn.typeText(" [[Ar")
+        let architecture = app.buttons["Architecture Notes"]
+        XCTAssertTrue(architecture.waitForExistence(timeout: 5))
+        let columnPicker = app.segmentedControls["nativeEditor.columns.picker"]
+        columnPicker.buttons.element(boundBy: 1).tap()
+        XCTAssertTrue(architecture.waitForNonExistence(timeout: 5), "Switching column dismisses column picker")
+        let columnsDone = app.buttons["nativeEditor.columns.done"]
+        XCTAssertTrue(columnsDone.exists, "Dismissing picker must not close the column editor")
+        columnPicker.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(firstColumn.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForText(of: firstColumn, containing: "Page: Product Roadmap"))
+        XCTAssertTrue(waitForText(of: firstColumn, containing: "Mention: @Ada Lovelace"))
+        columnsDone.tap()
+        XCTAssertTrue(columnCard.waitForExistence(timeout: 5))
+
+        // 2. Table: insert interlink + mention in empty cell (1, 1), then tap another cell to dismiss picker.
+        let tableCard = app.descendants(matching: .any)["nativeEditor.attachment.owned-table"]
+        XCTAssertTrue(tableCard.waitForExistence(timeout: 5))
+        tableCard.tap()
+        let emptyCell = app.staticTexts["nativeEditor.table.text.1.1"]
+        XCTAssertTrue(emptyCell.waitForExistence(timeout: 5))
+        emptyCell.tap()
+        XCTAssertTrue(emptyCell.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+
+        app.typeText("[[Road")
+        XCTAssertTrue(roadmap.waitForExistence(timeout: 5))
+        roadmap.tap()
+        XCTAssertTrue(roadmap.waitForNonExistence(timeout: 5))
+
+        app.typeText(" @ada")
+        XCTAssertTrue(adaRow.waitForExistence(timeout: 5))
+        adaRow.tap()
+        XCTAssertTrue(adaRow.waitForNonExistence(timeout: 5))
+
+        app.typeText(" [[Ar")
+        XCTAssertTrue(architecture.waitForExistence(timeout: 5))
+        app.staticTexts["nativeEditor.table.text.0.0"].tap()
+        XCTAssertTrue(architecture.waitForNonExistence(timeout: 5), "Tapping another cell dismisses table cell picker")
+        let tableDone = app.buttons["nativeEditor.table.done"]
+        XCTAssertTrue(tableDone.exists, "Dismissing picker must not close the table editor")
+        tableDone.tap()
+        XCTAssertTrue(tableCard.waitForExistence(timeout: 5))
+
+        waitForDurableJournal(in: app)
+        app.terminate()
+
+        app.launchArguments = ["--native-inline-objects"]
+        app.launch()
+        XCTAssertTrue(columnCard.waitForExistence(timeout: 10))
+        columnCard.tap()
+        XCTAssertTrue(firstColumn.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForText(of: firstColumn, containing: "Page: Product Roadmap"))
+        XCTAssertTrue(waitForText(of: firstColumn, containing: "Mention: @Ada Lovelace"))
+        columnsDone.tap()
+
+        XCTAssertTrue(tableCard.waitForExistence(timeout: 5))
+        tableCard.tap()
+        XCTAssertTrue(emptyCell.waitForExistence(timeout: 5))
+        let cellValue = emptyCell.value as? String ?? ""
+        XCTAssertTrue(cellValue.contains("Product Roadmap"), "table cell kept interlink: \(cellValue)")
+        XCTAssertTrue(cellValue.contains("@Ada Lovelace"), "table cell kept mention: \(cellValue)")
+    }
+
+    /// PR13c2: tapping an inserted interlink chip triggers document navigation (`onOpenDocument`).
+    func testTappingInsertedInterlinkChipNavigatesToDocument() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-inline-objects", "--reset"]
+        app.launch()
+        let editor = app.textViews["nativeEditor.text"]
+        focusTopParagraph(of: editor, in: app)
+
+        editor.typeText("[[Road")
+        let roadmap = app.buttons["Product Roadmap"]
+        XCTAssertTrue(roadmap.waitForExistence(timeout: 5))
+        roadmap.tap()
+        XCTAssertTrue(roadmap.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(waitForText(of: editor, containing: "Page: Product Roadmap"))
+
+        // Tap inside the chip laid out at offset 0 of the top paragraph (`textContainerInset` 16,16).
+        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 60, dy: 27)).tap()
+        let opened = app.staticTexts["inlineObjects.openedDocument"]
+        XCTAssertTrue(opened.waitForExistence(timeout: 5), "tapping interlink chip navigates to linked document")
+        XCTAssertEqual(opened.label, "Product Roadmap")
+    }
+
     private func text(of element: XCUIElement) -> String { element.value as? String ?? "" }
+
+    private func focusTopParagraph(of editor: XCUIElement, in app: XCUIApplication) {
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(editor.waitForStableFrame(), "The editor must stop moving before it is tapped")
+        XCTAssertTrue(editor.isHittable)
+        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 32, dy: 26)).tap()
+        let keyboard = app.keyboards.firstMatch
+        guard keyboard.waitForExistence(timeout: 10), keyboard.waitForStableFrame() else {
+            let screen = XCTAttachment(screenshot: app.screenshot())
+            screen.name = "Editor tap did not raise a settled keyboard"
+            screen.lifetime = .keepAlways
+            add(screen)
+            return XCTFail("The tap must focus the editor and raise a settled keyboard before typing")
+        }
+    }
+
+    private func waitForDurableJournal(in app: XCUIApplication) {
+        XCTAssertTrue(app.staticTexts["Saved on this device"].waitForExistence(timeout: 10))
+        let idle = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "idle"), object: app.staticTexts["replica.inFlight"])
+        XCTAssertEqual(XCTWaiter.wait(for: [idle], timeout: 15), .completed)
+    }
 
     /// Taps into the first paragraph only once the editor holds still, then waits for the keyboard to
     /// finish rising. A bare `waitForExistence` passes while the view is still laying out (the tap then

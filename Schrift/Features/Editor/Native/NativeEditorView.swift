@@ -33,6 +33,8 @@ struct NativeEditorView: View {
     var resolveLinkedDocument: (@MainActor (UUID) async -> Document?)? = nil
     /// Opens a resolved linked document onto the caller's navigation stack (PR13c1).
     var onOpenDocument: ((Document) -> Void)? = nil
+    /// Shared page-link and `@` mention candidate source (PR13c2).
+    var inlinePickerSource: NativeInlinePickerSource? = nil
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -81,7 +83,8 @@ struct NativeEditorView: View {
                     uploadingBlocks: uploads?.uploadingBlocks ?? [], waitingUploads: uploads?.waitingBlocks ?? [],
                     failedUploads: uploads?.failedBlocks ?? [],
                     documentTitle: documentTitle,
-                    onOpenDocument: { id, _ in openInlineDocument(id) }
+                    onOpenDocument: { id, _ in openInlineDocument(id) },
+                    inlinePickerSource: inlinePickerSource
                 )
                 .id(ObjectIdentifier(session))
             }
@@ -118,16 +121,22 @@ struct NativeEditorView: View {
                         .accessibilityIdentifier("nativeEditor.inputNotice")
                 }
                 if let input = session.input {
-                    // The classic menu, offering only what this editor can apply;
-                    // each choice is one durable type change.
-                    if let query = input.slashMenuQuery {
-                        SlashMenuView(query: query, available: NativeInputCoordinator.slashItems) { item in
-                            input.applySlashItem(item)
+                    GlassEffectContainer(spacing: DocsSpacing.space2xs) {
+                        VStack(spacing: 0) {
+                            // The classic menu, offering only what this editor can apply;
+                            // each choice is one durable type change.
+                            if let query = input.slashMenuQuery {
+                                SlashMenuView(query: query, available: input.slashItems) { item in
+                                    input.applySlashItem(item)
+                                }
+                                .padding(.horizontal, DocsSpacing.gutter)
+                                .padding(.bottom, DocsSpacing.space2xs)
+                            } else {
+                                NativeInlinePickerHost(input: input)
+                            }
+                            NativeFormattingBar(input: input) { linkTarget = $0 }
                         }
-                        .padding(.horizontal, DocsSpacing.gutter)
-                        .padding(.bottom, DocsSpacing.space2xs)
                     }
-                    NativeFormattingBar(input: input) { linkTarget = $0 }
                 }
             }
         }
@@ -145,6 +154,8 @@ struct NativeEditorView: View {
                 cellLabel: { String(format: loc[.native_editor_table_cell], $0, $1) }, text: { loc[$0] },
                 documentTitle: documentTitle,
                 serverOrigin: serverOrigin,
+                isOffline: isOffline,
+                inlinePickerSource: inlinePickerSource,
                 onOpenDocument: { id, _ in openInlineDocument(id) },
                 onClose: {
                     lastTable = request.id
@@ -163,7 +174,8 @@ struct NativeEditorView: View {
         ) { model in
             ColumnEditorScreen(
                 model: model, serverOrigin: serverOrigin, isOffline: isOffline, uploads: uploads,
-                documentTitle: documentTitle, onOpenDocument: { id, _ in openInlineDocument(id) })
+                documentTitle: documentTitle, inlinePickerSource: inlinePickerSource,
+                onOpenDocument: { id, _ in openInlineDocument(id) })
         }
         .sheet(
             item: $openMedia,
@@ -260,6 +272,9 @@ struct NativeEditorView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { session.navigation.persist() }
         }
+        .onChange(of: isOffline) { _, _ in
+            session.input?.refreshInlinePicker()
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -299,6 +314,7 @@ extension NativeEditorView {
         _ groupID: String, target: (column: String, block: String)? = nil
     ) -> ColumnEditorModel {
         let model = ColumnEditorModel(document: session, groupID: groupID, target: target)
+        model.inlinePickerSource = inlinePickerSource
         model.onOpenDocument = { id, _ in openInlineDocument(id) }
         model.onClose = { [navigation = session.navigation] in
             navigation.columnEditorClosed()
@@ -588,6 +604,7 @@ extension NativeEditorLabels {
             chipPage: loc[.native_editor_chip_page],
             chipMention: loc[.native_editor_chip_mention],
             chipUntitled: loc[.native_editor_chip_untitled],
+            openLink: loc[.native_editor_open_link],
             blockMenu: loc[.native_editor_block_actions],
             blockActions: Dictionary(
                 uniqueKeysWithValues: NativeBlockAction.allCases.map { ($0, loc[$0.labelKey]) }))
@@ -611,6 +628,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
     var failedUploads: Set<String> = []
     var documentTitle: (@MainActor (UUID) -> String?)? = nil
     var onOpenDocument: ((UUID, String) -> Void)? = nil
+    var inlinePickerSource: NativeInlinePickerSource? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -642,18 +660,38 @@ private struct NativeTextCanvas: UIViewRepresentable {
         session.textView.blockControls.documentTitle = documentTitle
         session.navigation.documentTitle = documentTitle
         coordinator.update(
-            surface: session.surface, presentation: NativeTextPresentation(contentSize: contentSize, labels: labels))
+            surface: session.surface, input: session.input, textView: session.textView,
+            inlinePickerSource: inlinePickerSource,
+            presentation: NativeTextPresentation(contentSize: contentSize, labels: labels))
     }
 
     @MainActor
     final class Coordinator {
         private weak var surface: NativeTextSurface?
         private var presentation: NativeTextPresentation?
+        private var installedInlinePickerSource = false
 
-        func update(surface: NativeTextSurface, presentation: NativeTextPresentation) {
+        func update(
+            surface: NativeTextSurface, input: NativeInputCoordinator?, textView: NativeTextView,
+            inlinePickerSource: NativeInlinePickerSource?, presentation: NativeTextPresentation
+        ) {
+            let surfaceChanged = self.surface !== surface
+            if surfaceChanged {
+                installedInlinePickerSource = false
+            }
+            if let inlinePickerSource, !installedInlinePickerSource {
+                installedInlinePickerSource = true
+                if textView.selectedRange == NSRange(location: 0, length: 0), input?.activeInlineTrigger == nil {
+                    input?.inlinePickerSource = inlinePickerSource
+                } else {
+                    Task { @MainActor [weak input] in
+                        input?.inlinePickerSource = inlinePickerSource
+                    }
+                }
+            }
             // UIViewRepresentable may update while UIKit handles selection.
             // Unchanged inputs must never even request a storage reconciliation.
-            guard self.surface !== surface || self.presentation != presentation else { return }
+            guard surfaceChanged || self.presentation != presentation else { return }
             self.surface = surface
             self.presentation = presentation
             surface.updatePresentation(

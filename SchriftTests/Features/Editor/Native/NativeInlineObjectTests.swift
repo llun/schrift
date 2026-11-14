@@ -470,6 +470,39 @@ final class NativeInlineObjectTests: NativeEditingTestCase {
         XCTAssertNil(vm.cachedDocumentTitle(for: childOfHomeID))
     }
 
+    func testRecordedNativeDocumentTitlesAreScopedBySignedInUser() throws {
+        let docID = UUID()
+        let targetID = UUID()
+        let userA = UUID()
+        let userB = UUID()
+
+        let (vm, signedInUser, _, _) = makeViewModel(documentID: docID, title: "Root Doc", userID: userA)
+        vm.recordNativeDocumentTitle("Account A Roadmap", for: targetID)
+        XCTAssertEqual(vm.cachedDocumentTitle(for: targetID), "Account A Roadmap")
+
+        // Signing out must hide titles recorded under the previous account.
+        signedInUser.clear()
+        XCTAssertNil(vm.cachedDocumentTitle(for: targetID))
+
+        // Recording while signed out must not attach to a future account.
+        let anonymousTargetID = UUID()
+        vm.recordNativeDocumentTitle("Anonymous Title", for: anonymousTargetID)
+
+        // Switching to another account must not expose Account A's recorded title.
+        signedInUser.remember(userB)
+        XCTAssertNil(vm.cachedDocumentTitle(for: targetID))
+        XCTAssertNil(vm.cachedDocumentTitle(for: anonymousTargetID))
+
+        // Account B can record its own title for the same document ID independently.
+        vm.recordNativeDocumentTitle("Account B Roadmap", for: targetID)
+        XCTAssertEqual(vm.cachedDocumentTitle(for: targetID), "Account B Roadmap")
+
+        signedInUser.clear()
+        signedInUser.remember(userA)
+        XCTAssertEqual(vm.cachedDocumentTitle(for: targetID), "Account A Roadmap")
+        XCTAssertNil(vm.cachedDocumentTitle(for: anonymousTargetID))
+    }
+
     // MARK: - Accessibility Value (Adjacent Identical Chips & Table Describe)
 
     func testAccessibilityValueExpandsAdjacentIdenticalChipsAndOmitsFFFC() async throws {

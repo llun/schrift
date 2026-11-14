@@ -49,8 +49,11 @@ struct NativeEditorTestHostApp: App {
 
     var body: some Scene {
         WindowGroup {
-            if ProcessInfo.processInfo.arguments.contains("--native-open") {
-                NativeOpenFixture()
+            if ProcessInfo.processInfo.arguments.contains("--native-inline-objects") {
+                NativeOpenFixture(mode: .inlineObjects)
+                    .environment(localization)
+            } else if ProcessInfo.processInfo.arguments.contains("--native-open") {
+                NativeOpenFixture(mode: .standard)
                     .environment(localization)
             } else {
                 readerFixture
@@ -112,12 +115,20 @@ struct NativeEditorTestHostApp: App {
     }
 }
 
-/// `--native-open`: the production `EditorView` → `NativeEditorOpen` route over
-/// an owned replica, offline, with isolated stores under this host's sandbox.
-/// Every request fails as offline, so no network is used. The stores survive
-/// relaunch unless `--reset` is passed, which is what the relaunch test needs.
+/// `--native-open` / `--native-inline-objects`: the production `EditorView` →
+/// `NativeEditorOpen` route over an owned replica with isolated stores under
+/// this host's sandbox. Every request stays local (`OfflineURLProtocol` or
+/// `InlineObjectsURLProtocol`), so no real network is ever used. The stores
+/// survive relaunch unless `--reset` is passed.
 private struct NativeOpenFixture: View {
+    enum Mode {
+        case standard
+        case inlineObjects
+    }
+
+    let mode: Mode
     @State private var model: EditorViewModel?
+    @State private var openedDocument: Document?
     private static let suite = "dev.llun.Schrift.NativeTestHost.open"
     private static let owner = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
     private static let documentID = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
@@ -126,8 +137,19 @@ private struct NativeOpenFixture: View {
         NavigationStack {
             if let model {
                 EditorView(
-                    viewModel: model, reach: .restricted, serverHost: "native-fixture.invalid",
-                    serverOrigin: "https://native-fixture.invalid", pinRow: Self.document, isOffline: true)
+                    viewModel: model,
+                    reach: .restricted,
+                    serverHost: mode == .inlineObjects ? InlineObjectsFixture.serverHost : "native-fixture.invalid",
+                    serverOrigin: mode == .inlineObjects
+                        ? InlineObjectsFixture.serverOrigin : "https://native-fixture.invalid",
+                    pinRow: Self.document(mode: mode),
+                    isOffline: mode == .standard,
+                    onOpenDocument: mode == .inlineObjects ? { openedDocument = $0 } : nil
+                )
+                .navigationDestination(item: $openedDocument) { doc in
+                    Text(doc.title ?? doc.id.uuidString)
+                        .accessibilityIdentifier("inlineObjects.openedDocument")
+                }
             } else {
                 ProgressView()
             }
@@ -135,110 +157,63 @@ private struct NativeOpenFixture: View {
         .overlay {
             if ProcessInfo.processInfo.arguments.contains("--native-ime") { SyntheticIMEControls() }
             if ProcessInfo.processInfo.arguments.contains("--native-tree") { TreeControls() }
-            if ProcessInfo.processInfo.arguments.contains("--native-slow-disk") { InFlightReadout() }
+            if ProcessInfo.processInfo.arguments.contains("--native-slow-disk") || mode == .inlineObjects {
+                InFlightReadout()
+            }
         }
         .task {
             guard model == nil else { return }
-            model = try? Self.makeModel()
+            model = try? Self.makeModel(mode: mode)
         }
     }
 
-    private static var document: Document {
-        var abilities = DocumentAbilities()
-        abilities.update = true
-        return Document(
-            id: documentID, title: "Native open fixture", excerpt: nil, abilities: abilities,
-            linkReach: .restricted, linkRole: .editor, isFavorite: false, depth: 1, numchild: 0, path: "0001",
-            createdAt: Date(), updatedAt: Date(), userRole: nil, creator: nil)
+    private static func document(mode: Mode) -> Document {
+        switch mode {
+        case .standard:
+            var abilities = DocumentAbilities()
+            abilities.update = true
+            return Document(
+                id: documentID, title: "Native open fixture", excerpt: nil, abilities: abilities,
+                linkReach: .restricted, linkRole: .editor, isFavorite: false, depth: 1, numchild: 0, path: "0001",
+                createdAt: Date(), updatedAt: Date(), userRole: nil, creator: nil)
+        case .inlineObjects:
+            return InlineObjectsFixture.openDocument(canMention: InlineObjectsFixture.canMention)
+        }
     }
 
-    private static func makeModel() throws -> EditorViewModel {
-        let defaults = UserDefaults(suiteName: suite)!
+    private static func makeModel(mode: Mode) throws -> EditorViewModel {
+        let suiteName = mode == .inlineObjects ? InlineObjectsFixture.suite : suite
+        let directoryName = mode == .inlineObjects ? InlineObjectsFixture.directoryName : "NativeOpenFixture"
+        let docID = mode == .inlineObjects ? InlineObjectsFixture.documentID : documentID
+        let ownerID = mode == .inlineObjects ? InlineObjectsFixture.owner : owner
+        let defaults = UserDefaults(suiteName: suiteName)!
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("NativeOpenFixture", isDirectory: true)
+            .appendingPathComponent(directoryName, isDirectory: true)
         if ProcessInfo.processInfo.arguments.contains("--reset") {
-            defaults.removePersistentDomain(forName: suite)
+            defaults.removePersistentDomain(forName: suiteName)
             try? FileManager.default.removeItem(at: directory)
         }
         // The host's own sandbox; the shipping app never reads this switch here.
         UserDefaults.standard.set(true, forKey: NativeEditorPreference.key)
-        SignedInUserStore(userDefaults: defaults).remember(owner)
+        SignedInUserStore(userDefaults: defaults).remember(ownerID)
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [OfflineURLProtocol.self]
+        configuration.protocolClasses =
+            mode == .inlineObjects ? [InlineObjectsURLProtocol.self] : [OfflineURLProtocol.self]
+        let origin = mode == .inlineObjects ? InlineObjectsFixture.serverOrigin : "https://native-fixture.invalid"
         let client = DocsAPIClient(
-            baseURL: URL(string: "https://native-fixture.invalid/api/v1.0/")!,
+            baseURL: URL(string: "\(origin)/api/v1.0/")!,
             session: URLSession(configuration: configuration), cookieProvider: { [] })
+        let listCache = DocumentCacheStore(userDefaults: defaults)
+        if mode == .inlineObjects, listCache.loadRecentDocuments() == nil {
+            listCache.saveRecentDocuments(InlineObjectsFixture.seededDocuments, fetchedFor: ownerID)
+        }
         let replicaStore = ReplicaStore(
             directory: directory.appendingPathComponent("ReplicaDrafts"),
             ownershipStore: ReplicaOwnershipStore(userDefaults: defaults), interrupt: slowDisk)
         let scope = ReplicaScope(
-            serverOrigin: client.serverOrigin, ownerUserID: owner, org: "docs", documentID: documentID)
+            serverOrigin: client.serverOrigin, ownerUserID: ownerID, org: "docs", documentID: docID)
         if try replicaStore.manifest(for: scope) == nil {
-            let style: [(key: String, value: YAnyValue)] = [
-                ("backgroundColor", .string("default")), ("textColor", .string("default")),
-                ("textAlignment", .string("left")),
-            ]
-            var blocks = (0..<30).map { index in
-                BlockNoteBlock(
-                    node: "paragraph", props: style, runs: [InlineRun("Owned paragraph \(index + 1).")],
-                    id: "owned-\(index)")
-            }
-            // `--native-blocks`: one of each block type the typeable production
-            // route accepts first (callout and page break would make it read-only).
-            if ProcessInfo.processInfo.arguments.contains("--native-blocks") {
-                blocks.insert(
-                    contentsOf: [
-                        BlockNoteBlock(
-                            node: "heading", props: style + [("level", .int(2)), ("isToggleable", .bool(false))],
-                            runs: [InlineRun("Fixture heading")], id: "owned-heading"),
-                        BlockNoteBlock(
-                            node: "checkListItem", props: style + [("checked", .bool(false))],
-                            runs: [InlineRun("Fixture task")], id: "owned-check"),
-                        BlockNoteBlock(
-                            node: "codeBlock", props: [("language", .string("swift"))],
-                            runs: [InlineRun("let fixture = 1\nlet second = 2")], id: "owned-code"),
-                        BlockNoteBlock(
-                            node: "bulletListItem", props: style, runs: [InlineRun("Fixture bullet")],
-                            id: "owned-bullet"),
-                        BlockNoteBlock(
-                            node: "numberedListItem", props: style + [("start", .int(3))],
-                            runs: [InlineRun("Fixture third")], id: "owned-number-1"),
-                        BlockNoteBlock(
-                            node: "numberedListItem", props: style + [("start", .undefined)],
-                            runs: [InlineRun("Fixture fourth")], id: "owned-number-2"),
-                        BlockNoteBlock(
-                            node: "quote",
-                            props: [("backgroundColor", .string("default")), ("textColor", .string("default"))],
-                            runs: [InlineRun("Fixture quote")], id: "owned-quote"),
-                        BlockNoteBlock(node: "divider", props: [], runs: [], id: "owned-divider"),
-                    ], at: 0)
-            }
-            // `--native-tree`: two bullets first, for Tab.
-            if ProcessInfo.processInfo.arguments.contains("--native-tree") {
-                blocks.insert(
-                    contentsOf: [
-                        BlockNoteBlock(
-                            node: "bulletListItem", props: style, runs: [InlineRun("Tree first")], id: "owned-tree-1"),
-                        BlockNoteBlock(
-                            node: "bulletListItem", props: style, runs: [InlineRun("Tree second")], id: "owned-tree-2"),
-                    ], at: 0)
-            }
-            var checkpoint = BlockNoteYjs.encode(blocks, clientID: 1)
-            // `--native-table` (PR11a): a web-shaped 2 × 2 table (a header row
-            // and an empty cell) after the first paragraph.
-            if ProcessInfo.processInfo.arguments.contains("--native-table") {
-                checkpoint = try TableFixture.inserting(into: checkpoint, after: "owned-0")
-            }
-            // `--native-columns` (PR12a): a web-shaped group of two columns
-            // after the first paragraph.
-            if ProcessInfo.processInfo.arguments.contains("--native-columns") {
-                checkpoint = try ColumnFixture.inserting(into: checkpoint, after: "owned-0")
-            }
-            // `--native-media-edit` (PR13a): a web-shaped captioned image and a
-            // file after the first paragraph (no image loader: no request).
-            if ProcessInfo.processInfo.arguments.contains("--native-media-edit") {
-                checkpoint = try MediaEditFixture.inserting(into: checkpoint, after: "owned-0")
-            }
+            let checkpoint = try makeInitialCheckpoint(mode: mode)
             _ = try replicaStore.create(for: scope, checkpoint: checkpoint)
         }
         let content = DocumentContentCacheStore(directory: directory.appendingPathComponent("Content"))
@@ -249,12 +224,94 @@ private struct NativeOpenFixture: View {
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             attachmentStore: PendingAttachmentStore(
                 userDefaults: defaults, directory: directory.appendingPathComponent("Attachments")),
-            listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: children)
+            listCache: listCache, childrenCache: children)
         return EditorViewModel(
-            client: client, documentID: documentID, title: "Native open fixture", saveCoordinator: coordinator,
+            client: client, documentID: docID,
+            title: mode == .inlineObjects ? "Inline objects fixture" : "Native open fixture",
+            saveCoordinator: coordinator,
             signedInUser: SignedInUserStore(userDefaults: defaults), contentCache: content, childrenCache: children,
-            listCache: DocumentCacheStore(userDefaults: defaults),
+            listCache: listCache,
             availability: OnlineAvailability(userDefaults: defaults))
+    }
+
+    private static func makeInitialCheckpoint(mode: Mode) throws -> Data {
+        let style: [(key: String, value: YAnyValue)] = [
+            ("backgroundColor", .string("default")), ("textColor", .string("default")),
+            ("textAlignment", .string("left")),
+        ]
+        if mode == .inlineObjects {
+            let blocks = [
+                BlockNoteBlock(node: "paragraph", props: style, runs: [], id: "owned-0"),
+                BlockNoteBlock(
+                    node: "paragraph", props: style, runs: [InlineRun("Trailing paragraph.")], id: "owned-1"),
+            ]
+            var checkpoint = BlockNoteYjs.encode(blocks, clientID: 1)
+            checkpoint = try TableFixture.inserting(into: checkpoint, after: "owned-0")
+            checkpoint = try ColumnFixture.inserting(into: checkpoint, after: "owned-0")
+            return checkpoint
+        }
+        var blocks = (0..<30).map { index in
+            BlockNoteBlock(
+                node: "paragraph", props: style, runs: [InlineRun("Owned paragraph \(index + 1).")],
+                id: "owned-\(index)")
+        }
+        // `--native-blocks`: one of each block type the typeable production
+        // route accepts first (callout and page break would make it read-only).
+        if ProcessInfo.processInfo.arguments.contains("--native-blocks") {
+            blocks.insert(
+                contentsOf: [
+                    BlockNoteBlock(
+                        node: "heading", props: style + [("level", .int(2)), ("isToggleable", .bool(false))],
+                        runs: [InlineRun("Fixture heading")], id: "owned-heading"),
+                    BlockNoteBlock(
+                        node: "checkListItem", props: style + [("checked", .bool(false))],
+                        runs: [InlineRun("Fixture task")], id: "owned-check"),
+                    BlockNoteBlock(
+                        node: "codeBlock", props: [("language", .string("swift"))],
+                        runs: [InlineRun("let fixture = 1\nlet second = 2")], id: "owned-code"),
+                    BlockNoteBlock(
+                        node: "bulletListItem", props: style, runs: [InlineRun("Fixture bullet")],
+                        id: "owned-bullet"),
+                    BlockNoteBlock(
+                        node: "numberedListItem", props: style + [("start", .int(3))],
+                        runs: [InlineRun("Fixture third")], id: "owned-number-1"),
+                    BlockNoteBlock(
+                        node: "numberedListItem", props: style + [("start", .undefined)],
+                        runs: [InlineRun("Fixture fourth")], id: "owned-number-2"),
+                    BlockNoteBlock(
+                        node: "quote",
+                        props: [("backgroundColor", .string("default")), ("textColor", .string("default"))],
+                        runs: [InlineRun("Fixture quote")], id: "owned-quote"),
+                    BlockNoteBlock(node: "divider", props: [], runs: [], id: "owned-divider"),
+                ], at: 0)
+        }
+        // `--native-tree`: two bullets first, for Tab.
+        if ProcessInfo.processInfo.arguments.contains("--native-tree") {
+            blocks.insert(
+                contentsOf: [
+                    BlockNoteBlock(
+                        node: "bulletListItem", props: style, runs: [InlineRun("Tree first")], id: "owned-tree-1"),
+                    BlockNoteBlock(
+                        node: "bulletListItem", props: style, runs: [InlineRun("Tree second")], id: "owned-tree-2"),
+                ], at: 0)
+        }
+        var checkpoint = BlockNoteYjs.encode(blocks, clientID: 1)
+        // `--native-table` (PR11a): a web-shaped 2 × 2 table (a header row
+        // and an empty cell) after the first paragraph.
+        if ProcessInfo.processInfo.arguments.contains("--native-table") {
+            checkpoint = try TableFixture.inserting(into: checkpoint, after: "owned-0")
+        }
+        // `--native-columns` (PR12a): a web-shaped group of two columns
+        // after the first paragraph.
+        if ProcessInfo.processInfo.arguments.contains("--native-columns") {
+            checkpoint = try ColumnFixture.inserting(into: checkpoint, after: "owned-0")
+        }
+        // `--native-media-edit` (PR13a): a web-shaped captioned image and a
+        // file after the first paragraph (no image loader: no request).
+        if ProcessInfo.processInfo.arguments.contains("--native-media-edit") {
+            checkpoint = try MediaEditFixture.inserting(into: checkpoint, after: "owned-0")
+        }
+        return checkpoint
     }
 }
 
@@ -424,6 +481,165 @@ private final class OfflineURLProtocol: URLProtocol {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() { client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet)) }
     override func stopLoading() {}
+}
+
+/// `--native-inline-objects` (PR13c2): local fixture constants and mocked
+/// `listAccesses` / `document` responses (never touches a real server).
+private enum InlineObjectsFixture: Sendable {
+    static let suite = "dev.llun.Schrift.NativeTestHost.inlineObjects"
+    static let directoryName = "NativeInlineObjectsFixture"
+    static let serverHost = "docs.example"
+    static let serverOrigin = "https://docs.example"
+    static let owner = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+    static let documentID = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
+    static let productRoadmapID = UUID(uuidString: "55555555-5555-4555-8555-555555555551")!
+    static let architectureNotesID = UUID(uuidString: "55555555-5555-4555-8555-555555555552")!
+
+    static var canMention: Bool {
+        !ProcessInfo.processInfo.arguments.contains("--native-inline-objects-no-mention")
+    }
+
+    static func openDocument(canMention: Bool) -> Document {
+        makeDocument(
+            id: documentID, title: "Inline objects fixture", path: "0001", canUpdate: true, canMention: canMention)
+    }
+
+    static var seededDocuments: [Document] {
+        [
+            makeDocument(
+                id: productRoadmapID, title: "Product Roadmap", path: "0002", canUpdate: true, canMention: true),
+            makeDocument(
+                id: architectureNotesID, title: "Architecture Notes", path: "0003", canUpdate: true, canMention: true),
+        ]
+    }
+
+    static func makeDocument(
+        id: UUID, title: String, path: String, canUpdate: Bool, canMention: Bool
+    ) -> Document {
+        var abilities = DocumentAbilities()
+        abilities.update = canUpdate
+        abilities.mention = canMention
+        return Document(
+            id: id, title: title, excerpt: nil, abilities: abilities, linkReach: .restricted,
+            linkRole: .editor, isFavorite: false, depth: 1, numchild: 0, path: path,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            userRole: .editor, creator: owner)
+    }
+
+    static let accessesData: Data = Data(
+        """
+        [
+          {
+            "id": "99999999-0000-4000-8000-000000000001",
+            "user": {
+              "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              "email": "ada@docs.example",
+              "full_name": "Ada Lovelace",
+              "short_name": "Ada"
+            },
+            "team": null,
+            "role": "editor",
+            "abilities": {}
+          },
+          {
+            "id": "99999999-0000-4000-8000-000000000002",
+            "user": {
+              "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              "email": "grace@docs.example",
+              "full_name": "Grace Hopper",
+              "short_name": "Grace"
+            },
+            "team": null,
+            "role": "administrator",
+            "abilities": {}
+          },
+          {
+            "id": "99999999-0000-4000-8000-000000000003",
+            "user": {
+              "id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+              "email": "reader@docs.example",
+              "full_name": "Reader User",
+              "short_name": "Reader"
+            },
+            "team": null,
+            "role": "reader",
+            "abilities": {}
+          },
+          {
+            "id": "99999999-0000-4000-8000-000000000004",
+            "user": {
+              "id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+              "email": "downgraded@docs.example",
+              "full_name": "Downgraded Reader",
+              "short_name": "Downgraded"
+            },
+            "team": null,
+            "role": "editor",
+            "max_role": "reader",
+            "abilities": {}
+          }
+        ]
+        """.utf8)
+
+    static func documentData(for id: UUID) -> Data? {
+        let doc: Document? =
+            switch id {
+            case documentID: openDocument(canMention: canMention)
+            case productRoadmapID: seededDocuments[0]
+            case architectureNotesID: seededDocuments[1]
+            default: nil
+            }
+        guard let doc else { return nil }
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        encoder.dateEncodingStrategy = .iso8601
+        return try? encoder.encode(doc)
+    }
+}
+
+private final class InlineObjectsURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url, request.httpMethod == "GET" else {
+            client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+            return
+        }
+        let path = url.path
+        let docPrefix = "/api/v1.0/documents/"
+        guard path.hasPrefix(docPrefix) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+            return
+        }
+        let remainder = String(path.dropFirst(docPrefix.count))
+        let parts = remainder.split(separator: "/", omittingEmptySubsequences: true)
+        if parts.count == 2, parts[1] == "accesses",
+            UUID(uuidString: String(parts[0])) == InlineObjectsFixture.documentID
+        {
+            respond(statusCode: 200, data: InlineObjectsFixture.accessesData, url: url)
+            return
+        }
+        if parts.count == 1, let id = UUID(uuidString: String(parts[0])),
+            let data = InlineObjectsFixture.documentData(for: id)
+        {
+            respond(statusCode: 200, data: data, url: url)
+            return
+        }
+        client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+    }
+
+    override func stopLoading() {}
+
+    private func respond(statusCode: Int, data: Data, url: URL) {
+        let response = HTTPURLResponse(
+            url: url, statusCode: statusCode, httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
 }
 
 /// `--native-ime`: the host's synthetic marked-text path. Each button sends the

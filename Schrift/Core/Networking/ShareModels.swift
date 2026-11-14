@@ -12,6 +12,7 @@ struct DocumentAccess: Codable, Equatable, Identifiable, Hashable {
     let user: ShareUser?
     let team: String?
     var role: DocumentRole
+    var maxRole: DocumentRole? = nil
 }
 
 struct Invitation: Codable, Equatable, Identifiable, Hashable {

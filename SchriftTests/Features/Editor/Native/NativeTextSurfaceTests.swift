@@ -453,6 +453,35 @@ final class NativeTextSurfaceTests: DocumentEngineTestCase {
             XCTAssertTrue(try XCTUnwrap(attachment as? NativeBlockAttachment).content.label.contains("preserved"))
         }
     }
+
+    func testDocumentTitleResolverReadingAttachmentGeometryDoesNotTriggerExclusivityConflictDuringInsertOrReplace() {
+        let initial = BlockSnapshot(id: "b1", node: "paragraph", props: [], runs: [InlineRun("Hello")])
+        let surface = NativeTextSurface(blocks: [initial], storage: NativeTextView().textStorage)
+        let targetID = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        surface.documentTitle = { [weak surface] id in
+            surface?.attachmentGeometry.documentTitles[id] ?? (id == targetID ? "Spec" : nil)
+        }
+        let chip = InlineRun(
+            "\u{FFFC}",
+            inlineObject: .interlink(
+                docID: targetID.uuidString.lowercased(), blockID: nil, title: nil, disabled: false, trigger: "/"))
+
+        let inserted = BlockSnapshot(id: "b2", node: "paragraph", props: [], runs: [chip])
+        surface.applyPatch(BlockPatch([.insert(after: "b1", blocks: [inserted])], origin: .localUser))
+        XCTAssertEqual(surface.attachmentGeometry.documentTitles[targetID], "Spec")
+
+        let secondID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        surface.documentTitle = { [weak surface] id in
+            surface?.attachmentGeometry.documentTitles[id] ?? (id == secondID ? "Notes" : nil)
+        }
+        let replacedChip = InlineRun(
+            "\u{FFFC}",
+            inlineObject: .interlink(
+                docID: secondID.uuidString.lowercased(), blockID: nil, title: nil, disabled: false, trigger: "/"))
+        let replacement = BlockSnapshot(id: "b1", node: "paragraph", props: [], runs: [replacedChip])
+        surface.applyPatch(BlockPatch([.replaceBlock(blockID: "b1", block: replacement)], origin: .localUser))
+        XCTAssertEqual(surface.attachmentGeometry.documentTitles[secondID], "Notes")
+    }
 }
 
 @MainActor

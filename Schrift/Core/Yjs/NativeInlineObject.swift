@@ -313,6 +313,18 @@ enum NativeInlineObject: Equatable, Hashable, Sendable, Codable {
         return truncated ? String(scalars) + "…" : String(scalars)
     }
 
+    /// Single-line display-safe text trimmed of outer whitespace and newlines,
+    /// returning `nil` when empty after stripping bidi overrides, `U+FFFC`,
+    /// newlines, and control characters.
+    static func clippedNonEmptyDisplayText(_ text: String?, limit: Int = defaultDisplayLimit) -> String? {
+        guard let text else { return nil }
+        let outerTrimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !outerTrimmed.isEmpty else { return nil }
+        let clipped = clippedDisplayText(outerTrimmed, limit: limit)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return clipped.isEmpty ? nil : clipped
+    }
+
     /// Display-safe `visibleText`, bounded by `limit` Unicode scalars and
     /// scrubbed of newlines, controls, `U+FFFC`, and bidi overrides.
     func clippedVisibleText(limit: Int = defaultDisplayLimit, titleForDocument: (UUID) -> String? = { _ in nil })

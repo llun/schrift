@@ -73,7 +73,7 @@ struct NativeEditorLabels: Equatable {
     var chipPage = Strings_en.table[.native_editor_chip_page]!
     var chipMention = Strings_en.table[.native_editor_chip_mention]!
     var chipUntitled = Strings_en.table[.native_editor_chip_untitled]!
-    var openLink = "Open link"
+    var openLink = Strings_en.table[.native_editor_open_link]!
     /// The block menu's title and actions (PR06d): the edit menu and VoiceOver.
     var blockMenu = Strings_en.table[.native_editor_block_actions]!
     var blockActions = Dictionary(

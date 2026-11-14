@@ -101,4 +101,37 @@ final class SlashMenuTests: XCTestCase {
         XCTAssertTrue(ids(isOffline: false, isLocalDocument: false).contains("file"))
         XCTAssertTrue(ids(isOffline: true, isLocalDocument: true).contains("photo"))
     }
+
+    func testLinkPageSlashItemMatchesExpectedKeywordsWithoutImmediateUpload() {
+        XCTAssertFalse(linkPageSlashItem.action.requiresImmediateUpload)
+        XCTAssertEqual(linkPageSlashItem.action, .linkPage)
+        XCTAssertEqual(linkPageSlashItem.titleKey, .editor_slash_link_page)
+        XCTAssertFalse(allSlashMenuItems.contains(linkPageSlashItem), "native-only item stays off the classic menu")
+
+        let menuWithLinkPage = allSlashMenuItems + [linkPageSlashItem]
+        for query in ["link", "page", "doc", "interlinking", "anchor", "a"] {
+            let matched = filteredSlashItems(query: query, items: menuWithLinkPage)
+            XCTAssertTrue(
+                matched.contains { $0.action == .linkPage },
+                "\(query) should surface the Link a page item")
+        }
+    }
+
+    @MainActor
+    func testClassicEditorViewModelIgnoresLinkPageSlashAction() {
+        let client = DocsAPIClient(baseURL: URL(string: "https://docs.example.org/api/v1.0/")!)
+        let viewModel = EditorViewModel(
+            client: client, documentID: UUID(), title: "Doc",
+            saveCoordinator: DocumentSaveCoordinator(client: client, backgroundTasks: .noop))
+        viewModel.mode = .blocks
+        let block = EditorBlock(kind: .paragraph, text: "/link")
+        viewModel.blocks = [block]
+        viewModel.focusedBlockID = block.id
+
+        viewModel.applySlashSelection(linkPageSlashItem)
+
+        XCTAssertEqual(viewModel.blocks[0].text, "/link")
+        XCTAssertEqual(viewModel.blocks[0].kind, .paragraph)
+        XCTAssertFalse(viewModel.isDirty)
+    }
 }

@@ -68,6 +68,21 @@ final class DocumentDecodingTests: XCTestCase {
         XCTAssertTrue(document.abilities.favorite)
         XCTAssertTrue(document.abilities.duplicate)
         XCTAssertTrue(document.abilities.childrenCreate)
+        XCTAssertFalse(document.abilities.mention)
+    }
+
+    func testDecodesExplicitMentionAbilityTrueAndFalse() throws {
+        let original = String(decoding: fixture, as: UTF8.self)
+        for (raw, expected) in [("true", true), ("false", false)] {
+            let json = original.replacingOccurrences(
+                of: "\"children_create\": true,",
+                with: "\"children_create\": true,\n                \"mention\": \(raw),")
+            let document = try JSONDecoder.docsAPI.decode(Document.self, from: Data(json.utf8))
+            XCTAssertEqual(document.abilities.mention, expected)
+
+            let roundTripped = try JSONDecoder().decode(Document.self, from: try JSONEncoder().encode(document))
+            XCTAssertEqual(roundTripped.abilities.mention, expected)
+        }
     }
 
     func testDecodesDatesWithAndWithoutFractionalSeconds() throws {

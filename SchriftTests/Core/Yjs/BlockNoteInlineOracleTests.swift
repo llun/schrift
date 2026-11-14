@@ -524,6 +524,27 @@ final class BlockNoteInlineOracleTests: XCTestCase {
             XCTAssertEqual(caret, EditorPosition(blockID: "p", offset: 5, assoc: -1))
         }
 
+        try runEdit("replaceQueryWithInterlink") { engine, _ in
+            // "See [[Spec here" -> replace "[[Spec" (4..<10) with interlink chip
+            let caret = try apply(engine, "p", .insertInlineObject(interlink, replacing: 4..<10))
+            XCTAssertEqual(caret, EditorPosition(blockID: "p", offset: 5, assoc: -1))
+        }
+
+        let mention = NativeInlineObject.mention(
+            userID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", fullName: "Ada Lovelace")
+
+        try runEdit("replaceQueryWithMention") { engine, _ in
+            // "cc @ada please" -> replace "@ada" (3..<7) with mention chip
+            let caret = try apply(engine, "p", .insertInlineObject(mention, replacing: 3..<7))
+            XCTAssertEqual(caret, EditorPosition(blockID: "p", offset: 4, assoc: -1))
+        }
+
+        try runEdit("replaceBoldQueryWithMention") { engine, _ in
+            // "<bold>cc @ada</bold>" -> replace "@ada" (3..<7) with unstyled mention chip
+            let caret = try apply(engine, "p", .insertInlineObject(mention, replacing: 3..<7))
+            XCTAssertEqual(caret, EditorPosition(blockID: "p", offset: 4, assoc: -1))
+        }
+
         XCTAssertEqual(Set(BlockNoteInlineCaptures.edits.map(\.name)), covered, "every web edit must be covered")
     }
 

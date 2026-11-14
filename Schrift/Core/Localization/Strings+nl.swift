@@ -345,8 +345,12 @@ enum Strings_nl {
         .editor_slash_math_block: "Wiskundeblok",
         .editor_slash_inline_math: "Inline-formule",
         .editor_slash_diagram: "Diagram",
+        .editor_slash_link_page: "Pagina koppelen",
         .editor_page_link_title: "Pagina koppelen",
         .editor_page_link_empty: "Geen overeenkomende pagina's",
+        .editor_mention_title: "Vermelding",
+        .editor_mention_empty: "Geen overeenkomende personen",
+        .editor_mention_loading: "Personen laden…",
         .editor_uploading_file: "Bestand uploaden…",
         .editor_uploading_file_a11y: "Bestand uploaden",
 
@@ -426,6 +430,7 @@ enum Strings_nl {
         .native_editor_chip_page: "Pagina",
         .native_editor_chip_mention: "Vermelding",
         .native_editor_chip_untitled: "Naamloze pagina",
+        .native_editor_open_link: "Link openen",
         .native_editor_input_unavailable: "Deze invoer wordt nog niet ondersteund in de native editor.",
         .native_editor_range_unavailable: "Deze selectie bevat inhoud die de native editor nog niet kan wijzigen.",
         .native_editor_paste_too_large:

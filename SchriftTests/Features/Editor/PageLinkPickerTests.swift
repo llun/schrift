@@ -265,4 +265,21 @@ final class PageLinkPickerTests: XCTestCase {
             PageLinkPickerState(query: "", matches: [first, second], highlightedIndex: 1).highlighted?.id, second.id)
         XCTAssertNil(PageLinkPickerState(query: "z", matches: [], highlightedIndex: 0).highlighted)
     }
+
+    func testPageLinkTitleAndRankingScrubBidiControlsNewlinesAndBoundLength() {
+        let dirty = document("Plan\n2026\u{202E}\u{FFFC}\u{0007}!")
+        XCTAssertEqual(pageLinkTitle(of: dirty), "Plan 2026 !")
+
+        let strippedOnly = document("\u{202E}\u{FFFC}\u{2066}")
+        XCTAssertEqual(pageLinkTitle(of: strippedOnly), "")
+
+        let oversized = document(String(repeating: "a", count: 1_500))
+        let clipped = pageLinkTitle(of: oversized)
+        XCTAssertLessThanOrEqual(clipped.unicodeScalars.count, NativeInlineObject.defaultDisplayLimit + 1)
+        XCTAssertTrue(clipped.hasSuffix("…"))
+
+        let ranked = rankedPageLinkCandidates(
+            query: "", documents: [strippedOnly, dirty, oversized], excluding: currentID)
+        XCTAssertEqual(ranked.map(\.id), [oversized.id, dirty.id])
+    }
 }

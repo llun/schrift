@@ -354,8 +354,12 @@ enum Strings_sl {
         .editor_slash_math_block: "Matematični blok",
         .editor_slash_inline_math: "Vrstična formula",
         .editor_slash_diagram: "Diagram",
+        .editor_slash_link_page: "Poveži stran",
         .editor_page_link_title: "Poveži stran",
         .editor_page_link_empty: "Ni ujemajočih se strani",
+        .editor_mention_title: "Omemba",
+        .editor_mention_empty: "Ni ujemajočih se oseb",
+        .editor_mention_loading: "Nalaganje oseb…",
         .editor_uploading_file: "Nalaganje datoteke…",
         .editor_uploading_file_a11y: "Nalaganje datoteke",
 
@@ -437,6 +441,7 @@ enum Strings_sl {
         .native_editor_chip_page: "Stran",
         .native_editor_chip_mention: "Omemba",
         .native_editor_chip_untitled: "Neimenovana stran",
+        .native_editor_open_link: "Odpri povezavo",
         .native_editor_input_unavailable: "Ta vnos v izvornem urejevalniku še ni podprt.",
         .native_editor_range_unavailable: "Ta izbor vsebuje vsebino, ki je izvorni urejevalnik še ne more spremeniti.",
         .native_editor_paste_too_large:

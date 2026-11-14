@@ -3977,6 +3977,54 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `"Open link"`, table/column/outline expansion, mark barriers, atomic delete, IME composition,
   clipboard degradation, same-origin URL paste, TextKit 2 chip tap hit-testing across surfaces, and
   cover dismissal).
+- **PR13c2 Native inline-object pickers (`[[`, `@`, slash "Link a page").**
+  **Triggers & zero-zombie model:** `NativeInlinePicker` (`nativeInlineTrigger`, `NativeInlineTrigger`,
+  `InlineTriggerKey`, `NativeInlinePickerSource`, `NativeInlinePickerPresentation`) detects `[[`,
+  `@` (capped at 64 UTF-16 units, valid only at block offset 0 or after whitespace / `\u{FFFC}`,
+  rejecting leading whitespace so emails like `user@example.com` and `"@ 5pm"` stay prose), and
+  slash `"Link a page"` (`SlashMenuAction.linkPage` / `linkPageSlashItem(title:)`, ignored by
+  classic `EditorViewModel.applySlashSelection`) across editable inline blocks (`paragraph`,
+  `heading`, `bulletListItem`, `numberedListItem`, `checkListItem`, `quote`, `callout`,
+  `toggleListItem`, `tableParagraph`). `\u{FFFC}`, `"code"`, `"link"`, and line breaks act as hard
+  barriers; multi-word prose auto-closes when matches are empty and not loading. Native never
+  creates or writes `mentionSearchInline` to Yjs: `[[` and `@` stay ordinary text until commit,
+  `/link` consumes the slash token into an ephemeral `slashPageLinkSession` (rebased across remote
+  patches via `adjustSlashPageLinkSession`), and Escape (`dismissedInlineTrigger`), empty-session
+  Backspace (`cancelEmptySlashPageLinkOnBackspace`), caret move, ranged selection, blur, or IME
+  `hasMarkedText` dismisses with zero Yjs writes.
+  **Permissions, loading & account scope:** `DocumentAbilities.mention` (default `false`) and
+  `DocumentAccess.maxRole` (`(maxRole ?? role) != .reader`) gate `@` mention eligibility via
+  `NativeEditorOpen.canMention` and `NativeMentionAccessLoader` (scoped to `(serverOrigin,
+  ownerUserID, documentID, signInGeneration)` over `DocsAPIClient.listAccesses(documentID:)`;
+  suppressed when `!canMention`, `isLocalDocument`, or `isOffline` before first load; coalesces
+  in-flight fetches, caches in memory for the open session, and fails silently per
+  `InlineTriggerKey`). `[[` and slash `"Link a page"` are gated by non-empty `serverOrigin` and read
+  offline account-scoped candidates from `EditorViewModel.nativePageLinkCandidates()` and
+  `recordedNativeDocumentTitles` (keyed by `signedInUser.userID`).
+  **Commit, surfaces & localization:** Selecting a candidate dispatches one `.insertInlineObject`
+  command replacing `anchor..<caret>` (`interlinkingLinkInline` with `blockId: ""`,
+  `disabled: false`, `trigger: "/"` and omitted `title`, immediately priming `documentTitles`;
+  `userMentionInline` with `userID` and `fullName`). `NativeMentionPickerView` /
+  `NativeInlinePickerCard` / `NativeInlinePickerHost` share Liquid Glass bottom-docked placement
+  with `PageLinkPickerView` across `NativeEditorView`, `ColumnEditorScreen` (`ColumnEditorModel`),
+  and `TableEditorViewController` (`TableInlinePickerOverlay` above `keyboardLayoutGuide`);
+  `NativeTextView` (`keyCommands`, `pressesBegan`, `canPerformAction`) routes `Escape`, `Up`/`Down`,
+  and `Return` ahead of slash, table cell navigation/exit, and column exit. Adds 5 localized keys
+  (including `.native_editor_open_link` replacing hardcoded `"Open link"`) across all 11
+  `Strings+<lang>.swift` tables.
+  **Known limits:** Native `@` mention picks do not trigger notification emails (`POST
+  /api/v1.0/documents/{id}/mention/` is not called and UI strings make no notification promise);
+  `[[` and slash `"Link a page"` rank device-known cached pages only (no live `/documents/` search);
+  `@` mention requires at least one online `listAccesses` fetch during the open session (access
+  rosters are not persisted across launches); pickers author whole-document interlinks (`blockId:
+  ""`) only; and XCUITest synthesized `Escape` does not reliably reach `NativeTextView`, so
+  Escape-dismissal precedence is covered in unit tests while simulator UI tests verify tap-outside
+  and Backspace dismissal.
+  **Tests:** `NativeInlinePickerTests` (13 tests), `NativeInlinePickerCoordinatorTests` (10 tests),
+  `NativeEditorInlinePickerViewTests` (7 tests), `NativeInlineObjectTests` (24 tests), and
+  `NativeEditorUITests` (6 `--native-inline-objects` tests), alongside PR13c2 additions in
+  `NativeMentionAccessLoaderTests`, `ColumnEditorTests`, `TableEditorTests`, `SlashMenuTests`,
+  `BlockNoteInlineOracleTests`, `DocumentDecodingTests`, and `ShareModelsTests`.
 - **PR14 Native math & diagram blocks + inline math (read/edit/preview/clipboard/recovery).**
   **Model & Yjs:** `SourceBlock` (`mathBlock`, `diagram`) and `SourceTarget` (`block(id:)`,
   `inlineMath(blockID:itemID:)`, synthetic surface id `"\(ownerID)\u{2}\(client).\(clock)"`) in

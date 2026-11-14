@@ -42,6 +42,10 @@ final class ColumnEditorModel: Identifiable {
     /// A tap (or VoiceOver action) on an inline page link chip navigates to that document.
     @ObservationIgnored var onOpenDocument: ((UUID, String) -> Void)?
     @ObservationIgnored var onOpenSource: ((NativeSourceRequest) -> Void)?
+    /// Shared page-link and `@` mention candidate source across columns and nested tables (PR13c2).
+    @ObservationIgnored var inlinePickerSource: NativeInlinePickerSource? {
+        didSet { applyInlinePickerSource() }
+    }
     @ObservationIgnored private var loadStarted = false
     /// Where the editor opens (PR12c: a find or outline result in a column):
     /// that column is active with the caret at the block's start.
@@ -137,6 +141,7 @@ final class ColumnEditorModel: Identifiable {
     private func attach(_ columnID: String) async -> NativeEditorSession? {
         guard let session = await document.openColumn(group: groupID, column: columnID) else { return nil }
         session.input?.onExit = { [weak self] in self?.close() }
+        session.input?.inlinePickerSource = columnPickerSource()
         session.textView.blockControls.onOpenTable = { [weak self] in self?.openTable = NativeTableRequest(id: $0) }
         session.textView.blockControls.onOpenMedia = { [weak self] in self?.openMedia = NativeMediaRequest(id: $0) }
         session.textView.blockControls.onOpenDocument = { [weak self] id, blockID in
@@ -314,6 +319,30 @@ final class ColumnEditorModel: Identifiable {
         return input.applyColumns(groupID, command, expecting: group?.columns.map(\.id))
     }
 
+    private func applyInlinePickerSource() {
+        let source = columnPickerSource()
+        for column in columns {
+            column.input?.inlinePickerSource = source
+        }
+    }
+
+    /// Wraps `inlinePickerSource` (or `fallback`) so picking a page link inside a
+    /// column or a table within it propagates the title to the parent document
+    /// surface and every attached column surface immediately.
+    func columnPickerSource(fallback: NativeInlinePickerSource? = nil) -> NativeInlinePickerSource? {
+        guard var source = inlinePickerSource ?? fallback else { return nil }
+        let originalRecord = source.onRecordDocumentTitle
+        source.onRecordDocumentTitle = { [weak self] id, title in
+            originalRecord(id, title)
+            guard let self else { return }
+            self.document.surface.recordDocumentTitle(title, for: id)
+            for column in self.columns {
+                column.surface.recordDocumentTitle(title, for: id)
+            }
+        }
+        return source
+    }
+
     /// Ends every column surface and hands focus back to the document.
     func close() {
         guard !isClosed else { return }
@@ -357,6 +386,7 @@ struct ColumnEditorScreen: View {
     /// The document's uploads (PR13a): a column's media block uploads into its column.
     var uploads: NativeMediaUploads? = nil
     var documentTitle: (@MainActor (UUID) -> String?)? = nil
+    var inlinePickerSource: NativeInlinePickerSource? = nil
     var onOpenDocument: ((UUID, String) -> Void)? = nil
     var onOpenSource: ((NativeSourceRequest) -> Void)? = nil
     @State private var linkTarget: NativeLinkTarget?
@@ -397,7 +427,15 @@ struct ColumnEditorScreen: View {
                 }
         }
         // Done and Escape close the model; the screen never makes or closes one itself.
-        .task { await model.load() }
+        .task {
+            if model.inlinePickerSource == nil, let inlinePickerSource {
+                model.inlinePickerSource = inlinePickerSource
+            }
+            await model.load()
+        }
+        .onChange(of: isOffline) { _, _ in
+            model.activeSession?.input?.refreshInlinePicker()
+        }
     }
 
     @ViewBuilder private func content(_ model: ColumnEditorModel) -> some View {
@@ -433,14 +471,20 @@ struct ColumnEditorScreen: View {
                             .padding()
                             .accessibilityIdentifier("nativeEditor.inputNotice")
                     }
-                    if let query = input.slashMenuQuery {
-                        SlashMenuView(query: query, available: NativeInputCoordinator.slashItems) { item in
-                            input.applySlashItem(item)
+                    GlassEffectContainer(spacing: DocsSpacing.space2xs) {
+                        VStack(spacing: 0) {
+                            if let query = input.slashMenuQuery {
+                                SlashMenuView(query: query, available: input.slashItems) { item in
+                                    input.applySlashItem(item)
+                                }
+                                .padding(.horizontal, DocsSpacing.gutter)
+                                .padding(.bottom, DocsSpacing.space2xs)
+                            } else {
+                                NativeInlinePickerHost(input: input)
+                            }
+                            NativeFormattingBar(input: input) { linkTarget = $0 }
                         }
-                        .padding(.horizontal, DocsSpacing.gutter)
-                        .padding(.bottom, DocsSpacing.space2xs)
                     }
-                    NativeFormattingBar(input: input) { linkTarget = $0 }
                 }
             }
         }
@@ -457,6 +501,8 @@ struct ColumnEditorScreen: View {
                     labels: .document(loc), doneTitle: loc[.editor_action_done],
                     cellLabel: { String(format: loc[.native_editor_table_cell], $0, $1) }, text: { loc[$0] },
                     documentTitle: documentTitle, serverOrigin: serverOrigin,
+                    isOffline: isOffline,
+                    inlinePickerSource: model.columnPickerSource(fallback: inlinePickerSource),
                     onOpenDocument: onOpenDocument ?? model.onOpenDocument,
                     onOpenSource: onOpenSource ?? model.onOpenSource,
                     onClose: {

@@ -1,3 +1,4 @@
+import SwiftUI
 import UIKit
 import XCTest
 
@@ -940,8 +941,453 @@ extension TableEditorTests {
         let stored = harness.store.provisionalRecoveries(for: harness.scope).map(\.text)
         XCTAssertTrue(stored.contains("にほん"), "written to the recovery file: \(stored)")
     }
+
+    // MARK: - PR13c2 Step 4: Table inline pickers & key precedence
+
+    private func makePickerDocument(id: UUID, title: String) -> Schrift.Document {
+        Schrift.Document(
+            id: id, title: title, excerpt: nil, abilities: DocumentAbilities(),
+            linkReach: .restricted, linkRole: .reader, isFavorite: false,
+            depth: 1, numchild: 0, path: "0001",
+            createdAt: Date(timeIntervalSince1970: 1_000),
+            updatedAt: Date(timeIntervalSince1970: 1_000),
+            userRole: nil, creator: nil)
+    }
+
+    func testTableInlinePickerHostingKeyPrecedenceTitlePropagationAndMarkdownExport() async throws {
+        let alphaID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let betaID = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        let ada = MentionCandidate(userID: "user-ada", fullName: "Ada Lovelace", shortName: "Ada", email: nil)
+        let source = PickerSourceBox()
+        source.pageLinks = [
+            makePickerDocument(id: alphaID, title: "Alpha | Spec"),
+            makePickerDocument(id: betaID, title: "Alpinist Notes"),
+        ]
+        source.mentionState = .loaded([ada])
+
+        let harness = try await makeHarness(state: try fixture("styled"))
+        addTeardownBlock { await harness.close() }
+        let editor = TableEditorViewController(document: harness.session, tableID: "tbl")
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let loc = LocalizationStore(userDefaults: defaults)
+        loc.language = .french
+        editor.localizationStore = loc
+        editor.labels = .document(loc)
+        editor.serverOrigin = "https://docs.example"
+        editor.inlinePickerSource = source.makeSource()
+        var closeCount = 0
+        editor.onClose = { closeCount += 1 }
+
+        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+        let previous = scene?.windows.first(where: \.isKeyWindow)
+        let window =
+            scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = UINavigationController(rootViewController: editor)
+        window.makeKeyAndVisible()
+        addTeardownBlock { @MainActor in
+            window.endEditing(true)
+            window.isHidden = true
+            previous?.makeKey()
+        }
+        windows.append(window)
+        editor.loadViewIfNeeded()
+        await editor.load()
+        for _ in 0..<300 where !editor.isLoaded { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(editor.isLoaded)
+        if let session = editor.cellSession { addTeardownBlock { await session.close().value } }
+
+        let table = try XCTUnwrap(editor.cellSession)
+        let input = try XCTUnwrap(table.input)
+        XCTAssertEqual(table.textView.blockControls.labels.openLink, Strings_fr.table[.native_editor_open_link])
+
+        let hostView = try XCTUnwrap(editor.inlinePickerHostView)
+        XCTAssertTrue(hostView.superview === editor.view)
+        XCTAssertEqual(hostView.backgroundColor, .clear)
+        XCTAssertTrue(hostView.isHidden)
+
+        // Start in cell (0, 0) at end of text; typing `[[al` opens the picker and unhides the hosted card.
+        let cell00 = TableGrid.CellRef(row: 0, index: 0)
+        editor.activate(cell00, caret: .end)
+        for ch in [" ", "[", "[", "a", "l"] { table.textView.insertText(ch) }
+        await table.settle()
+        for _ in 0..<50 where hostView.isHidden { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(hostView.isHidden)
+
+        // Up/Down claim while matches exist, moving highlight without leaving cell (0, 0).
+        let downCommand = try XCTUnwrap(
+            table.textView.keyCommands?.first { $0.input == UIKeyCommand.inputDownArrow && $0.modifierFlags == [] })
+        let upCommand = try XCTUnwrap(
+            table.textView.keyCommands?.first { $0.input == UIKeyCommand.inputUpArrow && $0.modifierFlags == [] })
+        table.textView.perform(downCommand.action)
+        guard case .pageLink(let s1)? = input.inlinePicker else { return XCTFail("expected pageLink picker") }
+        XCTAssertEqual(s1.highlightedIndex, 1)
+        XCTAssertEqual(editor.active, cell00)
+        table.textView.perform(upCommand.action)
+        guard case .pageLink(let s2)? = input.inlinePicker else { return XCTFail("expected pageLink picker") }
+        XCTAssertEqual(s2.highlightedIndex, 0)
+
+        // Escape dismisses picker WITHOUT exiting the table editor.
+        let escapeCommand = try XCTUnwrap(
+            table.textView.keyCommands?.first { $0.input == UIKeyCommand.inputEscape && $0.modifierFlags == [] })
+        table.textView.perform(escapeCommand.action)
+        XCTAssertNil(input.inlinePicker)
+        XCTAssertEqual(closeCount, 0)
+        for _ in 0..<50 where !hostView.isHidden { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(hostView.isHidden)
+
+        // Empty-match query (`[[zzz`) leaves Up/Down unclaimed so cell arrow navigation works,
+        // and Return falls through to `tableMove(.below)` rather than committing.
+        table.textView.insertText(" [[zzz")
+        await table.settle()
+        guard case .pageLink(let emptyState)? = input.inlinePicker else { return XCTFail("expected empty pageLink") }
+        XCTAssertTrue(emptyState.matches.isEmpty)
+        XCTAssertFalse(input.claimsInlinePickerKey(.up))
+        XCTAssertFalse(input.claimsInlinePickerKey(.down))
+        XCTAssertTrue(input.claimsInlinePickerKey(.escape))
+        XCTAssertNil(table.textView.keyCommands?.first { $0.input == "\r" && $0.modifierFlags == [] })
+        XCTAssertTrue(editor.key(.arrow(.down, extend: false)))
+        XCTAssertEqual(editor.active, TableGrid.CellRef(row: 1, index: 0))
+
+        // In cell (1, 0), `[[alp` + Return inserts the interlink chip INSTEAD of moving to row 2,
+        // and propagates `"Alpha | Spec"` to parent session and realised TableCellView.
+        editor.activate(TableGrid.CellRef(row: 1, index: 0), caret: .end)
+        for ch in [" ", "[", "[", "a", "l", "p"] { table.textView.insertText(ch) }
+        await table.settle()
+        XCTAssertTrue(input.hasHighlightedInlinePicker)
+        table.textView.insertText("\n")
+        await table.settle()
+        XCTAssertEqual(editor.active, TableGrid.CellRef(row: 1, index: 0), "Return committed chip, did not move below")
+        XCTAssertNil(input.inlinePicker)
+        XCTAssertEqual(source.recordedTitles.map(\.0), [alphaID])
+        XCTAssertEqual(harness.session.surface.attachmentGeometry.documentTitles[alphaID], "Alpha | Spec")
+        XCTAssertEqual(table.surface.attachmentGeometry.documentTitles[alphaID], "Alpha | Spec")
+
+        // Move to cell (1, 1) so cell (1, 0) renders via TableCellView with the propagated title.
+        editor.activate(TableGrid.CellRef(row: 1, index: 1), caret: .end)
+        let cell10View = try XCTUnwrap(editor.cellViews[TableGrid.CellRef(row: 1, index: 0)])
+        let cell10Attr = try XCTUnwrap(cell10View.label.attributedText)
+        var renderedLabels: [String] = []
+        cell10Attr.enumerateAttribute(.attachment, in: NSRange(location: 0, length: cell10Attr.length)) { value, _, _ in
+            if let attachment = value as? NativeInlineChipAttachment {
+                renderedLabels.append(attachment.content.displayLabel)
+            }
+        }
+        XCTAssertEqual(renderedLabels, ["Alpha | Spec"])
+
+        // `@ada` in cell (1, 1) opens mention picker and Return commits userMentionInline.
+        for ch in [" ", "@", "a", "d", "a"] { table.textView.insertText(ch) }
+        await table.settle()
+        guard case .mention(let mentionState)? = input.inlinePicker else {
+            return XCTFail("expected mention picker in table cell")
+        }
+        XCTAssertEqual(mentionState.matches.map(\.userID), ["user-ada"])
+        table.textView.insertText("\n")
+        await table.settle()
+        XCTAssertEqual(editor.active, TableGrid.CellRef(row: 1, index: 1))
+
+        await harness.settle()
+        let xml = await self.xml(harness)
+        XCTAssertFalse(xml.lowercased().contains("mentionsearchinline"))
+        XCTAssertTrue(xml.contains(#"docId="\#(alphaID.uuidString.lowercased())""#))
+        XCTAssertTrue(xml.contains(#"userId="user-ada""#))
+
+        // Exported table markdown escapes `|` in page titles via `NativeExportMarkdown.table`.
+        var titledGrid = try XCTUnwrap(editor.grid)
+        titledGrid.rows[1][0].paragraphs[0].runs = [
+            InlineRun("Ada "),
+            InlineRun(
+                inlineObject: .interlink(
+                    docID: alphaID.uuidString.lowercased(), blockID: "", title: "Alpha | Spec",
+                    disabled: false, trigger: "/")),
+        ]
+        let exported = try XCTUnwrap(
+            NativeExportMarkdown.table(titledGrid, interlinkingOrigin: "https://docs.example"))
+        XCTAssertTrue(
+            exported.contains("[Alpha \\| Spec](https://docs.example/docs/\(alphaID.uuidString.lowercased())/)"),
+            exported)
+
+        // Pressing Escape with no picker open now exits the table editor.
+        table.textView.perform(escapeCommand.action)
+        XCTAssertEqual(closeCount, 1)
+    }
+
+    func testTableEditorScreenForwardsInlinePickerSourceAndLocalizedOpenLink() async throws {
+        let docID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let source = PickerSourceBox()
+        source.pageLinks = [makePickerDocument(id: docID, title: "Screen Linked Page")]
+        let harness = try await makeHarness(state: try fixture("styled"))
+        addTeardownBlock { await harness.close() }
+
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let loc = LocalizationStore(userDefaults: defaults)
+        loc.language = .german
+        let labels = NativeEditorLabels.document(loc)
+
+        let screen = TableEditorScreen(
+            document: harness.session, tableID: "tbl", labels: labels,
+            doneTitle: loc[.editor_action_done],
+            cellLabel: { String(format: loc[.native_editor_table_cell], $0, $1) },
+            text: { loc[$0] },
+            serverOrigin: "https://docs.example",
+            inlinePickerSource: source.makeSource(),
+            onClose: {})
+        let host = UIHostingController(rootView: screen.environment(loc))
+        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+        let previous = scene?.windows.first(where: \.isKeyWindow)
+        let window =
+            scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        addTeardownBlock { @MainActor in
+            window.endEditing(true)
+            window.isHidden = true
+            previous?.makeKey()
+        }
+        windows.append(window)
+        host.view.layoutIfNeeded()
+
+        func findTableController(in vc: UIViewController) -> TableEditorViewController? {
+            if let tableVC = vc as? TableEditorViewController { return tableVC }
+            for child in vc.children {
+                if let found = findTableController(in: child) { return found }
+            }
+            return nil
+        }
+
+        var tableVC: TableEditorViewController?
+        for _ in 0..<200 {
+            host.view.layoutIfNeeded()
+            if let found = findTableController(in: host), found.isLoaded {
+                tableVC = found
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let editor = try XCTUnwrap(tableVC)
+        let session = try XCTUnwrap(editor.cellSession)
+        addTeardownBlock { await session.close().value }
+        let input = try XCTUnwrap(session.input)
+        XCTAssertEqual(session.textView.blockControls.labels.openLink, Strings_de.table[.native_editor_open_link])
+
+        editor.activate(TableGrid.CellRef(row: 2, index: 2), caret: .end)
+        session.textView.insertText("[[Screen")
+        await session.settle()
+        guard case .pageLink(let state)? = input.inlinePicker else {
+            return XCTFail("expected TableEditorScreen to forward inlinePickerSource")
+        }
+        XCTAssertEqual(state.matches.map(\.id), [docID])
+        let committed = await session.run { input.commitHighlightedInlinePicker() }
+        XCTAssertTrue(committed)
+        XCTAssertEqual(harness.session.surface.attachmentGeometry.documentTitles[docID], "Screen Linked Page")
+    }
+
+    func testTableEditorScreenDoesNotMutatePickerOnUnchangedUpdateAndRefreshesOnlyOnOfflineChange() async throws {
+        let docID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let source = PickerSourceBox()
+        source.pageLinks = [makePickerDocument(id: docID, title: "Screen Linked Page")]
+        let harness = try await makeHarness(state: try fixture("styled"))
+        addTeardownBlock { await harness.close() }
+
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let loc = LocalizationStore(userDefaults: defaults)
+        let labels = NativeEditorLabels.document(loc)
+        let screenState = TableScreenHostState()
+
+        let host = UIHostingController(
+            rootView: TableScreenHostView(
+                state: screenState,
+                document: harness.session,
+                tableID: "tbl",
+                labels: labels,
+                doneTitle: loc[.editor_action_done],
+                cellLabel: { String(format: loc[.native_editor_table_cell], $0, $1) },
+                text: { loc[$0] },
+                inlinePickerSource: source.makeSource()
+            ).environment(loc))
+        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+        let previous = scene?.windows.first(where: \.isKeyWindow)
+        let window =
+            scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        addTeardownBlock { @MainActor in
+            window.endEditing(true)
+            window.isHidden = true
+            previous?.makeKey()
+        }
+        windows.append(window)
+        host.view.layoutIfNeeded()
+
+        func findTableController(in vc: UIViewController) -> TableEditorViewController? {
+            if let tableVC = vc as? TableEditorViewController { return tableVC }
+            for child in vc.children {
+                if let found = findTableController(in: child) { return found }
+            }
+            return nil
+        }
+
+        var tableVC: TableEditorViewController?
+        for _ in 0..<200 {
+            host.view.layoutIfNeeded()
+            if let found = findTableController(in: host), found.isLoaded {
+                tableVC = found
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let editor = try XCTUnwrap(tableVC)
+        let session = try XCTUnwrap(editor.cellSession)
+        addTeardownBlock { await session.close().value }
+        let input = try XCTUnwrap(session.input)
+
+        editor.activate(TableGrid.CellRef(row: 2, index: 2), caret: .end)
+        session.textView.insertText("[[Screen")
+        await session.settle()
+        XCTAssertNotNil(input.activeInlineTrigger)
+
+        // Flip underlying capability without changing `isOffline`, then trigger a parent SwiftUI update.
+        source.canInsertPageLink = false
+        screenState.tick += 1
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNotNil(
+            input.activeInlineTrigger,
+            "Unchanged isOffline parent update must not mutate picker state during updateUIViewController")
+
+        // Changing `isOffline` triggers `.onChange(of: isOffline)` outside the update pass.
+        screenState.isOffline = true
+        for _ in 0..<100 where input.activeInlineTrigger != nil {
+            host.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertNil(input.activeInlineTrigger)
+    }
+
+    func testTableEditorViewControllerSkipsRedundantDocumentTitleThemeAndLocalizationRefreshes() async throws {
+        let docID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let source = PickerSourceBox()
+        source.pageLinks = [makePickerDocument(id: docID, title: "Initial Title")]
+        let harness = try await makeHarness(state: try fixture("styled"))
+        addTeardownBlock { await harness.close() }
+
+        let editor = TableEditorViewController(document: harness.session, tableID: "tbl")
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let loc = LocalizationStore(userDefaults: defaults)
+        var resolvedTitle = "Initial Title"
+        editor.theme = .white
+        editor.localizationStore = loc
+        editor.documentTitle = { _ in resolvedTitle }
+        editor.inlinePickerSource = source.makeSource()
+
+        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+        let previous = scene?.windows.first(where: \.isKeyWindow)
+        let window =
+            scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = editor
+        window.makeKeyAndVisible()
+        addTeardownBlock { @MainActor in
+            window.endEditing(true)
+            window.isHidden = true
+            previous?.makeKey()
+        }
+        windows.append(window)
+        await editor.load()
+        for _ in 0..<200 where !editor.isLoaded { try await Task.sleep(for: .milliseconds(10)) }
+        let session = try XCTUnwrap(editor.cellSession)
+        addTeardownBlock { await session.close().value }
+        let input = try XCTUnwrap(session.input)
+
+        // Insert an interlink so `documentTitle` resolution actually exercises title comparison.
+        editor.activate(TableGrid.CellRef(row: 2, index: 2), caret: .end)
+        session.textView.insertText("[[Init")
+        await session.settle()
+        let committed = await session.run { input.commitHighlightedInlinePicker() }
+        XCTAssertTrue(committed)
+
+        let baselineTitleRefreshes = editor.documentTitleRefreshCount
+        let baselineOverlayUpdates = editor.inlinePickerOverlayUpdateCount
+
+        // Reassigning identical theme, localizationStore, and unchanged documentTitle does no redundant work.
+        editor.theme = .white
+        editor.localizationStore = loc
+        editor.documentTitle = { _ in resolvedTitle }
+        XCTAssertEqual(editor.inlinePickerOverlayUpdateCount, baselineOverlayUpdates)
+        XCTAssertEqual(editor.documentTitleRefreshCount, baselineTitleRefreshes)
+
+        // Changing each value acts once.
+        editor.theme = .mist
+        XCTAssertEqual(editor.inlinePickerOverlayUpdateCount, baselineOverlayUpdates + 1)
+
+        let otherLoc = LocalizationStore(userDefaults: try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString)))
+        editor.localizationStore = otherLoc
+        XCTAssertEqual(editor.inlinePickerOverlayUpdateCount, baselineOverlayUpdates + 2)
+
+        resolvedTitle = "Updated Title"
+        editor.documentTitle = { _ in resolvedTitle }
+        XCTAssertEqual(editor.documentTitleRefreshCount, baselineTitleRefreshes + 1)
+    }
+}
+
+@MainActor @Observable
+private final class TableScreenHostState {
+    var isOffline = false
+    var tick = 0
+}
+
+private struct TableScreenHostView: View {
+    let state: TableScreenHostState
+    let document: NativeEditorSession
+    let tableID: String
+    let labels: NativeEditorLabels
+    let doneTitle: String
+    let cellLabel: (Int, Int) -> String
+    let text: (L10nKey) -> String
+    let inlinePickerSource: NativeInlinePickerSource
+
+    var body: some View {
+        let _ = state.tick
+        TableEditorScreen(
+            document: document,
+            tableID: tableID,
+            labels: labels,
+            doneTitle: doneTitle,
+            cellLabel: cellLabel,
+            text: text,
+            serverOrigin: "https://docs.example",
+            isOffline: state.isOffline,
+            inlinePickerSource: inlinePickerSource,
+            onClose: {})
+    }
 }
 
 extension Array {
     fileprivate subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
+}
+
+@MainActor @Observable
+private final class PickerSourceBox {
+    var canInsertPageLink = true
+    var pageLinks: [Schrift.Document] = []
+    var excludedDocumentID = UUID(uuidString: "00000000-0000-4000-8000-000000000099")!
+    var recordedTitles: [(UUID, String)] = []
+    var canMention = true
+    var mentionState: NativeInlinePickerSource.MentionAccessState = .idle
+
+    func makeSource() -> NativeInlinePickerSource {
+        NativeInlinePickerSource(
+            canInsertPageLink: { self.canInsertPageLink },
+            pageLinkCandidates: { self.pageLinks },
+            excludedDocumentID: excludedDocumentID,
+            onRecordDocumentTitle: { id, title in
+                self.recordedTitles.append((id, title))
+            },
+            canMention: { self.canMention },
+            mentionState: { self.mentionState },
+            requestMentions: { _ in })
+    }
 }

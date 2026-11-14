@@ -121,10 +121,10 @@ func rankedPageLinkCandidates(
     return ranked.prefix(max(0, limit)).map { $0.document }
 }
 
-/// A document's title as the picker shows it and the link carries it: trimmed, and
-/// empty for an untitled document.
+/// A document's title as the picker shows it and the link carries it: trimmed,
+/// display-safe, bounded, and empty for an untitled document.
 func pageLinkTitle(of document: Document) -> String {
-    (document.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    NativeInlineObject.clippedNonEmptyDisplayText(document.title) ?? ""
 }
 
 /// The part of `title` the query matched, for the row to emphasise — the first

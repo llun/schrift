@@ -166,6 +166,9 @@ final class EditorViewModel {
     /// decoding Home's lists from `UserDefaults` on every keystroke. Not observed: it is a
     /// memo of on-disk state, refreshed whenever a new search starts.
     @ObservationIgnored private var pageLinkCandidateMemo: PageLinkCandidateMemo?
+    /// Titles primed by native page-link picks, keyed by signed-in owner so one
+    /// account's primed titles are never visible after switching accounts.
+    @ObservationIgnored private var recordedNativeDocumentTitles: [UUID: [UUID: String]] = [:]
     /// The block whose text view holds an input method's uncommitted (marked) text, as its
     /// text view last reported it. While it does, UIKit owns those characters — a model write
     /// is not applied to the view until the composition commits, and the commit then
@@ -3072,16 +3075,41 @@ final class EditorViewModel {
         if let memo = pageLinkCandidateMemo, memo.key == key {
             cached = memo.documents
         } else {
-            let homeLists = signedInUser.userID.map { listCache.documents(fetchedFor: $0) } ?? []
-            let parents = Set([documentID] + (subpages ?? []).map(\.id) + homeLists.map(\.id))
-            cached = homeLists + childrenCache.children(ofParents: parents)
+            cached = accountScopedCachedDocuments()
             pageLinkCandidateMemo = PageLinkCandidateMemo(key: key, documents: cached)
         }
+        return filterAvailablePageLinkCandidates(cached: cached)
+    }
+
+    /// Account-scoped page candidates (`subpages`, signed-in Home lists, and their
+    /// cached children) for the native `[[` and slash `"Link a page"` pickers,
+    /// excluding this document and pending creates/deletes.
+    func nativePageLinkCandidates() -> [Document] {
+        filterAvailablePageLinkCandidates(cached: accountScopedCachedDocuments()).filter { $0.id != documentID }
+    }
+
+    private func accountScopedCachedDocuments() -> [Document] {
+        let homeLists = signedInUser.userID.map { listCache.documents(fetchedFor: $0) } ?? []
+        let parents = Set([documentID] + (subpages ?? []).map(\.id) + homeLists.map(\.id))
+        return homeLists + childrenCache.children(ofParents: parents)
+    }
+
+    private func filterAvailablePageLinkCandidates(cached: [Document]) -> [Document] {
         // `subpages` is live state, so it is merged on every read rather than memoized, and
         // first: it is the freshest copy of the documents it holds.
         return ((subpages ?? []) + cached).filter {
             !saveCoordinator.isPendingCreate(documentID: $0.id) && !saveCoordinator.isPendingDelete(documentID: $0.id)
         }
+    }
+
+    /// Primes an in-memory title for a page picked in the native `[[` or slash
+    /// picker under the signed-in owner so its chip renders immediately without
+    /// leaking across accounts.
+    func recordNativeDocumentTitle(_ title: String, for targetID: UUID) {
+        guard let ownerUserID = signedInUser.userID,
+            let safeTitle = NativeInlineObject.clippedNonEmptyDisplayText(title)
+        else { return }
+        recordedNativeDocumentTitles[ownerUserID, default: [:]][targetID] = safeTitle
     }
 
     /// Cached title for a linked document within this account's known scope
@@ -3104,6 +3132,12 @@ final class EditorViewModel {
             let title = child.title, !title.isEmpty
         {
             return title
+        }
+        if let ownerUserID = signedInUser.userID,
+            let recorded = recordedNativeDocumentTitles[ownerUserID]?[targetID],
+            !recorded.isEmpty
+        {
+            return recorded
         }
         return nil
     }
@@ -3157,6 +3191,7 @@ final class EditorViewModel {
         if case .media = item.action { return }
         if case .source = item.action { return }
         if case .inlineMath = item.action { return }
+        if case .linkPage = item.action { return }
         let text = blocks[index].text
         let tokenEnd =
             slashTokenLength(text: text, kind: blocks[index].kind, caret: selection?.location)
@@ -3190,7 +3225,7 @@ final class EditorViewModel {
             // Same contract as photo: `insertAttachmentBlock` acts on success only.
             focusBlock(focusedBlockID, cursorAt: 0)
             requestAttachmentInsertion()
-        case .toggle, .columns, .media, .source, .inlineMath:
+        case .toggle, .columns, .media, .source, .inlineMath, .linkPage:
             break
         }
         markDirty()

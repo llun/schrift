@@ -47,7 +47,15 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     private(set) var isLoaded = false
     private var loadStarted = false
     private var isClosed = false
-    var labels = NativeEditorLabels()
+    var labels = NativeEditorLabels() {
+        didSet {
+            guard labels != oldValue else { return }
+            cellSession?.textView.blockControls.labels = labels
+            cellSession?.surface.updatePresentation(traits: traitCollection, labels: labels)
+            refreshLabels()
+            layoutGrid()
+        }
+    }
     var cellLabel: (Int, Int) -> String = { "Row \($0), column \($1)" }
     var doneTitle = "Done"
     /// The editor closed: the document takes focus back.
@@ -55,9 +63,46 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     /// Menu titles (the app's localized strings; English in tests).
     var text: (L10nKey) -> String = { Strings_en.table[$0] ?? "" }
     /// Cached title resolver for linked document chips (read-only display).
-    var documentTitle: (@MainActor (UUID) -> String?)?
+    var documentTitle: (@MainActor (UUID) -> String?)? {
+        didSet {
+            guard oldValue != nil || documentTitle != nil else { return }
+            refreshDocumentTitlesIfChanged()
+        }
+    }
     /// Server origin for same-origin URL paste-interlink and clipboard serialization.
     var serverOrigin: String?
+    private var suppressesOfflinePickerRefresh = false
+    /// Offline status propagated to cell inline pickers.
+    var isOffline = false {
+        didSet {
+            guard isOffline != oldValue, !suppressesOfflinePickerRefresh else { return }
+            cellSession?.input?.refreshInlinePicker()
+        }
+    }
+    /// Shared page-link and `@` mention candidate source for cell editing (PR13c2).
+    var inlinePickerSource: NativeInlinePickerSource? {
+        didSet { applyInlinePickerSource() }
+    }
+    /// Theme and localization forwarded to the hosted inline picker card.
+    var theme: AppTheme = .white {
+        didSet {
+            guard theme != oldValue else { return }
+            refreshInlinePickerOverlay()
+        }
+    }
+    var localizationStore: LocalizationStore? {
+        didSet {
+            guard localizationStore !== oldValue else { return }
+            refreshInlinePickerOverlay()
+        }
+    }
+    private var lastResolvedInterlinkTitles: [UUID: String] = [:]
+    private(set) var documentTitleRefreshCount = 0
+    private(set) var inlinePickerOverlayUpdateCount = 0
+    private lazy var fallbackLocalizationStore = LocalizationStore()
+    private var recordedDocumentTitles: [UUID: String] = [:]
+    private var pickerHostController: UIHostingController<TableInlinePickerOverlay>?
+    var inlinePickerHostView: UIView? { pickerHostController?.view }
     /// A tap (or VoiceOver action) on an inline page link chip navigates to that document.
     var onOpenDocument: ((UUID, String) -> Void)?
     /// A tap (or VoiceOver action) on an inline `.math` chip opens the focused source editor.
@@ -175,7 +220,10 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
             session.input?.tableKey = { [weak self] in self?.key($0) ?? false }
             session.textView.isScrollEnabled = false
             session.textView.blockControls.labels = labels
-            session.textView.blockControls.documentTitle = documentTitle
+            session.surface.updatePresentation(traits: traitCollection, labels: labels)
+            session.textView.blockControls.documentTitle = { [weak self] id in
+                self?.resolvedDocumentTitle(for: id)
+            }
             session.textView.blockControls.onOpenDocument = { [weak self] id, blockID in
                 self?.onOpenDocument?(id, blockID)
             }
@@ -188,6 +236,10 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
                 ?? document.textView.blockControls.serverOrigin
             session.textView.blockControls.serverOrigin = origin
             session.input?.serverOrigin = origin
+            applyInlinePickerSource()
+            if let input = session.input {
+                installInlinePickerHost(for: input)
+            }
             if let awareness = document.awareness { session.showAwareness(awareness) }
         } else {
             grid = await document.tableGrid(tableID, full: true)
@@ -197,6 +249,7 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         rebuild()
         observePeers()
         if let first = start ?? order.first { activate(first) }
+        lastResolvedInterlinkTitles = currentResolvedInterlinkTitles()
         isLoaded = true
     }
 
@@ -204,6 +257,7 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     func close() {
         isClosed = true
         refreshTask?.cancel()
+        teardownInlinePickerHost()
         if let presented = presentedSourceController {
             presentedSourceController = nil
             if let sourceEditor = presented.topViewController as? NativeSourceEditorViewController {
@@ -250,6 +304,8 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         super.viewDidDisappear(animated)
         // A dismissal that did not come through `close` ends the surface too.
         guard cellSession != nil, isBeingDismissed || navigationController?.isBeingDismissed == true else { return }
+        isClosed = true
+        teardownInlinePickerHost()
         cellSession?.close()
         cellSession = nil
         onClose?()
@@ -948,6 +1004,7 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
     private func refreshLabels() {
         liveBlocks = Dictionary(
             (cellSession?.surface.blocks ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        lastResolvedInterlinkTitles = currentResolvedInterlinkTitles()
         for (ref, view) in cellViews { configureText(view, ref) }
     }
 
@@ -975,15 +1032,13 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
 
     private func cellGeometry(for paragraphs: [BlockSnapshot], width: CGFloat = 0) -> NativeAttachmentGeometry {
         var geometry = NativeAttachmentGeometry(width: width)
-        guard let documentTitle else { return geometry }
         for paragraph in paragraphs {
             for run in paragraph.runs {
                 guard case .interlink(let docID, _, _, let disabled, _)? = run.inlineObject,
                     !disabled,
                     let uuid = UUID(uuidString: docID),
                     geometry.documentTitles[uuid] == nil,
-                    let title = documentTitle(uuid),
-                    !title.isEmpty
+                    let title = resolvedDocumentTitle(for: uuid)
                 else { continue }
                 geometry.documentTitles[uuid] = title
             }
@@ -999,8 +1054,8 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         else { return }
         let cell = grid.cell(ref)
         element.accessibilityLabel = cellLabel(cell.row + 1, cell.column + 1)
-        let resolver = documentTitle ?? { _ in nil }
-        let value = paragraphs(ref).map { $0.clippedVisibleText(titleForDocument: resolver) }.joined(separator: "\n")
+        let value = paragraphs(ref).map { $0.clippedVisibleText(titleForDocument: { resolvedDocumentTitle(for: $0) }) }
+            .joined(separator: "\n")
         let peers = (peerMarks[ref] ?? []).map { String(format: labels.peerCursor, $0.name) }
         element.accessibilityValue = ([value] + peers).filter { !$0.isEmpty }.joined(separator: ", ")
         var traits: UIAccessibilityTraits = .staticText
@@ -1281,6 +1336,172 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         peerMarks = marks
         layoutGrid()
     }
+
+    // MARK: - Inline Pickers (PR13c2)
+
+    private var resolvedLocalizationStore: LocalizationStore {
+        localizationStore ?? fallbackLocalizationStore
+    }
+
+    private func applyInlinePickerSource() {
+        cellSession?.input?.inlinePickerSource = wrappedPickerSource(inlinePickerSource)
+    }
+
+    private func wrappedPickerSource(_ source: NativeInlinePickerSource?) -> NativeInlinePickerSource? {
+        guard var source else { return nil }
+        let originalRecord = source.onRecordDocumentTitle
+        source.onRecordDocumentTitle = { [weak self] id, title in
+            originalRecord(id, title)
+            self?.recordPickedDocumentTitle(title, for: id)
+        }
+        return source
+    }
+
+    private func recordPickedDocumentTitle(_ title: String, for documentID: UUID) {
+        guard let safeTitle = NativeInlineObject.clippedNonEmptyDisplayText(title) else { return }
+        recordedDocumentTitles[documentID] = safeTitle
+        document.surface.recordDocumentTitle(safeTitle, for: documentID)
+        cellSession?.surface.recordDocumentTitle(safeTitle, for: documentID)
+        cellHeights.removeAll()
+        refreshLabels()
+        layoutGrid()
+    }
+
+    private func currentResolvedInterlinkTitles() -> [UUID: String] {
+        let runLists: [[InlineRun]] =
+            cellSession?.surface.blocks.map(\.runs)
+            ?? grid?.rows.flatMap { row in row.flatMap { cell in cell.paragraphs.map(\.runs) } }
+            ?? []
+        var titles: [UUID: String] = [:]
+        for runs in runLists {
+            for run in runs {
+                guard case .interlink(let docID, _, _, let disabled, _)? = run.inlineObject,
+                    !disabled,
+                    let uuid = UUID(uuidString: docID),
+                    titles[uuid] == nil,
+                    let title = resolvedDocumentTitle(for: uuid)
+                else { continue }
+                titles[uuid] = title
+            }
+        }
+        return titles
+    }
+
+    private func refreshDocumentTitlesIfChanged() {
+        guard isLoaded else { return }
+        let next = currentResolvedInterlinkTitles()
+        guard next != lastResolvedInterlinkTitles else { return }
+        lastResolvedInterlinkTitles = next
+        documentTitleRefreshCount += 1
+        cellSession?.surface.refreshAttachmentGeometry()
+        refreshLabels()
+        layoutGrid()
+    }
+
+    fileprivate func syncOfflineFromSwiftUI(_ offline: Bool) {
+        suppressesOfflinePickerRefresh = true
+        isOffline = offline
+        suppressesOfflinePickerRefresh = false
+    }
+
+    private func resolvedDocumentTitle(for documentID: UUID) -> String? {
+        if let title = documentTitle?(documentID)?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            return title
+        }
+        if let title = recordedDocumentTitles[documentID], !title.isEmpty {
+            return title
+        }
+        if let title = cellSession?.surface.attachmentGeometry.documentTitles[documentID], !title.isEmpty {
+            return title
+        }
+        return document.surface.attachmentGeometry.documentTitles[documentID]
+    }
+
+    private func installInlinePickerHost(for input: NativeInputCoordinator) {
+        guard isViewLoaded else { return }
+        let overlay = TableInlinePickerOverlay(
+            input: input, theme: theme, localizationStore: resolvedLocalizationStore)
+        if let existing = pickerHostController {
+            existing.rootView = overlay
+        } else {
+            let host = UIHostingController(rootView: overlay)
+            host.sizingOptions = .intrinsicContentSize
+            host.view.backgroundColor = .clear
+            host.view.isOpaque = false
+            host.view.translatesAutoresizingMaskIntoConstraints = false
+            host.view.isHidden = !input.hasActiveInlinePicker
+            addChild(host)
+            view.addSubview(host.view)
+            host.didMove(toParent: self)
+            NSLayoutConstraint.activate([
+                host.view.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
+                host.view.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
+                host.view.bottomAnchor.constraint(
+                    equalTo: view.keyboardLayoutGuide.topAnchor, constant: -DocsSpacing.spaceXS),
+                host.view.topAnchor.constraint(
+                    greaterThanOrEqualTo: controls.bottomAnchor, constant: DocsSpacing.spaceXS),
+            ])
+            pickerHostController = host
+        }
+        observeInlinePicker()
+    }
+
+    private func refreshInlinePickerOverlay() {
+        guard let host = pickerHostController, let input = cellSession?.input else { return }
+        inlinePickerOverlayUpdateCount += 1
+        host.rootView = TableInlinePickerOverlay(
+            input: input, theme: theme, localizationStore: resolvedLocalizationStore)
+    }
+
+    private func teardownInlinePickerHost() {
+        guard let host = pickerHostController else { return }
+        pickerHostController = nil
+        host.view.isHidden = true
+        host.willMove(toParent: nil)
+        host.view.removeFromSuperview()
+        host.removeFromParent()
+    }
+
+    private func observeInlinePicker() {
+        guard !isClosed, let input = cellSession?.input else {
+            pickerHostController?.view.isHidden = true
+            return
+        }
+        withObservationTracking {
+            _ = input.inlinePicker
+        } onChange: {
+            Task { @MainActor [weak self] in
+                self?.observeInlinePicker()
+            }
+        }
+        updateInlinePickerVisibility()
+    }
+
+    private func updateInlinePickerVisibility() {
+        guard let host = pickerHostController else { return }
+        let isVisible = cellSession?.input?.hasActiveInlinePicker == true
+        host.view.isHidden = !isVisible
+        if isVisible {
+            view.bringSubviewToFront(host.view)
+            host.view.invalidateIntrinsicContentSize()
+        }
+    }
+}
+
+private struct TableInlinePickerOverlay: View {
+    let input: NativeInputCoordinator
+    let theme: AppTheme
+    let localizationStore: LocalizationStore
+
+    var body: some View {
+        GlassEffectContainer(spacing: DocsSpacing.space2xs) {
+            if let presentation = input.inlinePicker {
+                NativeInlinePickerCard(presentation: presentation, input: input)
+            }
+        }
+        .environment(\.docsTheme, theme)
+        .environment(localizationStore)
+    }
 }
 
 extension UIAction {
@@ -1290,8 +1511,13 @@ extension UIAction {
     }
 }
 
+@MainActor
+private final class TableEditorHostBox {
+    weak var controller: TableEditorViewController?
+}
+
 /// The table editor as `NativeEditorView` presents it (PR11a).
-struct TableEditorScreen: UIViewControllerRepresentable {
+struct TableEditorScreen: View {
     let document: NativeEditorSession
     let tableID: String
     let labels: NativeEditorLabels
@@ -1300,18 +1526,78 @@ struct TableEditorScreen: UIViewControllerRepresentable {
     let text: (L10nKey) -> String
     var documentTitle: (@MainActor (UUID) -> String?)? = nil
     var serverOrigin: String? = nil
+    var isOffline = false
+    var inlinePickerSource: NativeInlinePickerSource? = nil
     var onOpenDocument: ((UUID, String) -> Void)? = nil
     var onOpenSource: ((NativeSourceRequest) -> Void)? = nil
     let onClose: () -> Void
+    @Environment(LocalizationStore.self) private var loc
+    @Environment(\.docsTheme) private var theme
+    @State private var host = TableEditorHostBox()
+
+    var body: some View {
+        TableEditorRepresentable(
+            document: document,
+            tableID: tableID,
+            labels: labels,
+            doneTitle: doneTitle,
+            cellLabel: cellLabel,
+            text: text,
+            documentTitle: documentTitle,
+            serverOrigin: serverOrigin,
+            isOffline: isOffline,
+            inlinePickerSource: inlinePickerSource,
+            onOpenDocument: onOpenDocument,
+            onOpenSource: onOpenSource,
+            onClose: onClose,
+            loc: loc,
+            theme: theme,
+            host: host
+        )
+        .onChange(of: isOffline) { _, _ in
+            host.controller?.cellSession?.input?.refreshInlinePicker()
+        }
+    }
+}
+
+private struct TableEditorRepresentable: UIViewControllerRepresentable {
+    let document: NativeEditorSession
+    let tableID: String
+    let labels: NativeEditorLabels
+    let doneTitle: String
+    let cellLabel: (Int, Int) -> String
+    let text: (L10nKey) -> String
+    let documentTitle: (@MainActor (UUID) -> String?)?
+    let serverOrigin: String?
+    let isOffline: Bool
+    let inlinePickerSource: NativeInlinePickerSource?
+    let onOpenDocument: ((UUID, String) -> Void)?
+    let onOpenSource: ((NativeSourceRequest) -> Void)?
+    let onClose: () -> Void
+    let loc: LocalizationStore
+    let theme: AppTheme
+    let host: TableEditorHostBox
+
+    final class Coordinator {
+        var installedInlinePickerSource = false
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIViewController(context: Context) -> UINavigationController {
         let editor = TableEditorViewController(document: document, tableID: tableID)
+        host.controller = editor
         editor.labels = labels
         editor.doneTitle = doneTitle
         editor.cellLabel = cellLabel
         editor.text = text
         editor.documentTitle = documentTitle
         editor.serverOrigin = serverOrigin
+        editor.syncOfflineFromSwiftUI(isOffline)
+        editor.theme = theme
+        editor.localizationStore = loc
+        editor.inlinePickerSource = inlinePickerSource
+        context.coordinator.installedInlinePickerSource = inlinePickerSource != nil
         editor.onOpenDocument = onOpenDocument
         editor.onOpenSource = onOpenSource
         editor.onClose = onClose
@@ -1320,8 +1606,25 @@ struct TableEditorScreen: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: UINavigationController, context: Context) {
         guard let editor = controller.topViewController as? TableEditorViewController else { return }
+        host.controller = editor
+        editor.labels = labels
         editor.documentTitle = documentTitle
         editor.serverOrigin = serverOrigin
+        if editor.isOffline != isOffline {
+            editor.syncOfflineFromSwiftUI(isOffline)
+        }
+        editor.theme = theme
+        editor.localizationStore = loc
+        if let inlinePickerSource, !context.coordinator.installedInlinePickerSource {
+            context.coordinator.installedInlinePickerSource = true
+            if editor.cellSession?.input == nil {
+                editor.inlinePickerSource = inlinePickerSource
+            } else {
+                Task { @MainActor [weak editor] in
+                    editor?.inlinePickerSource = inlinePickerSource
+                }
+            }
+        }
         editor.onOpenDocument = onOpenDocument
         editor.onOpenSource = onOpenSource
     }

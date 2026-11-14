@@ -23,6 +23,9 @@ enum SlashMenuAction: Equatable, Sendable {
     /// An inline `<math>` chip followed by a trailing space: native editor only
     /// (PR14), opening the source editor immediately.
     case inlineMath
+    /// Consumes `/query` and opens the inline page-link picker at that anchor:
+    /// native editor only (PR13c2, BlockNote's "Link a doc" / "Link a page").
+    case linkPage
 
     /// True for the actions that must reach the server **now** — the only items withheld
     /// offline or on a document that has no server id yet.
@@ -36,7 +39,7 @@ enum SlashMenuAction: Equatable, Sendable {
     var requiresImmediateUpload: Bool {
         switch self {
         case .insertAttachment: return true
-        case .insertPhoto, .convert, .toggle, .columns, .media, .source, .inlineMath: return false
+        case .insertPhoto, .convert, .toggle, .columns, .media, .source, .inlineMath, .linkPage: return false
         }
     }
 }
@@ -149,6 +152,11 @@ let sourceSlashItems: [SlashMenuItem] = [
         id: "diagram", title: "Diagram", titleKey: .editor_slash_diagram, icon: .account_tree,
         action: .source(SourceBlock.diagram), keywords: ["mermaid", "diagram", "flowchart", "chart", "graph"]),
 ]
+/// BlockNote's "Link a doc" / "Link a page" item (PR13c2, native editor only
+/// when `canInsertPageLink` is enabled).
+let linkPageSlashItem = SlashMenuItem(
+    id: "linkPage", title: "Link a page", titleKey: .editor_slash_link_page, icon: .link,
+    action: .linkPage, keywords: ["link", "page", "doc", "interlinking", "anchor", "a"])
 let toggleHeadingSlashItem = SlashMenuItem(
     id: "toggleHeading", title: "Toggle heading", titleKey: .editor_slash_toggle_heading, icon: .expand_more,
     action: .toggle(heading: true), keywords: ["toggle", "collapsible", "heading", "details"])

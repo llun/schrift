@@ -347,8 +347,12 @@ enum Strings_es {
         .editor_slash_math_block: "Bloque matemático",
         .editor_slash_inline_math: "Fórmula en línea",
         .editor_slash_diagram: "Diagrama",
+        .editor_slash_link_page: "Enlazar una página",
         .editor_page_link_title: "Enlazar una página",
         .editor_page_link_empty: "No hay páginas coincidentes",
+        .editor_mention_title: "Mención",
+        .editor_mention_empty: "No hay personas coincidentes",
+        .editor_mention_loading: "Cargando personas…",
         .editor_uploading_file: "Subiendo archivo…",
         .editor_uploading_file_a11y: "Subiendo archivo",
 
@@ -428,6 +432,7 @@ enum Strings_es {
         .native_editor_chip_page: "Página",
         .native_editor_chip_mention: "Mención",
         .native_editor_chip_untitled: "Página sin título",
+        .native_editor_open_link: "Abrir enlace",
         .native_editor_input_unavailable: "Esta entrada aún no es compatible con el editor nativo.",
         .native_editor_range_unavailable: "Esta selección incluye contenido que el editor nativo aún no puede cambiar.",
         .native_editor_paste_too_large:

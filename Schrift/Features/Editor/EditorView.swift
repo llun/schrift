@@ -297,6 +297,7 @@ struct EditorView: View {
     /// reopened rather than left typing into the previous account's replica.
     var signInGeneration: Int = 0
     @State private var nativeOpen = NativeEditorOpen()
+    @State private var mentionLoader: NativeMentionAccessLoader?
     /// The app's replica registry (PR08c); hosts without one keep the open's own.
     @Environment(NativeSessionRegistry.self) private var nativeSessions: NativeSessionRegistry?
     /// Dials the native live socket (PR09a); hosts without one stay HTTP-only.
@@ -327,7 +328,8 @@ struct EditorView: View {
                     mediaQueue: viewModel.saveCoordinator,
                     documentTitle: { [viewModel] id in viewModel.cachedDocumentTitle(for: id) },
                     resolveLinkedDocument: { [viewModel] id in await viewModel.openLinkedDocument(id) },
-                    onOpenDocument: onOpenDocument)
+                    onOpenDocument: onOpenDocument,
+                    inlinePickerSource: makeInlinePickerSource())
             case .preservedUnavailable:
                 ContentUnavailableView(
                     loc[.native_editor_owned_unavailable_title], systemImage: "doc.richtext",
@@ -341,13 +343,20 @@ struct EditorView: View {
             }
         }
         .task { await openNative() }
-        .onDisappear { nativeOpen.close() }
+        .onDisappear {
+            nativeOpen.close()
+            mentionLoader?.reset()
+        }
         // The journal is already durable; this hands the debounced save to the
         // coordinator, whose background task carries it.
         .onChange(of: scenePhase) { _, phase in
             if phase == .background || phase == .inactive { nativeOpen.flushPendingSave() }
         }
         .onChange(of: showsOffline) { _, offline in
+            syncMentionLoader()
+            if case .native(let session) = nativeOpen.route {
+                session.input?.refreshInlinePicker()
+            }
             guard !offline else { return }
             nativeOpen.refreshInBackground(viewModel: viewModel, isOffline: showsOffline)
         }
@@ -355,20 +364,90 @@ struct EditorView: View {
             nativeOpen.liveSettingChanged(viewModel: viewModel, isOffline: showsOffline)
         }
         .onChange(of: signInGeneration) { _, _ in
+            syncMentionLoader()
             // A mounted classic editor keeps its own session handling and is never swapped.
             if case .classic = nativeOpen.route { return }
             nativeOpen.reopen(
-                viewModel: viewModel, isOffline: showsOffline, canUpdate: pinRow?.abilities.update == true)
+                viewModel: viewModel, isOffline: showsOffline,
+                canUpdate: pinRow?.abilities.update == true,
+                canMention: pinRow?.abilities.mention == true)
+        }
+        .onChange(of: nativeOpen.canMention) { _, _ in
+            syncMentionLoader()
+            if case .native(let session) = nativeOpen.route {
+                session.input?.refreshInlinePicker()
+            }
+        }
+        .onChange(of: viewModel.signedInUser.userID) { _, _ in
+            syncMentionLoader()
+            if case .native(let session) = nativeOpen.route {
+                session.input?.refreshInlinePicker()
+            }
+        }
+        .onChange(of: viewModel.isLocalDocument) { _, _ in
+            syncMentionLoader()
+            if case .native(let session) = nativeOpen.route {
+                session.input?.refreshInlinePicker()
+            }
         }
     }
 
     private func openNative() async {
+        syncMentionLoader()
         if let nativeSessions { nativeOpen.registry = nativeSessions }
         nativeOpen.collaboration = collaboration
         // Both navigation surfaces pass the server Document as pinRow. Missing
         // metadata fails closed to the read-only view.
         await nativeOpen.open(
-            viewModel: viewModel, isOffline: showsOffline, canUpdate: pinRow?.abilities.update == true)
+            viewModel: viewModel, isOffline: showsOffline,
+            canUpdate: pinRow?.abilities.update == true,
+            canMention: pinRow?.abilities.mention == true)
+        syncMentionLoader()
+    }
+
+    private var currentMentionScope: NativeMentionAccessLoader.Scope {
+        NativeMentionAccessLoader.Scope(
+            serverOrigin: serverOrigin,
+            ownerUserID: viewModel.signedInUser.userID,
+            documentID: viewModel.documentID,
+            signInGeneration: signInGeneration)
+    }
+
+    private func syncMentionLoader() {
+        let scope = currentMentionScope
+        let canMention = nativeOpen.canMention
+        let isLocal = viewModel.isLocalDocument
+        let offline = showsOffline
+        if let mentionLoader {
+            mentionLoader.update(
+                scope: scope, canMention: canMention, isLocalDocument: isLocal, isOffline: offline)
+        } else {
+            mentionLoader = NativeMentionAccessLoader(
+                client: viewModel.client, scope: scope, canMention: canMention,
+                isLocalDocument: isLocal, isOffline: offline)
+        }
+    }
+
+    private func makeInlinePickerSource() -> NativeInlinePickerSource {
+        let loader = mentionLoader
+        let serverOrigin = self.serverOrigin
+        return NativeInlinePickerSource(
+            canInsertPageLink: { !documentLinkHost(forOrigin: serverOrigin).isEmpty },
+            pageLinkCandidates: { [viewModel] in viewModel.nativePageLinkCandidates() },
+            excludedDocumentID: viewModel.documentID,
+            onRecordDocumentTitle: { [viewModel] id, title in
+                viewModel.recordNativeDocumentTitle(title, for: id)
+            },
+            canMention: { [nativeOpen, viewModel] in
+                nativeOpen.canMention && !viewModel.isLocalDocument && viewModel.signedInUser.userID != nil
+            },
+            mentionState: { loader?.state ?? .idle },
+            requestMentions: { key in
+                loader?.requestMentions(for: key)
+            },
+            clearMentionFailure: {
+                loader?.clearFailure()
+            })
     }
 
     /// The classic status resolver, fed by the coordinator's real save state.
