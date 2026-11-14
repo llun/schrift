@@ -282,9 +282,9 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
             attachmentStore: attachmentStore,
             listCache: listCache,
             backgroundTasks: .noop,
-            nativeEditorEnabled: { true },
             isLiveReplicaHeld: { _ in true }
         )
+        coordinator.nativeEditorEnabled = { true }
 
         let checkpoint = BlockNoteYjs.encode(
             [
@@ -319,15 +319,14 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
             coordinator.queueNativeAttachment(
                 scope: attachmentScope,
                 target: NativeMediaTarget(
-                    org: "docs", blockID: "b1", slot: .image, fileName: "a.png", contentType: "image/png"
+                    org: "docs", blockID: "b1", slot: MediaBlock.Slot(node: "image", url: ""), fileName: "a.png",
+                    contentType: "image/png"
                 ),
                 data: Data([1, 2, 3])
             )
         )
         ServerConfigStore(userDefaults: defaults).remember(
-            ServerConfig(
-                version: "6.0.0", releaseDate: nil, serverTime: nil, sentryDsn: nil,
-                environment: nil, features: nil, capabilities: nil, yjs: nil),
+            ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: nil),
             forServerOrigin: client.serverOrigin
         )
         let localDoc = coordinator.createLocalDocument(title: "Local", parentID: nil, ownerUserID: owner)

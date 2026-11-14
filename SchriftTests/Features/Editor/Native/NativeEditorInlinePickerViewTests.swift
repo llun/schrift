@@ -591,6 +591,8 @@ final class NativeEditorInlinePickerViewTests: NativeEditingTestCase {
         let sessionA = try XCTUnwrap(registry.surfaces(of: scopeA).first)
         let inputA = try XCTUnwrap(sessionA.input)
         XCTAssertTrue(inputA.inlinePickerSource?.canMention() == true)
+        sessionA.textView.onRequestEdit?()
+        await waitUntil { sessionA.textView.isEditable }
         sessionA.textView.selectedRange = NSRange(location: 5, length: 0)
         XCTAssertTrue(inputA.replace(range: NSRange(location: 5, length: 0), with: " @"))
         await sessionA.settle()
@@ -615,6 +617,8 @@ final class NativeEditorInlinePickerViewTests: NativeEditingTestCase {
         let sessionB = try XCTUnwrap(
             registry.surfaces(of: scopeA).first { $0 !== sessionA && !$0.isClosed })
         let inputB = try XCTUnwrap(sessionB.input)
+        sessionB.textView.onRequestEdit?()
+        await waitUntil { sessionB.textView.isEditable }
         sessionB.textView.selectedRange = NSRange(location: 5, length: 0)
         XCTAssertTrue(inputB.replace(range: NSRange(location: 5, length: 0), with: " @"))
         await sessionB.settle()

@@ -389,6 +389,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         let nativeIntent = NewDocumentEntryIntent()
         let nativeFixture = makeFixture(entryIntent: nativeIntent, nativeEditorEnabled: { true })
         defer { nativeFixture.clean() }
+        stub(version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID), markdown: "")
         let enabledOpen = NativeEditorOpen(preference: { true })
         defer { enabledOpen.close() }
         await enabledOpen.open(viewModel: nativeFixture.model, isOffline: false)
@@ -558,13 +559,12 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         }
         let owner = UUID()
         SignedInUserStore(userDefaults: defaults).remember(owner)
+        let baseURL = URL(string: "https://docs.example.org/api/v1.0/")!
         let client = DocsAPIClient(
-            baseURL: URL(string: "https://docs.example.org/api/v1.0/")!, session: MockURLProtocol.makeSession(),
+            baseURL: baseURL, session: MockURLProtocol.makeSession(),
             cookieProvider: { [] })
         ServerConfigStore(userDefaults: defaults).remember(
-            ServerConfig(
-                version: "6.0.0", releaseDate: nil, serverTime: nil, sentryDsn: nil,
-                environment: nil, features: nil, capabilities: nil, yjs: nil),
+            ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: nil),
             forServerOrigin: client.serverOrigin)
         let content = DocumentContentCacheStore(directory: directory)
         let children = DocumentChildrenCacheStore(userDefaults: defaults)
@@ -579,12 +579,12 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             attachmentStore: PendingAttachmentStore(
                 userDefaults: defaults, directory: directory.appendingPathComponent("attachments")),
-            listCache: listCache, childrenCache: children, backgroundTasks: .noop,
-            nativeEditorEnabled: { true })
+            listCache: listCache, childrenCache: children, backgroundTasks: .noop)
+        coordinator.nativeEditorEnabled = { true }
 
         let localDoc = coordinator.createLocalDocument(title: "", parentID: nil, ownerUserID: owner)
         let model = EditorViewModel(
-            client: client, documentID: localDoc.id, title: localDoc.title, saveCoordinator: coordinator,
+            client: client, documentID: localDoc.id, title: localDoc.title ?? "", saveCoordinator: coordinator,
             signedInUser: SignedInUserStore(userDefaults: defaults), contentCache: content, childrenCache: children,
             listCache: listCache, availability: OnlineAvailability(userDefaults: defaults))
 
@@ -596,7 +596,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
 
         let open = NativeEditorOpen(preference: { true })
         open.collaboration = DocumentCollaborationManager(
-            serverBaseURL: client.baseURL,
+            serverBaseURL: baseURL,
             cookieProvider: { [] },
             featureEnabled: { true },
             isOffline: { false },
@@ -609,15 +609,17 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
 
         // Both offline and online requests for a localID must open from the local replica
         // without issuing any document HTTP request or dialing a WebSocket for the localID.
-        await open.open(viewModel: model, isOffline: true)
+        await open.open(viewModel: model, isOffline: true, canUpdate: true)
         guard case .native(let session) = open.route else {
             return XCTFail("local-created Docs 6 document must open natively offline")
         }
         XCTAssertTrue(model.isNativeRouteActive)
-        XCTAssertEqual(recorder.requests.count, 0)
+        XCTAssertTrue(recorder.methods.isEmpty)
 
-        let blockID = try XCTUnwrap(session.surface.blocks.first?.id)
-        try session.surface.replaceText(in: blockID, range: 0..<0, with: "Offline draft ")
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText("Offline draft ")
+        await session.settle()
         XCTAssertTrue(session.surface.blocks.first?.runs.map(\.text).joined().hasPrefix("Offline draft ") == true)
 
         open.close()
@@ -625,7 +627,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         guard case .native = open.route else {
             return XCTFail("local-created document must stay offline-local in native even when connectivity is online")
         }
-        XCTAssertEqual(recorder.requests.count, 0, "must never hit HTTP routes with a localID")
+        XCTAssertTrue(recorder.methods.isEmpty, "must never hit HTTP routes with a localID")
         XCTAssertEqual(wsAttempted.current, 0, "must never dial WebSocket with a localID")
     }
 
@@ -644,9 +646,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         }
         await waitUntil { guarded.model.availability.isOffline }
         ServerConfigStore(userDefaults: guarded.defaults).remember(
-            ServerConfig(
-                version: "6.0.0", releaseDate: nil, serverTime: nil, sentryDsn: nil,
-                environment: nil, features: nil, capabilities: nil, yjs: nil),
+            ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: nil),
             forServerOrigin: guarded.model.client.serverOrigin)
         DocumentContentCacheStore(directory: guarded.directory).save(
             CachedDocumentContent(
@@ -662,15 +662,13 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         defer { drafted.clean() }
         await waitUntil { drafted.model.availability.isOffline }
         ServerConfigStore(userDefaults: drafted.defaults).remember(
-            ServerConfig(
-                version: "6.0.0", releaseDate: nil, serverTime: nil, sentryDsn: nil,
-                environment: nil, features: nil, capabilities: nil, yjs: nil),
+            ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: nil),
             forServerOrigin: drafted.model.client.serverOrigin)
         let pendingStore = PendingDraftStore(userDefaults: drafted.defaults)
         pendingStore.save(
             PendingDraft(
                 documentID: drafted.model.documentID, title: "Drafted", markdown: "Offline classic draft",
-                savedAt: Date(), baselineUpdatedAt: nil, serverOrigin: drafted.model.client.serverOrigin))
+                updatedAt: Date()))
         await drafted.model.load()
         XCTAssertFalse(drafted.model.isNativeLimitedOfflineRead)
         XCTAssertTrue(drafted.model.canStartEditing, "classic PendingDraft must remain editable offline")
@@ -680,9 +678,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         defer { defaultOff.clean() }
         await waitUntil { defaultOff.model.availability.isOffline }
         ServerConfigStore(userDefaults: defaultOff.defaults).remember(
-            ServerConfig(
-                version: "6.0.0", releaseDate: nil, serverTime: nil, sentryDsn: nil,
-                environment: nil, features: nil, capabilities: nil, yjs: nil),
+            ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: nil),
             forServerOrigin: defaultOff.model.client.serverOrigin)
         DocumentContentCacheStore(directory: defaultOff.directory).save(
             CachedDocumentContent(
@@ -703,7 +699,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         stub(
             version: "6.0.0",
             state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID),
-            markdown: "Stale server body"
+            markdown: "Initial server body"
         )
 
         let open = NativeEditorOpen(preference: { true })
@@ -711,28 +707,30 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         await open.open(viewModel: fixture.model, isOffline: false)
         XCTAssertTrue(fixture.model.isNativeRouteActive)
 
-        // Attempt late classic load/refresh/apply while native route is active.
-        fixture.model.apply(
-            Document(
-                id: fixture.model.documentID, title: "Stale formatted title", content: "Stale body",
-                createdAt: Date(), updatedAt: Date(), canEdit: true))
+        // Late formatted-content responses must never overwrite an active or owned native session.
+        stub(
+            version: "6.0.0",
+            state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID),
+            markdown: "Stale server body"
+        )
+
+        // Attempt late classic load/refresh while native route is active.
+        fixture.model.updateNativeTitle("Native active title") {}
         await fixture.model.load()
         await fixture.model.refresh()
         XCTAssertFalse(fixture.model.isEditing, "classic editing must not activate over an active native route")
-        XCTAssertNotEqual(fixture.model.markdown, "Stale body")
+        XCTAssertNotEqual(fixture.model.rawMarkdown, "Stale server body")
+        XCTAssertEqual(fixture.model.title, "Native active title")
 
-        // Even after closing the native route, native-owned docs block classic apply/load and preserve pending title edits.
+        // Even after closing the native route, native-owned docs block classic load/refresh and preserve pending title edits.
         open.close()
         XCTAssertFalse(fixture.model.isNativeRouteActive)
         XCTAssertTrue(fixture.model.saveCoordinator.isNativeOwned(documentID: fixture.model.documentID))
-        fixture.model.title = "User edited native title"
-        fixture.model.titleChangedFromNative()
+        fixture.model.updateNativeTitle("User edited native title") {}
         await fixture.model.load()
-        fixture.model.apply(
-            Document(
-                id: fixture.model.documentID, title: "Stale overwrite", content: "Stale overwrite body",
-                createdAt: Date(), updatedAt: Date(), canEdit: true))
+        await fixture.model.refresh()
         XCTAssertEqual(fixture.model.title, "User edited native title")
+        XCTAssertNotEqual(fixture.model.rawMarkdown, "Stale server body")
         XCTAssertFalse(fixture.model.isEditing)
     }
 
@@ -806,8 +804,8 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             attachmentStore: PendingAttachmentStore(
                 userDefaults: defaults, directory: directory.appendingPathComponent("attachments")),
-            listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: children, backgroundTasks: .noop,
-            nativeEditorEnabled: nativeEditorEnabled ?? { false })
+            listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: children, backgroundTasks: .noop)
+        coordinator.nativeEditorEnabled = nativeEditorEnabled ?? { false }
         let model = EditorViewModel(
             client: client, documentID: UUID(), title: "Fixture", saveCoordinator: coordinator,
             entryIntent: entryIntent,

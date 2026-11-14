@@ -523,13 +523,16 @@ final class ReplicaStoreTests: XCTestCase {
         let copied = try store.copyReplica(from: scope, to: destinationScope)
         XCTAssertEqual(copied.revision, 1)
         XCTAssertEqual(copied.outbox.count, 1)
-        XCTAssertTrue(ownership.isNativeOwned(documentID: destinationScope.documentID))
+        XCTAssertEqual(
+            ownership.owner(documentID: destinationScope.documentID, serverOrigin: destinationScope.serverOrigin),
+            .owned(destinationScope)
+        )
 
         let restoredSource = try XCTUnwrap(try store.restore(for: scope))
         let restoredDest = try XCTUnwrap(try store.restore(for: destinationScope))
         XCTAssertEqual(restoredDest.checkpoint, restoredSource.checkpoint)
         XCTAssertEqual(restoredDest.updates, restoredSource.updates)
-        XCTAssertEqual(restoredDest.provisional, provisional)
+        XCTAssertEqual(store.provisionalRecoveries(for: destinationScope), provisional)
 
         // Second copy when destination already exists is idempotent.
         let idempotent = try store.copyReplica(from: scope, to: destinationScope)
@@ -547,7 +550,7 @@ final class ReplicaStoreTests: XCTestCase {
         let corruptID = UUID()
         let otherUserID = UUID()
 
-        let makeScope: (UUID, UUID?) -> ReplicaScope = { docID, owner in
+        let makeScope: (UUID, UUID) -> ReplicaScope = { docID, owner in
             ReplicaScope(serverOrigin: self.scope.serverOrigin, ownerUserID: owner, org: "docs", documentID: docID)
         }
 

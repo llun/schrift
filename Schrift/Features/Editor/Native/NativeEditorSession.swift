@@ -751,6 +751,7 @@ final class NativeEditorOpen {
     /// Dials the native live socket (PR09a); `EditorView` hands in the app's
     /// manager. Without one (tests, previews) no socket is opened.
     @ObservationIgnored var collaboration: DocumentCollaborationManager?
+    @ObservationIgnored private weak var activeViewModel: EditorViewModel?
 
     init(
         preference: @escaping @MainActor () -> Bool = { NativeEditorPreference.isEnabled() },
@@ -778,6 +779,7 @@ final class NativeEditorOpen {
         // establishes the next safe open or reopen boundary.
         guard !isOpen else { return }
         isOpen = true
+        activeViewModel = viewModel
         enabled = preference()
         self.canUpdate = false
         self.canMention = false
@@ -1433,6 +1435,8 @@ final class NativeEditorOpen {
 
     /// Closing flushes a debounced save before the replica goes away.
     func close() {
+        activeViewModel?.setNativeRouteActive(false)
+        activeViewModel = nil
         isOpen = false
         canUpdate = false
         canMention = false

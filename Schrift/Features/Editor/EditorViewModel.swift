@@ -551,7 +551,7 @@ final class EditorViewModel {
 
     func load() async {
         loadFailedOffline = false
-        if isNativeRouteActive || saveCoordinator.isNativeOwned(documentID: documentID) {
+        if isNativeRouteActive {
             isLoading = false
             return
         }
@@ -1646,7 +1646,7 @@ final class EditorViewModel {
     /// them risks a destructive full-overwrite save of non-round-trippable content.
     private func install(markdown: String, title contentTitle: String?, syncedAt: Date?) {
         resetComposition()
-        if let contentTitle {
+        if let contentTitle, !hasPendingNativeTitleEdit {
             title = contentTitle
         }
         savedTitle = title

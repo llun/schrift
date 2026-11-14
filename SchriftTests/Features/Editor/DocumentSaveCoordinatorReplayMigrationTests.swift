@@ -990,9 +990,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
         SignedInUserStore(userDefaults: defaults).remember(user)
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         ServerConfigStore(userDefaults: defaults).remember(
-            ServerConfig(
-                version: "6.0.0", releaseDate: nil, serverTime: nil, sentryDsn: nil,
-                environment: nil, features: nil, capabilities: nil, yjs: nil),
+            ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: nil),
             forServerOrigin: client.serverOrigin)
 
         let replicaDir = cacheDirectory.appendingPathComponent("ReplicaDrafts", isDirectory: true)
@@ -1005,10 +1003,11 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
         let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
         let lists = DocumentCacheStore(userDefaults: defaults)
         let children = DocumentChildrenCacheStore(userDefaults: defaults)
+        let registry = NativeSessionRegistry()
 
         let makeCoord: (@escaping @Sendable () -> Bool) -> DocumentSaveCoordinator = { isOnline in
             let _ = isOnline
-            return DocumentSaveCoordinator(
+            let coordinator = DocumentSaveCoordinator(
                 client: client,
                 draftStore: drafts,
                 replicaStore: ReplicaStore(directory: replicaDir, ownershipStore: ownership),
@@ -1018,8 +1017,13 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
                 attachmentStore: attachments,
                 listCache: lists,
                 childrenCache: children,
-                backgroundTasks: .noop,
-                nativeEditorEnabled: { true })
+                serverOrigin: client.serverOrigin,
+                mediaCheckRetryInterval: .milliseconds(10),
+                backgroundTasks: .noop)
+            coordinator.nativeEditorEnabled = { true }
+            coordinator.nativeSessions = registry
+            coordinator.nativeCommitInterval = .milliseconds(10)
+            return coordinator
         }
 
         let offlineCoord = makeCoord { false }
@@ -1029,22 +1033,31 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
         let seeded = try XCTUnwrap(
             try ReplicaStore(directory: replicaDir, ownershipStore: ownership).restore(for: localScope),
             "Docs 6 local create must seed an empty BlockNote replica under localScope")
-        XCTAssertTrue(ownership.isNativeOwned(documentID: localDoc.id))
+        XCTAssertEqual(ownership.owner(documentID: localDoc.id, serverOrigin: client.serverOrigin), .owned(localScope))
         XCTAssertEqual(drafts.draft(for: localDoc.id)?.replica?.scope, localScope)
 
         // Type offline and enqueue onto coordinator without throwing .pendingCreate.
         let doc = YDoc(clientID: 2)
         defer { doc.destroy() }
         try doc.applyUpdate(YUpdateDecoder.decode(seeded.checkpoint), origin: .remote)
-        let blocks = BlockNoteYjs.blocks(from: doc)
+        let blocks = NativeBlockProjection.project(doc).blocks
         let firstBlockID = try XCTUnwrap(blocks.first?.id)
-        let update = try BlockNoteWriter(doc: doc).replaceText(block: firstBlockID, range: 0..<0, with: "Offline typed")
+        let writer = BlockNoteWriter(doc: doc)
+        let update = try writer.replaceText(block: firstBlockID, range: 0..<0, with: "Offline typed")
+        let imgBlockID = "img-\(UUID().uuidString.lowercased())"
+        let targetBlock = try writer.find(firstBlockID)
+        let imgUpdate = try writer.insertMedia(
+            "image", at: targetBlock.item, in: targetBlock.group, replacing: false, blockID: imgBlockID,
+            paragraphID: nil)
         let localAdapter = ReplicaSaveAdapter(
             store: ReplicaStore(directory: replicaDir, ownershipStore: ownership), scope: localScope)
         try localAdapter.record(
             NativeEditCommand(
                 id: UUID(), baseRevision: 0, blockID: firstBlockID, range: 0..<0, replacement: "Offline typed"),
             update: update)
+        try localAdapter.record(
+            NativeEditCommand(id: UUID(), baseRevision: 1, blockID: imgBlockID, range: 0..<0, replacement: ""),
+            update: imgUpdate)
 
         let versionBefore = offlineCoord.pendingCreatesVersion
         try offlineCoord.enqueueReplica(adapter: localAdapter, title: "Typed Native Title")
@@ -1056,8 +1069,8 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             offlineCoord.queueNativeAttachment(
                 scope: localScope,
                 target: NativeMediaTarget(
-                    org: "docs", blockID: firstBlockID, slot: .image, fileName: "photo.png",
-                    contentType: "image/png"),
+                    org: "docs", blockID: imgBlockID, slot: MediaBlock.Slot(node: "image", url: ""),
+                    fileName: "photo.png", contentType: "image/png"),
                 data: Data([0x89, 0x50, 0x4E, 0x47])))
 
         // Offline sync attempt fails at POST /documents/ and never leaks localID to document or attachment routes.
@@ -1075,7 +1088,8 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
         let localIDLower = localDoc.id.uuidString.lowercased()
         let serverIDLower = serverID.uuidString.lowercased()
         let childServerLower = childServerID.uuidString.lowercased()
-        let ydocPatchRecorder = Box<[URL]>([])
+        let ydocPatchCount = Counter()
+        let userLower = user.uuidString.lowercased()
 
         MockURLProtocol.stubHandler = { request in
             log.record(request)
@@ -1084,7 +1098,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             if url.hasSuffix("users/me/") {
                 return .init(
                     statusCode: 200, headers: [:],
-                    body: Data("{\"id\": \"\(self.user.uuidString.lowercased())\"}".utf8), error: nil)
+                    body: Data("{\"id\": \"\(userLower)\"}".utf8), error: nil)
             }
             if url.hasSuffix("/config/") {
                 return .init(
@@ -1093,7 +1107,8 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             if method == "POST", url.hasSuffix("/documents/") {
                 let body = Data(
                     """
-                    {"id":"\(serverIDLower)","title":"Typed Native Title","content":"",
+                    {"id":"\(serverIDLower)","title":"Typed Native Title","abilities":{"update":true},
+                     "link_reach":"restricted","link_role":"reader","depth":1,"numchild":0,"path":"0001",
                      "created_at":"2026-03-01T12:00:00Z","updated_at":"2026-03-01T12:00:00Z"}
                     """.utf8)
                 return .init(statusCode: 201, headers: [:], body: body, error: nil)
@@ -1101,7 +1116,8 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             if method == "POST", url.hasSuffix("/documents/\(serverIDLower)/children/") {
                 let body = Data(
                     """
-                    {"id":"\(childServerLower)","title":"Child Doc","content":"",
+                    {"id":"\(childServerLower)","title":"Child Doc","abilities":{"update":true},
+                     "link_reach":"restricted","link_role":"reader","depth":2,"numchild":0,"path":"00010001",
                      "created_at":"2026-03-01T12:00:00Z","updated_at":"2026-03-01T12:00:00Z"}
                     """.utf8)
                 return .init(statusCode: 201, headers: [:], body: body, error: nil)
@@ -1114,17 +1130,28 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             if method == "GET", url.contains("media-check") {
                 return .init(
                     statusCode: 200, headers: [:],
-                    body: Data(#"{"status":"ready","file":"/media/k.png"}"#.utf8), error: nil)
+                    body: Data(
+                        #"{"status":"ready","file":"/media/\#(serverIDLower)/attachments/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png"}"#
+                            .utf8),
+                    error: nil)
             }
-            if method == "PATCH", url.contains("/collaboration/ydoc/\(serverIDLower)/") {
-                if let u = request.url { ydocPatchRecorder.value.append(u) }
+            if method == "PATCH", url.contains("/collaboration/ydoc/") && url.contains(serverIDLower) {
+                _ = ydocPatchCount.next()
                 return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
             }
-            if method == "GET", url.contains("formatted-content") || url.contains("/documents/\(serverIDLower)/") {
+            if method == "GET", url.contains("formatted-content") {
                 let body = Data(
                     """
                     {"id":"\(serverIDLower)","title":"Typed Native Title","content":"",
-                     "abilities":{"update":true},
+                     "created_at":"2026-03-01T12:00:00Z","updated_at":"2026-03-01T12:00:00Z"}
+                    """.utf8)
+                return .init(statusCode: 200, headers: [:], body: body, error: nil)
+            }
+            if method == "GET", url.contains("/documents/\(serverIDLower)/") {
+                let body = Data(
+                    """
+                    {"id":"\(serverIDLower)","title":"Typed Native Title","abilities":{"update":true},
+                     "link_reach":"restricted","link_role":"reader","depth":1,"numchild":0,"path":"0001",
                      "created_at":"2026-03-01T12:00:00Z","updated_at":"2026-03-01T12:00:00Z"}
                     """.utf8)
                 return .init(statusCode: 200, headers: [:], body: body, error: nil)
@@ -1145,16 +1172,18 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
         await waitUntil {
             creates.create(for: localDoc.id) == nil
                 && creates.create(for: childDoc.id) == nil
-                && attachments.all().isEmpty
-                && !ydocPatchRecorder.value.isEmpty
+                && attachments.allAttachments().isEmpty
+                && ydocPatchCount.current > 0
         }
 
         XCTAssertNil(try store.restore(for: localScope), "local replica folder must be cleaned up after migration")
         XCTAssertNotNil(try store.restore(for: serverScope), "serverScope replica must exist after migration")
-        XCTAssertTrue(ownership.isNativeOwned(documentID: serverID))
-        XCTAssertFalse(
-            log.requests.contains { $0.url?.absoluteString.contains(localIDLower) == true },
-            "must never send localID to any server endpoint")
+        XCTAssertEqual(ownership.owner(documentID: serverID, serverOrigin: client.serverOrigin), .owned(serverScope))
+        for method in ["GET", "POST", "PATCH", "PUT", "DELETE"] {
+            XCTAssertEqual(
+                log.count(ofMethod: method, urlContaining: localIDLower), 0,
+                "must never send localID to any server endpoint")
+        }
         XCTAssertTrue(
             log.count(ofMethod: "POST", urlContaining: "/documents/\(serverIDLower)/children/") == 1,
             "child create must have had its parentID rewritten to serverID")
@@ -1171,9 +1200,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
         SignedInUserStore(userDefaults: defaults).remember(user)
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         ServerConfigStore(userDefaults: defaults).remember(
-            ServerConfig(
-                version: "6.0.0", releaseDate: nil, serverTime: nil, sentryDsn: nil,
-                environment: nil, features: nil, capabilities: nil, yjs: nil),
+            ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: nil),
             forServerOrigin: client.serverOrigin)
 
         let replicaDir = cacheDirectory.appendingPathComponent("ReplicaDrafts", isDirectory: true)
@@ -1189,8 +1216,8 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             createStore: creates,
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults),
-            backgroundTasks: .noop,
-            nativeEditorEnabled: { true })
+            backgroundTasks: .noop)
+        coord.nativeEditorEnabled = { true }
 
         let local = coord.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
         let localScope = ReplicaScope(
@@ -1200,7 +1227,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
         let ydoc = YDoc(clientID: 2)
         defer { ydoc.destroy() }
         try ydoc.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
-        let firstID = try XCTUnwrap(BlockNoteYjs.blocks(from: ydoc).first?.id)
+        let firstID = try XCTUnwrap(NativeBlockProjection.project(ydoc).blocks.first?.id)
         let update = try BlockNoteWriter(doc: ydoc).replaceText(block: firstID, range: 0..<0, with: "Local phone edit")
         let adapter = ReplicaSaveAdapter(store: store, scope: localScope)
         try adapter.record(
@@ -1236,8 +1263,8 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             createStore: creates,
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults),
-            backgroundTasks: .noop,
-            nativeEditorEnabled: { true })
+            backgroundTasks: .noop)
+        relaunched.nativeEditorEnabled = { true }
         await relaunched.syncPendingDrafts()
 
         XCTAssertNil(creates.create(for: local.id))
@@ -1257,9 +1284,7 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
         SignedInUserStore(userDefaults: defaults).remember(user)
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
         ServerConfigStore(userDefaults: defaults).remember(
-            ServerConfig(
-                version: "6.0.0", releaseDate: nil, serverTime: nil, sentryDsn: nil,
-                environment: nil, features: nil, capabilities: nil, yjs: nil),
+            ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: nil),
             forServerOrigin: client.serverOrigin)
 
         let replicaDir = cacheDirectory.appendingPathComponent("ReplicaDrafts", isDirectory: true)
@@ -1274,8 +1299,8 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             createStore: creates,
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults),
-            backgroundTasks: .noop,
-            nativeEditorEnabled: { true })
+            backgroundTasks: .noop)
+        coord.nativeEditorEnabled = { true }
 
         let local = coord.createLocalDocument(title: "Untitled document", parentID: nil, ownerUserID: user)
         let localScope = ReplicaScope(
@@ -1307,8 +1332,8 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             createStore: creates,
             deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
             listCache: DocumentCacheStore(userDefaults: defaults),
-            backgroundTasks: .noop,
-            nativeEditorEnabled: { true })
+            backgroundTasks: .noop)
+        relaunched.nativeEditorEnabled = { true }
         await relaunched.syncPendingDrafts()
 
         XCTAssertNil(creates.create(for: local.id))
