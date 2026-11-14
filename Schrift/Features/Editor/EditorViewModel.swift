@@ -3106,10 +3106,10 @@ final class EditorViewModel {
     /// picker under the signed-in owner so its chip renders immediately without
     /// leaking across accounts.
     func recordNativeDocumentTitle(_ title: String, for targetID: UUID) {
-        guard let ownerUserID = signedInUser.userID else { return }
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        recordedNativeDocumentTitles[ownerUserID, default: [:]][targetID] = trimmed
+        guard let ownerUserID = signedInUser.userID,
+            let safeTitle = NativeInlineObject.clippedNonEmptyDisplayText(title)
+        else { return }
+        recordedNativeDocumentTitles[ownerUserID, default: [:]][targetID] = safeTitle
     }
 
     /// Cached title for a linked document within this account's known scope

@@ -202,9 +202,9 @@ func mentionCandidates(from accesses: [DocumentAccess]) -> [MentionCandidate] {
         let userID = id.uuidString.lowercased()
         guard !seen.contains(userID) else { continue }
 
-        let fullName = trimmedNonEmpty(user.fullName)
-        let shortName = trimmedNonEmpty(user.shortName)
-        let email = trimmedNonEmpty(user.email)
+        let fullName = NativeInlineObject.clippedNonEmptyDisplayText(user.fullName)
+        let shortName = NativeInlineObject.clippedNonEmptyDisplayText(user.shortName)
+        let email = NativeInlineObject.clippedNonEmptyDisplayText(user.email)
         guard let label = fullName ?? shortName ?? email else { continue }
 
         seen.insert(userID)
@@ -231,7 +231,7 @@ func rankedMentionCandidates(
     var ranked: [(rank: Int, candidate: MentionCandidate, foldedName: String)] = []
 
     for candidate in candidates {
-        let foldedName = foldedForInlineMatch(candidate.fullName)
+        let foldedName = foldedForInlineMatch(NativeInlineObject.clippedDisplayText(candidate.fullName))
         guard words.allSatisfy({ foldedName.contains($0) }) else { continue }
         let rank: Int
         if folded.isEmpty || foldedName.hasPrefix(folded) {
@@ -361,13 +361,6 @@ private func detectMentionTrigger(
 private func isUTF16Whitespace(_ unit: UInt16) -> Bool {
     guard let scalar = UnicodeScalar(unit) else { return false }
     return Character(scalar).isWhitespace
-}
-
-private func trimmedNonEmpty(_ string: String?) -> String? {
-    guard let trimmed = string?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
-        return nil
-    }
-    return trimmed
 }
 
 private func foldedForInlineMatch(_ string: String) -> String {

@@ -384,4 +384,64 @@ final class NativeInlinePickerTests: XCTestCase {
         let loaded = NativeMentionPickerState(query: "a", isLoading: false, matches: [ada], highlightedIndex: 0)
         XCTAssertEqual(loaded.highlighted, ada)
     }
+
+    func testMentionCandidatesSanitizeBidiControlNewlinesAndBoundsAndFallbackWhenStrippedToEmpty() {
+        let strippedID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let dirtyID = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        let longID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let onlyStrippedID = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
+
+        let accesses: [DocumentAccess] = [
+            // Stripped-only fullName falls back to sanitized shortName instead of inserting an empty chip.
+            makeAccess(
+                userID: strippedID,
+                fullName: "\u{202E}\u{FFFC}\u{2066}",
+                shortName: "  Ada\u{202E} ",
+                email: "ada@example.com",
+                role: .editor),
+            // Interior newlines, controls, U+2028, U+FFFC, and bidi overrides are scrubbed.
+            makeAccess(
+                userID: dirtyID,
+                fullName: "Grace\nHopper\u{2028}III\u{0007}!\u{202E}\u{FFFC}",
+                shortName: "Grace\r\nH",
+                email: "grace\u{202E}@example.com",
+                role: .editor),
+            // Oversized fields are bounded to defaultDisplayLimit + ellipsis and <= 1,000 UTF-16 units.
+            makeAccess(
+                userID: longID,
+                fullName: String(repeating: "😀", count: 600),
+                shortName: String(repeating: "s", count: 600),
+                email: String(repeating: "e", count: 1_500) + "@example.com",
+                role: .editor),
+            // Only stripped scalars across all label fields -> dropped.
+            makeAccess(
+                userID: onlyStrippedID,
+                fullName: "\u{202E}",
+                shortName: "\u{FFFC}",
+                email: " \u{2069} ",
+                role: .editor),
+        ]
+
+        let candidates = mentionCandidates(from: accesses)
+        XCTAssertEqual(candidates.count, 3)
+
+        XCTAssertEqual(candidates[0].fullName, "Ada")
+        XCTAssertEqual(candidates[0].shortName, "Ada")
+
+        XCTAssertEqual(candidates[1].fullName, "Grace Hopper III !")
+        XCTAssertEqual(candidates[1].shortName, "Grace H")
+        XCTAssertEqual(candidates[1].email, "grace@example.com")
+
+        XCTAssertLessThanOrEqual(
+            candidates[2].fullName.unicodeScalars.count, NativeInlineObject.defaultDisplayLimit + 1)
+        XCTAssertLessThanOrEqual(candidates[2].fullName.utf16.count, NativeInlineObject.maxLabelUTF16)
+        XCTAssertLessThanOrEqual(
+            candidates[2].email?.unicodeScalars.count ?? 0, NativeInlineObject.defaultDisplayLimit + 1)
+
+        for candidate in candidates {
+            XCTAssertTrue(
+                NativeInlineObject.isPastableText(candidate.fullName, limit: NativeInlineObject.maxLabelUTF16),
+                "Mention fullName must pass pastable check: \(candidate.userID)")
+        }
+    }
 }

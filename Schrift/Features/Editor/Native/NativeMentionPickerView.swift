@@ -80,18 +80,20 @@ struct NativeMentionPickerView: View {
     }
 
     private func row(_ candidate: MentionCandidate, isHighlighted: Bool) -> some View {
-        Button {
+        let displayName = NativeInlineObject.clippedNonEmptyDisplayText(candidate.fullName) ?? ""
+        let displayEmail = NativeInlineObject.clippedNonEmptyDisplayText(candidate.email)
+        return Button {
             onSelect(candidate)
         } label: {
             HStack(spacing: DocsSpacing.spaceSM) {
-                Avatar(name: candidate.fullName, size: 28)
+                Avatar(name: displayName, size: 28)
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(highlightedName(candidate.fullName))
+                    Text(highlightedName(displayName))
                         .font(DocsFont.body)
                         .foregroundStyle(theme.colors.textPrimary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
-                    if let email = candidate.email, email != candidate.fullName {
+                    if let email = displayEmail, email != displayName {
                         Text(email)
                             .font(DocsFont.caption)
                             .foregroundStyle(theme.colors.textTertiary)
@@ -112,16 +114,22 @@ struct NativeMentionPickerView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(rowAccessibilityLabel(candidate))
+        .accessibilityLabel(Self.rowAccessibilityLabel(name: displayName, email: displayEmail))
         .accessibilityAddTraits(isHighlighted ? .isSelected : [])
         .accessibilityIdentifier("editor.mentionPicker.row.\(candidate.userID)")
     }
 
-    private func rowAccessibilityLabel(_ candidate: MentionCandidate) -> String {
-        if let email = candidate.email, email != candidate.fullName {
-            return "\(candidate.fullName), \(email)"
+    static func rowAccessibilityLabel(for candidate: MentionCandidate) -> String {
+        let displayName = NativeInlineObject.clippedNonEmptyDisplayText(candidate.fullName) ?? ""
+        let displayEmail = NativeInlineObject.clippedNonEmptyDisplayText(candidate.email)
+        return rowAccessibilityLabel(name: displayName, email: displayEmail)
+    }
+
+    private static func rowAccessibilityLabel(name: String, email: String?) -> String {
+        if let email, email != name {
+            return "\(name), \(email)"
         }
-        return candidate.fullName
+        return name
     }
 
     private func highlightedName(_ name: String) -> AttributedString {

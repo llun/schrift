@@ -306,6 +306,32 @@ final class NativeEditorInlinePickerViewTests: NativeEditingTestCase {
         }
     }
 
+    func testPickerViewsAndRecordedTitlesScrubBidiOverridesAndBoundLength() async throws {
+        let env = makeEnv(userID: owner)
+        defer { env.clean() }
+        let targetID = UUID(uuidString: "55555555-5555-4555-8555-555555555555")!
+        let oversizedBidi = String(repeating: "A", count: 500) + "\u{202E}\u{FFFC}\nTail"
+
+        env.model.recordNativeDocumentTitle(oversizedBidi, for: targetID)
+        let recorded = try XCTUnwrap(env.model.cachedDocumentTitle(for: targetID))
+        XCTAssertLessThanOrEqual(recorded.unicodeScalars.count, NativeInlineObject.defaultDisplayLimit + 1)
+        XCTAssertFalse(recorded.unicodeScalars.contains { $0.value == 0x202E || $0.value == 0xFFFC })
+
+        let surface = NativeTextSurface(blocks: [], storage: NativeTextView().textStorage)
+        surface.recordDocumentTitle("Spec\u{202E}\nNotes\u{FFFC}", for: targetID)
+        XCTAssertEqual(surface.attachmentGeometry.documentTitles[targetID], "Spec Notes")
+
+        let dirtyCandidate = MentionCandidate(
+            userID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            fullName: "Ada\u{202E}Lovelace\n" + String(repeating: "x", count: 400),
+            shortName: nil,
+            email: "ada\u{202E}@example.org")
+        let label = NativeMentionPickerView.rowAccessibilityLabel(for: dirtyCandidate)
+        XCTAssertFalse(label.unicodeScalars.contains { $0.value == 0x202E })
+        XCTAssertFalse(label.contains("\n"))
+        XCTAssertLessThanOrEqual(label.unicodeScalars.count, (NativeInlineObject.defaultDisplayLimit + 1) * 2 + 2)
+    }
+
     // MARK: - NativeEditorView & EditorView integration
 
     func testNativeEditorViewPickPageLinkPrimesTitleAndSlashMenuOffersLinkPage() async throws {

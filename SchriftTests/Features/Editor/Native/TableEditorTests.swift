@@ -1182,6 +1182,187 @@ extension TableEditorTests {
         XCTAssertTrue(committed)
         XCTAssertEqual(harness.session.surface.attachmentGeometry.documentTitles[docID], "Screen Linked Page")
     }
+
+    func testTableEditorScreenDoesNotMutatePickerOnUnchangedUpdateAndRefreshesOnlyOnOfflineChange() async throws {
+        let docID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let source = PickerSourceBox()
+        source.pageLinks = [makePickerDocument(id: docID, title: "Screen Linked Page")]
+        let harness = try await makeHarness(state: try fixture("styled"))
+        addTeardownBlock { await harness.close() }
+
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let loc = LocalizationStore(userDefaults: defaults)
+        let labels = NativeEditorLabels.document(loc)
+        let screenState = TableScreenHostState()
+
+        let host = UIHostingController(
+            rootView: TableScreenHostView(
+                state: screenState,
+                document: harness.session,
+                tableID: "tbl",
+                labels: labels,
+                doneTitle: loc[.editor_action_done],
+                cellLabel: { String(format: loc[.native_editor_table_cell], $0, $1) },
+                text: { loc[$0] },
+                inlinePickerSource: source.makeSource()
+            ).environment(loc))
+        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+        let previous = scene?.windows.first(where: \.isKeyWindow)
+        let window =
+            scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        addTeardownBlock { @MainActor in
+            window.endEditing(true)
+            window.isHidden = true
+            previous?.makeKey()
+        }
+        windows.append(window)
+        host.view.layoutIfNeeded()
+
+        func findTableController(in vc: UIViewController) -> TableEditorViewController? {
+            if let tableVC = vc as? TableEditorViewController { return tableVC }
+            for child in vc.children {
+                if let found = findTableController(in: child) { return found }
+            }
+            return nil
+        }
+
+        var tableVC: TableEditorViewController?
+        for _ in 0..<200 {
+            host.view.layoutIfNeeded()
+            if let found = findTableController(in: host), found.isLoaded {
+                tableVC = found
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let editor = try XCTUnwrap(tableVC)
+        let session = try XCTUnwrap(editor.cellSession)
+        addTeardownBlock { await session.close().value }
+        let input = try XCTUnwrap(session.input)
+
+        editor.activate(TableGrid.CellRef(row: 2, index: 2), caret: .end)
+        session.textView.insertText("[[Screen")
+        await session.settle()
+        XCTAssertNotNil(input.activeInlineTrigger)
+
+        // Flip underlying capability without changing `isOffline`, then trigger a parent SwiftUI update.
+        source.canInsertPageLink = false
+        screenState.tick += 1
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNotNil(
+            input.activeInlineTrigger,
+            "Unchanged isOffline parent update must not mutate picker state during updateUIViewController")
+
+        // Changing `isOffline` triggers `.onChange(of: isOffline)` outside the update pass.
+        screenState.isOffline = true
+        for _ in 0..<100 where input.activeInlineTrigger != nil {
+            host.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertNil(input.activeInlineTrigger)
+    }
+
+    func testTableEditorViewControllerSkipsRedundantDocumentTitleThemeAndLocalizationRefreshes() async throws {
+        let docID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let source = PickerSourceBox()
+        source.pageLinks = [makePickerDocument(id: docID, title: "Initial Title")]
+        let harness = try await makeHarness(state: try fixture("styled"))
+        addTeardownBlock { await harness.close() }
+
+        let editor = TableEditorViewController(document: harness.session, tableID: "tbl")
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let loc = LocalizationStore(userDefaults: defaults)
+        var resolvedTitle = "Initial Title"
+        editor.theme = .white
+        editor.localizationStore = loc
+        editor.documentTitle = { _ in resolvedTitle }
+        editor.inlinePickerSource = source.makeSource()
+
+        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+        let previous = scene?.windows.first(where: \.isKeyWindow)
+        let window =
+            scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = editor
+        window.makeKeyAndVisible()
+        addTeardownBlock { @MainActor in
+            window.endEditing(true)
+            window.isHidden = true
+            previous?.makeKey()
+        }
+        windows.append(window)
+        await editor.load()
+        for _ in 0..<200 where !editor.isLoaded { try await Task.sleep(for: .milliseconds(10)) }
+        let session = try XCTUnwrap(editor.cellSession)
+        addTeardownBlock { await session.close().value }
+        let input = try XCTUnwrap(session.input)
+
+        // Insert an interlink so `documentTitle` resolution actually exercises title comparison.
+        editor.activate(TableGrid.CellRef(row: 2, index: 2), caret: .end)
+        session.textView.insertText("[[Init")
+        await session.settle()
+        let committed = await session.run { input.commitHighlightedInlinePicker() }
+        XCTAssertTrue(committed)
+
+        let baselineTitleRefreshes = editor.documentTitleRefreshCount
+        let baselineOverlayUpdates = editor.inlinePickerOverlayUpdateCount
+
+        // Reassigning identical theme, localizationStore, and unchanged documentTitle does no redundant work.
+        editor.theme = .white
+        editor.localizationStore = loc
+        editor.documentTitle = { _ in resolvedTitle }
+        XCTAssertEqual(editor.inlinePickerOverlayUpdateCount, baselineOverlayUpdates)
+        XCTAssertEqual(editor.documentTitleRefreshCount, baselineTitleRefreshes)
+
+        // Changing each value acts once.
+        editor.theme = .mist
+        XCTAssertEqual(editor.inlinePickerOverlayUpdateCount, baselineOverlayUpdates + 1)
+
+        let otherLoc = LocalizationStore(userDefaults: try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString)))
+        editor.localizationStore = otherLoc
+        XCTAssertEqual(editor.inlinePickerOverlayUpdateCount, baselineOverlayUpdates + 2)
+
+        resolvedTitle = "Updated Title"
+        editor.documentTitle = { _ in resolvedTitle }
+        XCTAssertEqual(editor.documentTitleRefreshCount, baselineTitleRefreshes + 1)
+    }
+}
+
+@MainActor @Observable
+private final class TableScreenHostState {
+    var isOffline = false
+    var tick = 0
+}
+
+private struct TableScreenHostView: View {
+    let state: TableScreenHostState
+    let document: NativeEditorSession
+    let tableID: String
+    let labels: NativeEditorLabels
+    let doneTitle: String
+    let cellLabel: (Int, Int) -> String
+    let text: (L10nKey) -> String
+    let inlinePickerSource: NativeInlinePickerSource
+
+    var body: some View {
+        let _ = state.tick
+        TableEditorScreen(
+            document: document,
+            tableID: tableID,
+            labels: labels,
+            doneTitle: doneTitle,
+            cellLabel: cellLabel,
+            text: text,
+            serverOrigin: "https://docs.example",
+            isOffline: state.isOffline,
+            inlinePickerSource: inlinePickerSource,
+            onClose: {})
+    }
 }
 
 extension Array {

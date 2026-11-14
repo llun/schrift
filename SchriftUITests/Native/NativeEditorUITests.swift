@@ -1149,7 +1149,10 @@ final class NativeEditorUITests: XCTestCase {
         let valueAfterDismiss = text(of: editor)
         XCTAssertFalse(valueAfterDismiss.contains("/link"), valueAfterDismiss)
         XCTAssertFalse(valueAfterDismiss.contains("Mention:"), "zero zombie mentionSearchInline: \(valueAfterDismiss)")
-        XCTAssertFalse(valueAfterDismiss.contains("\u{FFFC}"), valueAfterDismiss)
+        XCTAssertFalse(valueAfterDismiss.contains("[["), valueAfterDismiss)
+        XCTAssertEqual(
+            valueAfterDismiss.components(separatedBy: "Page:").count - 1, 1,
+            "expected exactly one Page: chip: \(valueAfterDismiss)")
 
         waitForDurableJournal(in: app)
         app.terminate()
@@ -1259,10 +1262,13 @@ final class NativeEditorUITests: XCTestCase {
         firstColumn.typeText(" [[Ar")
         let architecture = app.buttons["Architecture Notes"]
         XCTAssertTrue(architecture.waitForExistence(timeout: 5))
-        firstColumn.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 20, dy: 24)).tap()
-        XCTAssertTrue(architecture.waitForNonExistence(timeout: 5), "Tapping outside dismisses column picker")
+        let columnPicker = app.segmentedControls["nativeEditor.columns.picker"]
+        columnPicker.buttons.element(boundBy: 1).tap()
+        XCTAssertTrue(architecture.waitForNonExistence(timeout: 5), "Switching column dismisses column picker")
         let columnsDone = app.buttons["nativeEditor.columns.done"]
         XCTAssertTrue(columnsDone.exists, "Dismissing picker must not close the column editor")
+        columnPicker.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(firstColumn.waitForExistence(timeout: 5))
         XCTAssertTrue(waitForText(of: firstColumn, containing: "Page: Product Roadmap"))
         XCTAssertTrue(waitForText(of: firstColumn, containing: "Mention: @Ada Lovelace"))
         columnsDone.tap()

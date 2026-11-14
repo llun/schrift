@@ -576,4 +576,82 @@ final class NativeInlinePickerCoordinatorTests: NativeEditingTestCase {
             labels: harness.session.surface.labels, geometry: harness.session.surface.attachmentGeometry)
         XCTAssertTrue(harness.view.textStorage.isEqual(to: fresh))
     }
+
+    func testSelectMentionRejectsUnpastableCandidateBeforeWritingToYjs() async throws {
+        let source = SourceBox()
+        let oversized = MentionCandidate(
+            userID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            fullName: String(repeating: "x", count: NativeInlineObject.maxLabelUTF16 + 200),
+            shortName: nil, email: nil)
+        let bidiBearing = MentionCandidate(
+            userID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            fullName: "Ada\u{202E}Lovelace\nAdmin",
+            shortName: nil, email: nil)
+        source.mentionState = .loaded([oversized, bidiBearing])
+
+        let harness = try await makeHarness([paragraph("p", "Hi @")])
+        addTeardownBlock { await harness.close() }
+        attach(harness, source: source)
+
+        try caret(harness, "p", 4)
+        XCTAssertNotNil(harness.input.inlinePicker)
+
+        let insertedOversized = await harness.run { harness.input.selectMention(oversized) }
+        XCTAssertFalse(insertedOversized)
+        let insertedBidi = await harness.run { harness.input.selectMention(bidiBearing) }
+        XCTAssertFalse(insertedBidi)
+        XCTAssertEqual(try block(harness.session, "p").runs, [InlineRun("Hi @")])
+        XCTAssertTrue(harness.log.commands.isEmpty)
+    }
+
+    func testUndoingPageLinkOrMentionPickDoesNotReopenPickerUntilOpenerIsCleared() async throws {
+        let docID = UUID(uuidString: "88888888-8888-4888-8888-888888888888")!
+        let ada = MentionCandidate(
+            userID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            fullName: "Ada Lovelace", shortName: "Ada", email: "ada@example.com")
+        let source = SourceBox()
+        source.pageLinks = [makeDocument(id: docID, title: "Spec")]
+        source.mentionState = .loaded([ada])
+
+        // 1. Page-link pick + Undo keeps picker closed until `[[` is removed and retyped.
+        let pageHarness = try await makeHarness([paragraph("p", "See ")])
+        addTeardownBlock { await pageHarness.close() }
+        attach(pageHarness, source: source)
+        try caret(pageHarness, "p", 4)
+        type(pageHarness, "[[sp")
+        await pageHarness.settle()
+        XCTAssertNotNil(pageHarness.input.inlinePicker)
+
+        yes(await pageHarness.run { pageHarness.input.commitHighlightedInlinePicker() })
+        XCTAssertNil(pageHarness.input.inlinePicker)
+
+        yes(await pageHarness.run { pageHarness.input.undo() })
+        XCTAssertEqual(try block(pageHarness.session, "p").runs, [InlineRun("See [[sp")])
+        XCTAssertNil(pageHarness.input.inlinePicker, "Undoing a page-link pick must not reopen the picker")
+
+        // Deleting the restored opener clears dismissal so typing `[[` reopens it.
+        let end = try location(pageHarness.session, "p", 8)
+        let start = try location(pageHarness.session, "p", 4)
+        XCTAssertTrue(pageHarness.input.replace(range: NSRange(location: start, length: end - start), with: ""))
+        await pageHarness.settle()
+        type(pageHarness, "[[")
+        await pageHarness.settle()
+        XCTAssertNotNil(pageHarness.input.inlinePicker)
+
+        // 2. Mention pick + Undo keeps picker closed as well.
+        let mentionHarness = try await makeHarness([paragraph("m", "Hi ")])
+        addTeardownBlock { await mentionHarness.close() }
+        attach(mentionHarness, source: source)
+        try caret(mentionHarness, "m", 3)
+        type(mentionHarness, "@ada")
+        await mentionHarness.settle()
+        XCTAssertNotNil(mentionHarness.input.inlinePicker)
+
+        yes(await mentionHarness.run { mentionHarness.input.commitHighlightedInlinePicker() })
+        XCTAssertNil(mentionHarness.input.inlinePicker)
+
+        yes(await mentionHarness.run { mentionHarness.input.undo() })
+        XCTAssertEqual(try block(mentionHarness.session, "m").runs, [InlineRun("Hi @ada")])
+        XCTAssertNil(mentionHarness.input.inlinePicker, "Undoing a mention pick must not reopen the picker")
+    }
 }

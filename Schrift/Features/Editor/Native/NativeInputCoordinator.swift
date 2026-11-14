@@ -1867,12 +1867,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             else { return false }
             let docRange = NSRange(location: entry.textRange.location + token.lowerBound, length: token.count)
             let anchor = token.lowerBound
-            let beforeBarrier = barrier?.id
             let beforeCommand = lastCommandID
             guard replace(range: docRange, with: "", marks: []) else { return false }
             if barrier != nil, lastCommandID != beforeCommand, let commandID = lastCommandID {
                 pendingSlashPageLink = (commandID: commandID, blockID: entry.blockID, anchor: anchor)
-            } else if beforeBarrier == nil {
+            } else {
                 slashPageLinkSession = SlashPageLinkSession(blockID: entry.blockID, anchor: anchor)
                 refreshInlinePicker()
             }
@@ -2072,10 +2071,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             let entry = surface.rangeIndex.entry(for: active.blockID),
             active.trigger.range.upperBound <= entry.textRange.length
         else { return false }
-        let trimmedTitle = (document.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedTitle.isEmpty {
-            source.onRecordDocumentTitle(document.id, trimmedTitle)
-            surface.recordDocumentTitle(trimmedTitle, for: document.id)
+        if let safeTitle = NativeInlineObject.clippedNonEmptyDisplayText(document.title) {
+            source.onRecordDocumentTitle(document.id, safeTitle)
+            surface.recordDocumentTitle(safeTitle, for: document.id)
         }
         let chip = NativeInlineObject.interlink(
             docID: document.id.uuidString.lowercased(), blockID: "", title: nil, disabled: false, trigger: "/")
@@ -2083,6 +2081,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             location: entry.textRange.location + active.trigger.range.lowerBound,
             length: active.trigger.range.count)
         guard insertInlineObject(chip, at: docRange) else { return false }
+        if active.trigger.kind == .pageLink {
+            dismissedInlineTrigger = active.key
+        }
         slashPageLinkSession = nil
         inlinePickerHighlight = nil
         activeInlineTrigger = nil
@@ -2103,6 +2104,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             location: entry.textRange.location + active.trigger.range.lowerBound,
             length: active.trigger.range.count)
         guard insertInlineObject(chip, at: docRange) else { return false }
+        dismissedInlineTrigger = active.key
         inlinePickerHighlight = nil
         activeInlineTrigger = nil
         return true
@@ -2110,6 +2112,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     private func insertInlineObject(_ object: NativeInlineObject, at docRange: NSRange) -> Bool {
         guard canEdit,
+            NativeInlineObject.pastable(
+                node: object.nodeName,
+                props: object.canonicalProps.map { ProjectedProp(key: $0.key, value: $0.value) },
+                children: object.canonicalChildren
+            ) != nil,
             let start = surface.rangeIndex.textPosition(atUTF16: docRange.location),
             let end = surface.rangeIndex.textPosition(
                 atUTF16: NSMaxRange(docRange), isUpperBound: docRange.length > 0),
@@ -2154,7 +2161,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             let dismissedBlock = surface.blocks.first {
                 $0.id == dismissed.blockID && !AttributedDocumentProjection.isPlaceholder($0)
             }
-            if dismissedBlock.map({ !hasInlineOpener(in: $0, key: dismissed) }) ?? true {
+            let keepDismissed =
+                dismissedBlock.map {
+                    hasInlineOpener(in: $0, key: dismissed) || Self.hasInlineObject(in: $0, at: dismissed.anchor)
+                } ?? false
+            if !keepDismissed {
                 dismissedInlineTrigger = nil
             }
         }
@@ -2268,6 +2279,20 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             }
         }
         slashPageLinkSession = session
+    }
+
+    private static func hasInlineObject(in block: BlockSnapshot, at utf16Offset: Int) -> Bool {
+        guard utf16Offset >= 0 else { return false }
+        var offset = 0
+        for run in block.runs {
+            let length = run.text.utf16.count
+            if offset == utf16Offset, run.inlineObject != nil {
+                return true
+            }
+            offset += length
+            if offset > utf16Offset { return false }
+        }
+        return false
     }
 
     private static func slashType(_ action: SlashMenuAction) -> (node: String, props: [ProjectedProp])? {
