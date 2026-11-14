@@ -589,6 +589,47 @@ final class ReplicaStoreTests: XCTestCase {
             .isExcludedFromBackup
         XCTAssertFalse(corruptExcluded == true, "unreadable replica folder must be preserved and kept backed up")
     }
+
+    @MainActor
+    func testMigrateLocalReplicaReplacesEmptyUnmigratedDestinationAndRefusesNonEmptyUnmigratedDestination() throws {
+        let (store, ownership) = ownedStore()
+        let emptyDestScope = ReplicaScope(
+            serverOrigin: scope.serverOrigin, ownerUserID: scope.ownerUserID, org: scope.org, documentID: UUID())
+        let nonEmptyDestScope = ReplicaScope(
+            serverOrigin: scope.serverOrigin, ownerUserID: scope.ownerUserID, org: scope.org, documentID: UUID())
+
+        let localCheckpoint = MarkdownYjs.encode(markdown: "Offline local content", serverOrigin: scope.serverOrigin)
+        _ = try store.create(for: scope, checkpoint: localCheckpoint)
+        let localRestored = try XCTUnwrap(try store.restore(for: scope))
+        let fullState = try ReplicaSaveAdapter.fullState(localRestored)
+
+        // 1. Existing clean/empty unmigrated destination must be replaced with local fullState.
+        let emptyServerCheckpoint = MarkdownYjs.encode(markdown: "", serverOrigin: scope.serverOrigin)
+        let emptyManifest = try store.create(for: emptyDestScope, checkpoint: emptyServerCheckpoint)
+        let migrated = try store.migrateLocalReplica(from: scope, to: emptyDestScope, fullState: fullState)
+        XCTAssertNotEqual(migrated.generation, emptyManifest.generation)
+        XCTAssertEqual(migrated.outbox, [1])
+        XCTAssertEqual(
+            ownership.owner(documentID: emptyDestScope.documentID, serverOrigin: scope.serverOrigin),
+            .owned(emptyDestScope))
+        let restoredMigrated = try XCTUnwrap(try store.restore(for: emptyDestScope))
+        XCTAssertEqual(restoredMigrated.checkpoint, Data([0, 0]))
+        XCTAssertEqual(restoredMigrated.updates, [fullState])
+
+        // Calling again returns the already-migrated replica idempotently.
+        let idempotent = try store.migrateLocalReplica(from: scope, to: emptyDestScope, fullState: fullState)
+        XCTAssertEqual(idempotent.generation, migrated.generation)
+
+        // 2. Existing non-empty unmigrated destination must not be overwritten.
+        let nonEmptyCheckpoint = MarkdownYjs.encode(markdown: "Server text", serverOrigin: scope.serverOrigin)
+        _ = try store.create(for: nonEmptyDestScope, checkpoint: nonEmptyCheckpoint)
+        XCTAssertThrowsError(try store.migrateLocalReplica(from: scope, to: nonEmptyDestScope, fullState: fullState)) {
+            error in
+            XCTAssertEqual(error as? ReplicaStoreError, .alreadyExists)
+        }
+        let preserved = try XCTUnwrap(try store.restore(for: nonEmptyDestScope))
+        XCTAssertEqual(preserved.checkpoint, nonEmptyCheckpoint)
+    }
 }
 
 /// Two bytes per journal update, so every one is distinct.

@@ -1656,4 +1656,500 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             log.count(ofMethod: "PATCH", urlContaining: self.serverID.uuidString.lowercased()) > 0
         }
     }
+
+    /// Path A: POST checkpoints `syncedServerID = serverID`, then before migration runs
+    /// the user opens and closes `serverID` online against the empty server YDoc.
+    /// Opening `serverID` must not seed/own an empty server replica, and subsequent
+    /// migration must push the local full Yjs state so offline content arrives on server.
+    func testCheckpointedCreatePathAOpenAndCloseServerIDBeforeMigrationPreservesAndSyncsLocalContent() async throws {
+        let defaultsSuite = "NativePathACheckpoint.\(UUID().uuidString)"
+        suiteNames.append(defaultsSuite)
+        let defaults = UserDefaults(suiteName: defaultsSuite)!
+        SignedInUserStore(userDefaults: defaults).remember(user)
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        ServerConfigStore(userDefaults: defaults).remember(
+            ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: nil),
+            forServerOrigin: client.serverOrigin)
+
+        let replicaDir = cacheDirectory.appendingPathComponent("ReplicaDrafts", isDirectory: true)
+        let ownership = ReplicaOwnershipStore(userDefaults: defaults)
+        let drafts = PendingDraftStore(userDefaults: defaults)
+        let creates = PendingDocumentCreateStore(userDefaults: defaults)
+        let deletes = PendingDocumentDeleteStore(userDefaults: defaults)
+        let attachments = PendingAttachmentStore(
+            userDefaults: defaults, directory: cacheDirectory.appendingPathComponent("Attachments", isDirectory: true))
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        let childrenCache = DocumentChildrenCacheStore(userDefaults: defaults)
+        let listCache = DocumentCacheStore(userDefaults: defaults)
+        let registry = NativeSessionRegistry()
+
+        func makeCoordinator() -> DocumentSaveCoordinator {
+            let coordinator = DocumentSaveCoordinator(
+                client: client,
+                draftStore: drafts,
+                replicaStore: ReplicaStore(directory: replicaDir, ownershipStore: ownership),
+                contentCache: contentCache,
+                createStore: creates,
+                deleteStore: deletes,
+                attachmentStore: attachments,
+                listCache: listCache,
+                childrenCache: childrenCache,
+                serverOrigin: client.serverOrigin,
+                mediaCheckRetryInterval: .milliseconds(10),
+                backgroundTasks: .noop)
+            coordinator.nativeEditorEnabled = { true }
+            coordinator.nativeSessions = registry
+            coordinator.nativeCommitInterval = .milliseconds(10)
+            return coordinator
+        }
+
+        // 1. Author offline in localID.
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let offlineCoord = makeCoordinator()
+        let localDoc = offlineCoord.createLocalDocument(title: "Path A Title", parentID: nil, ownerUserID: user)
+        let localScope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: user, org: "docs", documentID: localDoc.id)
+        let serverScope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: user, org: "docs", documentID: serverID)
+        let localModel = EditorViewModel(
+            client: client, documentID: localDoc.id, title: "Path A Title",
+            saveCoordinator: offlineCoord,
+            signedInUser: SignedInUserStore(userDefaults: defaults),
+            contentCache: contentCache, childrenCache: childrenCache, listCache: listCache,
+            availability: OnlineAvailability(connectivity: nil, userDefaults: defaults),
+            nativeEditorEnabled: { true })
+        let localOpen = NativeEditorOpen(preference: { true })
+        localOpen.registry = registry
+        await localOpen.open(viewModel: localModel, isOffline: true, canUpdate: true)
+        guard case .native(let localSession) = localOpen.route else {
+            return XCTFail("expected native session for local document")
+        }
+        localSession.textView.selectedRange = NSRange(location: 0, length: 0)
+        localSession.input?.textViewDidChangeSelection(localSession.textView)
+        localSession.textView.insertText("Path A offline work")
+        await localSession.settle()
+        localOpen.flushPendingSave()
+        localOpen.close()
+        await waitUntil { drafts.draft(for: localDoc.id) != nil }
+
+        // 2. Simulate POST checkpointed `syncedServerID = serverID` before migration ran.
+        var record = try XCTUnwrap(creates.create(for: localDoc.id))
+        record.syncedServerID = serverID
+        record.postedTitle = "Path A Title"
+        creates.save(record)
+
+        // 3. Relaunch online and open `serverID` before migration runs.
+        let capturedYjsUpdates = Locked<[Data]>([])
+        let serverIDLower = serverID.uuidString.lowercased()
+        let ownerLower = user.uuidString.lowercased()
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            let method = request.httpMethod ?? ""
+            if url.hasSuffix("/users/me/") {
+                return .init(statusCode: 200, headers: [:], body: Data(#"{"id":"\#(ownerLower)"}"#.utf8), error: nil)
+            }
+            if url.hasSuffix("/config/") {
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+            }
+            if url.contains("/collaboration/ydoc/") && method == "GET" {
+                let emptyDoc = YDoc(clientID: 99)
+                defer { emptyDoc.destroy() }
+                let emptyState = (try? YStateEncoder.encodeStateAsUpdate(emptyDoc))?.base64EncodedString() ?? ""
+                return .init(
+                    statusCode: 200, headers: ["Content-Type": "application/json"],
+                    body: Data(#"{"doc":"\#(emptyState)"}"#.utf8), error: nil)
+            }
+            if url.contains("/collaboration/ydoc/") && method == "PATCH" && url.contains(serverIDLower) {
+                if let body = bodyData(from: request),
+                    let json = try? JSONSerialization.jsonObject(with: body) as? [String: String],
+                    let encoded = json["update"], let raw = Data(base64Encoded: encoded)
+                {
+                    capturedYjsUpdates.update { $0.append(raw) }
+                }
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
+            if method == "GET", url.contains("formatted-content") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data(
+                        """
+                        {"id":"\(serverIDLower)","title":"Path A Title","content":"",
+                         "created_at":"2026-03-01T12:00:00Z","updated_at":"2026-03-01T12:00:00Z"}
+                        """.utf8), error: nil)
+            }
+            if method == "GET", url.hasSuffix("/\(serverIDLower)/") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data(
+                        """
+                        {"id":"\(serverIDLower)","title":"Path A Title",
+                         "abilities":{"update":true},"link_reach":"restricted","link_role":"reader",
+                         "depth":1,"numchild":0,"path":"0001",
+                         "created_at":"2026-03-01T12:00:00Z","updated_at":"2026-03-01T12:00:00Z"}
+                        """.utf8), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil)
+        }
+
+        let onlineCoord = makeCoordinator()
+        let serverModel = EditorViewModel(
+            client: client, documentID: serverID, title: "Path A Title",
+            saveCoordinator: onlineCoord,
+            signedInUser: SignedInUserStore(userDefaults: defaults),
+            contentCache: contentCache, childrenCache: childrenCache, listCache: listCache,
+            availability: OnlineAvailability(connectivity: nil, userDefaults: defaults),
+            nativeEditorEnabled: { true })
+        let serverOpen = NativeEditorOpen(preference: { true })
+        serverOpen.registry = registry
+        await serverOpen.open(viewModel: serverModel, isOffline: false, canUpdate: true)
+
+        let store = ReplicaStore(directory: replicaDir, ownershipStore: ownership)
+        XCTAssertNil(
+            try store.manifest(for: serverScope),
+            "opening checkpointed serverID must not seed a server replica")
+        XCTAssertEqual(
+            onlineCoord.nativeOwnership(documentID: serverID), .none,
+            "opening checkpointed serverID must not mark ownership for serverID")
+
+        // 4. Close the serverID editor and run migration.
+        serverOpen.close()
+        await onlineCoord.syncPendingDrafts()
+
+        await waitUntil {
+            creates.create(for: localDoc.id) == nil
+                && !capturedYjsUpdates.value.isEmpty
+                && drafts.draft(for: self.serverID) == nil
+        }
+
+        let serverDoc = YDoc(clientID: 102)
+        defer { serverDoc.destroy() }
+        for update in capturedYjsUpdates.value {
+            try serverDoc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote)
+        }
+        XCTAssertNil(serverDoc.store.pendingStructs)
+        XCTAssertNil(serverDoc.store.pendingDs)
+        let projectedText = NativeBlockProjection.project(serverDoc).blocks
+            .map { $0.block.runs.map(\.text).joined() }
+            .joined(separator: "\n")
+        XCTAssertTrue(
+            projectedText.contains("Path A offline work"),
+            "migration after closing serverID must deliver offline content, got: \(projectedText)")
+        XCTAssertNil(try store.restore(for: localScope))
+    }
+
+    /// Path B: Crash inside `migrateLocalReplica` after `ownershipStore.mark(destinationScope)`
+    /// and before `switchManifest`. On relaunch, opening `serverID` must keep the ownership
+    /// marker (refuse `clearNativeOwnership` and stay read-only) so it never seeds an empty
+    /// `serverScope` replica, and closing + migrating delivers the offline content.
+    func testCheckpointedCreatePathBCrashInsideMigrateLocalReplicaAfterMarkingOwnershipRecoversAndSyncsLocalContent()
+        async throws
+    {
+        enum SimulatedCrash: Error { case interrupted }
+        let defaultsSuite = "NativePathBCheckpointed.\(UUID().uuidString)"
+        suiteNames.append(defaultsSuite)
+        let defaults = UserDefaults(suiteName: defaultsSuite)!
+        SignedInUserStore(userDefaults: defaults).remember(user)
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        ServerConfigStore(userDefaults: defaults).remember(
+            ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: nil),
+            forServerOrigin: client.serverOrigin)
+
+        let replicaDir = cacheDirectory.appendingPathComponent("ReplicaDrafts", isDirectory: true)
+        let ownership = ReplicaOwnershipStore(userDefaults: defaults)
+        let drafts = PendingDraftStore(userDefaults: defaults)
+        let creates = PendingDocumentCreateStore(userDefaults: defaults)
+        let deletes = PendingDocumentDeleteStore(userDefaults: defaults)
+        let attachments = PendingAttachmentStore(
+            userDefaults: defaults, directory: cacheDirectory.appendingPathComponent("Attachments", isDirectory: true))
+        let contentCache = DocumentContentCacheStore(directory: cacheDirectory)
+        let childrenCache = DocumentChildrenCacheStore(userDefaults: defaults)
+        let listCache = DocumentCacheStore(userDefaults: defaults)
+        let registry = NativeSessionRegistry()
+
+        func makeCoordinator(store: ReplicaStore) -> DocumentSaveCoordinator {
+            let coordinator = DocumentSaveCoordinator(
+                client: client,
+                draftStore: drafts,
+                replicaStore: store,
+                contentCache: contentCache,
+                createStore: creates,
+                deleteStore: deletes,
+                attachmentStore: attachments,
+                listCache: listCache,
+                childrenCache: childrenCache,
+                serverOrigin: client.serverOrigin,
+                mediaCheckRetryInterval: .milliseconds(10),
+                backgroundTasks: .noop)
+            coordinator.nativeEditorEnabled = { true }
+            coordinator.nativeSessions = registry
+            coordinator.nativeCommitInterval = .milliseconds(10)
+            return coordinator
+        }
+
+        // 1. Author offline in localID.
+        MockURLProtocol.stubHandler = { _ in
+            .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+        }
+        let offlineCoord = makeCoordinator(store: ReplicaStore(directory: replicaDir, ownershipStore: ownership))
+        let localDoc = offlineCoord.createLocalDocument(title: "Path B Title", parentID: nil, ownerUserID: user)
+        let localScope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: user, org: "docs", documentID: localDoc.id)
+        let serverScope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: user, org: "docs", documentID: serverID)
+        let localModel = EditorViewModel(
+            client: client, documentID: localDoc.id, title: "Path B Title",
+            saveCoordinator: offlineCoord,
+            signedInUser: SignedInUserStore(userDefaults: defaults),
+            contentCache: contentCache, childrenCache: childrenCache, listCache: listCache,
+            availability: OnlineAvailability(connectivity: nil, userDefaults: defaults),
+            nativeEditorEnabled: { true })
+        let localOpen = NativeEditorOpen(preference: { true })
+        localOpen.registry = registry
+        await localOpen.open(viewModel: localModel, isOffline: true, canUpdate: true)
+        guard case .native(let localSession) = localOpen.route else {
+            return XCTFail("expected native session for local document")
+        }
+        localSession.textView.selectedRange = NSRange(location: 0, length: 0)
+        localSession.input?.textViewDidChangeSelection(localSession.textView)
+        localSession.textView.insertText("Path B offline work")
+        await localSession.settle()
+        localOpen.flushPendingSave()
+        localOpen.close()
+        await waitUntil { drafts.draft(for: localDoc.id) != nil }
+
+        // 2. Checkpoint `syncedServerID = serverID`, then crash inside `migrateLocalReplica`
+        // after `ownershipStore.mark(destinationScope)` and before `switchManifest`.
+        var record = try XCTUnwrap(creates.create(for: localDoc.id))
+        record.syncedServerID = serverID
+        record.postedTitle = "Path B Title"
+        creates.save(record)
+
+        let capturedYjsUpdates = Locked<[Data]>([])
+        let serverIDLower = serverID.uuidString.lowercased()
+        let ownerLower = user.uuidString.lowercased()
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            let method = request.httpMethod ?? ""
+            if url.hasSuffix("/users/me/") {
+                return .init(statusCode: 200, headers: [:], body: Data(#"{"id":"\#(ownerLower)"}"#.utf8), error: nil)
+            }
+            if url.hasSuffix("/config/") {
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+            }
+            if url.contains("/collaboration/ydoc/") && method == "GET" {
+                let emptyDoc = YDoc(clientID: 99)
+                defer { emptyDoc.destroy() }
+                let emptyState = (try? YStateEncoder.encodeStateAsUpdate(emptyDoc))?.base64EncodedString() ?? ""
+                return .init(
+                    statusCode: 200, headers: ["Content-Type": "application/json"],
+                    body: Data(#"{"doc":"\#(emptyState)"}"#.utf8), error: nil)
+            }
+            if url.contains("/collaboration/ydoc/") && method == "PATCH" && url.contains(serverIDLower) {
+                if let body = bodyData(from: request),
+                    let json = try? JSONSerialization.jsonObject(with: body) as? [String: String],
+                    let encoded = json["update"], let raw = Data(base64Encoded: encoded)
+                {
+                    capturedYjsUpdates.update { $0.append(raw) }
+                }
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
+            if method == "GET", url.contains("formatted-content") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data(
+                        """
+                        {"id":"\(serverIDLower)","title":"Path B Title","content":"",
+                         "created_at":"2026-03-01T12:00:00Z","updated_at":"2026-03-01T12:00:00Z"}
+                        """.utf8), error: nil)
+            }
+            if method == "GET", url.hasSuffix("/\(serverIDLower)/") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data(
+                        """
+                        {"id":"\(serverIDLower)","title":"Path B Title",
+                         "abilities":{"update":true},"link_reach":"restricted","link_role":"reader",
+                         "depth":1,"numchild":0,"path":"0001",
+                         "created_at":"2026-03-01T12:00:00Z","updated_at":"2026-03-01T12:00:00Z"}
+                        """.utf8), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil)
+        }
+
+        let crashingStore = ReplicaStore(directory: replicaDir, ownershipStore: ownership) { operation, boundary in
+            if operation == .create, boundary == .payloadWritten {
+                throw SimulatedCrash.interrupted
+            }
+        }
+        let crashingCoord = makeCoordinator(store: crashingStore)
+        await crashingCoord.syncPendingDrafts()
+
+        let healthyStore = ReplicaStore(directory: replicaDir, ownershipStore: ownership)
+        XCTAssertEqual(
+            ownership.owner(documentID: serverID, serverOrigin: client.serverOrigin),
+            .owned(serverScope),
+            "crash occurred after marking destination ownership")
+        XCTAssertNil(try healthyStore.manifest(for: serverScope), "crash occurred before switching server manifest")
+        XCTAssertNotNil(try healthyStore.manifest(for: localScope), "local replica remains intact")
+        XCTAssertNotNil(creates.create(for: localDoc.id), "pending create record remains intact")
+        XCTAssertTrue(capturedYjsUpdates.value.isEmpty)
+
+        // 3. Relaunch and open `serverID` before migration completes: must stay read-only and keep marker.
+        let relaunchedCoord = makeCoordinator(store: healthyStore)
+        let serverModel = EditorViewModel(
+            client: client, documentID: serverID, title: "Path B Title",
+            saveCoordinator: relaunchedCoord,
+            signedInUser: SignedInUserStore(userDefaults: defaults),
+            contentCache: contentCache, childrenCache: childrenCache, listCache: listCache,
+            availability: OnlineAvailability(connectivity: nil, userDefaults: defaults),
+            nativeEditorEnabled: { true })
+        let serverOpen = NativeEditorOpen(preference: { true })
+        serverOpen.registry = registry
+        await serverOpen.open(viewModel: serverModel, isOffline: false, canUpdate: true)
+
+        guard case .preservedUnavailable = serverOpen.route else {
+            return XCTFail("checkpointed serverID with ownership marker and no manifest must stay read-only")
+        }
+        XCTAssertEqual(
+            ownership.owner(documentID: serverID, serverOrigin: client.serverOrigin),
+            .owned(serverScope),
+            "clearNativeOwnership must not clear serverID ownership while create is checkpointed")
+        XCTAssertNil(
+            try healthyStore.manifest(for: serverScope),
+            "must not seed an empty serverScope replica over checkpointed create")
+
+        // 4. Close and migrate: local full state is migrated and sent to server.
+        serverOpen.close()
+        await relaunchedCoord.syncPendingDrafts()
+
+        await waitUntil {
+            creates.create(for: localDoc.id) == nil
+                && !capturedYjsUpdates.value.isEmpty
+                && drafts.draft(for: self.serverID) == nil
+        }
+
+        let serverDoc = YDoc(clientID: 103)
+        defer { serverDoc.destroy() }
+        for update in capturedYjsUpdates.value {
+            try serverDoc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote)
+        }
+        XCTAssertNil(serverDoc.store.pendingStructs)
+        XCTAssertNil(serverDoc.store.pendingDs)
+        let projectedText = NativeBlockProjection.project(serverDoc).blocks
+            .map { $0.block.runs.map(\.text).joined() }
+            .joined(separator: "\n")
+        XCTAssertTrue(
+            projectedText.contains("Path B offline work"),
+            "migration after Path B recovery must deliver offline content, got: \(projectedText)")
+        XCTAssertNil(try healthyStore.restore(for: localScope))
+    }
+
+    /// Even if an empty unmigrated `serverScope` manifest is already on disk while `localScope`
+    /// still holds unsent work, migration must not trust that empty manifest or delete `localScope`:
+    /// it replaces it with `localScope`'s full Yjs state and sends the offline work.
+    func testMigrateNativeCreatedDocumentReplacesEmptyUnmigratedServerReplicaAndPreservesLocalWork() async throws {
+        let defaultsSuite = "NativeEmptyServerManifest.\(UUID().uuidString)"
+        suiteNames.append(defaultsSuite)
+        let defaults = UserDefaults(suiteName: defaultsSuite)!
+        SignedInUserStore(userDefaults: defaults).remember(user)
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        ServerConfigStore(userDefaults: defaults).remember(
+            ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: nil),
+            forServerOrigin: client.serverOrigin)
+
+        let replicaDir = cacheDirectory.appendingPathComponent("ReplicaDrafts", isDirectory: true)
+        let ownership = ReplicaOwnershipStore(userDefaults: defaults)
+        let drafts = PendingDraftStore(userDefaults: defaults)
+        let creates = PendingDocumentCreateStore(userDefaults: defaults)
+        let store = ReplicaStore(directory: replicaDir, ownershipStore: ownership)
+        let coord = DocumentSaveCoordinator(
+            client: client,
+            draftStore: drafts,
+            replicaStore: store,
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: creates,
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            backgroundTasks: .noop)
+        coord.nativeEditorEnabled = { true }
+
+        let localDoc = coord.createLocalDocument(
+            title: "Offline Seed", parentID: nil, ownerUserID: user, seedMarkdown: "Must survive empty server replica")
+        var record = try XCTUnwrap(creates.create(for: localDoc.id))
+        record.syncedServerID = serverID
+        creates.save(record)
+
+        // Simulate a stray empty unmigrated serverScope replica on disk.
+        let serverScope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: user, org: "docs", documentID: serverID)
+        _ = try store.create(
+            for: serverScope, checkpoint: MarkdownYjs.encode(markdown: "", serverOrigin: client.serverOrigin))
+
+        let capturedYjsUpdates = Locked<[Data]>([])
+        let serverIDLower = serverID.uuidString.lowercased()
+        let ownerLower = user.uuidString.lowercased()
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            let method = request.httpMethod ?? ""
+            if url.hasSuffix("/users/me/") {
+                return .init(statusCode: 200, headers: [:], body: Data(#"{"id":"\#(ownerLower)"}"#.utf8), error: nil)
+            }
+            if url.hasSuffix("/config/") {
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+            }
+            if url.contains("/collaboration/ydoc/") && method == "PATCH" && url.contains(serverIDLower) {
+                if let body = bodyData(from: request),
+                    let json = try? JSONSerialization.jsonObject(with: body) as? [String: String],
+                    let encoded = json["update"], let raw = Data(base64Encoded: encoded)
+                {
+                    capturedYjsUpdates.update { $0.append(raw) }
+                }
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
+            if method == "GET", url.contains("formatted-content") {
+                return .init(
+                    statusCode: 200, headers: [:],
+                    body: Data(
+                        """
+                        {"id":"\(serverIDLower)","title":"Offline Seed","content":"",
+                         "created_at":"2026-03-01T12:00:00Z","updated_at":"2026-03-01T12:00:00Z"}
+                        """.utf8), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil)
+        }
+
+        let relaunched = DocumentSaveCoordinator(
+            client: client,
+            draftStore: drafts,
+            replicaStore: store,
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: creates,
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            backgroundTasks: .noop)
+        relaunched.nativeEditorEnabled = { true }
+        await relaunched.syncPendingDrafts()
+
+        await waitUntil {
+            creates.create(for: localDoc.id) == nil
+                && !capturedYjsUpdates.value.isEmpty
+                && drafts.draft(for: self.serverID) == nil
+        }
+
+        let serverDoc = YDoc(clientID: 104)
+        defer { serverDoc.destroy() }
+        for update in capturedYjsUpdates.value {
+            try serverDoc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote)
+        }
+        XCTAssertNil(serverDoc.store.pendingStructs)
+        let projectedText = NativeBlockProjection.project(serverDoc).blocks
+            .map { $0.block.runs.map(\.text).joined() }
+            .joined(separator: "\n")
+        XCTAssertTrue(projectedText.contains("Must survive empty server replica"))
+    }
 }

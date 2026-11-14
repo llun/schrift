@@ -1276,7 +1276,9 @@ final class NativeEditorOpen {
         into session: NativeEditorSession, scope: ReplicaScope, viewModel: EditorViewModel, request: Int,
         isOffline: Bool
     ) async {
-        guard enabled, !isOffline, !viewModel.availability.showsOfflineStatus, !viewModel.isLocalDocument else {
+        guard enabled, !isOffline, !viewModel.availability.showsOfflineStatus, !viewModel.isLocalDocument,
+            !viewModel.saveCoordinator.hasCheckpointedCreate(forServerID: scope.documentID)
+        else {
             return
         }
         let isCurrent = { [weak self] in
@@ -1428,6 +1430,7 @@ final class NativeEditorOpen {
         let coordinator = viewModel.saveCoordinator
         let documentID = viewModel.documentID
         return !viewModel.isDocumentPendingDelete
+            && !coordinator.hasCheckpointedCreate(forServerID: documentID)
             && !coordinator.isLiveHeld(documentID: documentID)
             && (coordinator.storedDraft(documentID: documentID).map { $0.replica != nil } ?? true)
     }
@@ -1441,6 +1444,7 @@ final class NativeEditorOpen {
         // route keeps its existing cache/retry controls so it can recover.
         enabled && !isOffline && !viewModel.availability.showsOfflineStatus && !viewModel.isLocalDocument
             && !viewModel.isDocumentPendingDelete
+            && !viewModel.saveCoordinator.hasCheckpointedCreate(forServerID: viewModel.documentID)
             && !viewModel.isEditing && !viewModel.hasUnsavedLocalContent
             && viewModel.saveCoordinator.storedDraft(documentID: viewModel.documentID) == nil
             && viewModel.saveCoordinator.pendingSave(documentID: viewModel.documentID) == nil

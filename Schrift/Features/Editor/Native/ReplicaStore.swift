@@ -370,11 +370,6 @@ final class ReplicaStore: Sendable {
     private func migrateLocalReplicaLocked(
         from sourceScope: ReplicaScope, to destinationScope: ReplicaScope, fullState: Data
     ) throws -> ReplicaManifest {
-        if let existing = try readManifest(for: destinationScope) {
-            guard try restoreLocked(for: destinationScope) != nil else { throw ReplicaStoreError.corrupt }
-            guard ownershipStore?.mark(destinationScope) ?? true else { throw ReplicaStoreError.ownershipUnavailable }
-            return existing
-        }
         guard let sourceManifest = try readManifest(for: sourceScope) else { throw ReplicaStoreError.missingReplica }
         _ = try restoreLocked(for: sourceScope)
         let sourceFolder = try folder(for: sourceScope)
@@ -388,8 +383,34 @@ final class ReplicaStore: Sendable {
             provisionalBytes = bytes
         }
 
-        guard ownershipStore?.mark(destinationScope) ?? true else { throw ReplicaStoreError.ownershipUnavailable }
         let destinationFolder = try folder(for: destinationScope)
+        var replacedObsoleteFiles: [ReplicaFile] = []
+        var removeStaleProvisional = false
+        if let existing = try readManifest(for: destinationScope) {
+            guard let existingRestore = try restoreLocked(for: destinationScope) else {
+                throw ReplicaStoreError.corrupt
+            }
+            if isMigratedDestinationLocked(existing, restore: existingRestore, from: sourceScope, fullState: fullState)
+            {
+                guard ownershipStore?.mark(destinationScope) ?? true else {
+                    throw ReplicaStoreError.ownershipUnavailable
+                }
+                return existing
+            }
+            let committed = Set(existing.journal.map(\.commandID))
+            guard existing.outbox.isEmpty,
+                isProvisionalCleanLocked(in: destinationFolder, committed: committed),
+                ReplicaSaveAdapter.isContentEmpty(existingRestore, interlinkingOrigin: destinationScope.serverOrigin)
+            else {
+                throw ReplicaStoreError.alreadyExists
+            }
+            replacedObsoleteFiles = [existing.checkpoint] + existing.journal.map(\.file)
+            removeStaleProvisional =
+                provisionalBytes == nil
+                && fileManager.fileExists(atPath: destinationFolder.appendingPathComponent("provisional.json").path)
+        }
+
+        guard ownershipStore?.mark(destinationScope) ?? true else { throw ReplicaStoreError.ownershipUnavailable }
         try ensureDirectory(destinationFolder)
         var root = directory
         var values = URLResourceValues()
@@ -411,9 +432,32 @@ final class ReplicaStore: Sendable {
             formatVersion: ReplicaManifest.currentFormat, scope: destinationScope,
             generation: UUID(), revision: 1, checkpointSequence: 0, checkpoint: checkpointFile,
             journal: [entry], outbox: [1], httpAcknowledgedThrough: 0,
-            projectionCacheVersion: sourceManifest.projectionCacheVersion)
+            projectionCacheVersion: sourceManifest.projectionCacheVersion,
+            migratedFromLocalID: sourceScope.documentID)
         try switchManifest(destinationManifest, in: destinationFolder, operation: .create)
+        if !replacedObsoleteFiles.isEmpty || removeStaleProvisional {
+            let retained = Set([checkpointFile.name, entryFile.name])
+            for obsolete in replacedObsoleteFiles where !retained.contains(obsolete.name) {
+                if let url = try? payloadURL(obsolete, in: destinationFolder) {
+                    try? fileManager.removeItem(at: url)
+                }
+            }
+            if removeStaleProvisional {
+                try? fileManager.removeItem(at: destinationFolder.appendingPathComponent("provisional.json"))
+            }
+            try? syncDirectory(destinationFolder)
+        }
         return destinationManifest
+    }
+
+    private func isMigratedDestinationLocked(
+        _ existing: ReplicaManifest, restore: ReplicaRestore, from sourceScope: ReplicaScope, fullState: Data
+    ) -> Bool {
+        if let marker = existing.migratedFromLocalID {
+            return marker == sourceScope.documentID
+        }
+        return restore.checkpoint == Data([0, 0])
+            && existing.journal.first?.file.digest == replicaDigest(fullState)
     }
 
     private func writeAtomicPayload(_ bytes: Data, to destination: URL, in folder: URL) throws {

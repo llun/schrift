@@ -629,6 +629,92 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         guard case .preservedUnavailable = open.route else { return XCTFail("its draft keeps it read-only") }
     }
 
+    func testOpeningCheckpointedServerIDDoesNotSeedClearOrOwnReplica() async throws {
+        // 1. Path A: serverID has no ownership yet, create is checkpointed -> must not seed or own.
+        do {
+            let env = makeEnvironment()
+            defer { env.clean() }
+            let server = ServerStub(owner: owner, state: seedState())
+            server.install()
+            let localDoc = env.model.saveCoordinator.createLocalDocument(
+                title: "Local", parentID: nil, ownerUserID: owner, seedMarkdown: "Offline seed")
+            var record = try XCTUnwrap(
+                PendingDocumentCreateStore(userDefaults: env.defaults).create(for: localDoc.id))
+            record.syncedServerID = env.model.documentID
+            PendingDocumentCreateStore(userDefaults: env.defaults).save(record)
+            // Reload coordinator so mirror sees checkpointed record.
+            let relaunchedModel = EditorViewModel(
+                client: env.model.client, documentID: env.model.documentID, title: env.model.title,
+                saveCoordinator: DocumentSaveCoordinator(
+                    client: env.model.client,
+                    draftStore: PendingDraftStore(userDefaults: env.defaults),
+                    replicaStore: env.replicaStore,
+                    contentCache: env.model.contentCache,
+                    createStore: PendingDocumentCreateStore(userDefaults: env.defaults),
+                    deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
+                    listCache: env.model.listCache,
+                    backgroundTasks: .noop),
+                signedInUser: env.model.signedInUser,
+                contentCache: env.model.contentCache,
+                childrenCache: env.model.childrenCache,
+                listCache: env.model.listCache,
+                availability: env.model.availability,
+                nativeEditorEnabled: { true })
+            let scope = ReplicaScope(
+                serverOrigin: relaunchedModel.client.serverOrigin, ownerUserID: owner, org: "docs",
+                documentID: relaunchedModel.documentID)
+            let open = NativeEditorOpen(preference: { true })
+            defer { open.close() }
+            await open.open(viewModel: relaunchedModel, isOffline: false, canUpdate: true)
+            XCTAssertNil(try env.replicaStore.manifest(for: scope))
+            XCTAssertEqual(relaunchedModel.saveCoordinator.nativeOwnership(documentID: scope.documentID), .none)
+        }
+
+        // 2. Path B: serverID has ownership marker without manifest while create is checkpointed -> must not clear.
+        do {
+            let env = makeEnvironment()
+            defer { env.clean() }
+            let server = ServerStub(owner: owner, state: seedState())
+            server.install()
+            let localDoc = env.model.saveCoordinator.createLocalDocument(
+                title: "Local", parentID: nil, ownerUserID: owner, seedMarkdown: "Offline seed")
+            let creates = PendingDocumentCreateStore(userDefaults: env.defaults)
+            var record = try XCTUnwrap(creates.create(for: localDoc.id))
+            record.syncedServerID = env.model.documentID
+            creates.save(record)
+            let scope = ReplicaScope(
+                serverOrigin: env.model.client.serverOrigin, ownerUserID: owner, org: "docs",
+                documentID: env.model.documentID)
+            XCTAssertTrue(env.ownership.mark(scope))
+            let relaunchedCoordinator = DocumentSaveCoordinator(
+                client: env.model.client,
+                draftStore: PendingDraftStore(userDefaults: env.defaults),
+                replicaStore: env.replicaStore,
+                contentCache: env.model.contentCache,
+                createStore: creates,
+                deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
+                listCache: env.model.listCache,
+                backgroundTasks: .noop)
+            let relaunchedModel = EditorViewModel(
+                client: env.model.client, documentID: env.model.documentID, title: env.model.title,
+                saveCoordinator: relaunchedCoordinator,
+                signedInUser: env.model.signedInUser,
+                contentCache: env.model.contentCache,
+                childrenCache: env.model.childrenCache,
+                listCache: env.model.listCache,
+                availability: env.model.availability,
+                nativeEditorEnabled: { true })
+            let open = NativeEditorOpen(preference: { true })
+            defer { open.close() }
+            await open.open(viewModel: relaunchedModel, isOffline: false, canUpdate: true)
+            guard case .preservedUnavailable = open.route else {
+                return XCTFail("checkpointed serverID with ownership marker must stay preservedUnavailable")
+            }
+            XCTAssertEqual(relaunchedCoordinator.nativeOwnership(documentID: scope.documentID), .owned(scope))
+            XCTAssertNil(try env.replicaStore.manifest(for: scope))
+        }
+    }
+
     // MARK: - Native live gate (PR09a)
 
     /// The socket opens only with the switch, the live preference, a Docs 6

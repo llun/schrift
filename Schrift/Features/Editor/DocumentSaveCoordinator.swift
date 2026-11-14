@@ -564,6 +564,7 @@ final class DocumentSaveCoordinator {
         ids.formUnion(draftStore.allDrafts().map(\.documentID))
         ids.formUnion(queued.keys)
         ids.formUnion(inFlight.keys)
+        ids.formUnion(inFlightContent.keys)
         ids.formUnion(conflicts.keys)
         ids.formUnion(pendingAttachments.values.map(\.documentID))
         return ids
@@ -759,7 +760,8 @@ final class DocumentSaveCoordinator {
     func clearNativeOwnership(scope: ReplicaScope) -> Bool {
         let id = scope.documentID
         guard scope.serverOrigin == client.serverOrigin, !draftStore.holdsUnreadableData,
-            draftStore.draft(for: id) == nil, inFlight[id] == nil, queued[id] == nil
+            draftStore.draft(for: id) == nil, inFlight[id] == nil, queued[id] == nil,
+            !hasCheckpointedCreate(forServerID: id)
         else { return false }
         return replicaStore.clearOwnership(for: scope)
     }
@@ -1819,6 +1821,12 @@ final class DocumentSaveCoordinator {
         pendingCreates.values.first { $0.syncedServerID == documentID }
     }
 
+    /// Whether `documentID` is the server ID of a checkpointed local create whose
+    /// migration onto that server ID has not completed yet.
+    func hasCheckpointedCreate(forServerID documentID: UUID) -> Bool {
+        checkpointedRecord(forServerID: documentID) != nil
+    }
+
     // MARK: - Create replay
 
     /// POST the documents this device created, then hand their content to the ordinary draft
@@ -2809,12 +2817,12 @@ final class DocumentSaveCoordinator {
         let serverScope = ReplicaScope(
             serverOrigin: scope.serverOrigin, ownerUserID: scope.ownerUserID,
             org: scope.org, documentID: serverID)
-        let hasLocalManifest = (try? replicaStore.manifest(for: localScope)) != nil
-        let hasServerManifest = (try? replicaStore.manifest(for: serverScope)) != nil
+        let localManifest = try? replicaStore.manifest(for: localScope)
+        let serverManifest = try? replicaStore.manifest(for: serverScope)
         let sourceScope: ReplicaScope
-        if hasLocalManifest {
+        if localManifest != nil {
             sourceScope = localScope
-        } else if hasServerManifest {
+        } else if let serverManifest, draft == nil || serverManifest.migratedFromLocalID == localID {
             sourceScope = serverScope
         } else {
             return
@@ -2839,6 +2847,12 @@ final class DocumentSaveCoordinator {
             restored.manifest.outbox.isEmpty && canonicalSource.isEmpty && !canonicalServer.isEmpty
 
         if willAdoptServer {
+            if sourceScope != serverScope,
+                let serverManifest, serverManifest.migratedFromLocalID != localID,
+                !serverManifest.outbox.isEmpty || migrated != nil
+            {
+                return
+            }
             draftStore.remove(documentID: localID)
             draftStore.remove(documentID: serverID)
             states[localID] = nil
@@ -2876,6 +2890,9 @@ final class DocumentSaveCoordinator {
         }
 
         if sourceScope != serverScope {
+            if let serverManifest, serverManifest.migratedFromLocalID != localID, migrated != nil {
+                return
+            }
             guard let fullState = try? ReplicaSaveAdapter.fullState(restored),
                 (try? replicaStore.migrateLocalReplica(
                     from: localScope, to: serverScope, fullState: fullState)) != nil
