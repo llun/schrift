@@ -277,10 +277,20 @@ func presentedPeerCount(peerCount: Int, isOffline: Bool) -> Int? {
     return peerCount
 }
 
-/// Presents the route NativeEditorOpen selects at each open or reopen. The classic view's tasks, save
-/// controls and live bridge are instantiated only when that route is selected.
+/// Presents the unified document shell (navigation bar actions, banner stack,
+/// conflict resolution, Pages drawer, Options, Share, subpages, and offline/delete
+/// chrome) across `.loading`, `.native`, `.preservedUnavailable`, and `.classic`.
 struct EditorView: View {
-    let viewModel: EditorViewModel
+    @Environment(\.docsTheme) private var theme
+    @Environment(NativeSessionRegistry.self) private var nativeSessions: NativeSessionRegistry?
+    @Environment(DocumentCollaborationManager.self) private var collaboration: DocumentCollaborationManager?
+    @Environment(LocalizationStore.self) private var loc
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Followed while open: a native document leaves or rejoins its room (PR09b).
+    @AppStorage(LiveCollaborationPreference.key) private var liveCollaboration = false
+
+    @Bindable var viewModel: EditorViewModel
     let reach: LinkReach
     let serverHost: String
     let serverOrigin: String
@@ -296,99 +306,708 @@ struct EditorView: View {
     /// screen may be another account's, so the native route is closed and
     /// reopened rather than left typing into the previous account's replica.
     var signInGeneration: Int = 0
+
     @State private var nativeOpen = NativeEditorOpen()
     @State private var mentionLoader: NativeMentionAccessLoader?
-    /// The app's replica registry (PR08c); hosts without one keep the open's own.
-    @Environment(NativeSessionRegistry.self) private var nativeSessions: NativeSessionRegistry?
-    /// Dials the native live socket (PR09a); hosts without one stay HTTP-only.
-    @Environment(DocumentCollaborationManager.self) private var collaboration: DocumentCollaborationManager?
-    @Environment(LocalizationStore.self) private var loc
-    @Environment(\.scenePhase) private var scenePhase
-    /// Followed while open: a native document leaves or rejoins its room (PR09b).
-    @AppStorage(LiveCollaborationPreference.key) private var liveCollaboration = false
+    @State private var offlineBannerStatus = DebouncedStatus()
+    @State private var isPresentingShareSheet = false
+    @State private var isPresentingOptionsSheet = false
+    @State private var isPresentingOutline = false
+    @State private var pendingOutlineAfterOptions = false
+    @State private var pendingShareAfterOptions = false
+    @State private var outlineGate = OutlinePresentationGate()
+    @State private var outlineHeldNavigation = OutlineHeldNavigation<EditorNavigation>()
+    @State private var outlineFocusesFind = false
+    @State private var outlineScrollRequest: DocumentScrollRequest?
+    @State private var conflictToResolve: IdentifiedSyncConflict?
+    @State private var toastMessage: ToastMessage?
+    @State private var isPresentingPagesTree = false
+    @State private var documentPendingUndo: Document?
+    @State private var subpagePendingDeleteConfirmation: Document?
+    @State private var drawerPendingDeleteConfirmation: Document?
+    @State private var documentPendingMove: Document?
+    @State private var subpageSwipe = SwipeRevealState<UUID>()
+    @State private var scrollAnchor = EditorScrollAnchorStore()
+    @State private var readingPosition: ReadingPositionSession
+    @State private var attachmentPreviewURL: URL?
+    @State private var pagesTreeViewModel: PagesTreeViewModel
+    @State private var optionsViewModel: OptionsViewModel
+    @State private var shareViewModel: ShareViewModel
+
+    /// Height the formatting bar reserves at the bottom of the canvas:
+    /// its 44pt tap target plus the inset's own padding.
+    private var editingToastInset: CGFloat { DocsSpacing.rowMinHeight + DocsSpacing.spaceBase }
 
     private var showsOffline: Bool { isOffline || viewModel.availability.isOffline }
+    private var showsOfflineStatus: Bool { isOffline || viewModel.availability.showsOfflineStatus }
+    private var showsOfflineBanner: Bool {
+        isOffline || viewModel.availability.isWorkOffline || offlineBannerStatus.value
+    }
+
+    private var isClassicRoute: Bool {
+        if case .classic = nativeOpen.route { return true }
+        return false
+    }
+
+    private var toastBottomInset: CGFloat {
+        switch nativeOpen.route {
+        case .classic:
+            return viewModel.isEditing ? editingToastInset : 0
+        case .native(let session):
+            return session.input != nil ? editingToastInset : 0
+        case .loading, .preservedUnavailable:
+            return 0
+        }
+    }
+
+    init(
+        viewModel: EditorViewModel,
+        reach: LinkReach,
+        serverHost: String,
+        serverOrigin: String,
+        childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
+        linkRole: LinkRole? = nil,
+        initialIsFavorite: Bool = false,
+        pinRow: Document? = nil,
+        isOffline: Bool = false,
+        onDeleted: (() -> Void)? = nil,
+        onOpenDocument: ((Document) -> Void)? = nil,
+        onCreatedDocument: ((Document) -> Void)? = nil,
+        signInGeneration: Int = 0
+    ) {
+        self._viewModel = Bindable(viewModel)
+        self.reach = reach
+        self.serverHost = serverHost
+        self.serverOrigin = serverOrigin
+        self.childrenCache = childrenCache
+        self.linkRole = linkRole
+        self.initialIsFavorite = initialIsFavorite
+        self.pinRow = pinRow
+        self.isOffline = isOffline
+        self.onDeleted = onDeleted
+        self.onOpenDocument = onOpenDocument
+        self.onCreatedDocument = onCreatedDocument
+        self.signInGeneration = signInGeneration
+        _readingPosition = State(
+            initialValue: ReadingPositionSession(serverOrigin: serverOrigin, documentID: viewModel.documentID))
+        _optionsViewModel = State(
+            initialValue: OptionsViewModel(
+                client: viewModel.client, documentID: viewModel.documentID, isFavorite: initialIsFavorite,
+                saveCoordinator: viewModel.saveCoordinator, signedInUser: viewModel.signedInUser, pinRow: pinRow))
+        _shareViewModel = State(
+            initialValue: ShareViewModel(
+                client: viewModel.client, documentID: viewModel.documentID, linkReach: reach, linkRole: linkRole))
+        _pagesTreeViewModel = State(
+            initialValue: PagesTreeViewModel(
+                rootID: viewModel.documentID, client: viewModel.client, cache: childrenCache,
+                saveCoordinator: viewModel.saveCoordinator, signedInUser: viewModel.signedInUser))
+    }
 
     var body: some View {
-        Group {
-            switch nativeOpen.route {
-            case .loading:
-                ProgressView()
-            case .native(let session):
-                NativeEditorView(
-                    session: session, title: viewModel.title, serverOrigin: serverOrigin,
-                    preservedNotice: nativeOpen.isPreservedReadOnly
-                        ? .native_editor_owned_read_only_body : nil,
-                    saveStatus: session.input == nil ? nil : nativeSaveStatus(session),
-                    saveFailureDetail: viewModel.saveFailureDetail,
-                    saveFailureOffersRetry: viewModel.saveFailureOffersRetry,
-                    onSave: { nativeOpen.saveNow(viewModel: viewModel) }, isOffline: showsOffline,
-                    documentID: viewModel.documentID,
-                    uploadDocumentID: viewModel.isLocalDocument ? nil : viewModel.documentID,
-                    mediaQueue: viewModel.saveCoordinator,
-                    documentTitle: { [viewModel] id in viewModel.cachedDocumentTitle(for: id) },
-                    resolveLinkedDocument: { [viewModel] id in await viewModel.openLinkedDocument(id) },
-                    onOpenDocument: onOpenDocument,
-                    inlinePickerSource: makeInlinePickerSource())
-            case .preservedUnavailable:
+        shellContent
+            .modifier(shellOverlaysModifier)
+            .toolbar { shellToolbar }
+            .navigationBarTitleDisplayMode(.inline)
+            .task { await openNative() }
+            .onAppear {
+                viewModel.noteEditorAppeared()
+            }
+            .onDisappear {
+                nativeOpen.flushPendingSave()
+                nativeOpen.close()
+                mentionLoader?.reset()
+            }
+            .onChange(of: viewModel.availability.transportOfflineEvidence, initial: true) { _, raw in
+                offlineBannerStatus.update(raw)
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background || phase == .inactive { nativeOpen.flushPendingSave() }
+            }
+            .onChange(of: viewModel.availability.token) { _, _ in
+                if viewModel.availability.isOffline {
+                    viewModel.pauseLoadingWhileOffline()
+                    isPresentingShareSheet = false
+                    pendingShareAfterOptions = false
+                }
+            }
+            .onChange(of: showsOffline) { _, offline in
+                syncMentionLoader()
+                if offline {
+                    isPresentingShareSheet = false
+                    pendingShareAfterOptions = false
+                }
+                if case .native(let session) = nativeOpen.route {
+                    session.input?.refreshInlinePicker()
+                }
+                guard !offline else { return }
+                nativeOpen.refreshInBackground(viewModel: viewModel, isOffline: showsOffline)
+                if !isClassicRoute {
+                    Task { await viewModel.loadChildren() }
+                }
+            }
+            .onChange(of: liveCollaboration) { _, _ in
+                nativeOpen.liveSettingChanged(viewModel: viewModel, isOffline: showsOffline)
+            }
+            .onChange(of: signInGeneration) { _, _ in
+                syncMentionLoader()
+                // A mounted classic editor keeps its own session handling and is never swapped.
+                if case .classic = nativeOpen.route { return }
+                nativeOpen.reopen(
+                    viewModel: viewModel, isOffline: showsOffline,
+                    canUpdate: pinRow?.abilities.update == true,
+                    canMention: pinRow?.abilities.mention == true)
+            }
+            .onChange(of: nativeOpen.canMention) { _, _ in
+                syncMentionLoader()
+                if case .native(let session) = nativeOpen.route {
+                    session.input?.refreshInlinePicker()
+                }
+            }
+            .onChange(of: viewModel.signedInUser.userID) { _, _ in
+                syncMentionLoader()
+                if case .native(let session) = nativeOpen.route {
+                    session.input?.refreshInlinePicker()
+                }
+            }
+            .onChange(of: viewModel.isLocalDocument) { _, _ in
+                syncMentionLoader()
+                if case .native(let session) = nativeOpen.route {
+                    session.input?.refreshInlinePicker()
+                }
+            }
+    }
+
+    private var shellContent: some View {
+        VStack(spacing: 0) {
+            bannerStack
+            routeBody
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .environment(\.attachmentPreview, AttachmentPreviewAction { attachmentPreviewURL = $0 })
+        .quickLookPreview(heldForOutline($attachmentPreviewURL))
+        .pendingDeleteUndoAlert(for: heldForOutline($documentPendingUndo)) { document in
+            viewModel.undoPendingDelete(document)
+        }
+        .deleteConfirmationAlert(
+            for: heldForOutline($subpagePendingDeleteConfirmation),
+            hasLocalSubpages: { viewModel.hasLocalSubpages($0) }
+        ) { document in
+            Task { await viewModel.deleteSubpage(document) }
+        }
+        .deleteConfirmationAlert(
+            for: heldForOutline($drawerPendingDeleteConfirmation),
+            hasLocalSubpages: { viewModel.hasLocalSubpages($0) }
+        ) { document in
+            Task { await pagesTreeViewModel.deletePage(document) }
+        }
+    }
+
+    private var shellOverlaysModifier: some ViewModifier {
+        EditorShellOverlaysModifier(
+            client: viewModel.client,
+            saveCoordinator: viewModel.saveCoordinator,
+            signedInUser: viewModel.signedInUser,
+            theme: theme,
+            toastBottomInset: toastBottomInset,
+            presentsPagesTree: presentsPagesTree,
+            isOffline: isOffline,
+            isPresentingShareSheet: heldForOutline($isPresentingShareSheet),
+            isPresentingOptionsSheet: heldForOutline($isPresentingOptionsSheet),
+            pendingShareAfterOptions: $pendingShareAfterOptions,
+            pendingOutlineAfterOptions: $pendingOutlineAfterOptions,
+            conflictToResolve: heldForOutline($conflictToResolve),
+            documentPendingMove: heldForOutline($documentPendingMove),
+            toastMessage: $toastMessage,
+            pagesDrawerPresentation: pagesDrawerPresentation,
+            shareSheet: { shareSheet },
+            optionsSheet: { optionsSheet },
+            presentOutlineAfterOptions: { presentOutline(focusingFind: false) },
+            onKeepMine: { resolveConflictKeepingMine() },
+            onKeepServer: { Task { await resolveConflictKeepingServer() } }
+        )
+    }
+
+    @ViewBuilder
+    private var routeBody: some View {
+        switch nativeOpen.route {
+        case .loading:
+            EditorLoadingPlaceholder()
+        case .native(let session):
+            NativeEditorView(
+                session: session, title: viewModel.title, serverOrigin: serverOrigin,
+                preservedNotice: nativeOpen.isPreservedReadOnly
+                    ? .native_editor_owned_read_only_body : nil,
+                saveStatus: session.input == nil ? nil : nativeSaveStatus(session),
+                saveFailureDetail: viewModel.saveFailureDetail,
+                saveFailureOffersRetry: viewModel.saveFailureOffersRetry,
+                onSave: { nativeOpen.saveNow(viewModel: viewModel) }, isOffline: showsOffline,
+                documentID: viewModel.documentID,
+                uploadDocumentID: viewModel.isLocalDocument ? nil : viewModel.documentID,
+                mediaQueue: viewModel.saveCoordinator,
+                documentTitle: { [viewModel] id in viewModel.cachedDocumentTitle(for: id) },
+                resolveLinkedDocument: { [viewModel] id in await viewModel.openLinkedDocument(id) },
+                onOpenDocument: onOpenDocument,
+                inlinePickerSource: makeInlinePickerSource(),
+                showsStandaloneChrome: false,
+                headerContent: { AnyView(nativeHeader(session)) },
+                footerContent: { AnyView(nativeSubpagesFooter) },
+                externalOutlinePresented: $isPresentingOutline,
+                externalOutlineFocusesFind: $outlineFocusesFind,
+                outlineShortcutEnabled: !viewModel.isLoading && !hasPendingPresentation,
+                outlineClosesOutline: outlineGate.closesOutline(hasPendingRequest: hasPendingPresentation),
+                onOutlineAppear: { outlineGate.outlineAppeared() },
+                onOutlineDismiss: {
+                    outlineGate.outlineDismissed()
+                    if let held = outlineHeldNavigation.takeAfterOutlineDismissed() { perform(held) }
+                },
+                onScrollInteraction: { subpageSwipe = swipeRevealAfterScrollInteraction(subpageSwipe) })
+        case .preservedUnavailable:
+            preservedUnavailableView
+        case .classic:
+            ClassicEditorView(
+                viewModel: viewModel, reach: reach,
+                canUpdateLiveDocument: pinRow?.abilities.update == true,
+                serverHost: serverHost, serverOrigin: serverOrigin,
+                offlineOverride: isOffline,
+                canOpenDocuments: onOpenDocument != nil,
+                outlineScrollRequest: $outlineScrollRequest,
+                isPresentingOutline: $isPresentingOutline,
+                outlineFocusesFind: $outlineFocusesFind,
+                outlineGate: $outlineGate,
+                outlineHeldNavigation: $outlineHeldNavigation,
+                hasPendingPresentation: hasPendingPresentation,
+                scrollAnchor: scrollAnchor,
+                readingPosition: $readingPosition,
+                subpageSwipe: $subpageSwipe,
+                documentPendingUndo: $documentPendingUndo,
+                subpagePendingDeleteConfirmation: $subpagePendingDeleteConfirmation,
+                documentPendingMove: $documentPendingMove,
+                onNavigate: navigate,
+                onPerformNavigation: perform,
+                onPresentOutline: presentOutline)
+        }
+    }
+
+    @ViewBuilder
+    private var preservedUnavailableView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
+                EditorDocumentHeader(
+                    title: viewModel.title, onEditTitle: nil, reach: reach, peers: []
+                ) {
+                    nativeHeaderStatus(session: nil)
+                }
+                .padding(.bottom, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
+
                 ContentUnavailableView(
                     loc[.native_editor_owned_unavailable_title], systemImage: "doc.richtext",
                     description: Text(loc[.native_editor_owned_unavailable_body]))
-            case .classic:
-                ClassicEditorView(
-                    viewModel: viewModel, reach: reach, serverHost: serverHost, serverOrigin: serverOrigin,
-                    childrenCache: childrenCache, linkRole: linkRole, initialIsFavorite: initialIsFavorite,
-                    pinRow: pinRow, isOffline: isOffline, onDeleted: onDeleted,
-                    onOpenDocument: onOpenDocument, onCreatedDocument: onCreatedDocument)
+
+                subpagesSectionView
+                    .padding(.top, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
+            }
+            .padding(.horizontal, EditorBlockMetrics.gutter)
+            .padding(.top, DocsSpacing.spaceSM)
+            .padding(.bottom, DocsSpacing.spaceLG)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func nativeHeader(_ session: NativeEditorSession) -> some View {
+        let rawPeers = session.awareness?.peers ?? []
+        let peers = presentedPeerCount(peerCount: rawPeers.count, isOffline: isOffline) == nil ? [] : rawPeers
+        return EditorDocumentHeader(
+            title: viewModel.title,
+            onEditTitle: session.input != nil
+                ? { nativeOpen.updateTitle($0, viewModel: viewModel) }
+                : nil,
+            reach: reach,
+            peers: peers
+        ) {
+            nativeHeaderStatus(session: session)
+        }
+        .padding(.horizontal, EditorBlockMetrics.gutter)
+        .padding(.top, DocsSpacing.spaceSM)
+        .padding(.bottom, DocsSpacing.spaceXS)
+    }
+
+    private var nativeSubpagesFooter: some View {
+        subpagesSectionView
+            .padding(.horizontal, EditorBlockMetrics.gutter)
+            .padding(.bottom, DocsSpacing.spaceLG)
+    }
+
+    @ViewBuilder
+    private func nativeHeaderStatus(session: NativeEditorSession?) -> some View {
+        let hasUnsaved = viewModel.isNativeLocalContentUnsaved(
+            sessionHasPendingSave: session?.hasPendingSave ?? false)
+        if let session, session.input != nil {
+            let display = nativeSaveStatus(session)
+            if display == .none {
+                EditorSyncCaptionLabel(
+                    viewModel: viewModel, offlineOverride: isOffline,
+                    hasUnsavedOverride: hasUnsaved,
+                    onRetry: { nativeOpen.saveNow(viewModel: viewModel) })
+            } else {
+                SaveStatusIndicator(
+                    display: display, failureDetail: viewModel.saveFailureDetail,
+                    failureOffersRetry: viewModel.saveFailureOffersRetry,
+                    onTap: { nativeOpen.saveNow(viewModel: viewModel) })
+            }
+        } else {
+            EditorSyncCaptionLabel(
+                viewModel: viewModel, offlineOverride: isOffline,
+                hasUnsavedOverride: hasUnsaved,
+                onRetry: { nativeOpen.saveNow(viewModel: viewModel) })
+        }
+    }
+
+    private var subpagesSectionView: some View {
+        EditorSubpagesSection(
+            viewModel: viewModel,
+            subpageSwipe: $subpageSwipe,
+            documentPendingUndo: $documentPendingUndo,
+            subpagePendingDeleteConfirmation: $subpagePendingDeleteConfirmation,
+            documentPendingMove: $documentPendingMove,
+            onNavigate: navigate)
+    }
+
+    @ToolbarContentBuilder
+    private var shellToolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Button {
+                isPresentingPagesTree = true
+            } label: {
+                ToolbarIcon(.account_tree)
+            }
+            .buttonBorderShape(.circle)
+            .accessibilityLabel(loc[.pages_open])
+            .accessibilityHidden(presentsPagesTree)
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            toolbarButton(for: isClassicRoute && viewModel.isEditing ? .done : .edit)
+                .accessibilityHidden(presentsPagesTree)
+        }
+        ToolbarSpacer(.fixed, placement: .topBarTrailing)
+        if editorToolbarActions(
+            isEditing: isClassicRoute && viewModel.isEditing, isLocal: viewModel.isLocalDocument, isOffline: isOffline
+        ).contains(.share) {
+            ToolbarItem(placement: .topBarTrailing) {
+                toolbarButton(for: .share)
+                    .accessibilityHidden(presentsPagesTree)
+            }
+            ToolbarSpacer(.fixed, placement: .topBarTrailing)
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            toolbarButton(for: .options)
+                .accessibilityHidden(presentsPagesTree)
+        }
+    }
+
+    @ViewBuilder
+    private func toolbarButton(for action: EditorToolbarAction) -> some View {
+        switch action {
+        case .edit:
+            Button {
+                guard isClassicRoute else { return }
+                snapshotScrollForModeSwap()
+                viewModel.startEditing()
+            } label: {
+                ToolbarIcon(.edit)
+            }
+            .disabled(!isClassicRoute || !viewModel.canStartEditing)
+            .buttonBorderShape(.circle)
+            .accessibilityLabel(loc[.editor_action_edit])
+
+        case .done:
+            Button {
+                guard isClassicRoute else { return }
+                snapshotScrollForModeSwap()
+                viewModel.finishEditing()
+            } label: {
+                ToolbarIcon(.check, filled: true)
+            }
+            .buttonBorderShape(.circle)
+            .accessibilityLabel(loc[.editor_action_done])
+
+        case .share:
+            Button {
+                guard !isOffline else { return }
+                isPresentingShareSheet = true
+            } label: {
+                ToolbarIcon(.share)
+            }
+            .buttonBorderShape(.circle)
+            .accessibilityLabel(loc[.editor_action_share])
+
+        case .options:
+            Button {
+                isPresentingOptionsSheet = true
+            } label: {
+                ToolbarIcon(.more_horiz)
+            }
+            .buttonBorderShape(.circle)
+            .accessibilityLabel(loc[.editor_action_options])
+        }
+    }
+
+    private var bannerStack: some View {
+        VStack(spacing: 0) {
+            if showsOfflineBanner, viewModel.hasLocalCopy {
+                OfflineBanner(note: loc[.editor_offline_local_copy])
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            if viewModel.syncConflict != nil {
+                Button {
+                    dismissFocusForConflictSheet()
+                    conflictToResolve = viewModel.syncConflict.map(IdentifiedSyncConflict.init)
+                } label: {
+                    EditorNoticeLabel(
+                        icon: .warning, title: loc[.editor_conflict_pill], foreground: theme.colors.danger)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, DocsSpacing.gutter)
+                .padding(.top, DocsSpacing.spaceXS)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel(loc[.editor_conflict_pill_a11y])
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            if isClassicRoute, viewModel.updateAvailable, !viewModel.isEditing {
+                Button {
+                    viewModel.applyPendingUpdate()
+                } label: {
+                    EditorNoticeLabel(
+                        icon: .sync, title: loc[.editor_update_available], foreground: theme.colors.textBrand)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, DocsSpacing.gutter)
+                .padding(.top, DocsSpacing.spaceXS)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel(loc[.editor_update_available_a11y])
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            if viewModel.isDocumentPendingDelete {
+                pendingDeleteNotice
+            } else if let errorKey = viewModel.errorKey {
+                VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
+                    Text(loc[errorKey])
+                        .font(DocsFont.footnote)
+                        .foregroundStyle(theme.colors.danger)
+                    if let errorDetail = viewModel.errorDetail {
+                        Text(errorDetail)
+                            .font(DocsFont.footnote)
+                            .foregroundStyle(theme.colors.textSecondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, DocsSpacing.gutter)
+                .padding(.top, DocsSpacing.spaceXS)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .task { await openNative() }
-        .onDisappear {
-            nativeOpen.close()
-            mentionLoader?.reset()
-        }
-        // The journal is already durable; this hands the debounced save to the
-        // coordinator, whose background task carries it.
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .background || phase == .inactive { nativeOpen.flushPendingSave() }
-        }
-        .onChange(of: showsOffline) { _, offline in
-            syncMentionLoader()
-            if case .native(let session) = nativeOpen.route {
-                session.input?.refreshInlinePicker()
+        .animation(reduceMotion ? nil : .snappy, value: showsOfflineBanner)
+        .animation(reduceMotion ? nil : .snappy, value: viewModel.syncConflict != nil)
+        .animation(reduceMotion ? nil : .snappy, value: viewModel.updateAvailable)
+        .animation(reduceMotion ? nil : .snappy, value: viewModel.errorKey)
+    }
+
+    private var pendingDeleteNotice: some View {
+        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+            Text(loc[.editor_pending_delete])
+                .font(DocsFont.footnote)
+                .foregroundStyle(theme.colors.textSecondary)
+            DocsButton(title: loc[.pending_delete_undo], variant: .secondary, size: .medium) {
+                viewModel.undoPendingDeleteForThisDocument()
+                Task {
+                    if isClassicRoute {
+                        await viewModel.load()
+                    } else {
+                        await reopenNativeAfterUndo()
+                    }
+                }
             }
-            guard !offline else { return }
-            nativeOpen.refreshInBackground(viewModel: viewModel, isOffline: showsOffline)
         }
-        .onChange(of: liveCollaboration) { _, _ in
-            nativeOpen.liveSettingChanged(viewModel: viewModel, isOffline: showsOffline)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, DocsSpacing.gutter)
+        .padding(.top, DocsSpacing.spaceXS)
+    }
+
+    private var shareSheet: some View {
+        ShareSheetView(
+            viewModel: shareViewModel,
+            shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
+            onLinkCopied: { toastMessage = ToastMessage(loc[.toast_link_copied]) }
+        )
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private var optionsSheet: some View {
+        OptionsSheetView(
+            viewModel: optionsViewModel,
+            client: viewModel.client,
+            documentID: viewModel.documentID,
+            serverHost: serverHost,
+            shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
+            saveCoordinator: viewModel.saveCoordinator,
+            signedInUser: viewModel.signedInUser,
+            availability: viewModel.availability,
+            onLinkCopied: { toastMessage = ToastMessage(loc[.toast_link_copied]) },
+            onShare: { pendingShareAfterOptions = true },
+            onOutline: { pendingOutlineAfterOptions = true },
+            onDeleted: { queued in
+                if queued {
+                    viewModel.handleDidQueueDelete()
+                } else {
+                    viewModel.noteDeletedFromThisScreen()
+                }
+                onDeleted?()
+            }
+        )
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private var hasPendingPresentation: Bool {
+        isPresentingShareSheet || isPresentingOptionsSheet || isPresentingPagesTree
+            || documentPendingMove != nil || subpagePendingDeleteConfirmation != nil
+            || drawerPendingDeleteConfirmation != nil || documentPendingUndo != nil || conflictToResolve != nil
+            || viewModel.linkEditor != nil || viewModel.isPhotoPickerPresented
+            || viewModel.isAttachmentImporterPresented || attachmentPreviewURL != nil
+            || outlineHeldNavigation.isHolding
+    }
+
+    private func heldForOutline(_ binding: Binding<Bool>) -> Binding<Bool> {
+        Binding(get: { outlineGate.releases(binding.wrappedValue) }, set: { binding.wrappedValue = $0 })
+    }
+
+    private func heldForOutline<Item>(_ binding: Binding<Item?>) -> Binding<Item?> {
+        Binding(get: { outlineGate.release(binding.wrappedValue) }, set: { binding.wrappedValue = $0 })
+    }
+
+    private var presentsPagesTree: Bool { outlineGate.releases(isPresentingPagesTree) }
+
+    private var pagesDrawerPresentation: some ViewModifier {
+        PagesDrawerPresentation(
+            isPresented: Binding(get: { presentsPagesTree }, set: { isPresentingPagesTree = $0 }),
+            isGestureEnabled: !hasPendingPresentation && !isPresentingOutline,
+            onPresentedByDrag: { AccessibilityNotification.ScreenChanged().post() }
+        ) { progress, pan in
+            pagesTreeDrawer(progress: progress, pan: pan)
         }
-        .onChange(of: signInGeneration) { _, _ in
-            syncMentionLoader()
-            // A mounted classic editor keeps its own session handling and is never swapped.
-            if case .classic = nativeOpen.route { return }
-            nativeOpen.reopen(
-                viewModel: viewModel, isOffline: showsOffline,
+    }
+
+    private func pagesTreeDrawer(progress: CGFloat, pan: PagesDrawerPanHandlers) -> some View {
+        PagesTreeDrawer(
+            viewModel: pagesTreeViewModel,
+            rootTitle: viewModel.title.isEmpty ? loc[.common_untitled] : viewModel.title,
+            onOpen: { document in
+                guard !viewModel.isDeletePending(document) else {
+                    isPresentingPagesTree = false
+                    documentPendingUndo = document
+                    return
+                }
+                isPresentingPagesTree = false
+                navigate(.open(document))
+            },
+            onCreated: { document in
+                dismissPagesTree()
+                navigate(.created(document))
+            },
+            onClose: { dismissPagesTree() },
+            onRequestDelete: { document in
+                dismissPagesTree()
+                drawerPendingDeleteConfirmation = document
+            },
+            onRequestMove: { document in
+                dismissPagesTree()
+                documentPendingMove = document
+            },
+            onUndoPendingDelete: { document in
+                dismissPagesTree()
+                documentPendingUndo = document
+            },
+            progress: progress,
+            pan: pan
+        )
+        .task {
+            if presentsPagesTree { AccessibilityNotification.ScreenChanged().post() }
+            guard !viewModel.isDocumentPendingDelete else { return }
+            await pagesTreeViewModel.loadRoot()
+        }
+    }
+
+    private func dismissPagesTree() {
+        isPresentingPagesTree = false
+        AccessibilityNotification.ScreenChanged().post()
+    }
+
+    private func navigate(_ navigation: EditorNavigation) {
+        isPresentingOutline = false
+        if let now = outlineHeldNavigation.request(navigation, isOutlineOnScreen: outlineGate.isOutlineOnScreen) {
+            perform(now)
+        }
+    }
+
+    private func perform(_ navigation: EditorNavigation) {
+        switch navigation {
+        case .open(let document): onOpenDocument?(document)
+        case .created(let document): onCreatedDocument?(document)
+        }
+    }
+
+    private func presentOutline(focusingFind: Bool) {
+        if isPresentingPagesTree { dismissPagesTree() }
+        outlineFocusesFind = focusingFind
+        isPresentingOutline = true
+    }
+
+    private func snapshotScrollForModeSwap() {
+        readingPosition.dismissBackToTop()
+        readingPosition.cancelPendingRestore()
+        guard viewModel.checklistReadingPresentation.hasChecklistItems || viewModel.hidesCompletedChecklistItems else {
+            scrollAnchor.snapshotForSwap()
+            return
+        }
+        let allIDs = viewModel.blocks.map(\.id)
+        let readingIDs = ChecklistReadingPresentation(
+            blocks: viewModel.blocks, hidingCompleted: viewModel.hidesCompletedChecklistItems,
+            settling: viewModel.checklistSettling.ids
+        ).rows.map(\.id)
+        scrollAnchor.snapshotForSwap(
+            blockOrder: viewModel.isEditing ? allIDs : readingIDs,
+            restoringAmong: viewModel.isEditing ? readingIDs : allIDs)
+    }
+
+    private func dismissFocusForConflictSheet() {
+        viewModel.dismissFocusForSheet()
+        if case .native(let session) = nativeOpen.route {
+            session.textView.resignFirstResponder()
+        }
+    }
+
+    private func resolveConflictKeepingMine() {
+        switch nativeOpen.route {
+        case .native, .preservedUnavailable:
+            nativeOpen.resolveConflictKeepingMine(viewModel: viewModel)
+        case .loading, .classic:
+            viewModel.resolveConflictKeepingMine()
+        }
+    }
+
+    private func resolveConflictKeepingServer() async {
+        switch nativeOpen.route {
+        case .native, .preservedUnavailable:
+            await nativeOpen.resolveConflictKeepingServer(
+                viewModel: viewModel,
+                isOffline: showsOffline,
                 canUpdate: pinRow?.abilities.update == true,
                 canMention: pinRow?.abilities.mention == true)
-        }
-        .onChange(of: nativeOpen.canMention) { _, _ in
-            syncMentionLoader()
-            if case .native(let session) = nativeOpen.route {
-                session.input?.refreshInlinePicker()
-            }
-        }
-        .onChange(of: viewModel.signedInUser.userID) { _, _ in
-            syncMentionLoader()
-            if case .native(let session) = nativeOpen.route {
-                session.input?.refreshInlinePicker()
-            }
-        }
-        .onChange(of: viewModel.isLocalDocument) { _, _ in
-            syncMentionLoader()
-            if case .native(let session) = nativeOpen.route {
-                session.input?.refreshInlinePicker()
-            }
+        case .loading, .classic:
+            await viewModel.resolveConflictKeepingServer()
         }
     }
 
@@ -396,13 +1015,19 @@ struct EditorView: View {
         syncMentionLoader()
         if let nativeSessions { nativeOpen.registry = nativeSessions }
         nativeOpen.collaboration = collaboration
-        // Both navigation surfaces pass the server Document as pinRow. Missing
-        // metadata fails closed to the read-only view.
         await nativeOpen.open(
             viewModel: viewModel, isOffline: showsOffline,
             canUpdate: pinRow?.abilities.update == true,
             canMention: pinRow?.abilities.mention == true)
         syncMentionLoader()
+        if !isClassicRoute {
+            await viewModel.loadChildren()
+        }
+    }
+
+    private func reopenNativeAfterUndo() async {
+        nativeOpen.close()
+        await openNative()
     }
 
     private var currentMentionScope: NativeMentionAccessLoader.Scope {
@@ -451,9 +1076,9 @@ struct EditorView: View {
     }
 
     /// The classic status resolver, fed by the coordinator's real save state.
-    /// Debounced journal bytes are on this device but not yet handed over.
+    /// Debounced journal bytes and unpushed title edits count as saved on device.
     private func nativeSaveStatus(_ session: NativeEditorSession) -> SaveStatusDisplay {
-        if session.hasPendingSave { return .savedOnDevice }
+        if session.hasPendingSave || viewModel.hasPendingNativeTitleEdit { return .savedOnDevice }
         let hasConflict = viewModel.syncConflict != nil
         return saveStatusDisplay(
             saveState: viewModel.saveState, hasConflict: hasConflict,
@@ -463,668 +1088,173 @@ struct EditorView: View {
     }
 }
 
-private struct ClassicEditorView: View {
-    @Environment(\.docsTheme) private var theme
-    @Bindable var viewModel: EditorViewModel
-    let reach: LinkReach
-    private let canUpdateLiveDocument: Bool
-    let serverHost: String
-    /// Origin the reading/editing surfaces gate embedded images against
-    /// (`imageLoadPolicy`) — off-origin images are tap-to-load.
-    let serverOrigin: String
-    var linkRole: LinkRole? = nil
-    var initialIsFavorite: Bool = false
-    private var offlineOverride: Bool = false
-    private var isOffline: Bool { offlineOverride || viewModel.availability.isOffline }
-    /// Offline for *status display* only (banner, save status, sync caption): adds the
-    /// transport evidence a satisfied-but-dead path produces. Controls keep `isOffline`.
-    private var showsOfflineStatus: Bool { offlineOverride || viewModel.availability.showsOfflineStatus }
-    /// Display-only debounce of the path/transport offline evidence for the banner, so one slow
-    /// request cannot flash it and push the document down and back. Controls, saves and the
-    /// sync caption keep their own signals; Work Offline is a choice, so it shows immediately.
-    @State private var offlineBannerStatus = DebouncedStatus()
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
-    private var showsOfflineBanner: Bool {
-        offlineOverride || viewModel.availability.isWorkOffline || offlineBannerStatus.value
-    }
-    var onDeleted: (() -> Void)? = nil
-    var onOpenDocument: ((Document) -> Void)? = nil
-    var onCreatedDocument: ((Document) -> Void)? = nil
-
-    @Environment(\.scenePhase) private var scenePhase
-    @Environment(LocalizationStore.self) private var loc
-    @Environment(DocumentCollaborationManager.self) private var collaboration
-    @State private var isPresentingShareSheet = false
-    @State private var isPresentingOptionsSheet = false
-    /// The "In this document" outline sheet. Reached from Options (which hands off through
-    /// `pendingOutlineAfterOptions`, as Share does) or Command-F (`outlineFocusesFind`).
-    @State private var isPresentingOutline = false
-    @State private var pendingOutlineAfterOptions = false
-    /// Holds every other presentation back while the outline is on screen — see `OutlinePresentationGate`.
-    @State private var outlineGate = OutlinePresentationGate()
-    /// A navigation asked for while the outline was on screen — see `navigate(_:)`.
-    @State private var outlineHeldNavigation = OutlineHeldNavigation<EditorNavigation>()
-    /// An attachment card's QuickLook preview. The cards hand it here (`AttachmentPreviewAction`)
-    /// rather than presenting it themselves, so it is held like the rest while the outline is up.
-    @State private var attachmentPreviewURL: URL?
-    @State private var outlineFocusesFind = false
-    /// What the outline sheet last asked the visible canvas to scroll to.
-    @State private var outlineScrollRequest: DocumentScrollRequest?
-    @State private var conflictToResolve: IdentifiedSyncConflict?
-    /// Transient confirmations ("Link copied"). Owned here, not in the sheets
-    /// that raise them — those dismiss themselves in the same breath, and a
-    /// toast inside one would be torn down before it could be read.
-    @State private var toastMessage: ToastMessage?
-    @State private var isPresentingPagesTree = false
-    /// The struck-through sub-page (or drawer page) the user tapped — see
-    /// `pendingDeleteUndoAlert`.
-    @State private var documentPendingUndo: Document?
-    /// The Subpages row whose Delete swipe action was tapped, awaiting confirmation.
-    @State private var subpagePendingDeleteConfirmation: Document?
-    /// The drawer row whose Delete was tapped. Deliberately **not** shared with the one above:
-    /// each routes to its own view model, so a failure reports on the surface the user is
-    /// actually looking at — a drawer deletion reporting through `EditorViewModel` would put
-    /// the message on a screen the drawer is covering.
-    @State private var drawerPendingDeleteConfirmation: Document?
-    /// The row whose Move swipe action was tapped, in the Subpages list or the drawer.
-    /// **One** state for both, unlike the two delete confirmations above: the picker reports
-    /// its own failures inside itself, so there is no per-surface message to route.
-    @State private var documentPendingMove: Document?
-    /// Which Subpages row's swipe strip is open. The drawer keeps its **own** state rather
-    /// than sharing this one: it floats over this list, and a single value would let either
-    /// close the other's strip.
-    @State private var subpageSwipe = SwipeRevealState<UUID>()
-    /// Where the document body is scrolled to, carried across the reading ↔
-    /// editing swap so tapping a block below the fold places a caret instead of
-    /// throwing the reader back to the top of the page. Shared by both surfaces
-    /// and deliberately not observable — see `EditorScrollAnchorStore`.
-    @State private var scrollAnchor = EditorScrollAnchorStore()
-    /// Reopens the document where it was last read and offers the way back to the top.
-    @State private var readingPosition: ReadingPositionSession
-    @State private var readingScrollPosition = ScrollPosition()
-    @State private var restoreAnnouncementTask: Task<Void, Never>?
-    /// Bumped by a reading-surface layout while a decided restore waits for its row, so the
-    /// scroll runs once the rows exist. See `ReadingPositionSession.takeRestoreScroll`.
-    @State private var restoreLayoutPass = 0
-    @State private var checklistRevealFocusRequest = 0
-    /// The pending second phase of each tick made while completed items are hidden — the row
-    /// leaving once its tick has landed (see `toggleChecklistFromReading`). Cancelled on untick
-    /// and when the screen goes away.
-    @State private var checklistSettleTasks: [UUID: Task<Void, Never>] = [:]
-    @State private var pagesTreeViewModel: PagesTreeViewModel
-
-    /// Height the formatting bar reserves at the bottom of the editing canvas:
-    /// its 44pt tap target plus the inset's own padding.
-    private var editingToastInset: CGFloat { DocsSpacing.rowMinHeight + DocsSpacing.spaceBase }
-    @State private var pendingShareAfterOptions = false
-    @State private var optionsViewModel: OptionsViewModel
-    @State private var shareViewModel: ShareViewModel
-    @State private var selectedPhotoItem: PhotosPickerItem?
-    /// Whether we currently hold a live-collaboration reference for this document,
-    /// so the request/release stays one-shot and balanced even as availability
-    /// flips (a session opened only once, released exactly once).
-    @State private var holdsCollaborationSession = false
-    /// C1's live-write coordinator. `nil` until the first collaboration-session
-    /// request, because it needs the `collaboration` manager, which only becomes
-    /// available from `@Environment` once the view has been installed — not in
-    /// `init`. Built once and retained in `@State` alongside the session hold.
-    @State private var liveEditingBridge: LiveEditingBridge?
+/// Extracted from `EditorView.body` to keep SwiftUI type-checking bounded.
+private struct EditorShellOverlaysModifier<ShareSheet: View, OptionsSheet: View>: ViewModifier {
+    let client: DocsAPIClient
+    let saveCoordinator: DocumentSaveCoordinator
+    let signedInUser: SignedInUserStore
+    let theme: AppTheme
+    let toastBottomInset: CGFloat
+    let presentsPagesTree: Bool
+    let isOffline: Bool
+    @Binding var isPresentingShareSheet: Bool
+    @Binding var isPresentingOptionsSheet: Bool
+    @Binding var pendingShareAfterOptions: Bool
+    @Binding var pendingOutlineAfterOptions: Bool
+    @Binding var conflictToResolve: IdentifiedSyncConflict?
+    @Binding var documentPendingMove: Document?
+    @Binding var toastMessage: ToastMessage?
+    let pagesDrawerPresentation: AnyViewModifier
+    let shareSheet: () -> ShareSheet
+    let optionsSheet: () -> OptionsSheet
+    let presentOutlineAfterOptions: () -> Void
+    let onKeepMine: () -> Void
+    let onKeepServer: () -> Void
 
     init(
-        viewModel: EditorViewModel,
-        reach: LinkReach,
-        serverHost: String,
-        serverOrigin: String,
-        childrenCache: DocumentChildrenCacheStore = DocumentChildrenCacheStore(),
-        linkRole: LinkRole? = nil,
-        initialIsFavorite: Bool = false,
-        pinRow: Document? = nil,
-        isOffline: Bool = false,
-        onDeleted: (() -> Void)? = nil,
-        onOpenDocument: ((Document) -> Void)? = nil,
-        onCreatedDocument: ((Document) -> Void)? = nil
+        client: DocsAPIClient,
+        saveCoordinator: DocumentSaveCoordinator,
+        signedInUser: SignedInUserStore,
+        theme: AppTheme,
+        toastBottomInset: CGFloat,
+        presentsPagesTree: Bool,
+        isOffline: Bool,
+        isPresentingShareSheet: Binding<Bool>,
+        isPresentingOptionsSheet: Binding<Bool>,
+        pendingShareAfterOptions: Binding<Bool>,
+        pendingOutlineAfterOptions: Binding<Bool>,
+        conflictToResolve: Binding<IdentifiedSyncConflict?>,
+        documentPendingMove: Binding<Document?>,
+        toastMessage: Binding<ToastMessage?>,
+        pagesDrawerPresentation: some ViewModifier,
+        @ViewBuilder shareSheet: @escaping () -> ShareSheet,
+        @ViewBuilder optionsSheet: @escaping () -> OptionsSheet,
+        presentOutlineAfterOptions: @escaping () -> Void,
+        onKeepMine: @escaping () -> Void,
+        onKeepServer: @escaping () -> Void
     ) {
-        self.viewModel = viewModel
-        self.reach = reach
-        // Both navigation surfaces pass the server Document as pinRow. Missing
-        // metadata fails closed; linkRole is not an authorization decision.
-        self.canUpdateLiveDocument = pinRow?.abilities.update == true
-        self.serverHost = serverHost
-        self.serverOrigin = serverOrigin
-        self.linkRole = linkRole
-        self.initialIsFavorite = initialIsFavorite
-        self.offlineOverride = isOffline
-        _readingPosition = State(
-            initialValue: ReadingPositionSession(serverOrigin: serverOrigin, documentID: viewModel.documentID))
-        self.onDeleted = onDeleted
-        self.onOpenDocument = onOpenDocument
-        self.onCreatedDocument = onCreatedDocument
-        _optionsViewModel = State(
-            initialValue: OptionsViewModel(
-                client: viewModel.client, documentID: viewModel.documentID, isFavorite: initialIsFavorite,
-                // So Delete can tell a document that exists only here from one the replay has
-                // already POSTed, and issue the server DELETE for the latter.
-                saveCoordinator: viewModel.saveCoordinator, signedInUser: viewModel.signedInUser, pinRow: pinRow))
-        _shareViewModel = State(
-            initialValue: ShareViewModel(
-                client: viewModel.client, documentID: viewModel.documentID, linkReach: reach, linkRole: linkRole))
-        // The same store the editor's own Subpages list fills, so a level either
-        // side has fetched is available to the other — and so a test can hand
-        // both an isolated one.
-        _pagesTreeViewModel = State(
-            initialValue: PagesTreeViewModel(
-                rootID: viewModel.documentID, client: viewModel.client, cache: childrenCache,
-                // So "New page" can fall back to a local page when the POST cannot land — and
-                // so the drawer's read-time merge scopes local pages to the same account the
-                // editor does, rather than to a second store of its own.
-                saveCoordinator: viewModel.saveCoordinator, signedInUser: viewModel.signedInUser))
+        self.client = client
+        self.saveCoordinator = saveCoordinator
+        self.signedInUser = signedInUser
+        self.theme = theme
+        self.toastBottomInset = toastBottomInset
+        self.presentsPagesTree = presentsPagesTree
+        self.isOffline = isOffline
+        self._isPresentingShareSheet = isPresentingShareSheet
+        self._isPresentingOptionsSheet = isPresentingOptionsSheet
+        self._pendingShareAfterOptions = pendingShareAfterOptions
+        self._pendingOutlineAfterOptions = pendingOutlineAfterOptions
+        self._conflictToResolve = conflictToResolve
+        self._documentPendingMove = documentPendingMove
+        self._toastMessage = toastMessage
+        self.pagesDrawerPresentation = AnyViewModifier(pagesDrawerPresentation)
+        self.shareSheet = shareSheet
+        self.optionsSheet = optionsSheet
+        self.presentOutlineAfterOptions = presentOutlineAfterOptions
+        self.onKeepMine = onKeepMine
+        self.onKeepServer = onKeepServer
     }
 
-    var body: some View {
-        // The undo alert is applied here, before the long modifier chain below, purely to
-        // keep that chain inside the type-checker's budget — it belongs to the whole screen
-        // either way (a struck-through row can be tapped in the Subpages list or the drawer).
-        mainContent
-            .modifier(outlinePresentation)
-            .pendingDeleteUndoAlert(for: heldForOutline($documentPendingUndo)) { document in
-                viewModel.undoPendingDelete(document)
-            }
-            .deleteConfirmationAlert(
-                for: heldForOutline($subpagePendingDeleteConfirmation),
-                hasLocalSubpages: { viewModel.hasLocalSubpages($0) }
-            ) { document in
-                Task { await viewModel.deleteSubpage(document) }
-            }
-            .deleteConfirmationAlert(
-                for: heldForOutline($drawerPendingDeleteConfirmation),
-                hasLocalSubpages: { viewModel.hasLocalSubpages($0) }
-            ) { document in
-                Task { await pagesTreeViewModel.deletePage(document) }
-            }
-            // Keyed to the row it was opened from, with the view model owned in `@State` by
-            // `MoveDocumentSheet` — this screen re-renders on nearly every editor state
-            // change, and an inline model would be swapped out from under an open picker.
-            .sheet(item: heldForOutline($documentPendingMove)) { document in
+    func body(content: Content) -> some View {
+        content
+            .sheet(item: $documentPendingMove) { document in
                 MoveDocumentSheet(
-                    client: viewModel.client, document: document,
-                    saveCoordinator: viewModel.saveCoordinator, signedInUser: viewModel.signedInUser
+                    client: client, document: document,
+                    saveCoordinator: saveCoordinator, signedInUser: signedInUser
                 )
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
             }
             .background(theme.colors.surfacePage)
-            // While editing, clear the formatting bar the canvas floats at the
-            // same edge — Copy Link is reachable from the toolbar mid-edit, so
-            // the two genuinely collide.
-            .toast($toastMessage, bottomInset: viewModel.isEditing ? editingToastInset : 0)
-            // The drawer is an overlay rather than a sheet, so it gets none of a
-            // sheet's VoiceOver scoping for free: without this the editor behind
-            // it stays in the accessibility tree and a swipe walks straight into
-            // toolbar buttons the drawer is covering. Ordered before the presentation,
-            // which adds the drawer on top of the hidden content.
+            .toast($toastMessage, bottomInset: toastBottomInset)
             .accessibilityHidden(presentsPagesTree)
             .modifier(pagesDrawerPresentation)
-            // One system toolbar in both modes. The document title stays in the
-            // canvas as a large content header (`EditorDocumentHeader`) rather than in the
-            // bar, so the bar carries only the back button and the trailing actions
-            // — hence `.inline` with no `.navigationTitle`.
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                // Leading, beside back: this is a *left* panel, and the trailing
-                // group is already three items.
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        isPresentingPagesTree = true
-                    } label: {
-                        ToolbarIcon(.account_tree)
-                    }
-                    .buttonBorderShape(.circle)
-                    .accessibilityLabel(loc[.pages_open])
-                    // Hidden here as well as on `mainContent`: toolbar content is
-                    // hosted by the navigation bar as its own accessibility
-                    // subtree, so hiding the screen's body never reached it, and
-                    // a VoiceOver swipe could still land on a bar button the
-                    // drawer is covering.
-                    .accessibilityHidden(presentsPagesTree)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    toolbarButton(for: viewModel.isEditing ? .done : .edit)
-                        .accessibilityHidden(presentsPagesTree)
-                }
-                ToolbarSpacer(.fixed, placement: .topBarTrailing)
-                if editorToolbarActions(
-                    isEditing: viewModel.isEditing, isLocal: viewModel.isLocalDocument, isOffline: isOffline
-                ).contains(.share) {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        toolbarButton(for: .share)
-                            .accessibilityHidden(presentsPagesTree)
-                    }
-                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    toolbarButton(for: .options)
-                        .accessibilityHidden(presentsPagesTree)
-                }
-            }
-            .task(id: viewModel.availability.token) {
-                if viewModel.availability.isOffline {
-                    viewModel.pauseLoadingWhileOffline()
-                    if !viewModel.hasLoadedContent { await viewModel.load() }
-                } else {
-                    await viewModel.reloadAfterReconnect()
-                }
-            }
-            .onChange(of: viewModel.availability.token) { _, _ in
-                if viewModel.availability.isOffline {
-                    viewModel.pauseLoadingWhileOffline()
-                    isPresentingShareSheet = false
-                    pendingShareAfterOptions = false
-                }
-            }
-            // Presence: request a live session while this document is on screen, so
-            // our avatar shows to peers and theirs to us. Reference-counted + balanced
-            // with `release` on disappear; the manager owns the socket lifecycle
-            // (linger, suspend, reconnect), so a background/foreground cycle is handled
-            // there.
-            .onAppear {
-                requestCollaborationSessionIfNeeded()
-                // Tell the save coordinator a screen is writing under this id. The create
-                // replay re-keys a document's draft, coordinator maps and caches from the
-                // local id onto the server id — and `EditorViewModel.documentID` is a `let`
-                // captured by four sibling view models and by the pushed `NavigationPath`
-                // value, so a live screen cannot follow that swap and would keep writing
-                // under an id the holds no longer cover. Registering here is what makes the
-                // migration defer instead.
-                //
-                // **For every document, not only locally-created ones.** The motivating case
-                // is an ordinary document opened from Home whose id a checkpointed record is
-                // about to migrate *onto*: that screen writes under the server id, and the
-                // guards protecting it are keyed on the server id too.
-                viewModel.noteEditorAppeared()
-            }
-            // Availability can resolve *after* the editor is already on screen — the
-            // `/config/` fetch that decides server support runs concurrently with
-            // navigation — so re-request when it flips to available; the one-shot hold
-            // keeps this from double-counting.
-            .onChange(of: collaboration.availability) { _, _ in
-                requestCollaborationSessionIfNeeded()
-            }
-            // Backstop for the synchronous replica observer: both notifications share
-            // one display-frame projection/apply of the latest replica state.
-            .onChange(of: collaboration.replicaVersion(for: viewModel.documentID)) { _, _ in
-                liveEditingBridge?.replicaDidChange()
-            }
-            .onChange(of: collaboration.initialSyncVersion(for: viewModel.documentID)) { _, _ in
-                liveEditingBridge?.initialSyncDidChange()
-            }
-            // Live refresh: a peer touched the document (a change signal on the socket
-            // bumps this token), so debounce a silent revalidation. Suppressed while the
-            // bridge is actively applying live content — the stream is already newer than
-            // a REST re-fetch would be, and installing a REST body over it would reset the
-            // caret the bridge just preserved.
-            .onChange(of: collaboration.remoteChangeToken(for: viewModel.documentID)) { _, _ in
-                if liveEditingBridge?.isApplyingLiveContent != true {
-                    viewModel.noteRemoteChange()
-                }
-            }
-            .onDisappear {
-                // The editor registration is deliberately *not* released here: `onDisappear`
-                // means "not visible" (a tab switch, a pushed sub-document), and the replay
-                // must not re-key a document whose screen is about to come back. It is
-                // released when the view model is deallocated — see `noteEditorAppeared`.
-                viewModel.flushPendingChanges()
-                liveEditingBridge?.stopRemoteApplies()
-                persistReadingPosition()
-                // Leaving ends the Back to top offer (it never auto-dismisses under VoiceOver) and
-                // drops a restore announcement still waiting for the transition to settle.
-                readingPosition.dismissBackToTop()
-                readingPosition.cancelPendingRestore()
-                restoreAnnouncementTask?.cancel()
-                restoreAnnouncementTask = nil
-                // A tick still settling hides at once rather than collapsing off screen.
-                for task in checklistSettleTasks.values { task.cancel() }
-                checklistSettleTasks = [:]
-                viewModel.clearChecklistSettling()
-                if holdsCollaborationSession {
-                    collaboration.release(viewModel.documentID)
-                    holdsCollaborationSession = false
-                }
-            }
-            .onChange(of: scenePhase) { _, phase in
-                if phase == .background || phase == .inactive {
-                    viewModel.flushPendingChanges()
-                    persistReadingPosition()
-                }
-            }
-            .sheet(isPresented: heldForOutline($isPresentingShareSheet)) { shareSheet }
+            .sheet(isPresented: $isPresentingShareSheet) { shareSheet() }
             .sheet(
-                isPresented: heldForOutline($isPresentingOptionsSheet),
+                isPresented: $isPresentingOptionsSheet,
                 onDismiss: {
                     if pendingShareAfterOptions && !isOffline {
                         pendingShareAfterOptions = false
                         isPresentingShareSheet = true
                     } else if pendingOutlineAfterOptions {
                         pendingOutlineAfterOptions = false
-                        presentOutline(focusingFind: false)
+                        presentOutlineAfterOptions()
                     }
                 }
             ) {
-                optionsSheet
+                optionsSheet()
             }
-            // `.sheet(item:)`, not `isPresented`: the sheet renders the conflict's server
-            // timestamp, so it must never be presented without one. Both choices dismiss
-            // the sheet themselves before handing off to the view model.
-            .sheet(item: heldForOutline($conflictToResolve)) { conflict in
+            .sheet(item: $conflictToResolve) { conflict in
                 ConflictSheetView(
                     conflict: conflict.value,
-                    onKeepMine: { viewModel.resolveConflictKeepingMine() },
-                    onKeepServer: { Task { await viewModel.resolveConflictKeepingServer() } }
+                    onKeepMine: onKeepMine,
+                    onKeepServer: onKeepServer
                 )
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
             }
     }
+}
 
-    /// Extracted from the `.sheet` closure: `body`'s modifier chain is long
-    /// enough that inlining these two tips the type-checker over.
-    private var shareSheet: some View {
-        ShareSheetView(
-            viewModel: shareViewModel,
-            shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
-            onLinkCopied: { toastMessage = ToastMessage(loc[.toast_link_copied]) }
-        )
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+private struct AnyViewModifier: ViewModifier {
+    private let build: (Content) -> AnyView
+
+    init<M: ViewModifier>(_ modifier: M) {
+        self.build = { content in AnyView(content.modifier(modifier)) }
     }
 
-    private var outlinePresentation: DocumentOutlinePresentation {
-        DocumentOutlinePresentation(
-            isPresented: $isPresentingOutline, focusesFind: outlineFocusesFind,
-            documentTitle: viewModel.title,
-            // Only what the canvas draws: with completed checklist items hidden, a match inside one
-            // would count but could never be scrolled to.
-            blocks: viewModel.checklistReadingPresentation.rows.map(\.block),
-            findShortcutTitle: loc[.outline_find_placeholder],
-            // Not while something else is up: the outline could not present over it.
-            findShortcutEnabled: viewModel.hasLoadedContent && !viewModel.isLoading && !hasPendingPresentation,
-            closesOutline: outlineGate.closesOutline(hasPendingRequest: hasPendingPresentation),
-            onFindShortcut: { presentOutline(focusingFind: true) },
-            onScroll: { target in requestOutlineScroll(to: target) },
-            onAppear: { outlineGate.outlineAppeared() },
-            // Releases whatever was requested while the outline was up; it presents now, and a held
-            // navigation runs.
-            onDismiss: {
-                outlineGate.outlineDismissed()
-                if let held = outlineHeldNavigation.takeAfterOutlineDismissed() { perform(held) }
-            },
-            onSelectHeading: { blockID in
-                // Editing: move focus to the heading so restoring the old caret on dismiss cannot
-                // scroll the canvas back; `BlockEditorView` scrolls to a newly focused block.
-                if viewModel.isEditing { viewModel.focusedBlockID = blockID }
-                requestOutlineScroll(to: .block(blockID))
-            })
+    func body(content: Content) -> some View {
+        build(content)
     }
+}
 
-    /// A scroll the outline asked for: a heading, a find match, or the title. The reader chose where
-    /// to be, so it also settles "continue reading" — the Back to top offer ends (the outline's jump
-    /// is not a programmatic scroll that reports a scroll phase) and a restore still undecided can no
-    /// longer pull the page away from the jump. See `ReadingPositionSession.noteDeliberateJump`.
-    private func requestOutlineScroll(to target: EditorScrollTarget) {
-        readingPosition.noteDeliberateJump(blocks: viewModel.blocks)
-        outlineScrollRequest = DocumentScrollRequest.following(outlineScrollRequest, target: target)
-    }
+/// Classic Markdown/BlockNote reading & editing canvases hosted inside `EditorView`'s
+/// unified shell when `NativeEditorOpen.route == .classic`.
+private struct ClassicEditorView: View {
+    @Environment(\.docsTheme) private var theme
+    @Bindable var viewModel: EditorViewModel
+    let reach: LinkReach
+    let canUpdateLiveDocument: Bool
+    let serverHost: String
+    let serverOrigin: String
+    let offlineOverride: Bool
+    let canOpenDocuments: Bool
+    private var isOffline: Bool { offlineOverride || viewModel.availability.isOffline }
+    private var showsOfflineStatus: Bool { offlineOverride || viewModel.availability.showsOfflineStatus }
 
-    /// Whether anything other than the outline is presented or asking to be.
-    private var hasPendingPresentation: Bool {
-        isPresentingShareSheet || isPresentingOptionsSheet || isPresentingPagesTree
-            || documentPendingMove != nil || subpagePendingDeleteConfirmation != nil
-            || drawerPendingDeleteConfirmation != nil || documentPendingUndo != nil || conflictToResolve != nil
-            || viewModel.linkEditor != nil || viewModel.isPhotoPickerPresented
-            || viewModel.isAttachmentImporterPresented || attachmentPreviewURL != nil
-            || outlineHeldNavigation.isHolding
-    }
+    @Binding var outlineScrollRequest: DocumentScrollRequest?
+    @Binding var isPresentingOutline: Bool
+    @Binding var outlineFocusesFind: Bool
+    @Binding var outlineGate: OutlinePresentationGate
+    @Binding var outlineHeldNavigation: OutlineHeldNavigation<EditorNavigation>
+    let hasPendingPresentation: Bool
+    let scrollAnchor: EditorScrollAnchorStore
+    @Binding var readingPosition: ReadingPositionSession
+    @Binding var subpageSwipe: SwipeRevealState<UUID>
+    @Binding var documentPendingUndo: Document?
+    @Binding var subpagePendingDeleteConfirmation: Document?
+    @Binding var documentPendingMove: Document?
+    let onNavigate: (EditorNavigation) -> Void
+    let onPerformNavigation: (EditorNavigation) -> Void
+    let onPresentOutline: (Bool) -> Void
 
-    /// `binding`, held back while the outline is on screen (`OutlinePresentationGate`).
-    private func heldForOutline(_ binding: Binding<Bool>) -> Binding<Bool> {
-        Binding(get: { outlineGate.releases(binding.wrappedValue) }, set: { binding.wrappedValue = $0 })
-    }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(LocalizationStore.self) private var loc
+    @Environment(DocumentCollaborationManager.self) private var collaboration: DocumentCollaborationManager?
 
-    /// `binding`, held back while the outline is on screen (`OutlinePresentationGate`).
-    private func heldForOutline<Item>(_ binding: Binding<Item?>) -> Binding<Item?> {
-        Binding(get: { outlineGate.release(binding.wrappedValue) }, set: { binding.wrappedValue = $0 })
-    }
+    @State private var readingScrollPosition = ScrollPosition()
+    @State private var restoreAnnouncementTask: Task<Void, Never>?
+    @State private var restoreLayoutPass = 0
+    @State private var checklistRevealFocusRequest = 0
+    @State private var checklistSettleTasks: [UUID: Task<Void, Never>] = [:]
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var holdsCollaborationSession = false
+    @State private var liveEditingBridge: LiveEditingBridge?
 
-    /// The Pages drawer, as shown: an overlay rather than a sheet, but held like one so it never
-    /// opens underneath the outline.
-    private var presentsPagesTree: Bool { outlineGate.releases(isPresentingPagesTree) }
-
-    /// Every navigation away from this document goes through here, so none of them can leave the
-    /// outline open over the next document (`OutlineHeldNavigation`). The outline is closed even when
-    /// it has not appeared yet, so a sheet still on its way up cannot land on the new document either.
-    private func navigate(_ navigation: EditorNavigation) {
-        isPresentingOutline = false
-        if let now = outlineHeldNavigation.request(navigation, isOutlineOnScreen: outlineGate.isOutlineOnScreen) {
-            perform(now)
-        }
-    }
-
-    private func perform(_ navigation: EditorNavigation) {
-        switch navigation {
-        case .open(let document): onOpenDocument?(document)
-        case .created(let document): onCreatedDocument?(document)
-        }
-    }
-
-    private func presentOutline(focusingFind: Bool) {
-        // The drawer is an overlay, so it can still be open here (Options reached over it). Close it,
-        // or the outline would find it pending and close itself straight away (`closesOutline`).
-        if isPresentingPagesTree { dismissPagesTree() }
-        outlineFocusesFind = focusingFind
-        isPresentingOutline = true
-    }
-
-    private var optionsSheet: some View {
-        OptionsSheetView(
-            viewModel: optionsViewModel,
-            client: viewModel.client,
-            documentID: viewModel.documentID,
-            serverHost: serverHost,
-            shareURL: documentShareURL(serverHost: serverHost, documentID: viewModel.documentID),
-            saveCoordinator: viewModel.saveCoordinator,
-            signedInUser: viewModel.signedInUser,
-            availability: viewModel.availability,
-            onLinkCopied: { toastMessage = ToastMessage(loc[.toast_link_copied]) },
-            onShare: { pendingShareAfterOptions = true },
-            onOutline: { pendingOutlineAfterOptions = true },
-            onDeleted: { queued in
-                // A *queued* deletion is still cancellable, so the teardown must not purge:
-                // the draft, the create record and the cached body are what the undo puts
-                // back. `DocumentSaveCoordinator.completePendingDelete` removes them once the
-                // DELETE has really landed. A queued deletion also announces nothing, so this
-                // is the only thing that ends the session for it.
-                //
-                // A *made* deletion deliberately has no branch here any more. It now goes
-                // through `completeImmediateDelete`, whose announcement reaches this screen's
-                // own `noteDocumentDeleted` → `handleDeletionLanded`, which calls
-                // `handleDidDelete()` and additionally goes terminal. Calling it here too
-                // would be a harmless second call — it only sets latches and bumps
-                // generations — but one reaction path is better than two, and this way the
-                // teardown is identical however the deletion was made (from this sheet, or
-                // from a swipe on a list while this screen sits in an iPad detail pane).
-                if queued {
-                    viewModel.handleDidQueueDelete()
-                } else {
-                    // The announcement has already torn this session down via
-                    // `handleDeletionLanded`, which is written for a deletion made *elsewhere*
-                    // and so leaves "no longer available" on screen. The user made this one
-                    // and is being popped away from it, so drop the message — in this same
-                    // turn, before anything renders.
-                    viewModel.noteDeletedFromThisScreen()
-                }
-                onDeleted?()
-            }
-        )
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-    }
-
-    /// The drawer as a panel that follows a finger (`PagesDrawerPresentation`): pulled in from the
-    /// leading edge, pushed back out, or sprung open by the toolbar button — which stays the
-    /// path that needs no gesture.
-    private var pagesDrawerPresentation: some ViewModifier {
-        PagesDrawerPresentation(
-            isPresented: Binding(get: { presentsPagesTree }, set: { isPresentingPagesTree = $0 }),
-            // Not while anything else is up or asking to be, or the pull would open the drawer
-            // underneath it.
-            isGestureEnabled: !hasPendingPresentation && !isPresentingOutline,
-            onPresentedByDrag: { AccessibilityNotification.ScreenChanged().post() }
-        ) { progress, pan in
-            pagesTreeDrawer(progress: progress, pan: pan)
-        }
-    }
-
-    private func pagesTreeDrawer(progress: CGFloat, pan: PagesDrawerPanHandlers) -> some View {
-        PagesTreeDrawer(
-            viewModel: pagesTreeViewModel,
-            rootTitle: viewModel.title.isEmpty ? loc[.common_untitled] : viewModel.title,
-            onOpen: { document in
-                // A page on its way out is not opened from the drawer either.
-                guard !viewModel.isDeletePending(document) else {
-                    isPresentingPagesTree = false
-                    documentPendingUndo = document
-                    return
-                }
-                isPresentingPagesTree = false
-                navigate(.open(document))
-            },
-            onCreated: { document in
-                dismissPagesTree()
-                navigate(.created(document))
-            },
-            onClose: { dismissPagesTree() },
-            // The drawer closes first: the confirmation is presented by the editor
-            // beneath it, and leaving the drawer up would put a system alert over a
-            // transitioning overlay.
-            onRequestDelete: { document in
-                dismissPagesTree()
-                drawerPendingDeleteConfirmation = document
-            },
-            // Same handover as Delete, and for the same reason: the drawer closes and
-            // the editor beneath it presents the picker.
-            onRequestMove: { document in
-                dismissPagesTree()
-                documentPendingMove = document
-            },
-            onUndoPendingDelete: { document in
-                dismissPagesTree()
-                documentPendingUndo = document
-            },
-            progress: progress,
-            pan: pan
-        )
-        .task {
-            // Nothing announces an overlay the way it would a sheet, so say the screen
-            // changed and let VoiceOver land in the drawer. Only when it is open: a drag
-            // mounts the drawer before it is known to be staying, and announces on release.
-            if presentsPagesTree { AccessibilityNotification.ScreenChanged().post() }
-            // A document queued for deletion is asked nothing — the same rule
-            // `load`/`revalidate`/`refresh` follow, and this is the one other path
-            // that would GET its children.
-            guard !viewModel.isDocumentPendingDelete else { return }
-            await pagesTreeViewModel.loadRoot()
-        }
-    }
-
-    private func dismissPagesTree() {
-        isPresentingPagesTree = false
-        AccessibilityNotification.ScreenChanged().post()
-    }
-
-    /// The banner stack above the document. The animations live on this container, not on
-    /// `mainContent`, so a banner coming or going animates without also animating the
-    /// loading/reading/editing content swap in the same transaction.
-    private var bannerStack: some View {
-        VStack(spacing: 0) {
-            if showsOfflineBanner, viewModel.hasLocalCopy {
-                OfflineBanner(note: loc[.editor_offline_local_copy])
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-
-            // Shown while EDITING too, unlike the "Updated" banner. The enqueue-hold parks
-            // an editing session's autosave, so without the pill the user has no affordance
-            // and no signal at all — they would keep typing into content that is silently
-            // not being pushed.
-            if viewModel.syncConflict != nil {
-                Button {
-                    viewModel.dismissFocusForSheet()
-                    conflictToResolve = viewModel.syncConflict.map(IdentifiedSyncConflict.init)
-                } label: {
-                    EditorNoticeLabel(
-                        icon: .warning, title: loc[.editor_conflict_pill], foreground: theme.colors.danger)
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.top, DocsSpacing.spaceXS)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityLabel(loc[.editor_conflict_pill_a11y])
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-
-            if viewModel.updateAvailable, !viewModel.isEditing {
-                Button {
-                    viewModel.applyPendingUpdate()
-                } label: {
-                    EditorNoticeLabel(
-                        icon: .sync, title: loc[.editor_update_available], foreground: theme.colors.textBrand)
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.top, DocsSpacing.spaceXS)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityLabel(loc[.editor_update_available_a11y])
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-
-            // A queued deletion is not a failure, so it is neither drawn in `danger` nor left
-            // without a way out. **This is the only undo affordance that does not depend on
-            // finding a list row**, which matters because the rows are account-scoped while
-            // the gate is not: a tombstone this session cannot see — another account's, or
-            // one whose owner is unknown — would otherwise leave the document permanently
-            // unopenable with nothing anywhere in the app to clear it.
-            if viewModel.isDocumentPendingDelete {
-                pendingDeleteNotice
-            } else if let errorKey = viewModel.errorKey {
-                VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
-                    Text(loc[errorKey])
-                        .font(DocsFont.footnote)
-                        .foregroundStyle(theme.colors.danger)
-                    if let errorDetail = viewModel.errorDetail {
-                        Text(errorDetail)
-                            .font(DocsFont.footnote)
-                            .foregroundStyle(theme.colors.textSecondary)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, DocsSpacing.gutter)
-                .padding(.top, DocsSpacing.spaceXS)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-        .animation(reduceMotion ? nil : .snappy, value: showsOfflineBanner)
-        .animation(reduceMotion ? nil : .snappy, value: viewModel.syncConflict != nil)
-        .animation(reduceMotion ? nil : .snappy, value: viewModel.updateAvailable)
-        .animation(reduceMotion ? nil : .snappy, value: viewModel.errorKey)
-    }
-
-    /// The screen's content column, lifted out of `body` so the long
-    /// modifier chain that follows stays type-checkable on its own — with
-    /// both in one expression the compiler gives up.
-    private var mainContent: some View {
-        VStack(spacing: 0) {
-
-            bannerStack
-
+    var body: some View {
+        Group {
             if viewModel.isLoading {
                 EditorLoadingPlaceholder()
             } else if viewModel.needsOnlineContent {
@@ -1149,37 +1279,88 @@ private struct ClassicEditorView: View {
                 readingSurface
             }
         }
-        .onChange(of: viewModel.availability.transportOfflineEvidence, initial: true) { _, raw in
-            offlineBannerStatus.update(raw)
-        }
-        // The column fills the screen in every state, so `body`'s page background does
-        // too. Without it a branch with no greedy child (the loading spinner) leaves the
-        // `VStack` only as wide as that child, and the page colour paints a narrow strip
-        // down the middle with the system background either side — invisible on White,
-        // obvious on Paper.
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        // Attachment cards in either canvas hand their preview here instead of presenting it
-        // themselves, so it is held while the outline is up like every other presentation.
-        .environment(\.attachmentPreview, AttachmentPreviewAction { attachmentPreviewURL = $0 })
-        .quickLookPreview(heldForOutline($attachmentPreviewURL))
-    }
-
-    /// Shown instead of the body for a document whose deletion is queued, with the undo beside
-    /// it. Deliberately not `errorKey`/`danger` styling: nothing has failed, the deletion is
-    /// simply waiting — and the button is what keeps this screen from being a dead end.
-    private var pendingDeleteNotice: some View {
-        VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
-            Text(loc[.editor_pending_delete])
-                .font(DocsFont.footnote)
-                .foregroundStyle(theme.colors.textSecondary)
-            DocsButton(title: loc[.pending_delete_undo], variant: .secondary, size: .medium) {
-                viewModel.undoPendingDeleteForThisDocument()
-                Task { await viewModel.load() }
+        .modifier(outlinePresentation)
+        .task(id: viewModel.availability.token) {
+            if viewModel.availability.isOffline {
+                viewModel.pauseLoadingWhileOffline()
+                if !viewModel.hasLoadedContent { await viewModel.load() }
+            } else {
+                await viewModel.reloadAfterReconnect()
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, DocsSpacing.gutter)
-        .padding(.top, DocsSpacing.spaceXS)
+        .onAppear {
+            requestCollaborationSessionIfNeeded()
+        }
+        .onChange(of: collaboration?.availability) { _, _ in
+            requestCollaborationSessionIfNeeded()
+        }
+        .onChange(of: collaboration?.replicaVersion(for: viewModel.documentID)) { _, _ in
+            liveEditingBridge?.replicaDidChange()
+        }
+        .onChange(of: collaboration?.initialSyncVersion(for: viewModel.documentID)) { _, _ in
+            liveEditingBridge?.initialSyncDidChange()
+        }
+        .onChange(of: collaboration?.remoteChangeToken(for: viewModel.documentID)) { _, _ in
+            if liveEditingBridge?.isApplyingLiveContent != true {
+                viewModel.noteRemoteChange()
+            }
+        }
+        .onDisappear {
+            viewModel.flushPendingChanges()
+            liveEditingBridge?.stopRemoteApplies()
+            persistReadingPosition()
+            readingPosition.dismissBackToTop()
+            readingPosition.cancelPendingRestore()
+            restoreAnnouncementTask?.cancel()
+            restoreAnnouncementTask = nil
+            for task in checklistSettleTasks.values { task.cancel() }
+            checklistSettleTasks = [:]
+            viewModel.clearChecklistSettling()
+            if holdsCollaborationSession {
+                collaboration?.release(viewModel.documentID)
+                holdsCollaborationSession = false
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background || phase == .inactive {
+                viewModel.flushPendingChanges()
+                persistReadingPosition()
+            }
+        }
+    }
+
+    private var outlinePresentation: DocumentOutlinePresentation {
+        DocumentOutlinePresentation(
+            isPresented: $isPresentingOutline, focusesFind: outlineFocusesFind,
+            documentTitle: viewModel.title,
+            blocks: viewModel.checklistReadingPresentation.rows.map(\.block),
+            findShortcutTitle: loc[.outline_find_placeholder],
+            findShortcutEnabled: viewModel.hasLoadedContent && !viewModel.isLoading && !hasPendingPresentation,
+            closesOutline: outlineGate.closesOutline(hasPendingRequest: hasPendingPresentation),
+            onFindShortcut: { onPresentOutline(true) },
+            onScroll: { target in requestOutlineScroll(to: target) },
+            onAppear: { outlineGate.outlineAppeared() },
+            onDismiss: {
+                outlineGate.outlineDismissed()
+                if let held = outlineHeldNavigation.takeAfterOutlineDismissed() { onPerformNavigation(held) }
+            },
+            onSelectHeading: { blockID in
+                if viewModel.isEditing { viewModel.focusedBlockID = blockID }
+                requestOutlineScroll(to: .block(blockID))
+            })
+    }
+
+    private func requestOutlineScroll(to target: EditorScrollTarget) {
+        readingPosition.noteDeliberateJump(blocks: viewModel.blocks)
+        outlineScrollRequest = DocumentScrollRequest.following(outlineScrollRequest, target: target)
+    }
+
+    private func heldForOutline(_ binding: Binding<Bool>) -> Binding<Bool> {
+        Binding(get: { outlineGate.releases(binding.wrappedValue) }, set: { binding.wrappedValue = $0 })
+    }
+
+    private func heldForOutline<Item>(_ binding: Binding<Item?>) -> Binding<Item?> {
+        Binding(get: { outlineGate.release(binding.wrappedValue) }, set: { binding.wrappedValue = $0 })
     }
 
     // MARK: - Editing
