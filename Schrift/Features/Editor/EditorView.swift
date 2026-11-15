@@ -298,6 +298,8 @@ struct EditorView: View {
     var signInGeneration: Int = 0
     @State private var nativeOpen = NativeEditorOpen()
     @State private var mentionLoader: NativeMentionAccessLoader?
+    @State private var reconnectOpenTask: Task<Void, Never>?
+    @State private var childrenLoadTask: Task<Void, Never>?
     /// The app's replica registry (PR08c); hosts without one keep the open's own.
     @Environment(NativeSessionRegistry.self) private var nativeSessions: NativeSessionRegistry?
     /// Dials the native live socket (PR09a); hosts without one stay HTTP-only.
@@ -343,6 +345,10 @@ struct EditorView: View {
         }
         .task { await openNative() }
         .onDisappear {
+            reconnectOpenTask?.cancel()
+            reconnectOpenTask = nil
+            childrenLoadTask?.cancel()
+            childrenLoadTask = nil
             nativeOpen.flushPendingSave()
             nativeOpen.close()
             mentionLoader?.reset()
@@ -364,10 +370,12 @@ struct EditorView: View {
                     !viewModel.hasUnsavedLocalContent
                 {
                     nativeOpen.close()
-                    Task { await openNative() }
+                    reconnectOpenTask?.cancel()
+                    reconnectOpenTask = Task { await openNative() }
                 }
             } else {
-                Task { await viewModel.loadChildren() }
+                childrenLoadTask?.cancel()
+                childrenLoadTask = Task { await viewModel.loadChildren() }
             }
         }
         .onChange(of: liveCollaboration) { _, _ in
@@ -412,6 +420,7 @@ struct EditorView: View {
             viewModel: viewModel, isOffline: showsOffline,
             canUpdate: pinRow?.abilities.update == true,
             canMention: pinRow?.abilities.mention == true)
+        guard !Task.isCancelled else { return }
         syncMentionLoader()
         if case .classic = nativeOpen.route { return }
         await viewModel.loadChildren()

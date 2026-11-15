@@ -1706,6 +1706,66 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
             creates: PendingDocumentCreateStore(userDefaults: defaults),
             documentID: documentID, makeModel: makeModel)
     }
+
+    /// Q2a: When `SignedInUserStore` has no signed-in user (`userID == nil`),
+    /// `hasCheckpointedCreate(forServerID:)` must fail closed (`true`) so pre-migration
+    /// editing cannot treat `serverID` as clean or open an editable replica.
+    func testHasCheckpointedCreateFailsClosedWhenSignedInUserUnknown() {
+        let env = makeEnvironment(serverOrigin: "https://docs.example.org")
+        defer { env.clean() }
+
+        let localDoc = env.model.saveCoordinator.createLocalDocument(
+            title: "Checkpointed Local", parentID: nil, ownerUserID: owner)
+        var record = env.creates.create(for: localDoc.id)!
+        record.syncedServerID = env.documentID
+        env.creates.save(record)
+
+        SignedInUserStore(userDefaults: env.defaults).clear()
+        let relaunched = env.relaunch()
+
+        XCTAssertTrue(
+            relaunched.saveCoordinator.hasCheckpointedCreate(forServerID: env.documentID),
+            "hasCheckpointedCreate must fail closed when signedInUser.userID is nil")
+    }
+
+    /// Q2b: `clearNativeOwnership(scope:)` must refuse to clear ownership while ANY account has a
+    /// checkpointed create for `scope.documentID` (`anyCheckpointedRecord == nil`), and must also
+    /// require the signed-in user to match `scope.ownerUserID`.
+    func testClearNativeOwnershipRequiresNoAnyCheckpointedCreateAndMatchingOwner() {
+        let env = makeEnvironment(serverOrigin: "https://docs.example.org")
+        defer { env.clean() }
+
+        let foreignOwner = UUID(uuidString: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")!
+        let origin = env.model.client.serverOrigin
+        let scopeA = ReplicaScope(serverOrigin: origin, ownerUserID: owner, org: "docs", documentID: env.documentID)
+        XCTAssertTrue(env.ownership.mark(scopeA))
+
+        // Foreign account holds a checkpointed create for the same serverID while `owner` is signed in.
+        let foreignLocal = env.model.saveCoordinator.createLocalDocument(
+            title: "Foreign Checkpointed", parentID: nil, ownerUserID: foreignOwner)
+        var record = env.creates.create(for: foreignLocal.id)!
+        record.syncedServerID = env.documentID
+        env.creates.save(record)
+        let relaunched = env.relaunch()
+
+        XCTAssertFalse(
+            relaunched.saveCoordinator.clearNativeOwnership(scope: scopeA),
+            "clearNativeOwnership must refuse when another account holds a checkpointed create for serverID")
+        XCTAssertEqual(
+            env.ownership.owner(documentID: env.documentID, serverOrigin: origin), .owned(scopeA))
+
+        // Once the checkpointed create clears, `clearNativeOwnership` still rejects mismatched owner scopes.
+        env.creates.remove(localID: foreignLocal.id)
+        let relaunchedAfterClear = env.relaunch()
+        let foreignScope = ReplicaScope(
+            serverOrigin: origin, ownerUserID: foreignOwner, org: "docs", documentID: UUID())
+        XCTAssertTrue(env.ownership.mark(foreignScope))
+        XCTAssertFalse(
+            relaunchedAfterClear.saveCoordinator.clearNativeOwnership(scope: foreignScope),
+            "clearNativeOwnership must refuse when signed-in user does not own scope")
+        XCTAssertEqual(
+            env.ownership.owner(documentID: foreignScope.documentID, serverOrigin: origin), .owned(foreignScope))
+    }
 }
 
 @MainActor

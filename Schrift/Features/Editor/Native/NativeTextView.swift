@@ -864,6 +864,7 @@ final class NativeTextView: UITextView {
         blockControls?.layoutControls()
         // After the viewport settled: collaborators' cursors on screen (PR10).
         cursorOverlay.layout(in: self)
+        chipAccessibilityOverlay.frame = bounds
         orderAuxiliarySubviews()
         mediaDropController?.bringIndicatorsToFront(in: self)
         onLayout?()
@@ -898,12 +899,15 @@ final class NativeTextView: UITextView {
         if cursorOverlay.superview === self {
             ordered.append(cursorOverlay)
         }
+        if chipAccessibilityOverlay.superview === self {
+            ordered.append(chipAccessibilityOverlay)
+        }
         reorderIfNeeded(ordered, in: self)
 
         var nestedByParent: [ObjectIdentifier: [UIView]] = [:]
         for container in subviews
         where container !== headerAccessoryView && container !== footerAccessoryView
-            && container !== cursorOverlay
+            && container !== cursorOverlay && container !== chipAccessibilityOverlay
         {
             collectAttachmentViews(in: container, into: &nestedByParent)
         }
@@ -956,6 +960,33 @@ final class NativeTextView: UITextView {
 
     /// Collaborators' cursors (PR10), painted over the text, never touched.
     let cursorOverlay = NativeCursorOverlay()
+    /// Accessibility overlay exposing visible navigable inline chips without
+    /// adding per-chip `UIView` subviews or intercepting touches.
+    private let chipAccessibilityOverlay = NativeInlineChipAccessibilityOverlay()
+
+    /// Visible, unfolded navigable interlink chips for VoiceOver and UI tests.
+    func visibleNavigableInterlinkChips() -> [(offset: Int, uuid: UUID, label: String, frame: CGRect)] {
+        guard blockControls?.onOpenDocument != nil, textStorage.length > 0 else { return [] }
+        let visibleBounds = bounds.inset(by: UIEdgeInsets(top: -16, left: -16, bottom: -16, right: -16))
+        var chips: [(offset: Int, uuid: UUID, label: String, frame: CGRect)] = []
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        textStorage.enumerateAttribute(.attachment, in: fullRange) { value, run, _ in
+            guard let chip = value as? NativeInlineChipAttachment,
+                case .interlink(let docID, _, _, let disabled, _) = chip.content.object,
+                !disabled,
+                let uuid = UUID(uuidString: docID)
+            else { return }
+            for offset in run.location..<NSMaxRange(run) {
+                guard blockControls?.surface?.isHidden(atUTF16: offset) != true,
+                    let frame = inlineChipFrame(atUTF16: offset),
+                    !frame.isNull, !frame.isEmpty,
+                    frame.intersects(visibleBounds)
+                else { continue }
+                chips.append((offset, uuid, chip.content.accessibilityLabel, frame))
+            }
+        }
+        return chips
+    }
 
     init() {
         super.init(frame: .zero, textContainer: nil)
@@ -980,6 +1011,8 @@ final class NativeTextView: UITextView {
             bottom: DocsSpacing.spaceLG, right: DocsSpacing.spaceBase)
         accessibilityIdentifier = "nativeEditor.text"
         addSubview(cursorOverlay)
+        chipAccessibilityOverlay.textView = self
+        addSubview(chipAccessibilityOverlay)
         chipTapRecognizer.addTarget(self, action: #selector(handleChipTap(_:)))
         chipTapRecognizer.numberOfTapsRequired = 1
         chipTapRecognizer.cancelsTouchesInView = false
@@ -1007,4 +1040,54 @@ final class NativeTextView: UITextView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+}
+
+private final class NativeInlineChipAccessibilityOverlay: UIView {
+    weak var textView: NativeTextView?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        isAccessibilityElement = false
+        backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool { false }
+
+    override var accessibilityElements: [Any]? {
+        get { buildElements() }
+        set {}
+    }
+
+    private func buildElements() -> [Any] {
+        guard let textView, !textView.isHidden else { return [] }
+        return textView.visibleNavigableInterlinkChips().map { chip in
+            let frameInOverlay = convert(chip.frame, from: textView)
+            let tapPoint = CGPoint(x: chip.frame.midX, y: chip.frame.midY)
+            let element = NativeInlineChipAccessibilityElement(accessibilityContainer: self) { [weak textView] in
+                textView?.handleChipTap(at: tapPoint) ?? false
+            }
+            element.isAccessibilityElement = true
+            element.accessibilityTraits = .button
+            element.accessibilityIdentifier = "nativeEditor.chip.interlink.\(chip.uuid.uuidString.lowercased())"
+            element.accessibilityLabel = chip.label
+            element.accessibilityFrameInContainerSpace = frameInOverlay
+            return element
+        }
+    }
+}
+
+private final class NativeInlineChipAccessibilityElement: UIAccessibilityElement {
+    private let activateHandler: () -> Bool
+
+    init(accessibilityContainer: Any, activate: @escaping () -> Bool) {
+        self.activateHandler = activate
+        super.init(accessibilityContainer: accessibilityContainer)
+    }
+
+    override func accessibilityActivate() -> Bool {
+        activateHandler()
+    }
 }

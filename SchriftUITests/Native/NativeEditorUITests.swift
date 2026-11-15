@@ -1337,10 +1337,9 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(roadmap.waitForNonExistence(timeout: 5))
         XCTAssertTrue(waitForText(of: editor, containing: "Page: Product Roadmap"))
 
-        // Tap inside the chip laid out at offset 0 of the top paragraph (`textContainerInset` 16,16).
-        editor.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: 60, dy: app.buttons["Options"].exists ? 112 : topParagraphY(in: app)))
-            .tap()
+        let chip = app.buttons["nativeEditor.chip.interlink.55555555-5555-4555-8555-555555555551"]
+        XCTAssertTrue(chip.waitForExistence(timeout: 5), "inserted interlink chip exposes button element")
+        chip.tap()
         let opened = app.staticTexts["inlineObjects.openedDocument"]
         XCTAssertTrue(opened.waitForExistence(timeout: 5), "tapping interlink chip navigates to linked document")
         XCTAssertEqual(opened.label, "Product Roadmap")

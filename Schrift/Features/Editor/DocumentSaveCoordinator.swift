@@ -754,14 +754,17 @@ final class DocumentSaveCoordinator {
 
     /// Clear a marker left by a crash between marking and writing the manifest,
     /// only while nothing unsynced exists anywhere: no replica manifest or
-    /// quarantine, no draft, no queued or in-flight save, and a readable draft
-    /// store. Anything else keeps the document read-only.
+    /// quarantine, no draft, no queued or in-flight save, no checkpointed create
+    /// for any account on this server ID, and a matching signed-in owner with a
+    /// readable draft store. Anything else keeps the document read-only.
     @discardableResult
     func clearNativeOwnership(scope: ReplicaScope) -> Bool {
         let id = scope.documentID
-        guard scope.serverOrigin == client.serverOrigin, !draftStore.holdsUnreadableData,
+        guard scope.serverOrigin == client.serverOrigin,
+            signedInUser.userID == scope.ownerUserID,
+            !draftStore.holdsUnreadableData,
             draftStore.draft(for: id) == nil, inFlight[id] == nil, queued[id] == nil,
-            !hasCheckpointedCreate(forServerID: id)
+            anyCheckpointedRecord(forServerID: id) == nil
         else { return false }
         return replicaStore.clearOwnership(for: scope)
     }
@@ -1829,13 +1832,16 @@ final class DocumentSaveCoordinator {
         pendingCreates.values.first { $0.syncedServerID == documentID }
     }
 
-    /// The current session's record waiting to migrate onto this **server** id, if any — i.e. the
-    /// id the signed-in user actually meets that document under while it sits checkpointed, since
-    /// `pendingLocalDocuments` withholds the local row from that moment on.
+    /// A record waiting to migrate onto this **server** id on the current origin, scoped to the
+    /// signed-in account when known. Fails closed when `signedInUser.userID == nil` (cookie
+    /// handover or pre-`/users/me/` launch) so classic/live writes and ownership clearing cannot
+    /// slip in before identity resolves.
     private func checkpointedRecord(forServerID documentID: UUID) -> PendingDocumentCreate? {
         let currentUserID = signedInUser.userID
         return pendingCreates.values.first {
-            $0.syncedServerID == documentID && belongsToSession($0, currentUserID: currentUserID)
+            $0.syncedServerID == documentID
+                && $0.serverOrigin == serverOrigin
+                && (currentUserID == nil || $0.ownerUserID == currentUserID)
         }
     }
 
@@ -2380,10 +2386,19 @@ final class DocumentSaveCoordinator {
         let serverOwnership = nativeOwnership(documentID: serverID)
         if case .unreadable = localOwnership { return }
         if case .unreadable = serverOwnership { return }
-        if let nativeScope = draft?.replica?.scope
-            ?? migrated?.replica?.scope
-            ?? localOwnership.scope
-            ?? serverOwnership.scope,
+        let nativeScopes = [
+            draft?.replica?.scope,
+            migrated?.replica?.scope,
+            queued[localID]?.replicaRequest?.reference.scope,
+            localOwnership.scope,
+            serverOwnership.scope,
+        ].compactMap { $0 }
+        if !nativeScopes.isEmpty {
+            guard let ownerUserID = record.ownerUserID,
+                nativeScopes.allSatisfy({ $0.ownerUserID == ownerUserID })
+            else { return }
+        }
+        if let nativeScope = nativeScopes.first,
             migrateNativeCreatedDocument(
                 record, serverID: serverID, scope: nativeScope, draft: draft, migrated: migrated,
                 serverTitle: serverTitle, serverUpdatedAt: serverUpdatedAt, serverMarkdown: serverMarkdown,
@@ -2868,6 +2883,9 @@ final class DocumentSaveCoordinator {
         draft: PendingDraft?, migrated: PendingDraft?, serverTitle: String?, serverUpdatedAt: Date,
         serverMarkdown: String, document: Document?
     ) -> Bool {
+        guard let ownerUserID = record.ownerUserID, scope.ownerUserID == ownerUserID else {
+            return true
+        }
         let localID = record.localID
         let localScope = ReplicaScope(
             serverOrigin: scope.serverOrigin, ownerUserID: scope.ownerUserID,
@@ -2890,10 +2908,10 @@ final class DocumentSaveCoordinator {
             sourceScope = serverScope
         } else {
             if serverManifest == nil {
-                guard replicaStore.clearOwnership(for: localScope),
-                    replicaStore.clearOwnership(for: serverScope)
-                else { return true }
                 if draft == nil, migrated == nil, queued[localID] == nil {
+                    guard replicaStore.clearOwnership(for: localScope),
+                        replicaStore.clearOwnership(for: serverScope)
+                    else { return true }
                     // Crash after `willAdoptServer` cleared drafts/replicas before removing the
                     // pending-create record: finish dropping the local record and stale markers.
                     finishAdoptedNativeMigration(
@@ -2901,7 +2919,10 @@ final class DocumentSaveCoordinator {
                         localScope: localScope, serverScope: serverScope)
                     return true
                 }
-                if draft?.replica == nil, migrated?.replica == nil {
+                if draft?.replica == nil, migrated?.replica == nil, queued[localID]?.replicaRequest == nil {
+                    guard replicaStore.clearOwnership(for: localScope),
+                        replicaStore.clearOwnership(for: serverScope)
+                    else { return true }
                     // `createLocalDocument` failed before writing a manifest and fell back to a
                     // classic draft, or a stale manifest-less marker remained: hand off to classic.
                     try? replicaStore.remove(for: localScope)

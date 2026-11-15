@@ -2487,4 +2487,69 @@ final class DocumentSaveCoordinatorReplayMigrationTests: DocumentSaveCoordinator
             ownership.owner(documentID: serverID, serverOrigin: client.serverOrigin), .owned(serverScope),
             "quarantined replica must preserve ownership marker")
     }
+
+    /// Q1: When the checkpointed create belongs to Account A (`user`) while `serverID` has a
+    /// `ReplicaScope` owned by Account B (`otherUser`), `migrateCreatedDocument` must defer
+    /// migration without clearing, adopting, or reading Account B's replica or ownership marker.
+    func testCrossAccountServerReplicaHoldsCheckpointedCreateMigration() async throws {
+        let defaultsSuite = "NativeCrossAccountMigration.\(UUID().uuidString)"
+        suiteNames.append(defaultsSuite)
+        let defaults = UserDefaults(suiteName: defaultsSuite)!
+        SignedInUserStore(userDefaults: defaults).remember(user)
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        ServerConfigStore(userDefaults: defaults).remember(
+            ServerConfig(releaseVersion: "6.0.0", collaborationWsUrl: nil),
+            forServerOrigin: client.serverOrigin)
+
+        let replicaDir = cacheDirectory.appendingPathComponent("ReplicaDrafts", isDirectory: true)
+        let ownership = ReplicaOwnershipStore(userDefaults: defaults)
+        let drafts = PendingDraftStore(userDefaults: defaults)
+        let creates = PendingDocumentCreateStore(userDefaults: defaults)
+        let store = ReplicaStore(directory: replicaDir, ownershipStore: ownership)
+
+        let coord = DocumentSaveCoordinator(
+            client: client,
+            draftStore: drafts,
+            replicaStore: store,
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: creates,
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: defaults),
+            serverOrigin: client.serverOrigin,
+            backgroundTasks: .noop)
+        coord.nativeEditorEnabled = { true }
+
+        let localDoc = coord.createLocalDocument(title: "Account A Doc", parentID: nil, ownerUserID: user)
+        var record = try XCTUnwrap(creates.create(for: localDoc.id))
+        record.syncedServerID = serverID
+        creates.save(record)
+
+        let localScope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: user, org: "docs", documentID: localDoc.id)
+        drafts.remove(documentID: localDoc.id)
+        try store.remove(for: localScope)
+
+        let otherUser = UUID(uuidString: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")!
+        let otherScope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: otherUser, org: "docs", documentID: serverID)
+        let otherSeed = BlockNoteYjs.encode(
+            [BlockNoteBlock(node: "paragraph", props: [], runs: [InlineRun("Account B private body")], id: "b1")],
+            clientID: 201)
+        _ = try store.create(for: otherScope, checkpoint: otherSeed)
+
+        let log = RequestRecorder()
+        stubReplayPipeline(log: log, title: "Account A Doc")
+        await coord.syncPendingDrafts()
+
+        XCTAssertNotNil(
+            creates.create(for: localDoc.id),
+            "cross-account serverScope must defer Account A's checkpointed create migration")
+        let otherManifest = try store.manifest(for: otherScope)
+        XCTAssertNotNil(otherManifest, "Account B's replica manifest must remain untouched")
+        XCTAssertEqual(
+            ownership.owner(documentID: serverID, serverOrigin: client.serverOrigin), .owned(otherScope),
+            "Account B's ownership marker must remain untouched")
+        XCTAssertNil(drafts.draft(for: serverID), "no cross-account draft may be written for Account B's serverID")
+    }
 }

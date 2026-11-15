@@ -13,13 +13,26 @@ final class NativeEditorInlinePickerViewTests: NativeEditingTestCase {
     private let owner = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
     private let otherOwner = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
     private let origin = "https://docs.example.org"
-    private var windows: [UIWindow] = []
+    private var windows: [(window: UIWindow, previous: UIWindow?)] = []
 
     override func tearDown() {
         windows.removeAll()
+        MockURLProtocol.reset()
         super.tearDown()
     }
 
+    @MainActor
+    private func dismissHostedWindows() {
+        for entry in windows {
+            entry.window.endEditing(true)
+            entry.window.rootViewController = nil
+            entry.window.isHidden = true
+            entry.previous?.makeKey()
+        }
+        windows.removeAll()
+    }
+
+    @MainActor
     @discardableResult
     private func hostController(_ controller: UIViewController) -> UIWindow {
         let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
@@ -29,12 +42,13 @@ final class NativeEditorInlinePickerViewTests: NativeEditingTestCase {
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         window.rootViewController = UINavigationController(rootViewController: controller)
         window.makeKeyAndVisible()
-        addTeardownBlock { @MainActor in
-            window.endEditing(true)
-            window.isHidden = true
+        addTeardownBlock { @MainActor [weak window, weak previous] in
+            window?.endEditing(true)
+            window?.rootViewController = nil
+            window?.isHidden = true
             previous?.makeKey()
         }
-        windows.append(window)
+        windows.append((window, previous))
         return window
     }
 
@@ -133,7 +147,7 @@ final class NativeEditorInlinePickerViewTests: NativeEditingTestCase {
         accessesJSON: String = "[]",
         recorder: RequestRecorder? = nil
     ) {
-        MockURLProtocol.stubHandler = { request in
+        MockURLProtocol.stubHandler = { [weak recorder] request in
             recorder?.record(request)
             let url = request.url?.absoluteString ?? ""
             let json = ["Content-Type": "application/json"]
@@ -521,8 +535,8 @@ final class NativeEditorInlinePickerViewTests: NativeEditingTestCase {
             """
 
         let useGrace = Locked(false)
-        MockURLProtocol.stubHandler = { request in
-            recorder.record(request)
+        MockURLProtocol.stubHandler = { [weak recorder, weak useGrace] request in
+            recorder?.record(request)
             let url = request.url?.absoluteString ?? ""
             let json = ["Content-Type": "application/json"]
             if url.hasSuffix("/config/") {
@@ -550,7 +564,7 @@ final class NativeEditorInlinePickerViewTests: NativeEditingTestCase {
                     statusCode: 200, headers: json, body: Data(#"{"count":0,"results":[]}"#.utf8), error: nil)
             }
             if url.contains("/accesses/") {
-                let payload = useGrace.value ? graceJSON : adaJSON
+                let payload = (useGrace?.value == true) ? graceJSON : adaJSON
                 return .init(statusCode: 200, headers: json, body: Data(payload.utf8), error: nil)
             }
             if request.httpMethod == "GET", url.hasSuffix("/"),
@@ -633,6 +647,8 @@ final class NativeEditorInlinePickerViewTests: NativeEditingTestCase {
         await sessionA.close().value
         await sessionB.close().value
         await registry.drainAll()
+        dismissHostedWindows()
+        await Task.yield()
     }
 }
 
