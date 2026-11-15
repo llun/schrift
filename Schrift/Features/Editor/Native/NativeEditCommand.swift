@@ -87,6 +87,11 @@ struct NativeEditCommand: Equatable, Sendable {
         /// paragraph: removes `removing` and replaces the emptied paragraph
         /// (preserving its id) or inserts a new source block with `newID` after it.
         case insertSourceBlock(node: String, newID: String, removing: Range<Int>)
+        /// Slash menu `/divider` or `---`/`***`/`___` + Return on a paragraph:
+        /// removes `removing` and replaces the emptied paragraph or inserts a
+        /// divider block plus an optional trailing paragraph (`ids` holds the
+        /// divider's id and the trailing paragraph's id).
+        case insertDivider(ids: [String], removing: Range<Int>)
         /// A media block's props (PR13a): BlockNote's `updateBlock`.
         /// `expecting` is the slot an upload started from: a block whose kind
         /// or url changed since refuses the commit.
@@ -134,8 +139,8 @@ struct NativeEditCommand: Equatable, Sendable {
         case .range(let range): return range.replacement
         case .split, .join, .marks, .props, .blockType, .indent, .outdent, .moveUp, .moveDown, .duplicate,
             .deleteBlock, .insertBlock, .insertSubtrees, .lineBreak, .table, .columns, .insertColumns, .insertMedia,
-            .insertMediaBatch, .insertSourceBlock, .mediaProps, .insertInlineObject, .insertInlineMath, .pasteInline,
-            .undo, .redo:
+            .insertMediaBatch, .insertSourceBlock, .insertDivider, .mediaProps, .insertInlineObject,
+            .insertInlineMath, .pasteInline, .undo, .redo:
             return ""
         }
     }

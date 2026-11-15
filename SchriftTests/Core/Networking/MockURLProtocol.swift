@@ -142,7 +142,20 @@ final class MockURLProtocol: URLProtocol {
         }
     }
 
-    nonisolated(unsafe) static var stubHandler: (@Sendable (URLRequest) -> Stub)?
+    nonisolated(unsafe) private static var _stubHandler: (@Sendable (URLRequest) -> Stub)?
+
+    static var stubHandler: (@Sendable (URLRequest) -> Stub)? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _stubHandler
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            _stubHandler = newValue
+        }
+    }
 
     private static let lock = NSLock()
     nonisolated(unsafe) private static var _lastRequest: URLRequest?
@@ -232,17 +245,18 @@ final class MockURLProtocol: URLProtocol {
         // the "task created in an invalidated session" NSException that crashes the
         // process. (A request with no token — a session not from `makeSession()` —
         // is left alone.)
-        if let token = request.value(forHTTPHeaderField: MockURLProtocol.sessionTokenHeader) {
-            MockURLProtocol.lock.lock()
-            let isLive = MockURLProtocol.liveSessionTokens.contains(token)
+        MockURLProtocol.lock.lock()
+        if let token = request.value(forHTTPHeaderField: MockURLProtocol.sessionTokenHeader),
+            !MockURLProtocol.liveSessionTokens.contains(token)
+        {
             MockURLProtocol.lock.unlock()
-            if !isLive {
-                client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
-                return
-            }
+            client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
+            return
         }
-        MockURLProtocol.lastRequest = request
-        guard let handler = MockURLProtocol.stubHandler else {
+        MockURLProtocol._lastRequest = request
+        let handler = MockURLProtocol._stubHandler
+        MockURLProtocol.lock.unlock()
+        guard let handler else {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
         }
@@ -354,9 +368,9 @@ final class MockURLProtocol: URLProtocol {
     /// test's `stubHandler`. Safe without a drain: deliveries run on the main queue,
     /// and `tearDown` is already on it.
     static func reset() {
-        stubHandler = nil
-        lastRequest = nil
         lock.lock()
+        _stubHandler = nil
+        _lastRequest = nil
         let items = pendingDeliveries
         pendingDeliveries = []
         _deferredDeliveryCount = 0

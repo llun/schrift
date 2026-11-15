@@ -87,6 +87,7 @@ enum Strings_sl {
         .editor_offline_unavailable_title: "Ni na voljo brez povezave",
         .editor_offline_open_online:
             "Najprej odprite ta dokument s spletno povezavo, da shranite kopijo v tej napravi.",
+        .editor_offline_read_only_native: "Samo za branje brez povezave · odprite na spletu za urejanje",
         .search_error_quick: "Hitrega dostopa ni bilo mogoče naložiti. Poskusite znova.",
         .search_error_search: "Iskanje ni uspelo. Poskusite znova.",
 

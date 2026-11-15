@@ -1311,7 +1311,7 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         withObservationTracking {
             _ = awareness.places
             _ = awareness.peers
-        } onChange: {
+        } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.refreshPeers()
                 self?.observePeers()
@@ -1469,7 +1469,7 @@ final class TableEditorViewController: UIViewController, UIScrollViewDelegate {
         }
         withObservationTracking {
             _ = input.inlinePicker
-        } onChange: {
+        } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.observeInlinePicker()
             }

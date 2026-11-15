@@ -279,6 +279,35 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         guard case .preservedUnavailable = open.route else { return XCTFail("the new account must not see it") }
     }
 
+    func testMismatchedOwnerDoesNotSeedAnotherAccountsDraftTitle() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let scope = try seedReplica(env, typed: "secret body")
+        let draftStore = PendingDraftStore(userDefaults: env.defaults)
+        let manifest = try XCTUnwrap(env.replicaStore.manifest(for: scope))
+        draftStore.save(
+            PendingDraft(
+                documentID: env.model.documentID,
+                title: "Previous Owner Secret Title",
+                markdown: "",
+                updatedAt: Date(),
+                replica: ReplicaDraftReference(manifest: manifest, markdown: "")
+            ))
+        SignedInUserStore(userDefaults: env.defaults).remember(UUID())
+        env.model.title = ""
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: true, canUpdate: true)
+        guard case .preservedUnavailable = open.route else {
+            return XCTFail("a foreign-owned replica must stay preservedUnavailable")
+        }
+        XCTAssertNotEqual(env.model.title, "Previous Owner Secret Title")
+        XCTAssertNotEqual(
+            env.model.nativeEnqueueInputs(cached: nil, draft: nil, fallbackTitle: "").title,
+            "Previous Owner Secret Title")
+    }
+
     func testAccountChangeBeforeTheDebouncedSaveRefusesToSend() async throws {
         let env = makeEnvironment()
         defer { env.clean() }
@@ -598,6 +627,92 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         defer { open.close() }
         await open.open(viewModel: env.model, isOffline: true, canUpdate: true)
         guard case .preservedUnavailable = open.route else { return XCTFail("its draft keeps it read-only") }
+    }
+
+    func testOpeningCheckpointedServerIDDoesNotSeedClearOrOwnReplica() async throws {
+        // 1. Path A: serverID has no ownership yet, create is checkpointed -> must not seed or own.
+        do {
+            let env = makeEnvironment()
+            defer { env.clean() }
+            let server = ServerStub(owner: owner, state: seedState())
+            server.install()
+            let localDoc = env.model.saveCoordinator.createLocalDocument(
+                title: "Local", parentID: nil, ownerUserID: owner, seedMarkdown: "Offline seed")
+            var record = try XCTUnwrap(
+                PendingDocumentCreateStore(userDefaults: env.defaults).create(for: localDoc.id))
+            record.syncedServerID = env.model.documentID
+            PendingDocumentCreateStore(userDefaults: env.defaults).save(record)
+            // Reload coordinator so mirror sees checkpointed record.
+            let relaunchedModel = EditorViewModel(
+                client: env.model.client, documentID: env.model.documentID, title: env.model.title,
+                saveCoordinator: DocumentSaveCoordinator(
+                    client: env.model.client,
+                    draftStore: PendingDraftStore(userDefaults: env.defaults),
+                    replicaStore: env.replicaStore,
+                    contentCache: env.model.contentCache,
+                    createStore: PendingDocumentCreateStore(userDefaults: env.defaults),
+                    deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
+                    listCache: env.model.listCache,
+                    backgroundTasks: .noop),
+                signedInUser: env.model.signedInUser,
+                contentCache: env.model.contentCache,
+                childrenCache: env.model.childrenCache,
+                listCache: env.model.listCache,
+                availability: env.model.availability,
+                nativeEditorEnabled: { true })
+            let scope = ReplicaScope(
+                serverOrigin: relaunchedModel.client.serverOrigin, ownerUserID: owner, org: "docs",
+                documentID: relaunchedModel.documentID)
+            let open = NativeEditorOpen(preference: { true })
+            defer { open.close() }
+            await open.open(viewModel: relaunchedModel, isOffline: false, canUpdate: true)
+            XCTAssertNil(try env.replicaStore.manifest(for: scope))
+            XCTAssertEqual(relaunchedModel.saveCoordinator.nativeOwnership(documentID: scope.documentID), .none)
+        }
+
+        // 2. Path B: serverID has ownership marker without manifest while create is checkpointed -> must not clear.
+        do {
+            let env = makeEnvironment()
+            defer { env.clean() }
+            let server = ServerStub(owner: owner, state: seedState())
+            server.install()
+            let localDoc = env.model.saveCoordinator.createLocalDocument(
+                title: "Local", parentID: nil, ownerUserID: owner, seedMarkdown: "Offline seed")
+            let creates = PendingDocumentCreateStore(userDefaults: env.defaults)
+            var record = try XCTUnwrap(creates.create(for: localDoc.id))
+            record.syncedServerID = env.model.documentID
+            creates.save(record)
+            let scope = ReplicaScope(
+                serverOrigin: env.model.client.serverOrigin, ownerUserID: owner, org: "docs",
+                documentID: env.model.documentID)
+            XCTAssertTrue(env.ownership.mark(scope))
+            let relaunchedCoordinator = DocumentSaveCoordinator(
+                client: env.model.client,
+                draftStore: PendingDraftStore(userDefaults: env.defaults),
+                replicaStore: env.replicaStore,
+                contentCache: env.model.contentCache,
+                createStore: creates,
+                deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
+                listCache: env.model.listCache,
+                backgroundTasks: .noop)
+            let relaunchedModel = EditorViewModel(
+                client: env.model.client, documentID: env.model.documentID, title: env.model.title,
+                saveCoordinator: relaunchedCoordinator,
+                signedInUser: env.model.signedInUser,
+                contentCache: env.model.contentCache,
+                childrenCache: env.model.childrenCache,
+                listCache: env.model.listCache,
+                availability: env.model.availability,
+                nativeEditorEnabled: { true })
+            let open = NativeEditorOpen(preference: { true })
+            defer { open.close() }
+            await open.open(viewModel: relaunchedModel, isOffline: false, canUpdate: true)
+            guard case .preservedUnavailable = open.route else {
+                return XCTFail("checkpointed serverID with ownership marker must stay preservedUnavailable")
+            }
+            XCTAssertEqual(relaunchedCoordinator.nativeOwnership(documentID: scope.documentID), .owned(scope))
+            XCTAssertNil(try env.replicaStore.manifest(for: scope))
+        }
     }
 
     // MARK: - Native live gate (PR09a)
@@ -924,6 +1039,545 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         }
     }
 
+    // MARK: - Step 1: Title saving, conflict resolution, subpages & shell hooks
+
+    func testNativeTitleEditDebouncesAndSavesTitleOnlyThenSurvivesRelaunch() async throws {
+        let env = makeEnvironment(autosaveInterval: .milliseconds(50))
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverTitle = "Original Title"
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        env.model.seedNativeMetadataIfNeeded()
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native = open.route else { return XCTFail("expected a native session") }
+
+        open.updateTitle("Renamed Title", viewModel: env.model)
+        XCTAssertEqual(env.model.title, "Renamed Title")
+
+        await waitUntil { server.titles.contains("Renamed Title") }
+        XCTAssertTrue(
+            server.patchedUpdates.isEmpty, "title-only save with empty body outbox must not emit an empty Yjs PATCH")
+        await waitUntil { self.isSaved(env.model.saveCoordinator.state(for: env.documentID)) }
+
+        // Offline title edit flushes cleanly and survives a relaunch before reconnecting.
+        server.isOffline = true
+        open.updateTitle("Offline Edited Title", viewModel: env.model)
+        open.flushPendingSave()
+        await waitUntil { self.isPendingSync(env.model.saveCoordinator.state(for: env.documentID)) }
+        open.close()
+
+        let relaunched = env.relaunch()
+        let open2 = NativeEditorOpen(preference: { true })
+        defer { open2.close() }
+        relaunched.seedNativeMetadataIfNeeded()
+        XCTAssertEqual(relaunched.title, "Offline Edited Title")
+        server.isOffline = false
+        await open2.open(viewModel: relaunched, isOffline: false, canUpdate: true)
+        await relaunched.saveCoordinator.syncPendingDrafts()
+        await waitUntil { server.titles.contains("Offline Edited Title") }
+        XCTAssertEqual(relaunched.title, "Offline Edited Title")
+    }
+
+    func testNativeTitleAndBodyEditSaveTogether() async throws {
+        let env = makeEnvironment(autosaveInterval: .seconds(30))
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        env.model.seedNativeMetadataIfNeeded()
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText("Lead ")
+        await session.settle()
+        open.updateTitle("Combined Title", viewModel: env.model)
+        open.flushPendingSave()
+
+        await waitUntil { !server.patchedUpdates.isEmpty && server.titles.contains("Combined Title") }
+        await waitUntil { self.isSaved(env.model.saveCoordinator.state(for: env.documentID)) }
+    }
+
+    func testNativeConflictKeepMineAdvancesBaselineAndPushesLocalTitleAndBody() async throws {
+        let env = makeEnvironment(autosaveInterval: .seconds(30))
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverTitle = "Base Title"
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        env.model.seedNativeMetadataIfNeeded()
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+
+        // Produce a queued offline body + title edit against the 2026-11-07 baseline.
+        server.isOffline = true
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText("Local ")
+        await session.settle()
+        open.updateTitle("Local Conflict Title", viewModel: env.model)
+        open.flushPendingSave()
+        await waitUntil { self.isPendingSync(env.model.saveCoordinator.state(for: env.documentID)) }
+
+        // Server advances remotely before our sync runs.
+        server.serverUpdatedAt = "2026-11-08T12:00:00Z"
+        server.serverTitle = "Remote Conflict Title"
+        server.serverContent = "Remote edit"
+        server.isOffline = false
+
+        await env.model.saveCoordinator.syncPendingDrafts()
+        XCTAssertNotNil(env.model.syncConflict)
+        XCTAssertTrue(server.patchedUpdates.isEmpty, "conflict hold must prevent overwriting the server")
+
+        open.resolveConflictKeepingMine(viewModel: env.model)
+        XCTAssertNil(env.model.syncConflict)
+        await waitUntil { !server.patchedUpdates.isEmpty && server.titles.contains("Local Conflict Title") }
+        await waitUntil { self.isSaved(env.model.saveCoordinator.state(for: env.documentID)) }
+        XCTAssertTrue(text(session, block: 0).hasPrefix("Local "))
+        XCTAssertEqual(env.model.title, "Local Conflict Title")
+    }
+
+    func testNativeConflictKeepServerFailureKeepsReplicaAndConflictIntact() async throws {
+        let env = makeEnvironment(autosaveInterval: .seconds(30))
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverTitle = "Base Title"
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        env.model.seedNativeMetadataIfNeeded()
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+
+        server.isOffline = true
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText("Local ")
+        await session.settle()
+        open.updateTitle("Local Title", viewModel: env.model)
+        open.flushPendingSave()
+        await waitUntil { self.isPendingSync(env.model.saveCoordinator.state(for: env.documentID)) }
+
+        server.serverUpdatedAt = "2026-11-08T12:00:00Z"
+        server.serverTitle = "Remote Title"
+        server.serverContent = "Remote edit"
+        server.isOffline = false
+        await env.model.saveCoordinator.syncPendingDrafts()
+        XCTAssertNotNil(env.model.syncConflict)
+
+        server.isOffline = true
+        await open.resolveConflictKeepingServer(viewModel: env.model, isOffline: false, canUpdate: true)
+
+        XCTAssertNotNil(env.model.syncConflict, "failed server fetch must preserve the conflict")
+        XCTAssertNotNil(
+            env.model.saveCoordinator.storedDraft(documentID: env.documentID), "draft stays intact on failure")
+        XCTAssertEqual(env.model.title, "Local Title")
+    }
+
+    func testNativeConflictKeepServerDiscardsReplicaAndReopensOnServerState() async throws {
+        let env = makeEnvironment(autosaveInterval: .seconds(30))
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverTitle = "Base Title"
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        env.model.seedNativeMetadataIfNeeded()
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+
+        server.isOffline = true
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText("Local ")
+        await session.settle()
+        open.updateTitle("Local Title", viewModel: env.model)
+        open.flushPendingSave()
+        await waitUntil { self.isPendingSync(env.model.saveCoordinator.state(for: env.documentID)) }
+
+        let serverBlocks = [
+            BlockNoteBlock(node: "paragraph", props: [], runs: [InlineRun("Server won.")], id: Self.firstID)
+        ]
+        server.mutableState = BlockNoteYjs.encode(serverBlocks, clientID: Self.seedClientID)
+        server.serverUpdatedAt = "2026-11-08T12:00:00Z"
+        server.serverTitle = "Server Won Title"
+        server.serverContent = "Server won."
+        server.isOffline = false
+        await env.model.saveCoordinator.syncPendingDrafts()
+        XCTAssertNotNil(env.model.syncConflict)
+
+        await open.resolveConflictKeepingServer(viewModel: env.model, isOffline: false, canUpdate: true)
+
+        XCTAssertNil(env.model.syncConflict)
+        XCTAssertNil(env.model.saveCoordinator.storedDraft(documentID: env.documentID))
+        guard case .native(let reopened) = open.route else { return XCTFail("expected reopened native session") }
+        XCTAssertEqual(text(reopened, block: 0), "Server won.")
+        XCTAssertEqual(env.model.title, "Server Won Title")
+    }
+
+    func testAccountBDoesNotSeeOrActOnAccountANativeConflictOrUnsavedIndicator() async throws {
+        let env = makeEnvironment(autosaveInterval: .seconds(30))
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        env.model.seedNativeMetadataIfNeeded()
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+
+        server.isOffline = true
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText("Account A ")
+        await session.settle()
+        open.flushPendingSave()
+        await waitUntil { self.isPendingSync(env.model.saveCoordinator.state(for: env.documentID)) }
+
+        server.serverUpdatedAt = "2026-11-08T12:00:00Z"
+        server.serverContent = "Remote edit"
+        server.isOffline = false
+        await env.model.saveCoordinator.syncPendingDrafts()
+        XCTAssertNotNil(env.model.saveCoordinator.conflict(for: env.documentID))
+        let aScope = try XCTUnwrap(env.model.saveCoordinator.nativeOwnership(documentID: env.documentID).scope)
+        open.close()
+
+        // Account B signs in on the same device and opens the preserved-unavailable document.
+        let accountB = UUID()
+        SignedInUserStore(userDefaults: env.defaults).remember(accountB)
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .preservedUnavailable = open.route else { return XCTFail("expected .preservedUnavailable") }
+
+        XCTAssertNil(
+            env.model.visibleNativeSyncConflict,
+            "Account B must not see Account A's native sync conflict banner or sheet")
+        XCTAssertFalse(
+            env.model.isNativeLocalContentUnsaved(sessionHasPendingSave: false),
+            "Account B must not see Account A's unsaved local content status")
+
+        // Attempting Keep server (from UI helper or directly on coordinator) must leave Account A's work intact.
+        await open.resolveConflictKeepingServer(viewModel: env.model, isOffline: false, canUpdate: true)
+        XCTAssertFalse(env.model.saveCoordinator.resolveConflictKeepingServer(documentID: env.documentID))
+
+        XCTAssertNotNil(env.model.saveCoordinator.conflict(for: env.documentID))
+        let preservedDraft = try XCTUnwrap(env.model.saveCoordinator.storedDraft(documentID: env.documentID))
+        XCTAssertNotNil(preservedDraft.conflictServerUpdatedAt)
+        XCTAssertNotNil(try env.replicaStore.restore(for: aScope))
+        XCTAssertEqual(
+            env.model.saveCoordinator.nativeOwnership(documentID: env.documentID),
+            .owned(aScope))
+    }
+
+    func testNativeConflictKeepServerAbortsAndReportsWhenReplicaRemovalFails() async throws {
+        let env = makeEnvironment(autosaveInterval: .seconds(30))
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverTitle = "Base Title"
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        env.model.seedNativeMetadataIfNeeded()
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+
+        server.isOffline = true
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText("Local ")
+        await session.settle()
+        open.updateTitle("Local Title", viewModel: env.model)
+        open.flushPendingSave()
+        await waitUntil { self.isPendingSync(env.model.saveCoordinator.state(for: env.documentID)) }
+
+        let serverBlocks = [
+            BlockNoteBlock(node: "paragraph", props: [], runs: [InlineRun("Server won.")], id: Self.firstID)
+        ]
+        server.mutableState = BlockNoteYjs.encode(serverBlocks, clientID: Self.seedClientID)
+        server.serverUpdatedAt = "2026-11-08T12:00:00Z"
+        server.serverTitle = "Server Won Title"
+        server.serverContent = "Server won."
+        server.isOffline = false
+        await env.model.saveCoordinator.syncPendingDrafts()
+        XCTAssertNotNil(env.model.syncConflict)
+
+        let scope = try XCTUnwrap(env.model.saveCoordinator.nativeOwnership(documentID: env.documentID).scope)
+        let replicaDir = env.directory.appendingPathComponent("ReplicaDrafts")
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: replicaDir.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: replicaDir.path)
+        }
+
+        await open.resolveConflictKeepingServer(viewModel: env.model, isOffline: false, canUpdate: true)
+
+        XCTAssertNotNil(
+            env.model.syncConflict,
+            "failed replica removal must abort Keep Server and keep the conflict record")
+        XCTAssertNotNil(
+            env.model.saveCoordinator.storedDraft(documentID: env.documentID),
+            "failed replica removal must keep PendingDraft intact")
+        XCTAssertNotNil(try env.replicaStore.restore(for: scope), "replica files must remain intact")
+        XCTAssertEqual(env.model.title, "Local Title", "failed Keep Server must not install server metadata")
+        if case .failed = env.model.saveCoordinator.state(for: env.documentID) {
+            XCTAssertFalse(env.model.saveCoordinator.failureOffersRetry(for: env.documentID))
+        } else {
+            XCTFail("expected coordinator state to report .failed when replica discard failed")
+        }
+        XCTAssertNotNil(env.model.errorKey, "editor must report replica discard failure to user")
+    }
+
+    func testSeedNativeMetadataRequiresNonNilUserAndMatchingReplicaOwner() {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let cachedDate = Date(timeIntervalSince1970: 1_700_000_000)
+        DocumentContentCacheStore(directory: env.directory).save(
+            CachedDocumentContent(
+                documentID: env.documentID, title: "Cached Title", markdown: "Cached Body",
+                syncedAt: cachedDate))
+
+        // Stage a classic (replica == nil) PendingDraft.
+        PendingDraftStore(userDefaults: env.defaults).save(
+            PendingDraft(
+                documentID: env.documentID, title: "Stale Classic Draft Title", markdown: "Classic",
+                updatedAt: Date(), replica: nil))
+
+        // 1. Signed-out (currentUserID == nil): must not match classic draft (nil == nil).
+        SignedInUserStore(userDefaults: env.defaults).clear()
+        env.model.seedNativeMetadataIfNeeded()
+        XCTAssertNotEqual(env.model.title, "Stale Classic Draft Title")
+        XCTAssertEqual(env.model.lastSyncedAt, cachedDate)
+
+        // 2. Signed-in user: still must not match classic (replica == nil) draft in native seeding.
+        env.model.lastSyncedAt = nil
+        SignedInUserStore(userDefaults: env.defaults).remember(owner)
+        env.model.seedNativeMetadataIfNeeded()
+        XCTAssertNotEqual(env.model.title, "Stale Classic Draft Title")
+        XCTAssertEqual(env.model.lastSyncedAt, cachedDate)
+    }
+
+    func testNativeShellRegistersOpenEditorAndManagesSubpages() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let childID = UUID()
+        let server = ServerStub(owner: owner, state: seedState())
+        server.children = [
+            [
+                "id": childID.uuidString.lowercased(),
+                "title": "Existing child",
+                "excerpt": NSNull(),
+                "abilities": ["update": true],
+                "computed_link_reach": "restricted",
+                "computed_link_role": NSNull(),
+                "created_at": "2026-11-07T10:00:00Z",
+                "creator": NSNull(),
+                "depth": 2,
+                "link_role": "reader",
+                "link_reach": "restricted",
+                "numchild": 0,
+                "path": "00010001",
+                "updated_at": "2026-11-07T10:00:00Z",
+                "user_role": "owner",
+            ]
+        ]
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+
+        env.model.noteEditorAppeared()
+        XCTAssertTrue(env.model.saveCoordinator.hasOpenEditorForTesting(documentID: env.documentID))
+
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native = open.route else { return XCTFail("expected a native session") }
+
+        await env.model.loadChildren()
+        XCTAssertEqual(env.model.mergedSubpages?.map(\.id), [childID])
+
+        let created = await env.model.addSubpage()
+        XCTAssertNotNil(created)
+        XCTAssertEqual(env.model.mergedSubpages?.count, 2)
+    }
+
+    func testNativeModeHandoffTransitionsEditabilityAndClearsTransientState() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+        let input = try XCTUnwrap(session.input)
+
+        XCTAssertTrue(session.isWritable)
+        session.setEditing(false)
+        XCTAssertFalse(session.textView.isEditable, "Reading mode keeps textView non-editable")
+        XCTAssertFalse(input.canEditForTextDrop)
+        XCTAssertTrue(input.canToggleCheckbox)
+
+        session.setEditing(true)
+        XCTAssertTrue(session.textView.isEditable)
+        XCTAssertTrue(input.canEditForTextDrop)
+        XCTAssertTrue(input.canFormat)
+
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.textView.insertText("/")
+        _ = await session.settle()
+        XCTAssertEqual(input.slashMenuQuery, "")
+
+        session.setEditing(false)
+        XCTAssertFalse(session.textView.isEditable)
+        XCTAssertFalse(input.canEditForTextDrop)
+        XCTAssertNil(input.slashMenuQuery)
+        XCTAssertNil(input.activeInlineTrigger)
+        XCTAssertTrue(input.activeMarks.isEmpty)
+
+        session.setExpectedWritable(false)
+        XCTAssertFalse(session.isWritable)
+        XCTAssertFalse(input.canToggleCheckbox)
+        session.setEditing(true)
+        XCTAssertFalse(session.textView.isEditable)
+    }
+
+    func testNativeNewDocumentEntryConsumesFocusOnceAndClearsOnExit() {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let intent = NewDocumentEntryIntent()
+        let model = EditorViewModel(
+            client: env.model.client, documentID: env.documentID, title: "Untitled",
+            saveCoordinator: env.model.saveCoordinator, entryIntent: intent,
+            signedInUser: SignedInUserStore(userDefaults: env.defaults),
+            contentCache: DocumentContentCacheStore(directory: env.directory),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
+            listCache: DocumentCacheStore(userDefaults: env.defaults),
+            availability: OnlineAvailability(userDefaults: env.defaults))
+
+        XCTAssertFalse(model.consumeNativeNewDocumentEntryIfNeeded(canEdit: false))
+        XCTAssertTrue(model.consumeNativeNewDocumentEntryIfNeeded(canEdit: true))
+        XCTAssertFalse(model.consumeNativeInitialTitleFocus(isEditing: false, canEdit: true))
+        XCTAssertTrue(model.consumeNativeInitialTitleFocus(isEditing: true, canEdit: true))
+        XCTAssertFalse(model.consumeNativeInitialTitleFocus(isEditing: true, canEdit: true))
+
+        let secondIntent = NewDocumentEntryIntent()
+        let secondModel = EditorViewModel(
+            client: env.model.client, documentID: env.documentID, title: "Untitled",
+            saveCoordinator: env.model.saveCoordinator, entryIntent: secondIntent,
+            signedInUser: SignedInUserStore(userDefaults: env.defaults),
+            contentCache: DocumentContentCacheStore(directory: env.directory),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
+            listCache: DocumentCacheStore(userDefaults: env.defaults),
+            availability: OnlineAvailability(userDefaults: env.defaults))
+        XCTAssertTrue(secondModel.consumeNativeNewDocumentEntryIfNeeded(canEdit: true))
+        secondModel.clearNativeInitialTitleFocus()
+        XCTAssertFalse(secondModel.consumeNativeInitialTitleFocus(isEditing: true, canEdit: true))
+    }
+
+    // MARK: - R3-3 Checkpointed create classic fallback & scoping
+
+    func testCheckpointedCreateClassicFallbackIsReadOnlyAndBlocksLiveBridgeWrites() async throws {
+        let env = makeEnvironment(serverOrigin: "https://docs.example.org")
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverContent = "- [ ] Pending item\n\nBody text"
+        server.install()
+
+        let local = env.model.saveCoordinator.createLocalDocument(
+            title: "Offline doc", parentID: nil, ownerUserID: owner)
+        var record = try XCTUnwrap(env.creates.create(for: local.id))
+        record.syncedServerID = env.documentID
+        env.creates.save(record)
+        let model = env.relaunch()
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: model, isOffline: false, canUpdate: true)
+        guard case .classic = open.route else {
+            return XCTFail("checkpointed serverID without server replica must fall back to classic")
+        }
+
+        await model.load()
+        XCTAssertTrue(model.hasLoadedContent)
+        XCTAssertFalse(model.canStartEditing, "classic fallback over checkpointed create must be read-only")
+
+        model.startEditing()
+        XCTAssertFalse(model.isEditing)
+        XCTAssertEqual(model.mode, .reading)
+
+        let checklistID = try XCTUnwrap(model.blocks.first?.id)
+        model.toggleChecklist(blockID: checklistID)
+        XCTAssertEqual(model.blocks.first?.kind, .checklistItem(checked: false))
+        XCTAssertFalse(model.isDirty)
+        XCTAssertNil(env.drafts.draft(for: env.documentID))
+
+        XCTAssertFalse(
+            model.canEngageLiveEditing,
+            "classic fallback over checkpointed create must not engage live collaboration writes")
+        let provider = StubLiveReplicaProvider()
+        let bridge = LiveEditingBridge(
+            documentID: env.documentID, viewModel: model, collaboration: provider,
+            serverOrigin: model.client.serverOrigin,
+            remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler())
+        model.liveWrite = bridge
+        bridge.replicaDidChange()
+        XCTAssertFalse(bridge.isEngaged)
+        XCTAssertFalse(bridge.isHandlingLocalEditsLive)
+        XCTAssertFalse(bridge.forwardLocalEdit())
+        XCTAssertEqual(provider.applyLocalEditCount, 0)
+    }
+
+    func testHasCheckpointedCreateScopesToSignedInOwnerAndServerOrigin() async throws {
+        let env = makeEnvironment(serverOrigin: "https://docs.example.org")
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.install()
+
+        let local = env.model.saveCoordinator.createLocalDocument(
+            title: "Account A doc", parentID: nil, ownerUserID: owner)
+        var record = try XCTUnwrap(env.creates.create(for: local.id))
+        record.syncedServerID = env.documentID
+        env.creates.save(record)
+        let relaunchedA = env.relaunch()
+
+        XCTAssertTrue(relaunchedA.saveCoordinator.hasCheckpointedCreate(forServerID: env.documentID))
+
+        // Different signed-in user on the same device: A's checkpointed create must not block B.
+        let otherUser = UUID(uuidString: "99999999-9999-4999-8999-999999999999")!
+        SignedInUserStore(userDefaults: env.defaults).remember(otherUser)
+        XCTAssertFalse(relaunchedA.saveCoordinator.hasCheckpointedCreate(forServerID: env.documentID))
+
+        let otherServer = ServerStub(owner: otherUser, state: seedState())
+        otherServer.install()
+        let otherModel = env.relaunch()
+        await otherModel.load()
+        XCTAssertTrue(
+            otherModel.canStartEditing,
+            "another account must not be locked read-only by Account A's checkpointed create")
+
+        // Same owner, different server origin: must not match.
+        SignedInUserStore(userDefaults: env.defaults).remember(owner)
+        let otherOriginClient = DocsAPIClient(
+            baseURL: URL(string: "https://other.example.org/api/v1.0/")!,
+            session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let otherOriginCoordinator = DocumentSaveCoordinator(
+            client: otherOriginClient,
+            draftStore: PendingDraftStore(userDefaults: env.defaults),
+            replicaStore: env.replicaStore,
+            contentCache: DocumentContentCacheStore(directory: env.directory),
+            createStore: PendingDocumentCreateStore(userDefaults: env.defaults),
+            deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
+            attachmentStore: PendingAttachmentStore(
+                userDefaults: env.defaults, directory: env.directory.appendingPathComponent("attachments")),
+            listCache: DocumentCacheStore(userDefaults: env.defaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
+            serverOrigin: "https://other.example.org",
+            backgroundTasks: .noop)
+        XCTAssertFalse(otherOriginCoordinator.hasCheckpointedCreate(forServerID: env.documentID))
+    }
+
     // MARK: - Fixture
 
     private func manifestURL(_ env: Environment, _ scope: ReplicaScope) throws -> URL {
@@ -994,6 +1648,8 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         let directory: URL
         let ownership: ReplicaOwnershipStore
         let replicaStore: ReplicaStore
+        let drafts: PendingDraftStore
+        let creates: PendingDocumentCreateStore
         let documentID: UUID
         let makeModel: @MainActor () -> EditorViewModel
         var replicaDirectory: URL { directory.appendingPathComponent("ReplicaDrafts") }
@@ -1007,7 +1663,9 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
     }
 
     private func makeEnvironment(
-        autosaveInterval: Duration = .seconds(10), isLiveHeld: @escaping @MainActor (UUID) -> Bool = { _ in false }
+        autosaveInterval: Duration = .seconds(10),
+        serverOrigin: String = "",
+        isLiveHeld: @escaping @MainActor (UUID) -> Bool = { _ in false }
     ) -> Environment {
         MockURLProtocol.reset()
         let suite = "NativeEditorActivationTests.\(UUID())"
@@ -1031,7 +1689,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
                 attachmentStore: PendingAttachmentStore(
                     userDefaults: defaults, directory: directory.appendingPathComponent("attachments")),
                 listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: children,
-                backgroundTasks: .noop, isLiveReplicaHeld: isLiveHeld)
+                serverOrigin: serverOrigin, backgroundTasks: .noop, isLiveReplicaHeld: isLiveHeld)
             return EditorViewModel(
                 client: client, documentID: documentID, title: "List title", saveCoordinator: coordinator,
                 signedInUser: SignedInUserStore(userDefaults: defaults), contentCache: content,
@@ -1043,8 +1701,97 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         let ownership = ReplicaOwnershipStore(userDefaults: defaults)
         return Environment(
             model: model, defaults: defaults, suite: suite, directory: directory, ownership: ownership,
-            replicaStore: model.saveCoordinator.replicaStore, documentID: documentID, makeModel: makeModel)
+            replicaStore: model.saveCoordinator.replicaStore,
+            drafts: PendingDraftStore(userDefaults: defaults),
+            creates: PendingDocumentCreateStore(userDefaults: defaults),
+            documentID: documentID, makeModel: makeModel)
     }
+
+    /// Q2a: When `SignedInUserStore` has no signed-in user (`userID == nil`),
+    /// `hasCheckpointedCreate(forServerID:)` must fail closed (`true`) so pre-migration
+    /// editing cannot treat `serverID` as clean or open an editable replica.
+    func testHasCheckpointedCreateFailsClosedWhenSignedInUserUnknown() {
+        let env = makeEnvironment(serverOrigin: "https://docs.example.org")
+        defer { env.clean() }
+
+        let localDoc = env.model.saveCoordinator.createLocalDocument(
+            title: "Checkpointed Local", parentID: nil, ownerUserID: owner)
+        var record = env.creates.create(for: localDoc.id)!
+        record.syncedServerID = env.documentID
+        env.creates.save(record)
+
+        SignedInUserStore(userDefaults: env.defaults).clear()
+        let relaunched = env.relaunch()
+
+        XCTAssertTrue(
+            relaunched.saveCoordinator.hasCheckpointedCreate(forServerID: env.documentID),
+            "hasCheckpointedCreate must fail closed when signedInUser.userID is nil")
+    }
+
+    /// Q2b: `clearNativeOwnership(scope:)` must refuse to clear ownership while ANY account has a
+    /// checkpointed create for `scope.documentID` (`anyCheckpointedRecord == nil`), and must also
+    /// require the signed-in user to match `scope.ownerUserID`.
+    func testClearNativeOwnershipRequiresNoAnyCheckpointedCreateAndMatchingOwner() {
+        let env = makeEnvironment(serverOrigin: "https://docs.example.org")
+        defer { env.clean() }
+
+        let foreignOwner = UUID(uuidString: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")!
+        let origin = env.model.client.serverOrigin
+        let scopeA = ReplicaScope(serverOrigin: origin, ownerUserID: owner, org: "docs", documentID: env.documentID)
+        XCTAssertTrue(env.ownership.mark(scopeA))
+
+        // Foreign account holds a checkpointed create for the same serverID while `owner` is signed in.
+        let foreignLocal = env.model.saveCoordinator.createLocalDocument(
+            title: "Foreign Checkpointed", parentID: nil, ownerUserID: foreignOwner)
+        var record = env.creates.create(for: foreignLocal.id)!
+        record.syncedServerID = env.documentID
+        env.creates.save(record)
+        let relaunched = env.relaunch()
+
+        XCTAssertFalse(
+            relaunched.saveCoordinator.clearNativeOwnership(scope: scopeA),
+            "clearNativeOwnership must refuse when another account holds a checkpointed create for serverID")
+        XCTAssertEqual(
+            env.ownership.owner(documentID: env.documentID, serverOrigin: origin), .owned(scopeA))
+
+        // Once the checkpointed create clears, `clearNativeOwnership` still rejects mismatched owner scopes.
+        env.creates.remove(localID: foreignLocal.id)
+        let relaunchedAfterClear = env.relaunch()
+        let foreignScope = ReplicaScope(
+            serverOrigin: origin, ownerUserID: foreignOwner, org: "docs", documentID: UUID())
+        XCTAssertTrue(env.ownership.mark(foreignScope))
+        XCTAssertFalse(
+            relaunchedAfterClear.saveCoordinator.clearNativeOwnership(scope: foreignScope),
+            "clearNativeOwnership must refuse when signed-in user does not own scope")
+        XCTAssertEqual(
+            env.ownership.owner(documentID: foreignScope.documentID, serverOrigin: origin), .owned(foreignScope))
+    }
+}
+
+@MainActor
+private final class StubLiveReplicaProvider: LiveReplicaProviding {
+    var applyLocalEditCount = 0
+
+    func replicaVersion(for documentID: UUID) -> Int { 1 }
+    func initialSyncVersion(for documentID: UUID) -> Int { 1 }
+    func projectedReplica(for documentID: UUID, interlinkingOrigin: String?) -> ProjectedDocument? {
+        ProjectedDocument(
+            blocks: [
+                ProjectedBlock(
+                    id: "b1", node: "paragraph", props: [], runs: [InlineRun("Body text")], fidelity: .modeled)
+            ],
+            isFullyRenderable: true,
+            isFullyModeled: true)
+    }
+    func setReplicaObserver(_ observer: (() -> Void)?, for documentID: UUID) {}
+    func canWriteReplica(for documentID: UUID) -> Bool { true }
+    func applyLocalEdit(old: [BlockNoteBlock], new: [BlockNoteBlock], for documentID: UUID) throws -> Data {
+        applyLocalEditCount += 1
+        return Data([1])
+    }
+    func encodeSnapshotForSave(for documentID: UUID) -> Data? { Data([1]) }
+    func replicaIsFailSafe(for documentID: UUID) -> Bool { false }
+    func hasPendingStructs(for documentID: UUID) -> Bool { false }
 }
 
 /// A Docs 6 server: config, raw state, formatted export, `/users/me/`, the
@@ -1053,7 +1800,11 @@ private final class ServerStub: @unchecked Sendable {
     let log = RequestRecorder()
     private let lock = NSLock()
     private let owner: UUID
-    private let state: Data
+    private var _state: Data
+    private var _serverTitle = "Fresh server title"
+    private var _serverContent = "First paragraph."
+    private var _serverUpdatedAt = "2026-11-07T10:00:00Z"
+    private var _children: [[String: Any]] = []
     private var _isOffline = false
     private var _collaborationWsUrl: String?
     private var _canUpdate = true
@@ -1068,7 +1819,28 @@ private final class ServerStub: @unchecked Sendable {
 
     init(owner: UUID, state: Data) {
         self.owner = owner
-        self.state = state
+        self._state = state
+    }
+
+    var mutableState: Data {
+        get { locked { _state } }
+        set { locked { _state = newValue } }
+    }
+    var serverTitle: String {
+        get { locked { _serverTitle } }
+        set { locked { _serverTitle = newValue } }
+    }
+    var serverContent: String {
+        get { locked { _serverContent } }
+        set { locked { _serverContent = newValue } }
+    }
+    var serverUpdatedAt: String {
+        get { locked { _serverUpdatedAt } }
+        set { locked { _serverUpdatedAt = newValue } }
+    }
+    var children: [[String: Any]] {
+        get { locked { _children } }
+        set { locked { _children = newValue } }
     }
 
     var isOffline: Bool {
@@ -1149,18 +1921,50 @@ private final class ServerStub: @unchecked Sendable {
                     }
                     return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
                 }
-                let body = try! JSONSerialization.data(withJSONObject: ["doc": state.base64EncodedString()])
+                let body = try! JSONSerialization.data(withJSONObject: ["doc": mutableState.base64EncodedString()])
                 return .init(statusCode: 200, headers: json, body: body, error: nil, releasedBy: stateGate)
             }
             if url.contains("formatted-content") {
                 let id = request.url!.path.split(separator: "/").first { UUID(uuidString: String($0)) != nil }!
                 let object: [String: Any] = [
-                    "id": String(id), "title": "Fresh server title", "content": "First paragraph.",
-                    "created_at": "2026-11-07T10:00:00Z", "updated_at": "2026-11-07T10:00:00Z",
+                    "id": String(id), "title": serverTitle, "content": serverContent,
+                    "created_at": "2026-11-07T10:00:00Z", "updated_at": serverUpdatedAt,
                 ]
                 return .init(
                     statusCode: 200, headers: json, body: try! JSONSerialization.data(withJSONObject: object),
                     error: nil, releasedBy: contentGate)
+            }
+            if url.contains("/children/") {
+                if request.httpMethod == "POST" {
+                    let body =
+                        (try? JSONSerialization.jsonObject(with: bodyData(from: request) ?? Data()))
+                        as? [String: Any]
+                    let child: [String: Any] = [
+                        "id": UUID().uuidString.lowercased(),
+                        "title": (body?["title"] as? String) ?? "",
+                        "excerpt": NSNull(),
+                        "abilities": ["update": true],
+                        "computed_link_reach": "restricted",
+                        "computed_link_role": NSNull(),
+                        "created_at": serverUpdatedAt,
+                        "creator": NSNull(),
+                        "depth": 2,
+                        "link_role": "reader",
+                        "link_reach": "restricted",
+                        "numchild": 0,
+                        "path": "00010002",
+                        "updated_at": serverUpdatedAt,
+                        "user_role": "owner",
+                    ]
+                    locked { _children.append(child) }
+                    return .init(
+                        statusCode: 201, headers: json, body: try! JSONSerialization.data(withJSONObject: child),
+                        error: nil)
+                }
+                let page: [String: Any] = ["count": children.count, "results": children]
+                return .init(
+                    statusCode: 200, headers: json, body: try! JSONSerialization.data(withJSONObject: page),
+                    error: nil)
             }
             if request.httpMethod == "GET", url.hasSuffix("/"),
                 let id = url.split(separator: "/").last.flatMap({ UUID(uuidString: String($0)) })
@@ -1183,11 +1987,11 @@ private final class ServerStub: @unchecked Sendable {
                     break
                 }
                 let detail: [String: Any] = [
-                    "id": (detailID ?? id).uuidString.lowercased(), "title": "Fresh server title", "excerpt": NSNull(),
+                    "id": (detailID ?? id).uuidString.lowercased(), "title": serverTitle, "excerpt": NSNull(),
                     "abilities": ["update": canUpdate], "computed_link_reach": "restricted",
                     "computed_link_role": NSNull(), "created_at": "2026-11-07T10:00:00Z", "creator": NSNull(),
                     "depth": 1, "link_role": "reader", "link_reach": "restricted", "numchild": 0, "path": "0001",
-                    "updated_at": "2026-11-07T10:00:00Z", "user_role": "owner",
+                    "updated_at": serverUpdatedAt, "user_role": "owner",
                 ]
                 return .init(
                     statusCode: 200, headers: json, body: try! JSONSerialization.data(withJSONObject: detail),

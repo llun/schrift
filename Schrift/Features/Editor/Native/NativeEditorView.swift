@@ -35,6 +35,25 @@ struct NativeEditorView: View {
     var onOpenDocument: ((Document) -> Void)? = nil
     /// Shared page-link and `@` mention candidate source (PR13c2).
     var inlinePickerSource: NativeInlinePickerSource? = nil
+    /// Whether this view owns the navigation title and standalone toolbar (`--native-typing` / unit tests).
+    /// When false, `EditorView` owns the unified document chrome.
+    var showsStandaloneChrome = true
+    /// Optional header (`EditorDocumentHeader`) hosted in the text view's top content inset.
+    var headerContent: (() -> AnyView)? = nil
+    /// Optional footer (`subpagesSection`) hosted in the text view's bottom content inset.
+    var footerContent: (() -> AnyView)? = nil
+    /// Optional shell-owned outline state when hosted inside `EditorView`.
+    var externalOutlinePresented: Binding<Bool>? = nil
+    var externalOutlineFocusesFind: Binding<Bool>? = nil
+    var outlineShortcutEnabled = true
+    var outlineClosesOutline = false
+    var onOutlineAppear: (() -> Void)? = nil
+    var onOutlineDismiss: (() -> Void)? = nil
+    var onScrollInteraction: (() -> Void)? = nil
+    /// Shell-owned Reading ↔ Editing mode handoff (G04). When nil, defaults to `session.input != nil`.
+    var externalIsEditing: Bool? = nil
+    var onRequestEdit: (() -> Void)? = nil
+    var onExitEditing: (() -> Void)? = nil
     @Environment(LocalizationStore.self) private var loc
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -62,38 +81,158 @@ struct NativeEditorView: View {
     @State private var lastSource: NativeSourceRequest?
     @State private var uploads: NativeMediaUploads?
     @State private var linkCoordinator = NativeDocumentLinkCoordinator()
+    @State private var hidesCompletedChecklists = false
+    @State private var checklistSettling = ChecklistSettlingStore<String>()
+    @State private var checklistSettleTasks: [String: Task<Void, Never>] = [:]
+    @State private var revealFocusRequest = 0
+
+    private var canEditDocument: Bool {
+        session.input != nil && session.isWritable
+    }
+
+    private var isEditing: Bool {
+        externalIsEditing ?? (session.input != nil)
+    }
+
+    private var shouldShowReadingChecklistControls: Bool {
+        !isEditing && !session.hasUnsupportedRoot && session.surface.checklistSummary.hasChecklists
+    }
+
+    private var effectiveHeaderContent: (() -> AnyView)? {
+        guard headerContent != nil || shouldShowReadingChecklistControls else { return nil }
+        let baseHeader = headerContent
+        let showControls = shouldShowReadingChecklistControls
+        let hiddenCount = session.surface.checklistSummary.hiddenCompleted
+        return {
+            AnyView(
+                VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+                    if let baseHeader {
+                        baseHeader()
+                    }
+                    if showControls {
+                        ChecklistReadingControls(
+                            hidesCompleted: Binding(
+                                get: { hidesCompletedChecklists },
+                                set: { setHidesCompleted($0) }),
+                            hiddenCount: hiddenCount,
+                            revealFocusRequest: revealFocusRequest
+                        )
+                        .padding(.horizontal, EditorBlockMetrics.gutter)
+                    }
+                }
+            )
+        }
+    }
+
+    private var outlinePresentedBinding: Binding<Bool> {
+        externalOutlinePresented ?? $isPresentingOutline
+    }
+
+    private var outlineFocusesFindBinding: Binding<Bool> {
+        externalOutlineFocusesFind ?? $outlineFocusesFind
+    }
+
+    private var isOutlinePresented: Bool {
+        outlinePresentedBinding.wrappedValue
+    }
 
     var body: some View {
-        Group {
-            if session.hasUnsupportedRoot {
-                ContentUnavailableView(
-                    loc[.native_editor_preserved_title], systemImage: "doc.richtext",
-                    description: Text(loc[.native_editor_preserved_body]))
-            } else if session.surface.blocks.isEmpty {
-                ContentUnavailableView(
-                    loc[.editor_empty_title], systemImage: "doc.text",
-                    description: Text(loc[.editor_empty_body]))
+        let _ = session.presentationRevision
+        let checklistSummary = session.surface.checklistSummary
+        return Group {
+            if session.hasUnsupportedRoot || session.surface.blocks.isEmpty {
+                if headerContent != nil || footerContent != nil {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
+                            if let headerContent {
+                                headerContent()
+                            }
+                            if session.hasUnsupportedRoot {
+                                ContentUnavailableView(
+                                    loc[.native_editor_preserved_title], systemImage: "doc.richtext",
+                                    description: Text(loc[.native_editor_preserved_body]))
+                            } else {
+                                ContentUnavailableView(
+                                    loc[.editor_empty_title], systemImage: "doc.text",
+                                    description: Text(loc[.editor_empty_body]))
+                            }
+                            if let footerContent {
+                                footerContent()
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .scrollDismissesKeyboard(.interactively)
+                } else if session.hasUnsupportedRoot {
+                    ContentUnavailableView(
+                        loc[.native_editor_preserved_title], systemImage: "doc.richtext",
+                        description: Text(loc[.native_editor_preserved_body]))
+                } else {
+                    ContentUnavailableView(
+                        loc[.editor_empty_title], systemImage: "doc.text",
+                        description: Text(loc[.editor_empty_body]))
+                }
+            } else if !isEditing && checklistSummary.allBlocksHidden {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
+                        if let effectiveHeader = effectiveHeaderContent {
+                            effectiveHeader()
+                        }
+                        if let footerContent {
+                            footerContent()
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .scrollDismissesKeyboard(.interactively)
             } else {
                 NativeTextCanvas(
                     session: session, contentSize: uiContentSizeCategory(for: dynamicTypeSize),
                     labels: .document(loc),
-                    theme: theme, images: images, posters: posters, serverOrigin: serverOrigin, isOffline: isOffline,
+                    theme: theme, loc: loc, images: images, posters: posters, serverOrigin: serverOrigin,
+                    isOffline: isOffline,
                     uploads: uploads,
-                    onOpenTable: { openTable = NativeTableRequest(id: $0) },
-                    onOpenColumns: { openColumns = columnEditor($0) },
-                    onOpenMedia: { openMedia = NativeMediaRequest(id: $0) },
-                    onOpenSource: { openSource = $0 },
+                    onOpenTable: {
+                        requestEditIfWritable()
+                        openTable = NativeTableRequest(id: $0)
+                    },
+                    onOpenColumns: {
+                        requestEditIfWritable()
+                        openColumns = columnEditor($0)
+                    },
+                    onOpenMedia: {
+                        requestEditIfWritable()
+                        openMedia = NativeMediaRequest(id: $0)
+                    },
+                    onOpenSource: {
+                        requestEditIfWritable()
+                        openSource = $0
+                    },
                     uploadingBlocks: uploads?.uploadingBlocks ?? [], waitingUploads: uploads?.waitingBlocks ?? [],
                     failedUploads: uploads?.failedBlocks ?? [],
                     documentTitle: documentTitle,
                     onOpenDocument: { id, _ in openInlineDocument(id) },
-                    inlinePickerSource: inlinePickerSource
+                    inlinePickerSource: inlinePickerSource,
+                    headerContent: effectiveHeaderContent,
+                    footerContent: footerContent,
+                    onScrollInteraction: onScrollInteraction,
+                    onRequestEdit: {
+                        requestEditIfWritable()
+                    },
+                    onToggleCheckbox: { blockID in
+                        handleCheckboxToggle(blockID: blockID)
+                    }
                 )
                 .id(ObjectIdentifier(session))
             }
         }
         // Over the text, above the formatting bar's inset.
         .overlay(alignment: .bottom) { backToTopOffer }
+        .accessibilityActions {
+            if session.navigation.reading?.offersBackToTop == true {
+                Button(loc[.editor_back_to_top]) { session.navigation.backToTop() }
+            }
+        }
         .safeAreaInset(edge: .top) {
             if let preservedNotice {
                 Text(loc[preservedNotice])
@@ -123,7 +262,7 @@ struct NativeEditorView: View {
                         .padding()
                         .accessibilityIdentifier("nativeEditor.inputNotice")
                 }
-                if let input = session.input {
+                if let input = session.input, isEditing {
                     GlassEffectContainer(spacing: DocsSpacing.space2xs) {
                         VStack(spacing: 0) {
                             // The classic menu, offering only what this editor can apply;
@@ -226,16 +365,33 @@ struct NativeEditorView: View {
             guard let mediaQueue else { return }
             uploads = NativeMediaUploads(scope: uploadDocumentID == nil ? nil : session.scope, queue: mediaQueue)
         }
-        .nativeLinkEditing($linkTarget, input: session.input)
+        .nativeLinkEditing($linkTarget, input: isEditing ? session.input : nil)
+        .onChange(of: ObjectIdentifier(session), initial: true) { _, _ in
+            cancelAllSettleTasks()
+            checklistSettling.removeAll()
+            session.input?.onRequestLinkEdit = { linkTarget = $0 }
+            session.input?.onDone = { onExitEditing?() }
+            syncEditingAndChecklistPresentation(editing: isEditing, scrollSurvivor: false)
+        }
+        .onChange(of: isEditing, initial: false) { _, editing in
+            syncEditingAndChecklistPresentation(editing: editing, scrollSurvivor: true)
+        }
         .modifier(
             DocumentOutlinePresentation(
-                isPresented: $isPresentingOutline, focusesFind: outlineFocusesFind, documentTitle: title,
+                isPresented: outlinePresentedBinding, focusesFind: outlineFocusesFindBinding.wrappedValue,
+                documentTitle: title,
                 blocks: session.navigation.blocks, findShortcutTitle: loc[.outline_find_placeholder],
-                findShortcutEnabled: !session.hasUnsupportedRoot, closesOutline: false,
+                findShortcutEnabled: !session.hasUnsupportedRoot && outlineShortcutEnabled,
+                closesOutline: outlineClosesOutline,
                 onFindShortcut: { presentOutline(focusingFind: true) },
-                onScroll: { target in jump(target) }, onAppear: { session.navigation.isOutlinePresented = true },
+                onScroll: { target in jump(target) },
+                onAppear: {
+                    session.navigation.isOutlinePresented = true
+                    onOutlineAppear?()
+                },
                 onDismiss: {
                     session.navigation.isOutlinePresented = false
+                    onOutlineDismiss?()
                     if let jump = pendingColumnJump {
                         pendingColumnJump = nil
                         openColumns = columnEditor(jump.group, target: (jump.column, jump.block))
@@ -246,15 +402,21 @@ struct NativeEditorView: View {
                 onSelectHeading: { jump(.block($0)) },
                 onQueryMatch: { target in jump(target, deliberate: false) })
         )
+        .onChange(of: isOutlinePresented) { _, presented in
+            session.navigation.isOutlinePresented = presented
+            if presented {
+                Task { await session.navigation.refresh() }
+            }
+        }
         .task(id: ObjectIdentifier(session)) {
             // A result in a column opens the column editor at it; the sheet goes first.
             session.navigation.onOpenColumn = { [navigation = session.navigation] group, column, block in
                 // One editor at a time: a reply arriving while one is up (a card tap) is dropped.
                 guard openColumns == nil, pendingColumnJump == nil else { return navigation.columnEditorClosed() }
                 let jump = ColumnJump(group: group, column: column, block: block)
-                if isPresentingOutline {
+                if outlinePresentedBinding.wrappedValue {
                     pendingColumnJump = jump
-                    isPresentingOutline = false
+                    outlinePresentedBinding.wrappedValue = false
                 } else {
                     openColumns = columnEditor(group, target: (column, block))
                 }
@@ -278,36 +440,22 @@ struct NativeEditorView: View {
         .onChange(of: isOffline) { _, _ in
             session.input?.refreshInlinePicker()
         }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    presentOutline(focusingFind: false)
-                } label: {
-                    MaterialSymbol(.subject, size: 20, scales: false)
-                }
-                .accessibilityLabel(loc[.outline_title])
-                .accessibilityIdentifier("nativeEditor.outline")
-                .disabled(session.hasUnsupportedRoot)
-            }
-            // Collaborators on the scope's live socket (PR10); stale offline.
-            if let peers = session.awareness?.peers,
-                presentedPeerCount(peerCount: peers.count, isOffline: isOffline) != nil
-            {
-                ToolbarItem(placement: .topBarTrailing) {
-                    PresenceBar(peers: peers).accessibilityIdentifier("nativeEditor.presence")
-                }
-            }
-            if let saveStatus, saveStatus != .none {
-                ToolbarItem(placement: .topBarTrailing) {
-                    SaveStatusIndicator(
-                        display: saveStatus, failureDetail: saveFailureDetail,
-                        failureOffersRetry: saveFailureOffersRetry, onTap: onSave)
-                }
-            }
-        }
+        .modifier(
+            NativeStandaloneChromeModifier(
+                enabled: showsStandaloneChrome,
+                hasUnsupportedRoot: session.hasUnsupportedRoot,
+                title: title,
+                outlineTitle: loc[.outline_title],
+                peers: session.awareness?.peers,
+                isOffline: isOffline,
+                saveStatus: saveStatus,
+                saveFailureDetail: saveFailureDetail,
+                saveFailureOffersRetry: saveFailureOffersRetry,
+                onOutline: { presentOutline(focusingFind: false) },
+                onSave: onSave
+            )
+        )
         .background(theme.colors.surfacePage)
-        .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -345,8 +493,105 @@ extension NativeEditorView {
         )
     }
 
+    private func requestEditIfWritable() {
+        guard !isEditing, canEditDocument else { return }
+        onRequestEdit?()
+    }
+
+    private func syncEditingAndChecklistPresentation(editing: Bool, scrollSurvivor: Bool) {
+        session.setEditing(editing)
+        if editing {
+            cancelAllSettleTasks()
+            checklistSettling.removeAll()
+            _ = session.setChecklistPresentation(hidesCompleted: false, settlingIDs: [])
+        } else {
+            applyReadingChecklistPresentation(hidesCompleted: hidesCompletedChecklists, scrollSurvivor: scrollSurvivor)
+        }
+    }
+
+    private func setHidesCompleted(_ hides: Bool) {
+        if !hides {
+            cancelAllSettleTasks()
+            checklistSettling.removeAll()
+        }
+        hidesCompletedChecklists = hides
+        guard !isEditing else { return }
+        applyReadingChecklistPresentation(hidesCompleted: hides, scrollSurvivor: hides)
+    }
+
+    private func applyReadingChecklistPresentation(hidesCompleted: Bool, scrollSurvivor: Bool) {
+        let settlingIDs = hidesCompleted ? checklistSettling.ids : []
+        let anchorID = (hidesCompleted && scrollSurvivor) ? session.textView.topVisibleBlockID() : nil
+        let survivorID =
+            (hidesCompleted && scrollSurvivor)
+            ? session.surface.survivingVisibleBlockID(
+                around: anchorID, nextHidesCompleted: hidesCompleted, settlingIDs: settlingIDs)
+            : nil
+        let changed = session.setChecklistPresentation(hidesCompleted: hidesCompleted, settlingIDs: settlingIDs)
+        if changed, let survivorID {
+            session.textView.layoutIfNeeded()
+            _ = session.textView.scroll(toBlock: survivorID, surface: session.surface)
+        }
+    }
+
+    private func handleCheckboxToggle(blockID: String) {
+        guard !isEditing, hidesCompletedChecklists,
+            let position = session.surface.rangeIndex.position(for: blockID),
+            session.surface.blocks.indices.contains(position)
+        else {
+            _ = session.input?.toggleCheckbox(blockID: blockID)
+            return
+        }
+        let wasChecked = NativeTextSurface.isCheckedChecklist(session.surface.blocks[position])
+        guard !wasChecked else {
+            checklistSettleTasks.removeValue(forKey: blockID)?.cancel()
+            checklistSettling.cancel(blockID)
+            _ = session.setChecklistPresentation(hidesCompleted: true, settlingIDs: checklistSettling.ids)
+            _ = session.input?.toggleCheckbox(blockID: blockID)
+            return
+        }
+        checklistSettleTasks.removeValue(forKey: blockID)?.cancel()
+        let token = checklistSettling.begin(blockID)
+        _ = session.setChecklistPresentation(hidesCompleted: true, settlingIDs: checklistSettling.ids)
+        guard session.input?.toggleCheckbox(blockID: blockID) == true else {
+            checklistSettling.cancel(blockID)
+            _ = session.setChecklistPresentation(hidesCompleted: true, settlingIDs: checklistSettling.ids)
+            return
+        }
+        let delay = DocsMotion.checklistSettleDelay(reduceMotion: reduceMotion)
+        let targetSession = session
+        checklistSettleTasks[blockID] = Task { @MainActor in
+            if delay > .zero {
+                try? await Task.sleep(for: delay)
+            }
+            checklistSettleTasks.removeValue(forKey: blockID)
+            guard !Task.isCancelled, targetSession === session else { return }
+            guard checklistSettling.finish(blockID, token: token) else { return }
+            guard !isEditing, hidesCompletedChecklists else { return }
+            let anchorID = session.textView.topVisibleBlockID()
+            let survivorID = session.surface.survivingVisibleBlockID(
+                around: anchorID, nextHidesCompleted: true, settlingIDs: checklistSettling.ids)
+            let changed = session.setChecklistPresentation(
+                hidesCompleted: true, settlingIDs: checklistSettling.ids)
+            if changed {
+                revealFocusRequest &+= 1
+                if let survivorID {
+                    session.textView.layoutIfNeeded()
+                    _ = session.textView.scroll(toBlock: survivorID, surface: session.surface)
+                }
+            }
+        }
+    }
+
+    private func cancelAllSettleTasks() {
+        for task in checklistSettleTasks.values {
+            task.cancel()
+        }
+        checklistSettleTasks.removeAll()
+    }
+
     private func hasPresentedNavigationCover() -> Bool {
-        openTable != nil || openColumns != nil || openMedia != nil || openSource != nil || isPresentingOutline
+        openTable != nil || openColumns != nil || openMedia != nil || openSource != nil || isOutlinePresented
     }
 
     private func dismissNavigationCovers() {
@@ -356,7 +601,7 @@ extension NativeEditorView {
         openMedia = nil
         lastSource = nil
         openSource = nil
-        isPresentingOutline = false
+        outlinePresentedBinding.wrappedValue = false
         if let columns = openColumns {
             columns.close()
         }
@@ -364,9 +609,9 @@ extension NativeEditorView {
     }
 
     fileprivate func presentOutline(focusingFind: Bool) {
-        outlineFocusesFind = focusingFind
+        outlineFocusesFindBinding.wrappedValue = focusingFind
         session.navigation.isOutlinePresented = true
-        isPresentingOutline = true
+        outlinePresentedBinding.wrappedValue = true
         Task { await session.navigation.refresh() }
     }
 
@@ -616,11 +861,62 @@ extension NativeEditorLabels {
     }
 }
 
-private struct NativeTextCanvas: UIViewRepresentable {
+/// Keeps standalone chrome (outline toolbar item, presence bar, save status, inline navigation title)
+/// enabled only for direct `NativeEditorView` fixtures outside the `EditorView` document shell.
+private struct NativeStandaloneChromeModifier: ViewModifier {
+    let enabled: Bool
+    let hasUnsupportedRoot: Bool
+    let title: String
+    let outlineTitle: String
+    let peers: [CollaborationPeer]?
+    let isOffline: Bool
+    let saveStatus: SaveStatusDisplay?
+    let saveFailureDetail: String?
+    let saveFailureOffersRetry: Bool
+    let onOutline: () -> Void
+    let onSave: () -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: onOutline) {
+                            MaterialSymbol(.subject, size: 20, scales: false)
+                        }
+                        .accessibilityLabel(outlineTitle)
+                        .accessibilityIdentifier("nativeEditor.outline")
+                        .disabled(hasUnsupportedRoot)
+                    }
+                    // Collaborators on the scope's live socket (PR10); stale offline.
+                    if let peers, presentedPeerCount(peerCount: peers.count, isOffline: isOffline) != nil {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            PresenceBar(peers: peers).accessibilityIdentifier("nativeEditor.presence")
+                        }
+                    }
+                    if let saveStatus, saveStatus != .none {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            SaveStatusIndicator(
+                                display: saveStatus, failureDetail: saveFailureDetail,
+                                failureOffersRetry: saveFailureOffersRetry, onTap: onSave)
+                        }
+                    }
+                }
+                .navigationTitle(title)
+                .navigationBarTitleDisplayMode(.inline)
+        } else {
+            content
+        }
+    }
+}
+
+private struct NativeTextCanvas: UIViewControllerRepresentable {
     let session: NativeEditorSession
     let contentSize: UIContentSizeCategory
     let labels: NativeEditorLabels
     let theme: AppTheme
+    let loc: LocalizationStore
     let images: ImageLoader?
     let posters: VideoPosterLoader?
     let serverOrigin: String
@@ -636,19 +932,25 @@ private struct NativeTextCanvas: UIViewRepresentable {
     var documentTitle: (@MainActor (UUID) -> String?)? = nil
     var onOpenDocument: ((UUID, String) -> Void)? = nil
     var inlinePickerSource: NativeInlinePickerSource? = nil
+    var headerContent: (() -> AnyView)? = nil
+    var footerContent: (() -> AnyView)? = nil
+    var onScrollInteraction: (() -> Void)? = nil
+    var onRequestEdit: (() -> Void)? = nil
+    var onToggleCheckbox: ((String) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeUIView(context: Context) -> NativeTextView {
-        updatePresentation(context.coordinator)
-        return session.textView
+    func makeUIViewController(context: Context) -> NativeCanvasViewController {
+        let controller = NativeCanvasViewController(textView: session.textView)
+        updatePresentation(controller, coordinator: context.coordinator)
+        return controller
     }
 
-    func updateUIView(_ view: NativeTextView, context: Context) {
-        updatePresentation(context.coordinator)
+    func updateUIViewController(_ controller: NativeCanvasViewController, context: Context) {
+        updatePresentation(controller, coordinator: context.coordinator)
     }
 
-    private func updatePresentation(_ coordinator: Coordinator) {
+    private func updatePresentation(_ controller: NativeCanvasViewController, coordinator: Coordinator) {
         // Chrome only: neither reaches storage, so neither can write Yjs.
         session.textView.blockControls.theme = theme
         session.textView.blockControls.labels = labels
@@ -667,7 +969,13 @@ private struct NativeTextCanvas: UIViewRepresentable {
         session.textView.blockControls.waitingUploads = waitingUploads
         session.textView.blockControls.failedUploads = failedUploads
         session.textView.blockControls.documentTitle = documentTitle
+        session.textView.blockControls.onToggleCheckbox = onToggleCheckbox
+        session.textView.onRequestEdit = onRequestEdit
         session.navigation.documentTitle = documentTitle
+        controller.updateAccessories(
+            header: headerContent.map { AnyView($0().environment(\.docsTheme, theme).environment(loc)) },
+            footer: footerContent.map { AnyView($0().environment(\.docsTheme, theme).environment(loc)) },
+            onScrollInteraction: onScrollInteraction)
         coordinator.update(
             surface: session.surface, input: session.input, textView: session.textView,
             inlinePickerSource: inlinePickerSource,
@@ -698,7 +1006,7 @@ private struct NativeTextCanvas: UIViewRepresentable {
                     }
                 }
             }
-            // UIViewRepresentable may update while UIKit handles selection.
+            // UIViewControllerRepresentable may update while UIKit handles selection.
             // Unchanged inputs must never even request a storage reconciliation.
             guard surfaceChanged || self.presentation != presentation else { return }
             self.surface = surface
@@ -706,6 +1014,172 @@ private struct NativeTextCanvas: UIViewRepresentable {
             surface.updatePresentation(
                 traits: UITraitCollection(preferredContentSizeCategory: presentation.contentSize),
                 labels: presentation.labels)
+        }
+    }
+}
+
+/// Hosts `session.textView` as the single vertical scroll owner with optional header
+/// (`EditorDocumentHeader`) in `contentInset.top` and footer (`subpagesSection`) in `contentInset.bottom`.
+@MainActor
+private final class NativeCanvasViewController: UIViewController {
+    let textView: NativeTextView
+    private var headerHost: UIHostingController<AnyView>?
+    private var footerHost: UIHostingController<AnyView>?
+    private var onScrollInteraction: (() -> Void)?
+    private var didRegisterPanTarget = false
+    private var didApplyInitialHeaderOffset = false
+
+    init(textView: NativeTextView) {
+        self.textView = textView
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func loadView() {
+        let container = UIView()
+        container.backgroundColor = .clear
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(textView)
+        NSLayoutConstraint.activate([
+            textView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            textView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            textView.topAnchor.constraint(equalTo: container.topAnchor),
+            textView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        view = container
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        textView.onGeometry = { [weak self] in
+            self?.layoutAccessoryViews()
+        }
+        if !didRegisterPanTarget {
+            didRegisterPanTarget = true
+            textView.panGestureRecognizer.addTarget(self, action: #selector(handlePanGesture(_:)))
+        }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        layoutAccessoryViews()
+    }
+
+    func updateAccessories(header: AnyView?, footer: AnyView?, onScrollInteraction: (() -> Void)?) {
+        self.onScrollInteraction = onScrollInteraction
+        if let header {
+            let wrapped = AnyView(
+                header
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self) {
+                        $0.size.height
+                    } action: { [weak self] _, _ in
+                        Task { @MainActor [weak self] in self?.layoutAccessoryViews() }
+                    }
+            )
+            if let headerHost {
+                headerHost.rootView = wrapped
+            } else {
+                let host = UIHostingController(rootView: wrapped)
+                host.view.backgroundColor = .clear
+                addChild(host)
+                textView.addSubview(host.view)
+                host.didMove(toParent: self)
+                headerHost = host
+            }
+        } else if let headerHost {
+            headerHost.willMove(toParent: nil)
+            headerHost.view.removeFromSuperview()
+            headerHost.removeFromParent()
+            self.headerHost = nil
+        }
+        textView.headerAccessoryView = headerHost?.view
+
+        if let footer {
+            let wrapped = AnyView(
+                footer
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self) {
+                        $0.size.height
+                    } action: { [weak self] _, _ in
+                        Task { @MainActor [weak self] in self?.layoutAccessoryViews() }
+                    }
+            )
+            if let footerHost {
+                footerHost.rootView = wrapped
+            } else {
+                let host = UIHostingController(rootView: wrapped)
+                host.view.backgroundColor = .clear
+                addChild(host)
+                textView.addSubview(host.view)
+                host.didMove(toParent: self)
+                footerHost = host
+            }
+        } else if let footerHost {
+            footerHost.willMove(toParent: nil)
+            footerHost.view.removeFromSuperview()
+            footerHost.removeFromParent()
+            self.footerHost = nil
+        }
+        textView.footerAccessoryView = footerHost?.view
+
+        layoutAccessoryViews()
+    }
+
+    @objc private func handlePanGesture(_ recognizer: UIPanGestureRecognizer) {
+        if recognizer.state == .began {
+            onScrollInteraction?()
+        }
+    }
+
+    private func layoutAccessoryViews() {
+        let width = textView.bounds.width
+        guard width > 0 else { return }
+
+        let headerHeight: CGFloat
+        if let headerHost {
+            let fitted = headerHost.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude))
+            headerHeight = max(0, ceil(fitted.height))
+            let frame = CGRect(x: 0, y: -headerHeight, width: width, height: headerHeight)
+            if headerHost.view.frame != frame {
+                headerHost.view.frame = frame
+            }
+        } else {
+            headerHeight = 0
+        }
+
+        let footerHeight: CGFloat
+        if let footerHost {
+            let fitted = footerHost.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude))
+            footerHeight = max(0, ceil(fitted.height))
+            let contentHeight = max(0, textView.contentSize.height)
+            let frame = CGRect(x: 0, y: contentHeight, width: width, height: footerHeight)
+            if footerHost.view.frame != frame {
+                footerHost.view.frame = frame
+            }
+        } else {
+            footerHeight = 0
+        }
+
+        let targetInset = UIEdgeInsets(top: headerHeight, left: 0, bottom: footerHeight, right: 0)
+        if textView.contentInset != targetInset {
+            let previousAdjustedTop = textView.adjustedContentInset.top
+            let wasAtTop =
+                abs(textView.contentOffset.y + previousAdjustedTop) <= 1
+                || (!didApplyInitialHeaderOffset && abs(textView.contentOffset.y) <= 1)
+            textView.contentInset = targetInset
+            if headerHeight > 0, !textView.isDragging, !textView.isDecelerating, wasAtTop {
+                didApplyInitialHeaderOffset = true
+                textView.layoutIfNeeded()
+                textView.contentOffset.y = -textView.adjustedContentInset.top
+            }
+        } else if headerHeight > 0, !didApplyInitialHeaderOffset, !textView.isDragging, !textView.isDecelerating,
+            abs(textView.contentOffset.y) <= 1
+        {
+            didApplyInitialHeaderOffset = true
+            textView.contentOffset.y = -textView.adjustedContentInset.top
         }
     }
 }

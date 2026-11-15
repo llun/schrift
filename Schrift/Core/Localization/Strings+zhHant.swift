@@ -78,6 +78,7 @@ enum Strings_zhHant {
         .versions_offline_explanation: "連線時可以查看版本記錄。",
         .editor_offline_unavailable_title: "離線時無法使用",
         .editor_offline_open_online: "請先連線開啟此文件，以在此裝置上儲存副本。",
+        .editor_offline_read_only_native: "離線時唯讀 · 連線開啟以編輯",
         .search_error_quick: "無法載入快速存取。請再試一次。",
         .search_error_search: "搜尋失敗。請再試一次。",
 

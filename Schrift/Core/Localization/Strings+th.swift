@@ -80,6 +80,7 @@ enum Strings_th {
         .versions_offline_explanation: "ดูประวัติเวอร์ชันได้เมื่อออนไลน์",
         .editor_offline_unavailable_title: "ใช้งานแบบออฟไลน์ไม่ได้",
         .editor_offline_open_online: "เปิดเอกสารนี้ขณะออนไลน์ก่อนเพื่อบันทึกสำเนาบนอุปกรณ์นี้",
+        .editor_offline_read_only_native: "อ่านอย่างเดียวเมื่อออฟไลน์ · เปิดออนไลน์เพื่อแก้ไข",
         .search_error_quick: "โหลดการเข้าถึงด่วนไม่ได้ โปรดลองอีกครั้ง",
         .search_error_search: "ค้นหาไม่สำเร็จ โปรดลองอีกครั้ง",
 

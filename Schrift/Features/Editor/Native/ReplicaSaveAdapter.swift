@@ -160,12 +160,37 @@ final class ReplicaSaveAdapter {
 
     /// The full Yjs state of a verified raw revision. Read-only: this throwaway
     /// replica never authors, and the checkpoint is never a writer.
-    private static func fullState(_ restored: ReplicaRestore) throws -> Data {
+    static func fullState(_ restored: ReplicaRestore) throws -> Data {
         let doc = YDoc(clientID: 0)
         defer { doc.destroy() }
         try doc.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
         for update in restored.updates { try doc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote) }
         guard doc.store.pendingStructs == nil, doc.store.pendingDs == nil else { throw ReplicaStoreError.corrupt }
         return try YStateEncoder.encodeStateAsUpdate(doc)
+    }
+
+    /// Whether a verified replica holds only an empty document (no blocks beyond empty root
+    /// paragraphs and canonically empty Markdown shadow). Fails closed (`false`) on corrupt or
+    /// unprojectable blocks.
+    nonisolated static func isContentEmpty(_ restored: ReplicaRestore, interlinkingOrigin: String) -> Bool {
+        let doc = YDoc(clientID: 0)
+        defer { doc.destroy() }
+        do {
+            try doc.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
+            for update in restored.updates { try doc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote) }
+        } catch {
+            return false
+        }
+        guard doc.store.pendingStructs == nil, doc.store.pendingDs == nil else { return false }
+        let blocks = NativeBlockProjection.project(doc, nativeMarks: false, inlineObjects: true).blocks
+        guard
+            blocks.allSatisfy({
+                $0.depth == 0 && $0.block.node == "paragraph" && $0.block.runs.allSatisfy(\.text.isEmpty)
+            }),
+            let markdown = NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: interlinkingOrigin)
+        else {
+            return false
+        }
+        return syncCanonicalMarkdown(markdown).isEmpty
     }
 }

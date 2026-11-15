@@ -297,6 +297,38 @@ extension BlockNoteWriter {
         }
     }
 
+    /// Inserts a contentless `divider` block (`props: []`, no text child):
+    /// `replacing` replaces `item`'s paragraph element in place (preserving its
+    /// container id), otherwise a new container `blockID` goes after `item` in
+    /// `group`. When `paragraphID` is non-nil, inserts an empty trailing
+    /// paragraph after the divider in `group`. One transaction.
+    @discardableResult
+    func insertDivider(
+        at item: YItem, in group: YType, replacing: Bool, blockID: String, paragraphID: String?
+    ) throws -> Data {
+        guard case .type(let container) = item.content else {
+            throw Error.unsupportedBlockType("divider")
+        }
+        let element = children(container).first
+        return try transaction { tx in
+            let inserted: YItem
+            if replacing {
+                guard let element else { throw Error.malformedBlock(blockID) }
+                element.delete(tx)
+                _ = try insertCopy(tx, .element("divider", [], []), into: container, after: nil)
+                inserted = item
+            } else {
+                let copy = Copy.element("blockContainer", [("id", .string(blockID))], [.element("divider", [], [])])
+                inserted = try insertCopy(tx, copy, into: group, after: item)
+            }
+            guard let paragraphID else { return }
+            let paragraph = Copy.element(
+                "blockContainer", [("id", .string(paragraphID))],
+                [.element("paragraph", schemas["paragraph"] ?? [], [])])
+            _ = try insertCopy(tx, paragraph, into: group, after: inserted)
+        }
+    }
+
     /// Inserts one or more empty media blocks at `item` in `group` inside a
     /// single Yjs transaction.
     ///

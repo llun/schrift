@@ -27,6 +27,7 @@ final class NativeCursorOverlay: UIView {
         accessibilityIdentifier = "nativeEditor.cursorOverlay"
         // VoiceOver visits collaborators together, not between the text's controls.
         shouldGroupAccessibilityChildren = true
+        accessibilityElementsHidden = true
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -58,6 +59,7 @@ final class NativeCursorOverlay: UIView {
                 views.forEach { $0.removeFromSuperview() }
                 highlights[id] = nil
             }
+            accessibilityElementsHidden = carets.isEmpty && badges.isEmpty && highlights.isEmpty
         }
         guard let awareness, let surface, !awareness.places.isEmpty, let visible = visibleRange(textView)
         else { return }

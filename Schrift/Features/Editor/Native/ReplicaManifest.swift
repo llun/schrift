@@ -55,6 +55,10 @@ struct ReplicaManifest: Codable, Equatable, Sendable {
     var outbox: [UInt64]
     var httpAcknowledgedThrough: UInt64
     let projectionCacheVersion: Int
+    /// Optional-on-decode marker identifying the local-create `documentID` that migrated onto
+    /// this server replica, so migration only trusts an existing destination manifest as an
+    /// already-migrated partial completion when it came from that create.
+    var migratedFromLocalID: UUID? = nil
 }
 
 struct ReplicaRestore: Sendable {

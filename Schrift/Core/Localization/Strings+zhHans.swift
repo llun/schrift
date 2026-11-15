@@ -78,6 +78,7 @@ enum Strings_zhHans {
         .versions_offline_explanation: "在线时可以查看版本历史。",
         .editor_offline_unavailable_title: "离线时不可用",
         .editor_offline_open_online: "请先在线打开此文档，以在此设备上保存副本。",
+        .editor_offline_read_only_native: "离线时只读 · 在线打开以编辑",
         .search_error_quick: "无法加载快速访问。请重试。",
         .search_error_search: "搜索失败。请重试。",
 

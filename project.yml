@@ -148,6 +148,11 @@ targets:
         excludes:
           - App/SchriftApp.swift
       - path: SchriftUITests/Support/NativeEditorTestHostApp.swift
+    info:
+      path: Generated/NativeTestHost-Info.plist
+      properties:
+        UIAppFonts:
+          - MaterialSymbolsOutlined-Icons.ttf
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.llun.Schrift.NativeTestHost

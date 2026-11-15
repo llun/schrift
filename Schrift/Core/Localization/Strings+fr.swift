@@ -81,6 +81,7 @@ enum Strings_fr {
         .versions_offline_explanation: "L’historique des versions est disponible en ligne.",
         .editor_offline_unavailable_title: "Indisponible hors ligne",
         .editor_offline_open_online: "Ouvrez d’abord ce document en ligne pour enregistrer une copie sur cet appareil.",
+        .editor_offline_read_only_native: "Lecture seule hors ligne · ouvrez en ligne pour modifier",
         .search_error_quick: "Impossible de charger l’accès rapide. Veuillez réessayer.",
         .search_error_search: "Échec de la recherche. Veuillez réessayer.",
 

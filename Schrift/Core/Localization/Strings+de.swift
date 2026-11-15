@@ -84,6 +84,7 @@ enum Strings_de {
         .editor_offline_unavailable_title: "Offline nicht verfügbar",
         .editor_offline_open_online:
             "Öffne dieses Dokument zuerst online, um eine Kopie auf diesem Gerät zu speichern.",
+        .editor_offline_read_only_native: "Offline schreibgeschützt · zum Bearbeiten online öffnen",
         .search_error_quick: "Schnellzugriff konnte nicht geladen werden. Bitte versuche es erneut.",
         .search_error_search: "Suche fehlgeschlagen. Bitte versuche es erneut.",
 

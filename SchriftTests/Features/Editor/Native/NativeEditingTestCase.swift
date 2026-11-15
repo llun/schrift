@@ -167,7 +167,8 @@ class NativeEditingTestCase: DocumentEngineTestCase {
     /// `localCommands` commands were journaled, and the journal replays to the
     /// surface. Nothing froze.
     func assertConsistent(
-        _ harness: Harness, localCommands: Int, file: StaticString = #filePath, line: UInt = #line
+        _ harness: Harness, localCommands: Int, expectedEditable: Bool = true,
+        file: StaticString = #filePath, line: UInt = #line
     ) async throws {
         await harness.settle()
         let session = harness.session
@@ -189,7 +190,7 @@ class NativeEditingTestCase: DocumentEngineTestCase {
         XCTAssertEqual(session.surface.blocks, try replay(harness), "replay equals the surface", file: file, line: line)
         let failed = await harness.engine { $0.nativeWriteFailed }
         XCTAssertEqual(failed, false, file: file, line: line)
-        XCTAssertTrue(session.textView.isEditable, file: file, line: line)
+        XCTAssertEqual(session.textView.isEditable, expectedEditable, file: file, line: line)
     }
 
     func replay(_ harness: Harness) throws -> [BlockSnapshot] {

@@ -54,6 +54,7 @@ enum L10nKey: String, CaseIterable, Sendable {
     case versions_offline_explanation = "versions.offline.explanation"
     case editor_offline_unavailable_title = "editor.offline.unavailable_title"
     case editor_offline_open_online = "editor.offline.open_online"
+    case editor_offline_read_only_native = "editor.offline.read_only_native"
     case search_error_quick = "search.error.quick"  // "Couldn't load quick access. Please try again."
     case search_error_search = "search.error.search"  // "Search failed. Please try again."
 

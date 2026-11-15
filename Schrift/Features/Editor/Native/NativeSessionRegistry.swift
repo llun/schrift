@@ -111,6 +111,9 @@ final class NativeSessionRegistry {
         else { return false }
         entry.isWritable = journal != nil
         replica.mailbox.post(.setWritable(journal))
+        for surface in entry.surfaces {
+            surface.setExpectedWritable(entry.isWritable)
+        }
         return true
     }
 

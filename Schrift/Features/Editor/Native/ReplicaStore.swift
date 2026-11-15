@@ -47,6 +47,7 @@ final class ReplicaStore: Sendable {
     /// Throwing at a boundary models a process interruption. No catch rewinds
     /// an already switched manifest; the next operation reads disk afresh.
     private let interrupt: (@Sendable (Operation, Boundary) throws -> Void)?
+    private let coordinatorHasUnsyncedMetadata = Mutex<(@Sendable (UUID) -> Bool)?>(nil)
 
     init(
         directory: URL? = nil, ownershipStore: ReplicaOwnershipStore? = nil,
@@ -58,6 +59,38 @@ final class ReplicaStore: Sendable {
             .appendingPathComponent("dev.llun.Schrift/ReplicaDrafts", isDirectory: true)
         self.ownershipStore = ownershipStore
         self.interrupt = interrupt
+    }
+
+    /// Registers the coordinator's check for unsynced `UserDefaults` / in-memory metadata
+    /// keyed by `documentID`, so `ReplicaStore` never excludes a folder from backup while
+    /// backup-included coordinator records still depend on it.
+    func setCoordinatorHasUnsyncedMetadata(_ predicate: @escaping @Sendable (UUID) -> Bool) {
+        coordinatorHasUnsyncedMetadata.withLock { $0 = predicate }
+    }
+
+    private func isCoordinatorDirty(_ documentID: UUID) -> Bool {
+        coordinatorHasUnsyncedMetadata.withLock { $0?(documentID) } ?? false
+    }
+
+    private func canExcludeFromBackupLocked(manifest: ReplicaManifest, folder: URL) -> Bool {
+        guard manifest.outbox.isEmpty,
+            isProvisionalCleanLocked(in: folder, committed: Set(manifest.journal.map(\.commandID)))
+        else { return false }
+        return !isCoordinatorDirty(manifest.scope.documentID)
+    }
+
+    /// Re-evaluates `isExcludedFromBackup` for `scope` after coordinator metadata changes.
+    func refreshBackupExclusion(for scope: ReplicaScope) {
+        Self.io.withLock { _ in
+            guard let folder = try? folder(for: scope) else { return }
+            guard let manifest = try? readManifest(for: scope) else {
+                if fileManager.fileExists(atPath: folder.path) {
+                    setBackupExcluded(false, on: folder)
+                }
+                return
+            }
+            setBackupExcluded(canExcludeFromBackupLocked(manifest: manifest, folder: folder), on: folder)
+        }
     }
 
     /// The durable owner marker's answer, failing closed when the marker data is
@@ -237,8 +270,233 @@ final class ReplicaStore: Sendable {
             formatVersion: ReplicaManifest.currentFormat, scope: scope, generation: UUID(), revision: 0,
             checkpointSequence: 0, checkpoint: file, journal: [], outbox: [], httpAcknowledgedThrough: 0,
             projectionCacheVersion: 1)
+        setBackupExcluded(canExcludeFromBackupLocked(manifest: manifest, folder: folder), on: folder)
         try switchManifest(manifest, in: folder, operation: .create)
         return manifest
+    }
+
+    /// Copies a verified replica cleanly from `sourceScope` to `destinationScope`
+    /// (preserving generation, revision, checkpoint, journal, outbox, and provisional
+    /// entries) and marks `destinationScope` ownership without removing `sourceScope`.
+    /// Idempotent when `destinationScope` already holds a valid replica.
+    @MainActor
+    func copyReplica(from sourceScope: ReplicaScope, to destinationScope: ReplicaScope) throws -> ReplicaManifest {
+        try Self.io.withLock { _ in try copyReplicaLocked(from: sourceScope, to: destinationScope) }
+    }
+
+    @MainActor
+    private func copyReplicaLocked(from sourceScope: ReplicaScope, to destinationScope: ReplicaScope) throws
+        -> ReplicaManifest
+    {
+        if let existing = try readManifest(for: destinationScope) {
+            guard try restoreLocked(for: destinationScope) != nil else { throw ReplicaStoreError.corrupt }
+            guard ownershipStore?.mark(destinationScope) ?? true else { throw ReplicaStoreError.ownershipUnavailable }
+            return existing
+        }
+        guard let sourceManifest = try readManifest(for: sourceScope) else { throw ReplicaStoreError.missingReplica }
+        let sourceFolder = try folder(for: sourceScope)
+        let checkpointBytes = try readPayload(sourceManifest.checkpoint, for: sourceScope)
+        var journalPayloads: [(entry: ReplicaJournalEntry, bytes: Data)] = []
+        journalPayloads.reserveCapacity(sourceManifest.journal.count)
+        for entry in sourceManifest.journal {
+            journalPayloads.append((entry, try readPayload(entry.file, for: sourceScope)))
+        }
+        let provisionalFile = sourceFolder.appendingPathComponent("provisional.json")
+        var provisionalBytes: Data?
+        if fileManager.fileExists(atPath: provisionalFile.path) {
+            let bytes = try Data(contentsOf: provisionalFile)
+            guard (try? JSONDecoder().decode([ProvisionalRecovery].self, from: bytes)) != nil else {
+                throw ReplicaStoreError.corrupt
+            }
+            provisionalBytes = bytes
+        }
+        let committed = Set(sourceManifest.journal.map(\.commandID))
+        let destinationIsClean =
+            sourceManifest.outbox.isEmpty
+            && isProvisionalCleanLocked(in: sourceFolder, committed: committed)
+            && !isCoordinatorDirty(destinationScope.documentID)
+
+        guard ownershipStore?.mark(destinationScope) ?? true else { throw ReplicaStoreError.ownershipUnavailable }
+        let destinationFolder = try folder(for: destinationScope)
+        try ensureDirectory(destinationFolder)
+        var root = directory
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = false
+        try root.setResourceValues(values)
+        setBackupExcluded(destinationIsClean, on: destinationFolder)
+
+        try writeAtomicPayload(
+            checkpointBytes, to: try payloadURL(sourceManifest.checkpoint, in: destinationFolder), in: destinationFolder
+        )
+        if !journalPayloads.isEmpty {
+            let journalDir = destinationFolder.appendingPathComponent("Journal", isDirectory: true)
+            try ensureDirectory(journalDir)
+            for (entry, bytes) in journalPayloads {
+                try writeAtomicPayload(bytes, to: try payloadURL(entry.file, in: destinationFolder), in: journalDir)
+            }
+            try syncDirectory(journalDir)
+        }
+        if let provisionalBytes {
+            try writeAtomicPayload(
+                provisionalBytes, to: destinationFolder.appendingPathComponent("provisional.json"),
+                in: destinationFolder)
+        }
+        try syncDirectory(destinationFolder)
+
+        let destinationManifest = ReplicaManifest(
+            formatVersion: sourceManifest.formatVersion, scope: destinationScope,
+            generation: sourceManifest.generation, revision: sourceManifest.revision,
+            checkpointSequence: sourceManifest.checkpointSequence, checkpoint: sourceManifest.checkpoint,
+            journal: sourceManifest.journal, outbox: sourceManifest.outbox,
+            httpAcknowledgedThrough: sourceManifest.httpAcknowledgedThrough,
+            projectionCacheVersion: sourceManifest.projectionCacheVersion)
+        try switchManifest(destinationManifest, in: destinationFolder, operation: .create)
+        return destinationManifest
+    }
+
+    /// Promotes a locally-created replica onto `destinationScope` with an empty `(0, 0)`
+    /// checkpoint and the complete Yjs `fullState` as sequence 1 in `outbox`, so the first
+    /// `PATCH` to the fresh server YDoc sends every initial and edited struct atomically.
+    @MainActor
+    func migrateLocalReplica(
+        from sourceScope: ReplicaScope, to destinationScope: ReplicaScope, fullState: Data
+    ) throws -> ReplicaManifest {
+        try Self.io.withLock { _ in
+            try migrateLocalReplicaLocked(from: sourceScope, to: destinationScope, fullState: fullState)
+        }
+    }
+
+    @MainActor
+    private func migrateLocalReplicaLocked(
+        from sourceScope: ReplicaScope, to destinationScope: ReplicaScope, fullState: Data
+    ) throws -> ReplicaManifest {
+        guard let sourceManifest = try readManifest(for: sourceScope) else { throw ReplicaStoreError.missingReplica }
+        _ = try restoreLocked(for: sourceScope)
+        let sourceFolder = try folder(for: sourceScope)
+        let provisionalFile = sourceFolder.appendingPathComponent("provisional.json")
+        var provisionalBytes: Data?
+        if fileManager.fileExists(atPath: provisionalFile.path) {
+            let bytes = try Data(contentsOf: provisionalFile)
+            guard (try? JSONDecoder().decode([ProvisionalRecovery].self, from: bytes)) != nil else {
+                throw ReplicaStoreError.corrupt
+            }
+            provisionalBytes = bytes
+        }
+
+        let destinationFolder = try folder(for: destinationScope)
+        var replacedObsoleteFiles: [ReplicaFile] = []
+        var removeStaleProvisional = false
+        if let existing = try readManifest(for: destinationScope) {
+            guard let existingRestore = try restoreLocked(for: destinationScope) else {
+                throw ReplicaStoreError.corrupt
+            }
+            if isMigratedDestinationLocked(existing, restore: existingRestore, from: sourceScope, fullState: fullState)
+            {
+                guard ownershipStore?.mark(destinationScope) ?? true else {
+                    throw ReplicaStoreError.ownershipUnavailable
+                }
+                return existing
+            }
+            let committed = Set(existing.journal.map(\.commandID))
+            guard existing.outbox.isEmpty,
+                isProvisionalCleanLocked(in: destinationFolder, committed: committed),
+                ReplicaSaveAdapter.isContentEmpty(existingRestore, interlinkingOrigin: destinationScope.serverOrigin)
+            else {
+                throw ReplicaStoreError.alreadyExists
+            }
+            replacedObsoleteFiles = [existing.checkpoint] + existing.journal.map(\.file)
+            removeStaleProvisional =
+                provisionalBytes == nil
+                && fileManager.fileExists(atPath: destinationFolder.appendingPathComponent("provisional.json").path)
+        }
+
+        guard ownershipStore?.mark(destinationScope) ?? true else { throw ReplicaStoreError.ownershipUnavailable }
+        try ensureDirectory(destinationFolder)
+        var root = directory
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = false
+        try root.setResourceValues(values)
+        setBackupExcluded(false, on: destinationFolder)
+
+        let checkpointFile = try writePayload(Data([0, 0]), in: destinationFolder, journal: false, operation: .create)
+        let entryFile = try writePayload(fullState, in: destinationFolder, journal: true, operation: .create)
+        if let provisionalBytes {
+            try writeAtomicPayload(
+                provisionalBytes, to: destinationFolder.appendingPathComponent("provisional.json"),
+                in: destinationFolder)
+        }
+        try syncDirectory(destinationFolder)
+
+        let entry = ReplicaJournalEntry(sequence: 1, commandID: UUID(), origin: .local, file: entryFile)
+        let destinationManifest = ReplicaManifest(
+            formatVersion: ReplicaManifest.currentFormat, scope: destinationScope,
+            generation: UUID(), revision: 1, checkpointSequence: 0, checkpoint: checkpointFile,
+            journal: [entry], outbox: [1], httpAcknowledgedThrough: 0,
+            projectionCacheVersion: sourceManifest.projectionCacheVersion,
+            migratedFromLocalID: sourceScope.documentID)
+        try switchManifest(destinationManifest, in: destinationFolder, operation: .create)
+        if !replacedObsoleteFiles.isEmpty || removeStaleProvisional {
+            let retained = Set([checkpointFile.name, entryFile.name])
+            for obsolete in replacedObsoleteFiles where !retained.contains(obsolete.name) {
+                if let url = try? payloadURL(obsolete, in: destinationFolder) {
+                    try? fileManager.removeItem(at: url)
+                }
+            }
+            if removeStaleProvisional {
+                try? fileManager.removeItem(at: destinationFolder.appendingPathComponent("provisional.json"))
+            }
+            try? syncDirectory(destinationFolder)
+        }
+        return destinationManifest
+    }
+
+    private func isMigratedDestinationLocked(
+        _ existing: ReplicaManifest, restore: ReplicaRestore, from sourceScope: ReplicaScope, fullState: Data
+    ) -> Bool {
+        if let marker = existing.migratedFromLocalID {
+            return marker == sourceScope.documentID
+        }
+        return restore.checkpoint == Data([0, 0])
+            && existing.journal.first?.file.digest == replicaDigest(fullState)
+    }
+
+    private func writeAtomicPayload(_ bytes: Data, to destination: URL, in folder: URL) throws {
+        let temporary = folder.appendingPathComponent("\(UUID().uuidString).pending")
+        try writeFlushed(bytes, to: temporary)
+        try renameFile(temporary, to: destination)
+    }
+
+    /// Removes only clean, valid replicas for the leaving account/origin that have
+    /// no unsent outbox, no uncommitted provisional recovery text, and no protected
+    /// document ids (`keepingDocumentIDs`). Dirty, provisional, conflicted, or
+    /// unreadable replicas stay untouched with backup enabled.
+    @MainActor
+    func purgeCleanReplicas(serverOrigin: String, ownerUserID: UUID, keepingDocumentIDs: Set<UUID>) {
+        Self.io.withLock { _ in
+            removeTombstones()
+            for entry in replicaFolders() {
+                switch read(folder: entry) {
+                case .uncommitted:
+                    continue
+                case .unreadable:
+                    setBackupExcluded(false, on: entry)
+                case .manifest(let manifest):
+                    guard manifest.scope.serverOrigin == serverOrigin,
+                        manifest.scope.ownerUserID == ownerUserID
+                    else { continue }
+                    let committed = Set(manifest.journal.map(\.commandID))
+                    let provisionalClean = isProvisionalCleanLocked(in: entry, committed: committed)
+                    guard !keepingDocumentIDs.contains(manifest.scope.documentID),
+                        manifest.outbox.isEmpty,
+                        provisionalClean
+                    else {
+                        setBackupExcluded(false, on: entry)
+                        continue
+                    }
+                    try? removeLocked(for: manifest.scope)
+                }
+            }
+        }
     }
 
     /// A successful return is the durability boundary. The caller must not
@@ -269,6 +527,7 @@ final class ReplicaStore: Sendable {
             throw ReplicaStoreError.staleRevision
         }
         let folder = try folder(for: scope)
+        if origin == .local { setBackupExcluded(false, on: folder) }
         let file = try writePayload(update, in: folder, journal: true, operation: .append)
         manifest.revision += 1
         manifest.journal.append(
@@ -335,15 +594,21 @@ final class ReplicaStore: Sendable {
         let folder = try folder(for: scope)
         let file = folder.appendingPathComponent("provisional.json")
         if entries.isEmpty {
-            guard fileManager.fileExists(atPath: file.path) else { return }
-            try fileManager.removeItem(at: file)
-        } else {
-            let temporary = folder.appendingPathComponent("\(UUID().uuidString).pending")
-            try writeFlushed(
-                JSONEncoder().encode(entries), to: temporary,
-                afterWrite: { try self.interrupt?(.provisional, .payloadWritten) })
-            try renameFile(temporary, to: file)
+            if fileManager.fileExists(atPath: file.path) {
+                try fileManager.removeItem(at: file)
+                try syncDirectory(folder)
+            }
+            if let manifest = try? readManifest(for: scope) {
+                setBackupExcluded(canExcludeFromBackupLocked(manifest: manifest, folder: folder), on: folder)
+            }
+            return
         }
+        setBackupExcluded(false, on: folder)
+        let temporary = folder.appendingPathComponent("\(UUID().uuidString).pending")
+        try writeFlushed(
+            JSONEncoder().encode(entries), to: temporary,
+            afterWrite: { try self.interrupt?(.provisional, .payloadWritten) })
+        try renameFile(temporary, to: file)
         try syncDirectory(folder)
     }
 
@@ -392,7 +657,9 @@ final class ReplicaStore: Sendable {
         }
         manifest.outbox.removeFirst(remaining.count)
         manifest.httpAcknowledgedThrough = remaining.last!
-        try switchManifest(manifest, in: folder(for: batch.scope), operation: .acknowledge)
+        let scopeFolder = try folder(for: batch.scope)
+        try switchManifest(manifest, in: scopeFolder, operation: .acknowledge)
+        setBackupExcluded(canExcludeFromBackupLocked(manifest: manifest, folder: scopeFolder), on: scopeFolder)
     }
 
     /// Snapshot bytes must represent exactly `baseRevision`. This is an
@@ -599,6 +866,7 @@ final class ReplicaStore: Sendable {
     /// only remaining manifest or segment. The durable marker makes the hold
     /// sticky. Recovery is explicit future work; never automatically clear it.
     private func quarantine(in folder: URL, damaged: URL?) throws {
+        setBackupExcluded(false, on: folder)
         let recovery = folder.appendingPathComponent("Recovery", isDirectory: true)
         try ensureDirectory(recovery)
         for source in [folder.appendingPathComponent("manifest.json"), damaged].compactMap({ $0 }) {
@@ -645,6 +913,22 @@ final class ReplicaStore: Sendable {
         guard descriptor >= 0 else { throw posixError() }
         defer { Darwin.close(descriptor) }
         guard Darwin.fsync(descriptor) == 0 else { throw posixError() }
+    }
+
+    private func setBackupExcluded(_ excluded: Bool, on folder: URL) {
+        var target = folder
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = excluded
+        try? target.setResourceValues(values)
+    }
+
+    private func isProvisionalCleanLocked(in folder: URL, committed: Set<UUID>) -> Bool {
+        let file = folder.appendingPathComponent("provisional.json")
+        guard fileManager.fileExists(atPath: file.path) else { return true }
+        guard let bytes = try? Data(contentsOf: file),
+            let entries = try? JSONDecoder().decode([ProvisionalRecovery].self, from: bytes)
+        else { return false }
+        return entries.allSatisfy { committed.contains($0.commandID) }
     }
 
     private func posixError() -> NSError { NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
