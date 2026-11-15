@@ -623,5 +623,8 @@ enum L10nKey: String, CaseIterable, Sendable {
     case account_language_footer = "account.language_footer"
     // Transient confirmation toast
     case toast_link_copied = "toast.link_copied"  // "Link copied"
+    case profile_native_editor_diagnostics_collect = "profile.native_editor_diagnostics_collect"  // "Collect native editor diagnostics"
+    case profile_native_editor_diagnostics = "profile.native_editor_diagnostics"  // "Copy native editor diagnostics"
+    case toast_diagnostics_copied = "toast.diagnostics_copied"  // "Diagnostics copied"
     // (screen-specific keys are added by B9, B11, Phase C, Phase F)
 }

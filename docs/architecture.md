@@ -1188,6 +1188,43 @@ document, column, and table cell surfaces resolves the target document, dismisse
 cover, and pushes without writing to the document (`@mention` taps are no-ops; autocomplete pickers
 and `blockID` scroll targets arrive in PR13c2).
 
+**PR15 Native shell integration, Reading↔Editing mode handoff, shortcuts, and diagnostics.**
+`EditorView` keeps `NativeEditorPreference.key` (`"schrift.nativeEditor"`) off by default and routes
+`.loading`, `.native`, and `.preservedUnavailable` through `NativeDocumentShellView` while keeping
+`.classic` on `ClassicEditorView`. `NativeDocumentShellView` unifies the production chrome across
+both surfaces (`EditorLoadingPlaceholder`, `EditorBannerStack`, toolbar leading `PagesTreeDrawer` +
+edge pan, trailing `Edit`/`Done` + `Share` + `OptionsSheetView` + `OutlinePresentationGate` /
+`OutlineHeldNavigation`, `ConflictSheetView`, `pendingDeleteNotice`, and `noteEditorAppeared()`).
+`NativeTextView` remains the **sole vertical `UIScrollView`** so TextKit 2 viewport virtualization
+is preserved: `EditorDocumentHeader` and Reading-mode `ChecklistReadingControls` sit in a measured
+`headerAccessoryView` (`contentInset.top`), and `subpagesSection` sits in `footerAccessoryView`
+(`contentInset.bottom`). Existing native documents open in Reading mode (`textView.isEditable = false`,
+formatting bar hidden) over the same `NativeEditorSession` and `NativeTextSurface`, transitioning
+to Editing mode on toolbar `Edit`, tapping writable text, tapping writable cards/sources, or
+consuming a new-document `entryIntent` (focusing the header title once); `Done` or `⌘Return`
+commits marked text, flushes pending saves, resigns first responder, and returns to Reading.
+In Reading mode, `NativeTextSurface.setChecklistPresentation(hidesCompleted:settlingIDs:)` extends
+`refreshFolding()`'s presentation-only hiding to conceal checked `checkListItem` blocks and deeper
+descendants (`block.depth > hiddenChecklistDepth`) with zero Yjs writes, using a 450 ms
+`ChecklistSettlingStore` grace period (0 ms under Reduce Motion), next-survivor scroll anchoring,
+and the all-hidden reading empty state with "Show completed" and VoiceOver reveal focus.
+`NativeTextView` enables hardware shortcuts (`⌘B`, `⌘I`, `⌘U`, `⇧⌘X`, `⌘E`, `⌘K`) and Edit-menu
+formatting actions when `canFormat` is true (staying disabled inside `mathBlock`/`diagram`/`inlineMath`
+source buffers), adds `/divider` and `---`/`***`/`___` + Return via `insertDivider`, attaches the
+localized `BackToTop` accessibility action on `NativeEditorView`, and orders auxiliary subviews
+top-to-bottom in `orderAuxiliarySubviews()` without altering TextKit's text element or `headingRotor`.
+`NativeEditorDiagnosticsStore` (`Logger(subsystem: "dev.llun.Schrift", category: "NativeEditor")`
++ `OSSignposter`) instruments ten pipeline stages (`diskRestore`, `decodeIntegrate`, `projection`,
+`storageApply`, `firstVisibleContent`, `timeToEdit`, `inputToDisplay`, `mailboxQueueWait`,
+`remoteMerge`, `checkpointCompact`), workload metrics, surface work counters, and Mach
+`task_vm_info` `phys_footprint` samples into a bounded in-memory ring (256 samples / 32 sessions,
+active only when both the native editor switch and the separate default-off **Collect native editor
+diagnostics** toggle are enabled — cached in memory via an atomic flag — or forced in
+`NativeEditorTestHostApp` via `setForcedCollection(true)`, cleared on every account change with a
+`minSessionSeq` floor, and emitting zero document content, titles, IDs, or server hosts). See
+[`native-editor-acceptance.md`](native-editor-acceptance.md) for the acceptance protocol and
+measured simulator results.
+
 **PR06d Subtree commands and the lossless clipboard.** A block menu (the formatting
 bar's first button, a Block submenu in the long-press edit menu, and VoiceOver custom
 actions on the text view) acts on the caret's block and its whole subtree: Move up, Move
@@ -2896,6 +2933,7 @@ Static assets (logo, illustrations, doc-type icons) are copied from the handoff'
 - Unit tests for the on-device Markdown→Yjs encoder (`Core/Yjs` — `YjsEncoderTests`, `MarkdownYjsTests`, `InlineMarkdownTests`, verifying valid Yjs-v1 update bytes) and for the save flow (`DocumentSaveTests` / `DocumentSaveCoordinator*Tests`, verifying `saveDocumentContent` issues `PATCH /content/` then `PATCH /{id}/` for the title; `CollaborationYDocSaveClientTests` for the Docs 6 route choice and request shapes, with `BlockNoteIncrementalSaveTests`/`BlockNoteAlignmentTests` checking at the document level that the incremental update makes the served state read exactly like the saved markdown).
 - `BlockNote056*Tests` inline eight yjs 13.6.33 / BlockNote 0.56 captures from the phase 0 S3 spike (the editing-scenario harness, not object storage), checking seed XML and every incremental edit (17 steps) with nothing pending.
   These tests hold XML and update bytes only; the captures' text deltas are not committed yet. B2's cursor positions are pinned separately by `YRelativePositionTests` (relative positions captured from yjs 13.6.33).
+- `NativeEditorAcceptanceTests` and `SchriftNativeUITests` (`NativeEditorUITests`, including `--native-diagnostics` and the `CADisplayLink` `--native-scroll-sampler` S2 sweep) cover whole-family round-trips, default-off rollback, classic non-regression, offline local-create replica migration, mode handoff, memory reclamation, clean-replica sign-out, and bounded work counters — see [`native-editor-acceptance.md`](native-editor-acceptance.md).
 - SwiftUI Previews for every DesignSystem component, serving as the visual QA catalog (mirrors the handoff's `*.card.html` files).
 - No live integration tests against docs.llun.dev in CI — it's a personal server; verify manually against it during development instead.
 

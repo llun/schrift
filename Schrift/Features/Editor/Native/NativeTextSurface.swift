@@ -43,6 +43,8 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     private(set) var attachmentGeometry = NativeAttachmentGeometry()
     private var pendingAttachmentWidth: CGFloat?
     private var pendingGeometryRefresh = false
+    /// PR15: Diagnostics session sequence for surface work counters & storage timings.
+    var sessionSeq: UInt64 = 0
     /// An image URL's remembered aspect ratio (the image loader's), consulted
     /// when attachment geometry is computed or refreshed.
     var aspectRatio: (@MainActor (String) -> CGFloat?)?
@@ -186,7 +188,13 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
                 applyPatch(plain)
                 return
             }
-            confirm(stamp.commandID, patch: patch)
+            let seq = sessionSeq
+            NativeEditorDiagnosticsStore.shared.measure(.storageApply, sessionSeq: seq, itemCount: 1) {
+                confirm(stamp.commandID, patch: patch)
+            }
+            NativeEditorDiagnosticsStore.shared.mutateCounters(sessionSeq: seq) {
+                $0.textPatchCount += 1
+            }
             return
         }
         if patch.origin == .localUser, let stamp = patch.nativeCommand {
@@ -198,10 +206,24 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
             }
             lastNativeStamp = stamp
         }
+        let seq = sessionSeq
+        let storageToken = NativeEditorDiagnosticsStore.shared.beginInterval(.storageApply)
+        var textCount = 0
+        var blockCount = 0
+        var resetCount = 0
         var foldChanged = false
         // Defers run in reverse: storage ends editing before the callback.
         defer {
             isApplyingPatch = false
+            NativeEditorDiagnosticsStore.shared.endInterval(
+                .storageApply, token: storageToken, sessionSeq: seq, itemCount: patch.changes.count)
+            if textCount > 0 || blockCount > 0 || resetCount > 0 {
+                NativeEditorDiagnosticsStore.shared.mutateCounters(sessionSeq: seq) {
+                    $0.textPatchCount += textCount
+                    $0.blockPatchCount += blockCount
+                    $0.fullStorageRebuildCount += resetCount
+                }
+            }
             if foldChanged { onFoldChange?() }
             onPatchApplied?(patch)
         }
@@ -212,6 +234,11 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
         var renumbers = false
         for change in patch.changes {
             if case .text = change {} else { renumbers = true }
+            switch change {
+            case .text: textCount += 1
+            case .props, .replaceBlock, .insert, .remove: blockCount += 1
+            case .reset: resetCount += 1
+            }
             switch change {
             case .text(let id, let deltas):
                 guard let position = rangeIndex.position(for: id) else { continue }
@@ -681,13 +708,20 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     }
 
     private func applyPresentation(_ traits: UITraitCollection, labels: NativeEditorLabels) {
-        presentation = NativeTextPresentation(contentSize: traits.preferredContentSizeCategory, labels: labels)
-        self.traits = traits
-        attachmentGeometry = geometry(width: attachmentGeometry.width)
-        rangeIndex = ProjectionRangeIndex(blocks: blocks, labels: labels)
-        storage.setAttributedString(
-            AttributedDocumentProjection.attributedString(
-                blocks: blocks, traits: traits, labels: labels, geometry: attachmentGeometry))
+        let seq = sessionSeq
+        NativeEditorDiagnosticsStore.shared.measure(.storageApply, sessionSeq: seq, itemCount: blocks.count) {
+            presentation = NativeTextPresentation(contentSize: traits.preferredContentSizeCategory, labels: labels)
+            self.traits = traits
+            attachmentGeometry = geometry(width: attachmentGeometry.width)
+            rangeIndex = ProjectionRangeIndex(blocks: blocks, labels: labels)
+            storage.setAttributedString(
+                AttributedDocumentProjection.attributedString(
+                    blocks: blocks, traits: traits, labels: labels, geometry: attachmentGeometry))
+        }
+        NativeEditorDiagnosticsStore.shared.mutateCounters(sessionSeq: seq) {
+            $0.presentationRestyleCount += 1
+            $0.fullStorageRebuildCount += 1
+        }
     }
 
     /// Character-level equality with the model's display (O(document); only
@@ -705,6 +739,7 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
     /// otherwise everything. Never during a composition: marked text owns storage then.
     func restoreStorage(blockID: String? = nil) {
         guard !holdsComposition else { return }
+        let seq = sessionSeq
         // UIKit changed only this block's slice, so the length difference is
         // all inside it. Anything else falls back to a full rebuild.
         let delta = storage.length - rangeIndex.length
@@ -712,13 +747,20 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
             rangeIndex.entries[position].range.length + delta >= 0
         {
             let entry = rangeIndex.entries[position]
-            storage.replaceCharacters(
-                in: NSRange(location: entry.range.location, length: entry.range.length + delta),
-                with: rendered(blocks[position], at: position))
+            NativeEditorDiagnosticsStore.shared.measure(.storageApply, sessionSeq: seq, itemCount: 1) {
+                storage.replaceCharacters(
+                    in: NSRange(location: entry.range.location, length: entry.range.length + delta),
+                    with: rendered(blocks[position], at: position))
+            }
         } else {
-            storage.setAttributedString(
-                AttributedDocumentProjection.attributedString(
-                    blocks: blocks, traits: traits, labels: labels, geometry: attachmentGeometry))
+            NativeEditorDiagnosticsStore.shared.measure(.storageApply, sessionSeq: seq, itemCount: blocks.count) {
+                storage.setAttributedString(
+                    AttributedDocumentProjection.attributedString(
+                        blocks: blocks, traits: traits, labels: labels, geometry: attachmentGeometry))
+            }
+            NativeEditorDiagnosticsStore.shared.mutateCounters(sessionSeq: seq) {
+                $0.fullStorageRebuildCount += 1
+            }
         }
     }
 
@@ -890,8 +932,17 @@ final class NativeTextSurface: @preconcurrency EditorSurface {
 
     private func restyleAttachments(positions: [Int]) {
         guard !positions.isEmpty else { return }
+        let seq = sessionSeq
+        let token = NativeEditorDiagnosticsStore.shared.beginInterval(.storageApply)
         isApplyingPatch = true
-        defer { isApplyingPatch = false }
+        defer {
+            isApplyingPatch = false
+            NativeEditorDiagnosticsStore.shared.endInterval(
+                .storageApply, token: token, sessionSeq: seq, itemCount: positions.count)
+            NativeEditorDiagnosticsStore.shared.mutateCounters(sessionSeq: seq) {
+                $0.presentationRestyleCount += 1
+            }
+        }
         storage.beginEditing()
         for position in positions {
             let range = rangeIndex.entries[position].range

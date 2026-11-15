@@ -193,6 +193,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// typed text carries. Nothing is written until text is typed, and a
     /// selection change drops it.
     @ObservationIgnored private var pendingTypingMarks: [TextMark]?
+    /// PR15: Key/command entry timestamps (nanoseconds) for end-to-end `inputToDisplay`.
+    @ObservationIgnored private var pendingInputStarts: [UUID: UInt64] = [:]
     /// The active keyboard's language; a seam so tests can stand in for a
     /// composing keyboard the simulator may not have.
     @ObservationIgnored var inputLanguage: () -> String? = { nil }
@@ -613,10 +615,26 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 }
             }
             if case .stale(let id)? = delivery.result {
+                if !pendingInputStarts.isEmpty {
+                    pendingInputStarts.removeValue(forKey: id)
+                }
                 staleAfterDrain.append(id)
             } else if let result = delivery.result {
+                let inputStartNs =
+                    pendingInputStarts.isEmpty
+                    ? nil : result.commandID.flatMap { pendingInputStarts.removeValue(forKey: $0) }
                 let shownBefore = (surface.shownDeltas.count, surface.shownReplaced, surface.shownRetexted)
                 handle(result, selection: delivery.selection)
+                if case .applied = result, let inputStartNs, NativeEditorDiagnosticsStore.shared.isCollecting {
+                    let seq = surface.sessionSeq
+                    CATransaction.begin()
+                    CATransaction.setCompletionBlock {
+                        let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds &- inputStartNs) / 1_000_000.0
+                        NativeEditorDiagnosticsStore.shared.recordDuration(
+                            .inputToDisplay, durationMs: elapsedMs, sessionSeq: seq)
+                    }
+                    CATransaction.commit()
+                }
                 // A rollback or a reconciliation the result caused is shown
                 // too: a barrier still in flight maps through it.
                 if barrier != nil, surface.shownDeltas.count > shownBefore.0 || surface.shownReplaced != shownBefore.1 {
@@ -1016,7 +1034,16 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// authoring rather than lose input silently.
     private func post(_ message: ReplicaMessage) -> Bool {
         guard !isDetached else { return false }
+        let trackedCommandID: UUID?
+        if case .command(let cmd) = message, NativeEditorDiagnosticsStore.shared.isCollecting {
+            if pendingInputStarts.count >= 128 { pendingInputStarts.removeAll(keepingCapacity: true) }
+            pendingInputStarts[cmd.command.id] = DispatchTime.now().uptimeNanoseconds
+            trackedCommandID = cmd.command.id
+        } else {
+            trackedCommandID = nil
+        }
         guard replica.mailbox.post(message) else {
+            if let trackedCommandID { pendingInputStarts.removeValue(forKey: trackedCommandID) }
             stopAfterStorageFailure()
             return false
         }
@@ -3286,6 +3313,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// The session closed: nothing more is posted.
     func detach() {
         isDetached = true
+        pendingInputStarts.removeAll(keepingCapacity: false)
         let dropped = barrier?.onSettled
         barrier = nil
         intents = []

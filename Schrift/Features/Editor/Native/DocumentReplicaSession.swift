@@ -70,6 +70,9 @@ actor DocumentReplicaSession {
         var columnGroup: ColumnGroup? = nil
         /// A source surface's kind when it attached (PR14); nil otherwise.
         var sourceKind: NativeSourceKind? = nil
+        /// PR15: Diagnostics session sequence & initial replica workload snapshot.
+        var diagnosticsSeq: UInt64 = 0
+        var initialWorkload: ReplicaWorkloadMetrics? = nil
     }
 
     /// Unseen changes a surface keeps for rebasing (the "remote ring").
@@ -89,6 +92,7 @@ actor DocumentReplicaSession {
     private let store: ReplicaStore?
     private let scope: ReplicaScope?
     private let interlinkingOrigin: String?
+    nonisolated let diagnosticsSeq: UInt64
     private var journal: Journal?
     private let hooks: Hooks
     private let hasUnsupportedRoot: Bool
@@ -147,18 +151,35 @@ actor DocumentReplicaSession {
         freshClientID: Bool, interlinkingOrigin: String? = nil, makeReplica: @Sendable () -> YDoc, hooks: Hooks
     ) throws {
         let resolvedOrigin = interlinkingOrigin ?? scope?.serverOrigin
-        let graph = try Self.build(
-            state: state, updates: updates, revision: revision, durable: store != nil, freshClientID: freshClientID,
-            interlinkingOrigin: resolvedOrigin, makeReplica: makeReplica)
-        hasUnsupportedRoot = graph.hasUnsupportedRoot
-        canType = graph.canType
-        self.doc = graph.doc
-        self.sink = graph.sink
-        self.engine = graph.engine
-        self.store = store
-        self.scope = scope
-        self.interlinkingOrigin = resolvedOrigin
-        self.hooks = hooks
+        let seq = NativeEditorDiagnosticsStore.shared.beginSession()
+        do {
+            let graph = try Self.build(
+                state: state, updates: updates, revision: revision, durable: store != nil, freshClientID: freshClientID,
+                interlinkingOrigin: resolvedOrigin, diagnosticsSeq: seq, makeReplica: makeReplica)
+            hasUnsupportedRoot = graph.hasUnsupportedRoot
+            canType = graph.canType
+            self.doc = graph.doc
+            self.sink = graph.sink
+            self.engine = graph.engine
+            self.store = store
+            self.scope = scope
+            self.interlinkingOrigin = resolvedOrigin
+            self.diagnosticsSeq = seq
+            self.hooks = hooks
+            if NativeEditorDiagnosticsStore.shared.isCollecting {
+                let metrics = Self.computeWorkloadMetrics(
+                    doc: graph.doc,
+                    blockCount: graph.blockCount,
+                    mediaBlockCount: graph.mediaBlockCount,
+                    rawBytes: state.count,
+                    store: store,
+                    scope: scope)
+                NativeEditorDiagnosticsStore.shared.recordWorkload(metrics, sessionSeq: seq)
+            }
+        } catch {
+            NativeEditorDiagnosticsStore.shared.endSession(seq)
+            throw error
+        }
     }
 
     private struct Graph {
@@ -167,16 +188,25 @@ actor DocumentReplicaSession {
         let sink: ReplicaPatchSink
         let hasUnsupportedRoot: Bool
         let canType: Bool
+        let blockCount: Int
+        let mediaBlockCount: Int
     }
 
     private static func build(
         state: Data, updates: [Data], revision: UInt64, durable: Bool, freshClientID: Bool,
-        interlinkingOrigin: String? = nil, makeReplica: () -> YDoc
+        interlinkingOrigin: String? = nil, diagnosticsSeq: UInt64 = 0, makeReplica: () -> YDoc
     ) throws -> Graph {
         let doc = makeReplica()
+        let totalInputBytes =
+            NativeEditorDiagnosticsStore.shared.isCollecting
+            ? state.count + updates.reduce(0) { $0 + $1.count } : 0
         do {
-            try doc.applyUpdate(YUpdateDecoder.decode(state), origin: .remote)
-            for update in updates { try doc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote) }
+            try NativeEditorDiagnosticsStore.shared.measure(
+                .decodeIntegrate, sessionSeq: diagnosticsSeq, byteCount: totalInputBytes, itemCount: 1 + updates.count
+            ) {
+                try doc.applyUpdate(YUpdateDecoder.decode(state), origin: .remote)
+                for update in updates { try doc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote) }
+            }
             if !updates.isEmpty || freshClientID {
                 guard doc.store.pendingStructs == nil, doc.store.pendingDs == nil else {
                     throw ReplicaStoreError.corrupt
@@ -193,7 +223,9 @@ actor DocumentReplicaSession {
             doc.destroy()
             throw error
         }
-        let projected = NativeBlockProjection.project(doc)
+        let projected = NativeEditorDiagnosticsStore.shared.measure(.projection, sessionSeq: diagnosticsSeq) {
+            NativeBlockProjection.project(doc)
+        }
         let sink = ReplicaPatchSink()
         let engine = DocumentEngine(doc: doc, surface: sink, revision: revision)
         sink.engine = engine
@@ -203,6 +235,16 @@ actor DocumentReplicaSession {
             // delivery's state says so and the surface stops authoring.
             engine.onUnjournaledTransaction = {}
         }
+        let mediaCount: Int
+        if NativeEditorDiagnosticsStore.shared.isCollecting {
+            mediaCount = projected.blocks.reduce(into: 0) { count, snapshot in
+                if MediaBlock.schemas[snapshot.block.node] != nil {
+                    count += 1
+                }
+            }
+        } else {
+            mediaCount = 0
+        }
         // Marks never make the native projection lossy (raw Yjs write-back
         // keeps them all); the Markdown shadow is the one `ReplicaSaveAdapter`
         // captures, which drops what Markdown cannot spell.
@@ -210,7 +252,31 @@ actor DocumentReplicaSession {
             doc: doc, engine: engine, sink: sink,
             hasUnsupportedRoot: projected.blocks.isEmpty && !projected.isFullyRenderable,
             canType: projected.isFullyModeled
-                && NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) != nil)
+                && NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) != nil,
+            blockCount: projected.blocks.count,
+            mediaBlockCount: mediaCount)
+    }
+
+    private static func computeWorkloadMetrics(
+        doc: YDoc, blockCount: Int, mediaBlockCount: Int, rawBytes: Int, store: ReplicaStore?, scope: ReplicaScope?
+    ) -> ReplicaWorkloadMetrics {
+        var structCount = 0
+        var tombstoneCount = 0
+        for list in doc.store.clients.values {
+            structCount += list.structs.count
+            for item in list.structs where item.deleted {
+                tombstoneCount += 1
+            }
+        }
+        let manifest = store.flatMap { store in scope.flatMap { try? store.manifest(for: $0) } }
+        return ReplicaWorkloadMetrics(
+            rawBytes: rawBytes,
+            yjsStructCount: structCount,
+            tombstoneCount: tombstoneCount,
+            blockCount: blockCount,
+            mediaBlockCount: mediaBlockCount,
+            journalSegmentCount: manifest?.journal.count ?? 0,
+            outboxSegmentCount: manifest?.outbox.count ?? 0)
     }
 
     /// An in-memory replica of `state` (no journal until `setWritable`).
@@ -295,7 +361,8 @@ actor DocumentReplicaSession {
         let recoveries = store.flatMap { store in scope.map { store.provisionalRecoveries(for: $0) } } ?? []
         return Attachment(
             blocks: projection(for: blockID), revision: engine.revision, hasUnsupportedRoot: hasUnsupportedRoot,
-            canType: canType, recoveries: recoveries, state: state, deliveries: stream, grid: grid)
+            canType: canType, recoveries: recoveries, state: state, deliveries: stream, grid: grid,
+            diagnosticsSeq: diagnosticsSeq)
     }
 
     /// A surface's whole projection: the document, a table's paragraphs, a
@@ -392,7 +459,11 @@ actor DocumentReplicaSession {
 
     private func run() async {
         for await message in mailbox.stream {
-            mailbox.took()
+            let collecting = NativeEditorDiagnosticsStore.shared.isCollecting
+            if let waitMs = mailbox.tookMeasuringWaitMs(collecting: collecting), collecting {
+                NativeEditorDiagnosticsStore.shared.recordDuration(
+                    .mailboxQueueWait, durationMs: waitMs, sessionSeq: diagnosticsSeq)
+            }
             guard !isClosed else {
                 message.cancel()
                 continue
@@ -400,6 +471,17 @@ actor DocumentReplicaSession {
             await hooks.beforeMessage?()
             hooks.onReplicaWork?()
             handle(message)
+            if collecting, diagnosticsSeq != 0 {
+                switch message {
+                case .command, .compositionCommit, .integrate, .setWritable:
+                    let depth = history?.undoDepth ?? 0
+                    NativeEditorDiagnosticsStore.shared.mutateCounters(sessionSeq: diagnosticsSeq) {
+                        $0.undoDepth = depth
+                    }
+                default:
+                    break
+                }
+            }
             reportCursor()
         }
     }
@@ -710,7 +792,11 @@ actor DocumentReplicaSession {
                 update: update,
                 apply: {
                     applied = true
-                    try doc.applyUpdate(decoded, origin: .remote)
+                    try NativeEditorDiagnosticsStore.shared.measure(
+                        .decodeIntegrate, sessionSeq: diagnosticsSeq, byteCount: update.count, itemCount: 1
+                    ) {
+                        try doc.applyUpdate(decoded, origin: .remote)
+                    }
                     guard doc.store.pendingStructs == nil, doc.store.pendingDs == nil else {
                         throw ReplicaStoreError.corrupt
                     }
@@ -740,8 +826,16 @@ actor DocumentReplicaSession {
     /// document that is only read still compacts (the HTTP ack compacts too).
     private func compactIfNeeded() {
         guard let store, let scope, remoteAppends >= ReplicaSaveAdapter.compactionJournalThreshold,
-            !engine.nativeWriteFailed, let checkpoint = try? YStateEncoder.encodeStateAsUpdate(doc)
+            !engine.nativeWriteFailed
         else { return }
+        let token = NativeEditorDiagnosticsStore.shared.beginInterval(.checkpointCompact)
+        var byteCount = 0
+        defer {
+            NativeEditorDiagnosticsStore.shared.endInterval(
+                .checkpointCompact, token: token, sessionSeq: diagnosticsSeq, byteCount: byteCount)
+        }
+        guard let checkpoint = try? YStateEncoder.encodeStateAsUpdate(doc) else { return }
+        byteCount = checkpoint.count
         remoteAppends = 0
         // Best effort: a failure leaves the journal as it was.
         try? store.compact(for: scope, checkpoint: checkpoint, baseRevision: engine.revision)
@@ -958,6 +1052,7 @@ actor DocumentReplicaSession {
     private func close() {
         guard !isClosed else { return }
         isClosed = true
+        NativeEditorDiagnosticsStore.shared.endSession(diagnosticsSeq)
         hooks.onReplicaWork?()
         _ = sink.take()
         // Undo history is session-local: it goes with the session.

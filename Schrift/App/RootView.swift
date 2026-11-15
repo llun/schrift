@@ -235,6 +235,7 @@ private struct AuthenticatedHomeContainer: View {
         // every replica; mounted native editors reopen on the same signal.
         .onChange(of: sessionStore.signInGeneration) { _, _ in
             nativeSessions.closeAll()
+            NativeEditorDiagnosticsStore.shared.reset()
             // Nothing announces the previous account; `reauthenticated` learns the new one.
             collaboration.forgetLocalAwareness()
         }
@@ -316,6 +317,7 @@ struct RootView: View {
                     // re-fetchable server data whose only use is naming the session that
                     // just ended.
                     CurrentUserCacheStore().clear()
+                    NativeEditorDiagnosticsStore.shared.reset()
                     try? sessionStore.signOut()
                 })
         } else {

@@ -2186,8 +2186,8 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   and stops input with the storage-failed notice. Backspace at a block start is
   structural (PR04a below); at the document end (after the last separator, which
   no block owns) it is refused with a notice, like typing there.
-  Still open: a total shadow for opaque/rich documents, clean-replica removal on
-  sign-out, old Markdown-draft and local-create key migration. No live socket.
+  Still open: a total shadow for opaque/rich documents and old Markdown-draft migration
+  (clean-replica removal on sign-out and local-create key migration landed in PR15). No live socket.
 
 - **PR02 activation (slice B), behind the default-off switch.** `NativeEditorOpen.open(
   viewModel:isOffline:canUpdate:)` enables typing only when the switch is on, the server
@@ -4094,6 +4094,57 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `ReplicaSessionSourceTests` (4 tests), `NativeSourcePreviewTests` (7 tests), `NativeSourceEditorTests`
   (21 tests), and `DocumentEngineBoundaryTests.testCoreYjsAndNativeSourceFilesRespectLayerBoundaries`
   (4 tests total in `DocumentEngineBoundaryTests`).
+- **PR15 Native shell integration, Reading↔Editing mode handoff, local-create migration, diagnostics, and acceptance suite (PR15a + PR15b).**
+  **Shell & Mode Handoff (PR15a):** `NativeEditorPreference.key` (`"schrift.nativeEditor"`) stays `false`
+  by default. `EditorView` routes `.loading`, `.native`, and `.preservedUnavailable` through
+  `NativeDocumentShellView`, sharing `EditorLoadingPlaceholder`, `EditorBannerStack`, `EditorDocumentHeader`,
+  `PagesTreeDrawer` + edge pan, `Share`, `OptionsSheetView`, `OutlinePresentationGate` /
+  `OutlineHeldNavigation`, `ConflictSheetView`, `pendingDeleteNotice`, `subpagesSection`, and
+  `noteEditorAppeared()` with classic while `NativeTextView` stays the sole vertical `UIScrollView`
+  (`headerAccessoryView` via `contentInset.top`, `footerAccessoryView` via `contentInset.bottom`).
+  Existing documents open in Reading mode (`isEditable = false`) over one `NativeEditorSession` &
+  `NativeTextSurface`, entering Editing via toolbar `Edit`, text tap, writable card/source tap, or
+  new-document `entryIntent` (one-shot header title focus), and exiting via `Done` or `⌘Return`
+  after committing marked text and flushing pending saves. Authoritative `title` on `EditorViewModel`
+  drives native header title saves (`NativeReplicaSaveScheduler` → `enqueueReplica`, `ReplicaSaveAdapter.prepare`
+  `batch == nil` title-only path); native conflict resolution wires "Keep my version"
+  (`flushPendingSave()` + `resolveConflictKeepingLocal`) and "Keep the server version"
+  (`close()` + `resolveConflictKeepingServer` + `reopen()`).
+  **Checklists, Shortcuts, Divider & Accessibility (PR15a):** `NativeTextSurface.setChecklistPresentation`
+  hides checked items and deeper descendants presentation-only in Reading mode without Yjs writes,
+  pairing `ChecklistReadingControls` and `ChecklistSettlingStore` (450 ms settle, 0 ms under Reduce
+  Motion) with next-survivor scroll restoration and the all-hidden empty state. `NativeTextView` adds
+  `⌘B`/`⌘I`/`⌘U`/`⇧⌘X`/`⌘E`/`⌘K` + Edit-menu formatting actions (disabled in `mathBlock`/`diagram`/`inlineMath`
+  source buffers), `NativeInputCoordinator` / `DocumentEngine` add `/divider` and `---`/`***`/`___` + Return
+  (`insertDivider`), `NativeEditorView` attaches the localized `BackToTop` accessibility action, and
+  `NativeTextView.orderAuxiliarySubviews()` orders header, controls, attachments, footer, `NativeCursorOverlay`,
+  and `NativeInlineChipAccessibilityOverlay` deterministically top-to-bottom without disturbing TextKit's
+  text element or `headingRotor`.
+  **Migration, Offline Guard & Sign-Out Cleanup (PR15a):** `ServerConfigEndpoints` persists Docs 6 capability
+  per origin; when the switch is on and Docs 6 org is known, `createLocalDocument` seeds a `localScope`
+  native replica, `enqueueReplica` holds saves under `pendingCreates` without sending `localID` over HTTP/WS,
+  and `migrateNativeCreatedDocument` verifies `ownerUserID`, copies `localScope` → `serverScope` before
+  removing the local draft/replica, and re-keys child creates and `PendingAttachment`s. Offline unmigrated
+  Docs-6 Markdown caches keep `canStartEditing == false` (`isNativeLimitedOfflineRead`) when the switch is on,
+  and delayed `formattedContent` responses never overwrite an active native route. `RootView.onSignOut` calls
+  `purgeCleanNativeReplicasOnSignOut(ownerUserID:)` → `ReplicaStore.purgeCleanReplicas` to remove clean
+  synced replicas while retaining dirty, provisional, conflicted, and unreadable ones (`isExcludedFromBackup`
+  is `true` while clean and `false` before local appends/provisionals).
+  **Diagnostics & Acceptance Suite (PR15b):** `NativeEditorDiagnosticsStore` (`Logger(subsystem: "dev.llun.Schrift", category: "NativeEditor")`
+  + `OSSignposter`) records 10 pipeline stages, `ReplicaWorkloadMetrics`, `SurfaceWorkCounters`, and Mach
+  `phys_footprint` in a bounded 256-sample / 32-session in-memory ring (active only when both
+  `NativeEditorPreference` and the separate default-off `NativeEditorDiagnosticsPreference`
+  ("Collect native editor diagnostics" in Profile, shown only when the native editor is on) are enabled,
+  cached in memory via an atomic flag, or forced in `NativeEditorTestHostApp` via `setForcedCollection(true)`;
+  strictly zero PII, document text, titles, IDs, or hosts; cleared on every account change / `signInGeneration`
+  with a `minSessionSeq` floor; copyable as sanitized JSON from Profile when native mode is enabled).
+  **Tests & Docs:** `NativeEditorAcceptanceTests` (11 tests: whole-family `72ebe1bb` round-trip, real `state.bin`
+  capture, switch-off rollback/retained drafts, classic non-regression, new-doc/subpage & offline local-create
+  migration, stale-cache/Docs-6 guard, Reading↔Editing & all-hidden checklist settling, 10-cycle memory
+  reclamation & clean-replica sign-out, bounded work counters on 5,000-block & S2 mixed fixtures,
+  diagnostics zero-PII/bounded-ring/opt-in/floor invariants, and `timeToEdit` first-responder gating),
+  `NativeEditorUITests` shell/diagnostics/S2 `CADisplayLink` `--native-scroll-sampler` tests, and
+  [`docs/native-editor-acceptance.md`](docs/native-editor-acceptance.md).
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below

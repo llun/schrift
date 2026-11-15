@@ -563,6 +563,7 @@ enum Strings_sl {
             "Nekaterih kopij dokumentov v tej napravi ni mogoče prebrati, zato tukaj ni mogoče urejati nobenega dokumenta. Z odložitvijo se te kopije premaknejo v ločeno mapo v tej napravi. Njihove datoteke se ohranijo, vendar se ne odpirajo več, spremembe v njih, ki niso bile nikoli sinhronizirane, pa ne bodo poslane. Druge dokumente boste nato lahko spet urejali.",
         .profile_recover_drafts_set_aside_success:
             "Neberljive kopije so odložene. Druge dokumente je spet mogoče urejati.",
+        .profile_native_editor_diagnostics_collect: "Zbiraj diagnostiko izvornega urejevalnika",
         .profile_recover_drafts_failure: "Osnutkov ni bilo mogoče obnoviti. Še vedno so shranjeni v tej napravi.",
     ]
 }

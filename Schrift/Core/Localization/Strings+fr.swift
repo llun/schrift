@@ -554,6 +554,7 @@ enum Strings_fr {
             "Certaines copies de documents sur cet appareil sont illisibles, donc aucun document ne peut être modifié ici. Les mettre de côté déplace ces copies dans un dossier distinct sur cet appareil. Leurs fichiers sont conservés mais ne sont plus ouverts, et les modifications jamais synchronisées qu'elles contiennent ne seront pas envoyées. Les autres documents pourront ensuite être modifiés à nouveau.",
         .profile_recover_drafts_set_aside_success:
             "Copies illisibles mises de côté. Les autres documents peuvent à nouveau être modifiés.",
+        .profile_native_editor_diagnostics_collect: "Collecter les diagnostics de l’éditeur natif",
         .profile_recover_drafts_failure:
             "Impossible de récupérer les brouillons. Ils restent enregistrés sur cet appareil.",
     ]

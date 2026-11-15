@@ -26,6 +26,7 @@ struct ProfileScreen: View {
     // entire wiring — see `LiveCollaborationPreference`.
     @AppStorage(LiveCollaborationPreference.key) private var liveCollaboration: Bool = false
     @AppStorage(NativeEditorPreference.key) private var nativeEditor: Bool = false
+    @AppStorage(NativeEditorDiagnosticsPreference.key) private var collectNativeEditorDiagnostics: Bool = false
 
     @State private var isConfirmingDisconnect = false
     @State private var showAppearanceSheet = false
@@ -39,6 +40,7 @@ struct ProfileScreen: View {
     /// Computed once per recovery attempt: scanning the replica manifests is disk I/O.
     @State private var offersSetAside = false
     @State private var recoveredBySettingAside = false
+    @State private var diagnosticsCopied = false
     /// The Appearance sheet is a fitted detent sized to its three rows. It has to
     /// grow with the text inside it, or the last option falls below the fold at
     /// larger sizes with no way to reach it.
@@ -79,6 +81,7 @@ struct ProfileScreen: View {
         // unkeyed, an account row loaded for the previous user stays on screen (and stays
         // tappable through to their detail) until the user happens to switch tabs.
         .task(id: signInGeneration) {
+            diagnosticsCopied = false
             holdsUnreadableDrafts = needsRecovery
             await viewModel.loadIfStale(sessionGeneration: signInGeneration)
         }
@@ -279,9 +282,39 @@ struct ProfileScreen: View {
                 Switch(isOn: $liveCollaboration)
             }
             ProfileTrailingRow(icon: .edit, title: loc[.profile_native_editor]) {
-                Switch(isOn: $nativeEditor)
+                Switch(
+                    isOn: Binding(
+                        get: { nativeEditor },
+                        set: {
+                            nativeEditor = $0
+                            NativeEditorDiagnosticsStore.shared.refreshCollectionPreference()
+                        }))
             }
             .accessibilityIdentifier("profile.nativeEditor")
+            if nativeEditor {
+                ProfileTrailingRow(icon: .data_object, title: loc[.profile_native_editor_diagnostics_collect]) {
+                    Switch(
+                        isOn: Binding(
+                            get: { collectNativeEditorDiagnostics },
+                            set: {
+                                collectNativeEditorDiagnostics = $0
+                                NativeEditorDiagnosticsStore.shared.refreshCollectionPreference()
+                            }))
+                }
+                .accessibilityIdentifier("profile.nativeEditor.collectDiagnostics")
+            }
+            if nativeEditor && collectNativeEditorDiagnostics {
+                ListRow(
+                    icon: .content_copy,
+                    title: loc[.profile_native_editor_diagnostics],
+                    value: diagnosticsCopied ? loc[.toast_diagnostics_copied] : nil,
+                    action: {
+                        UIPasteboard.general.string = NativeEditorDiagnosticsStore.shared.sanitizedJSONString()
+                        diagnosticsCopied = true
+                    }
+                )
+                .accessibilityIdentifier("profile.nativeEditor.diagnostics")
+            }
         }
     }
 

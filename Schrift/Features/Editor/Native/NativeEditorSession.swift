@@ -11,6 +11,12 @@ import UIKit
 @MainActor @Observable
 final class NativeEditorSession {
     @ObservationIgnored let replica: DocumentReplicaSession?
+    /// PR15: Monotonic diagnostics session identifier.
+    @ObservationIgnored let sessionSeq: UInt64
+    @ObservationIgnored private let ownsDiagnosticsSession: Bool
+    @ObservationIgnored private var pendingOpenStartNs: UInt64?
+    @ObservationIgnored private var hasRecordedFirstVisible = false
+    @ObservationIgnored private var pendingEditStartNs: UInt64?
     /// The id the replica session knows this surface by.
     let surfaceID: UUID
     let textView: NativeTextView
@@ -70,9 +76,15 @@ final class NativeEditorSession {
         canType: Bool, recoveries: [ProvisionalRecovery], state: ReplicaState
     ) {
         self.replica = replica
+        let seq = replica?.diagnosticsSeq ?? NativeEditorDiagnosticsStore.shared.beginSession()
+        self.sessionSeq = seq
+        self.ownsDiagnosticsSession = (replica == nil)
+        self.pendingOpenStartNs =
+            NativeEditorDiagnosticsStore.shared.isCollecting ? DispatchTime.now().uptimeNanoseconds : nil
         self.surfaceID = surfaceID
         let view = NativeTextView()
         let surface = NativeTextSurface(blocks: blocks, storage: view.textStorage, traits: view.traitCollection)
+        surface.sessionSeq = seq
         // Folding is the surface's view state; the view lays out around it.
         view.blockControls.surface = surface
         // Toggles open collapsed: lay out without their children from the start.
@@ -81,7 +93,6 @@ final class NativeEditorSession {
         self.surface = surface
         let navigation = NativeDocumentNavigation(replica: replica, surface: surface, textView: view)
         self.navigation = navigation
-        view.onLayout = { [weak navigation] in navigation?.layoutPassed() }
         self.hasUnsupportedRoot = hasUnsupportedRoot
         self.canType = canType
         self.revision = revision
@@ -89,10 +100,72 @@ final class NativeEditorSession {
         self.state = state
         self.isWritable = state.writable
         surface.surfaceID = surfaceID
+        view.onLayout = { [weak navigation, weak self] in
+            navigation?.layoutPassed()
+            self?.recordLayoutDiagnostics()
+        }
+        view.onFirstVisibleContent = { [weak self] in
+            self?.recordFirstVisibleContent()
+        }
+        view.onBecameFirstResponder = { [weak self] in
+            self?.completeTimeToEdit()
+        }
         surface.onFoldChange = { [weak view, weak self] in
             view?.blockControls.foldDidChange()
             self?.presentationRevision &+= 1
         }
+    }
+
+    func markOpenStarted(_ startNs: UInt64) {
+        guard !hasRecordedFirstVisible, NativeEditorDiagnosticsStore.shared.isCollecting else { return }
+        pendingOpenStartNs = startNs
+    }
+
+    private func recordFirstVisibleContent() {
+        guard !hasRecordedFirstVisible else { return }
+        hasRecordedFirstVisible = true
+        guard NativeEditorDiagnosticsStore.shared.isCollecting else {
+            pendingOpenStartNs = nil
+            return
+        }
+        let startNs = pendingOpenStartNs ?? DispatchTime.now().uptimeNanoseconds
+        pendingOpenStartNs = nil
+        let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds &- startNs) / 1_000_000.0
+        NativeEditorDiagnosticsStore.shared.recordDuration(
+            .firstVisibleContent, durationMs: elapsedMs, sessionSeq: sessionSeq)
+        sampleDiagnosticsSnapshot(steady: true)
+    }
+
+    private func recordLayoutDiagnostics() {
+        guard NativeEditorDiagnosticsStore.shared.isCollecting, let controls = textView.blockControls else { return }
+        let attachmentCount = max(
+            controls.visibleAttachmentViews.count,
+            controls.attachmentViews.allObjects.filter { $0.superview != nil }.count)
+        let controlCount = controls.orderedControlViews.count
+        let seq = sessionSeq
+        NativeEditorDiagnosticsStore.shared.mutateCounters(sessionSeq: seq) {
+            $0.realisedAttachmentViewCount = attachmentCount
+            $0.realisedControlViewCount = controlCount
+        }
+        NativeEditorDiagnosticsStore.shared.sampleMemory(sessionSeq: seq)
+    }
+
+    private func completeTimeToEdit() {
+        guard NativeEditorDiagnosticsStore.shared.isCollecting, textView.isEditable else {
+            pendingEditStartNs = nil
+            return
+        }
+        guard textView.isFirstResponder, let startNs = pendingEditStartNs else { return }
+        pendingEditStartNs = nil
+        let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds &- startNs) / 1_000_000.0
+        NativeEditorDiagnosticsStore.shared.recordDuration(
+            .timeToEdit, durationMs: elapsedMs, sessionSeq: sessionSeq)
+    }
+
+    private func sampleDiagnosticsSnapshot(steady: Bool) {
+        guard NativeEditorDiagnosticsStore.shared.isCollecting else { return }
+        recordLayoutDiagnostics()
+        NativeEditorDiagnosticsStore.shared.sampleMemory(sessionSeq: sessionSeq, steady: steady)
     }
 
     /// The read-only route (PR01): a one-shot projection, no replica session.
@@ -559,9 +632,17 @@ final class NativeEditorSession {
                 textView.isEditable = false
                 return
             }
+            let collecting = NativeEditorDiagnosticsStore.shared.isCollecting
+            if collecting, pendingEditStartNs == nil {
+                pendingEditStartNs = DispatchTime.now().uptimeNanoseconds
+            }
             textView.isEditable = true
             input.refreshSelectionMarks()
+            if collecting, textView.isFirstResponder {
+                completeTimeToEdit()
+            }
         } else {
+            pendingEditStartNs = nil
             if textView.markedTextRange != nil {
                 textView.unmarkText()
             }
@@ -596,6 +677,11 @@ final class NativeEditorSession {
     /// new server bytes before any resulting patch is delivered.
     func integrateServerState(_ state: Data) async throws {
         guard let replica, !isClosed else { throw ReplicaSaveError.invalidScope }
+        let token = NativeEditorDiagnosticsStore.shared.beginInterval(.remoteMerge)
+        defer {
+            NativeEditorDiagnosticsStore.shared.endInterval(
+                .remoteMerge, token: token, sessionSeq: sessionSeq, byteCount: state.count)
+        }
         try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, any Error>) in
             replica.mailbox.post(.integrate(state, reply: { done.resume(with: $0) }))
         }
@@ -635,6 +721,10 @@ final class NativeEditorSession {
     func close() -> Task<Void, Never> {
         if let closing { return closing }
         isClosed = true
+        sampleDiagnosticsSnapshot(steady: true)
+        if ownsDiagnosticsSession {
+            NativeEditorDiagnosticsStore.shared.endSession(sessionSeq)
+        }
         // What is journaled already is handed over now; appends still queued
         // schedule their save as their results arrive, flushed when the
         // deliveries end (`didFinishDeliveries`).
@@ -752,6 +842,7 @@ final class NativeEditorOpen {
     /// manager. Without one (tests, previews) no socket is opened.
     @ObservationIgnored var collaboration: DocumentCollaborationManager?
     @ObservationIgnored private weak var activeViewModel: EditorViewModel?
+    @ObservationIgnored private var pendingOpenStartNs: UInt64?
 
     init(
         preference: @escaping @MainActor () -> Bool = { NativeEditorPreference.isEnabled() },
@@ -778,6 +869,8 @@ final class NativeEditorOpen {
         // A repeated call while visible must not swap a focused editor. Close
         // establishes the next safe open or reopen boundary.
         guard !isOpen else { return }
+        pendingOpenStartNs =
+            NativeEditorDiagnosticsStore.shared.isCollecting ? DispatchTime.now().uptimeNanoseconds : nil
         isOpen = true
         activeViewModel = viewModel
         enabled = preference()
@@ -851,6 +944,7 @@ final class NativeEditorOpen {
                     installTyping(session, scope: scope, viewModel: viewModel)
                 }
                 viewModel.setNativeRouteActive(true)
+                if let openStart = pendingOpenStartNs { session.markOpenStarted(openStart) }
                 route = .native(session)
                 // Offline-first: the replica is on screen before any request.
                 await integrateServerState(
@@ -988,6 +1082,7 @@ final class NativeEditorOpen {
             self.canMention = false
             viewModel.seedNativeMetadataIfNeeded()
             viewModel.setNativeRouteActive(true)
+            if let openStart = pendingOpenStartNs { session.markOpenStarted(openStart) }
             route = .native(session)
             return
         }
@@ -997,6 +1092,9 @@ final class NativeEditorOpen {
         guard let seeded else { return }
         viewModel.seedNativeMetadataIfNeeded()
         viewModel.setNativeRouteActive(seeded.isNativeActive)
+        if case .native(let session) = seeded, let openStart = pendingOpenStartNs {
+            session.markOpenStarted(openStart)
+        }
         route = seeded
         if case .native(let session) = seeded {
             self.canMention = (ability?.mention ?? rowCanMention) && !viewModel.isLocalDocument

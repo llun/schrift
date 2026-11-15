@@ -309,4 +309,22 @@ final class SessionStoreIdentitySideEffectsTests: SessionStoreTestCase {
             AttachmentCacheStore(directory: cacheDir).cachedFileURL(for: display),
             "relaunch after unconfirmed handover must wipe Account B's unscoped attachment cache")
     }
+
+    func testDiagnosticsStoreResetsOnEveryAccountChange() throws {
+        var resetCount = 0
+        let store = SessionStore(
+            userDefaults: userDefaults,
+            keychain: FakeKeychainStore(),
+            cookieStorage: FakeCookieStorage(),
+            clearDiagnostics: { resetCount += 1 })
+
+        store.noteSessionCookiesReplaced()
+        XCTAssertEqual(resetCount, 1)
+
+        try store.signIn(serverURL: serverURL, userID: UUID())
+        XCTAssertEqual(resetCount, 2)
+
+        try store.signOut()
+        XCTAssertEqual(resetCount, 3)
+    }
 }

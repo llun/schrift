@@ -545,10 +545,21 @@ final class ReplicaStore: Sendable {
 
     private func restoreLocked(for scope: ReplicaScope) throws -> ReplicaRestore? {
         guard let manifest = try readManifest(for: scope) else { return nil }
+        let token = NativeEditorDiagnosticsStore.shared.beginInterval(.diskRestore)
+        var totalBytes = 0
+        var segmentCount = 0
+        defer {
+            NativeEditorDiagnosticsStore.shared.endInterval(
+                .diskRestore, token: token, byteCount: totalBytes, itemCount: segmentCount)
+        }
         let checkpoint = try readPayload(manifest.checkpoint, for: scope)
+        totalBytes += checkpoint.count
+        segmentCount += 1
         var updates: [Data] = []
         for entry in manifest.journal {
             let bytes = try readPayload(entry.file, for: scope)
+            totalBytes += bytes.count
+            segmentCount += 1
             if entry.sequence > manifest.checkpointSequence { updates.append(bytes) }
         }
         return ReplicaRestore(manifest: manifest, checkpoint: checkpoint, updates: updates)

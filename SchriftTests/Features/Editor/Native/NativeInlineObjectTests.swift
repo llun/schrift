@@ -1212,17 +1212,19 @@ final class NativeInlineObjectTests: NativeEditingTestCase {
     }
 
     private func ensureInlineChipFrame(in textView: NativeTextView, utf16Offset: Int) async throws -> CGRect {
-        textView.setNeedsLayout()
-        textView.layoutIfNeeded()
-        if let manager = textView.textLayoutManager {
-            manager.ensureLayout(for: manager.documentRange)
-        }
-        for _ in 0..<20 {
+        await waitUntil {
             if let frame = textView.inlineChipFrame(atUTF16: utf16Offset), !frame.isEmpty {
-                return frame
+                return true
             }
+            textView.setNeedsLayout()
             textView.layoutIfNeeded()
-            try await Task.sleep(for: .milliseconds(10))
+            if let manager = textView.textLayoutManager {
+                manager.ensureLayout(for: manager.documentRange)
+            }
+            if let frame = textView.inlineChipFrame(atUTF16: utf16Offset), !frame.isEmpty {
+                return true
+            }
+            return false
         }
         return try XCTUnwrap(textView.inlineChipFrame(atUTF16: utf16Offset))
     }
@@ -1507,7 +1509,9 @@ final class NativeInlineObjectTests: NativeEditingTestCase {
         tableEditor.onOpenDocument = { id, blockID in tableOpened.append((id, blockID)) }
         _ = hostController(tableEditor)
         await tableEditor.load()
-        for _ in 0..<300 where !tableEditor.isLoaded { try await Task.sleep(for: .milliseconds(10)) }
+        await waitUntil {
+            tableEditor.isLoaded && tableEditor.cellSession?.textView.window != nil
+        }
         let cellSession = try XCTUnwrap(tableEditor.cellSession)
         addTeardownBlock { await cellSession.close().value }
         let cellChipOffset = try inlineChipOffset(in: cellSession.textView.textStorage) {
@@ -1536,8 +1540,12 @@ final class NativeInlineObjectTests: NativeEditingTestCase {
                 onOpenDocument: { id, blockID in columnOpened.append((id, blockID)) }
             ).environment(LocalizationStore()))
         _ = hostController(hosting)
-        for _ in 0..<300 where columnModel.columns.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
+        await waitUntil {
+            columnModel.isLoaded
+                && !columnModel.columns.isEmpty
+                && columnModel.columns.allSatisfy {
+                    $0.textView.window != nil && $0.textView.blockControls.onOpenDocument != nil
+                }
         }
         let colSession = try XCTUnwrap(columnModel.columns.first)
         let colChipOffset = try inlineChipOffset(in: colSession.textView.textStorage) {

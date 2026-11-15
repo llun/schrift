@@ -231,8 +231,8 @@ also checks the open is still current and the document was not discarded before 
 writes the content cache.
 
 Still open: a total shadow for opaque/rich documents (re-stamping refuses an
-unprojectable revision), clean-replica removal on sign-out, old Markdown-draft
-migration and local-create key migration. Since PR06c the shadow spells callouts,
+unprojectable revision) and old Markdown-draft migration (clean-replica removal on
+sign-out and offline local-create replica migration shipped in PR15 below). Since PR06c the shadow spells callouts,
 toggles and page breaks as the server's Markdown export does (a callout as an emoji
 paragraph, a toggle list item as a bullet, a toggle heading as a plain heading, a page
 break not at all, and a toggle's paragraph children as the export's indented
@@ -283,6 +283,51 @@ pending. Offline and transient failures wait for the next pass
 (Retry or Discard). Deleting the document or keeping the server version drops the signed-in account's records for it
 (another account's stay); a record waiting for a later pass says so on its card.
 Existing Markdown drafts retain their classic owner.
+
+### Native shell persistence, conflict resolution, local-create migration, and sign-out purge (PR15)
+
+- **Native title saves (`batch == nil`).** Authoritative `title` lives on `EditorViewModel`;
+  editing the shared `EditorDocumentHeader` title on a native-owned document updates
+  `viewModel.title` and schedules `NativeReplicaSaveScheduler`, which passes
+  `viewModel.currentNativeTitle` (never a stale content-cache title) to `enqueueReplica`.
+  When the journal outbox is empty, `ReplicaSaveAdapter.prepare` produces a verified
+  `ReplicaSaveRequest` with `batch == nil`, allowing `DocumentSaveCoordinator` to PATCH the
+  title with half-land and baseline protection without touching body bytes.
+- **Native conflict resolution.** `.native` and `.preservedUnavailable` routes surface the
+  conflict pill and `ConflictSheetView` via `NativeDocumentShellView`. **"Keep my version"**
+  flushes pending saves (`nativeOpen.flushPendingSave()`), ensures a `ReplicaSaveRequest` is
+  parked when outbox bytes exist, and calls `saveCoordinator.resolveConflictKeepingLocal(documentID:)`.
+  **"Keep the server version"** closes the mounted native session, calls
+  `saveCoordinator.resolveConflictKeepingServer(documentID:)` (discarding the replica), and
+  reopens via `nativeOpen.reopen(...)` so fresh server Yjs state is fetched and seeded cleanly.
+- **Offline local-create seeding & `migrateNativeCreatedDocument`.** `ServerConfigEndpoints`
+  persists per-origin Docs 6 capabilities (`usesCollaborationYDocServer`, `collaborationOrg`).
+  When `NativeEditorPreference.isEnabled()` is true and Docs 6 org is known,
+  `createLocalDocument` seeds an empty native replica under `localScope` (`documentID: record.localID`)
+  alongside a `PendingDraft` carrying `ReplicaDraftReference`. `NativeEditorOpen.canOpen` admits
+  local documents and `hasPendingNewDocumentEntry` opens online new documents/subpages in Editing
+  mode with title focus; `enqueueReplica` parks local-document saves under `pendingCreates`
+  without transmitting `localID` over HTTP or WebSocket. When the `POST` returns `serverID`,
+  `migrateNativeCreatedDocument` verifies `record.ownerUserID`, copies `localScope` → `serverScope`
+  in `ReplicaStore` (preserving generation, revision, checkpoint, journal, outbox, and provisional
+  entries), marks `serverScope` ownership, writes the `serverID` `PendingDraft` before removing
+  the `localID` draft and `localScope` replica, re-keys child `PendingDocumentCreate.parentID` and
+  `PendingAttachment.documentID`, and then enqueues or holds on conflict.
+- **Offline Docs-6 Markdown-cache guard & stale-cache checks.** When `NativeEditorPreference.isEnabled()`
+  is true, the cached server config is Docs 6, `nativeOwnership == .none`, and `storedDraft == nil`,
+  `EditorViewModel.canStartEditing` stays `false` while offline (`isNativeLimitedOfflineRead`
+  banner explains the read-only state until online raw Yjs fetch succeeds; existing classic
+  `PendingDraft`s remain editable/replayable on classic). Delayed `formattedContent` revalidations
+  never clobber an active native route's edited title or state.
+- **Clean-replica sign-out purge & backup exclusion.** After `nativeSessions.drainAll()` and
+  `closeAll()` in `RootView.onSignOut`, `saveCoordinator.purgeCleanNativeReplicasOnSignOut(ownerUserID:)`
+  calls `ReplicaStore.purgeCleanReplicas(serverOrigin:ownerUserID:keepingDocumentIDs:)`, removing
+  only valid folders matching `(serverOrigin, ownerUserID)` that have an empty outbox, empty
+  `provisional.json`, and no draft, pending create/delete, queued/in-flight save, pending
+  attachment, or conflict. Dirty, provisional, conflicted, and quarantined/unreadable replicas
+  stay on disk untouched. `ReplicaStore` marks clean acknowledged/seeded replicas
+  `isExcludedFromBackup = true` and flips `isExcludedFromBackup = false` before any local append
+  or provisional write.
 
 > **Amendment (2026-07-03):** the document **lists** (Home, the editor's
 > Subpages section, and the Shared tab) now follow this same

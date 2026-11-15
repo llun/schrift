@@ -30,3 +30,6 @@ rationale that `AGENTS.md` only summarizes.
   configured.
 - [`testflight-setup.md`](testflight-setup.md) — the TestFlight release pipeline
   and one-time signing setup.
+- [`native-editor-acceptance.md`](native-editor-acceptance.md) — TestFlight acceptance
+  protocol, `NativeEditorDiagnostics` capture instructions, measured simulator baselines,
+  and owner sign-off log for the default-off native editor.

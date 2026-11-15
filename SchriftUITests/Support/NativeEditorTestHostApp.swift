@@ -13,6 +13,14 @@ struct NativeEditorTestHostApp: App {
     private let fixture: Data
 
     init() {
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("--native-diagnostics") || args.contains("--native-scroll-sampler") {
+            NativeEditorDiagnosticsStore.shared.setForcedCollection(true)
+        }
+        if args.contains("--native-scroll-sampler") {
+            fixture = ScrollSamplerFixture.state()
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--native-media") {
             fixture = MediaFixture.state()
             return
@@ -104,6 +112,12 @@ struct NativeEditorTestHostApp: App {
             if ProcessInfo.processInfo.arguments.contains("--native-readout"), let session {
                 TopBlockReadout(session: session)
             }
+            if ProcessInfo.processInfo.arguments.contains("--native-scroll-sampler"), session != nil {
+                ScrollSamplerOverlay()
+            }
+            if ProcessInfo.processInfo.arguments.contains("--native-diagnostics") {
+                DiagnosticsReadoutOverlay()
+            }
         }
         .environment(localization)
         .environment(images)
@@ -160,6 +174,9 @@ private struct NativeOpenFixture: View {
             if ProcessInfo.processInfo.arguments.contains("--native-slow-disk") || mode == .inlineObjects {
                 InFlightReadout()
             }
+        }
+        .overlay(alignment: .bottomLeading) {
+            if ProcessInfo.processInfo.arguments.contains("--native-diagnostics") { DiagnosticsReadoutOverlay() }
         }
         .task {
             guard model == nil else { return }
@@ -249,6 +266,17 @@ private struct NativeOpenFixture: View {
             checkpoint = try TableFixture.inserting(into: checkpoint, after: "owned-0")
             checkpoint = try ColumnFixture.inserting(into: checkpoint, after: "owned-0")
             return checkpoint
+        }
+        if ProcessInfo.processInfo.arguments.contains("--native-checklist-only") {
+            let checklistBlocks = [
+                BlockNoteBlock(
+                    node: "checkListItem", props: style + [("checked", .bool(false))],
+                    runs: [InlineRun("Only task one")], id: "owned-check-1"),
+                BlockNoteBlock(
+                    node: "checkListItem", props: style + [("checked", .bool(true))],
+                    runs: [InlineRun("Only task two")], id: "owned-check-2"),
+            ]
+            return BlockNoteYjs.encode(checklistBlocks, clientID: 1)
         }
         var blocks = (0..<30).map { index in
             BlockNoteBlock(
@@ -905,5 +933,327 @@ private enum ColumnFixture {
             }
         }
         return try YStateEncoder.encodeStateAsUpdate(doc)
+    }
+}
+
+// MARK: - PR15 Step 4 Diagnostics & Corrected S2 Scroll Sampler
+
+private struct DiagnosticsReadoutOverlay: View {
+    @State private var json = ""
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button("Refresh diagnostics") {
+                json = NativeEditorDiagnosticsStore.shared.sanitizedJSONString()
+            }
+            .accessibilityIdentifier("nativeEditor.diagnostics.refresh")
+            Text(verbatim: json.isEmpty ? "pending" : "ready")
+                .font(.caption2)
+                .accessibilityIdentifier("nativeEditor.diagnostics")
+                .accessibilityValue(json.isEmpty ? "pending" : json)
+        }
+        .padding(6)
+        .background(.ultraThinMaterial)
+    }
+}
+
+private enum ScrollSamplerFixture {
+    /// S2: 5,000 paragraphs interleaved with 200 mixed attachment blocks across
+    /// images, tables, columns, math blocks, and diagrams.
+    static func state() -> Data {
+        let style: [(String, YAnyValue)] = [
+            ("backgroundColor", .string("default")), ("textColor", .string("default")),
+            ("textAlignment", .string("left")),
+        ]
+        let doc = YDoc(clientID: 1, gc: true)
+        defer { doc.destroy() }
+        let root = doc.get(BlockNoteYjs.fragmentField)
+        try? doc.transact { tx in
+            func element(_ name: String, into parent: YType, after: YItem?, _ props: [(String, YAnyValue)]) throws
+                -> (YItem?, YType)
+            {
+                let type = YType(typeRef: .xmlElement(nodeName: name))
+                let item = try YWrite.insertAfter(tx, into: parent, after: after, [.type(type)])
+                for (key, value) in props { try YWrite.mapSet(tx, on: type, key: key, .any([value])) }
+                return (item, type)
+            }
+            let (_, rootGroup) = try element("blockGroup", into: root, after: nil, [])
+            var cursor: YItem?
+            for index in 0..<5_000 {
+                let (pContainerItem, pContainer) = try element(
+                    "blockContainer", into: rootGroup, after: cursor, [("id", .string("s2-p-\(index)"))])
+                cursor = pContainerItem
+                let (_, paragraph) = try element("paragraph", into: pContainer, after: nil, style)
+                let xmlText = YType(typeRef: .xmlText)
+                try YWrite.insertAfter(tx, into: paragraph, after: nil, [.type(xmlText)])
+                try xmlText.insert(0, "S2 paragraph \(index + 1): steady viewport displacement.", nil)
+
+                guard index % 25 == 0 else { continue }
+                let attachmentIndex = index / 25
+                switch attachmentIndex % 5 {
+                case 0:
+                    let (item, container) = try element(
+                        "blockContainer", into: rootGroup, after: cursor,
+                        [("id", .string("s2-img-\(attachmentIndex)"))])
+                    cursor = item
+                    _ = try element(
+                        "image", into: container, after: nil,
+                        [
+                            ("caption", .string("Image \(attachmentIndex)")),
+                            ("name", .string("\(attachmentIndex).png")),
+                            ("previewWidth", .undefined),
+                            ("showPreview", .bool(true)),
+                            ("url", .string("\(MediaFixture.origin)/s2/\(attachmentIndex).png")),
+                        ])
+                case 1:
+                    let (item, container) = try element(
+                        "blockContainer", into: rootGroup, after: cursor,
+                        [("id", .string("s2-tbl-\(attachmentIndex)"))])
+                    cursor = item
+                    let (_, table) = try element(
+                        "table", into: container, after: nil, [("textColor", .string("default"))])
+                    let cellProps: [(String, YAnyValue)] = [
+                        ("backgroundColor", .string("default")), ("colspan", .int(1)), ("rowspan", .int(1)),
+                        ("textAlignment", .string("left")), ("textColor", .string("default")),
+                    ]
+                    var lastRow: YItem?
+                    for (r, rowTexts) in [["Col A", "Col B"], ["Val \(attachmentIndex)", "OK"]].enumerated() {
+                        let (rowItem, row) = try element("tableRow", into: table, after: lastRow, [])
+                        lastRow = rowItem
+                        var lastCell: YItem?
+                        for cellText in rowTexts {
+                            let (cellItem, cell) = try element(
+                                r == 0 ? "tableHeader" : "tableCell", into: row, after: lastCell, cellProps)
+                            lastCell = cellItem
+                            let (_, tp) = try element("tableParagraph", into: cell, after: nil, [])
+                            let cellXML = YType(typeRef: .xmlText)
+                            try YWrite.insertAfter(tx, into: tp, after: nil, [.type(cellXML)])
+                            try cellXML.insert(0, cellText, nil)
+                        }
+                    }
+                case 2:
+                    let (item, list) = try element(
+                        "columnList", into: rootGroup, after: cursor,
+                        [("id", .string("s2-cols-\(attachmentIndex)"))])
+                    cursor = item
+                    var lastCol: YItem?
+                    for (c, colText) in ["Left \(attachmentIndex)", "Right \(attachmentIndex)"].enumerated() {
+                        let (colItem, col) = try element(
+                            "column", into: list, after: lastCol,
+                            [("id", .string("s2-col-\(attachmentIndex)-\(c)")), ("width", .int(1))])
+                        lastCol = colItem
+                        let (_, container) = try element(
+                            "blockContainer", into: col, after: nil,
+                            [("id", .string("s2-col-p-\(attachmentIndex)-\(c)"))])
+                        let (_, p) = try element("paragraph", into: container, after: nil, style)
+                        let xml = YType(typeRef: .xmlText)
+                        try YWrite.insertAfter(tx, into: p, after: nil, [.type(xml)])
+                        try xml.insert(0, colText, nil)
+                    }
+                case 3:
+                    let (item, container) = try element(
+                        "blockContainer", into: rootGroup, after: cursor,
+                        [("id", .string("s2-math-\(attachmentIndex)"))])
+                    cursor = item
+                    let (_, math) = try element("mathBlock", into: container, after: nil, [])
+                    let xml = YType(typeRef: .xmlText)
+                    try YWrite.insertAfter(tx, into: math, after: nil, [.type(xml)])
+                    try xml.insert(0, "\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}", nil)
+                default:
+                    let (item, container) = try element(
+                        "blockContainer", into: rootGroup, after: cursor,
+                        [("id", .string("s2-diag-\(attachmentIndex)"))])
+                    cursor = item
+                    let (_, diag) = try element("diagram", into: container, after: nil, [("type", .string("mermaid"))])
+                    let xml = YType(typeRef: .xmlText)
+                    try YWrite.insertAfter(tx, into: diag, after: nil, [.type(xml)])
+                    try xml.insert(0, "graph TD; A-->B;", nil)
+                }
+            }
+        }
+        return (try? YStateEncoder.encodeStateAsUpdate(doc)) ?? Data()
+    }
+}
+
+@MainActor
+private final class NativeScrollSampler: NSObject, ObservableObject {
+    @Published var status = "idle"
+    private var displayLink: CADisplayLink?
+    private var previousFrames: [String: CGFloat] = [:]
+    private var frameCount = 0
+    private var jumpCount = 0
+    private var reversalCount = 0
+    private var maxReversalPt: CGFloat = 0
+    private var maxBoundsError: CGFloat = 0
+    private var maxRealisedAttachments = 0
+    private var maxRealisedControls = 0
+    private var reachedBottom = false
+    private var isProgrammaticRun = false
+    private var pendingRequestedDeltaY: CGFloat = 0
+    private var previousContentOffsetY: CGFloat = 0
+
+    func startObserving() {
+        guard displayLink == nil else { return }
+        let link = CADisplayLink(target: self, selector: #selector(tick))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+        status = "observing"
+    }
+
+    func stop() {
+        displayLink?.invalidate()
+        displayLink = nil
+    }
+
+    func runProgrammaticSweep() {
+        guard let textView = mountedTextView() else {
+            status = "fail|noTextView"
+            return
+        }
+        startObserving()
+        frameCount = 0
+        jumpCount = 0
+        reversalCount = 0
+        maxReversalPt = 0
+        maxBoundsError = 0
+        maxRealisedAttachments = 0
+        maxRealisedControls = 0
+        reachedBottom = false
+        pendingRequestedDeltaY = 0
+        previousFrames = [:]
+        textView.setContentOffset(CGPoint(x: 0, y: -textView.adjustedContentInset.top), animated: false)
+        textView.layoutIfNeeded()
+        previousContentOffsetY = textView.contentOffset.y
+        isProgrammaticRun = true
+        status = "running"
+    }
+
+    @objc private func tick() {
+        guard let textView = mountedTextView(), let window = textView.window,
+            let controls = textView.blockControls
+        else { return }
+        // Measure visible attachment bounds vs provider/content bounds on every frame.
+        let visibleAttachments = controls.visibleAttachmentViews
+        maxRealisedAttachments = max(maxRealisedAttachments, visibleAttachments.count)
+        maxRealisedControls = max(maxRealisedControls, controls.orderedControlViews.count)
+        var currentFrames: [String: CGFloat] = [:]
+        for attachmentView in visibleAttachments {
+            let errW = abs(attachmentView.bounds.width - attachmentView.content.size.width)
+            let errH = abs(attachmentView.bounds.height - attachmentView.content.size.height)
+            maxBoundsError = max(maxBoundsError, max(errW, errH))
+            let screenRect = attachmentView.convert(attachmentView.bounds, to: window)
+            if screenRect.intersects(textView.convert(textView.bounds, to: window)) {
+                currentFrames[attachmentView.content.blockID] = screenRect.minY
+            }
+        }
+        if let layout = textView.textLayoutManager,
+            let content = layout.textContentManager,
+            let surface = controls.surface
+        {
+            layout.enumerateTextLayoutFragments(
+                from: layout.textViewportLayoutController.viewportRange?.location ?? layout.documentRange.location,
+                options: []
+            ) { fragment in
+                let offset = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.location)
+                guard offset != NSNotFound, let entry = surface.rangeIndex.entry(atUTF16: offset) else { return true }
+                let rectInTextView = fragment.layoutFragmentFrame
+                let screenMinY = textView.convert(rectInTextView, to: window).minY
+                if currentFrames[entry.blockID] == nil {
+                    currentFrames[entry.blockID] = screenMinY
+                }
+                return rectInTextView.maxY < textView.contentOffset.y + textView.bounds.height
+            }
+        }
+
+        let currentOffsetY = textView.contentOffset.y
+        let maxOffsetY = max(
+            -textView.adjustedContentInset.top,
+            textView.contentSize.height - textView.bounds.height + textView.adjustedContentInset.bottom)
+
+        if !previousFrames.isEmpty {
+            let commonDeltas = previousFrames.compactMap { id, prevY -> CGFloat? in
+                guard let curY = currentFrames[id] else { return nil }
+                return curY - prevY
+            }
+            if !commonDeltas.isEmpty {
+                let sortedDeltas = commonDeltas.sorted()
+                let minDelta = sortedDeltas.first ?? 0
+                let maxDelta = sortedDeltas.last ?? 0
+                if maxDelta - minDelta > 4.0 {
+                    jumpCount += 1
+                }
+                let medianDelta = sortedDeltas[sortedDeltas.count / 2]
+                if isProgrammaticRun && pendingRequestedDeltaY > 0 {
+                    // Explicit requested displacement vs observed screen delta.
+                    if medianDelta > 2.0 {
+                        reversalCount += 1
+                        maxReversalPt = max(maxReversalPt, medianDelta)
+                    }
+                    if abs(medianDelta - (-pendingRequestedDeltaY)) > 48.0 {
+                        jumpCount += 1
+                    }
+                } else if textView.isDragging || textView.isDecelerating,
+                    currentOffsetY > previousContentOffsetY + 2.0,
+                    currentOffsetY > 0,
+                    currentOffsetY < maxOffsetY - 2.0,
+                    medianDelta > 4.0
+                {
+                    // During active downward touch fling, visible blocks must not jump backwards down screen.
+                    reversalCount += 1
+                    maxReversalPt = max(maxReversalPt, medianDelta)
+                }
+            }
+        }
+        frameCount += 1
+        previousFrames = currentFrames
+        previousContentOffsetY = currentOffsetY
+
+        if currentOffsetY >= maxOffsetY - 2.0 && maxOffsetY > 0 {
+            reachedBottom = true
+        }
+
+        if isProgrammaticRun {
+            if currentOffsetY >= maxOffsetY - 2.0 {
+                reachedBottom = true
+                isProgrammaticRun = false
+                pendingRequestedDeltaY = 0
+                let passed =
+                    reachedBottom && reversalCount <= 2 && maxReversalPt <= 24.0
+                    && maxBoundsError <= 0.5 && maxRealisedAttachments <= 32
+                let prefix = passed ? "pass" : "fail"
+                status = String(
+                    format:
+                        "%@|jumps=%d|reversals=%d|maxReversalPt=%.2f|reachedBottom=%d|maxBoundsErr=%.2f|maxRealised=%d|maxControls=%d|frames=%d",
+                    prefix, jumpCount, reversalCount, maxReversalPt, reachedBottom ? 1 : 0, maxBoundsError,
+                    maxRealisedAttachments, maxRealisedControls, frameCount)
+            } else {
+                // Step at ~45% viewport height so consecutive frames keep overlapping blocks in common.
+                let step = min(max(textView.bounds.height * 0.45, 320.0), maxOffsetY - currentOffsetY)
+                pendingRequestedDeltaY = step
+                textView.setContentOffset(CGPoint(x: 0, y: currentOffsetY + step), animated: false)
+                textView.layoutIfNeeded()
+            }
+        }
+    }
+}
+
+private struct ScrollSamplerOverlay: View {
+    @StateObject private var sampler = NativeScrollSampler()
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button("Run S2 sweep") {
+                sampler.runProgrammaticSweep()
+            }
+            .accessibilityIdentifier("scrollSampler.run")
+            Text(verbatim: sampler.status)
+                .font(.caption2)
+                .lineLimit(1)
+                .accessibilityIdentifier("scrollSampler.status")
+        }
+        .padding(6)
+        .background(.ultraThinMaterial)
+        .onAppear { sampler.startObserving() }
+        .onDisappear { sampler.stop() }
     }
 }

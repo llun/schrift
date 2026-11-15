@@ -232,10 +232,17 @@ struct ReplicaDelivery: Sendable {
 final class ReplicaCommandMailbox: Sendable {
     static let capacity = 256
 
+    private struct QueueState {
+        var count = 0
+        var untrackedHeadCount = 0
+        var enqueueTimesNs: [UInt64?] = []
+        var headIndex = 0
+    }
+
     let stream: AsyncStream<ReplicaMessage>
     private let continuation: AsyncStream<ReplicaMessage>.Continuation
     /// Posted and not yet taken by the session (`took`).
-    private let queued = Mutex(0)
+    private let queueState = Mutex(QueueState())
 
     init() {
         // Unbounded: `post` keeps the bound, so a detach or close can pass it.
@@ -244,14 +251,24 @@ final class ReplicaCommandMailbox: Sendable {
 
     @discardableResult
     func post(_ message: ReplicaMessage) -> Bool {
-        let enqueued = queued.withLock { queued in
+        let collecting = NativeEditorDiagnosticsStore.shared.isCollecting
+        let nowNs = collecting ? DispatchTime.now().uptimeNanoseconds : 0
+        let enqueued = queueState.withLock { state in
             let fits =
                 switch message {
                 case .detach, .close: true
-                default: queued < Self.capacity
+                default: state.count < Self.capacity
                 }
             guard fits, case .enqueued = continuation.yield(message) else { return false }
-            queued += 1
+            state.count += 1
+            if collecting {
+                state.enqueueTimesNs.append(nowNs)
+            } else if state.headIndex < state.enqueueTimesNs.count {
+                // Keep FIFO alignment behind any already-tracked entries.
+                state.enqueueTimesNs.append(nil)
+            } else {
+                state.untrackedHeadCount += 1
+            }
             return true
         }
         if !enqueued { message.cancel() }
@@ -259,7 +276,33 @@ final class ReplicaCommandMailbox: Sendable {
     }
 
     /// The session took one message off `stream`.
-    func took() { queued.withLock { $0 -= 1 } }
+    func took() { _ = tookMeasuringWaitMs(collecting: false) }
+
+    /// The session took one message off `stream`; returns the queue wait in ms.
+    func tookMeasuringWaitMs(
+        collecting: Bool = NativeEditorDiagnosticsStore.shared.isCollecting
+    ) -> Double? {
+        let nowNs = collecting ? DispatchTime.now().uptimeNanoseconds : 0
+        return queueState.withLock { state in
+            state.count -= 1
+            if state.untrackedHeadCount > 0 {
+                state.untrackedHeadCount -= 1
+                return nil
+            }
+            guard state.headIndex < state.enqueueTimesNs.count else { return nil }
+            let maybeEnqueuedNs = state.enqueueTimesNs[state.headIndex]
+            state.headIndex += 1
+            if state.headIndex >= state.enqueueTimesNs.count {
+                state.enqueueTimesNs.removeAll(keepingCapacity: false)
+                state.headIndex = 0
+            } else if state.headIndex >= 32, state.headIndex * 2 >= state.enqueueTimesNs.count {
+                state.enqueueTimesNs.removeFirst(state.headIndex)
+                state.headIndex = 0
+            }
+            guard collecting, let enqueuedNs = maybeEnqueuedNs else { return nil }
+            return Double(nowNs &- enqueuedNs) / 1_000_000.0
+        }
+    }
 
     func finish() { continuation.finish() }
 }

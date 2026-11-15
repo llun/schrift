@@ -78,7 +78,11 @@ final class NativeEditorUITests: XCTestCase {
         app.launch()
         let editor = app.textViews["nativeEditor.text"]
         focusFirstParagraph(of: editor, in: app)
+        // Warm up the hardware-keyboard shifted-arrow path before selecting across paragraphs.
+        editor.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: .shift)
+        editor.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
         editor.typeText("alpha")
+        XCTAssertTrue(waitForText(of: editor, containing: "alpha"), text(of: editor))
         let lines = text(of: editor).components(separatedBy: "\n")
         guard lines.count > 2, let caret = lines[0].range(of: "alpha")?.upperBound else {
             return XCTFail(lines.prefix(3).joined(separator: "|"))
@@ -88,6 +92,7 @@ final class NativeEditorUITests: XCTestCase {
             editor.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: .shift)
         }
         editor.typeText("omega")
+        XCTAssertTrue(waitForText(of: editor, containing: "omega"), text(of: editor))
         let after = text(of: editor).components(separatedBy: "\n")
         // iOS's smart insert may separate a word that arrives whole (iOS 26.5 delivers
         // `typeText` as one insertion), as it does in any text view.
@@ -106,8 +111,11 @@ final class NativeEditorUITests: XCTestCase {
         let tail = after[0][omega...].count
         for _ in 0..<(tail + 1) { editor.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: .shift) }
         editor.typeText(XCUIKeyboardKey.delete.rawValue)
+        let expectedFirst = String(after[0].prefix(after[0].count - tail)) + after[1]
+        let expectedJoined = ([expectedFirst] + Array(after.dropFirst(2))).joined(separator: "\n")
+        XCTAssertTrue(waitForValue(of: editor, equalTo: expectedJoined, timeout: 10), text(of: editor))
         let joined = text(of: editor).components(separatedBy: "\n")
-        XCTAssertEqual(joined.first, String(after[0].prefix(after[0].count - tail)) + after[1])
+        XCTAssertEqual(joined.first, expectedFirst)
         XCTAssertEqual(joined.count, after.count - 1)
         XCTAssertFalse(
             app.staticTexts["nativeEditor.inputNotice"].exists, "Backspace over a selection is never refused")
@@ -1440,6 +1448,191 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
         XCTAssertTrue(waitForText(of: editor, containing: "\n\nAfter rule"))
         XCTAssertFalse(app.staticTexts["nativeEditor.preservedNotice"].exists)
+    }
+
+    // MARK: - PR15 Step 4 Acceptance UI Tests
+
+    /// PR15 §5B: S2 5,000-paragraph / 200-attachment fixture scrolls all the way to the bottom
+    /// via touch flings and explicit programmatic steps without reversals, bounds drift,
+    /// or unbounded attachment realisation. TextKit 2 height-estimate corrections (`jumps`) are
+    /// recorded in the attached sampler output without failing the test.
+    func testS2ScrollSamplerReachesBottomWithoutReversalsOrBoundsDrift() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-scroll-sampler"]
+        app.launch()
+
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 20))
+        XCTAssertTrue(editor.waitForStableFrame())
+
+        let runButton = app.buttons["scrollSampler.run"]
+        let status = app.staticTexts["scrollSampler.status"]
+        XCTAssertTrue(runButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+
+        // Exercise touch-fling deceleration while CADisplayLink sampler is observing.
+        for _ in 0..<2 {
+            let start = editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
+            let end = editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+            start.press(forDuration: 0.02, thenDragTo: end, withVelocity: .fast, thenHoldForDuration: 0.0)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+        }
+
+        // Now run the full programmatic sweep from top to bottom.
+        runButton.tap()
+        let finished = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "pass|", "fail|"),
+            object: status)
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [finished], timeout: 120), .completed, "scroll sampler finished: \(status.label)")
+
+        let result = status.label
+        print("S2_SAMPLER_RESULT: \(result)")
+        let attachment = XCTAttachment(string: result)
+        attachment.name = "S2 Scroll Sampler Result"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+
+        let metrics = Dictionary(
+            uniqueKeysWithValues: result.split(separator: "|").compactMap { part -> (String, String)? in
+                let pair = part.split(separator: "=", maxSplits: 1)
+                guard pair.count == 2 else { return nil }
+                return (String(pair[0]), String(pair[1]))
+            })
+
+        XCTAssertTrue(result.hasPrefix("pass|"), "S2 scroll sampler failed: \(result)")
+        XCTAssertEqual(metrics["reachedBottom"], "1", "S2 scroll sampler did not reach bottom: \(result)")
+        let reversals = Int(metrics["reversals"] ?? "") ?? .max
+        XCTAssertLessThanOrEqual(reversals, 2, "S2 scroll sampler recorded too many reversals: \(result)")
+        let maxReversalPt = Double(metrics["maxReversalPt"] ?? "") ?? .infinity
+        XCTAssertLessThanOrEqual(
+            maxReversalPt, 24.0, "S2 scroll sampler exceeded reversal displacement tolerance: \(result)")
+        let maxBoundsErr = Double(metrics["maxBoundsErr"] ?? "") ?? .infinity
+        XCTAssertLessThanOrEqual(maxBoundsErr, 0.5, "S2 scroll sampler exceeded bounds tolerance: \(result)")
+        let maxRealised = Int(metrics["maxRealised"] ?? "") ?? .max
+        XCTAssertLessThanOrEqual(maxRealised, 32, "S2 scroll sampler realised too many attachments: \(result)")
+    }
+
+    /// PR15 §4 / §5B: `--native-diagnostics` captures pipeline stages and surface counters in
+    /// sanitized JSON without leaking content, titles, IDs, or server hosts.
+    func testDiagnosticsReadoutIsSanitizedAndRecordsPipelineStages() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-diagnostics", "--native-slow-disk"]
+        app.launch()
+
+        let editor = app.textViews["nativeEditor.text"]
+        focusFirstParagraph(of: editor, in: app)
+        editor.typeText("Diagnostics probe ")
+        XCTAssertTrue(waitForText(of: editor, containing: "Diagnostics probe"))
+        waitForDurableJournal(in: app)
+
+        let refresh = app.buttons["nativeEditor.diagnostics.refresh"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 5))
+        refresh.tap()
+
+        let readout = app.staticTexts["nativeEditor.diagnostics"]
+        XCTAssertTrue(readout.waitForExistence(timeout: 5))
+        let ready = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value != %@", "pending"), object: readout)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+
+        let json = try XCTUnwrap(readout.value as? String)
+        let data = try XCTUnwrap(json.data(using: .utf8))
+        let decoded = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(decoded["schemaVersion"] as? Int, 1)
+        XCTAssertGreaterThan(decoded["totalSampleCount"] as? Int ?? 0, 0)
+
+        let stages = try XCTUnwrap(decoded["stageDistributions"] as? [String: Any])
+        for expectedStage in [
+            "diskRestore", "decodeIntegrate", "projection", "storageApply",
+            "firstVisibleContent", "timeToEdit", "inputToDisplay", "mailboxQueueWait",
+        ] {
+            XCTAssertNotNil(stages[expectedStage], "missing stage \(expectedStage) in \(stages.keys)")
+        }
+
+        let sessions = try XCTUnwrap(decoded["sessions"] as? [[String: Any]])
+        let session = try XCTUnwrap(sessions.first)
+        let counters = try XCTUnwrap(session["counters"] as? [String: Any])
+        XCTAssertGreaterThan(counters["textPatchCount"] as? Int ?? 0, 0)
+        XCTAssertEqual(counters["fullStorageRebuildCount"] as? Int, 0)
+
+        for forbidden in [
+            "Diagnostics probe", "Native open fixture", "Owned paragraph",
+            "native-fixture.invalid", "33333333", "44444444",
+        ] {
+            XCTAssertFalse(json.contains(forbidden), "sanitized diagnostics leaked \(forbidden)")
+        }
+    }
+
+    /// PR15 G01 / §5B: Editing `EditorDocumentHeader` title in Editing mode persists across relaunch.
+    func testHeaderTitleEditSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset"]
+        app.launch()
+
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(editor.waitForStableFrame())
+
+        let editButton = app.buttons["Edit"]
+        XCTAssertTrue(editButton.waitForExistence(timeout: 5))
+        editButton.tap()
+
+        let titleField = app.descendants(matching: .any)["editor.header.title"].firstMatch
+        XCTAssertTrue(titleField.waitForExistence(timeout: 5))
+        titleField.tap()
+        titleField.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        app.typeText(" Updated")
+
+        let doneButton = app.buttons["Done"]
+        XCTAssertTrue(doneButton.waitForExistence(timeout: 5))
+        doneButton.tap()
+
+        let readingTitle = app.staticTexts["editor.header.title"]
+        XCTAssertTrue(readingTitle.waitForExistence(timeout: 5))
+        XCTAssertEqual(readingTitle.label, "Native open fixture Updated")
+
+        app.terminate()
+        app.launchArguments = ["--native-open"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(readingTitle.waitForExistence(timeout: 5))
+        XCTAssertEqual(readingTitle.label, "Native open fixture Updated")
+    }
+
+    /// PR15 G05 / §5B: Completing the last remaining checklist item while `Hide completed` is on
+    /// settles into the all-hidden empty state, and `Show completed` reveals every item again.
+    func testAllHiddenChecklistReadingEmptyStateAndShowCompleted() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-checklist-only"]
+        app.launch()
+
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(editor.waitForStableFrame())
+
+        let hideToggle = app.switches["checklist.hideCompleted"]
+        XCTAssertTrue(hideToggle.waitForExistence(timeout: 5))
+        let switchControl = hideToggle.switches.firstMatch.exists ? hideToggle.switches.firstMatch : hideToggle
+        switchControl.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.2)
+
+        let firstCheckbox = app.buttons["nativeEditor.checkbox.owned-check-1"]
+        let secondCheckbox = app.buttons["nativeEditor.checkbox.owned-check-2"]
+        XCTAssertTrue(secondCheckbox.waitForNonExistence(timeout: 5), "pre-checked item hides immediately")
+        XCTAssertTrue(firstCheckbox.waitForExistence(timeout: 5))
+
+        firstCheckbox.tap()
+        let showCompleted = app.buttons["checklist.showCompleted"]
+        XCTAssertTrue(
+            showCompleted.waitForExistence(timeout: 5),
+            "completing the last item settles into the all-hidden reading state")
+        XCTAssertFalse(firstCheckbox.exists)
+
+        showCompleted.tap()
+        XCTAssertTrue(firstCheckbox.waitForExistence(timeout: 5))
+        XCTAssertTrue(secondCheckbox.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForText(of: editor, containing: "Only task one"))
+        XCTAssertTrue(waitForText(of: editor, containing: "Only task two"))
     }
 
     private func text(of element: XCUIElement) -> String { element.value as? String ?? "" }

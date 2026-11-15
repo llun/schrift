@@ -33,6 +33,7 @@ final class SessionStore {
     private let clearImageCache: () -> Void
     private let clearAttachmentCache: () -> Void
     private let clearMediaDropStaging: () -> Void
+    private let clearDiagnostics: () -> Void
     var imageCacheScope: String? { imageCacheSessionID?.uuidString }
 
     private(set) var serverURL: URL?
@@ -101,11 +102,13 @@ final class SessionStore {
         clearImageCache: @escaping () -> Void = { ImageCacheStore().removeAll() },
         clearAttachmentCache: @escaping () -> Void = { AttachmentCacheStore().removeAll() },
         clearMediaDropStaging: @escaping () -> Void = { NativeMediaDropPaste.removeStagingRoot() },
+        clearDiagnostics: @escaping () -> Void = { NativeEditorDiagnosticsStore.shared.reset() },
         now: @escaping () -> ContinuousClock.Instant = { ContinuousClock.now }
     ) {
         self.clearImageCache = clearImageCache
         self.clearAttachmentCache = clearAttachmentCache
         self.clearMediaDropStaging = clearMediaDropStaging
+        self.clearDiagnostics = clearDiagnostics
         self.now = now
         self.userDefaults = userDefaults
         self.keychain = keychain
@@ -249,6 +252,7 @@ final class SessionStore {
         clearImageCache()
         clearAttachmentCache()
         clearMediaDropStaging()
+        clearDiagnostics()
         signedInUser.clear()
         // The account's displayed profile goes with the id — it is *displayed* before any
         // fetch, so a kept entry would name the previous account on the new one's screen.

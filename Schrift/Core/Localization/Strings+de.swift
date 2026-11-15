@@ -558,6 +558,7 @@ enum Strings_de {
             "Einige Kopien von Dokumenten auf diesem Gerät können nicht gelesen werden, daher lässt sich hier kein Dokument bearbeiten. Beim Beiseitelegen werden diese Kopien in einen separaten Ordner auf diesem Gerät verschoben. Ihre Dateien bleiben erhalten, werden aber nicht mehr geöffnet, und nie synchronisierte Änderungen darin werden nicht gesendet. Andere Dokumente lassen sich danach wieder bearbeiten.",
         .profile_recover_drafts_set_aside_success:
             "Unlesbare Kopien beiseitegelegt. Andere Dokumente lassen sich wieder bearbeiten.",
+        .profile_native_editor_diagnostics_collect: "Diagnosedaten des nativen Editors erfassen",
         .profile_recover_drafts_failure:
             "Die Entwürfe konnten nicht wiederhergestellt werden. Sie bleiben auf diesem Gerät gespeichert.",
     ]
