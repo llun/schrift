@@ -1773,9 +1773,17 @@ final class NativeEditorOpen {
             editUnavailableReason = session.isWritable ? nil : .noEditAccess
             return
         }
-        editUnavailableReason = unavailableReason(
+        let next = unavailableReason(
             for: session, viewModel: viewModel, hasEditAccess: hasEditAccess,
             hasAccount: viewModel.signedInUser.userID != nil)
+        // Typing is only installed on open, so a cleared hold still needs a reopen: keep the
+        // transient note (it says "reopen it to edit") rather than leaving Edit disabled silently.
+        switch editUnavailableReason {
+        case .pendingSync?, .classicDraft?, .liveHeld?:
+            editUnavailableReason = next ?? editUnavailableReason
+        default:
+            editUnavailableReason = next
+        }
     }
 
     /// Computes why editing is unavailable when a `.native` session opens without typing.

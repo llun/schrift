@@ -489,7 +489,9 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
 
             held = false
             await open.refresh(viewModel: env.model, isOffline: false)
-            XCTAssertNil(open.editUnavailableReason, "stale .liveHeld must clear after refresh")
+            XCTAssertEqual(
+                open.editUnavailableReason, .liveHeld,
+                "a cleared hold keeps the reopen-to-edit note while typing is not installed")
         }
 
         // 2. pendingSync clears into liveHeld, then clears to .noEditAccess when server says reader
@@ -542,7 +544,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
 
             draftStore.remove(documentID: env.documentID)
             await open.refresh(viewModel: env.model, isOffline: false)
-            XCTAssertNil(open.editUnavailableReason)
+            XCTAssertEqual(open.editUnavailableReason, .classicDraft, "keeps the reopen-to-edit note")
         }
     }
 
