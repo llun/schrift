@@ -114,9 +114,11 @@ struct PatchBuilder {
             visitedTypes += 1
             let type = entry.type
             // The fragment root itself: a root-group add, remove or replacement
-            // has no block-relative spelling. Resync the whole surface.
+            // has no block-relative spelling. Resync the whole surface. Changes
+            // to auxiliary roots (e.g. `doc-<UUID>` broadcast arrays) do not
+            // touch `document-store` and never force a surface resync.
             if type.item == nil {
-                resync = true
+                if type === index.root { resync = true }
                 continue
             }
             if type.typeRef == .xmlText {

@@ -496,7 +496,7 @@ enum Strings_sl {
         .native_editor_paste_unavailable: "Te kopirane vsebine tukaj ni mogoče prilepiti. Nič ni bilo spremenjeno.",
         .profile_native_editor: "Izvorni urejevalnik (poskusno)",
         .profile_native_editor_footer:
-            "Velja ob naslednjem odprtju dokumenta. Podpira Docs 6 z besedilom, oblikovanjem, povezavami, naslovi, seznami, kontrolnimi seznami, citati in bloki kode; drugi bloki so ohranjeni, vendar jih še ni mogoče urejati.",
+            "Velja ob naslednjem odprtju dokumenta. Podpira besedilo, oblikovanje, naslove, sezname, kontrolne sezname, citate, bloke kode, preklopne razdelke, oblačke, tabele, stolpce, predstavnost, matematiko, diagrame, povezave do strani in omembe ter delo brez povezave in sodelovanje v živo. Dokument z blokom, ki ga izvorni urejevalnik še ne more urejati, se odpre samo za branje.",
         .native_editor_preserved_title: "Ohranjen dokument",
         .native_editor_preserved_body:
             "Izvorni bralnik še ne more prikazati strukture tega dokumenta. Izvirna vsebina je ohranjena.",
@@ -565,5 +565,29 @@ enum Strings_sl {
             "Neberljive kopije so odložene. Druge dokumente je spet mogoče urejati.",
         .profile_native_editor_diagnostics_collect: "Zbiraj diagnostiko izvornega urejevalnika",
         .profile_recover_drafts_failure: "Osnutkov ni bilo mogoče obnoviti. Še vedno so shranjeni v tej napravi.",
+        .native_editor_read_only_unfamiliar_block:
+            "Samo za branje: ta dokument vsebuje blok, ki ga izvorni urejevalnik še ne more urejati (%@)",
+        .native_editor_unfamiliar_detail_format: "%@: %@",
+        .native_editor_unfamiliar_unknown_block_type: "vrsta bloka, ki je izvorni urejevalnik ne pozna",
+        .native_editor_unfamiliar_category_block_type: "nepodprta vrsta bloka",
+        .native_editor_unfamiliar_category_block_setting: "nepodprta nastavitev bloka",
+        .native_editor_unfamiliar_category_nested_content: "gnezdena vsebina",
+        .native_editor_unfamiliar_category_link: "nepodprta povezava",
+        .native_editor_unfamiliar_category_oversized: "prevelika vsebina",
+        .native_editor_unfamiliar_category_other: "drugo",
+        .native_editor_read_only_details: "Podrobnosti: %@",
+        .native_editor_read_only_no_access: "Samo za branje: nimate dovoljenja za urejanje",
+        .native_editor_read_only_pending_sync:
+            "Čakanje na dokončanje sinhronizacije tega dokumenta — za urejanje ga znova odprite",
+        .native_editor_read_only_classic_draft:
+            "Samo za branje: čakanje na sinhronizacijo osnutka brez povezave — za urejanje ga znova odprite",
+        .native_editor_read_only_live_held:
+            "Čakanje na sinhronizacijo sprememb sodelovanja v živo — za urejanje ga znova odprite",
+        .native_editor_read_only_signed_out: "Samo za branje: za urejanje tega dokumenta se prijavite",
+        .native_editor_block_callout: "Oblaček",
+        .native_editor_block_table: "Tabela",
+        .native_editor_block_columns: "Stolpci",
+        .native_editor_block_heading: "Naslov",
+        .native_editor_block_paragraph: "Odstavek",
     ]
 }

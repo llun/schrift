@@ -475,7 +475,7 @@ enum Strings_th {
         .native_editor_paste_unavailable: "วางเนื้อหาที่คัดลอกนี้ที่นี่ไม่ได้ ไม่มีการเปลี่ยนแปลงใดๆ",
         .profile_native_editor: "ตัวแก้ไขเนทีฟ (ทดลอง)",
         .profile_native_editor_footer:
-            "มีผลเมื่อเปิดเอกสารครั้งถัดไป รองรับ Docs 6 สำหรับข้อความ การจัดรูปแบบ ลิงก์ หัวข้อ รายการ รายการตรวจสอบ คำอ้างอิง และบล็อกโค้ด บล็อกอื่นจะถูกเก็บรักษาไว้แต่ยังแก้ไขไม่ได้",
+            "มีผลเมื่อเปิดเอกสารครั้งถัดไป รองรับข้อความ การจัดรูปแบบ หัวข้อ รายการ รายการตรวจสอบ คำอ้างอิง บล็อกโค้ด ส่วนพับเก็บ กล่องข้อความ ตาราง คอลัมน์ สื่อ คณิตศาสตร์ ไดอะแกรม ลิงก์หน้าและการกล่าวถึง รวมถึงโหมดออฟไลน์และการทำงานร่วมกันแบบเรียลไทม์ เอกสารที่มีบล็อกที่ตัวแก้ไขเนทีฟยังไม่สามารถแก้ไขได้จะเปิดแบบอ่านอย่างเดียว",
         .native_editor_preserved_title: "เอกสารถูกเก็บรักษาไว้",
         .native_editor_preserved_body: "ตัวอ่านเนทีฟยังไม่สามารถแสดงโครงสร้างของเอกสารนี้ได้ เนื้อหาต้นฉบับยังคงถูกเก็บรักษาไว้",
         .profile_live_collaboration: "การทำงานร่วมกันแบบเรียลไทม์",
@@ -541,5 +541,29 @@ enum Strings_th {
         .profile_recover_drafts_set_aside_success: "แยกสำเนาที่อ่านไม่ได้ไว้แล้ว แก้ไขเอกสารอื่นได้อีกครั้ง",
         .profile_native_editor_diagnostics_collect: "รวบรวมข้อมูลวินิจฉัยของตัวแก้ไขเนทีฟ",
         .profile_recover_drafts_failure: "ไม่สามารถกู้คืนฉบับร่างได้ ฉบับร่างยังคงบันทึกอยู่ในอุปกรณ์นี้",
+        .native_editor_read_only_unfamiliar_block:
+            "อ่านอย่างเดียว: เอกสารนี้มีบล็อกที่ตัวแก้ไขเนทีฟยังไม่สามารถแก้ไขได้ (%@)",
+        .native_editor_unfamiliar_detail_format: "%@: %@",
+        .native_editor_unfamiliar_unknown_block_type: "ประเภทบล็อกที่ตัวแก้ไขเนทีฟยังไม่รู้จัก",
+        .native_editor_unfamiliar_category_block_type: "ประเภทบล็อกที่ไม่รองรับ",
+        .native_editor_unfamiliar_category_block_setting: "การตั้งค่าบล็อกที่ไม่รองรับ",
+        .native_editor_unfamiliar_category_nested_content: "เนื้อหาที่ซ้อนกัน",
+        .native_editor_unfamiliar_category_link: "ลิงก์ที่ไม่รองรับ",
+        .native_editor_unfamiliar_category_oversized: "เนื้อหาที่มีขนาดใหญ่เกินไป",
+        .native_editor_unfamiliar_category_other: "อื่นๆ",
+        .native_editor_read_only_details: "รายละเอียด: %@",
+        .native_editor_read_only_no_access: "อ่านอย่างเดียว: คุณไม่มีสิทธิ์แก้ไข",
+        .native_editor_read_only_pending_sync:
+            "กำลังรอให้เอกสารนี้ซิงค์เสร็จสมบูรณ์ — เปิดเอกสารใหม่อีกครั้งเพื่อแก้ไข",
+        .native_editor_read_only_classic_draft:
+            "อ่านอย่างเดียว: กำลังรอให้ฉบับร่างออฟไลน์ซิงค์เสร็จสมบูรณ์ — เปิดเอกสารใหม่อีกครั้งเพื่อแก้ไข",
+        .native_editor_read_only_live_held:
+            "กำลังรอให้การเปลี่ยนแปลงแบบเรียลไทม์ซิงค์ — เปิดเอกสารใหม่อีกครั้งเพื่อแก้ไข",
+        .native_editor_read_only_signed_out: "อ่านอย่างเดียว: ลงชื่อเข้าใช้เพื่อแก้ไขเอกสารนี้",
+        .native_editor_block_callout: "กล่องข้อความ",
+        .native_editor_block_table: "ตาราง",
+        .native_editor_block_columns: "คอลัมน์",
+        .native_editor_block_heading: "หัวข้อ",
+        .native_editor_block_paragraph: "ย่อหน้า",
     ]
 }

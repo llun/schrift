@@ -7,10 +7,6 @@ struct NativeEditorView: View {
     /// loader of this server's session (`MarkdownImageView.matchesSession`).
     /// Required, like the classic image sites.
     let serverOrigin: String
-    /// Shown when the document is native-owned but editing is not enabled.
-    /// The replica is preserved and read-only; the classic writer must not
-    /// open over it.
-    var preservedNotice: L10nKey? = nil
     /// The classic editor's save status, shown only while typing is enabled.
     var saveStatus: SaveStatusDisplay? = nil
     var saveFailureDetail: String? = nil
@@ -231,18 +227,6 @@ struct NativeEditorView: View {
         .accessibilityActions {
             if session.navigation.reading?.offersBackToTop == true {
                 Button(loc[.editor_back_to_top]) { session.navigation.backToTop() }
-            }
-        }
-        .safeAreaInset(edge: .top) {
-            if let preservedNotice {
-                Text(loc[preservedNotice])
-                    .font(.footnote)
-                    .foregroundStyle(theme.colors.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, DocsSpacing.gutter)
-                    .padding(.vertical, DocsSpacing.spaceXS)
-                    .background(theme.colors.surfacePage)
-                    .accessibilityIdentifier("nativeEditor.preservedNotice")
             }
         }
         .safeAreaInset(edge: .bottom) {

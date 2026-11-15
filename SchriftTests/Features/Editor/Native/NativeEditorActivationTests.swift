@@ -27,7 +27,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         XCTAssertEqual(env.model.saveCoordinator.nativeOwnership(documentID: env.model.documentID), .owned(scope))
         XCTAssertEqual(try env.replicaStore.manifest(for: scope)?.revision, 0)
         XCTAssertFalse(env.model.hasLoadedContent, "classic loading must not run")
-        XCTAssertFalse(open.isPreservedReadOnly)
+        XCTAssertNil(open.editUnavailableReason)
     }
 
     /// PR08b: the restore runs on the replica session, off the main actor. An
@@ -46,7 +46,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         attach.open()
         await opening.value
         guard case .loading = open.route else { return XCTFail("a closed open shows nothing") }
-        XCTAssertFalse(open.isPreservedReadOnly)
+        XCTAssertNil(open.editUnavailableReason)
     }
 
     func testOwnedReplicaRestoresOfflineFirstThenIntegratesTheServerState() async throws {

@@ -261,7 +261,7 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
         guard case .native(let preservedSession) = open2.route else {
             return XCTFail("owned native document must reopen as preserved native read-only")
         }
-        XCTAssertTrue(open2.isPreservedReadOnly)
+        XCTAssertEqual(open2.editUnavailableReason, .nativeSwitchOff)
         XCTAssertNil(preservedSession.input)
         XCTAssertFalse(relaunched.canStartEditing)
         let beforeDraft = env.model.saveCoordinator.storedDraft(documentID: env.documentID)
@@ -277,7 +277,7 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
         await open3.open(viewModel: relaunched2, isOffline: false, canUpdate: true)
         guard case .native(let resumed) = open3.route else { return XCTFail("expected resumed native session") }
         XCTAssertNotNil(resumed.input)
-        XCTAssertFalse(open3.isPreservedReadOnly)
+        XCTAssertNil(open3.editUnavailableReason)
         XCTAssertTrue(resumed.surface.blocks[0].runs.map(\.text).joined().hasPrefix("Rich "))
 
         // 5. Untouched document opens in ClassicEditorView when switch is OFF.

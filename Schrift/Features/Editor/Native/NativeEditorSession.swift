@@ -2,6 +2,205 @@ import Foundation
 import Observation
 import UIKit
 
+/// Explains why native editing is unavailable when a document opens in read-only
+/// mode (because `session.input` is `nil`, the route is preserved-unavailable,
+/// or `session.isWritable` is `false`).
+enum NativeEditUnavailableReason: Equatable, Sendable {
+    /// A block, prop, or root cannot be authored or shadow-exported losslessly yet.
+    /// `blockNode` names the offending block type (never document text), and
+    /// `reason` carries the projection's computed explanation.
+    case unfamiliarContent(blockNode: String, reason: String)
+    /// `abilities.update` is false, a remembered denial holds, or the live/server
+    /// check downgraded this session via `becomeReader`.
+    case noEditAccess
+    /// Native-owned replica opened while the experimental native editor switch is off.
+    case nativeSwitchOff
+    /// A newly created server document still has a checkpointed create pending sync.
+    case pendingSync
+    /// Document is queued for deletion.
+    case pendingDelete
+    /// Document has an un-migrated classic draft.
+    case classicDraft
+    /// Document is held by a live collaboration session.
+    case liveHeld
+    /// No signed-in account is active for this open.
+    case signedOut
+    /// Document cannot be restored or rendered safely on the native route.
+    case preservedUnavailable
+
+    private static let maxTechnicalDetailLength = 48
+
+    private enum UnfamiliarCategory {
+        case blockType
+        case blockSetting
+        case nestedContent
+        case unsupportedLink
+        case oversizedContent
+        case other
+
+        var l10nKey: L10nKey {
+            switch self {
+            case .blockType: return .native_editor_unfamiliar_category_block_type
+            case .blockSetting: return .native_editor_unfamiliar_category_block_setting
+            case .nestedContent: return .native_editor_unfamiliar_category_nested_content
+            case .unsupportedLink: return .native_editor_unfamiliar_category_link
+            case .oversizedContent: return .native_editor_unfamiliar_category_oversized
+            case .other: return .native_editor_unfamiliar_category_other
+            }
+        }
+    }
+
+    var icon: MaterialIcon {
+        switch self {
+        case .unfamiliarContent: return .info
+        case .noEditAccess, .nativeSwitchOff, .signedOut: return .lock
+        case .pendingSync, .classicDraft, .liveHeld: return .sync
+        case .pendingDelete: return .delete
+        case .preservedUnavailable: return .warning
+        }
+    }
+
+    /// Concise user-facing note for the read-only notice under the header.
+    /// Never includes document text or raw peer-controlled strings.
+    @MainActor
+    func localizedNote(using loc: LocalizationStore) -> String {
+        switch self {
+        case .unfamiliarContent(let blockNode, let reason):
+            let detail = Self.localizedUnfamiliarDetail(blockNode: blockNode, reason: reason, using: loc)
+            return loc.format(.native_editor_read_only_unfamiliar_block, detail)
+        case .noEditAccess:
+            return loc[.native_editor_read_only_no_access]
+        case .nativeSwitchOff:
+            return loc[.native_editor_owned_read_only_body]
+        case .pendingSync:
+            return loc[.native_editor_read_only_pending_sync]
+        case .pendingDelete:
+            return loc[.editor_pending_delete]
+        case .classicDraft:
+            return loc[.native_editor_read_only_classic_draft]
+        case .liveHeld:
+            return loc[.native_editor_read_only_live_held]
+        case .signedOut:
+            return loc[.native_editor_read_only_signed_out]
+        case .preservedUnavailable:
+            return loc[.native_editor_owned_unavailable_body]
+        }
+    }
+
+    /// Secondary technical diagnosis line for `.unfamiliarContent`, sanitized to
+    /// ASCII `[A-Za-z0-9:._-]` and clipped to 48 characters.
+    @MainActor
+    func localizedDetailsLine(using loc: LocalizationStore) -> String? {
+        guard case .unfamiliarContent(let blockNode, let reason) = self else { return nil }
+        let raw: String
+        if reason.isEmpty {
+            raw = blockNode
+        } else if blockNode.isEmpty || reason == blockNode || reason.hasPrefix("\(blockNode):")
+            || reason.hasPrefix("unknownNode:\(blockNode)")
+        {
+            raw = reason
+        } else {
+            raw = "\(blockNode):\(reason)"
+        }
+        let sanitized = Self.sanitizeTechnicalDetail(raw)
+        guard !sanitized.isEmpty else { return nil }
+        return loc.format(.native_editor_read_only_details, sanitized)
+    }
+
+    static func sanitizeTechnicalDetail(_ raw: String, maxLength: Int = maxTechnicalDetailLength) -> String {
+        guard maxLength > 0 else { return "" }
+        var scalars = String.UnicodeScalarView()
+        scalars.reserveCapacity(min(raw.unicodeScalars.count, maxLength))
+        for scalar in raw.unicodeScalars {
+            let value = scalar.value
+            let isASCIILetter = (value >= 0x41 && value <= 0x5A) || (value >= 0x61 && value <= 0x7A)
+            let isASCIIDigit = (value >= 0x30 && value <= 0x39)
+            let isAllowedPunctuation = scalar == ":" || scalar == "." || scalar == "_" || scalar == "-"
+            if isASCIILetter || isASCIIDigit || isAllowedPunctuation {
+                scalars.append(scalar)
+                if scalars.count == maxLength { break }
+            }
+        }
+        return String(scalars)
+    }
+
+    @MainActor
+    private static func localizedUnfamiliarDetail(
+        blockNode: String, reason: String, using loc: LocalizationStore
+    ) -> String {
+        let blockLabel =
+            knownBlockLabelKey(for: blockNode).map { loc[$0] }
+            ?? loc[.native_editor_unfamiliar_unknown_block_type]
+        let category = unfamiliarCategory(blockNode: blockNode, reason: reason)
+        return loc.format(.native_editor_unfamiliar_detail_format, blockLabel, loc[category.l10nKey])
+    }
+
+    private static func unfamiliarCategory(blockNode: String, reason: String) -> UnfamiliarCategory {
+        if reason.hasPrefix("unknownNode:") {
+            return .blockType
+        }
+        let prefix = "\(blockNode): "
+        let trimmed =
+            !blockNode.isEmpty && reason.hasPrefix(prefix)
+            ? String(reason.dropFirst(prefix.count))
+            : reason
+        if trimmed.hasPrefix("unknownNode:") || trimmed == "node" {
+            return .blockType
+        }
+        if trimmed.hasPrefix("prop:") || trimmed.hasPrefix("unknownProp:") {
+            return .blockSetting
+        }
+        switch trimmed {
+        case "props", "unsupported prop", "unreadable prop",
+            "missing heading level", "invalid heading level", "toggleable heading",
+            "missing checkListItem checked", "invalid checkListItem checked",
+            "missing emoji",
+            "unreadable group attribute", "unreadable table attribute", "unreadable cell attribute",
+            "unreadable span", "unreadable colwidth", "unreadable width":
+            return .blockSetting
+        case "nested blocks", "nested children", "nested media", "nested column group", "nesting":
+            return .nestedContent
+        case "interlinkingLink", "badLink", "unsupported URL":
+            return .unsupportedLink
+        case "size", "large table", "large group", "too many columns":
+            return .oversizedContent
+        default:
+            if knownBlockLabelKey(for: blockNode) == nil,
+                trimmed.isEmpty || trimmed == blockNode || (blockNode.isEmpty && trimmed == "unknown")
+            {
+                return .blockType
+            }
+            return .other
+        }
+    }
+
+    private static func knownBlockLabelKey(for blockNode: String) -> L10nKey? {
+        switch blockNode {
+        case "callout": return .native_editor_block_callout
+        case "table": return .native_editor_block_table
+        case "columnList": return .native_editor_block_columns
+        case "heading": return .native_editor_block_heading
+        case "paragraph": return .native_editor_block_paragraph
+        case "bulletListItem": return .editor_slash_bulleted_list
+        case "numberedListItem": return .editor_slash_numbered_list
+        case "checkListItem": return .editor_slash_checklist
+        case "quote": return .editor_slash_quote
+        case "codeBlock": return .editor_slash_code_block
+        case "toggleListItem": return .editor_slash_toggle_list
+        case "divider": return .editor_slash_divider
+        case "image": return .editor_image_a11y
+        case "video": return .native_editor_video
+        case "audio": return .native_editor_audio
+        case "file": return .native_editor_file
+        case "pdf": return .native_editor_pdf
+        case "mathBlock", "math": return .native_editor_math
+        case "diagram": return .native_editor_diagram
+        case "pageBreak": return .native_editor_page_break
+        default: return nil
+        }
+    }
+}
+
 /// The view session (PR08b): one surface over a `DocumentReplicaSession`,
 /// which solely owns the replica. This side holds no `YDoc` or engine: it
 /// shows the attach snapshot, applies the session's deliveries in order and
@@ -28,6 +227,8 @@ final class NativeEditorSession {
     /// authored: anything else would be written back lossily. Opaque/rich
     /// documents stay in PR01's read-only view until the total shadow exists.
     let canType: Bool
+    /// First unfamiliar block/prop/root reason when `!canType`, if any.
+    let unfamiliarContent: NativeUnfamiliarBlock?
     private(set) var input: NativeInputCoordinator?
     private(set) var scope: ReplicaScope?
     private var hasRecoveryStore = false
@@ -73,7 +274,8 @@ final class NativeEditorSession {
     private init(
         replica: DocumentReplicaSession?, surfaceID: UUID = UUID(), blocks: [BlockSnapshot], revision: UInt64,
         hasUnsupportedRoot: Bool,
-        canType: Bool, recoveries: [ProvisionalRecovery], state: ReplicaState
+        canType: Bool, unfamiliarContent: NativeUnfamiliarBlock? = nil,
+        recoveries: [ProvisionalRecovery], state: ReplicaState
     ) {
         self.replica = replica
         let seq = replica?.diagnosticsSeq ?? NativeEditorDiagnosticsStore.shared.beginSession()
@@ -95,6 +297,7 @@ final class NativeEditorSession {
         self.navigation = navigation
         self.hasUnsupportedRoot = hasUnsupportedRoot
         self.canType = canType
+        self.unfamiliarContent = unfamiliarContent
         self.revision = revision
         self.recoveries = recoveries
         self.state = state
@@ -175,7 +378,8 @@ final class NativeEditorSession {
         }.value
         let session = NativeEditorSession(
             replica: nil, blocks: inspected.blocks, revision: 0, hasUnsupportedRoot: inspected.hasUnsupportedRoot,
-            canType: inspected.canType, recoveries: [], state: ReplicaState())
+            canType: inspected.canType, unfamiliarContent: inspected.unfamiliarContent,
+            recoveries: [], state: ReplicaState())
         session.inspectedTables = inspected.tables
         session.inspectedColumns = inspected.columns
         return session
@@ -244,6 +448,7 @@ final class NativeEditorSession {
         let session = NativeEditorSession(
             replica: replica, surfaceID: surfaceID, blocks: attachment.blocks, revision: attachment.revision,
             hasUnsupportedRoot: attachment.hasUnsupportedRoot, canType: attachment.canType,
+            unfamiliarContent: attachment.unfamiliarContent,
             recoveries: attachment.recoveries, state: attachment.state)
         session.scope = scope
         session.interlinkingOrigin = scope?.serverOrigin ?? ""
@@ -798,16 +1003,16 @@ final class NativeEditorOpen {
     }
     private(set) var enabled = false
     private(set) var route: Route
-    /// True when the native route was selected because the document is
-    /// native-owned, not because the experimental switch is on. The view uses
-    /// it to explain why editing is unavailable.
-    private(set) var isPreservedReadOnly = false
+    /// Explains why editing is unavailable when `route` cannot enter Edit mode.
+    private(set) var editUnavailableReason: NativeEditUnavailableReason?
     private var isOpen = false
     private let preference: @MainActor () -> Bool
     /// The Live collaboration preference, one input of the native live gate (PR09a).
     private let livePreference: @MainActor () -> Bool
     /// The open's `abilities.update`, another input of that gate.
     private var canUpdate = false
+    /// The row's `abilities.update` passed to `open`, used to recompute unavailable reasons on refresh.
+    private var rowCanUpdate = false
     /// Whether `abilities.mention` is granted for this open document session.
     private(set) var canMention = false
     private var rowCanMention = false
@@ -875,9 +1080,10 @@ final class NativeEditorOpen {
         activeViewModel = viewModel
         enabled = preference()
         self.canUpdate = false
+        self.rowCanUpdate = canUpdate
         self.canMention = false
         self.rowCanMention = canMention
-        isPreservedReadOnly = false
+        editUnavailableReason = nil
         // A reappearing classic editor keeps its SwiftUI identity and local
         // view state while the optional native eligibility read is in flight.
         switch route {
@@ -907,6 +1113,7 @@ final class NativeEditorOpen {
         case .unreadable:
             viewModel.seedNativeMetadataIfNeeded(includeLocalDrafts: false)
             viewModel.setNativeRouteActive(true)
+            editUnavailableReason = .preservedUnavailable
             route = .preservedUnavailable
             return
         case .owned(let scope):
@@ -914,6 +1121,7 @@ final class NativeEditorOpen {
             guard scope.ownerUserID == account else {
                 viewModel.seedNativeMetadataIfNeeded(includeLocalDrafts: false)
                 viewModel.setNativeRouteActive(true)
+                editUnavailableReason = .preservedUnavailable
                 route = .preservedUnavailable
                 return
             }
@@ -924,6 +1132,7 @@ final class NativeEditorOpen {
             } catch {
                 guard generation == request else { return }
                 viewModel.setNativeRouteActive(true)
+                editUnavailableReason = .preservedUnavailable
                 route = .preservedUnavailable
                 return
             }
@@ -934,14 +1143,16 @@ final class NativeEditorOpen {
                 return
             }
             if let session = restored {
-                // The "turn the switch on" explanation is only true while it is off.
-                isPreservedReadOnly = !enabled
                 if enabled, canUpdate, session.canType, mayType(viewModel) {
                     // Typing starts from the row at once; an online open's
                     // integration asks the server and downgrades a reader.
                     self.canUpdate = true
                     self.canMention = canMention && !viewModel.isLocalDocument
+                    editUnavailableReason = nil
                     installTyping(session, scope: scope, viewModel: viewModel)
+                } else {
+                    editUnavailableReason = unavailableReason(
+                        for: session, viewModel: viewModel, hasEditAccess: canUpdate, hasAccount: account != nil)
                 }
                 viewModel.setNativeRouteActive(true)
                 if let openStart = pendingOpenStartNs { session.markOpenStarted(openStart) }
@@ -957,6 +1168,7 @@ final class NativeEditorOpen {
             // when typing is possible. Otherwise it stays read-only.
             guard enabled, coordinator.clearNativeOwnership(scope: scope) else {
                 viewModel.setNativeRouteActive(true)
+                editUnavailableReason = .preservedUnavailable
                 route = .preservedUnavailable
                 return
             }
@@ -1055,10 +1267,12 @@ final class NativeEditorOpen {
             guard generation == request else { return }
             if fallbackToClassicOnInspectError {
                 viewModel.setNativeRouteActive(false)
+                editUnavailableReason = nil
                 route = .classic
             } else {
                 viewModel.seedNativeMetadataIfNeeded()
                 viewModel.setNativeRouteActive(true)
+                editUnavailableReason = .preservedUnavailable
                 route = .preservedUnavailable
             }
             return
@@ -1080,6 +1294,8 @@ final class NativeEditorOpen {
         self.canUpdate = verified
         guard enabled, verified, session.canType, let account, let scope, mayType(viewModel) else {
             self.canMention = false
+            editUnavailableReason = unavailableReason(
+                for: session, viewModel: viewModel, hasEditAccess: verified, hasAccount: account != nil)
             viewModel.seedNativeMetadataIfNeeded()
             viewModel.setNativeRouteActive(true)
             if let openStart = pendingOpenStartNs { session.markOpenStarted(openStart) }
@@ -1092,8 +1308,14 @@ final class NativeEditorOpen {
         guard let seeded else { return }
         viewModel.seedNativeMetadataIfNeeded()
         viewModel.setNativeRouteActive(seeded.isNativeActive)
-        if case .native(let session) = seeded, let openStart = pendingOpenStartNs {
-            session.markOpenStarted(openStart)
+        switch seeded {
+        case .native(let session):
+            if let openStart = pendingOpenStartNs { session.markOpenStarted(openStart) }
+            editUnavailableReason = nil
+        case .preservedUnavailable:
+            editUnavailableReason = .preservedUnavailable
+        case .loading, .classic:
+            editUnavailableReason = nil
         }
         route = seeded
         if case .native(let session) = seeded {
@@ -1104,7 +1326,21 @@ final class NativeEditorOpen {
 
     /// Reconnect: merge the fetched raw state into the open durable owner.
     func refresh(viewModel: EditorViewModel, isOffline: Bool) async {
-        guard isOpen, case .native(let session) = route, let scope = session.scope else { return }
+        guard isOpen, case .native(let session) = route else { return }
+        guard let scope = session.scope else {
+            let scope = viewModel.signedInUser.userID.flatMap { account in
+                viewModel.saveCoordinator.serverConfigStore.config(
+                    forServerOrigin: viewModel.client.serverOrigin
+                ).map { config in
+                    ReplicaScope(
+                        serverOrigin: viewModel.client.serverOrigin, ownerUserID: account,
+                        org: config.collaborationOrg, documentID: viewModel.documentID)
+                }
+            }
+            let denied = scope.map { viewModel.saveCoordinator.isNativeReader($0) } ?? false
+            recomputeUnavailableReason(for: session, viewModel: viewModel, hasEditAccess: rowCanUpdate && !denied)
+            return
+        }
         await integrateServerState(
             into: session, scope: scope, viewModel: viewModel, request: generation, isOffline: isOffline)
     }
@@ -1257,6 +1493,7 @@ final class NativeEditorOpen {
                     formatted: formatted, leafNesting: leafNesting, installClassicFallback: false)
                 isOpen = true
                 generation += 1
+                self.rowCanUpdate = canUpdate
                 self.rowCanMention = canMention
                 await activateFetchedState(
                     state: resolvedState.state, config: config, ability: resolvedState.ability,
@@ -1374,25 +1611,35 @@ final class NativeEditorOpen {
         into session: NativeEditorSession, scope: ReplicaScope, viewModel: EditorViewModel, request: Int,
         isOffline: Bool
     ) async {
-        guard enabled, !isOffline, !viewModel.availability.showsOfflineStatus, !viewModel.isLocalDocument,
-            !viewModel.saveCoordinator.hasCheckpointedCreate(forServerID: scope.documentID)
-        else {
-            return
-        }
         let isCurrent = { [weak self] in
             !Task.isCancelled && self?.generation == request && !session.isClosed
                 && viewModel.signedInUser.userID == scope.ownerUserID
         }
+        let cachedEditAccess = rowCanUpdate && !viewModel.saveCoordinator.isNativeReader(scope)
+        guard enabled, !isOffline, !viewModel.availability.showsOfflineStatus, !viewModel.isLocalDocument,
+            !viewModel.saveCoordinator.hasCheckpointedCreate(forServerID: scope.documentID)
+        else {
+            if isCurrent() {
+                recomputeUnavailableReason(for: session, viewModel: viewModel, hasEditAccess: cachedEditAccess)
+            }
+            return
+        }
         do {
             let config = try await viewModel.client.serverConfig()
             viewModel.saveCoordinator.noteServerConfig(config)
-            guard isCurrent(), config.usesCollaborationYDocServer, config.collaborationOrg == scope.org else { return }
+            guard isCurrent(), config.usesCollaborationYDocServer, config.collaborationOrg == scope.org else {
+                if isCurrent() {
+                    recomputeUnavailableReason(for: session, viewModel: viewModel, hasEditAccess: cachedEditAccess)
+                }
+                return
+            }
             let state = try await viewModel.client.collaborationYDocState(
                 documentID: scope.documentID, org: scope.org)
             guard isCurrent() else { return }
             try await session.integrateServerState(state)
             guard isCurrent() else { return }
-            let ability = canUpdate ? await Self.serverAbility(viewModel) : nil
+            let askAbility = canUpdate || (session.input == nil && rowCanUpdate)
+            let ability = askAbility ? await Self.serverAbility(viewModel) : nil
             guard isCurrent() else { return }
             if ability?.writer == false {
                 // The row was stale: every surface of the scope stops writing
@@ -1401,7 +1648,7 @@ final class NativeEditorOpen {
             } else if ability?.writer == true {
                 // The server says writer: an earlier remembered denial no longer holds.
                 viewModel.saveCoordinator.clearNativeReader(scope)
-                if let serverMention = ability?.mention {
+                if session.input != nil, let serverMention = ability?.mention {
                     self.canMention = serverMention && !viewModel.isLocalDocument
                 }
             } else if viewModel.saveCoordinator.isNativeReader(scope) {
@@ -1409,12 +1656,18 @@ final class NativeEditorOpen {
                 // is a reader too, so nothing dials a socket for it. It recovers on reopen.
                 becomeReader(scope, coordinator: viewModel.saveCoordinator)
             }
+            let verifiedEditAccess =
+                rowCanUpdate && ability?.writer != false && !viewModel.saveCoordinator.isNativeReader(scope)
+            recomputeUnavailableReason(for: session, viewModel: viewModel, hasEditAccess: verifiedEditAccess)
             startLive(session, scope: scope, config: config, viewModel: viewModel)
             // Refreshes the server title native saves send.
             _ = try await viewModel.refreshOfflineCacheForNativeReader(isCurrent: isCurrent)
         } catch {
             // Offline-first: the restored replica stays on screen. A disk
             // failure inside the integration has already frozen authoring.
+            if isCurrent() {
+                recomputeUnavailableReason(for: session, viewModel: viewModel, hasEditAccess: cachedEditAccess)
+            }
         }
     }
 
@@ -1504,10 +1757,79 @@ final class NativeEditorOpen {
     private func becomeReader(_ scope: ReplicaScope, coordinator: DocumentSaveCoordinator) {
         canUpdate = false
         canMention = false
+        editUnavailableReason = .noEditAccess
         // No headless media commit trusts a cached `update: true` for this scope again (review Y1).
         coordinator.noteNativeReader(scope)
         registry.setWritable(nil, for: scope)
         registry.liveBinding(for: scope, create: false)?.disconnect()
+    }
+
+    /// Recomputes `editUnavailableReason` after a state/refresh change so transient
+    /// reasons (`pendingSync`, `classicDraft`, `liveHeld`) do not remain stale.
+    private func recomputeUnavailableReason(
+        for session: NativeEditorSession, viewModel: EditorViewModel, hasEditAccess: Bool
+    ) {
+        guard session.input == nil else {
+            editUnavailableReason = session.isWritable ? nil : .noEditAccess
+            return
+        }
+        let next = unavailableReason(
+            for: session, viewModel: viewModel, hasEditAccess: hasEditAccess,
+            hasAccount: viewModel.signedInUser.userID != nil)
+        // Typing is only installed on open, so a cleared hold still needs a reopen: keep the
+        // transient note (it says "reopen it to edit") rather than leaving Edit disabled silently.
+        switch editUnavailableReason {
+        case .pendingSync?, .classicDraft?, .liveHeld?:
+            editUnavailableReason = next ?? editUnavailableReason
+        default:
+            editUnavailableReason = next
+        }
+    }
+
+    /// Computes why editing is unavailable when a `.native` session opens without typing.
+    private func unavailableReason(
+        for session: NativeEditorSession, viewModel: EditorViewModel, hasEditAccess: Bool, hasAccount: Bool
+    ) -> NativeEditUnavailableReason? {
+        let coordinator = viewModel.saveCoordinator
+        let documentID = viewModel.documentID
+        let hasClassicDraft = coordinator.storedDraft(documentID: documentID).map { $0.replica == nil } ?? false
+        return Self.resolveUnavailableReason(
+            enabled: enabled,
+            hasEditAccess: hasEditAccess,
+            hasAccount: hasAccount,
+            isPendingDelete: viewModel.isDocumentPendingDelete,
+            hasCheckpointedCreate: coordinator.hasCheckpointedCreate(forServerID: documentID),
+            isLiveHeld: coordinator.isLiveHeld(documentID: documentID),
+            hasClassicDraft: hasClassicDraft,
+            session: session)
+    }
+
+    static func resolveUnavailableReason(
+        enabled: Bool,
+        hasEditAccess: Bool,
+        hasAccount: Bool,
+        isPendingDelete: Bool,
+        hasCheckpointedCreate: Bool,
+        isLiveHeld: Bool,
+        hasClassicDraft: Bool,
+        session: NativeEditorSession
+    ) -> NativeEditUnavailableReason? {
+        if !hasEditAccess { return .noEditAccess }
+        if !enabled { return .nativeSwitchOff }
+        if isPendingDelete { return .pendingDelete }
+        if hasCheckpointedCreate { return .pendingSync }
+        if isLiveHeld { return .liveHeld }
+        if hasClassicDraft { return .classicDraft }
+        if !hasAccount { return .signedOut }
+        if !session.canType {
+            if let unfamiliar = session.unfamiliarContent {
+                return .unfamiliarContent(blockNode: unfamiliar.node, reason: unfamiliar.reason)
+            }
+            return .unfamiliarContent(
+                blockNode: "",
+                reason: session.hasUnsupportedRoot ? "unsupported root" : "unsupported markdown")
+        }
+        return nil
     }
 
     /// The Live collaboration preference changed while open (PR09b): off
@@ -1554,6 +1876,7 @@ final class NativeEditorOpen {
         activeViewModel = nil
         isOpen = false
         canUpdate = false
+        rowCanUpdate = false
         canMention = false
         rowCanMention = false
         generation += 1
@@ -1563,7 +1886,7 @@ final class NativeEditorOpen {
         refreshTask = nil
         pendingOpen?.finish()
         pendingOpen = nil
-        isPreservedReadOnly = false
+        editUnavailableReason = nil
         switch route {
         case .native(let session):
             closing = session.close()

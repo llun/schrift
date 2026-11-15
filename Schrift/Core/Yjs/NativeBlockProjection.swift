@@ -1,5 +1,13 @@
 import Foundation
 
+/// The first offending block and reason computed by `NativeBlockProjection` when a
+/// document cannot be authored natively (`canType == false`). Contains only schema
+/// metadata — never document text.
+struct NativeUnfamiliarBlock: Equatable, Sendable {
+    let node: String
+    let reason: String
+}
+
 /// The native tree projection: every block of the replica's
 /// `blockGroup → blockContainer → blockGroup …` tree in preorder, each with its
 /// depth, parent and handle. Each block reads exactly as the classic
@@ -19,13 +27,70 @@ enum NativeBlockProjection {
     /// (`BlockNoteWriter.maxNestingDepth`).
     static let maxDepth = 64
 
+    static let maxBroadcastItemsPerRoot = 10_000
+    static let maxBroadcastItemUTF8Bytes = 256
+    static let maxBroadcastRoots = 8
+    static let broadcastItemPrefix = "broadcast: "
+
+    /// Whether `name` / `type` is the Docs web app's auxiliary broadcast root
+    /// (`doc-<UUID>`, a `Y.Array` or untyped wire root holding at most
+    /// `maxBroadcastItemsPerRoot` undeleted string items, each starting with
+    /// `"broadcast: "` and at most `maxBroadcastItemUTF8Bytes` UTF-8 bytes).
+    /// Preserved byte for byte and never written, ignored by native
+    /// familiarity and save-shadow checks.
+    static func isKnownAuxiliaryRoot(name: String, type: YType) -> Bool {
+        guard name.hasPrefix("doc-"), name.utf8.count == 40 else { return false }
+        let uuidPart = String(name.dropFirst(4))
+        guard uuidPart.count == 36, UUID(uuidString: uuidPart) != nil else { return false }
+        guard type.typeRef == nil || type.typeRef == .array, !type.isText, type.map.isEmpty else {
+            return false
+        }
+        guard type.length <= UInt(maxBroadcastItemsPerRoot) else { return false }
+        var itemCount = 0
+        var item = type.start
+        while let current = item {
+            item = current.right
+            guard !current.deleted else { continue }
+            guard case .any(let values) = current.content else { return false }
+            itemCount += values.count
+            if itemCount > maxBroadcastItemsPerRoot { return false }
+            for value in values {
+                guard case .string(let text) = value,
+                    text.hasPrefix(broadcastItemPrefix),
+                    text.utf8.count <= maxBroadcastItemUTF8Bytes
+                else { return false }
+            }
+        }
+        return true
+    }
+
+    /// True when `doc.share` contains any top-level root other than
+    /// `document-store` and at most `maxBroadcastRoots` known `doc-<UUID>`
+    /// broadcast arrays.
+    static func hasUnsupportedAuxiliaryRoot(_ doc: YDoc) -> Bool {
+        var knownAuxiliaryRoots = 0
+        for (name, type) in doc.share {
+            if name == BlockNoteYjs.fragmentField { continue }
+            guard knownAuxiliaryRoots < maxBroadcastRoots, isKnownAuxiliaryRoot(name: name, type: type) else {
+                return true
+            }
+            knownAuxiliaryRoots += 1
+        }
+        return false
+    }
+
     static func project(
         _ doc: YDoc, generation: UUID = UUID(), interlinkingOrigin: String? = nil, nativeMarks: Bool = true,
         inlineObjects: Bool = false
     ) -> (blocks: [NativeBlockSnapshot], isFullyRenderable: Bool, isFullyModeled: Bool) {
-        guard let root = doc.share[BlockNoteYjs.fragmentField] else { return ([], true, true) }
+        let hasBadExtraRoot = hasUnsupportedAuxiliaryRoot(doc)
+        guard let root = doc.share[BlockNoteYjs.fragmentField] else {
+            return ([], !hasBadExtraRoot, !hasBadExtraRoot)
+        }
         let rootChildren = YBlockProjection.children(of: root, includeFormats: false)
-        if rootChildren.isEmpty { return ([], true, true) }
+        if rootChildren.isEmpty {
+            return ([], !hasBadExtraRoot, !hasBadExtraRoot)
+        }
         guard rootChildren.count == 1, case .type(let group) = rootChildren[0].content,
             group.typeRef == .xmlElement(nodeName: "blockGroup")
         else { return ([], false, false) }
@@ -35,7 +100,7 @@ enum NativeBlockProjection {
             group, depth: 0, parent: nil, generation: generation, interlinkingOrigin: interlinkingOrigin,
             nativeMarks: nativeMarks, inlineObjects: inlineObjects, seen: &seen, into: &blocks)
         let renderable = blocks.allSatisfy { !$0.block.fidelity.isOpaque }
-        let modeled = renderable && blocks.allSatisfy { $0.block.fidelity == .modeled }
+        let modeled = renderable && blocks.allSatisfy { $0.block.fidelity == .modeled } && !hasBadExtraRoot
         return (blocks, renderable, modeled)
     }
 
@@ -132,6 +197,7 @@ enum NativeBlockProjection {
     /// a trailing space just typed always has a shadow. `nil` when the
     /// document has no total shadow.
     static func markdownShadow(_ doc: YDoc, interlinkingOrigin: String? = nil) -> String? {
+        guard !hasUnsupportedAuxiliaryRoot(doc) else { return nil }
         let tree = project(doc, nativeMarks: false, inlineObjects: true)
         // A flat document with no native-only block or inline object keeps
         // exactly the classic shadow.
@@ -525,5 +591,197 @@ enum NativeBlockProjection {
             indents.append(snapshot.depth)
         }
         return (blocks, indents)
+    }
+
+    /// Computes the first block type and reason why `doc` cannot be authored natively
+    /// (`canType == false`), or `nil` when `doc` is fully modeled and has a total
+    /// Markdown shadow. Never returns document text.
+    static func firstUnsupportedReason(_ doc: YDoc, interlinkingOrigin: String? = nil) -> NativeUnfamiliarBlock? {
+        let projected = project(doc)
+        if (projected.blocks.isEmpty && !projected.isFullyRenderable) || hasUnsupportedAuxiliaryRoot(doc) {
+            return NativeUnfamiliarBlock(node: "", reason: "unsupported root")
+        }
+        if let first = projected.blocks.first(where: { $0.block.fidelity != .modeled }) {
+            switch first.block.fidelity {
+            case .opaque(let reason):
+                return NativeUnfamiliarBlock(node: first.block.node, reason: reason)
+            case .lossy(let reasons):
+                return NativeUnfamiliarBlock(node: first.block.node, reason: reasons.first ?? "unsupported prop")
+            case .modeled:
+                break
+            }
+        }
+        guard markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) == nil else {
+            return nil
+        }
+        let tree = project(doc, nativeMarks: false, inlineObjects: true)
+        return firstShadowRefusal(
+            tree.blocks[...], items: rootItems(doc), containers: allContainerItems(doc), allowsColumns: true,
+            interlinkingOrigin: interlinkingOrigin)
+            ?? NativeUnfamiliarBlock(node: tree.blocks.first?.block.node ?? "", reason: "unsupported markdown")
+    }
+
+    private static func firstShadowRefusal(
+        _ blocks: ArraySlice<NativeBlockSnapshot>, items: [YID: YItem], containers: [YID: YItem],
+        allowsColumns: Bool, interlinkingOrigin: String?
+    ) -> NativeUnfamiliarBlock? {
+        for snapshot in blocks where SourceBlock.isSource(snapshot.block.node) {
+            guard let item = containers[snapshot.handle.itemID], let element = contentElement(of: item) else {
+                return NativeUnfamiliarBlock(node: snapshot.block.node, reason: "content")
+            }
+            if let props = YBlockProjection.props(of: element),
+                let reason = SourceBlock.unfamiliarReason(
+                    node: snapshot.block.node, props: props, element: element)
+            {
+                return NativeUnfamiliarBlock(node: snapshot.block.node, reason: reason)
+            }
+        }
+        guard let stripped = stripFamiliarSources(blocks, containers: containers) else { return nil }
+        let blocks = stripped.blocks[...]
+        var plain = blocks.startIndex
+        var root = blocks.startIndex
+        while root < blocks.endIndex {
+            var end = root + 1
+            while end < blocks.endIndex, blocks[end].depth > 0 { end += 1 }
+            if let badMedia = blocks[root..<end].first(where: {
+                MediaBlock.isMediaLike($0.block.node) && $0.block.fidelity != .modeled
+                    && ($0.depth > 0 || end > root + 1)
+            }) {
+                return NativeUnfamiliarBlock(
+                    node: badMedia.block.node, reason: badMedia.depth > 0 ? "nested media" : "nested blocks")
+            }
+            if MediaBlock.isMediaLike(blocks[root].block.node), end == root + 1 {
+                if classicSpelling(blocks[plain..<root]) == nil {
+                    return firstClassicRefusal(blocks[plain..<root])
+                }
+                guard let item = items[blocks[root].handle.itemID], let element = contentElement(of: item),
+                    let props = YBlockProjection.props(of: element)
+                else {
+                    return NativeUnfamiliarBlock(node: blocks[root].block.node, reason: "content")
+                }
+                if let reason = MediaBlock.unfamiliarReason(
+                    node: blocks[root].block.node, props: props, hasContent: hasContent(element))
+                {
+                    return NativeUnfamiliarBlock(node: blocks[root].block.node, reason: reason)
+                }
+                if NativeExportMarkdown.media(node: blocks[root].block.node, props: props) == nil {
+                    return NativeUnfamiliarBlock(node: blocks[root].block.node, reason: "unsupported URL")
+                }
+                plain = end
+            } else if blocks[root].block.node == "table" {
+                if end > root + 1 {
+                    return NativeUnfamiliarBlock(node: "table", reason: "nested blocks")
+                }
+                if classicSpelling(blocks[plain..<root]) == nil {
+                    return firstClassicRefusal(blocks[plain..<root])
+                }
+                guard let item = items[blocks[root].handle.itemID], let grid = tableGrid(of: item) else {
+                    return NativeUnfamiliarBlock(node: "table", reason: "unsupported table")
+                }
+                if NativeExportMarkdown.table(grid, interlinkingOrigin: interlinkingOrigin) == nil {
+                    return NativeUnfamiliarBlock(node: "table", reason: "unsupported table")
+                }
+                plain = end
+            } else if blocks[root].block.node == "columnList" {
+                if !allowsColumns {
+                    return NativeUnfamiliarBlock(node: "columnList", reason: "nested column group")
+                }
+                if end > root + 1 {
+                    return NativeUnfamiliarBlock(node: "columnList", reason: "nested blocks")
+                }
+                if classicSpelling(blocks[plain..<root]) == nil {
+                    return firstClassicRefusal(blocks[plain..<root])
+                }
+                guard let item = items[blocks[root].handle.itemID], case .type(let list) = item.content else {
+                    return NativeUnfamiliarBlock(node: "columnList", reason: "unsupported columns")
+                }
+                let group = ColumnGroup.read(list, id: blocks[root].id)
+                if case .unfamiliar(let reason) = group.familiarity {
+                    return NativeUnfamiliarBlock(node: "columnList", reason: reason)
+                }
+                for column in ColumnGroup.columnTypes(of: list) {
+                    var columnItems: [YID: YItem] = [:]
+                    for child in YBlockProjection.children(of: column, includeFormats: false) {
+                        columnItems[child.id] = child
+                    }
+                    let snapshots = columnBlocks(column, nativeMarks: false, inlineObjects: true)
+                    if let columnStripped = stripFamiliarSources(snapshots[...], containers: containers) {
+                        if !columnStripped.blocks.isEmpty,
+                            let refusal = firstShadowRefusal(
+                                columnStripped.blocks[...], items: columnItems, containers: containers,
+                                allowsColumns: false, interlinkingOrigin: interlinkingOrigin)
+                        {
+                            return refusal
+                        }
+                    } else if let refusal = firstShadowRefusal(
+                        snapshots[...], items: columnItems, containers: containers,
+                        allowsColumns: false, interlinkingOrigin: interlinkingOrigin)
+                    {
+                        return refusal
+                    }
+                }
+                plain = end
+            } else if case let subtree = blocks[root..<end],
+                needsExport(subtree)
+                    || subtree.contains(where: { hasEdgeWhitespace($0.block) || hasInlineObject($0.block) })
+            {
+                if classicSpelling(blocks[plain..<root]) == nil {
+                    return firstClassicRefusal(blocks[plain..<root])
+                }
+                let requiresExport = needsExport(subtree) || subtree.contains { hasInlineObject($0.block) }
+                let exported = exportNodes(subtree).flatMap {
+                    NativeExportMarkdown.body($0, interlinkingOrigin: interlinkingOrigin)
+                }
+                if exported == nil {
+                    if let calloutIndex = subtree.indices.first(where: { subtree[$0].block.node == "callout" }) {
+                        let depth = subtree[calloutIndex].depth
+                        let hasChildren = subtree[(calloutIndex + 1)...].first.map { $0.depth > depth } ?? false
+                        return NativeUnfamiliarBlock(
+                            node: "callout", reason: hasChildren ? "nested blocks" : "missing emoji")
+                    }
+                    if let missingOrigin = subtree.first(where: {
+                        $0.block.runs.contains {
+                            if case .interlink(let docID, _, _, let disabled, _)? = $0.inlineObject {
+                                return !disabled && !docID.isEmpty && (interlinkingOrigin?.isEmpty ?? true)
+                            }
+                            return false
+                        }
+                    }) {
+                        return NativeUnfamiliarBlock(node: missingOrigin.block.node, reason: "interlinkingLink")
+                    }
+                    if requiresExport {
+                        return NativeUnfamiliarBlock(
+                            node: subtree.first?.block.node ?? "",
+                            reason: end > root + 1 ? "nested blocks" : "unsupported markdown")
+                    }
+                    if classicSpelling(subtree) == nil, classicSpelling(edgeTrimmed(subtree)) == nil {
+                        return firstClassicRefusal(subtree)
+                    }
+                }
+                plain = end
+            }
+            root = end
+        }
+        if classicSpelling(blocks[plain...]) == nil {
+            return firstClassicRefusal(blocks[plain...])
+        }
+        return nil
+    }
+
+    private static func firstClassicRefusal(_ snapshots: ArraySlice<NativeBlockSnapshot>) -> NativeUnfamiliarBlock {
+        for index in snapshots.indices {
+            let snapshot = snapshots[index]
+            guard let spelled = exportSpelling(snapshots[index...index])?.blocks.first else {
+                return NativeUnfamiliarBlock(
+                    node: snapshot.block.node,
+                    reason: snapshot.block.node == "callout" ? "missing emoji" : "unsupported content")
+            }
+            if YBlockProjection.projectedMarkdown(
+                ProjectedDocument(blocks: [spelled], isFullyRenderable: true, isFullyModeled: false)) == nil
+            {
+                return NativeUnfamiliarBlock(node: snapshot.block.node, reason: "unsupported markdown")
+            }
+        }
+        return NativeUnfamiliarBlock(node: snapshots.first?.block.node ?? "", reason: "unsupported markdown")
     }
 }

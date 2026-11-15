@@ -459,11 +459,11 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         try seedReplica(fixture)
         let open = NativeEditorOpen(preference: { false })
         defer { open.close() }
-        await open.open(viewModel: fixture.model, isOffline: false)
+        await open.open(viewModel: fixture.model, isOffline: false, canUpdate: true)
         guard case .native(let session) = open.route else {
             return XCTFail("an owned document must restore natively even with the switch off")
         }
-        XCTAssertTrue(open.isPreservedReadOnly)
+        XCTAssertEqual(open.editUnavailableReason, .nativeSwitchOff)
         XCTAssertFalse(session.textView.isEditable)
         XCTAssertNil(session.input, "the switch is off, so the replica stays read-only")
         XCTAssertEqual(session.surface.blocks.count, 3)
@@ -484,7 +484,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         XCTAssertTrue(fixture.ownership.mark(scope))
         let open = NativeEditorOpen(preference: { false })
         defer { open.close() }
-        await open.open(viewModel: fixture.model, isOffline: false)
+        await open.open(viewModel: fixture.model, isOffline: false, canUpdate: true)
         guard case .preservedUnavailable = open.route else {
             return XCTFail("a missing replica must stay read-only, never classic")
         }
@@ -527,7 +527,8 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             return XCTFail("re-enabling the switch must restore the same replica")
         }
         XCTAssertEqual(second.surface.blocks, blocks)
-        XCTAssertFalse(on.isPreservedReadOnly, "the turn-it-on notice is only true with the switch off")
+        XCTAssertNotEqual(
+            on.editUnavailableReason, .nativeSwitchOff, "the turn-it-on notice is only true with the switch off")
         XCTAssertNil(MockURLProtocol.lastRequest)
     }
 

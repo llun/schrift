@@ -4068,6 +4068,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   drop `markdownShadow` (`nil`). Classic projection keeps all three opaque. `BlockNoteSubtreePayload`
   and `BlockNoteInlinePayload` validate plain unmarked content, preserve `<math>` text on copy/paste,
   and reject newlines/control chars/`U+FFFC` inside `<math>`.
+  **Auxiliary broadcast root (`doc-<UUID>`):** Docs' `useBroadcastStore.tsx` writes a top-level `Y.Array` named `doc-<UUID>` holding string items (`"broadcast: doc-<UUID>"`); `NativeBlockProjection` (`isKnownAuxiliaryRoot`) preserves it untouched while ignoring it in `canType`, `markdownShadow`, and `firstUnsupportedReason`, and still refuses any other unknown root (`"unsupported root"`).
   **Shadow:** `NativeBlockProjection.markdownShadow(_:interlinkingOrigin:)` and
   `NativeExportMarkdown` match Docs' `y-provider` (which omits `@blocknote/math-block` and
   `@blocknote/diagram-block`), dropping familiar `mathBlock`/`diagram` subtrees (including nested
@@ -4102,6 +4103,9 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `OutlineHeldNavigation`, `ConflictSheetView`, `pendingDeleteNotice`, `subpagesSection`, and
   `noteEditorAppeared()` with classic while `NativeTextView` stays the sole vertical `UIScrollView`
   (`headerAccessoryView` via `contentInset.top`, `footerAccessoryView` via `contentInset.bottom`).
+  Read-only `.native` routes show `NativeEditUnavailableNotice` (`nativeEditor.editUnavailableNotice`)
+  under the header with a localized `NativeEditUnavailableReason` (plus a sanitized, 48-char
+  ASCII-bounded `Details:` line for `.unfamiliarContent`, recomputed on `refresh`/`integrateServerState`).
   Existing documents open in Reading mode (`isEditable = false`) over one `NativeEditorSession` &
   `NativeTextSurface`, entering Editing via toolbar `Edit`, text tap, writable card/source tap, or
   new-document `entryIntent` (one-shot header title focus), and exiting via `Done` or `⌘Return`

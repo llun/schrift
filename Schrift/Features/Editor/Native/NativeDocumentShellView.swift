@@ -309,6 +309,24 @@ struct NativeDocumentShellView: View {
         return false
     }
 
+    private func editUnavailableReason(for session: NativeEditorSession) -> NativeEditUnavailableReason? {
+        if session.input != nil {
+            return session.isWritable ? nil : .noEditAccess
+        }
+        if let reason = nativeOpen.editUnavailableReason {
+            return reason
+        }
+        if !session.canType {
+            if let unfamiliar = session.unfamiliarContent {
+                return .unfamiliarContent(blockNode: unfamiliar.node, reason: unfamiliar.reason)
+            }
+            return .unfamiliarContent(
+                blockNode: "",
+                reason: session.hasUnsupportedRoot ? "unsupported root" : "unsupported markdown")
+        }
+        return nil
+    }
+
     private var effectiveNativeEditing: Bool {
         isNativeEditing && canEditNative
     }
@@ -489,8 +507,6 @@ struct NativeDocumentShellView: View {
             case .native(let session):
                 NativeEditorView(
                     session: session, title: viewModel.title, serverOrigin: serverOrigin,
-                    preservedNotice: nativeOpen.isPreservedReadOnly
-                        ? .native_editor_owned_read_only_body : nil,
                     saveStatus: session.input == nil ? nil : nativeSaveStatus(session),
                     saveFailureDetail: viewModel.saveFailureDetail,
                     saveFailureOffersRetry: viewModel.saveFailureOffersRetry,
@@ -563,19 +579,24 @@ struct NativeDocumentShellView: View {
     private func nativeHeader(_ session: NativeEditorSession) -> some View {
         let rawPeers = session.awareness?.peers ?? []
         let peers = presentedPeerCount(peerCount: rawPeers.count, isOffline: isOffline) == nil ? [] : rawPeers
-        return EditorDocumentHeader(
-            title: viewModel.title,
-            onEditTitle: effectiveNativeEditing
-                ? { nativeOpen.updateTitle($0, viewModel: viewModel) }
-                : nil,
-            reach: reach,
-            peers: peers,
-            onConsumeInitialTitleFocus: {
-                viewModel.consumeNativeInitialTitleFocus(
-                    isEditing: effectiveNativeEditing, canEdit: canEditNative)
+        return VStack(alignment: .leading, spacing: DocsSpacing.spaceXS) {
+            EditorDocumentHeader(
+                title: viewModel.title,
+                onEditTitle: effectiveNativeEditing
+                    ? { nativeOpen.updateTitle($0, viewModel: viewModel) }
+                    : nil,
+                reach: reach,
+                peers: peers,
+                onConsumeInitialTitleFocus: {
+                    viewModel.consumeNativeInitialTitleFocus(
+                        isEditing: effectiveNativeEditing, canEdit: canEditNative)
+                }
+            ) {
+                nativeHeaderStatus(session: session)
             }
-        ) {
-            nativeHeaderStatus(session: session)
+            if let reason = editUnavailableReason(for: session) {
+                NativeEditUnavailableNotice(reason: reason)
+            }
         }
         .padding(.horizontal, EditorBlockMetrics.gutter)
         .padding(.top, DocsSpacing.spaceSM)
@@ -869,5 +890,37 @@ struct NativeDocumentShellView: View {
             hasUnsavedLocalContent: viewModel.isNativeLocalContentUnsaved(
                 sessionHasPendingSave: session.hasPendingSave),
             connectionDown: isOffline || viewModel.availability.connectionAppearsDown)
+    }
+}
+
+/// Explains beneath `EditorDocumentHeader` why native editing is unavailable.
+private struct NativeEditUnavailableNotice: View {
+    @Environment(\.docsTheme) private var theme
+    @Environment(LocalizationStore.self) private var loc
+
+    let reason: NativeEditUnavailableReason
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DocsSpacing.spaceXS) {
+            MaterialSymbol(reason.icon, size: 15, relativeTo: .footnote)
+            VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
+                Text(reason.localizedNote(using: loc))
+                    .font(DocsFont.footnote)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let details = reason.localizedDetailsLine(using: loc) {
+                    Text(details)
+                        .font(DocsFont.caption)
+                        .foregroundStyle(theme.colors.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .foregroundStyle(theme.colors.textSecondary)
+        .padding(.horizontal, DocsSpacing.spaceSM)
+        .padding(.vertical, DocsSpacing.spaceXS)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.colors.gray050, in: RoundedRectangle(cornerRadius: DocsRadius.lg))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("nativeEditor.editUnavailableNotice")
     }
 }

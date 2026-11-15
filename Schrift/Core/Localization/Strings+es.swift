@@ -487,7 +487,7 @@ enum Strings_es {
         .native_editor_paste_unavailable: "Este contenido copiado no se puede pegar aquí. No se ha cambiado nada.",
         .profile_native_editor: "Editor nativo (experimental)",
         .profile_native_editor_footer:
-            "Se aplica al abrir el próximo documento. Compatible con Docs 6: texto, formato, enlaces, títulos, listas, listas de tareas, citas y bloques de código; los demás bloques se conservan, pero aún no se pueden editar.",
+            "Se aplica al abrir el próximo documento. Admite texto, formato, títulos, listas, listas de tareas, citas, bloques de código, secciones desplegables, avisos, tablas, columnas, medios, matemáticas, diagramas, enlaces a páginas y menciones, además de modo sin conexión y colaboración en vivo. Un documento que contiene un bloque que el editor nativo aún no puede editar se abre en solo lectura.",
         .native_editor_preserved_title: "Documento conservado",
         .native_editor_preserved_body:
             "El lector nativo aún no puede mostrar la estructura de este documento. Su contenido original se conserva.",
@@ -559,5 +559,29 @@ enum Strings_es {
         .profile_native_editor_diagnostics_collect: "Recopilar diagnósticos del editor nativo",
         .profile_recover_drafts_failure:
             "No se pudieron recuperar los borradores. Siguen guardados en este dispositivo.",
+        .native_editor_read_only_unfamiliar_block:
+            "Solo lectura: este documento tiene un bloque que el editor nativo aún no puede editar (%@)",
+        .native_editor_unfamiliar_detail_format: "%@: %@",
+        .native_editor_unfamiliar_unknown_block_type: "un tipo de bloque que el editor nativo no conoce",
+        .native_editor_unfamiliar_category_block_type: "tipo de bloque no compatible",
+        .native_editor_unfamiliar_category_block_setting: "configuración de bloque no compatible",
+        .native_editor_unfamiliar_category_nested_content: "contenido anidado",
+        .native_editor_unfamiliar_category_link: "enlace no compatible",
+        .native_editor_unfamiliar_category_oversized: "contenido demasiado grande",
+        .native_editor_unfamiliar_category_other: "otro",
+        .native_editor_read_only_details: "Detalles: %@",
+        .native_editor_read_only_no_access: "Solo lectura: no tienes permiso de edición",
+        .native_editor_read_only_pending_sync:
+            "Esperando a que este documento termine de sincronizarse — vuelve a abrirlo para editar",
+        .native_editor_read_only_classic_draft:
+            "Solo lectura: esperando a que termine de sincronizarse un borrador sin conexión — vuelve a abrirlo para editar",
+        .native_editor_read_only_live_held:
+            "Esperando a que se sincronicen los cambios de colaboración en vivo — vuelve a abrirlo para editar",
+        .native_editor_read_only_signed_out: "Solo lectura: inicia sesión para editar este documento",
+        .native_editor_block_callout: "Aviso",
+        .native_editor_block_table: "Tabla",
+        .native_editor_block_columns: "Columnas",
+        .native_editor_block_heading: "Título",
+        .native_editor_block_paragraph: "Párrafo",
     ]
 }
