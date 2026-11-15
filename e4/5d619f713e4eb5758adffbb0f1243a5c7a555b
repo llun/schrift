@@ -1,0 +1,47 @@
+Schrift/Core/Localization/L10nKey.swift
+  s_dc239db0cc1c9d::t_bb9e0adeaf69e4 629-650
+Schrift/Core/Localization/Strings+de.swift
+  s_dc239db0cc1c9d::t_f91a608e259356 493,564-580
+Schrift/Core/Localization/Strings+en.swift
+  s_dc239db0cc1c9d::t_7d7d0a4548104e 495,566-579
+Schrift/Core/Localization/Strings+es.swift
+  s_dc239db0cc1c9d::t_2b29a6ee45b14d 490,562-577
+Schrift/Core/Localization/Strings+fr.swift
+  s_dc239db0cc1c9d::t_7186a16ee08f4b 488,560-575
+Schrift/Core/Localization/Strings+it.swift
+  s_dc239db0cc1c9d::t_f887288982a497 488,557-572
+Schrift/Core/Localization/Strings+nl.swift
+  s_dc239db0cc1c9d::t_03ec247bc76d55 489,560-575
+Schrift/Core/Localization/Strings+pt.swift
+  s_dc239db0cc1c9d::t_2738a492282056 487,558-573
+Schrift/Core/Localization/Strings+sl.swift
+  s_dc239db0cc1c9d::t_9967c7b3b37614 499,568-582
+Schrift/Core/Localization/Strings+th.swift
+  s_dc239db0cc1c9d::t_33cba39c6a4429 478,544-557
+Schrift/Core/Localization/Strings+zhHans.swift
+  s_dc239db0cc1c9d::t_8617dc8f01d59f 475-476,537-549
+Schrift/Core/Localization/Strings+zhHant.swift
+  s_dc239db0cc1c9d::t_fca37592e44179 475-476,537-549
+Schrift/Core/Yjs/NativeBlockProjection.swift
+  s_dc239db0cc1c9d::t_4a5f4bab02963f 3-10,537-728
+Schrift/Features/Editor/Native/DocumentReplicaSession.swift
+  s_dc239db0cc1c9d::t_cf7bbca6a531c4 64,101,163,194,255-257,261-264,328-330,337-339,342-345,380-381,426-427,461-462
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_dc239db0cc1c9d::t_3b0ab2b6ce8c67 5-120,147-148,194-195,217,298-299,368,927-928,1005,1035,1043,1054,1072,1074-1076,1092,1191,1196,1218-1219,1232-1239,1650,1657-1702,1757
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e45d619f713e4eb5758adffbb0f1243a5c7a555b",
+  "prompts": {},
+  "sessions": {
+    "s_dc239db0cc1c9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fbbf59-c54b-41d1-b7f6-3bfb9de173ec",
+        "model": "unknown"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
