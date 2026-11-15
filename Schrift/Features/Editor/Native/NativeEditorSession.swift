@@ -43,37 +43,39 @@ enum NativeEditUnavailableReason: Equatable, Sendable {
 
     /// Concise user-facing note for the read-only notice under the header.
     /// Never includes document text.
+    @MainActor
     func localizedNote(using loc: LocalizationStore) -> String {
         switch self {
         case .unfamiliarContent(let blockNode, let reason):
             let detail = Self.localizedUnfamiliarDetail(blockNode: blockNode, reason: reason, using: loc)
-            return String(format: loc.string(.native_editor_read_only_unfamiliar_block), detail)
+            return loc.format(.native_editor_read_only_unfamiliar_block, detail)
         case .noEditAccess:
-            return loc.string(.native_editor_read_only_no_access)
+            return loc[.native_editor_read_only_no_access]
         case .nativeSwitchOff:
-            return loc.string(.native_editor_owned_read_only_body)
+            return loc[.native_editor_owned_read_only_body]
         case .pendingSync:
-            return loc.string(.native_editor_read_only_pending_sync)
+            return loc[.native_editor_read_only_pending_sync]
         case .pendingDelete:
-            return loc.string(.editor_pending_delete)
+            return loc[.editor_pending_delete]
         case .classicDraft:
-            return loc.string(.native_editor_read_only_classic_draft)
+            return loc[.native_editor_read_only_classic_draft]
         case .liveHeld:
-            return loc.string(.native_editor_read_only_live_held)
+            return loc[.native_editor_read_only_live_held]
         case .signedOut:
-            return loc.string(.native_editor_read_only_signed_out)
+            return loc[.native_editor_read_only_signed_out]
         case .preservedUnavailable:
-            return loc.string(.native_editor_owned_unavailable_body)
+            return loc[.native_editor_owned_unavailable_body]
         case .offlineLimitedRead:
-            return loc.string(.editor_offline_read_only_native)
+            return loc[.editor_offline_read_only_native]
         }
     }
 
+    @MainActor
     private static func localizedUnfamiliarDetail(
         blockNode: String, reason: String, using loc: LocalizationStore
     ) -> String {
         if blockNode.isEmpty, reason == "unsupported root" {
-            return loc.string(.native_editor_unfamiliar_unsupported_root)
+            return loc[.native_editor_unfamiliar_unsupported_root]
         }
         let label = localizedBlockLabel(for: blockNode, using: loc)
         let prefix = "\(blockNode): "
@@ -82,7 +84,7 @@ enum NativeEditUnavailableReason: Equatable, Sendable {
             ? String(reason.dropFirst(prefix.count))
             : reason
         if trimmed == "nested blocks" {
-            return String(format: loc.string(.native_editor_unfamiliar_nested_blocks), label)
+            return loc.format(.native_editor_unfamiliar_nested_blocks, label)
         }
         if trimmed.isEmpty || trimmed == blockNode || (blockNode.isEmpty && trimmed == "unknown") {
             return label
@@ -90,29 +92,30 @@ enum NativeEditUnavailableReason: Equatable, Sendable {
         return "\(label): \(trimmed)"
     }
 
+    @MainActor
     private static func localizedBlockLabel(for blockNode: String, using loc: LocalizationStore) -> String {
         switch blockNode {
-        case "callout": return loc.string(.native_editor_block_callout)
-        case "table": return loc.string(.native_editor_block_table)
-        case "columnList": return loc.string(.native_editor_block_columns)
-        case "heading": return loc.string(.native_editor_block_heading)
-        case "paragraph": return loc.string(.native_editor_block_paragraph)
-        case "bulletListItem": return loc.string(.editor_slash_bulleted_list)
-        case "numberedListItem": return loc.string(.editor_slash_numbered_list)
-        case "checkListItem": return loc.string(.editor_slash_checklist)
-        case "quote": return loc.string(.editor_slash_quote)
-        case "codeBlock": return loc.string(.editor_slash_code_block)
-        case "toggleListItem": return loc.string(.editor_slash_toggle_list)
-        case "divider": return loc.string(.editor_slash_divider)
-        case "image": return loc.string(.editor_image_a11y)
-        case "video": return loc.string(.native_editor_video)
-        case "audio": return loc.string(.native_editor_audio)
-        case "file": return loc.string(.native_editor_file)
-        case "pdf": return loc.string(.native_editor_pdf)
-        case "mathBlock", "math": return loc.string(.native_editor_math)
-        case "diagram": return loc.string(.native_editor_diagram)
-        case "pageBreak": return loc.string(.native_editor_page_break)
-        case "": return loc.string(.native_editor_unknown_block)
+        case "callout": return loc[.native_editor_block_callout]
+        case "table": return loc[.native_editor_block_table]
+        case "columnList": return loc[.native_editor_block_columns]
+        case "heading": return loc[.native_editor_block_heading]
+        case "paragraph": return loc[.native_editor_block_paragraph]
+        case "bulletListItem": return loc[.editor_slash_bulleted_list]
+        case "numberedListItem": return loc[.editor_slash_numbered_list]
+        case "checkListItem": return loc[.editor_slash_checklist]
+        case "quote": return loc[.editor_slash_quote]
+        case "codeBlock": return loc[.editor_slash_code_block]
+        case "toggleListItem": return loc[.editor_slash_toggle_list]
+        case "divider": return loc[.editor_slash_divider]
+        case "image": return loc[.editor_image_a11y]
+        case "video": return loc[.native_editor_video]
+        case "audio": return loc[.native_editor_audio]
+        case "file": return loc[.native_editor_file]
+        case "pdf": return loc[.native_editor_pdf]
+        case "mathBlock", "math": return loc[.native_editor_math]
+        case "diagram": return loc[.native_editor_diagram]
+        case "pageBreak": return loc[.native_editor_page_break]
+        case "": return loc[.native_editor_unknown_block]
         default: return blockNode
         }
     }
