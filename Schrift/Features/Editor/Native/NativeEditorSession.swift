@@ -79,7 +79,8 @@ final class NativeEditorSession {
         let seq = replica?.diagnosticsSeq ?? NativeEditorDiagnosticsStore.shared.beginSession()
         self.sessionSeq = seq
         self.ownsDiagnosticsSession = (replica == nil)
-        self.pendingOpenStartNs = DispatchTime.now().uptimeNanoseconds
+        self.pendingOpenStartNs =
+            NativeEditorDiagnosticsStore.shared.isCollecting ? DispatchTime.now().uptimeNanoseconds : nil
         self.surfaceID = surfaceID
         let view = NativeTextView()
         let surface = NativeTextSurface(blocks: blocks, storage: view.textStorage, traits: view.traitCollection)
@@ -116,13 +117,17 @@ final class NativeEditorSession {
     }
 
     func markOpenStarted(_ startNs: UInt64) {
-        guard !hasRecordedFirstVisible else { return }
+        guard !hasRecordedFirstVisible, NativeEditorDiagnosticsStore.shared.isCollecting else { return }
         pendingOpenStartNs = startNs
     }
 
     private func recordFirstVisibleContent() {
         guard !hasRecordedFirstVisible else { return }
         hasRecordedFirstVisible = true
+        guard NativeEditorDiagnosticsStore.shared.isCollecting else {
+            pendingOpenStartNs = nil
+            return
+        }
         let startNs = pendingOpenStartNs ?? DispatchTime.now().uptimeNanoseconds
         pendingOpenStartNs = nil
         let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds &- startNs) / 1_000_000.0
@@ -132,8 +137,7 @@ final class NativeEditorSession {
     }
 
     private func recordLayoutDiagnostics() {
-        guard NativeEditorDiagnosticsStore.shared.isCollecting else { return }
-        let controls = textView.blockControls
+        guard NativeEditorDiagnosticsStore.shared.isCollecting, let controls = textView.blockControls else { return }
         let attachmentCount = max(
             controls.visibleAttachmentViews.count,
             controls.attachmentViews.allObjects.filter { $0.superview != nil }.count)
@@ -147,7 +151,11 @@ final class NativeEditorSession {
     }
 
     private func completeTimeToEdit() {
-        guard textView.isEditable, let startNs = pendingEditStartNs else { return }
+        guard NativeEditorDiagnosticsStore.shared.isCollecting, textView.isEditable, let startNs = pendingEditStartNs
+        else {
+            pendingEditStartNs = nil
+            return
+        }
         pendingEditStartNs = nil
         let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds &- startNs) / 1_000_000.0
         NativeEditorDiagnosticsStore.shared.recordDuration(
@@ -623,16 +631,18 @@ final class NativeEditorSession {
                 textView.isEditable = false
                 return
             }
-            if pendingEditStartNs == nil {
+            if NativeEditorDiagnosticsStore.shared.isCollecting, pendingEditStartNs == nil {
                 pendingEditStartNs = DispatchTime.now().uptimeNanoseconds
             }
             textView.isEditable = true
             input.refreshSelectionMarks()
-            if textView.isFirstResponder {
-                completeTimeToEdit()
-            } else {
-                DispatchQueue.main.async { [weak self] in
-                    self?.completeTimeToEdit()
+            if NativeEditorDiagnosticsStore.shared.isCollecting {
+                if textView.isFirstResponder {
+                    completeTimeToEdit()
+                } else {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.completeTimeToEdit()
+                    }
                 }
             }
         } else {
@@ -863,7 +873,8 @@ final class NativeEditorOpen {
         // A repeated call while visible must not swap a focused editor. Close
         // establishes the next safe open or reopen boundary.
         guard !isOpen else { return }
-        pendingOpenStartNs = DispatchTime.now().uptimeNanoseconds
+        pendingOpenStartNs =
+            NativeEditorDiagnosticsStore.shared.isCollecting ? DispatchTime.now().uptimeNanoseconds : nil
         isOpen = true
         activeViewModel = viewModel
         enabled = preference()

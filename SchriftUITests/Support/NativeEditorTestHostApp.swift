@@ -1006,7 +1006,8 @@ private enum ScrollSamplerFixture {
                         "blockContainer", into: rootGroup, after: cursor,
                         [("id", .string("s2-tbl-\(attachmentIndex)"))])
                     cursor = item
-                    let (_, table) = try element("table", into: container, after: nil, [("textColor", .string("default"))])
+                    let (_, table) = try element(
+                        "table", into: container, after: nil, [("textColor", .string("default"))])
                     let cellProps: [(String, YAnyValue)] = [
                         ("backgroundColor", .string("default")), ("colspan", .int(1)), ("rowspan", .int(1)),
                         ("textAlignment", .string("left")), ("textColor", .string("default")),
@@ -1121,9 +1122,10 @@ private final class NativeScrollSampler: NSObject, ObservableObject {
     }
 
     @objc private func tick() {
-        guard let textView = mountedTextView(), let window = textView.window else { return }
+        guard let textView = mountedTextView(), let window = textView.window,
+            let controls = textView.blockControls
+        else { return }
         // Measure visible attachment bounds vs provider/content bounds on every frame.
-        let controls = textView.blockControls
         let visibleAttachments = controls.visibleAttachmentViews
         maxRealisedAttachments = max(maxRealisedAttachments, visibleAttachments.count)
         maxRealisedControls = max(maxRealisedControls, controls.orderedControlViews.count)
@@ -1138,17 +1140,15 @@ private final class NativeScrollSampler: NSObject, ObservableObject {
             }
         }
         if let layout = textView.textLayoutManager,
-            let surface = controls.surface,
-            let viewportOrigin = layout.textViewportLayoutController.viewportBounds.origin as CGPoint?
+            let content = layout.textContentManager,
+            let surface = controls.surface
         {
-            _ = viewportOrigin
-            let content = layout.textContentManager
             layout.enumerateTextLayoutFragments(
                 from: layout.textViewportLayoutController.viewportRange?.location ?? layout.documentRange.location,
                 options: []
             ) { fragment in
                 let offset = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.location)
-                guard let entry = surface.rangeIndex.entry(atUTF16: offset) else { return true }
+                guard offset != NSNotFound, let entry = surface.rangeIndex.entry(atUTF16: offset) else { return true }
                 let rectInTextView = fragment.layoutFragmentFrame
                 let screenMinY = textView.convert(rectInTextView, to: window).minY
                 if currentFrames[entry.blockID] == nil {
@@ -1183,7 +1183,7 @@ private final class NativeScrollSampler: NSObject, ObservableObject {
                     if abs(sampleDelta - (-pendingRequestedDeltaY)) > 48.0 {
                         jumpCount += 1
                     }
-                } else if (textView.isDragging || textView.isDecelerating),
+                } else if textView.isDragging || textView.isDecelerating,
                     currentOffsetY > previousContentOffsetY + 2.0,
                     currentOffsetY > 0,
                     currentOffsetY < maxOffsetY - 2.0,

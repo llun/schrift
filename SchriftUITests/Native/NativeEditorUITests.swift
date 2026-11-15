@@ -1442,6 +1442,164 @@ final class NativeEditorUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["nativeEditor.preservedNotice"].exists)
     }
 
+    // MARK: - PR15 Step 4 Acceptance UI Tests
+
+    /// PR15 §5B: S2 5,000-paragraph / 200-attachment fixture scrolls all the way to the bottom
+    /// via touch flings and explicit programmatic steps without jumps, reversals, bounds drift,
+    /// or unbounded attachment realisation.
+    func testS2ScrollSamplerReachesBottomWithoutJumpsOrReversals() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-scroll-sampler"]
+        app.launch()
+
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 20))
+        XCTAssertTrue(editor.waitForStableFrame())
+
+        let runButton = app.buttons["scrollSampler.run"]
+        let status = app.staticTexts["scrollSampler.status"]
+        XCTAssertTrue(runButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+
+        // Exercise touch-fling deceleration while CADisplayLink sampler is observing.
+        for _ in 0..<2 {
+            let start = editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
+            let end = editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+            start.press(forDuration: 0.02, thenDragTo: end, withVelocity: .fast, thenHoldForDuration: 0.0)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+        }
+
+        // Now run the full programmatic sweep from top to bottom.
+        runButton.tap()
+        let finished = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "pass|", "fail|"),
+            object: status)
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [finished], timeout: 120), .completed, "scroll sampler finished: \(status.label)")
+        XCTAssertTrue(status.label.hasPrefix("pass|"), "S2 scroll sampler failed: \(status.label)")
+    }
+
+    /// PR15 §4 / §5B: `--native-diagnostics` captures pipeline stages and surface counters in
+    /// sanitized JSON without leaking content, titles, IDs, or server hosts.
+    func testDiagnosticsReadoutIsSanitizedAndRecordsPipelineStages() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-diagnostics", "--native-slow-disk"]
+        app.launch()
+
+        let editor = app.textViews["nativeEditor.text"]
+        focusFirstParagraph(of: editor, in: app)
+        editor.typeText("Diagnostics probe ")
+        XCTAssertTrue(waitForText(of: editor, containing: "Diagnostics probe"))
+        waitForDurableJournal(in: app)
+
+        let refresh = app.buttons["nativeEditor.diagnostics.refresh"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 5))
+        refresh.tap()
+
+        let readout = app.staticTexts["nativeEditor.diagnostics"]
+        XCTAssertTrue(readout.waitForExistence(timeout: 5))
+        let ready = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value != %@", "pending"), object: readout)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+
+        let json = try XCTUnwrap(readout.value as? String)
+        let data = try XCTUnwrap(json.data(using: .utf8))
+        let decoded = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(decoded["schemaVersion"] as? Int, 1)
+        XCTAssertGreaterThan(decoded["totalSampleCount"] as? Int ?? 0, 0)
+
+        let stages = try XCTUnwrap(decoded["stageDistributions"] as? [String: Any])
+        for expectedStage in [
+            "diskRestore", "decodeIntegrate", "projection", "storageApply",
+            "firstVisibleContent", "timeToEdit", "inputToDisplay", "mailboxQueueWait",
+        ] {
+            XCTAssertNotNil(stages[expectedStage], "missing stage \(expectedStage) in \(stages.keys)")
+        }
+
+        let sessions = try XCTUnwrap(decoded["sessions"] as? [[String: Any]])
+        let session = try XCTUnwrap(sessions.first)
+        let counters = try XCTUnwrap(session["counters"] as? [String: Any])
+        XCTAssertGreaterThan(counters["textPatchCount"] as? Int ?? 0, 0)
+        XCTAssertEqual(counters["fullStorageRebuildCount"] as? Int, 0)
+
+        for forbidden in [
+            "Diagnostics probe", "Native open fixture", "Owned paragraph",
+            "native-fixture.invalid", "33333333", "44444444",
+        ] {
+            XCTAssertFalse(json.contains(forbidden), "sanitized diagnostics leaked \(forbidden)")
+        }
+    }
+
+    /// PR15 G01 / §5B: Editing `EditorDocumentHeader` title in Editing mode persists across relaunch.
+    func testHeaderTitleEditSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset"]
+        app.launch()
+
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(editor.waitForStableFrame())
+
+        let editButton = app.buttons["Edit"]
+        XCTAssertTrue(editButton.waitForExistence(timeout: 5))
+        editButton.tap()
+
+        let titleField = app.textViews["editor.header.title"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 5))
+        titleField.tap()
+        titleField.typeText(" Updated")
+
+        let doneButton = app.buttons["Done"]
+        XCTAssertTrue(doneButton.waitForExistence(timeout: 5))
+        doneButton.tap()
+
+        let readingTitle = app.staticTexts["editor.header.title"]
+        XCTAssertTrue(readingTitle.waitForExistence(timeout: 5))
+        XCTAssertEqual(readingTitle.label, "Native open fixture Updated")
+
+        app.terminate()
+        app.launchArguments = ["--native-open"]
+        app.launch()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(readingTitle.waitForExistence(timeout: 5))
+        XCTAssertEqual(readingTitle.label, "Native open fixture Updated")
+    }
+
+    /// PR15 G05 / §5B: Completing the last remaining checklist item while `Hide completed` is on
+    /// settles into the all-hidden empty state, and `Show completed` reveals every item again.
+    func testAllHiddenChecklistReadingEmptyStateAndShowCompleted() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-open", "--reset", "--native-checklist-only"]
+        app.launch()
+
+        let editor = app.textViews["nativeEditor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(editor.waitForStableFrame())
+
+        let hideToggle = app.switches["checklist.hideCompleted"]
+        XCTAssertTrue(hideToggle.waitForExistence(timeout: 5))
+        let switchControl = hideToggle.switches.firstMatch.exists ? hideToggle.switches.firstMatch : hideToggle
+        switchControl.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.2)
+
+        let firstCheckbox = app.buttons["nativeEditor.checkbox.owned-check-1"]
+        let secondCheckbox = app.buttons["nativeEditor.checkbox.owned-check-2"]
+        XCTAssertTrue(secondCheckbox.waitForNonExistence(timeout: 5), "pre-checked item hides immediately")
+        XCTAssertTrue(firstCheckbox.waitForExistence(timeout: 5))
+
+        firstCheckbox.tap()
+        let showCompleted = app.buttons["checklist.showCompleted"]
+        XCTAssertTrue(
+            showCompleted.waitForExistence(timeout: 5),
+            "completing the last item settles into the all-hidden reading state")
+        XCTAssertFalse(firstCheckbox.exists)
+
+        showCompleted.tap()
+        XCTAssertTrue(firstCheckbox.waitForExistence(timeout: 5))
+        XCTAssertTrue(secondCheckbox.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForText(of: editor, containing: "Only task one"))
+        XCTAssertTrue(waitForText(of: editor, containing: "Only task two"))
+    }
+
     private func text(of element: XCUIElement) -> String { element.value as? String ?? "" }
 
     private func topParagraphY(in app: XCUIApplication) -> CGFloat {

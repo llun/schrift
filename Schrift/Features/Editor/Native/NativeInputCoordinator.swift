@@ -617,10 +617,12 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
             if case .stale(let id)? = delivery.result {
                 staleAfterDrain.append(id)
             } else if let result = delivery.result {
-                let inputStartNs = result.commandID.flatMap { pendingInputStarts.removeValue(forKey: $0) }
+                let inputStartNs =
+                    pendingInputStarts.isEmpty
+                    ? nil : result.commandID.flatMap { pendingInputStarts.removeValue(forKey: $0) }
                 let shownBefore = (surface.shownDeltas.count, surface.shownReplaced, surface.shownRetexted)
                 handle(result, selection: delivery.selection)
-                if case .applied = result, let inputStartNs {
+                if case .applied = result, let inputStartNs, NativeEditorDiagnosticsStore.shared.isCollecting {
                     let seq = surface.sessionSeq
                     CATransaction.begin()
                     CATransaction.setCompletionBlock {

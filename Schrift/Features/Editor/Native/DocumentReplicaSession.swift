@@ -197,7 +197,9 @@ actor DocumentReplicaSession {
         interlinkingOrigin: String? = nil, diagnosticsSeq: UInt64 = 0, makeReplica: () -> YDoc
     ) throws -> Graph {
         let doc = makeReplica()
-        let totalInputBytes = state.count + updates.reduce(0) { $0 + $1.count }
+        let totalInputBytes =
+            NativeEditorDiagnosticsStore.shared.isCollecting
+            ? state.count + updates.reduce(0) { $0 + $1.count } : 0
         do {
             try NativeEditorDiagnosticsStore.shared.measure(
                 .decodeIntegrate, sessionSeq: diagnosticsSeq, byteCount: totalInputBytes, itemCount: 1 + updates.count
@@ -233,10 +235,15 @@ actor DocumentReplicaSession {
             // delivery's state says so and the surface stops authoring.
             engine.onUnjournaledTransaction = {}
         }
-        let mediaCount = projected.blocks.reduce(into: 0) { count, block in
-            if block.node == "image" || block.node == "video" || block.node == "file" || block.node == "audio" {
-                count += 1
+        let mediaCount: Int
+        if NativeEditorDiagnosticsStore.shared.isCollecting {
+            mediaCount = projected.blocks.reduce(into: 0) { count, snapshot in
+                if MediaBlock.schemas[snapshot.block.node] != nil {
+                    count += 1
+                }
             }
+        } else {
+            mediaCount = 0
         }
         // Marks never make the native projection lossy (raw Yjs write-back
         // keeps them all); the Markdown shadow is the one `ReplicaSaveAdapter`

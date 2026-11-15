@@ -211,6 +211,7 @@ struct EditorDocumentHeader<Status: View>: View {
                 loc[.common_untitled], text: Binding(get: { title }, set: onEditTitle),
                 selection: $titleSelection, axis: .vertical
             )
+            .accessibilityIdentifier("editor.header.title")
             .foregroundStyle(theme.colors.textPrimary)
             .focused($isTitleFocused)
             .task {
@@ -226,6 +227,7 @@ struct EditorDocumentHeader<Status: View>: View {
             // has a title line while editing and none while reading, so the body
             // moves by a whole title's height on the swap.
             Text(title.isEmpty ? loc[.common_untitled] : title)
+                .accessibilityIdentifier("editor.header.title")
                 .foregroundStyle(title.isEmpty ? theme.colors.textTertiary : theme.colors.textPrimary)
                 .accessibilityAddTraits(.isHeader)
         }
