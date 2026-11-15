@@ -1873,3 +1873,21 @@ title a Conventional Commit; PR review loop run and threads resolved.
 > cumulative line-box drift already documented, not a fourth bug. **None of this
 > is reachable by the test suite** — it took a build, a real document and a
 > screenshot at a fixed coordinate to find each one.
+>
+> **PR15 native shell, checklist controls, and VoiceOver parity:** `NativeDocumentShellView`
+> shares `EditorLoadingPlaceholder`, `EditorBannerStack`, `EditorDocumentHeader` (title +
+> `LinkReachPill` + `SaveStatusIndicator`/`EditorSyncCaptionLabel` + `PresenceBar`),
+> `PagesTreeDrawer` + edge pan, `OutlinePresentationGate` / `OutlineHeldNavigation`,
+> `ConflictSheetView`, and `subpagesSection` across `.loading`, `.native`, and
+> `.preservedUnavailable` routes. To preserve TextKit 2 viewport virtualization, `NativeTextView`
+> remains the sole vertical `UIScrollView`, hosting `EditorDocumentHeader` + Reading-mode
+> `ChecklistReadingControls` in `headerAccessoryView` (`contentInset.top`) and `subpagesSection`
+> in `footerAccessoryView` (`contentInset.bottom`). In Reading mode, `NativeTextSurface` hides
+> completed checklist items and deeper descendants presentation-only (450 ms `ChecklistSettlingStore`
+> grace period, 0 ms under Reduce Motion), restores scroll to the next surviving visible block, and
+> shows the localized all-hidden empty state with "Show completed" and VoiceOver reveal focus.
+> `NativeEditorView` attaches the localized `BackToTop` custom accessibility action when
+> `offersBackToTop` is true, and `NativeTextView.orderAuxiliarySubviews()` orders header,
+> visible `NativeBlockControls`, visible `NativeAttachmentView`s, footer, `NativeCursorOverlay`
+> (hidden when no peers are visible), and `NativeInlineChipAccessibilityOverlay` top-to-bottom
+> while keeping TextKit's text element and `headingRotor` intact.
