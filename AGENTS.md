@@ -4132,16 +4132,19 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   is `true` while clean and `false` before local appends/provisionals).
   **Diagnostics & Acceptance Suite (PR15b):** `NativeEditorDiagnosticsStore` (`Logger(subsystem: "dev.llun.Schrift", category: "NativeEditor")`
   + `OSSignposter`) records 10 pipeline stages, `ReplicaWorkloadMetrics`, `SurfaceWorkCounters`, and Mach
-  `phys_footprint` in a bounded 256-sample / 32-session in-memory ring (active when the native switch or
-  `--native-diagnostics`/`--native-scroll-sampler` is set; strictly zero PII, document text, titles, IDs, or
-  hosts; copyable as sanitized JSON from Profile when native mode is enabled). `project.yml` adds
-  `MaterialSymbolsOutlined-Icons.ttf` to `SchriftNativeTestHost`.
-  **Tests & Docs:** `NativeEditorAcceptanceTests` (10 tests: whole-family `72ebe1bb` round-trip, real `state.bin`
+  `phys_footprint` in a bounded 256-sample / 32-session in-memory ring (active only when both
+  `NativeEditorPreference` and the separate default-off `NativeEditorDiagnosticsPreference`
+  ("Collect native editor diagnostics" in Profile, shown only when the native editor is on) are enabled,
+  cached in memory via an atomic flag, or forced in `NativeEditorTestHostApp` via `setForcedCollection(true)`;
+  strictly zero PII, document text, titles, IDs, or hosts; cleared on every account change / `signInGeneration`
+  with a `minSessionSeq` floor; copyable as sanitized JSON from Profile when native mode is enabled).
+  **Tests & Docs:** `NativeEditorAcceptanceTests` (11 tests: whole-family `72ebe1bb` round-trip, real `state.bin`
   capture, switch-off rollback/retained drafts, classic non-regression, new-doc/subpage & offline local-create
   migration, stale-cache/Docs-6 guard, Reading↔Editing & all-hidden checklist settling, 10-cycle memory
-  reclamation & clean-replica sign-out, bounded work counters on 5,000-block & S2 mixed fixtures, and
-  diagnostics zero-PII/bounded-ring invariants), `NativeEditorUITests` shell/diagnostics/S2 `CADisplayLink`
-  `--native-scroll-sampler` tests, and [`docs/native-editor-acceptance.md`](docs/native-editor-acceptance.md).
+  reclamation & clean-replica sign-out, bounded work counters on 5,000-block & S2 mixed fixtures,
+  diagnostics zero-PII/bounded-ring/opt-in/floor invariants, and `timeToEdit` first-responder gating),
+  `NativeEditorUITests` shell/diagnostics/S2 `CADisplayLink` `--native-scroll-sampler` tests, and
+  [`docs/native-editor-acceptance.md`](docs/native-editor-acceptance.md).
 - **Layers.** `EditorSurface` (model → UI: `applyPatch(BlockPatch)`) sits above
   `DocumentEngine` (confined to its creating domain, PR08a), which borrows the replica and resolves
   intents through `BlockNoteWriter` inside one `.localUser` transaction. Below

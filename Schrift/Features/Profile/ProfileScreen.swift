@@ -26,6 +26,7 @@ struct ProfileScreen: View {
     // entire wiring — see `LiveCollaborationPreference`.
     @AppStorage(LiveCollaborationPreference.key) private var liveCollaboration: Bool = false
     @AppStorage(NativeEditorPreference.key) private var nativeEditor: Bool = false
+    @AppStorage(NativeEditorDiagnosticsPreference.key) private var collectNativeEditorDiagnostics: Bool = false
 
     @State private var isConfirmingDisconnect = false
     @State private var showAppearanceSheet = false
@@ -80,6 +81,7 @@ struct ProfileScreen: View {
         // unkeyed, an account row loaded for the previous user stays on screen (and stays
         // tappable through to their detail) until the user happens to switch tabs.
         .task(id: signInGeneration) {
+            diagnosticsCopied = false
             holdsUnreadableDrafts = needsRecovery
             await viewModel.loadIfStale(sessionGeneration: signInGeneration)
         }
@@ -280,10 +282,26 @@ struct ProfileScreen: View {
                 Switch(isOn: $liveCollaboration)
             }
             ProfileTrailingRow(icon: .edit, title: loc[.profile_native_editor]) {
-                Switch(isOn: $nativeEditor)
+                Switch(
+                    isOn: Binding(
+                        get: { nativeEditor },
+                        set: {
+                            nativeEditor = $0
+                            NativeEditorDiagnosticsStore.shared.refreshCollectionPreference()
+                        }))
             }
             .accessibilityIdentifier("profile.nativeEditor")
             if nativeEditor {
+                ProfileTrailingRow(icon: .data_object, title: loc[.profile_native_editor_diagnostics_collect]) {
+                    Switch(
+                        isOn: Binding(
+                            get: { collectNativeEditorDiagnostics },
+                            set: {
+                                collectNativeEditorDiagnostics = $0
+                                NativeEditorDiagnosticsStore.shared.refreshCollectionPreference()
+                            }))
+                }
+                .accessibilityIdentifier("profile.nativeEditor.collectDiagnostics")
                 ListRow(
                     icon: .content_copy,
                     title: loc[.profile_native_editor_diagnostics],

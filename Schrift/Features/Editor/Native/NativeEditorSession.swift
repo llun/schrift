@@ -151,11 +151,11 @@ final class NativeEditorSession {
     }
 
     private func completeTimeToEdit() {
-        guard NativeEditorDiagnosticsStore.shared.isCollecting, textView.isEditable, let startNs = pendingEditStartNs
-        else {
+        guard NativeEditorDiagnosticsStore.shared.isCollecting, textView.isEditable else {
             pendingEditStartNs = nil
             return
         }
+        guard textView.isFirstResponder, let startNs = pendingEditStartNs else { return }
         pendingEditStartNs = nil
         let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds &- startNs) / 1_000_000.0
         NativeEditorDiagnosticsStore.shared.recordDuration(
@@ -163,6 +163,7 @@ final class NativeEditorSession {
     }
 
     private func sampleDiagnosticsSnapshot(steady: Bool) {
+        guard NativeEditorDiagnosticsStore.shared.isCollecting else { return }
         recordLayoutDiagnostics()
         NativeEditorDiagnosticsStore.shared.sampleMemory(sessionSeq: sessionSeq, steady: steady)
     }
@@ -631,19 +632,14 @@ final class NativeEditorSession {
                 textView.isEditable = false
                 return
             }
-            if NativeEditorDiagnosticsStore.shared.isCollecting, pendingEditStartNs == nil {
+            let collecting = NativeEditorDiagnosticsStore.shared.isCollecting
+            if collecting, pendingEditStartNs == nil {
                 pendingEditStartNs = DispatchTime.now().uptimeNanoseconds
             }
             textView.isEditable = true
             input.refreshSelectionMarks()
-            if NativeEditorDiagnosticsStore.shared.isCollecting {
-                if textView.isFirstResponder {
-                    completeTimeToEdit()
-                } else {
-                    DispatchQueue.main.async { [weak self] in
-                        self?.completeTimeToEdit()
-                    }
-                }
+            if collecting, textView.isFirstResponder {
+                completeTimeToEdit()
             }
         } else {
             pendingEditStartNs = nil

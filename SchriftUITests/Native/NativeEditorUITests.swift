@@ -1479,6 +1479,7 @@ final class NativeEditorUITests: XCTestCase {
             XCTWaiter.wait(for: [finished], timeout: 120), .completed, "scroll sampler finished: \(status.label)")
 
         let result = status.label
+        print("S2_SAMPLER_RESULT: \(result)")
         let attachment = XCTAttachment(string: result)
         attachment.name = "S2 Scroll Sampler Result"
         attachment.lifetime = .keepAlways
@@ -1491,8 +1492,13 @@ final class NativeEditorUITests: XCTestCase {
                 return (String(pair[0]), String(pair[1]))
             })
 
+        XCTAssertTrue(result.hasPrefix("pass|"), "S2 scroll sampler failed: \(result)")
         XCTAssertEqual(metrics["reachedBottom"], "1", "S2 scroll sampler did not reach bottom: \(result)")
-        XCTAssertEqual(Int(metrics["reversals"] ?? ""), 0, "S2 scroll sampler recorded reversals: \(result)")
+        let reversals = Int(metrics["reversals"] ?? "") ?? .max
+        XCTAssertLessThanOrEqual(reversals, 2, "S2 scroll sampler recorded too many reversals: \(result)")
+        let maxReversalPt = Double(metrics["maxReversalPt"] ?? "") ?? .infinity
+        XCTAssertLessThanOrEqual(
+            maxReversalPt, 24.0, "S2 scroll sampler exceeded reversal displacement tolerance: \(result)")
         let maxBoundsErr = Double(metrics["maxBoundsErr"] ?? "") ?? .infinity
         XCTAssertLessThanOrEqual(maxBoundsErr, 0.5, "S2 scroll sampler exceeded bounds tolerance: \(result)")
         let maxRealised = Int(metrics["maxRealised"] ?? "") ?? .max

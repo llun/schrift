@@ -459,7 +459,8 @@ actor DocumentReplicaSession {
 
     private func run() async {
         for await message in mailbox.stream {
-            if let waitMs = mailbox.tookMeasuringWaitMs() {
+            let collecting = NativeEditorDiagnosticsStore.shared.isCollecting
+            if let waitMs = mailbox.tookMeasuringWaitMs(collecting: collecting), collecting {
                 NativeEditorDiagnosticsStore.shared.recordDuration(
                     .mailboxQueueWait, durationMs: waitMs, sessionSeq: diagnosticsSeq)
             }
@@ -470,10 +471,15 @@ actor DocumentReplicaSession {
             await hooks.beforeMessage?()
             hooks.onReplicaWork?()
             handle(message)
-            if NativeEditorDiagnosticsStore.shared.isCollecting {
-                let depth = history?.undoDepth ?? 0
-                NativeEditorDiagnosticsStore.shared.mutateCounters(sessionSeq: diagnosticsSeq) {
-                    $0.undoDepth = depth
+            if collecting, diagnosticsSeq != 0 {
+                switch message {
+                case .command, .compositionCommit, .integrate, .setWritable:
+                    let depth = history?.undoDepth ?? 0
+                    NativeEditorDiagnosticsStore.shared.mutateCounters(sessionSeq: diagnosticsSeq) {
+                        $0.undoDepth = depth
+                    }
+                default:
+                    break
                 }
             }
             reportCursor()

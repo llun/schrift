@@ -235,7 +235,7 @@ final class ReplicaCommandMailbox: Sendable {
     private struct QueueState {
         var count = 0
         var untrackedHeadCount = 0
-        var enqueueTimesNs: [UInt64] = []
+        var enqueueTimesNs: [UInt64?] = []
         var headIndex = 0
     }
 
@@ -263,6 +263,9 @@ final class ReplicaCommandMailbox: Sendable {
             state.count += 1
             if collecting {
                 state.enqueueTimesNs.append(nowNs)
+            } else if state.headIndex < state.enqueueTimesNs.count {
+                // Keep FIFO alignment behind any already-tracked entries.
+                state.enqueueTimesNs.append(nil)
             } else {
                 state.untrackedHeadCount += 1
             }
@@ -273,11 +276,12 @@ final class ReplicaCommandMailbox: Sendable {
     }
 
     /// The session took one message off `stream`.
-    func took() { _ = tookMeasuringWaitMs() }
+    func took() { _ = tookMeasuringWaitMs(collecting: false) }
 
     /// The session took one message off `stream`; returns the queue wait in ms.
-    func tookMeasuringWaitMs() -> Double? {
-        let collecting = NativeEditorDiagnosticsStore.shared.isCollecting
+    func tookMeasuringWaitMs(
+        collecting: Bool = NativeEditorDiagnosticsStore.shared.isCollecting
+    ) -> Double? {
         let nowNs = collecting ? DispatchTime.now().uptimeNanoseconds : 0
         return queueState.withLock { state in
             state.count -= 1
@@ -286,7 +290,7 @@ final class ReplicaCommandMailbox: Sendable {
                 return nil
             }
             guard state.headIndex < state.enqueueTimesNs.count else { return nil }
-            let enqueuedNs = state.enqueueTimesNs[state.headIndex]
+            let maybeEnqueuedNs = state.enqueueTimesNs[state.headIndex]
             state.headIndex += 1
             if state.headIndex >= state.enqueueTimesNs.count {
                 state.enqueueTimesNs.removeAll(keepingCapacity: false)
@@ -295,7 +299,7 @@ final class ReplicaCommandMailbox: Sendable {
                 state.enqueueTimesNs.removeFirst(state.headIndex)
                 state.headIndex = 0
             }
-            guard collecting else { return nil }
+            guard collecting, let enqueuedNs = maybeEnqueuedNs else { return nil }
             return Double(nowNs &- enqueuedNs) / 1_000_000.0
         }
     }

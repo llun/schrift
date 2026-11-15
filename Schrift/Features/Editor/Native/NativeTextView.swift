@@ -867,10 +867,13 @@ final class NativeTextView: UITextView {
         chipAccessibilityOverlay.frame = bounds
         orderAuxiliarySubviews()
         mediaDropController?.bringIndicatorsToFront(in: self)
-        if !hasReportedFirstVisibleContent, NativeEditorDiagnosticsStore.shared.isCollecting, hasVisibleRenderedContent
-        {
-            hasReportedFirstVisibleContent = true
-            onFirstVisibleContent?()
+        if !hasReportedFirstVisibleContent {
+            if !NativeEditorDiagnosticsStore.shared.isCollecting {
+                hasReportedFirstVisibleContent = true
+            } else if hasVisibleRenderedContent {
+                hasReportedFirstVisibleContent = true
+                onFirstVisibleContent?()
+            }
         }
         onLayout?()
         onGeometry?()

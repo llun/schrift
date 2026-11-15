@@ -26,11 +26,14 @@ durations are emitted.
 
 ### A. In-app sanitized JSON (TestFlight & Debug)
 
-1. Open **Profile** and enable **Native editor (experimental)** (`profile.nativeEditor`).
-   In-memory collection in `NativeEditorDiagnosticsStore.shared` (bounded ring: 256 recent stage
-   samples, 32 session summaries; cleared on sign-out and process termination; never written to
-   disk, backups, or network) activates automatically whenever `NativeEditorPreference.isEnabled()`
-   is true.
+1. Open **Profile**, enable **Native editor (experimental)** (`profile.nativeEditor`), and then
+   enable **Collect native editor diagnostics** (`profile.nativeEditor.collectDiagnostics`, default
+   `false`, shown only while the native editor switch is on). In-memory collection in
+   `NativeEditorDiagnosticsStore.shared` (bounded ring: 256 recent stage samples, 32 session
+   summaries; reset on sign-out, account change, `signInGeneration` bump, and process termination;
+   never written to disk, backups, or network) activates only when
+   `NativeEditorDiagnosticsPreference.isEnabled()` is true (or `setForcedCollection(true)` in the
+   UI-test host).
 2. Open, read, edit, scroll, and close target documents.
 3. Return to **Profile** and tap **Copy native editor diagnostics** (`profile.nativeEditor.diagnostics`)
    to copy the sanitized JSON (`NativeEditorDiagnosticsSnapshot`, `schemaVersion: 1`) to the
@@ -63,12 +66,18 @@ and Mach `task_vm_info` `phys_footprint` snapshots (`baselineBytes`, `peakBytes`
 
 ### C. Debug test-host launch arguments (`SchriftNativeTestHost`)
 
-- `--native-diagnostics`: forces `NativeEditorDiagnosticsStore` collection on launch and exposes
-  the sanitized JSON readout (`nativeEditor.diagnostics`) + refresh button (`nativeEditor.diagnostics.refresh`).
+Handled inside `NativeEditorTestHostApp` (`SchriftUITests/Support/NativeEditorTestHostApp.swift`),
+calling `NativeEditorDiagnosticsStore.shared.setForcedCollection(true)` so shipping targets never
+read process arguments for diagnostics or test switches:
+
+- `--native-diagnostics`: forces `NativeEditorDiagnosticsStore` collection on launch in the UI-test
+  host and exposes the sanitized JSON readout (`nativeEditor.diagnostics`) + refresh button
+  (`nativeEditor.diagnostics.refresh`).
 - `--native-scroll-sampler`: mounts the S2 5,000-paragraph / 200-attachment mixed fixture with an
   in-process `CADisplayLink` `NativeScrollSampler` (`scrollSampler.run`, `scrollSampler.status`)
   that measures per-frame block/attachment screen `minY`, attachment bounds vs provider bounds,
-  realised attachment/control counts, and bottom-reach across touch flings and programmatic sweeps.
+  realised attachment/control counts, reversal count + `maxReversalPt`, and bottom-reach across
+  touch flings and programmatic sweeps.
 
 ## 3. Target device envelope & provisional thresholds
 
@@ -91,42 +100,51 @@ and Mach `task_vm_info` `phys_footprint` snapshots (`baselineBytes`, `peakBytes`
 
 ### A. Unit & integration acceptance suite (`SchriftTests/NativeEditorAcceptanceTests`)
 
-Recorded in `.review/step4c.log` (`10` tests executed, `0` failures, `6.498 s` total):
+Recorded in `.review/fix1.log` (`11` tests executed, `0` failures, `6.454 s` total):
 
 | Test | Scope verified | Result | Duration (s) |
 |---|---|---|---|
-| `testWholeFamilyFixturePreserveReadEditAndWebRoundTrip` | All registered BlockNote 0.56 families in one Yjs doc (`HeadlessSurface` == `NativeTextSurface`, edit prose/checklist/table/column/source/inline, untouched sibling `YItem` IDs, auxiliary root preservation, shadow parity) | Passed | 0.034 |
-| `testRealStateBinCaptureProjectsAndMatchesHeadlessSurfaceIfPresent` | Real server `state.bin` fixture projection & headless parity | Passed | 0.021 |
-| `testSwitchOffRollbackRetainsRichDraftAndLeavesUntouchedClassic` | Rich edits with switch on → switch off → background replay via Yjs update + preserved read-only view + untouched docs open classic | Passed | 0.068 |
-| `testClassicEditorAndBlockNoteApplyEditNonRegression` | Default-off classic open, edit, `BlockNotePreservation` (`applyEdit`) save, checklist filter, conflict resolution | Passed | 0.063 |
-| `testNewDocumentSubpageAndOfflineLocalCreateMigration` | Online new doc & subpage + title-only `batch == nil` save; offline local create (`localScope` replica, child create, queued image upload) → online `migrateNativeCreatedDocument` to `serverID` | Passed | 0.250 |
+| `testBoundedWorkCountersOnLargeProseAndS2MixedFixtures` | Single insert / checkbox toggle on 5,000-block & S2 5,000/200 fixtures: `textPatchCount == 1` / `blockPatchCount == 1`, `fullStorageRebuildCount == 0`, viewport-bounded realised views (`<= 32`) | Passed | 1.146 |
+| `testClassicEditorAndBlockNoteApplyEditNonRegression` | Default-off classic open, edit, `BlockNotePreservation` (`applyEdit`) save, checklist filter, conflict resolution | Passed | 0.067 |
+| `testDiagnosticsStoreBoundedRingPercentilesZeroPIIAndOffModeEarlyReturn` | 256-sample / 32-session ring caps, percentile accuracy, zero PII/IDs/hosts, separate `NativeEditorDiagnosticsPreference` opt-in & `minSessionSeq` floor, mid-session toggle-off interval/session closing & `activeSessions` eviction, mailbox FIFO alignment | Passed | 0.010 |
+| `testNewDocumentSubpageAndOfflineLocalCreateMigration` | Online new doc & subpage + title-only `batch == nil` save; offline local create (`localScope` replica, child create, queued image upload) → online `migrateNativeCreatedDocument` to `serverID` | Passed | 0.243 |
+| `testReadingEditingModeHandoffAndAllHiddenChecklistSettling` | Reading starts non-editable; `Hide completed` zero-Yjs-write hiding of checked items & descendants; 450 ms settle into all-hidden state; "Show completed"; mode round-trip anchor | Passed | 0.479 |
+| `testRealStateBinCaptureProjectsAndMatchesHeadlessSurfaceIfPresent` | Real server `state.bin` fixture projection & headless parity | Passed | 0.020 |
 | `testStaleFormattedContentAndOfflineDocs6Guard` | Delayed `formattedContent` does not clobber native title/state; unmigrated Docs 6 offline Markdown cache stays `canStartEditing == false` | Passed | 0.051 |
-| `testReadingEditingModeHandoffAndAllHiddenChecklistSettling` | Reading starts non-editable; `Hide completed` zero-Yjs-write hiding of checked items & descendants; 450 ms settle into all-hidden state; "Show completed"; mode round-trip anchor | Passed | 0.502 |
-| `testTenCycleMemoryReclamationAndCleanReplicaSignOut` | 10 open/type/sheet/undo/close cycles on 5,000/200 fixture release `NativeEditorSession`, `NativeTextView`, `NativeInputCoordinator`, `DocumentReplicaSession`; sign-out purges clean replicas and retains dirty/provisional/conflicted/quarantined ones | Passed | 4.365 |
-| `testBoundedWorkCountersOnLargeProseAndS2MixedFixtures` | Single insert / checkbox toggle on 5,000-block & S2 5,000/200 fixtures: `textPatchCount == 1` / `blockPatchCount == 1`, `fullStorageRebuildCount == 0`, viewport-bounded realised views (`<= 32`) | Passed | 1.138 |
-| `testDiagnosticsStoreBoundedRingPercentilesZeroPIIAndOffModeEarlyReturn` | 256-sample / 32-session ring caps, percentile accuracy, zero PII/IDs/hosts, no-op early return when switch & args are off | Passed | 0.007 |
+| `testSwitchOffRollbackRetainsRichDraftAndLeavesUntouchedClassic` | Rich edits with switch on → switch off → background replay via Yjs update + preserved read-only view + untouched docs open classic | Passed | 0.066 |
+| `testTenCycleMemoryReclamationAndCleanReplicaSignOut` | 10 open/type/sheet/undo/close cycles on 5,000/200 fixture release `NativeEditorSession`, `NativeTextView`, `NativeInputCoordinator`, `DocumentReplicaSession`; sign-out purges clean replicas and retains dirty/provisional/conflicted/quarantined ones | Passed | 4.280 |
+| `testTimeToEditRequiresFirstResponderReady` | `timeToEdit` records only once `textView.isFirstResponder` is true and uses monotonic timestamps | Passed | 0.054 |
+| `testWholeFamilyFixturePreserveReadEditAndWebRoundTrip` | All registered BlockNote 0.56 families in one Yjs doc (`HeadlessSurface` == `NativeTextSurface`, edit prose/checklist/table/column/source/inline, untouched sibling `YItem` IDs, auxiliary root preservation, shadow parity) | Passed | 0.038 |
 
 ### B. UI-host & S2 scroll-displacement sampler (`SchriftNativeUITests/NativeEditorUITests`)
 
 - **Header title persistence (`testHeaderTitleEditSurvivesRelaunch`):**
-  - **Measured simulator (Debug) result (`.review/step5.log`):** Passed in `21.040 s`. Editing
+  - **Measured simulator (Debug) result (`.review/fix1.log`):** Passed in `20.398 s`. Editing
     `editor.header.title` (`EditorDocumentHeader`) in Editing mode, tapping `Done`, and
     relaunching the app preserves `"Native open fixture Updated"`.
+- **Diagnostics readout (`testDiagnosticsReadoutIsSanitizedAndRecordsPipelineStages`):**
+  - **Measured simulator (Debug) result (`.review/fix1.log`):** Passed in `17.129 s`.
 - **S2 scroll-displacement sampler (`testS2ScrollSamplerReachesBottomWithoutReversalsOrBoundsDrift`):**
   - **Fixture:** S2 5,000-paragraph / 200-attachment mixed fixture (`--native-scroll-sampler`),
     combining two fast XCUITest touch flings with a full top-to-bottom programmatic sweep sampled
     per frame via `CADisplayLink`.
-  - **Measured simulator (Debug) results:**
-    - `.review/step4c.log`: `jumps=13`, `reversals=0`, `reachedBottom=1`, `maxBoundsErr=0.00 pt`
-      (bound `<= 0.5 pt`), `maxRealised=1` (bound `<= 32`), `maxControls=0`, `frames=661`.
-    - `.review/step5.log` (renamed test, passed in `103.026 s`): `jumps=16`, `reversals=0`,
-      `reachedBottom=1`, `maxBoundsErr=0.00 pt`, `maxRealised=1`, `maxControls=0`, `frames=652`.
-  - **Interpretation:** The `13–16` single-frame jumps are genuine **TextKit 2 height-estimate
-    corrections** as the viewport sweeps past complex attachment/container runs—a known risk
-    tracked in this acceptance record rather than suppressed. Downward scrolling never reversed
-    (`reversals=0`), reached the bottom (`reachedBottom=1`), kept every attachment view frame
-    matched to its `NSTextAttachmentViewProvider` bounds (`maxBoundsErr=0.00`), and bounded
-    realised attachments to `1`. The full raw sampler string is attached to the test result as an
+  - **Previous `.review/step4c.log` baseline note:** Earlier `.review/step4c.log` ran the stricter
+    `testS2ScrollSamplerReachesBottomWithoutJumpsOrReversals`, which **failed** on `jumps=13`
+    (`reversals=0`, `reachedBottom=1`, `maxBoundsErr=0.00 pt`, `maxRealised=1`, `maxControls=0`,
+    `frames=661`).
+  - **Sampler measurement fix & verdict rule:** Fixed `NativeScrollSampler.tick` to sort observed
+    anchor-block frame deltas before taking the median (previously indexed an unsorted
+    `Dictionary.values` array), cleared residual `pendingRequestedDeltaY` at sweep start, tracked
+    `maxReversalPt`, and aligned `passed` with the reversal/bounds contract
+    (`reachedBottom && reversalCount <= 2 && maxReversalPt <= 24.0 && maxBoundsError <= 0.5 && maxRealisedAttachments <= 32`)
+    while continuing to report single-frame TextKit 2 height-estimate `jumps`.
+  - **Measured simulator (Debug) result (`.review/fix1.log`, passed in `102.064 s`):**
+    `S2_SAMPLER_RESULT: pass|jumps=16|reversals=0|maxReversalPt=0.00|reachedBottom=1|maxBoundsErr=0.00|maxRealised=1|maxControls=0|frames=721`
+  - **Interpretation:** With the unsorted anchor-delta median bug fixed, the 16 single-frame jumps
+    are pure TextKit 2 height-estimate corrections as the viewport sweeps past mixed
+    attachment/container runs, with `0` reversals (`maxReversalPt=0.00 pt`), full bottom reach
+    (`reachedBottom=1`), zero provider bounds drift (`maxBoundsErr=0.00 pt`), and realised
+    attachments bounded to `1`. The full raw sampler string is attached to the test result as an
     `XCTAttachment` (`"S2 Scroll Sampler Result"`).
 
 ## 5. Step-by-step TestFlight manual checklist (iPhone & iPad)
@@ -189,8 +207,9 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
 - **Preserved read-only structures:** Unknown BlockNote block types, unknown marks/props, and
   auxiliary Yjs roots are preserved byte-for-byte in `YDoc` and keep the surface in preserved
   read-only mode (`!session.canType`).
-- **S2 TextKit 2 height-estimate corrections:** As measured in §4B (`jumps=13` in `.review/step4c.log`,
-  `jumps=16` in `.review/step5.log`, both with `reversals=0`),
+- **S2 TextKit 2 height-estimate corrections:** As measured in §4B (`jumps=16`, `reversals=0`,
+  `maxReversalPt=0.00`, `reachedBottom=1`, `maxBoundsErr=0.00`, `maxRealised=1`, `maxControls=0`,
+  `frames=721` in `.review/fix1.log`, after the earlier `jumps=13` failure in `.review/step4c.log`),
   TextKit 2 adjusts estimated fragment heights during fast sweeps across mixed attachment/container
   runs. Monitor real-device hitch time (`< 5 ms/s`) during TestFlight evaluation.
 - **Markdown shadow whitespace edge case:** Leading/trailing whitespace in a block can differ

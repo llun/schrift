@@ -552,6 +552,7 @@ enum Strings_it {
             "Alcune copie dei documenti su questo dispositivo non sono leggibili, quindi qui non è possibile modificare alcun documento. Metterle da parte sposta quelle copie in una cartella separata su questo dispositivo. I loro file vengono conservati ma non vengono più aperti, e le modifiche mai sincronizzate al loro interno non verranno inviate. Gli altri documenti torneranno modificabili.",
         .profile_recover_drafts_set_aside_success:
             "Copie illeggibili messe da parte. Gli altri documenti sono di nuovo modificabili.",
+        .profile_native_editor_diagnostics_collect: "Raccogli diagnostica dell'editor nativo",
         .profile_recover_drafts_failure: "Impossibile recuperare le bozze. Restano salvate su questo dispositivo.",
     ]
 }

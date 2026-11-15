@@ -615,6 +615,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 }
             }
             if case .stale(let id)? = delivery.result {
+                if !pendingInputStarts.isEmpty {
+                    pendingInputStarts.removeValue(forKey: id)
+                }
                 staleAfterDrain.append(id)
             } else if let result = delivery.result {
                 let inputStartNs =
@@ -3310,6 +3313,7 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     /// The session closed: nothing more is posted.
     func detach() {
         isDetached = true
+        pendingInputStarts.removeAll(keepingCapacity: false)
         let dropped = barrier?.onSettled
         barrier = nil
         intents = []

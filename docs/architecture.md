@@ -1218,8 +1218,10 @@ top-to-bottom in `orderAuxiliarySubviews()` without altering TextKit's text elem
 `storageApply`, `firstVisibleContent`, `timeToEdit`, `inputToDisplay`, `mailboxQueueWait`,
 `remoteMerge`, `checkpointCompact`), workload metrics, surface work counters, and Mach
 `task_vm_info` `phys_footprint` samples into a bounded in-memory ring (256 samples / 32 sessions,
-active when the native switch or `--native-diagnostics`/`--native-scroll-sampler` is enabled,
-emitting zero document content, titles, IDs, or server hosts). See
+active only when both the native editor switch and the separate default-off **Collect native editor
+diagnostics** toggle are enabled — cached in memory via an atomic flag — or forced in
+`NativeEditorTestHostApp` via `setForcedCollection(true)`, cleared on every account change with a
+`minSessionSeq` floor, and emitting zero document content, titles, IDs, or server hosts). See
 [`native-editor-acceptance.md`](native-editor-acceptance.md) for the acceptance protocol and
 measured simulator results.
 

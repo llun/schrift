@@ -101,15 +101,19 @@ struct NativeEditorDiagnosticsSnapshot: Codable, Equatable, Sendable {
 
 /// Signpost and bounded in-memory telemetry store for the native editor (PR15).
 ///
-/// Signposts stay active in Release/TestFlight builds for Instruments capture.
-/// In-memory ring recording is active whenever `NativeEditorPreference.isEnabled`
-/// or `--native-diagnostics` / `--native-scroll-sampler` is passed (or when
-/// explicitly forced on an isolated test store instance).
+/// In-memory ring recording and signpost emission are active only when both
+/// `NativeEditorPreference.isEnabled` and `NativeEditorDiagnosticsPreference.isEnabled`
+/// are true (or when explicitly forced in tests/test-host via `setForcedCollection`).
+/// The effective flag is cached in an atomic boolean so disabled hot-path checks
+/// never touch `UserDefaults` or acquire the store mutex.
 ///
 /// Strict privacy invariant: this store accepts and emits only monotonic session
 /// sequence integers, stage identifiers, counts, byte sizes, and timings.
 final class NativeEditorDiagnosticsStore: Sendable {
-    static let shared = NativeEditorDiagnosticsStore()
+    static let shared: NativeEditorDiagnosticsStore = {
+        let store = NativeEditorDiagnosticsStore(userDefaults: .standard, observeDefaults: true)
+        return store
+    }()
     static let defaultMaxSamples = 256
     static let defaultMaxSessions = 32
 
@@ -127,26 +131,44 @@ final class NativeEditorDiagnosticsStore: Sendable {
 
     private struct State {
         var nextSessionSeq: UInt64 = 1
+        var minSessionSeq: UInt64 = 1
         var samples: [StageSample] = []
         var sessions: [SessionRecord] = []
         var activeSessions: Set<UInt64> = []
+        var preferenceEnabled: Bool
         var forcedCollection: Bool?
     }
 
     let maxSamples: Int
     let maxSessions: Int
     private let state: Mutex<State>
+    private let collectingFlag: Atomic<Bool>
 
     init(
         maxSamples: Int = defaultMaxSamples,
         maxSessions: Int = defaultMaxSessions,
-        forcedCollection: Bool? = nil
+        forcedCollection: Bool? = nil,
+        userDefaults: UserDefaults = .standard,
+        observeDefaults: Bool = false
     ) {
         self.maxSamples = max(1, maxSamples)
         self.maxSessions = max(1, maxSessions)
-        var initial = State()
-        initial.forcedCollection = forcedCollection
+        let prefEnabled =
+            NativeEditorPreference.isEnabled(userDefaults)
+            && NativeEditorDiagnosticsPreference.isEnabled(userDefaults)
+        var initial = State(preferenceEnabled: prefEnabled, forcedCollection: forcedCollection)
+        let initialEffective = Self.shouldCollectLocked(initial)
         self.state = Mutex(initial)
+        self.collectingFlag = Atomic(initialEffective)
+        if observeDefaults {
+            _ = NotificationCenter.default.addObserver(
+                forName: UserDefaults.didChangeNotification,
+                object: userDefaults,
+                queue: nil
+            ) { [weak self] _ in
+                self?.refreshCollectionPreference()
+            }
+        }
     }
 
     /// Reads the process resident footprint via Mach `task_vm_info` (`phys_footprint`).
@@ -166,22 +188,33 @@ final class NativeEditorDiagnosticsStore: Sendable {
         Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000.0
     }
 
-    private static let hasDiagnosticLaunchArg: Bool = {
-        let args = ProcessInfo.processInfo.arguments
-        return args.contains("--native-diagnostics") || args.contains("--native-scroll-sampler")
-    }()
-
     typealias IntervalToken = (signpostID: OSSignpostID, state: OSSignpostIntervalState, startNs: UInt64)
 
     var isCollecting: Bool {
-        if let forced = state.withLock({ $0.forcedCollection }) {
-            return forced
-        }
-        return NativeEditorPreference.isEnabled() || Self.hasDiagnosticLaunchArg
+        collectingFlag.load(ordering: .relaxed)
     }
 
     func setForcedCollection(_ forced: Bool?) {
-        state.withLock { $0.forcedCollection = forced }
+        let effective = state.withLock { state -> Bool in
+            state.forcedCollection = forced
+            return Self.shouldCollectLocked(state)
+        }
+        collectingFlag.store(effective, ordering: .relaxed)
+    }
+
+    func setCollectionEnabled(_ enabled: Bool) {
+        let effective = state.withLock { state -> Bool in
+            state.preferenceEnabled = enabled
+            return Self.shouldCollectLocked(state)
+        }
+        collectingFlag.store(effective, ordering: .relaxed)
+    }
+
+    func refreshCollectionPreference(_ userDefaults: UserDefaults = .standard) {
+        let enabled =
+            NativeEditorPreference.isEnabled(userDefaults)
+            && NativeEditorDiagnosticsPreference.isEnabled(userDefaults)
+        setCollectionEnabled(enabled)
     }
 
     @discardableResult
@@ -202,16 +235,20 @@ final class NativeEditorDiagnosticsStore: Sendable {
     }
 
     func endSession(_ sessionSeq: UInt64) {
-        guard sessionSeq != 0, isCollecting else { return }
-        let footprint = Self.currentPhysFootprintBytes()
+        guard sessionSeq != 0 else { return }
+        let footprint = isCollecting ? Self.currentPhysFootprintBytes() : 0
         state.withLock { state in
             state.activeSessions.remove(sessionSeq)
-            guard let index = state.sessions.firstIndex(where: { $0.seq == sessionSeq }) else { return }
+            guard sessionSeq >= state.minSessionSeq,
+                let index = state.sessions.firstIndex(where: { $0.seq == sessionSeq })
+            else { return }
             state.sessions[index].isOpen = false
-            state.sessions[index].memory.steadyBytes = footprint
-            let baseline = Int64(bitPattern: state.sessions[index].memory.baselineBytes)
-            let current = Int64(bitPattern: footprint)
-            state.sessions[index].memory.closeDeltaBytes = current - baseline
+            if footprint > 0 {
+                state.sessions[index].memory.steadyBytes = footprint
+                let baseline = Int64(bitPattern: state.sessions[index].memory.baselineBytes)
+                let current = Int64(bitPattern: footprint)
+                state.sessions[index].memory.closeDeltaBytes = current - baseline
+            }
         }
     }
 
@@ -221,6 +258,7 @@ final class NativeEditorDiagnosticsStore: Sendable {
         guard footprint > 0 else { return }
         state.withLock { state in
             guard Self.shouldCollectLocked(state),
+                sessionSeq >= state.minSessionSeq,
                 let index = state.sessions.firstIndex(where: { $0.seq == sessionSeq })
             else { return }
             if footprint > state.sessions[index].memory.peakBytes {
@@ -246,7 +284,7 @@ final class NativeEditorDiagnosticsStore: Sendable {
         byteCount: Int = 0,
         itemCount: Int = 0
     ) {
-        guard let token, isCollecting else { return }
+        guard let token else { return }
         let endNs = DispatchTime.now().uptimeNanoseconds
         let elapsedMs = Double(endNs &- token.startNs) / 1_000_000.0
         Self.signposter.endInterval(
@@ -284,7 +322,7 @@ final class NativeEditorDiagnosticsStore: Sendable {
             "stage=\(stage.rawValue, privacy: .public) session=\(sessionSeq) bytes=\(byteCount) items=\(itemCount)")
         let nowMs = Self.uptimeMs
         state.withLock { state in
-            guard Self.shouldCollectLocked(state) else { return }
+            guard Self.shouldCollectLocked(state), Self.isAcceptedLocked(state, sessionSeq: sessionSeq) else { return }
             let sample = StageSample(
                 sessionSeq: sessionSeq,
                 stage: stage,
@@ -310,7 +348,7 @@ final class NativeEditorDiagnosticsStore: Sendable {
     func recordWorkload(_ metrics: ReplicaWorkloadMetrics, sessionSeq: UInt64) {
         guard sessionSeq != 0, isCollecting else { return }
         state.withLock { state in
-            guard Self.shouldCollectLocked(state) else { return }
+            guard Self.shouldCollectLocked(state), sessionSeq >= state.minSessionSeq else { return }
             let index = Self.ensureSessionLocked(&state, seq: sessionSeq, maxSessions: maxSessions)
             state.sessions[index].workload = metrics
         }
@@ -319,7 +357,7 @@ final class NativeEditorDiagnosticsStore: Sendable {
     func mutateCounters(sessionSeq: UInt64, _ mutate: (inout SurfaceWorkCounters) -> Void) {
         guard sessionSeq != 0, isCollecting else { return }
         state.withLock { state in
-            guard Self.shouldCollectLocked(state) else { return }
+            guard Self.shouldCollectLocked(state), sessionSeq >= state.minSessionSeq else { return }
             let index = Self.ensureSessionLocked(&state, seq: sessionSeq, maxSessions: maxSessions)
             mutate(&state.sessions[index].counters)
         }
@@ -374,6 +412,7 @@ final class NativeEditorDiagnosticsStore: Sendable {
 
     func reset() {
         state.withLock { state in
+            state.minSessionSeq = state.nextSessionSeq
             state.samples.removeAll(keepingCapacity: false)
             state.sessions.removeAll(keepingCapacity: false)
             state.activeSessions.removeAll(keepingCapacity: false)
@@ -382,7 +421,11 @@ final class NativeEditorDiagnosticsStore: Sendable {
 
     private static func shouldCollectLocked(_ state: State) -> Bool {
         if let forced = state.forcedCollection { return forced }
-        return NativeEditorPreference.isEnabled() || hasDiagnosticLaunchArg
+        return state.preferenceEnabled
+    }
+
+    private static func isAcceptedLocked(_ state: State, sessionSeq: UInt64) -> Bool {
+        sessionSeq == 0 || sessionSeq >= state.minSessionSeq
     }
 
     private static func ensureSessionLocked(_ state: inout State, seq: UInt64, maxSessions: Int) -> Int {
@@ -397,7 +440,11 @@ final class NativeEditorDiagnosticsStore: Sendable {
     private static func appendSessionLocked(_ state: inout State, record: SessionRecord, maxSessions: Int) {
         state.sessions.append(record)
         if state.sessions.count > maxSessions {
-            state.sessions.removeFirst(state.sessions.count - maxSessions)
+            let overflow = state.sessions.count - maxSessions
+            for dropped in state.sessions.prefix(overflow) {
+                state.activeSessions.remove(dropped.seq)
+            }
+            state.sessions.removeFirst(overflow)
         }
     }
 }

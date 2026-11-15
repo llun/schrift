@@ -516,10 +516,15 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
         await open.open(viewModel: onlineEnv.model, isOffline: false, canUpdate: true)
         guard case .native = open.route else { return XCTFail("expected native session") }
         open.updateTitle("Fresh Native Title", viewModel: onlineEnv.model)
+        onlineEnv.model.rawMarkdown = "Initial native shadow"
+        let formattedCountBefore = server.log.count(ofMethod: "GET", urlContaining: "formatted-content")
         await onlineEnv.model.load()
         await onlineEnv.model.refresh()
+        XCTAssertTrue(onlineEnv.model.isNativeRouteActive)
         XCTAssertEqual(onlineEnv.model.title, "Fresh Native Title")
-        XCTAssertNotEqual(onlineEnv.model.rawMarkdown, "Stale server export")
+        XCTAssertEqual(onlineEnv.model.rawMarkdown, "Initial native shadow")
+        XCTAssertEqual(
+            server.log.count(ofMethod: "GET", urlContaining: "formatted-content"), formattedCountBefore)
         XCTAssertFalse(onlineEnv.model.isEditing)
     }
 
@@ -625,12 +630,12 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
             session.input?.textViewDidChangeSelection(session.textView)
             session.textView.insertText("Cycle \(cycle) ")
             _ = await session.settle()
-            if let tbl = await session.openTable("s2-tbl-1") {
-                await tbl.close().value
-            }
-            if let cols = await session.openColumn(group: "s2-cols-2", column: "s2-col-2-0") {
-                await cols.close().value
-            }
+            let maybeTbl = await session.openTable("s2-tbl-1")
+            let tbl = try XCTUnwrap(maybeTbl, "expected table surface to open")
+            await tbl.close().value
+            let maybeCols = await session.openColumn(group: "s2-cols-2", column: "s2-col-2-0")
+            let cols = try XCTUnwrap(maybeCols, "expected column surface to open")
+            await cols.close().value
             _ = await session.run { session.input?.undo() ?? false }
             _ = await session.run { session.input?.redo() ?? false }
             await session.close().value
@@ -757,7 +762,9 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
             NativeEditorDiagnosticsStore.shared.sessionSummary(for: s2Session.sessionSeq)?.counters)
         XCTAssertEqual(afterS2.blockPatchCount - midS2.blockPatchCount, 1)
         XCTAssertEqual(afterS2.fullStorageRebuildCount - midS2.fullStorageRebuildCount, 0)
+        XCTAssertGreaterThan(afterS2.realisedAttachmentViewCount, 0)
         XCTAssertLessThanOrEqual(afterS2.realisedAttachmentViewCount, 32)
+        XCTAssertGreaterThan(afterS2.realisedControlViewCount, 0)
         XCTAssertLessThanOrEqual(afterS2.realisedControlViewCount, 32)
         window.isHidden = true
     }
@@ -815,6 +822,100 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
         XCTAssertFalse(json.contains("https://"))
         XCTAssertFalse(json.contains("title"))
         XCTAssertFalse(json.contains("markdown"))
+
+        // Separate opt-in preference: native editor alone does not enable diagnostics collection.
+        let prefSuite = "NativeEditorDiagnosticsPref.\(UUID())"
+        let prefDefaults = UserDefaults(suiteName: prefSuite)!
+        defer { prefDefaults.removePersistentDomain(forName: prefSuite) }
+        XCTAssertFalse(NativeEditorDiagnosticsPreference.isEnabled(prefDefaults))
+        let prefStore = NativeEditorDiagnosticsStore(maxSamples: 8, maxSessions: 4, userDefaults: prefDefaults)
+        XCTAssertFalse(prefStore.isCollecting)
+        prefDefaults.set(true, forKey: NativeEditorPreference.key)
+        prefStore.refreshCollectionPreference(prefDefaults)
+        XCTAssertFalse(prefStore.isCollecting, "native editor switch alone must not start collection")
+        prefDefaults.set(true, forKey: NativeEditorDiagnosticsPreference.key)
+        prefStore.refreshCollectionPreference(prefDefaults)
+        XCTAssertTrue(prefStore.isCollecting)
+        prefDefaults.set(false, forKey: NativeEditorPreference.key)
+        prefStore.refreshCollectionPreference(prefDefaults)
+        XCTAssertFalse(prefStore.isCollecting, "disabling native editor must disable collection")
+
+        // minSessionSeq floor on reset() ignores pre-reset async teardown writes.
+        let floorStore = NativeEditorDiagnosticsStore(maxSamples: 8, maxSessions: 4, forcedCollection: true)
+        let staleSeq = floorStore.beginSession()
+        floorStore.reset()
+        floorStore.recordWorkload(ReplicaWorkloadMetrics(rawBytes: 42, blockCount: 1), sessionSeq: staleSeq)
+        floorStore.mutateCounters(sessionSeq: staleSeq) { $0.textPatchCount += 1 }
+        floorStore.recordDuration(.storageApply, durationMs: 5.0, sessionSeq: staleSeq)
+        floorStore.sampleMemory(sessionSeq: staleSeq, steady: true)
+        floorStore.endSession(staleSeq)
+        let postResetSnap = floorStore.snapshot()
+        XCTAssertTrue(postResetSnap.sessions.isEmpty)
+        XCTAssertEqual(postResetSnap.totalSampleCount, 0)
+        XCTAssertEqual(postResetSnap.activeSessionCount, 0)
+
+        // Turning collection off mid-session still clears activeSessions on endSession and closes interval tokens.
+        let toggleSeq = floorStore.beginSession()
+        let openToken = floorStore.beginInterval(.remoteMerge)
+        floorStore.setForcedCollection(false)
+        floorStore.endInterval(.remoteMerge, token: openToken, sessionSeq: toggleSeq)
+        floorStore.endSession(toggleSeq)
+        XCTAssertEqual(floorStore.snapshot().activeSessionCount, 0)
+        XCTAssertEqual(floorStore.snapshot().totalSampleCount, 0)
+        XCTAssertEqual(floorStore.sessionSummary(for: toggleSeq)?.isOpen, false)
+
+        // activeSessions is evicted alongside sessions past maxSessions.
+        let capStore = NativeEditorDiagnosticsStore(maxSamples: 8, maxSessions: 2, forcedCollection: true)
+        _ = capStore.beginSession()
+        _ = capStore.beginSession()
+        _ = capStore.beginSession()
+        let capSnap = capStore.snapshot()
+        XCTAssertEqual(capSnap.sessions.count, 2)
+        XCTAssertEqual(capSnap.activeSessionCount, 2)
+
+        // Mailbox FIFO wait accounting preserves order across on -> off -> on toggles.
+        let fifoMailbox = ReplicaCommandMailbox()
+        NativeEditorDiagnosticsStore.shared.setForcedCollection(true)
+        XCTAssertTrue(fifoMailbox.post(.drain(surfaceID: UUID(), token: UUID())))
+        NativeEditorDiagnosticsStore.shared.setForcedCollection(false)
+        XCTAssertTrue(fifoMailbox.post(.drain(surfaceID: UUID(), token: UUID())))
+        NativeEditorDiagnosticsStore.shared.setForcedCollection(true)
+        XCTAssertTrue(fifoMailbox.post(.drain(surfaceID: UUID(), token: UUID())))
+        XCTAssertNotNil(fifoMailbox.tookMeasuringWaitMs(), "tracked head A must report wait")
+        XCTAssertNil(fifoMailbox.tookMeasuringWaitMs(), "untracked middle B must not consume A or C")
+        XCTAssertNotNil(fifoMailbox.tookMeasuringWaitMs(), "tracked tail C must report wait")
+        NativeEditorDiagnosticsStore.shared.setForcedCollection(nil)
+    }
+
+    func testTimeToEditRequiresFirstResponderReady() async throws {
+        NativeEditorDiagnosticsStore.shared.reset()
+        NativeEditorDiagnosticsStore.shared.setForcedCollection(true)
+        defer {
+            NativeEditorDiagnosticsStore.shared.setForcedCollection(nil)
+            NativeEditorDiagnosticsStore.shared.reset()
+        }
+
+        let session = try await NativeEditorSession.seed(
+            state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: 1), clientID: 2)
+        defer { Task { await session.close().value } }
+        session.enableTyping(persist: { _, _ in })
+
+        // setEditing(true) without becoming first responder must NOT record timeToEdit.
+        session.setEditing(true)
+        try await Task.sleep(for: .milliseconds(30))
+        let beforeFocus = NativeEditorDiagnosticsStore.shared.sessionSummary(for: session.sessionSeq)
+        XCTAssertNil(beforeFocus?.stages[NativeEditorStage.timeToEdit.rawValue])
+
+        // Once the textView actually becomes first responder (e.g. inside a window), timeToEdit records.
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        session.textView.frame = window.bounds
+        window.addSubview(session.textView)
+        window.makeKeyAndVisible()
+        XCTAssertTrue(session.textView.becomeFirstResponder())
+        let afterFocus = NativeEditorDiagnosticsStore.shared.sessionSummary(for: session.sessionSeq)
+        XCTAssertEqual(afterFocus?.stages[NativeEditorStage.timeToEdit.rawValue]?.count, 1)
+        _ = session.textView.resignFirstResponder()
+        window.isHidden = true
     }
 
     // MARK: - Helpers

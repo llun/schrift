@@ -545,6 +545,7 @@ enum Strings_en {
             "The language your server uses for emails and shared content. The app's own language is in Preferences.",
         // Toast
         .toast_link_copied: "Link copied",
+        .profile_native_editor_diagnostics_collect: "Collect native editor diagnostics",
         .profile_native_editor_diagnostics: "Copy native editor diagnostics",
         .toast_diagnostics_copied: "Diagnostics copied",
         .native_editor_owned_read_only_body:
