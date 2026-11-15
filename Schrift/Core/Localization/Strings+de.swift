@@ -490,7 +490,7 @@ enum Strings_de {
             "Dieser kopierte Inhalt kann hier nicht eingefügt werden. Es wurde nichts geändert.",
         .profile_native_editor: "Nativer Editor (experimentell)",
         .profile_native_editor_footer:
-            "Gilt beim nächsten Öffnen eines Dokuments. Unterstützt Docs 6 mit Text, Formatierung, Links, Überschriften, Listen, Checklisten, Zitaten und Codeblöcken; andere Blöcke bleiben erhalten, sind aber noch nicht bearbeitbar.",
+            "Gilt beim nächsten Öffnen eines Dokuments. Unterstützt Text, Formatierung, Überschriften, Listen, Checklisten, Zitate, Codeblöcke, Ausklappblöcke, Hinweise, Tabellen, Spalten, Medien, Mathematik, Diagramme, Seitenlinks und Erwähnungen sowie Offline-Nutzung und Live-Zusammenarbeit. Einige Blöcke bleiben schreibgeschützt.",
         .native_editor_preserved_title: "Dokument erhalten",
         .native_editor_preserved_body:
             "Der native Leser kann die Struktur dieses Dokuments noch nicht anzeigen. Der ursprüngliche Inhalt bleibt erhalten.",
@@ -561,5 +561,22 @@ enum Strings_de {
         .profile_native_editor_diagnostics_collect: "Diagnosedaten des nativen Editors erfassen",
         .profile_recover_drafts_failure:
             "Die Entwürfe konnten nicht wiederhergestellt werden. Sie bleiben auf diesem Gerät gespeichert.",
+        .native_editor_read_only_unfamiliar_block:
+            "Schreibgeschützt: Dieses Dokument enthält einen Block, den der native Editor noch nicht bearbeiten kann (%@)",
+        .native_editor_unfamiliar_nested_blocks: "%@ mit verschachtelten Blöcken",
+        .native_editor_unfamiliar_unsupported_root: "Nicht unterstützte Dokumentwurzel",
+        .native_editor_read_only_no_access: "Schreibgeschützt: Du hast keine Bearbeitungsrechte",
+        .native_editor_read_only_pending_sync: "Warten auf den Abschluss der Synchronisierung dieses Dokuments",
+        .native_editor_read_only_classic_draft:
+            "Schreibgeschützt: Warten auf die Synchronisierung eines Offline-Entwurfs",
+        .native_editor_read_only_live_held:
+            "Warten auf die Synchronisierung von Änderungen aus der Live-Zusammenarbeit",
+        .native_editor_read_only_signed_out:
+            "Schreibgeschützt: Melde dich an, um dieses Dokument zu bearbeiten",
+        .native_editor_block_callout: "Hinweis",
+        .native_editor_block_table: "Tabelle",
+        .native_editor_block_columns: "Spalten",
+        .native_editor_block_heading: "Überschrift",
+        .native_editor_block_paragraph: "Absatz",
     ]
 }

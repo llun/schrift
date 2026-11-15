@@ -492,7 +492,7 @@ enum Strings_en {
         .native_editor_paste_unavailable: "This copied content can't be pasted here. Nothing was changed.",
         .profile_native_editor: "Native editor (experimental)",
         .profile_native_editor_footer:
-            "Applies when you next open a document. Supports Docs 6 with text, formatting, links, headings, lists, checklists, quotes and code blocks; other blocks are kept but can't be edited yet.",
+            "Applies when you next open a document. Supports text, formatting, headings, lists, checklists, quotes, code blocks, toggles, callouts, tables, columns, media, math, diagrams, page links and mentions, plus offline and live collaboration. Some blocks stay read-only.",
         .native_editor_preserved_title: "Preserved document",
         .native_editor_preserved_body:
             "This document has a structure the native reader cannot display yet. Its original content is preserved.",
@@ -563,5 +563,19 @@ enum Strings_en {
             "Some documents' copies on this device can't be read, so no document can be edited here. Setting them aside moves those copies to a separate folder on this device. Their files are kept but no longer opened, and changes in them that never synced won't be sent. Other documents can then be edited again.",
         .profile_recover_drafts_set_aside_success: "Unreadable copies set aside. Other documents can be edited again.",
         .profile_recover_drafts_failure: "Couldn't recover the drafts. They're still saved on this device.",
+        .native_editor_read_only_unfamiliar_block:
+            "Read-only: this document has a block the native editor can't edit yet (%@)",
+        .native_editor_unfamiliar_nested_blocks: "%@ with nested blocks",
+        .native_editor_unfamiliar_unsupported_root: "Unsupported document root",
+        .native_editor_read_only_no_access: "Read-only: you don't have edit access",
+        .native_editor_read_only_pending_sync: "Waiting for this document to finish syncing",
+        .native_editor_read_only_classic_draft: "Read-only: waiting for an offline draft to finish syncing",
+        .native_editor_read_only_live_held: "Waiting for live collaboration changes to sync",
+        .native_editor_read_only_signed_out: "Read-only: sign in to edit this document",
+        .native_editor_block_callout: "Callout",
+        .native_editor_block_table: "Table",
+        .native_editor_block_columns: "Columns",
+        .native_editor_block_heading: "Heading",
+        .native_editor_block_paragraph: "Paragraph",
     ]
 }

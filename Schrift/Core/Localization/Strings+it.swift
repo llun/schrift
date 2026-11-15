@@ -485,7 +485,7 @@ enum Strings_it {
             "Questo contenuto copiato non può essere incollato qui. Non è stato modificato nulla.",
         .profile_native_editor: "Editor nativo (sperimentale)",
         .profile_native_editor_footer:
-            "Si applica alla prossima apertura di un documento. Supporta Docs 6 con testo, formattazione, link, titoli, elenchi, liste di controllo, citazioni e blocchi di codice; gli altri blocchi vengono conservati ma non sono ancora modificabili.",
+            "Si applica alla prossima apertura di un documento. Supporta testo, formattazione, titoli, elenchi, liste di controllo, citazioni, blocchi di codice, sezioni comprimibili, riquadri, tabelle, colonne, media, matematica, diagrammi, link a pagine e menzioni, oltre a modalità offline e collaborazione dal vivo. Alcuni blocchi restano in sola lettura.",
         .native_editor_preserved_title: "Documento conservato",
         .native_editor_preserved_body:
             "Il lettore nativo non può ancora visualizzare la struttura di questo documento. Il contenuto originale è conservato.",
@@ -554,5 +554,21 @@ enum Strings_it {
             "Copie illeggibili messe da parte. Gli altri documenti sono di nuovo modificabili.",
         .profile_native_editor_diagnostics_collect: "Raccogli diagnostica dell'editor nativo",
         .profile_recover_drafts_failure: "Impossibile recuperare le bozze. Restano salvate su questo dispositivo.",
+        .native_editor_read_only_unfamiliar_block:
+            "Sola lettura: questo documento contiene un blocco che l’editor nativo non può ancora modificare (%@)",
+        .native_editor_unfamiliar_nested_blocks: "%@ con blocchi annidati",
+        .native_editor_unfamiliar_unsupported_root: "Radice del documento non supportata",
+        .native_editor_read_only_no_access: "Sola lettura: non hai i permessi di modifica",
+        .native_editor_read_only_pending_sync: "In attesa che questo documento completi la sincronizzazione",
+        .native_editor_read_only_classic_draft:
+            "Sola lettura: in attesa della sincronizzazione di una bozza offline",
+        .native_editor_read_only_live_held:
+            "In attesa della sincronizzazione delle modifiche della collaborazione dal vivo",
+        .native_editor_read_only_signed_out: "Sola lettura: accedi per modificare questo documento",
+        .native_editor_block_callout: "Riquadro",
+        .native_editor_block_table: "Tabella",
+        .native_editor_block_columns: "Colonne",
+        .native_editor_block_heading: "Titolo",
+        .native_editor_block_paragraph: "Paragrafo",
     ]
 }

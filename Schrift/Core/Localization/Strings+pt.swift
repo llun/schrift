@@ -484,7 +484,7 @@ enum Strings_pt {
         .native_editor_paste_unavailable: "Não é possível colar aqui este conteúdo copiado. Nada foi alterado.",
         .profile_native_editor: "Editor nativo (experimental)",
         .profile_native_editor_footer:
-            "Aplica-se na próxima abertura de um documento. Suporta Docs 6 com texto, formatação, links, títulos, listas, listas de verificação, citações e blocos de código; os outros blocos são mantidos, mas ainda não podem ser editados.",
+            "Aplica-se na próxima abertura de um documento. Suporta texto, formatação, títulos, listas, listas de verificação, citações, blocos de código, secções retráteis, avisos, tabelas, colunas, média, matemática, diagramas, ligações a páginas e menções, além de modo offline e colaboração ao vivo. Alguns blocos permanecem só de leitura.",
         .native_editor_preserved_title: "Documento preservado",
         .native_editor_preserved_body:
             "O leitor nativo ainda não consegue apresentar a estrutura deste documento. O conteúdo original está preservado.",
@@ -555,5 +555,21 @@ enum Strings_pt {
         .profile_native_editor_diagnostics_collect: "Coletar diagnósticos do editor nativo",
         .profile_recover_drafts_failure:
             "Não foi possível recuperar os rascunhos. Continuam guardados neste dispositivo.",
+        .native_editor_read_only_unfamiliar_block:
+            "Só de leitura: este documento tem um bloco que o editor nativo ainda não consegue editar (%@)",
+        .native_editor_unfamiliar_nested_blocks: "%@ com blocos aninhados",
+        .native_editor_unfamiliar_unsupported_root: "Raiz do documento não suportada",
+        .native_editor_read_only_no_access: "Só de leitura: não tem permissão para editar",
+        .native_editor_read_only_pending_sync: "A aguardar que este documento termine de sincronizar",
+        .native_editor_read_only_classic_draft:
+            "Só de leitura: a aguardar que um rascunho offline termine de sincronizar",
+        .native_editor_read_only_live_held:
+            "A aguardar que as alterações da colaboração ao vivo sincronizem",
+        .native_editor_read_only_signed_out: "Só de leitura: inicie sessão para editar este documento",
+        .native_editor_block_callout: "Aviso",
+        .native_editor_block_table: "Tabela",
+        .native_editor_block_columns: "Colunas",
+        .native_editor_block_heading: "Título",
+        .native_editor_block_paragraph: "Parágrafo",
     ]
 }

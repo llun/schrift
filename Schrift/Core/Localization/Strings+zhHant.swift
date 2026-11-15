@@ -472,7 +472,8 @@ enum Strings_zhHant {
         .native_editor_block_insert_below: "在下方插入區塊",
         .native_editor_paste_unavailable: "無法在此處貼上拷貝的內容。未做任何變更。",
         .profile_native_editor: "原生編輯器（實驗性）",
-        .profile_native_editor_footer: "下次開啟文件時生效。支援 Docs 6 的文字、格式、連結、標題、清單、核取清單、引文和程式碼區塊；其他區塊會保留，但暫時無法編輯。",
+        .profile_native_editor_footer:
+            "下次開啟文件時生效。支援文字、格式、標題、清單、核取清單、引文、程式碼區塊、摺疊區塊、提示框、表格、欄位、媒體、數學公式、圖表、頁面連結與提及，以及離線編輯和即時協作。部分區塊仍為唯讀。",
         .native_editor_preserved_title: "文件已保留",
         .native_editor_preserved_body: "原生閱讀器暫時無法顯示此文件的結構，原始內容仍然保留。",
         .profile_live_collaboration: "即時協作",
@@ -533,5 +534,18 @@ enum Strings_zhHant {
         .profile_recover_drafts_set_aside_success: "已移開無法讀取的副本。現在可再次編輯其他文件。",
         .profile_native_editor_diagnostics_collect: "收集原生編輯器診斷資訊",
         .profile_recover_drafts_failure: "無法復原草稿。它們仍儲存在此裝置上。",
+        .native_editor_read_only_unfamiliar_block: "唯讀：此文件包含原生編輯器尚無法編輯的區塊（%@）",
+        .native_editor_unfamiliar_nested_blocks: "包含巢狀區塊的%@",
+        .native_editor_unfamiliar_unsupported_root: "不支援的文件根結構",
+        .native_editor_read_only_no_access: "唯讀：您沒有編輯權限",
+        .native_editor_read_only_pending_sync: "正在等待此文件完成同步",
+        .native_editor_read_only_classic_draft: "唯讀：正在等待離線草稿完成同步",
+        .native_editor_read_only_live_held: "正在等待即時協作變更同步",
+        .native_editor_read_only_signed_out: "唯讀：請登入以編輯此文件",
+        .native_editor_block_callout: "提示框",
+        .native_editor_block_table: "表格",
+        .native_editor_block_columns: "欄位",
+        .native_editor_block_heading: "標題",
+        .native_editor_block_paragraph: "段落",
     ]
 }

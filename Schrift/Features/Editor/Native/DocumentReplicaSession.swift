@@ -61,6 +61,7 @@ actor DocumentReplicaSession {
         let revision: UInt64
         let hasUnsupportedRoot: Bool
         let canType: Bool
+        var unfamiliarContent: NativeUnfamiliarBlock? = nil
         let recoveries: [ProvisionalRecovery]
         let state: ReplicaState
         let deliveries: AsyncStream<ReplicaDelivery>
@@ -97,6 +98,7 @@ actor DocumentReplicaSession {
     private let hooks: Hooks
     private let hasUnsupportedRoot: Bool
     private let canType: Bool
+    private let unfamiliarContent: NativeUnfamiliarBlock?
     private var surfaces: [UUID: SurfaceState] = [:]
     private var loop: Task<Void, Never>?
     private var isClosed = false
@@ -158,6 +160,7 @@ actor DocumentReplicaSession {
                 interlinkingOrigin: resolvedOrigin, diagnosticsSeq: seq, makeReplica: makeReplica)
             hasUnsupportedRoot = graph.hasUnsupportedRoot
             canType = graph.canType
+            unfamiliarContent = graph.unfamiliarContent
             self.doc = graph.doc
             self.sink = graph.sink
             self.engine = graph.engine
@@ -188,6 +191,7 @@ actor DocumentReplicaSession {
         let sink: ReplicaPatchSink
         let hasUnsupportedRoot: Bool
         let canType: Bool
+        let unfamiliarContent: NativeUnfamiliarBlock?
         let blockCount: Int
         let mediaBlockCount: Int
     }
@@ -248,11 +252,16 @@ actor DocumentReplicaSession {
         // Marks never make the native projection lossy (raw Yjs write-back
         // keeps them all); the Markdown shadow is the one `ReplicaSaveAdapter`
         // captures, which drops what Markdown cannot spell.
+        let canType =
+            projected.isFullyModeled
+            && NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) != nil
         return Graph(
             doc: doc, engine: engine, sink: sink,
             hasUnsupportedRoot: projected.blocks.isEmpty && !projected.isFullyRenderable,
-            canType: projected.isFullyModeled
-                && NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) != nil,
+            canType: canType,
+            unfamiliarContent: canType
+                ? nil
+                : NativeBlockProjection.firstUnsupportedReason(doc, interlinkingOrigin: interlinkingOrigin),
             blockCount: projected.blocks.count,
             mediaBlockCount: mediaCount)
     }
@@ -316,17 +325,24 @@ actor DocumentReplicaSession {
 
     /// The read-only route's one-shot projection: no session outlives it.
     static func inspect(state: Data, interlinkingOrigin: String? = nil) throws -> (
-        blocks: [BlockSnapshot], hasUnsupportedRoot: Bool, canType: Bool, tables: [String: TableGrid],
+        blocks: [BlockSnapshot], hasUnsupportedRoot: Bool, canType: Bool,
+        unfamiliarContent: NativeUnfamiliarBlock?,
+        tables: [String: TableGrid],
         columns: [String: (group: ColumnGroup, blocks: [[BlockSnapshot]])]
     ) {
         let doc = YDoc(clientID: 1, gc: true)
         defer { doc.destroy() }
         try doc.applyUpdate(YUpdateDecoder.decode(state), origin: .remote)
         let projected = NativeBlockProjection.project(doc)
+        let canType =
+            projected.isFullyModeled
+            && NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) != nil
         return (
             projected.blocks.map(BlockSnapshot.init), projected.blocks.isEmpty && !projected.isFullyRenderable,
-            projected.isFullyModeled
-                && NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) != nil,
+            canType,
+            canType
+                ? nil
+                : NativeBlockProjection.firstUnsupportedReason(doc, interlinkingOrigin: interlinkingOrigin),
             TableGrid.tables(in: doc),
             ColumnGroup.groups(in: doc)
         )
@@ -361,8 +377,8 @@ actor DocumentReplicaSession {
         let recoveries = store.flatMap { store in scope.map { store.provisionalRecoveries(for: $0) } } ?? []
         return Attachment(
             blocks: projection(for: blockID), revision: engine.revision, hasUnsupportedRoot: hasUnsupportedRoot,
-            canType: canType, recoveries: recoveries, state: state, deliveries: stream, grid: grid,
-            diagnosticsSeq: diagnosticsSeq)
+            canType: canType, unfamiliarContent: unfamiliarContent, recoveries: recoveries, state: state,
+            deliveries: stream, grid: grid, diagnosticsSeq: diagnosticsSeq)
     }
 
     /// A surface's whole projection: the document, a table's paragraphs, a
@@ -407,8 +423,8 @@ actor DocumentReplicaSession {
         if selectionOwner == nil { selectionOwner = surfaceID }
         return Attachment(
             blocks: blocks, revision: engine.revision, hasUnsupportedRoot: hasUnsupportedRoot,
-            canType: canType, recoveries: [], state: state, deliveries: stream,
-            sourceKind: engine.sourceKind(sourceID))
+            canType: canType, unfamiliarContent: unfamiliarContent, recoveries: [], state: state,
+            deliveries: stream, sourceKind: engine.sourceKind(sourceID))
     }
 
     /// Resolves the inline `<math>` chip at `utf16Offset` inside `blockID`
@@ -442,8 +458,8 @@ actor DocumentReplicaSession {
         if selectionOwner == nil { selectionOwner = surfaceID }
         return Attachment(
             blocks: projection(for: nil, column: columnID), revision: engine.revision,
-            hasUnsupportedRoot: hasUnsupportedRoot, canType: canType, recoveries: [], state: state,
-            deliveries: stream, columnGroup: group)
+            hasUnsupportedRoot: hasUnsupportedRoot, canType: canType, unfamiliarContent: unfamiliarContent,
+            recoveries: [], state: state, deliveries: stream, columnGroup: group)
     }
 
     /// Returns once the session closed (`.close` was handled).

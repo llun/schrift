@@ -486,7 +486,7 @@ enum Strings_nl {
             "Deze gekopieerde inhoud kan hier niet worden geplakt. Er is niets gewijzigd.",
         .profile_native_editor: "Native editor (experimenteel)",
         .profile_native_editor_footer:
-            "Wordt toegepast wanneer je een document opnieuw opent. Ondersteunt Docs 6 met tekst, opmaak, links, koppen, lijsten, checklists, citaten en codeblokken; andere blokken blijven behouden, maar zijn nog niet bewerkbaar.",
+            "Wordt toegepast wanneer je een document opnieuw opent. Ondersteunt tekst, opmaak, koppen, lijsten, checklists, citaten, codeblokken, inklapbare secties, toelichtingsblokken, tabellen, kolommen, media, wiskunde, diagrammen, paginalinks en vermeldingen, plus offline werken en live samenwerken. Sommige blokken blijven alleen-lezen.",
         .native_editor_preserved_title: "Document behouden",
         .native_editor_preserved_body:
             "De native lezer kan de structuur van dit document nog niet weergeven. De oorspronkelijke inhoud blijft behouden.",
@@ -557,5 +557,21 @@ enum Strings_nl {
         .profile_native_editor_diagnostics_collect: "Diagnostiek van native editor verzamelen",
         .profile_recover_drafts_failure:
             "De concepten konden niet worden hersteld. Ze blijven op dit apparaat opgeslagen.",
+        .native_editor_read_only_unfamiliar_block:
+            "Alleen-lezen: dit document bevat een blok dat de native editor nog niet kan bewerken (%@)",
+        .native_editor_unfamiliar_nested_blocks: "%@ met geneste blokken",
+        .native_editor_unfamiliar_unsupported_root: "Niet-ondersteunde documenthoofdstructuur",
+        .native_editor_read_only_no_access: "Alleen-lezen: je hebt geen bewerkrechten",
+        .native_editor_read_only_pending_sync: "Wachten tot dit document klaar is met synchroniseren",
+        .native_editor_read_only_classic_draft:
+            "Alleen-lezen: wachten tot een offline concept is gesynchroniseerd",
+        .native_editor_read_only_live_held:
+            "Wachten tot wijzigingen van live samenwerken zijn gesynchroniseerd",
+        .native_editor_read_only_signed_out: "Alleen-lezen: meld je aan om dit document te bewerken",
+        .native_editor_block_callout: "Toelichting",
+        .native_editor_block_table: "Tabel",
+        .native_editor_block_columns: "Kolommen",
+        .native_editor_block_heading: "Kop",
+        .native_editor_block_paragraph: "Alinea",
     ]
 }
