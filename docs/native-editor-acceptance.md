@@ -104,7 +104,7 @@ Recorded in `.review/fix1.log` (`11` tests executed, `0` failures, `6.454 s` tot
 
 | Test | Scope verified | Result | Duration (s) |
 |---|---|---|---|
-| `testBoundedWorkCountersOnLargeProseAndS2MixedFixtures` | Single insert / checkbox toggle on 5,000-block & S2 5,000/200 fixtures: `textPatchCount == 1` / `blockPatchCount == 1`, `fullStorageRebuildCount == 0`, viewport-bounded realised views (`<= 32`) | Passed | 1.146 |
+| `testBoundedWorkCountersOnLargeProseAndS2MixedFixtures` | Single insert / checkbox toggle on 5,000-block & S2 5,000/200 fixtures: `textPatchCount == 1` / `blockPatchCount == 1`, `fullStorageRebuildCount == 0`, viewport-bounded realised views (`> 0` and `<= 32`) | Passed | 1.146 |
 | `testClassicEditorAndBlockNoteApplyEditNonRegression` | Default-off classic open, edit, `BlockNotePreservation` (`applyEdit`) save, checklist filter, conflict resolution | Passed | 0.067 |
 | `testDiagnosticsStoreBoundedRingPercentilesZeroPIIAndOffModeEarlyReturn` | 256-sample / 32-session ring caps, percentile accuracy, zero PII/IDs/hosts, separate `NativeEditorDiagnosticsPreference` opt-in & `minSessionSeq` floor, mid-session toggle-off interval/session closing & `activeSessions` eviction, mailbox FIFO alignment | Passed | 0.010 |
 | `testNewDocumentSubpageAndOfflineLocalCreateMigration` | Online new doc & subpage + title-only `batch == nil` save; offline local create (`localScope` replica, child create, queued image upload) → online `migrateNativeCreatedDocument` to `serverID` | Passed | 0.243 |
@@ -137,6 +137,7 @@ Recorded in `.review/fix1.log` (`11` tests executed, `0` failures, `6.454 s` tot
     `Dictionary.values` array), cleared residual `pendingRequestedDeltaY` at sweep start, tracked
     `maxReversalPt`, and aligned `passed` with the reversal/bounds contract
     (`reachedBottom && reversalCount <= 2 && maxReversalPt <= 24.0 && maxBoundsError <= 0.5 && maxRealisedAttachments <= 32`)
+    Why up to two reversals of at most 24 pt: TextKit 2 replaces estimated paragraph heights with measured ones as it lays out ahead of the viewport, and the correction can nudge the content offset back by a fraction of a line during a continuous scroll. One full-suite run recorded a single such reversal (jumps=20, reversals=1); a reversal larger than a line or repeated reversals would still fail.
     while continuing to report single-frame TextKit 2 height-estimate `jumps`.
   - **Measured simulator (Debug) result (`.review/fix1.log`, passed in `102.064 s`):**
     `S2_SAMPLER_RESULT: pass|jumps=16|reversals=0|maxReversalPt=0.00|reachedBottom=1|maxBoundsErr=0.00|maxRealised=1|maxControls=0|frames=721`
@@ -194,7 +195,7 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
      offline (must stay read-only), and sign-out / account switch (clean replicas purged, unsynced
      dirty work preserved).
 7. **Rollback check & diagnostics capture:**
-   - Copy diagnostics via **Profile → Copy native editor diagnostics** and record Instruments
+   - Turn on **Profile → Collect native editor diagnostics** before the run, then copy diagnostics via **Profile → Copy native editor diagnostics** and record Instruments
      `NativeEditor` signpost timings (`p50`/`p95`/`max`) and peak `phys_footprint`.
    - Disable **Native editor (experimental)** in Profile: verify any un-synced rich draft still
      replays via raw Yjs and opens preserved read-only, while untouched documents return to

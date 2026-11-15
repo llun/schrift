@@ -302,6 +302,8 @@ struct ProfileScreen: View {
                             }))
                 }
                 .accessibilityIdentifier("profile.nativeEditor.collectDiagnostics")
+            }
+            if nativeEditor && collectNativeEditorDiagnostics {
                 ListRow(
                     icon: .content_copy,
                     title: loc[.profile_native_editor_diagnostics],
