@@ -486,7 +486,7 @@ enum Strings_nl {
             "Deze gekopieerde inhoud kan hier niet worden geplakt. Er is niets gewijzigd.",
         .profile_native_editor: "Native editor (experimenteel)",
         .profile_native_editor_footer:
-            "Wordt toegepast wanneer je een document opnieuw opent. Ondersteunt tekst, opmaak, koppen, lijsten, checklists, citaten, codeblokken, inklapbare secties, toelichtingsblokken, tabellen, kolommen, media, wiskunde, diagrammen, paginalinks en vermeldingen, plus offline werken en live samenwerken. Sommige blokken blijven alleen-lezen.",
+            "Wordt toegepast wanneer je een document opnieuw opent. Ondersteunt tekst, opmaak, koppen, lijsten, checklists, citaten, codeblokken, inklapbare secties, toelichtingsblokken, tabellen, kolommen, media, wiskunde, diagrammen, paginalinks en vermeldingen, plus offline werken en live samenwerken. Een document met een blok dat de native editor nog niet kan bewerken, wordt alleen-lezen geopend.",
         .native_editor_preserved_title: "Document behouden",
         .native_editor_preserved_body:
             "De native lezer kan de structuur van dit document nog niet weergeven. De oorspronkelijke inhoud blijft behouden.",
@@ -559,14 +559,22 @@ enum Strings_nl {
             "De concepten konden niet worden hersteld. Ze blijven op dit apparaat opgeslagen.",
         .native_editor_read_only_unfamiliar_block:
             "Alleen-lezen: dit document bevat een blok dat de native editor nog niet kan bewerken (%@)",
-        .native_editor_unfamiliar_nested_blocks: "%@ met geneste blokken",
-        .native_editor_unfamiliar_unsupported_root: "Niet-ondersteunde documenthoofdstructuur",
+        .native_editor_unfamiliar_detail_format: "%@: %@",
+        .native_editor_unfamiliar_unknown_block_type: "een bloktype dat de native editor niet kent",
+        .native_editor_unfamiliar_category_block_type: "niet-ondersteund bloktype",
+        .native_editor_unfamiliar_category_block_setting: "niet-ondersteunde blokinstelling",
+        .native_editor_unfamiliar_category_nested_content: "geneste inhoud",
+        .native_editor_unfamiliar_category_link: "niet-ondersteunde link",
+        .native_editor_unfamiliar_category_oversized: "te grote inhoud",
+        .native_editor_unfamiliar_category_other: "overig",
+        .native_editor_read_only_details: "Details: %@",
         .native_editor_read_only_no_access: "Alleen-lezen: je hebt geen bewerkrechten",
-        .native_editor_read_only_pending_sync: "Wachten tot dit document klaar is met synchroniseren",
+        .native_editor_read_only_pending_sync:
+            "Wachten tot dit document klaar is met synchroniseren — open het opnieuw om te bewerken",
         .native_editor_read_only_classic_draft:
-            "Alleen-lezen: wachten tot een offline concept is gesynchroniseerd",
+            "Alleen-lezen: wachten tot een offline concept is gesynchroniseerd — open het opnieuw om te bewerken",
         .native_editor_read_only_live_held:
-            "Wachten tot wijzigingen van live samenwerken zijn gesynchroniseerd",
+            "Wachten tot wijzigingen van live samenwerken zijn gesynchroniseerd — open het opnieuw om te bewerken",
         .native_editor_read_only_signed_out: "Alleen-lezen: meld je aan om dit document te bewerken",
         .native_editor_block_callout: "Toelichting",
         .native_editor_block_table: "Tabel",

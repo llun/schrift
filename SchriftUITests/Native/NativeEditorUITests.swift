@@ -175,7 +175,7 @@ final class NativeEditorUITests: XCTestCase {
         app.launch()
         let card = app.descendants(matching: .any)["nativeEditor.attachment.owned-table"]
         XCTAssertTrue(card.waitForExistence(timeout: 10))
-        XCTAssertFalse(app.staticTexts["nativeEditor.preservedNotice"].exists, "the document types")
+        XCTAssertFalse(app.staticTexts["nativeEditor.editUnavailableNotice"].exists, "the document types")
         card.tap()
         let ada = app.staticTexts["nativeEditor.table.text.1.0"]
         let empty = app.staticTexts["nativeEditor.table.text.1.1"]
@@ -222,7 +222,7 @@ final class NativeEditorUITests: XCTestCase {
         let card = app.descendants(matching: .any)["nativeEditor.attachment.owned-image"]
         XCTAssertTrue(card.waitForExistence(timeout: 10))
         XCTAssertTrue(app.descendants(matching: .any)["nativeEditor.attachment.owned-file"].exists)
-        XCTAssertFalse(app.staticTexts["nativeEditor.preservedNotice"].exists, "the document types")
+        XCTAssertFalse(app.staticTexts["nativeEditor.editUnavailableNotice"].exists, "the document types")
         card.tap()
         let caption = app.textFields["nativeMedia.caption"]
         XCTAssertTrue(caption.waitForExistence(timeout: 5), "the inspector opened")
@@ -269,7 +269,7 @@ final class NativeEditorUITests: XCTestCase {
         app.launch()
         let card = app.descendants(matching: .any)["nativeEditor.attachment.owned-columns"]
         XCTAssertTrue(card.waitForExistence(timeout: 10))
-        XCTAssertFalse(app.staticTexts["nativeEditor.preservedNotice"].exists, "the document types")
+        XCTAssertFalse(app.staticTexts["nativeEditor.editUnavailableNotice"].exists, "the document types")
         card.tap()
         let first = app.textViews["nativeEditor.column.0"]
         XCTAssertTrue(first.waitForExistence(timeout: 5), "the column editor opened")
@@ -352,7 +352,7 @@ final class NativeEditorUITests: XCTestCase {
         app.launch()
         let card = app.descendants(matching: .any)["nativeEditor.attachment.owned-columns"]
         XCTAssertTrue(card.waitForExistence(timeout: 10))
-        XCTAssertFalse(app.staticTexts["nativeEditor.preservedNotice"].exists, "the document types")
+        XCTAssertFalse(app.staticTexts["nativeEditor.editUnavailableNotice"].exists, "the document types")
         card.tap()
         let first = app.textViews["nativeEditor.column.0"]
         XCTAssertTrue(first.waitForExistence(timeout: 5), "the column editor opened")
@@ -1439,7 +1439,7 @@ final class NativeEditorUITests: XCTestCase {
 
         editor.typeText("After rule")
         XCTAssertTrue(waitForText(of: editor, containing: "\n\nAfter rule"))
-        XCTAssertFalse(app.staticTexts["nativeEditor.preservedNotice"].exists)
+        XCTAssertFalse(app.staticTexts["nativeEditor.editUnavailableNotice"].exists)
         waitForDurableJournal(in: app)
         app.terminate()
 
@@ -1447,7 +1447,7 @@ final class NativeEditorUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
         XCTAssertTrue(waitForText(of: editor, containing: "\n\nAfter rule"))
-        XCTAssertFalse(app.staticTexts["nativeEditor.preservedNotice"].exists)
+        XCTAssertFalse(app.staticTexts["nativeEditor.editUnavailableNotice"].exists)
     }
 
     // MARK: - PR15 Step 4 Acceptance UI Tests

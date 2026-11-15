@@ -485,7 +485,7 @@ enum Strings_fr {
         .native_editor_paste_unavailable: "Ce contenu copié ne peut pas être collé ici. Rien n’a été modifié.",
         .profile_native_editor: "Éditeur natif (expérimental)",
         .profile_native_editor_footer:
-            "S’applique à la prochaine ouverture d’un document. Prend en charge texte, mise en forme, titres, listes, listes de tâches, citations, blocs de code, sections repliables, encadrés, tableaux, colonnes, médias, maths, diagrammes, liens de page et mentions, ainsi que le mode hors ligne et la collaboration en direct. Certains blocs restent en lecture seule.",
+            "S’applique à la prochaine ouverture d’un document. Prend en charge texte, mise en forme, titres, listes, listes de tâches, citations, blocs de code, sections repliables, encadrés, tableaux, colonnes, médias, maths, diagrammes, liens de page et mentions, ainsi que le mode hors ligne et la collaboration en direct. Un document contenant un bloc que l’éditeur natif ne peut pas encore modifier s’ouvre en lecture seule.",
         .native_editor_preserved_title: "Document préservé",
         .native_editor_preserved_body:
             "La structure de ce document ne peut pas encore être affichée par le lecteur natif. Son contenu original est préservé.",
@@ -559,14 +559,22 @@ enum Strings_fr {
             "Impossible de récupérer les brouillons. Ils restent enregistrés sur cet appareil.",
         .native_editor_read_only_unfamiliar_block:
             "Lecture seule : ce document contient un bloc que l’éditeur natif ne peut pas encore modifier (%@)",
-        .native_editor_unfamiliar_nested_blocks: "%@ avec blocs imbriqués",
-        .native_editor_unfamiliar_unsupported_root: "Racine de document non prise en charge",
+        .native_editor_unfamiliar_detail_format: "%@ : %@",
+        .native_editor_unfamiliar_unknown_block_type: "un type de bloc que l’éditeur natif ne connaît pas",
+        .native_editor_unfamiliar_category_block_type: "type de bloc non pris en charge",
+        .native_editor_unfamiliar_category_block_setting: "réglage de bloc non pris en charge",
+        .native_editor_unfamiliar_category_nested_content: "contenu imbriqué",
+        .native_editor_unfamiliar_category_link: "lien non pris en charge",
+        .native_editor_unfamiliar_category_oversized: "contenu trop volumineux",
+        .native_editor_unfamiliar_category_other: "autre",
+        .native_editor_read_only_details: "Détails : %@",
         .native_editor_read_only_no_access: "Lecture seule : vous n’avez pas les droits de modification",
-        .native_editor_read_only_pending_sync: "En attente de la fin de synchronisation de ce document",
+        .native_editor_read_only_pending_sync:
+            "En attente de la fin de synchronisation de ce document — rouvrez-le pour modifier",
         .native_editor_read_only_classic_draft:
-            "Lecture seule : en attente de la synchronisation d’un brouillon hors ligne",
+            "Lecture seule : en attente de la synchronisation d’un brouillon hors ligne — rouvrez-le pour modifier",
         .native_editor_read_only_live_held:
-            "En attente de la synchronisation des modifications en direct",
+            "En attente de la synchronisation des modifications en direct — rouvrez-le pour modifier",
         .native_editor_read_only_signed_out: "Lecture seule : connectez-vous pour modifier ce document",
         .native_editor_block_callout: "Encadré",
         .native_editor_block_table: "Tableau",

@@ -485,7 +485,7 @@ enum Strings_it {
             "Questo contenuto copiato non può essere incollato qui. Non è stato modificato nulla.",
         .profile_native_editor: "Editor nativo (sperimentale)",
         .profile_native_editor_footer:
-            "Si applica alla prossima apertura di un documento. Supporta testo, formattazione, titoli, elenchi, liste di controllo, citazioni, blocchi di codice, sezioni comprimibili, riquadri, tabelle, colonne, media, matematica, diagrammi, link a pagine e menzioni, oltre a modalità offline e collaborazione dal vivo. Alcuni blocchi restano in sola lettura.",
+            "Si applica alla prossima apertura di un documento. Supporta testo, formattazione, titoli, elenchi, liste di controllo, citazioni, blocchi di codice, sezioni comprimibili, riquadri, tabelle, colonne, media, matematica, diagrammi, link a pagine e menzioni, oltre a modalità offline e collaborazione dal vivo. Un documento che contiene un blocco che l’editor nativo non può ancora modificare si apre in sola lettura.",
         .native_editor_preserved_title: "Documento conservato",
         .native_editor_preserved_body:
             "Il lettore nativo non può ancora visualizzare la struttura di questo documento. Il contenuto originale è conservato.",
@@ -556,14 +556,22 @@ enum Strings_it {
         .profile_recover_drafts_failure: "Impossibile recuperare le bozze. Restano salvate su questo dispositivo.",
         .native_editor_read_only_unfamiliar_block:
             "Sola lettura: questo documento contiene un blocco che l’editor nativo non può ancora modificare (%@)",
-        .native_editor_unfamiliar_nested_blocks: "%@ con blocchi annidati",
-        .native_editor_unfamiliar_unsupported_root: "Radice del documento non supportata",
+        .native_editor_unfamiliar_detail_format: "%@: %@",
+        .native_editor_unfamiliar_unknown_block_type: "un tipo di blocco che l’editor nativo non conosce",
+        .native_editor_unfamiliar_category_block_type: "tipo di blocco non supportato",
+        .native_editor_unfamiliar_category_block_setting: "impostazione del blocco non supportata",
+        .native_editor_unfamiliar_category_nested_content: "contenuto annidato",
+        .native_editor_unfamiliar_category_link: "link non supportato",
+        .native_editor_unfamiliar_category_oversized: "contenuto troppo grande",
+        .native_editor_unfamiliar_category_other: "altro",
+        .native_editor_read_only_details: "Dettagli: %@",
         .native_editor_read_only_no_access: "Sola lettura: non hai i permessi di modifica",
-        .native_editor_read_only_pending_sync: "In attesa che questo documento completi la sincronizzazione",
+        .native_editor_read_only_pending_sync:
+            "In attesa che questo documento completi la sincronizzazione — riaprilo per modificare",
         .native_editor_read_only_classic_draft:
-            "Sola lettura: in attesa della sincronizzazione di una bozza offline",
+            "Sola lettura: in attesa della sincronizzazione di una bozza offline — riaprilo per modificare",
         .native_editor_read_only_live_held:
-            "In attesa della sincronizzazione delle modifiche della collaborazione dal vivo",
+            "In attesa della sincronizzazione delle modifiche della collaborazione dal vivo — riaprilo per modificare",
         .native_editor_read_only_signed_out: "Sola lettura: accedi per modificare questo documento",
         .native_editor_block_callout: "Riquadro",
         .native_editor_block_table: "Tabella",

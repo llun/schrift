@@ -903,9 +903,17 @@ private struct NativeEditUnavailableNotice: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: DocsSpacing.spaceXS) {
             MaterialSymbol(reason.icon, size: 15, relativeTo: .footnote)
-            Text(reason.localizedNote(using: loc))
-                .font(DocsFont.footnote)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: DocsSpacing.space4xs) {
+                Text(reason.localizedNote(using: loc))
+                    .font(DocsFont.footnote)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let details = reason.localizedDetailsLine(using: loc) {
+                    Text(details)
+                        .font(DocsFont.caption)
+                        .foregroundStyle(theme.colors.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
         .foregroundStyle(theme.colors.textSecondary)
         .padding(.horizontal, DocsSpacing.spaceSM)
