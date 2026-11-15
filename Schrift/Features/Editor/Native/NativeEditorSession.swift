@@ -1493,6 +1493,7 @@ final class NativeEditorOpen {
                     formatted: formatted, leafNesting: leafNesting, installClassicFallback: false)
                 isOpen = true
                 generation += 1
+                self.rowCanUpdate = canUpdate
                 self.rowCanMention = canMention
                 await activateFetchedState(
                     state: resolvedState.state, config: config, ability: resolvedState.ability,
