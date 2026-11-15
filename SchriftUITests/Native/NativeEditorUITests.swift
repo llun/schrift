@@ -78,7 +78,11 @@ final class NativeEditorUITests: XCTestCase {
         app.launch()
         let editor = app.textViews["nativeEditor.text"]
         focusFirstParagraph(of: editor, in: app)
+        // Warm up the hardware-keyboard shifted-arrow path before selecting across paragraphs.
+        editor.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: .shift)
+        editor.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: [])
         editor.typeText("alpha")
+        XCTAssertTrue(waitForText(of: editor, containing: "alpha"), text(of: editor))
         let lines = text(of: editor).components(separatedBy: "\n")
         guard lines.count > 2, let caret = lines[0].range(of: "alpha")?.upperBound else {
             return XCTFail(lines.prefix(3).joined(separator: "|"))
@@ -88,6 +92,7 @@ final class NativeEditorUITests: XCTestCase {
             editor.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: .shift)
         }
         editor.typeText("omega")
+        XCTAssertTrue(waitForText(of: editor, containing: "omega"), text(of: editor))
         let after = text(of: editor).components(separatedBy: "\n")
         // iOS's smart insert may separate a word that arrives whole (iOS 26.5 delivers
         // `typeText` as one insertion), as it does in any text view.
@@ -106,8 +111,11 @@ final class NativeEditorUITests: XCTestCase {
         let tail = after[0][omega...].count
         for _ in 0..<(tail + 1) { editor.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: .shift) }
         editor.typeText(XCUIKeyboardKey.delete.rawValue)
+        let expectedFirst = String(after[0].prefix(after[0].count - tail)) + after[1]
+        let expectedJoined = ([expectedFirst] + Array(after.dropFirst(2))).joined(separator: "\n")
+        XCTAssertTrue(waitForValue(of: editor, equalTo: expectedJoined, timeout: 10), text(of: editor))
         let joined = text(of: editor).components(separatedBy: "\n")
-        XCTAssertEqual(joined.first, String(after[0].prefix(after[0].count - tail)) + after[1])
+        XCTAssertEqual(joined.first, expectedFirst)
         XCTAssertEqual(joined.count, after.count - 1)
         XCTAssertFalse(
             app.staticTexts["nativeEditor.inputNotice"].exists, "Backspace over a selection is never refused")
