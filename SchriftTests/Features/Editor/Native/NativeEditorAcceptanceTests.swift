@@ -21,6 +21,7 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
         let session = try await NativeEditorSession.seed(state: state, clientID: 41)
         defer { Task { await session.close().value } }
         session.enableTyping(persist: { _, _ in })
+        session.setEditing(true)
 
         // HeadlessSurface vs NativeTextSurface parity on initial projection.
         let headless = HeadlessSurface(blocks: session.surface.blocks)
@@ -69,6 +70,7 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
         let maybeTableSession = await session.openTable("wf-table")
         let tableSession = try XCTUnwrap(maybeTableSession)
         tableSession.setEditing(true)
+        tableSession.input?.showCell([tableSession.surface.blocks[0].id])
         tableSession.textView.selectedRange = NSRange(location: 0, length: 0)
         tableSession.input?.textViewDidChangeSelection(tableSession.textView)
         tableSession.textView.insertText("CellEdit ")
@@ -162,9 +164,9 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
                 BlockNoteBlock(
                     node: "paragraph", props: [],
                     runs: [
-                        InlineRun("Bold", marks: [("bold", "true")]),
+                        InlineRun("Bold", marks: [("bold", "{}")]),
                         InlineRun(" and "),
-                        InlineRun("code", marks: [("code", "true")]),
+                        InlineRun("code", marks: [("code", "{}")]),
                     ],
                     id: "sh-2"),
                 BlockNoteBlock(
@@ -369,11 +371,16 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
         await open.open(viewModel: model, isOffline: false, canUpdate: true)
         guard case .native(let session) = open.route else { return XCTFail("expected native session") }
         XCTAssertTrue(model.consumeNativeNewDocumentEntryIfNeeded(canEdit: true))
-        XCTAssertFalse(model.consumeNativeNewDocumentEntryIfNeeded(canEdit: true), "entryIntent must consume once")
+        XCTAssertTrue(model.consumeNativeInitialTitleFocus(isEditing: true, canEdit: true))
+        XCTAssertFalse(
+            model.consumeNativeInitialTitleFocus(isEditing: true, canEdit: true),
+            "initial title focus must consume once")
+        XCTAssertFalse(entryIntent.consume(), "entryIntent must consume once")
         open.updateTitle("Online New Doc", viewModel: model)
         await waitUntil { server.titles.contains("Online New Doc") }
         XCTAssertTrue(server.patchedUpdates.isEmpty, "title-only save must not emit empty Yjs PATCH")
 
+        session.setEditing(true)
         session.textView.selectedRange = NSRange(location: 0, length: 0)
         session.input?.textViewDidChangeSelection(session.textView)
         session.textView.insertText("Body ")
@@ -382,6 +389,7 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
         open.flushPendingSave()
         await waitUntil { !server.patchedUpdates.isEmpty && server.titles.contains("Online New Doc 2") }
 
+        await model.loadChildren()
         let addedChild = await model.addSubpage()
         XCTAssertNotNil(addedChild)
         XCTAssertEqual(model.mergedSubpages?.count, 1)
@@ -412,6 +420,7 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
         guard case .native(let localSession) = offlineOpen.route else {
             return XCTFail("local-created doc must open natively offline")
         }
+        localSession.setEditing(true)
         localSession.textView.selectedRange = NSRange(location: 0, length: 0)
         localSession.input?.textViewDidChangeSelection(localSession.textView)
         localSession.textView.insertText("Offline Root Body ")
@@ -419,28 +428,24 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
         offlineOpen.updateTitle("Offline Root Renamed", viewModel: localModel)
 
         // Stage a native pending attachment tied to an image block in the local replica.
-        let imageBlockID = "offline-img-1"
-        _ = await localSession.post(
-            .insertMediaBatch(
-                nodes: ["image"], placement: .after, ids: [imageBlockID], paragraphID: "offline-trail-1"),
-            blockID: localSession.surface.blocks[0].id)
+        var insertedIDs: [String] = []
+        XCTAssertTrue(
+            localSession.input?.insertMediaBatch(
+                nodes: ["image"], at: localSession.surface.blocks[0].id, placement: .after,
+                onApplied: { insertedIDs = $0 }) == true)
         _ = await localSession.settle()
+        let imageBlockID = try XCTUnwrap(insertedIDs.first)
         let pngData = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
-        let attID = UUID()
-        XCTAssertTrue(env.attachmentStore.saveData(pngData, for: attID))
-        env.attachmentStore.save(
-            PendingAttachment(
-                localID: attID,
-                documentID: localRoot.id,
-                createdAt: Date(),
-                serverOrigin: env.model.client.serverOrigin,
-                ownerUserID: owner,
-                native: NativeMediaTarget(
-                    org: "docs",
-                    blockID: imageBlockID,
-                    slot: MediaBlock.Slot(node: "image", url: ""),
-                    fileName: "offline.png",
-                    contentType: "image/png")))
+        let attID = coordinator.queueNativeAttachment(
+            scope: localScope,
+            target: NativeMediaTarget(
+                org: "docs",
+                blockID: imageBlockID,
+                slot: MediaBlock.Slot(node: "image", url: ""),
+                fileName: "offline.png",
+                contentType: "image/png"),
+            data: pngData)
+        XCTAssertNotNil(attID)
         offlineOpen.flushPendingSave()
         offlineOpen.close()
 
@@ -457,7 +462,7 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
         server.isOffline = false
         let migratedRootID = UUID()
         let migratedChildID = UUID()
-        server.createdIDs = [localRoot.id: migratedRootID, localChild.id: migratedChildID]
+        server.createdIDsByTitle = ["Offline Root Renamed": migratedRootID, "Child offline": migratedChildID]
         await coordinator.syncPendingDrafts()
 
         await waitUntil {
@@ -470,6 +475,7 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
             try env.replicaStore.manifest(for: localScope), "localScope replica must be removed after migration")
         XCTAssertNil(coordinator.storedDraft(documentID: localRoot.id), "localID draft must be removed")
         XCTAssertEqual(coordinator.nativeOwnership(documentID: migratedRootID), .owned(serverScope))
+        await waitUntil { server.uploadedAttachmentDocIDs.contains(migratedRootID) }
         XCTAssertTrue(
             server.uploadedAttachmentDocIDs.contains(migratedRootID),
             "attachment must upload under migrated serverID")
@@ -534,14 +540,15 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
                 runs: [InlineRun("Task B")], id: "chk-b"),
         ]
         let state = BlockNoteYjs.encode(blocks, clientID: 1)
-        let session = try await NativeEditorSession.seed(state: state, clientID: 2)
-        defer { Task { await session.close().value } }
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: tempDir) }
         let store = ReplicaStore(directory: tempDir)
         let scope = ReplicaScope(
             serverOrigin: "https://example.test", ownerUserID: owner, org: "docs", documentID: UUID())
-        session.enableTyping(persist: DocumentReplicaSession.journal(store: store, scope: scope))
+        _ = try store.create(for: scope, checkpoint: state)
+        let maybeSession = try await NativeEditorSession.restore(store: store, scope: scope, editable: true)
+        let session = try XCTUnwrap(maybeSession)
+        defer { Task { await session.close().value } }
 
         // Reading mode starts non-editable.
         session.setEditing(false)
@@ -877,23 +884,13 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
             cursor = pItem
             let (_, pNode) = try element("paragraph", into: pContainer, after: nil, style)
             let pXML = YType(typeRef: .xmlText)
-            try YWrite.insertAfter(tx, into: pNode, after: nil, [.type(pXML)])
-            try pXML.insert(0, "Alpha", ["bold": "true", "textColor": "\"red\""])
-            try pXML.insert(5, " Beta", ["italic": "true", "link": "{\"href\":\"https://docs.example\"}"])
+            let pXMLItem = try YWrite.insertAfter(tx, into: pNode, after: nil, [.type(pXML)])
+            try pXML.insert(0, "Alpha", ["bold": "{}", "textColor": NativeMark.colorValue("red")])
+            try pXML.insert(5, " Beta", ["italic": "{}", "link": NativeMark.linkValue("https://docs.example")])
 
-            var pTail: YItem?
-            do {
-                let text = YType(typeRef: .xmlText)
-                _ = text
-                // Locate the trailing xmlText item so inline nodes append after "Alpha Beta".
-                var item = pXML.firstItem
-                while let current = item {
-                    if !current.deleted { pTail = current }
-                    item = current.right
-                }
-            }
+            // Append inline object siblings directly under the paragraph element after `pXML`.
             let interlink = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.interlinkingLinkNodeName))
-            let interlinkItem = try YWrite.insertAfter(tx, into: pXML, after: pTail, [.type(interlink)])
+            let interlinkItem = try YWrite.insertAfter(tx, into: pNode, after: pXMLItem, [.type(interlink)])
             try YWrite.mapSet(
                 tx, on: interlink, key: "docId", .any([.string("55555555-5555-4555-8555-555555555551")]))
             try YWrite.mapSet(tx, on: interlink, key: "blockId", .any([.string("")]))
@@ -902,12 +899,12 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
             try YWrite.mapSet(tx, on: interlink, key: "title", .any([.string("Roadmap")]))
 
             let mention = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.userMentionNodeName))
-            let mentionItem = try YWrite.insertAfter(tx, into: pXML, after: interlinkItem, [.type(mention)])
+            let mentionItem = try YWrite.insertAfter(tx, into: pNode, after: interlinkItem, [.type(mention)])
             try YWrite.mapSet(tx, on: mention, key: "userId", .any([.string("user-1")]))
             try YWrite.mapSet(tx, on: mention, key: "fullName", .any([.string("Ada")]))
 
             let inlineMath = YType(typeRef: .xmlElement(nodeName: NativeInlineObject.mathNodeName))
-            _ = try YWrite.insertAfter(tx, into: pXML, after: mentionItem, [.type(inlineMath)])
+            _ = try YWrite.insertAfter(tx, into: pNode, after: mentionItem, [.type(inlineMath)])
             let inlineMathXML = YType(typeRef: .xmlText)
             try YWrite.insertAfter(tx, into: inlineMath, after: nil, [.type(inlineMathXML)])
             try inlineMathXML.insert(0, "x^2", nil)
@@ -1213,6 +1210,7 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
         let replicaStore: ReplicaStore
         let attachmentStore: PendingAttachmentStore
         let creates: PendingDocumentCreateStore
+        let nativeSessions: NativeSessionRegistry
         let documentID: UUID
         var replicaDirectory: URL { directory.appendingPathComponent("ReplicaDrafts") }
         let makeModel: @MainActor () -> EditorViewModel
@@ -1238,6 +1236,7 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
         SignedInUserStore(userDefaults: defaults).remember(owner)
         let sharedAttachmentStore = PendingAttachmentStore(
             userDefaults: defaults, directory: directory.appendingPathComponent("attachments"))
+        let nativeSessions = NativeSessionRegistry()
         let makeModel: @MainActor () -> EditorViewModel = {
             let client = DocsAPIClient(
                 baseURL: URL(string: "https://docs.example.org/api/v1.0/")!, session: MockURLProtocol.makeSession(),
@@ -1257,6 +1256,7 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
                 listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: children,
                 backgroundTasks: .noop)
             coordinator.nativeEditorEnabled = { NativeEditorPreference.isEnabled(defaults) }
+            coordinator.nativeSessions = nativeSessions
             let availability =
                 connectivity.map { OnlineAvailability(connectivity: $0, userDefaults: defaults) }
                 ?? OnlineAvailability(userDefaults: defaults)
@@ -1274,6 +1274,7 @@ final class NativeEditorAcceptanceTests: NativeEditingTestCase {
             replicaStore: model.saveCoordinator.replicaStore,
             attachmentStore: sharedAttachmentStore,
             creates: PendingDocumentCreateStore(userDefaults: defaults),
+            nativeSessions: nativeSessions,
             documentID: documentID, makeModel: makeModel)
     }
 }
@@ -1289,7 +1290,7 @@ private final class AcceptanceServerStub: @unchecked Sendable {
     private var _patchedUpdates: [Data] = []
     private var _classicMarkdownPatches: [String] = []
     private var _titles: [String] = []
-    private var _createdIDs: [UUID: UUID] = [:]
+    private var _createdIDsByTitle: [String: UUID] = [:]
     private var _uploadedAttachmentDocIDs: [UUID] = []
     private var _children: [[String: Any]] = []
 
@@ -1309,9 +1310,9 @@ private final class AcceptanceServerStub: @unchecked Sendable {
     var patchedUpdates: [Data] { locked { _patchedUpdates } }
     var classicMarkdownPatches: [String] { locked { _classicMarkdownPatches } }
     var titles: [String] { locked { _titles } }
-    var createdIDs: [UUID: UUID] {
-        get { locked { _createdIDs } }
-        set { locked { _createdIDs = newValue } }
+    var createdIDsByTitle: [String: UUID] {
+        get { locked { _createdIDsByTitle } }
+        set { locked { _createdIDsByTitle = newValue } }
     }
     var uploadedAttachmentDocIDs: [UUID] { locked { _uploadedAttachmentDocIDs } }
 
@@ -1325,91 +1326,71 @@ private final class AcceptanceServerStub: @unchecked Sendable {
                 return .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
             }
             let path = request.url?.path ?? ""
-            if path.hasSuffix("config") || path.hasSuffix("config/") {
-                let json = "{\"release_version\":\"6.0.0\"}"
-                return .init(
-                    statusCode: 200, headers: ["Content-Type": "application/json"],
-                    body: Data(json.utf8), error: nil)
+            let jsonHeaders = ["Content-Type": "application/json"]
+            if path.hasSuffix("/config") {
+                let json = "{\"RELEASE_VERSION\":\"6.0.0\"}"
+                return .init(statusCode: 200, headers: jsonHeaders, body: Data(json.utf8), error: nil)
             }
-            if path.hasSuffix("users/me/") || path.hasSuffix("users/me") {
+            if path.hasSuffix("/users/me") {
                 let json =
                     "{\"id\":\"\(owner.uuidString.lowercased())\",\"email\":\"a@docs.example\",\"language\":\"en\"}"
-                return .init(
-                    statusCode: 200, headers: ["Content-Type": "application/json"],
-                    body: Data(json.utf8), error: nil)
+                return .init(statusCode: 200, headers: jsonHeaders, body: Data(json.utf8), error: nil)
             }
-            if request.httpMethod == "POST", path.hasSuffix("/documents/") {
-                let assignedID = locked { _createdIDs.values.first ?? UUID() }
+            if request.httpMethod == "POST", path.hasSuffix("/documents") {
                 let body = requestBody(request)
                 let title =
                     (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["title"] as? String ?? "Untitled"
                 let parentHint =
                     (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["parent_id"] as? String
-                let resolvedID = locked { () -> UUID in
-                    if parentHint == nil,
-                        let rootMatch = _createdIDs.first(where: { _ in title.contains("Root") })?.value
-                    {
-                        return rootMatch
-                    }
-                    if parentHint != nil,
-                        let childMatch = _createdIDs.first(where: { _ in title.contains("Child") })?.value
-                    {
-                        return childMatch
-                    }
-                    return assignedID
-                }
-                let json: [String: Any] = [
-                    "id": resolvedID.uuidString.lowercased(),
-                    "title": title,
-                    "abilities": ["update": true, "mention": true],
-                    "link_reach": "restricted",
-                    "link_role": "editor",
-                    "is_favorite": false,
-                    "depth": parentHint == nil ? 1 : 2,
-                    "numchild": 0,
-                    "path": "0001",
-                    "created_at": "2026-11-07T10:00:00Z",
-                    "updated_at": "2026-11-07T10:00:00Z",
-                ]
+                let resolvedID = locked { _createdIDsByTitle[title] ?? UUID() }
+                let doc = makeDocumentJSON(
+                    id: resolvedID, title: title, depth: parentHint == nil ? 1 : 2,
+                    path: parentHint == nil ? "0001" : "00010001")
                 return .init(
-                    statusCode: 201, headers: ["Content-Type": "application/json"],
-                    body: try! JSONSerialization.data(withJSONObject: json), error: nil)
+                    statusCode: 201, headers: jsonHeaders,
+                    body: try! JSONSerialization.data(withJSONObject: doc), error: nil)
             }
-            if request.httpMethod == "POST", path.contains("/documents/"), path.hasSuffix("/children/") {
-                let childID = UUID()
-                let json: [String: Any] = [
-                    "id": childID.uuidString.lowercased(),
-                    "title": "",
-                    "abilities": ["update": true],
-                    "link_reach": "restricted",
-                    "depth": 2,
-                    "numchild": 0,
-                    "path": "00010001",
-                    "created_at": "2026-11-07T10:00:00Z",
-                    "updated_at": "2026-11-07T10:00:00Z",
-                ]
+            if request.httpMethod == "POST", path.contains("/documents/"), path.hasSuffix("/children") {
+                let body = requestBody(request)
+                let title =
+                    (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["title"] as? String ?? ""
+                let childID = locked { _createdIDsByTitle[title] ?? UUID() }
+                let child = makeDocumentJSON(id: childID, title: title, depth: 2, path: "00010001")
+                locked { _children.append(child) }
                 return .init(
-                    statusCode: 201, headers: ["Content-Type": "application/json"],
-                    body: try! JSONSerialization.data(withJSONObject: json), error: nil)
+                    statusCode: 201, headers: jsonHeaders,
+                    body: try! JSONSerialization.data(withJSONObject: child), error: nil)
             }
-            if request.httpMethod == "POST", path.contains("/documents/"), path.contains("/attachments") {
+            if request.httpMethod == "POST", path.contains("/documents/"), path.contains("/attachment-upload") {
                 if let docID = path.split(separator: "/").compactMap({ UUID(uuidString: String($0)) }).first {
                     locked { _uploadedAttachmentDocIDs.append(docID) }
+                    let checkPath =
+                        "/api/v1.0/documents/\(docID.uuidString.lowercased())/media-check/?key=\(docID.uuidString.lowercased())/attachments/offline.png"
+                    let json = "{\"file\":\"\(checkPath)\"}"
+                    return .init(statusCode: 201, headers: jsonHeaders, body: Data(json.utf8), error: nil)
                 }
-                let json = "{\"file\":\"/media/attachments/offline.png\",\"is_ready_to_show\":true}"
-                return .init(
-                    statusCode: 201, headers: ["Content-Type": "application/json"],
-                    body: Data(json.utf8), error: nil)
+                let json = "{\"file\":\"/api/v1.0/documents/unknown/media-check/?key=offline.png\"}"
+                return .init(statusCode: 201, headers: jsonHeaders, body: Data(json.utf8), error: nil)
+            }
+            if request.httpMethod == "GET", path.contains("/media-check") {
+                let docID =
+                    path.split(separator: "/").compactMap({ UUID(uuidString: String($0)) }).first?.uuidString
+                    .lowercased() ?? "unknown"
+                let json = "{\"status\":\"ready\",\"file\":\"/media/\(docID)/attachments/offline.png\"}"
+                return .init(statusCode: 200, headers: jsonHeaders, body: Data(json.utf8), error: nil)
             }
             if path.contains("/collaboration/ydoc/") {
                 if request.httpMethod == "GET" {
-                    return .init(
-                        statusCode: 200, headers: ["Content-Type": "application/octet-stream"],
-                        body: locked { _state }, error: nil)
+                    let state = locked { _state }
+                    let body = try! JSONSerialization.data(withJSONObject: ["doc": state.base64EncodedString()])
+                    return .init(statusCode: 200, headers: jsonHeaders, body: body, error: nil)
                 }
                 if request.httpMethod == "PATCH" {
-                    let body = requestBody(request)
-                    locked { _patchedUpdates.append(body) }
+                    let raw = requestBody(request)
+                    let decoded =
+                        (try? JSONSerialization.jsonObject(with: raw) as? [String: String])?["update"]
+                        .flatMap { Data(base64Encoded: $0) } ?? raw
+                    locked { _patchedUpdates.append(decoded) }
                     return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
                 }
             }
@@ -1423,13 +1404,15 @@ private final class AcceptanceServerStub: @unchecked Sendable {
                     "updated_at": "2026-11-07T10:00:00Z",
                 ]
                 return .init(
-                    statusCode: 200, headers: ["Content-Type": "application/json"],
+                    statusCode: 200, headers: jsonHeaders,
                     body: try! JSONSerialization.data(withJSONObject: json), error: nil)
             }
-            if path.contains("children") {
+            if path.hasSuffix("/children") {
+                let children = locked { _children }
+                let page: [String: Any] = ["count": children.count, "results": children]
                 return .init(
-                    statusCode: 200, headers: ["Content-Type": "application/json"],
-                    body: Data("{\"count\":0,\"results\":[]}".utf8), error: nil)
+                    statusCode: 200, headers: jsonHeaders,
+                    body: try! JSONSerialization.data(withJSONObject: page), error: nil)
             }
             if request.httpMethod == "PATCH", path.contains("/documents/") {
                 let body = requestBody(request)
@@ -1445,31 +1428,38 @@ private final class AcceptanceServerStub: @unchecked Sendable {
                     }
                 }
                 let docID = path.split(separator: "/").compactMap({ UUID(uuidString: String($0)) }).first ?? UUID()
-                let json: [String: Any] = [
-                    "id": docID.uuidString.lowercased(),
-                    "title": locked { _serverTitle },
-                    "abilities": ["update": true, "mention": true],
-                    "link_reach": "restricted",
-                    "created_at": "2026-11-07T10:00:00Z",
-                    "updated_at": "2026-11-07T10:00:00Z",
-                ]
+                let doc = makeDocumentJSON(id: docID, title: locked { _serverTitle }, depth: 1, path: "0001")
                 return .init(
-                    statusCode: 200, headers: ["Content-Type": "application/json"],
-                    body: try! JSONSerialization.data(withJSONObject: json), error: nil)
+                    statusCode: 200, headers: jsonHeaders,
+                    body: try! JSONSerialization.data(withJSONObject: doc), error: nil)
             }
             let docID = path.split(separator: "/").compactMap({ UUID(uuidString: String($0)) }).first ?? UUID()
-            let json: [String: Any] = [
-                "id": docID.uuidString.lowercased(),
-                "title": locked { _serverTitle },
-                "abilities": ["update": true, "mention": true],
-                "link_reach": "restricted",
-                "created_at": "2026-11-07T10:00:00Z",
-                "updated_at": "2026-11-07T10:00:00Z",
-            ]
+            let doc = makeDocumentJSON(id: docID, title: locked { _serverTitle }, depth: 1, path: "0001")
             return .init(
-                statusCode: 200, headers: ["Content-Type": "application/json"],
-                body: try! JSONSerialization.data(withJSONObject: json), error: nil)
+                statusCode: 200, headers: jsonHeaders,
+                body: try! JSONSerialization.data(withJSONObject: doc), error: nil)
         }
+    }
+
+    private func makeDocumentJSON(id: UUID, title: String, depth: Int, path: String) -> [String: Any] {
+        [
+            "id": id.uuidString.lowercased(),
+            "title": title,
+            "excerpt": NSNull(),
+            "abilities": ["update": true, "mention": true],
+            "computed_link_reach": "restricted",
+            "computed_link_role": NSNull(),
+            "link_reach": "restricted",
+            "link_role": "editor",
+            "is_favorite": false,
+            "depth": depth,
+            "numchild": 0,
+            "path": path,
+            "created_at": "2026-11-07T10:00:00Z",
+            "updated_at": "2026-11-07T10:00:00Z",
+            "user_role": "owner",
+            "creator": NSNull(),
+        ]
     }
 
     private func locked<T>(_ body: () -> T) -> T {
