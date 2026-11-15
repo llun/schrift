@@ -2823,11 +2823,51 @@ final class DocumentSaveCoordinator {
         enqueue(documentID: serverID, title: title, markdown: body, baseline: baseline)
     }
 
+    private func finishAdoptedNativeMigration(
+        _ record: PendingDocumentCreate, serverID: UUID, serverTitle: String?, document: Document?,
+        localScope: ReplicaScope, serverScope: ReplicaScope
+    ) {
+        let localID = record.localID
+        draftStore.remove(documentID: localID)
+        draftStore.remove(documentID: serverID)
+        states[localID] = nil
+        clearFailure(localID)
+        queued[localID] = nil
+        settledSaves[localID] = nil
+        lastConfirmedPushMarkdown[localID] = nil
+        knownServerTitles[localID] = nil
+        knownServerTitles[serverID] = serverTitle
+        conflicts[localID] = nil
+        contentCache.remove(documentID: localID)
+        childrenCache.removeDocument(localID)
+        if let document {
+            let liveParentID = pendingCreates[localID].map(\.parentID) ?? record.parentID
+            insertIntoListCaches(document, parentID: liveParentID)
+        }
+        for var child in pendingCreates.values.filter({ $0.parentID == localID }) {
+            child.parentID = serverID
+            updatePendingCreate(child)
+        }
+        for var attachment in pendingAttachments.values.filter({ $0.documentID == localID }) {
+            attachment.documentID = serverID
+            updatePendingAttachment(attachment)
+        }
+        try? replicaStore.remove(for: localScope)
+        try? replicaStore.remove(for: serverScope)
+        removePendingCreate(documentID: localID)
+        clearResolvedConflict(documentID: serverID)
+        states[serverID] = .idle
+        clearFailure(serverID)
+        syncBackupExclusion(for: localID)
+        syncBackupExclusion(for: serverID)
+        onDocumentMigrated?(document)
+    }
+
     private func migrateNativeCreatedDocument(
         _ record: PendingDocumentCreate, serverID: UUID, scope: ReplicaScope,
         draft: PendingDraft?, migrated: PendingDraft?, serverTitle: String?, serverUpdatedAt: Date,
         serverMarkdown: String, document: Document?
-    ) {
+    ) -> Bool {
         let localID = record.localID
         let localScope = ReplicaScope(
             serverOrigin: scope.serverOrigin, ownerUserID: scope.ownerUserID,
@@ -2835,17 +2875,45 @@ final class DocumentSaveCoordinator {
         let serverScope = ReplicaScope(
             serverOrigin: scope.serverOrigin, ownerUserID: scope.ownerUserID,
             org: scope.org, documentID: serverID)
-        let localManifest = try? replicaStore.manifest(for: localScope)
-        let serverManifest = try? replicaStore.manifest(for: serverScope)
+        let localManifest: ReplicaManifest?
+        let serverManifest: ReplicaManifest?
+        do {
+            localManifest = try replicaStore.manifest(for: localScope)
+            serverManifest = try replicaStore.manifest(for: serverScope)
+        } catch {
+            return true
+        }
         let sourceScope: ReplicaScope
         if localManifest != nil {
             sourceScope = localScope
         } else if let serverManifest, draft == nil || serverManifest.migratedFromLocalID == localID {
             sourceScope = serverScope
         } else {
-            return
+            if serverManifest == nil {
+                guard replicaStore.clearOwnership(for: localScope),
+                    replicaStore.clearOwnership(for: serverScope)
+                else { return true }
+                if draft == nil, migrated == nil, queued[localID] == nil {
+                    // Crash after `willAdoptServer` cleared drafts/replicas before removing the
+                    // pending-create record: finish dropping the local record and stale markers.
+                    finishAdoptedNativeMigration(
+                        record, serverID: serverID, serverTitle: serverTitle, document: document,
+                        localScope: localScope, serverScope: serverScope)
+                    return true
+                }
+                if draft?.replica == nil, migrated?.replica == nil {
+                    // `createLocalDocument` failed before writing a manifest and fell back to a
+                    // classic draft, or a stale manifest-less marker remained: hand off to classic.
+                    try? replicaStore.remove(for: localScope)
+                    try? replicaStore.remove(for: serverScope)
+                    syncBackupExclusion(for: localID)
+                    syncBackupExclusion(for: serverID)
+                    return false
+                }
+            }
+            return true
         }
-        guard let restored = try? replicaStore.restore(for: sourceScope) else { return }
+        guard let restored = try? replicaStore.restore(for: sourceScope) else { return true }
         let sourceAdapter = ReplicaSaveAdapter(store: replicaStore, scope: sourceScope)
         let sourcePrepared = try? sourceAdapter.prepare()
         let fallbackBody = queued[localID]?.markdown ?? draft?.markdown ?? migrated?.markdown ?? ""
@@ -2869,55 +2937,25 @@ final class DocumentSaveCoordinator {
                 let serverManifest, serverManifest.migratedFromLocalID != localID,
                 !serverManifest.outbox.isEmpty || migrated != nil
             {
-                return
+                return true
             }
-            draftStore.remove(documentID: localID)
-            draftStore.remove(documentID: serverID)
-            states[localID] = nil
-            clearFailure(localID)
-            queued[localID] = nil
-            settledSaves[localID] = nil
-            lastConfirmedPushMarkdown[localID] = nil
-            knownServerTitles[localID] = nil
-            knownServerTitles[serverID] = serverTitle
-            conflicts[localID] = nil
-            contentCache.remove(documentID: localID)
-            childrenCache.removeDocument(localID)
-            if let document {
-                let liveParentID = pendingCreates[localID].map(\.parentID) ?? record.parentID
-                insertIntoListCaches(document, parentID: liveParentID)
-            }
-            for var child in pendingCreates.values.filter({ $0.parentID == localID }) {
-                child.parentID = serverID
-                updatePendingCreate(child)
-            }
-            for var attachment in pendingAttachments.values.filter({ $0.documentID == localID }) {
-                attachment.documentID = serverID
-                updatePendingAttachment(attachment)
-            }
-            try? replicaStore.remove(for: localScope)
-            try? replicaStore.remove(for: serverScope)
-            removePendingCreate(documentID: localID)
-            clearResolvedConflict(documentID: serverID)
-            states[serverID] = .idle
-            clearFailure(serverID)
-            syncBackupExclusion(for: localID)
-            syncBackupExclusion(for: serverID)
-            onDocumentMigrated?(document)
-            return
+            finishAdoptedNativeMigration(
+                record, serverID: serverID, serverTitle: serverTitle, document: document,
+                localScope: localScope, serverScope: serverScope)
+            return true
         }
 
         if sourceScope != serverScope {
             if let serverManifest, serverManifest.migratedFromLocalID != localID, migrated != nil {
-                return
+                return true
             }
             guard let fullState = try? ReplicaSaveAdapter.fullState(restored),
                 (try? replicaStore.migrateLocalReplica(
                     from: localScope, to: serverScope, fullState: fullState)) != nil
-            else { return }
+            else { return true }
         }
         let serverAdapter = ReplicaSaveAdapter(store: replicaStore, scope: serverScope)
-        guard let prepared = try? serverAdapter.prepare() else { return }
+        guard let prepared = try? serverAdapter.prepare() else { return true }
         let body = prepared.markdown
         let serverRef = prepared.request.reference
         let canonicalBody = syncCanonicalMarkdown(body)
@@ -2969,6 +3007,7 @@ final class DocumentSaveCoordinator {
             clearResolvedConflict(documentID: serverID)
         }
         try? enqueueReplica(adapter: serverAdapter, title: title, baseline: baseline)
+        return true
     }
 
     private func insertIntoListCaches(_ created: Document, parentID: UUID?) {

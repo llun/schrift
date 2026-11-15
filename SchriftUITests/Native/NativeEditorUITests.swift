@@ -1339,7 +1339,7 @@ final class NativeEditorUITests: XCTestCase {
 
         // Tap inside the chip laid out at offset 0 of the top paragraph (`textContainerInset` 16,16).
         editor.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: 60, dy: topParagraphY(in: app) + 1))
+            .withOffset(CGVector(dx: 60, dy: app.buttons["Options"].exists ? 112 : topParagraphY(in: app)))
             .tap()
         let opened = app.staticTexts["inlineObjects.openedDocument"]
         XCTAssertTrue(opened.waitForExistence(timeout: 5), "tapping interlink chip navigates to linked document")

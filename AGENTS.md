@@ -5789,6 +5789,11 @@ markdown write endpoint**. Understand this before touching the save path:
     only rebuild is Profile's `repairReplicaOwnership`. Read ownership through
     `DocumentSaveCoordinator.nativeOwnership` / `replicaStore`, never a second store
     instance, and never fall back to `UserDefaults.standard` in tests.
+    **Known limit:** if a server document created offline is discovered via a concurrent
+    list refresh and opened/edited before the create `POST` checkpoints `syncedServerID`,
+    seeding a non-empty unmigrated server-scoped replica makes `migrateLocalReplica` refuse
+    with `alreadyExists`, halting migration and leaving that document read-only until
+    resolved.
 - **C2c wires the write path into the editor, behind the same weak-delegate seam C1 used
   for reads.** `EditorLiveWriteCoordinating` (`forwardLocalEdit() -> Bool`,
   `flushPendingLiveSnapshot()`) is implemented by `LiveEditingBridge` and held as `weak var

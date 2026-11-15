@@ -1476,6 +1476,108 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         XCTAssertFalse(secondModel.consumeNativeInitialTitleFocus(isEditing: true, canEdit: true))
     }
 
+    // MARK: - R3-3 Checkpointed create classic fallback & scoping
+
+    func testCheckpointedCreateClassicFallbackIsReadOnlyAndBlocksLiveBridgeWrites() async throws {
+        let env = makeEnvironment(serverOrigin: "https://docs.example.org")
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverContent = "- [ ] Pending item\n\nBody text"
+        server.install()
+
+        let local = env.model.saveCoordinator.createLocalDocument(
+            title: "Offline doc", parentID: nil, ownerUserID: owner)
+        var record = try XCTUnwrap(env.creates.create(for: local.id))
+        record.syncedServerID = env.documentID
+        env.creates.save(record)
+        let model = env.relaunch()
+
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: model, isOffline: false, canUpdate: true)
+        guard case .classic = open.route else {
+            return XCTFail("checkpointed serverID without server replica must fall back to classic")
+        }
+
+        await model.load()
+        XCTAssertTrue(model.hasLoadedContent)
+        XCTAssertFalse(model.canStartEditing, "classic fallback over checkpointed create must be read-only")
+
+        model.startEditing()
+        XCTAssertFalse(model.isEditing)
+        XCTAssertEqual(model.mode, .reading)
+
+        let checklistID = try XCTUnwrap(model.blocks.first?.id)
+        model.toggleChecklist(blockID: checklistID)
+        XCTAssertEqual(model.blocks.first?.kind, .checklistItem(checked: false))
+        XCTAssertFalse(model.isDirty)
+        XCTAssertNil(env.drafts.draft(for: env.documentID))
+
+        XCTAssertFalse(
+            model.canEngageLiveEditing,
+            "classic fallback over checkpointed create must not engage live collaboration writes")
+        let provider = StubLiveReplicaProvider()
+        let bridge = LiveEditingBridge(
+            documentID: env.documentID, viewModel: model, collaboration: provider,
+            serverOrigin: model.client.serverOrigin,
+            remoteApplyScheduler: ImmediateLiveRemoteApplyScheduler())
+        model.liveWrite = bridge
+        bridge.replicaDidChange()
+        XCTAssertFalse(bridge.isEngaged)
+        XCTAssertFalse(bridge.isHandlingLocalEditsLive)
+        XCTAssertFalse(bridge.forwardLocalEdit())
+        XCTAssertEqual(provider.applyLocalEditCount, 0)
+    }
+
+    func testHasCheckpointedCreateScopesToSignedInOwnerAndServerOrigin() async throws {
+        let env = makeEnvironment(serverOrigin: "https://docs.example.org")
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.install()
+
+        let local = env.model.saveCoordinator.createLocalDocument(
+            title: "Account A doc", parentID: nil, ownerUserID: owner)
+        var record = try XCTUnwrap(env.creates.create(for: local.id))
+        record.syncedServerID = env.documentID
+        env.creates.save(record)
+        let relaunchedA = env.relaunch()
+
+        XCTAssertTrue(relaunchedA.saveCoordinator.hasCheckpointedCreate(forServerID: env.documentID))
+
+        // Different signed-in user on the same device: A's checkpointed create must not block B.
+        let otherUser = UUID(uuidString: "99999999-9999-4999-8999-999999999999")!
+        SignedInUserStore(userDefaults: env.defaults).remember(otherUser)
+        XCTAssertFalse(relaunchedA.saveCoordinator.hasCheckpointedCreate(forServerID: env.documentID))
+
+        let otherServer = ServerStub(owner: otherUser, state: seedState())
+        otherServer.install()
+        let otherModel = env.relaunch()
+        await otherModel.load()
+        XCTAssertTrue(
+            otherModel.canStartEditing,
+            "another account must not be locked read-only by Account A's checkpointed create")
+
+        // Same owner, different server origin: must not match.
+        SignedInUserStore(userDefaults: env.defaults).remember(owner)
+        let otherOriginClient = DocsAPIClient(
+            baseURL: URL(string: "https://other.example.org/api/v1.0/")!,
+            session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let otherOriginCoordinator = DocumentSaveCoordinator(
+            client: otherOriginClient,
+            draftStore: PendingDraftStore(userDefaults: env.defaults),
+            replicaStore: env.replicaStore,
+            contentCache: DocumentContentCacheStore(directory: env.directory),
+            createStore: PendingDocumentCreateStore(userDefaults: env.defaults),
+            deleteStore: PendingDocumentDeleteStore(userDefaults: env.defaults),
+            attachmentStore: PendingAttachmentStore(
+                userDefaults: env.defaults, directory: env.directory.appendingPathComponent("attachments")),
+            listCache: DocumentCacheStore(userDefaults: env.defaults),
+            childrenCache: DocumentChildrenCacheStore(userDefaults: env.defaults),
+            serverOrigin: "https://other.example.org",
+            backgroundTasks: .noop)
+        XCTAssertFalse(otherOriginCoordinator.hasCheckpointedCreate(forServerID: env.documentID))
+    }
+
     // MARK: - Fixture
 
     private func manifestURL(_ env: Environment, _ scope: ReplicaScope) throws -> URL {
@@ -1546,6 +1648,8 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         let directory: URL
         let ownership: ReplicaOwnershipStore
         let replicaStore: ReplicaStore
+        let drafts: PendingDraftStore
+        let creates: PendingDocumentCreateStore
         let documentID: UUID
         let makeModel: @MainActor () -> EditorViewModel
         var replicaDirectory: URL { directory.appendingPathComponent("ReplicaDrafts") }
@@ -1559,7 +1663,9 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
     }
 
     private func makeEnvironment(
-        autosaveInterval: Duration = .seconds(10), isLiveHeld: @escaping @MainActor (UUID) -> Bool = { _ in false }
+        autosaveInterval: Duration = .seconds(10),
+        serverOrigin: String = "",
+        isLiveHeld: @escaping @MainActor (UUID) -> Bool = { _ in false }
     ) -> Environment {
         MockURLProtocol.reset()
         let suite = "NativeEditorActivationTests.\(UUID())"
@@ -1583,7 +1689,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
                 attachmentStore: PendingAttachmentStore(
                     userDefaults: defaults, directory: directory.appendingPathComponent("attachments")),
                 listCache: DocumentCacheStore(userDefaults: defaults), childrenCache: children,
-                backgroundTasks: .noop, isLiveReplicaHeld: isLiveHeld)
+                serverOrigin: serverOrigin, backgroundTasks: .noop, isLiveReplicaHeld: isLiveHeld)
             return EditorViewModel(
                 client: client, documentID: documentID, title: "List title", saveCoordinator: coordinator,
                 signedInUser: SignedInUserStore(userDefaults: defaults), contentCache: content,
@@ -1595,8 +1701,37 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         let ownership = ReplicaOwnershipStore(userDefaults: defaults)
         return Environment(
             model: model, defaults: defaults, suite: suite, directory: directory, ownership: ownership,
-            replicaStore: model.saveCoordinator.replicaStore, documentID: documentID, makeModel: makeModel)
+            replicaStore: model.saveCoordinator.replicaStore,
+            drafts: PendingDraftStore(userDefaults: defaults),
+            creates: PendingDocumentCreateStore(userDefaults: defaults),
+            documentID: documentID, makeModel: makeModel)
     }
+}
+
+@MainActor
+private final class StubLiveReplicaProvider: LiveReplicaProviding {
+    var applyLocalEditCount = 0
+
+    func replicaVersion(for documentID: UUID) -> Int { 1 }
+    func initialSyncVersion(for documentID: UUID) -> Int { 1 }
+    func projectedReplica(for documentID: UUID, interlinkingOrigin: String?) -> ProjectedDocument? {
+        ProjectedDocument(
+            blocks: [
+                ProjectedBlock(
+                    id: "b1", node: "paragraph", props: [], runs: [InlineRun("Body text")], fidelity: .modeled)
+            ],
+            isFullyRenderable: true,
+            isFullyModeled: true)
+    }
+    func setReplicaObserver(_ observer: (() -> Void)?, for documentID: UUID) {}
+    func canWriteReplica(for documentID: UUID) -> Bool { true }
+    func applyLocalEdit(old: [BlockNoteBlock], new: [BlockNoteBlock], for documentID: UUID) throws -> Data {
+        applyLocalEditCount += 1
+        return Data([1])
+    }
+    func encodeSnapshotForSave(for documentID: UUID) -> Data? { Data([1]) }
+    func replicaIsFailSafe(for documentID: UUID) -> Bool { false }
+    func hasPendingStructs(for documentID: UUID) -> Bool { false }
 }
 
 /// A Docs 6 server: config, raw state, formatted export, `/users/me/`, the

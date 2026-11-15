@@ -1659,7 +1659,10 @@ private struct ClassicEditorView: View {
         // collaboration room to join — the socket dials a URL containing its id. A document
         // queued for deletion is the same shape for a different reason: it is on its way out,
         // and "no requests for a tombstoned document" has to include the socket.
-        guard !viewModel.isLocalDocument, !viewModel.isDocumentPendingDelete else { return }
+        guard !viewModel.isLocalDocument, !viewModel.isDocumentPendingDelete,
+            !viewModel.saveCoordinator.isNativeOwned(documentID: viewModel.documentID),
+            !viewModel.saveCoordinator.hasCheckpointedCreate(forServerID: viewModel.documentID)
+        else { return }
         if liveEditingBridge == nil {
             let bridge = LiveEditingBridge(
                 documentID: viewModel.documentID, viewModel: viewModel, collaboration: collaboration,

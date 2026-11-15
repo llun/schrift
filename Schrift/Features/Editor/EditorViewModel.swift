@@ -2145,6 +2145,7 @@ final class EditorViewModel {
     var canStartEditing: Bool {
         hasLoadedContent
             && !saveCoordinator.isNativeOwned(documentID: documentID)
+            && !saveCoordinator.hasCheckpointedCreate(forServerID: documentID)
             && !((availability.isOffline || loadFailedOffline) && isNativeBaselineRequiredOffline)
     }
 
@@ -2189,8 +2190,8 @@ final class EditorViewModel {
     }
 
     func startEditing(focusing blockID: UUID? = nil, focusingTitle: Bool = false) {
-        liveWrite?.prepareForLocalEdit()
         guard canStartEditing else { return }
+        liveWrite?.prepareForLocalEdit()
         resetComposition()
         clearError()
         // Hide the banner while the caret is in the document (`applyPendingUpdate` is guarded
@@ -2748,6 +2749,10 @@ final class EditorViewModel {
     }
 
     func toggleChecklist(blockID: UUID) {
+        guard !saveCoordinator.isNativeOwned(documentID: documentID),
+            !saveCoordinator.hasCheckpointedCreate(forServerID: documentID),
+            !((availability.isOffline || loadFailedOffline) && isNativeBaselineRequiredOffline)
+        else { return }
         liveWrite?.prepareForLocalEdit()
         guard let index = blockIndex(blockID),
             case .checklistItem(let checked) = blocks[index].kind
@@ -4549,6 +4554,9 @@ final class EditorViewModel {
     ///    coordinator's own state machine, as belt-and-braces.
     var canEngageLiveEditing: Bool {
         guard hasLoadedContent, !isDirty, !isDocumentDiscarded, !isUnavailable else { return false }
+        guard !saveCoordinator.isNativeOwned(documentID: documentID),
+            !saveCoordinator.hasCheckpointedCreate(forServerID: documentID)
+        else { return false }
         // The editor holds something the replica cannot represent. Re-engaging
         // would let the replica win: `liveChangeSet` compares the document
         // against the projection, sees a block the projection does not have, and
