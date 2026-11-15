@@ -676,6 +676,216 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         XCTAssertNil(NativeBlockProjection.markdownShadow(nonStringBroadcastDoc))
     }
 
+    func testAuxiliaryBroadcastRootBoundsAndPrefixRefuseEditing() async throws {
+        let baseState = BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID)
+        let broadcastUUID = "72ebe1bb-b927-49d0-9554-8235827e2c5a"
+        let rootName = "doc-\(broadcastUUID)"
+        let validItem = "broadcast: \(rootName)"
+
+        func makeBroadcastDoc(_ configure: (YDoc) throws -> Void) throws -> YDoc {
+            let doc = YDoc(clientID: 40, gc: true)
+            try doc.applyUpdate(YUpdateDecoder.decode(baseState), origin: .remote)
+            try configure(doc)
+            return doc
+        }
+
+        func assertReadOnly(_ doc: YDoc, label: String) async throws {
+            XCTAssertTrue(NativeBlockProjection.hasUnsupportedAuxiliaryRoot(doc), label)
+            XCTAssertFalse(NativeBlockProjection.project(doc).isFullyModeled, label)
+            XCTAssertNil(NativeBlockProjection.markdownShadow(doc), label)
+            XCTAssertEqual(
+                NativeBlockProjection.firstUnsupportedReason(doc),
+                NativeUnfamiliarBlock(node: "", reason: "unsupported root"),
+                label)
+
+            let state = try YStateEncoder.encodeStateAsUpdate(doc)
+            let env = makeEnvironment()
+            defer { env.clean() }
+            stubServer(state: state, canUpdate: true)
+            let open = NativeEditorOpen(preference: { true })
+            defer { open.close() }
+            await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+            guard case .native(let session) = open.route else {
+                return XCTFail("expected .native route for \(label)")
+            }
+            XCTAssertFalse(session.canType, label)
+            XCTAssertNil(session.input, label)
+            XCTAssertEqual(
+                open.editUnavailableReason,
+                .unfamiliarContent(blockNode: "", reason: "unsupported root"),
+                label)
+        }
+
+        // 1. Item without the `"broadcast: "` prefix stays read-only.
+        for badItem in ["broadcast:\(rootName)", "other: \(rootName)", ""] {
+            let doc = try makeBroadcastDoc { doc in
+                try doc.transact { tx in
+                    let root = doc.get(rootName)
+                    try YWrite.insertAfter(tx, into: root, after: nil, [.any([.string(badItem)])])
+                }
+            }
+            defer { doc.destroy() }
+            try await assertReadOnly(doc, label: "missing prefix: \(badItem.debugDescription)")
+        }
+
+        // 2. Item byte-length bound: 256 UTF-8 bytes allowed; 257 UTF-8 bytes (ASCII and multi-byte) read-only.
+        let exactLimitItem = "broadcast: " + String(repeating: "a", count: 256 - "broadcast: ".utf8.count)
+        XCTAssertEqual(exactLimitItem.utf8.count, 256)
+        let exactBytesDoc = try makeBroadcastDoc { doc in
+            try doc.transact { tx in
+                try YWrite.insertAfter(tx, into: doc.get(rootName), after: nil, [.any([.string(exactLimitItem)])])
+            }
+        }
+        defer { exactBytesDoc.destroy() }
+        XCTAssertFalse(NativeBlockProjection.hasUnsupportedAuxiliaryRoot(exactBytesDoc))
+        XCTAssertTrue(NativeBlockProjection.project(exactBytesDoc).isFullyModeled)
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(exactBytesDoc))
+
+        let overByteLimitASCII = exactLimitItem + "a"
+        XCTAssertEqual(overByteLimitASCII.utf8.count, 257)
+        let overBytesDoc = try makeBroadcastDoc { doc in
+            try doc.transact { tx in
+                try YWrite.insertAfter(
+                    tx, into: doc.get(rootName), after: nil, [.any([.string(overByteLimitASCII)])])
+            }
+        }
+        defer { overBytesDoc.destroy() }
+        try await assertReadOnly(overBytesDoc, label: "257 UTF-8 ASCII bytes")
+
+        let overByteLimitMultibyte =
+            "broadcast: " + String(repeating: "a", count: 255 - "broadcast: ".utf8.count) + "é"
+        XCTAssertEqual(overByteLimitMultibyte.count, 256)
+        XCTAssertEqual(overByteLimitMultibyte.utf8.count, 257)
+        let overMultibyteDoc = try makeBroadcastDoc { doc in
+            try doc.transact { tx in
+                try YWrite.insertAfter(
+                    tx, into: doc.get(rootName), after: nil, [.any([.string(overByteLimitMultibyte)])])
+            }
+        }
+        defer { overMultibyteDoc.destroy() }
+        try await assertReadOnly(overMultibyteDoc, label: "257 UTF-8 multi-byte")
+
+        // 3. Per-root item count bound: 10,000 undeleted items (+ deleted items) allowed; 10,001 read-only.
+        let exactItemsDoc = try makeBroadcastDoc { doc in
+            try doc.transact { tx in
+                let root = doc.get(rootName)
+                let items = Array(repeating: YAnyValue.string(validItem), count: 10_001)
+                try YWrite.insertAfter(tx, into: root, after: nil, [.any(items)])
+                try YWrite.delete(tx, from: root, at: 0, length: 1)
+            }
+        }
+        defer { exactItemsDoc.destroy() }
+        XCTAssertFalse(NativeBlockProjection.hasUnsupportedAuxiliaryRoot(exactItemsDoc))
+        XCTAssertTrue(NativeBlockProjection.project(exactItemsDoc).isFullyModeled)
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(exactItemsDoc))
+
+        let overItemsDoc = try makeBroadcastDoc { doc in
+            try doc.transact { tx in
+                let items = Array(repeating: YAnyValue.string(validItem), count: 10_001)
+                try YWrite.insertAfter(tx, into: doc.get(rootName), after: nil, [.any(items)])
+            }
+        }
+        defer { overItemsDoc.destroy() }
+        try await assertReadOnly(overItemsDoc, label: "10,001 undeleted items")
+
+        // 4. Document root count bound: 8 `doc-<UUID>` roots allowed; 9 read-only.
+        let nineRoots = (0..<9).map { _ in "doc-\(UUID().uuidString.lowercased())" }
+        let exactRootsDoc = try makeBroadcastDoc { doc in
+            try doc.transact { tx in
+                for name in nineRoots.prefix(8) {
+                    try YWrite.insertAfter(
+                        tx, into: doc.get(name), after: nil, [.any([.string("broadcast: \(name)")])])
+                }
+            }
+        }
+        defer { exactRootsDoc.destroy() }
+        XCTAssertFalse(NativeBlockProjection.hasUnsupportedAuxiliaryRoot(exactRootsDoc))
+        XCTAssertTrue(NativeBlockProjection.project(exactRootsDoc).isFullyModeled)
+        XCTAssertNotNil(NativeBlockProjection.markdownShadow(exactRootsDoc))
+
+        let overRootsDoc = try makeBroadcastDoc { doc in
+            try doc.transact { tx in
+                for name in nineRoots {
+                    try YWrite.insertAfter(
+                        tx, into: doc.get(name), after: nil, [.any([.string("broadcast: \(name)")])])
+                }
+            }
+        }
+        defer { overRootsDoc.destroy() }
+        try await assertReadOnly(overRootsDoc, label: "9 doc-<UUID> roots")
+    }
+
+    func testPeerAppendToBroadcastRootPreservesSessionSelectionTypingAndShadowWithoutReset() async throws {
+        let baseState = BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID)
+        let broadcastUUID = "72ebe1bb-b927-49d0-9554-8235827e2c5a"
+        let broadcastRootName = "doc-\(broadcastUUID)"
+        let broadcastItem = "broadcast: \(broadcastRootName)"
+
+        let seedDoc = YDoc(clientID: 20, gc: true)
+        defer { seedDoc.destroy() }
+        try seedDoc.applyUpdate(YUpdateDecoder.decode(baseState), origin: .remote)
+        try seedDoc.transact { tx in
+            let broadcast = seedDoc.get(broadcastRootName)
+            try YWrite.insertAfter(tx, into: broadcast, after: nil, [.any([.string(broadcastItem)])])
+        }
+        let initialState = try YStateEncoder.encodeStateAsUpdate(seedDoc)
+
+        let env = makeEnvironment()
+        defer { env.clean() }
+        stubServer(state: initialState, canUpdate: true)
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected .native route") }
+        let input = try XCTUnwrap(session.input)
+        XCTAssertTrue(session.canType)
+        session.setEditing(true)
+        XCTAssertTrue(session.textView.isEditable)
+
+        let firstEntry = try XCTUnwrap(session.surface.rangeIndex.entry(for: Self.firstID))
+        let initialSelection = NSRange(location: firstEntry.textRange.location + 3, length: 2)
+        session.textView.selectedRange = initialSelection
+        input.textViewDidChangeSelection(session.textView)
+        await session.settle()
+        XCTAssertEqual(session.textView.selectedRange, initialSelection)
+
+        let maybeInitialShadow = await session.replicaDoc { NativeBlockProjection.markdownShadow($0) }
+        let initialShadow = try XCTUnwrap(maybeInitialShadow.flatMap { $0 })
+        let log = PatchLog(session)
+
+        // A peer appends another `"broadcast: doc-<uuid>"` item to the same broadcast root.
+        let peerDoc = YDoc(clientID: 21, gc: true)
+        defer { peerDoc.destroy() }
+        try peerDoc.applyUpdate(YUpdateDecoder.decode(initialState), origin: .remote)
+        let before = peerDoc.store.getStateVector()
+        try peerDoc.transact { tx in
+            let broadcast = peerDoc.get(broadcastRootName)
+            let tail = YBlockProjection.children(of: broadcast, includeFormats: false).last
+            try YWrite.insertAfter(tx, into: broadcast, after: tail, [.any([.string(broadcastItem)])])
+        }
+        let peerUpdate = try YStateEncoder.encodeStateAsUpdate(peerDoc, since: before)
+
+        try await session.integrateServerState(peerUpdate)
+
+        XCTAssertFalse(log.didReset)
+        XCTAssertTrue(log.deliveries.allSatisfy { $0.resync == nil })
+        XCTAssertTrue(log.patches.isEmpty)
+        XCTAssertEqual(session.textView.selectedRange, initialSelection)
+        XCTAssertTrue(session.canType)
+        XCTAssertNotNil(session.input)
+        XCTAssertTrue(session.state.writable)
+        XCTAssertTrue(session.textView.isEditable)
+
+        let maybeShadowAfterPeer = await session.replicaDoc { NativeBlockProjection.markdownShadow($0) }
+        let shadowAfterPeer = try XCTUnwrap(maybeShadowAfterPeer.flatMap { $0 })
+        XCTAssertEqual(shadowAfterPeer, initialShadow)
+
+        // Typing remains functional and updates the document after the peer broadcast append.
+        XCTAssertTrue(input.replace(range: NSRange(location: 0, length: 0), with: "Typed "))
+        await session.settle()
+        XCTAssertTrue(session.surface.blocks[0].runs.map(\.text).joined().hasPrefix("Typed "))
+    }
+
     // MARK: - Helpers
 
     private func makeLocalizationStore(language: AppLanguage = .english) -> (LocalizationStore, () -> Void) {

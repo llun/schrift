@@ -27,37 +27,56 @@ enum NativeBlockProjection {
     /// (`BlockNoteWriter.maxNestingDepth`).
     static let maxDepth = 64
 
+    static let maxBroadcastItemsPerRoot = 10_000
+    static let maxBroadcastItemUTF8Bytes = 256
+    static let maxBroadcastRoots = 8
+    static let broadcastItemPrefix = "broadcast: "
+
     /// Whether `name` / `type` is the Docs web app's auxiliary broadcast root
-    /// (`doc-<UUID>`, a `Y.Array` or untyped wire root holding only string
-    /// items). Preserved byte for byte and never written, ignored by native
+    /// (`doc-<UUID>`, a `Y.Array` or untyped wire root holding at most
+    /// `maxBroadcastItemsPerRoot` undeleted string items, each starting with
+    /// `"broadcast: "` and at most `maxBroadcastItemUTF8Bytes` UTF-8 bytes).
+    /// Preserved byte for byte and never written, ignored by native
     /// familiarity and save-shadow checks.
     static func isKnownAuxiliaryRoot(name: String, type: YType) -> Bool {
-        guard name.hasPrefix("doc-") else { return false }
+        guard name.hasPrefix("doc-"), name.utf8.count == 40 else { return false }
         let uuidPart = String(name.dropFirst(4))
         guard uuidPart.count == 36, UUID(uuidString: uuidPart) != nil else { return false }
         guard type.typeRef == nil || type.typeRef == .array, !type.isText, type.map.isEmpty else {
             return false
         }
+        guard type.length <= UInt(maxBroadcastItemsPerRoot) else { return false }
+        var itemCount = 0
         var item = type.start
         while let current = item {
-            defer { item = current.right }
+            item = current.right
             guard !current.deleted else { continue }
-            guard case .any(let values) = current.content,
-                values.allSatisfy({
-                    if case .string = $0 { return true }
-                    return false
-                })
-            else { return false }
+            guard case .any(let values) = current.content else { return false }
+            itemCount += values.count
+            if itemCount > maxBroadcastItemsPerRoot { return false }
+            for value in values {
+                guard case .string(let text) = value,
+                    text.hasPrefix(broadcastItemPrefix),
+                    text.utf8.count <= maxBroadcastItemUTF8Bytes
+                else { return false }
+            }
         }
         return true
     }
 
     /// True when `doc.share` contains any top-level root other than
-    /// `document-store` and known `doc-<UUID>` string-only broadcast arrays.
+    /// `document-store` and at most `maxBroadcastRoots` known `doc-<UUID>`
+    /// broadcast arrays.
     static func hasUnsupportedAuxiliaryRoot(_ doc: YDoc) -> Bool {
-        doc.share.contains { name, type in
-            name != BlockNoteYjs.fragmentField && !isKnownAuxiliaryRoot(name: name, type: type)
+        var knownAuxiliaryRoots = 0
+        for (name, type) in doc.share {
+            if name == BlockNoteYjs.fragmentField { continue }
+            guard knownAuxiliaryRoots < maxBroadcastRoots, isKnownAuxiliaryRoot(name: name, type: type) else {
+                return true
+            }
+            knownAuxiliaryRoots += 1
         }
+        return false
     }
 
     static func project(
