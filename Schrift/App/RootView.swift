@@ -316,6 +316,7 @@ struct RootView: View {
                     // re-fetchable server data whose only use is naming the session that
                     // just ended.
                     CurrentUserCacheStore().clear()
+                    NativeEditorDiagnosticsStore.shared.reset()
                     try? sessionStore.signOut()
                 })
         } else {

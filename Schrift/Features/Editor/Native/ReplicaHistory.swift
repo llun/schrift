@@ -55,6 +55,7 @@ final class ReplicaHistory {
 
     var canUndo: Bool { history.canUndo }
     var canRedo: Bool { history.canRedo }
+    var undoDepth: Int { history.undoStack.count }
 
     /// The next local change starts a new step: structural commands, a
     /// composition commit, a caret moved other than by typing, undo and redo.

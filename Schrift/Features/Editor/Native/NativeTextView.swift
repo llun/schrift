@@ -867,8 +867,23 @@ final class NativeTextView: UITextView {
         chipAccessibilityOverlay.frame = bounds
         orderAuxiliarySubviews()
         mediaDropController?.bringIndicatorsToFront(in: self)
+        if !hasReportedFirstVisibleContent, hasVisibleRenderedContent {
+            hasReportedFirstVisibleContent = true
+            onFirstVisibleContent?()
+        }
         onLayout?()
         onGeometry?()
+    }
+
+    private var hasVisibleRenderedContent: Bool {
+        guard bounds.width > 0, bounds.height > 0, let layout = textLayoutManager else { return false }
+        if textStorage.length == 0 { return true }
+        var hasFragment = false
+        layout.enumerateTextLayoutFragments(from: layout.documentRange.location, options: []) { _ in
+            hasFragment = true
+            return false
+        }
+        return hasFragment
     }
 
     /// Orders auxiliary subviews top-to-bottom so VoiceOver traverses header,
@@ -947,14 +962,22 @@ final class NativeTextView: UITextView {
 
     /// After every layout pass: scrolling, size changes (PR10b's reading position).
     var onLayout: (() -> Void)?
+    /// After the first layout pass that produces visible rendered content (PR15).
+    var onFirstVisibleContent: (() -> Void)?
+    private var hasReportedFirstVisibleContent = false
     /// After every layout pass too: the column editor's layout (PR12c).
     var onGeometry: (() -> Void)?
     /// The text view became first responder: the column editor's active column (PR12c).
     var onFocus: (() -> Void)?
+    /// The text view became first responder for diagnostics time-to-edit measurement (PR15).
+    var onBecameFirstResponder: (() -> Void)?
 
     override func becomeFirstResponder() -> Bool {
         let became = super.becomeFirstResponder()
-        if became { onFocus?() }
+        if became {
+            onFocus?()
+            onBecameFirstResponder?()
+        }
         return became
     }
 

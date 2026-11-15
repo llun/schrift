@@ -39,6 +39,7 @@ struct ProfileScreen: View {
     /// Computed once per recovery attempt: scanning the replica manifests is disk I/O.
     @State private var offersSetAside = false
     @State private var recoveredBySettingAside = false
+    @State private var diagnosticsCopied = false
     /// The Appearance sheet is a fitted detent sized to its three rows. It has to
     /// grow with the text inside it, or the last option falls below the fold at
     /// larger sizes with no way to reach it.
@@ -282,6 +283,18 @@ struct ProfileScreen: View {
                 Switch(isOn: $nativeEditor)
             }
             .accessibilityIdentifier("profile.nativeEditor")
+            if nativeEditor {
+                ListRow(
+                    icon: .content_copy,
+                    title: loc[.profile_native_editor_diagnostics],
+                    value: diagnosticsCopied ? loc[.toast_diagnostics_copied] : nil,
+                    action: {
+                        UIPasteboard.general.string = NativeEditorDiagnosticsStore.shared.sanitizedJSONString()
+                        diagnosticsCopied = true
+                    }
+                )
+                .accessibilityIdentifier("profile.nativeEditor.diagnostics")
+            }
         }
     }
 

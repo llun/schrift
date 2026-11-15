@@ -235,7 +235,7 @@ final class ReplicaCommandMailbox: Sendable {
     let stream: AsyncStream<ReplicaMessage>
     private let continuation: AsyncStream<ReplicaMessage>.Continuation
     /// Posted and not yet taken by the session (`took`).
-    private let queued = Mutex(0)
+    private let queueState = Mutex<(count: Int, enqueueTimesNs: [UInt64])>((0, []))
 
     init() {
         // Unbounded: `post` keeps the bound, so a detach or close can pass it.
@@ -244,14 +244,16 @@ final class ReplicaCommandMailbox: Sendable {
 
     @discardableResult
     func post(_ message: ReplicaMessage) -> Bool {
-        let enqueued = queued.withLock { queued in
+        let nowNs = DispatchTime.now().uptimeNanoseconds
+        let enqueued = queueState.withLock { state in
             let fits =
                 switch message {
                 case .detach, .close: true
-                default: queued < Self.capacity
+                default: state.count < Self.capacity
                 }
             guard fits, case .enqueued = continuation.yield(message) else { return false }
-            queued += 1
+            state.count += 1
+            state.enqueueTimesNs.append(nowNs)
             return true
         }
         if !enqueued { message.cancel() }
@@ -259,7 +261,18 @@ final class ReplicaCommandMailbox: Sendable {
     }
 
     /// The session took one message off `stream`.
-    func took() { queued.withLock { $0 -= 1 } }
+    func took() { _ = tookMeasuringWaitMs() }
+
+    /// The session took one message off `stream`; returns the queue wait in ms.
+    func tookMeasuringWaitMs() -> Double? {
+        let nowNs = DispatchTime.now().uptimeNanoseconds
+        return queueState.withLock { state in
+            state.count -= 1
+            guard !state.enqueueTimesNs.isEmpty else { return nil }
+            let enqueuedNs = state.enqueueTimesNs.removeFirst()
+            return Double(nowNs &- enqueuedNs) / 1_000_000.0
+        }
+    }
 
     func finish() { continuation.finish() }
 }

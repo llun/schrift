@@ -347,11 +347,16 @@ final class NativeCollaborationBinding {
             return
         }
         inFlight += 1
+        let mergeToken = NativeEditorDiagnosticsStore.shared.beginInterval(.remoteMerge)
+        let payloadBytes = sync.data.count
+        let sessionSeq = replica.diagnosticsSeq
         replica.mailbox.post(
             .integrate(
                 sync.data,
                 reply: { result in
                     Task { @MainActor [weak self] in
+                        NativeEditorDiagnosticsStore.shared.endInterval(
+                            .remoteMerge, token: mergeToken, sessionSeq: sessionSeq, byteCount: payloadBytes)
                         self?.integrated(result, step2: step2, early: early, generation: generation)
                     }
                 }))

@@ -126,7 +126,14 @@ final class ReplicaSaveAdapter {
                 manifest.journal.count - manifest.outbox.count >= Self.compactionJournalThreshold,
                 let restored = try store.restore(for: scope)
             else { return false }
+            let token = NativeEditorDiagnosticsStore.shared.beginInterval(.checkpointCompact)
+            var checkpointSize = 0
+            defer {
+                NativeEditorDiagnosticsStore.shared.endInterval(
+                    .checkpointCompact, token: token, byteCount: checkpointSize, itemCount: manifest.journal.count)
+            }
             let checkpoint = try Self.fullState(restored)
+            checkpointSize = checkpoint.count
             try store.compact(for: scope, checkpoint: checkpoint, baseRevision: restored.manifest.revision)
             return true
         } catch {
