@@ -166,7 +166,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         let badRootDoc = YDoc(clientID: 2)
         defer { badRootDoc.destroy() }
         let root = badRootDoc.get(BlockNoteYjs.fragmentField)
-        try badRootDoc.transact { tx in
+        try badRootDoc.transact { tx -> Void in
             _ = try YWrite.insertAfter(
                 tx, into: root, after: nil, [.type(YType(typeRef: .xmlElement(nodeName: "unknown")))])
         }
@@ -567,7 +567,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         let seedDoc = YDoc(clientID: 20, gc: true)
         defer { seedDoc.destroy() }
         try seedDoc.applyUpdate(YUpdateDecoder.decode(baseState), origin: .remote)
-        try seedDoc.transact { tx in
+        try seedDoc.transact { tx -> Void in
             let broadcast = seedDoc.get(broadcastRootName)
             try YWrite.insertAfter(tx, into: broadcast, after: nil, [.any([.string(broadcastItem)])])
         }
@@ -591,7 +591,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         let typedArrayRoot = YType(typeRef: .array)
         typedArrayRoot.integrate(doc: typedArrayDoc, item: nil)
         typedArrayDoc.share[broadcastRootName] = typedArrayRoot
-        try typedArrayDoc.transact { tx in
+        try typedArrayDoc.transact { tx -> Void in
             try YWrite.insertAfter(tx, into: typedArrayRoot, after: nil, [.any([.string(broadcastItem)])])
         }
         XCTAssertTrue(NativeBlockProjection.project(typedArrayDoc).isFullyModeled)
@@ -638,7 +638,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         let commentsDoc = YDoc(clientID: 30, gc: true)
         defer { commentsDoc.destroy() }
         try commentsDoc.applyUpdate(YUpdateDecoder.decode(baseState), origin: .remote)
-        try commentsDoc.transact { tx in
+        try commentsDoc.transact { tx -> Void in
             let comments = commentsDoc.get("comments")
             try YWrite.mapSet(tx, on: comments, key: "c1", .any([.string("hello")]))
         }
@@ -668,7 +668,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         let nonStringBroadcastDoc = YDoc(clientID: 31, gc: true)
         defer { nonStringBroadcastDoc.destroy() }
         try nonStringBroadcastDoc.applyUpdate(YUpdateDecoder.decode(baseState), origin: .remote)
-        try nonStringBroadcastDoc.transact { tx in
+        try nonStringBroadcastDoc.transact { tx -> Void in
             let bad = nonStringBroadcastDoc.get(broadcastRootName)
             try YWrite.insertAfter(tx, into: bad, after: nil, [.any([.int(42)])])
         }
@@ -719,7 +719,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         // 1. Item without the `"broadcast: "` prefix stays read-only.
         for badItem in ["broadcast:\(rootName)", "other: \(rootName)", ""] {
             let doc = try makeBroadcastDoc { doc in
-                try doc.transact { tx in
+                try doc.transact { tx -> Void in
                     let root = doc.get(rootName)
                     try YWrite.insertAfter(tx, into: root, after: nil, [.any([.string(badItem)])])
                 }
@@ -732,7 +732,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         let exactLimitItem = "broadcast: " + String(repeating: "a", count: 256 - "broadcast: ".utf8.count)
         XCTAssertEqual(exactLimitItem.utf8.count, 256)
         let exactBytesDoc = try makeBroadcastDoc { doc in
-            try doc.transact { tx in
+            try doc.transact { tx -> Void in
                 try YWrite.insertAfter(tx, into: doc.get(rootName), after: nil, [.any([.string(exactLimitItem)])])
             }
         }
@@ -744,7 +744,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         let overByteLimitASCII = exactLimitItem + "a"
         XCTAssertEqual(overByteLimitASCII.utf8.count, 257)
         let overBytesDoc = try makeBroadcastDoc { doc in
-            try doc.transact { tx in
+            try doc.transact { tx -> Void in
                 try YWrite.insertAfter(
                     tx, into: doc.get(rootName), after: nil, [.any([.string(overByteLimitASCII)])])
             }
@@ -757,7 +757,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         XCTAssertEqual(overByteLimitMultibyte.count, 256)
         XCTAssertEqual(overByteLimitMultibyte.utf8.count, 257)
         let overMultibyteDoc = try makeBroadcastDoc { doc in
-            try doc.transact { tx in
+            try doc.transact { tx -> Void in
                 try YWrite.insertAfter(
                     tx, into: doc.get(rootName), after: nil, [.any([.string(overByteLimitMultibyte)])])
             }
@@ -767,7 +767,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
 
         // 3. Per-root item count bound: 10,000 undeleted items (+ deleted items) allowed; 10,001 read-only.
         let exactItemsDoc = try makeBroadcastDoc { doc in
-            try doc.transact { tx in
+            try doc.transact { tx -> Void in
                 let root = doc.get(rootName)
                 let items = Array(repeating: YAnyValue.string(validItem), count: 10_001)
                 try YWrite.insertAfter(tx, into: root, after: nil, [.any(items)])
@@ -780,7 +780,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         XCTAssertNotNil(NativeBlockProjection.markdownShadow(exactItemsDoc))
 
         let overItemsDoc = try makeBroadcastDoc { doc in
-            try doc.transact { tx in
+            try doc.transact { tx -> Void in
                 let items = Array(repeating: YAnyValue.string(validItem), count: 10_001)
                 try YWrite.insertAfter(tx, into: doc.get(rootName), after: nil, [.any(items)])
             }
@@ -791,7 +791,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         // 4. Document root count bound: 8 `doc-<UUID>` roots allowed; 9 read-only.
         let nineRoots = (0..<9).map { _ in "doc-\(UUID().uuidString.lowercased())" }
         let exactRootsDoc = try makeBroadcastDoc { doc in
-            try doc.transact { tx in
+            try doc.transact { tx -> Void in
                 for name in nineRoots.prefix(8) {
                     try YWrite.insertAfter(
                         tx, into: doc.get(name), after: nil, [.any([.string("broadcast: \(name)")])])
@@ -804,7 +804,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         XCTAssertNotNil(NativeBlockProjection.markdownShadow(exactRootsDoc))
 
         let overRootsDoc = try makeBroadcastDoc { doc in
-            try doc.transact { tx in
+            try doc.transact { tx -> Void in
                 for name in nineRoots {
                     try YWrite.insertAfter(
                         tx, into: doc.get(name), after: nil, [.any([.string("broadcast: \(name)")])])
@@ -824,7 +824,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         let seedDoc = YDoc(clientID: 20, gc: true)
         defer { seedDoc.destroy() }
         try seedDoc.applyUpdate(YUpdateDecoder.decode(baseState), origin: .remote)
-        try seedDoc.transact { tx in
+        try seedDoc.transact { tx -> Void in
             let broadcast = seedDoc.get(broadcastRootName)
             try YWrite.insertAfter(tx, into: broadcast, after: nil, [.any([.string(broadcastItem)])])
         }
@@ -858,7 +858,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         defer { peerDoc.destroy() }
         try peerDoc.applyUpdate(YUpdateDecoder.decode(initialState), origin: .remote)
         let before = peerDoc.store.getStateVector()
-        try peerDoc.transact { tx in
+        try peerDoc.transact { tx -> Void in
             let broadcast = peerDoc.get(broadcastRootName)
             let tail = YBlockProjection.children(of: broadcast, includeFormats: false).last
             try YWrite.insertAfter(tx, into: broadcast, after: tail, [.any([.string(broadcastItem)])])
