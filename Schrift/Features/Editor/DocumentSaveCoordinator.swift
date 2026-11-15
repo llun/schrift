@@ -999,12 +999,20 @@ final class DocumentSaveCoordinator {
                 serverOrigin: client.serverOrigin, ownerUserID: ownerUserID, org: org,
                 documentID: record.localID)
             let checkpoint = MarkdownYjs.encode(markdown: seedMarkdown, serverOrigin: client.serverOrigin)
-            if let manifest = try? replicaStore.create(for: scope, checkpoint: checkpoint) {
+            do {
+                let manifest = try replicaStore.create(for: scope, checkpoint: checkpoint)
                 createdScope = scope
                 draft = PendingDraft(
                     documentID: record.localID, title: title, markdown: seedMarkdown,
                     updatedAt: record.createdAt,
                     replica: ReplicaDraftReference(manifest: manifest, markdown: seedMarkdown))
+            } catch {
+                // Only a partial create that left no manifest falls back to classic; preserve
+                // an intact replica if a manifest landed despite the thrown error.
+                if (try? replicaStore.manifest(for: scope)) == nil {
+                    try? replicaStore.remove(for: scope)
+                    _ = replicaStore.clearOwnership(for: scope)
+                }
             }
         }
         draftStore.save(draft)
@@ -1106,7 +1114,7 @@ final class DocumentSaveCoordinator {
     /// leaves behind — the false sentence round one removed.
     private func parentIDAliases(_ parentID: UUID?) -> Set<UUID> {
         guard let parentID else { return [] }
-        return aliases(of: parentID, checkpointedLocalID: checkpointedRecord(forServerID: parentID)?.localID)
+        return aliases(of: parentID, checkpointedLocalID: anyCheckpointedRecord(forServerID: parentID)?.localID)
     }
 
     /// The alias set with the server→local half already looked up, so a caller that needs it for
@@ -1212,7 +1220,7 @@ final class DocumentSaveCoordinator {
         let localID: UUID
         if isPendingCreate(documentID: documentID) {
             localID = documentID
-        } else if let checkpointed = checkpointedRecord(forServerID: documentID) {
+        } else if let checkpointed = anyCheckpointedRecord(forServerID: documentID) {
             localID = checkpointed.localID
         } else {
             return false
@@ -1780,7 +1788,7 @@ final class DocumentSaveCoordinator {
             // it is the designed completion path.
             // A queued photo joins the same list: its collection is deferred while an editor is
             // open, and a photo queued while the network was up has no reconnect edge coming.
-            if isPendingCreate(documentID: documentID) || checkpointedRecord(forServerID: documentID) != nil
+            if isPendingCreate(documentID: documentID) || anyCheckpointedRecord(forServerID: documentID) != nil
                 || isPendingDelete(documentID: documentID) || hasPendingAttachments(documentID: documentID)
             {
                 Task { await syncPendingDrafts() }
@@ -1814,15 +1822,25 @@ final class DocumentSaveCoordinator {
         (openEditors[documentID] ?? 0) > 0
     }
 
-    /// The record waiting to migrate onto this **server** id, if any — i.e. the id the user
-    /// actually meets that document under while it sits checkpointed, since
-    /// `pendingLocalDocuments` withholds the local row from that moment on.
-    private func checkpointedRecord(forServerID documentID: UUID) -> PendingDocumentCreate? {
+    /// Any pending record waiting to migrate onto this **server** id, regardless of session.
+    /// Used by device-wide protection guards (sweep/delete/move/alias) that must hold across
+    /// sign-out or transient identity gaps.
+    private func anyCheckpointedRecord(forServerID documentID: UUID) -> PendingDocumentCreate? {
         pendingCreates.values.first { $0.syncedServerID == documentID }
     }
 
-    /// Whether `documentID` is the server ID of a checkpointed local create whose
-    /// migration onto that server ID has not completed yet.
+    /// The current session's record waiting to migrate onto this **server** id, if any — i.e. the
+    /// id the signed-in user actually meets that document under while it sits checkpointed, since
+    /// `pendingLocalDocuments` withholds the local row from that moment on.
+    private func checkpointedRecord(forServerID documentID: UUID) -> PendingDocumentCreate? {
+        let currentUserID = signedInUser.userID
+        return pendingCreates.values.first {
+            $0.syncedServerID == documentID && belongsToSession($0, currentUserID: currentUserID)
+        }
+    }
+
+    /// Whether `documentID` is the server ID of a checkpointed local create for the signed-in
+    /// account and server origin whose migration onto that server ID has not completed yet.
     func hasCheckpointedCreate(forServerID documentID: UUID) -> Bool {
         checkpointedRecord(forServerID: documentID) != nil
     }
@@ -2365,12 +2383,12 @@ final class DocumentSaveCoordinator {
         if let nativeScope = draft?.replica?.scope
             ?? migrated?.replica?.scope
             ?? localOwnership.scope
-            ?? serverOwnership.scope
-        {
+            ?? serverOwnership.scope,
             migrateNativeCreatedDocument(
                 record, serverID: serverID, scope: nativeScope, draft: draft, migrated: migrated,
                 serverTitle: serverTitle, serverUpdatedAt: serverUpdatedAt, serverMarkdown: serverMarkdown,
                 document: document)
+        {
             return
         }
         // First **non-nil**, not first non-empty — and that distinction is load-bearing if a
@@ -3480,7 +3498,7 @@ final class DocumentSaveCoordinator {
             // be holding the local id while a tombstone names the server one — but if one were,
             // `completePendingDelete` would reach `discardPendingWork`'s restart-as-fresh-create
             // arm, which clears the checkpoint and re-POSTs the document the user deleted.
-            let localAlias = checkpointedRecord(forServerID: tombstone.documentID)?.localID
+            let localAlias = anyCheckpointedRecord(forServerID: tombstone.documentID)?.localID
             guard !hasOpenEditor(documentID: tombstone.documentID) else { continue }
             if let localAlias, hasOpenEditor(documentID: localAlias) { continue }
 
@@ -3555,7 +3573,7 @@ final class DocumentSaveCoordinator {
             // unreachable (a checkpointed record is withheld from every listing, so nothing can
             // open its local id); this makes it structural instead of argued, for free.
             guard !hasOpenEditor(documentID: tombstone.documentID) else { continue }
-            if let localAlias = checkpointedRecord(forServerID: tombstone.documentID)?.localID,
+            if let localAlias = anyCheckpointedRecord(forServerID: tombstone.documentID)?.localID,
                 hasOpenEditor(documentID: localAlias)
             {
                 continue
@@ -3641,7 +3659,7 @@ final class DocumentSaveCoordinator {
         // would hold the migration whenever the *old* parent happens to be tombstoned. Both
         // are stale readings of a placement the server has since changed, so move the record
         // with the document.
-        if var checkpointed = checkpointedRecord(forServerID: documentID), checkpointed.parentID != newParentID {
+        if var checkpointed = anyCheckpointedRecord(forServerID: documentID), checkpointed.parentID != newParentID {
             checkpointed.parentID = newParentID
             updatePendingCreate(checkpointed)
         }
@@ -3719,7 +3737,7 @@ final class DocumentSaveCoordinator {
             var cursor: UUID? = newParentID
             while let current = cursor {
                 guard current != documentID, visited.insert(current).inserted else { return false }
-                cursor = (pendingCreates[current] ?? checkpointedRecord(forServerID: current))?.parentID
+                cursor = (pendingCreates[current] ?? anyCheckpointedRecord(forServerID: current))?.parentID
             }
         }
         record.parentID = newParentID
@@ -3751,7 +3769,7 @@ final class DocumentSaveCoordinator {
         // the checkpoint hands it straight back to `runCreatePass`, which POSTs it fresh under
         // a new server id, exactly as the `.notFound` start-over does. Everything else — the
         // record, its draft, its sub-pages — stays where it is.
-        if var checkpointed = checkpointedRecord(forServerID: documentID) {
+        if var checkpointed = anyCheckpointedRecord(forServerID: documentID) {
             checkpointed.syncedServerID = nil
             checkpointed.postedTitle = nil
             updatePendingCreate(checkpointed)
@@ -4170,7 +4188,7 @@ final class DocumentSaveCoordinator {
                         // hand-built baseline-less draft is what that shape naturally looks
                         // like, which is how it would become reachable.
                         guard !createStoreUnreadable else { continue }
-                        guard checkpointedRecord(forServerID: draft.documentID) == nil else { continue }
+                        guard anyCheckpointedRecord(forServerID: draft.documentID) == nil else { continue }
                         // And never a draft whose deletion is queued: it is the undo's only
                         // payload. Unreachable through the guard at the top of the loop, and
                         // stated here for the same reason its three neighbours are — this is
@@ -4212,7 +4230,7 @@ final class DocumentSaveCoordinator {
                 // reached one error over. Only the **delete** is withheld: the push path above
                 // must keep running, since it is what clears `finishMigration`'s both-drafts
                 // guard.
-                guard checkpointedRecord(forServerID: draft.documentID) == nil else { continue }
+                guard anyCheckpointedRecord(forServerID: draft.documentID) == nil else { continue }
                 // **And never a draft whose deletion is queued.** A 404 here is exactly what a
                 // tombstone predicts — the DELETE may already have landed in a pass that died
                 // before its cleanup ran — but it is also what a *co-author's* delete looks
@@ -4611,7 +4629,7 @@ final class DocumentSaveCoordinator {
             discardLocalSubtree(rootedAt: documentID)
             states[documentID] = .idle
             clearFailure(documentID)
-        } else if let checkpointed = checkpointedRecord(forServerID: documentID) {
+        } else if let checkpointed = anyCheckpointedRecord(forServerID: documentID) {
             // Clear it under the id it is actually keyed by, and take the local draft with it
             // — that draft is what a later pass would rebuild the document from. The rest
             // mirrors `migrateCreatedDocument`'s id-keyed sweep for the same transition, minus
