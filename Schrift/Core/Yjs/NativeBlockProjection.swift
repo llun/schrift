@@ -27,13 +27,51 @@ enum NativeBlockProjection {
     /// (`BlockNoteWriter.maxNestingDepth`).
     static let maxDepth = 64
 
+    /// Whether `name` / `type` is the Docs web app's auxiliary broadcast root
+    /// (`doc-<UUID>`, a `Y.Array` or untyped wire root holding only string
+    /// items). Preserved byte for byte and never written, ignored by native
+    /// familiarity and save-shadow checks.
+    static func isKnownAuxiliaryRoot(name: String, type: YType) -> Bool {
+        guard name.hasPrefix("doc-") else { return false }
+        let uuidPart = String(name.dropFirst(4))
+        guard uuidPart.count == 36, UUID(uuidString: uuidPart) != nil else { return false }
+        guard type.typeRef == nil || type.typeRef == .array, !type.isText, type.map.isEmpty else {
+            return false
+        }
+        var item = type.start
+        while let current = item {
+            defer { item = current.right }
+            guard !current.deleted else { continue }
+            guard case .any(let values) = current.content,
+                values.allSatisfy({
+                    if case .string = $0 { return true }
+                    return false
+                })
+            else { return false }
+        }
+        return true
+    }
+
+    /// True when `doc.share` contains any top-level root other than
+    /// `document-store` and known `doc-<UUID>` string-only broadcast arrays.
+    static func hasUnsupportedAuxiliaryRoot(_ doc: YDoc) -> Bool {
+        doc.share.contains { name, type in
+            name != BlockNoteYjs.fragmentField && !isKnownAuxiliaryRoot(name: name, type: type)
+        }
+    }
+
     static func project(
         _ doc: YDoc, generation: UUID = UUID(), interlinkingOrigin: String? = nil, nativeMarks: Bool = true,
         inlineObjects: Bool = false
     ) -> (blocks: [NativeBlockSnapshot], isFullyRenderable: Bool, isFullyModeled: Bool) {
-        guard let root = doc.share[BlockNoteYjs.fragmentField] else { return ([], true, true) }
+        let hasBadExtraRoot = hasUnsupportedAuxiliaryRoot(doc)
+        guard let root = doc.share[BlockNoteYjs.fragmentField] else {
+            return ([], !hasBadExtraRoot, !hasBadExtraRoot)
+        }
         let rootChildren = YBlockProjection.children(of: root, includeFormats: false)
-        if rootChildren.isEmpty { return ([], true, true) }
+        if rootChildren.isEmpty {
+            return ([], !hasBadExtraRoot, !hasBadExtraRoot)
+        }
         guard rootChildren.count == 1, case .type(let group) = rootChildren[0].content,
             group.typeRef == .xmlElement(nodeName: "blockGroup")
         else { return ([], false, false) }
@@ -43,7 +81,7 @@ enum NativeBlockProjection {
             group, depth: 0, parent: nil, generation: generation, interlinkingOrigin: interlinkingOrigin,
             nativeMarks: nativeMarks, inlineObjects: inlineObjects, seen: &seen, into: &blocks)
         let renderable = blocks.allSatisfy { !$0.block.fidelity.isOpaque }
-        let modeled = renderable && blocks.allSatisfy { $0.block.fidelity == .modeled }
+        let modeled = renderable && blocks.allSatisfy { $0.block.fidelity == .modeled } && !hasBadExtraRoot
         return (blocks, renderable, modeled)
     }
 
@@ -140,6 +178,7 @@ enum NativeBlockProjection {
     /// a trailing space just typed always has a shadow. `nil` when the
     /// document has no total shadow.
     static func markdownShadow(_ doc: YDoc, interlinkingOrigin: String? = nil) -> String? {
+        guard !hasUnsupportedAuxiliaryRoot(doc) else { return nil }
         let tree = project(doc, nativeMarks: false, inlineObjects: true)
         // A flat document with no native-only block or inline object keeps
         // exactly the classic shadow.
@@ -540,7 +579,7 @@ enum NativeBlockProjection {
     /// Markdown shadow. Never returns document text.
     static func firstUnsupportedReason(_ doc: YDoc, interlinkingOrigin: String? = nil) -> NativeUnfamiliarBlock? {
         let projected = project(doc)
-        if projected.blocks.isEmpty && !projected.isFullyRenderable {
+        if (projected.blocks.isEmpty && !projected.isFullyRenderable) || hasUnsupportedAuxiliaryRoot(doc) {
             return NativeUnfamiliarBlock(node: "", reason: "unsupported root")
         }
         if let first = projected.blocks.first(where: { $0.block.fidelity != .modeled }) {

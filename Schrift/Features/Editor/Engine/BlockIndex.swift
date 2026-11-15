@@ -73,7 +73,7 @@ struct BlockIndex {
     private let doc: YDoc
     /// Re-resolved on every rebuild: an engine created on an empty document
     /// must start patching once the owner seeds the root.
-    private var root: YType?
+    private(set) var root: YType?
     /// Tables the native table editor opened (PR11a), by block id: their
     /// paragraph ids in grid order (cell by cell, paragraph by paragraph).
     /// Each is an entry (`entries`) addressed like a block's text, but never

@@ -548,6 +548,134 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         }
     }
 
+    // MARK: - Auxiliary Broadcast Root (doc-<UUID>)
+
+    func testAuxiliaryBroadcastArrayRootIsTypablePreservedAndIgnoredByShadowWhileUnknownRootsStayReadOnly()
+        async throws
+    {
+        let baseState = BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID)
+        let baseDoc = YDoc(clientID: 10, gc: true)
+        defer { baseDoc.destroy() }
+        try baseDoc.applyUpdate(YUpdateDecoder.decode(baseState), origin: .remote)
+        let expectedShadow = try XCTUnwrap(NativeBlockProjection.markdownShadow(baseDoc))
+
+        // 1. Build a doc with document-store + root array `doc-<uuid>` holding `"broadcast: doc-<uuid>"`.
+        let broadcastUUID = "72ebe1bb-b927-49d0-9554-8235827e2c5a"
+        let broadcastRootName = "doc-\(broadcastUUID)"
+        let broadcastItem = "broadcast: \(broadcastRootName)"
+
+        let seedDoc = YDoc(clientID: 20, gc: true)
+        defer { seedDoc.destroy() }
+        try seedDoc.applyUpdate(YUpdateDecoder.decode(baseState), origin: .remote)
+        try seedDoc.transact { tx in
+            let broadcast = seedDoc.get(broadcastRootName)
+            try YWrite.insertAfter(tx, into: broadcast, after: nil, [.any([.string(broadcastItem)])])
+        }
+        let wireState = try YStateEncoder.encodeStateAsUpdate(seedDoc)
+
+        // Decode from wire into a fresh YDoc (untyped bare root, matching live capture).
+        let wireDoc = YDoc(clientID: 21, gc: true)
+        defer { wireDoc.destroy() }
+        try wireDoc.applyUpdate(YUpdateDecoder.decode(wireState), origin: .remote)
+
+        let projection = NativeBlockProjection.project(wireDoc)
+        XCTAssertTrue(projection.isFullyRenderable)
+        XCTAssertTrue(projection.isFullyModeled)
+        XCTAssertNil(NativeBlockProjection.firstUnsupportedReason(wireDoc))
+        XCTAssertEqual(NativeBlockProjection.markdownShadow(wireDoc), expectedShadow)
+
+        // Also check an explicitly `.array`-typed root.
+        let typedArrayDoc = YDoc(clientID: 22, gc: true)
+        defer { typedArrayDoc.destroy() }
+        try typedArrayDoc.applyUpdate(YUpdateDecoder.decode(baseState), origin: .remote)
+        let typedArrayRoot = YType(typeRef: .array)
+        typedArrayRoot.integrate(doc: typedArrayDoc, item: nil)
+        typedArrayDoc.share[broadcastRootName] = typedArrayRoot
+        try typedArrayDoc.transact { tx in
+            try YWrite.insertAfter(tx, into: typedArrayRoot, after: nil, [.any([.string(broadcastItem)])])
+        }
+        XCTAssertTrue(NativeBlockProjection.project(typedArrayDoc).isFullyModeled)
+        XCTAssertEqual(NativeBlockProjection.markdownShadow(typedArrayDoc), expectedShadow)
+
+        // Inspect and open through NativeEditorOpen (with a different documentID than broadcastUUID).
+        let inspected = try await NativeEditorSession.inspect(state: wireState)
+        defer { inspected.close() }
+        XCTAssertTrue(inspected.canType)
+        XCTAssertFalse(inspected.hasUnsupportedRoot)
+        XCTAssertNil(inspected.unfamiliarContent)
+
+        let env = makeEnvironment()
+        defer { env.clean() }
+        XCTAssertNotEqual(env.documentID.uuidString.lowercased(), broadcastUUID)
+        stubServer(state: wireState, canUpdate: true)
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected .native route") }
+        let input = try XCTUnwrap(session.input, "doc-<UUID> broadcast array must keep document typable")
+        XCTAssertTrue(session.canType)
+        XCTAssertFalse(session.hasUnsupportedRoot)
+        XCTAssertNil(open.editUnavailableReason)
+
+        // 2. Edit round-trip leaves the broadcast root's items unchanged.
+        XCTAssertTrue(input.replace(range: NSRange(location: 0, length: 0), with: "Edited "))
+        await session.settle()
+        let maybeRoundTripped = await session.replicaDoc { doc in
+            try? YStateEncoder.encodeStateAsUpdate(doc)
+        }
+        let roundTrippedBytes = try XCTUnwrap(maybeRoundTripped.flatMap { $0 })
+        let roundTrippedDoc = YDoc(clientID: 23, gc: true)
+        defer { roundTrippedDoc.destroy() }
+        try roundTrippedDoc.applyUpdate(YUpdateDecoder.decode(roundTrippedBytes), origin: .remote)
+        XCTAssertTrue(
+            NativeBlockProjection.project(roundTrippedDoc).blocks[0].block.runs.map(\.text).joined()
+                .hasPrefix("Edited "))
+        let preservedItems = YBlockProjection.children(
+            of: try XCTUnwrap(roundTrippedDoc.share[broadcastRootName]), includeFormats: false)
+        XCTAssertEqual(preservedItems.map(\.content), [.any([.string(broadcastItem)])])
+
+        // 3. Different unknown roots (e.g. root map `comments`, or non-string / invalid `doc-*` roots) stay read-only.
+        let commentsDoc = YDoc(clientID: 30, gc: true)
+        defer { commentsDoc.destroy() }
+        try commentsDoc.applyUpdate(YUpdateDecoder.decode(baseState), origin: .remote)
+        try commentsDoc.transact { tx in
+            let comments = commentsDoc.get("comments")
+            try YWrite.mapSet(tx, on: comments, key: "c1", .any([.string("hello")]))
+        }
+        let commentsState = try YStateEncoder.encodeStateAsUpdate(commentsDoc)
+        XCTAssertFalse(NativeBlockProjection.project(commentsDoc).isFullyModeled)
+        XCTAssertNil(NativeBlockProjection.markdownShadow(commentsDoc))
+        XCTAssertEqual(
+            NativeBlockProjection.firstUnsupportedReason(commentsDoc),
+            NativeUnfamiliarBlock(node: "", reason: "unsupported root"))
+
+        let commentsEnv = makeEnvironment()
+        defer { commentsEnv.clean() }
+        stubServer(state: commentsState, canUpdate: true)
+        let commentsOpen = NativeEditorOpen(preference: { true })
+        defer { commentsOpen.close() }
+        await commentsOpen.open(viewModel: commentsEnv.model, isOffline: false, canUpdate: true)
+        guard case .native(let commentsSession) = commentsOpen.route else {
+            return XCTFail("expected .native read-only route")
+        }
+        XCTAssertFalse(commentsSession.canType)
+        XCTAssertNil(commentsSession.input)
+        XCTAssertEqual(
+            commentsOpen.editUnavailableReason,
+            .unfamiliarContent(blockNode: "", reason: "unsupported root"))
+
+        // Non-string item in `doc-<uuid>` is also refused.
+        let nonStringBroadcastDoc = YDoc(clientID: 31, gc: true)
+        defer { nonStringBroadcastDoc.destroy() }
+        try nonStringBroadcastDoc.applyUpdate(YUpdateDecoder.decode(baseState), origin: .remote)
+        try nonStringBroadcastDoc.transact { tx in
+            let bad = nonStringBroadcastDoc.get(broadcastRootName)
+            try YWrite.insertAfter(tx, into: bad, after: nil, [.any([.int(42)])])
+        }
+        XCTAssertFalse(NativeBlockProjection.project(nonStringBroadcastDoc).isFullyModeled)
+        XCTAssertNil(NativeBlockProjection.markdownShadow(nonStringBroadcastDoc))
+    }
+
     // MARK: - Helpers
 
     private func makeLocalizationStore(language: AppLanguage = .english) -> (LocalizationStore, () -> Void) {

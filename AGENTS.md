@@ -4068,6 +4068,7 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   drop `markdownShadow` (`nil`). Classic projection keeps all three opaque. `BlockNoteSubtreePayload`
   and `BlockNoteInlinePayload` validate plain unmarked content, preserve `<math>` text on copy/paste,
   and reject newlines/control chars/`U+FFFC` inside `<math>`.
+  **Auxiliary broadcast root (`doc-<UUID>`):** Docs' `useBroadcastStore.tsx` writes a top-level `Y.Array` named `doc-<UUID>` holding string items (`"broadcast: doc-<UUID>"`); `NativeBlockProjection` (`isKnownAuxiliaryRoot`) preserves it untouched while ignoring it in `canType`, `markdownShadow`, and `firstUnsupportedReason`, and still refuses any other unknown root (`"unsupported root"`).
   **Shadow:** `NativeBlockProjection.markdownShadow(_:interlinkingOrigin:)` and
   `NativeExportMarkdown` match Docs' `y-provider` (which omits `@blocknote/math-block` and
   `@blocknote/diagram-block`), dropping familiar `mathBlock`/`diagram` subtrees (including nested
