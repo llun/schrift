@@ -3319,9 +3319,10 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
 
     /// A remote integrate brought in content this editor cannot author: the
     /// surface stops taking input, with the same reason an open of such a
-    /// document shows. Nothing is rolled back — predictions already posted are
-    /// journaled and still save — and keys held behind a barrier, which were
-    /// never posted, are kept as a recovery entry rather than lost.
+    /// document shows. Nothing is rolled back — predictions and a composition
+    /// commit already posted are journaled and still save — and text held
+    /// behind a barrier, which was never posted, is kept as a recovery entry
+    /// (a held backspace is dropped, as `rollBack` drops it).
     func stopForUnfamiliarContent() {
         // Under a composition the view is UIKit's: the stop waits for its end.
         guard !compositionOwnsView else {
@@ -3336,11 +3337,6 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         var held = ""
         for case .insert(let typed) in intents { held += typed }
         intents = []
-        if let pending = pendingCompositionCommit {
-            pendingCompositionCommit = nil
-            composition.finish(pending.id)
-            composition.recover(pending.text, blockID: pending.blockID)
-        }
         if !held.isEmpty, let block = blockSelection()?.start.0 ?? surface.blocks.first?.id {
             composition.recover(held, blockID: block)
         }

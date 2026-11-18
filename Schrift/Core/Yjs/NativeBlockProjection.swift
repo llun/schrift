@@ -218,7 +218,8 @@ enum NativeBlockProjection {
     }
 
     /// The save's Markdown shadow when the document has no total one: the
-    /// blocks Markdown can spell, in order, and nothing for the rest. Never
+    /// blocks Markdown can spell, in order, and nothing for the rest (or, when
+    /// even that subset cannot be rendered, every block's plain text). Never
     /// nil, so a capture never fails for lack of a shadow — a replica draft's
     /// markdown is only a fingerprint/display shadow, and the raw Yjs bytes
     /// are what the save sends. Deterministic: the same document always

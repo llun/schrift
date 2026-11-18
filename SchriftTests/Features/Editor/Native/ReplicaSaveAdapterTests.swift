@@ -654,4 +654,46 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         XCTAssertEqual(try f.store.outbox(for: f.scope)?.updates, [f.update], "its bytes are still unsent")
         XCTAssertEqual(log.count(ofMethod: "PATCH"), patchesBefore, "the sync pass sends nothing")
     }
+
+    /// The dangerous half of the same rule: a server body equal to the lossy
+    /// shadow is never read as "already synced" — the pass pushes the outbox.
+    func testASyncPassWhoseServerBodyEqualsTheLossyShadowSendsTheOutbox() async throws {
+        let f = try fixture(extraBlocks: [
+            BlockNoteBlock(node: "futureBlock", props: [], runs: [InlineRun("future")], id: "future")
+        ])
+        let log = RequestRecorder()
+        stub(log: log, bodyError: URLError(.notConnectedToInternet))
+        try f.coordinator.enqueueReplica(adapter: f.adapter, title: "Doc")
+        await waitUntil { self.isPendingSync(f.coordinator.state(for: self.documentID)) }
+        let draft = try XCTUnwrap(f.drafts.draft(for: documentID))
+        XCTAssertEqual(draft.markdown, "xOne\n")
+
+        let ownerID = owner.uuidString
+        let documentIDString = documentID.uuidString
+        let patchesBefore = log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/")
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let path = request.url?.absoluteString ?? ""  // `URL.path` drops the trailing slash
+            if path.hasSuffix("/config/") {
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+            }
+            if path.hasSuffix("/users/me/") {
+                return .init(statusCode: 200, headers: [:], body: Data("{\"id\":\"\(ownerID)\"}".utf8), error: nil)
+            }
+            if path.contains("formatted-content") {
+                let body = Data(
+                    """
+                    {"id":"\(documentIDString)","title":"Doc","content":"xOne\\n",
+                     "created_at":"2026-01-15T10:30:00Z","updated_at":"2030-01-15T10:30:00Z"}
+                    """.utf8)
+                return .init(statusCode: 200, headers: [:], body: body, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await f.coordinator.syncPendingDrafts()
+        await waitUntil { self.isSaved(f.coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/"), patchesBefore + 1)
+        XCTAssertNil(try f.store.outbox(for: f.scope), "the unsent bytes went out")
+    }
 }

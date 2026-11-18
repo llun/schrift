@@ -149,4 +149,22 @@ final class ReplicaTypabilityTests: NativeEditingTestCase {
         XCTAssertTrue(harness.log.commands.isEmpty, "the keystroke was refused, not journaled")
         XCTAssertEqual(text(of: try block(harness.session, Self.firstID)), "First paragraph.")
     }
+
+    /// A web peer centering a paragraph (an unmodeled prop, not an unknown
+    /// node) takes authoring away the same way, with the prop as the reason.
+    func testAPeerCenteringAParagraphStopsTypingWithThePropReason() async throws {
+        let harness = try await makeHarness()
+        addTeardownBlock { await harness.close() }
+        let peer = try makeDoc(clientID: 23)
+        defer { peer.destroy() }
+        let update = try BlockNoteWriter(doc: peer).setBlockType(
+            block: Self.thirdID, to: "paragraph", props: [("textAlignment", .string("center"))])
+
+        harness.session.replica?.mailbox.post(.integrate(update, reply: nil))
+        await harness.settle()
+
+        XCTAssertFalse(harness.session.canType)
+        XCTAssertEqual(harness.session.unfamiliarContent?.reason, "prop:textAlignment")
+        XCTAssertTrue(harness.input.isFrozen)
+    }
 }

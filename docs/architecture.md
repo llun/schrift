@@ -688,6 +688,8 @@ the changed display. A remote integrate that brings in a block the editor cannot
 author (or takes the total shadow away) downgrades `canType` for every surface:
 typing stops with the same unfamiliar-content reason an open of such a document
 shows, and what was journaled before still saves. Re-enabling happens on reopen.
+The document editor leaves editing mode as Done does, committing an in-progress IME
+composition as typed; a source editor's composition defers the stop until it ends.
 A draft reference older than the journal
 is re-stamped from the current raw revision during replay; an incompatible one is
 refused, and a first capture projects its shadow from raw rather than trusting the

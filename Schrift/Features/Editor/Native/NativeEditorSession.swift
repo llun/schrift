@@ -488,7 +488,9 @@ final class NativeEditorSession {
         session.textView.accessibilityIdentifier = "nativeEditor.table.cell"
         session.consume(attachment.deliveries)
         // The table types while the document does (the replica's one journal).
-        if input != nil, textView.isEditable {
+        // `session.canType || !canType`: a downgrade that raced this attach (the
+        // parent has not applied it yet) must not enable a child surface.
+        if input != nil, textView.isEditable, session.canType || !canType {
             session.enableTyping(persist: nil, scheduler: saveScheduler)
             session.setExpectedWritable(isWritable)
         }
@@ -548,7 +550,9 @@ final class NativeEditorSession {
         session.textView.accessibilityIdentifier = "nativeEditor.column"
         session.consume(attachment.deliveries)
         // The column types while the document does (the replica's one journal).
-        if input != nil, textView.isEditable {
+        // `session.canType || !canType`: a downgrade that raced this attach (the
+        // parent has not applied it yet) must not enable a child surface.
+        if input != nil, textView.isEditable, session.canType || !canType {
             session.enableTyping(persist: nil, scheduler: saveScheduler)
             session.setExpectedWritable(isWritable)
         }
@@ -592,7 +596,9 @@ final class NativeEditorSession {
         children.add(session)
         Self.configureSourceTextView(session.textView)
         session.consume(attachment.deliveries)
-        if input != nil, textView.isEditable {
+        // `session.canType || !canType`: a downgrade that raced this attach (the
+        // parent has not applied it yet) must not enable a child surface.
+        if input != nil, textView.isEditable, session.canType || !canType {
             session.enableTyping(persist: nil, scheduler: saveScheduler)
             session.setExpectedWritable(isWritable)
         }

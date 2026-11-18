@@ -142,7 +142,10 @@ spell whole (an opaque/rich block) gets a deterministic lossy shadow — the blo
 Markdown can spell, in order, and nothing for the rest. That shadow is only a
 fingerprint and a display string: it is never sent as content, never written to the
 classic cache, and never a reason to drop a replica draft (the sync pass keeps such a
-draft and its unsent outbox, asking the user rather than discarding). A manual retry
+draft and its unsent outbox, asking the user rather than discarding). Because a lossy
+shadow never equals the server's export, rule 1 (our own last push) cannot recognise a
+later replay of such a document, which may then ask about a conflict with the user's own
+save. A manual retry
 (`saveNow`) of a raw draft re-runs the raw capture
 (`retryReplicaDraft`). A failed raw capture after "Keep mine"
 reports `.failed` instead of a silent no-op.

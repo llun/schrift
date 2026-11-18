@@ -854,6 +854,8 @@ actor DocumentReplicaSession {
     /// before the downgrade still saves (the capture no longer needs a total
     /// shadow).
     private func recheckTypability() {
+        // shortcut: a full projection + shadow per remote frame; measure with
+        // the nesting cap before live collaboration is on by default (plan PR 13).
         guard canType else { return }
         let projected = NativeBlockProjection.project(doc)
         guard
@@ -902,8 +904,11 @@ actor DocumentReplicaSession {
         doc = graph.doc
         engine = graph.engine
         sink = graph.sink
-        canType = graph.canType
-        unfamiliarContent = graph.unfamiliarContent
+        // Downgrade only: a rebuild never re-enables authoring mid-session.
+        if canType {
+            canType = graph.canType
+            unfamiliarContent = graph.unfamiliarContent
+        }
         history = journal == nil ? nil : ReplicaHistory(doc: doc, engine: engine)
         // The new engine's index opens the groups, tables and sources surfaces show again.
         for group in openGroups.keys { engine.openColumns(group) }
