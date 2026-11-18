@@ -229,6 +229,8 @@ final class NativeEditorSession {
     /// A remote integrate can take it away mid-session (downgrade only): the
     /// surface then stops taking input and shows the unfamiliar-content reason.
     private(set) var canType: Bool
+    /// `canType` at construction: a later downgrade never changes it.
+    private let openedTypeable: Bool
     /// First unfamiliar block/prop/root reason when `!canType`, if any.
     private(set) var unfamiliarContent: NativeUnfamiliarBlock?
     private(set) var input: NativeInputCoordinator?
@@ -299,6 +301,7 @@ final class NativeEditorSession {
         self.navigation = navigation
         self.hasUnsupportedRoot = hasUnsupportedRoot
         self.canType = canType
+        openedTypeable = canType
         self.unfamiliarContent = unfamiliarContent
         self.revision = revision
         self.recoveries = recoveries
@@ -488,9 +491,11 @@ final class NativeEditorSession {
         session.textView.accessibilityIdentifier = "nativeEditor.table.cell"
         session.consume(attachment.deliveries)
         // The table types while the document does (the replica's one journal).
-        // `session.canType || !canType`: a downgrade that raced this attach (the
-        // parent has not applied it yet) must not enable a child surface.
-        if input != nil, textView.isEditable, session.canType || !canType {
+        // A child of a document that opened typeable types only while the replica
+        // still says so: a downgrade the parent has not applied (or deferred under
+        // a composition) must not enable it. Isolated hosts that type around
+        // preserved blocks opened non-typeable and keep their behaviour.
+        if input != nil, textView.isEditable, session.canType || !openedTypeable {
             session.enableTyping(persist: nil, scheduler: saveScheduler)
             session.setExpectedWritable(isWritable)
         }
@@ -550,9 +555,11 @@ final class NativeEditorSession {
         session.textView.accessibilityIdentifier = "nativeEditor.column"
         session.consume(attachment.deliveries)
         // The column types while the document does (the replica's one journal).
-        // `session.canType || !canType`: a downgrade that raced this attach (the
-        // parent has not applied it yet) must not enable a child surface.
-        if input != nil, textView.isEditable, session.canType || !canType {
+        // A child of a document that opened typeable types only while the replica
+        // still says so: a downgrade the parent has not applied (or deferred under
+        // a composition) must not enable it. Isolated hosts that type around
+        // preserved blocks opened non-typeable and keep their behaviour.
+        if input != nil, textView.isEditable, session.canType || !openedTypeable {
             session.enableTyping(persist: nil, scheduler: saveScheduler)
             session.setExpectedWritable(isWritable)
         }
@@ -596,9 +603,11 @@ final class NativeEditorSession {
         children.add(session)
         Self.configureSourceTextView(session.textView)
         session.consume(attachment.deliveries)
-        // `session.canType || !canType`: a downgrade that raced this attach (the
-        // parent has not applied it yet) must not enable a child surface.
-        if input != nil, textView.isEditable, session.canType || !canType {
+        // A child of a document that opened typeable types only while the replica
+        // still says so: a downgrade the parent has not applied (or deferred under
+        // a composition) must not enable it. Isolated hosts that type around
+        // preserved blocks opened non-typeable and keep their behaviour.
+        if input != nil, textView.isEditable, session.canType || !openedTypeable {
             session.enableTyping(persist: nil, scheduler: saveScheduler)
             session.setExpectedWritable(isWritable)
         }
