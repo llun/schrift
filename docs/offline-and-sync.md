@@ -139,7 +139,8 @@ only for the remembered signed-in owner. The shadow is never caller-supplied: a
 stored draft's verified shadow is re-captured, or a first capture is projected from
 raw. A capture never fails for lack of a total shadow: a document Markdown cannot
 spell whole (an opaque/rich block) gets a deterministic lossy shadow — the blocks
-Markdown can spell, in order, and nothing for the rest. That shadow is only a
+Markdown can spell, in order, and nothing for the rest (or every block's plain
+text, when even that subset cannot be rendered). That shadow is only a
 fingerprint and a display string: it is never sent as content, never written to the
 classic cache, and never a reason to drop a replica draft (the sync pass keeps such a
 draft and its unsent outbox, asking the user rather than discarding). Because a lossy

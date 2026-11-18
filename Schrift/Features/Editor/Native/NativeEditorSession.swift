@@ -494,7 +494,8 @@ final class NativeEditorSession {
         // A child of a document that opened typeable types only while the replica
         // still says so: a downgrade the parent has not applied (or deferred under
         // a composition) must not enable it. Isolated hosts that type around
-        // preserved blocks opened non-typeable and keep their behaviour.
+        // preserved blocks opened non-typeable and keep their behaviour (in
+        // production a non-typeable open never makes the parent's view editable).
         if input != nil, textView.isEditable, session.canType || !openedTypeable {
             session.enableTyping(persist: nil, scheduler: saveScheduler)
             session.setExpectedWritable(isWritable)
@@ -558,7 +559,8 @@ final class NativeEditorSession {
         // A child of a document that opened typeable types only while the replica
         // still says so: a downgrade the parent has not applied (or deferred under
         // a composition) must not enable it. Isolated hosts that type around
-        // preserved blocks opened non-typeable and keep their behaviour.
+        // preserved blocks opened non-typeable and keep their behaviour (in
+        // production a non-typeable open never makes the parent's view editable).
         if input != nil, textView.isEditable, session.canType || !openedTypeable {
             session.enableTyping(persist: nil, scheduler: saveScheduler)
             session.setExpectedWritable(isWritable)
@@ -606,7 +608,8 @@ final class NativeEditorSession {
         // A child of a document that opened typeable types only while the replica
         // still says so: a downgrade the parent has not applied (or deferred under
         // a composition) must not enable it. Isolated hosts that type around
-        // preserved blocks opened non-typeable and keep their behaviour.
+        // preserved blocks opened non-typeable and keep their behaviour (in
+        // production a non-typeable open never makes the parent's view editable).
         if input != nil, textView.isEditable, session.canType || !openedTypeable {
             session.enableTyping(persist: nil, scheduler: saveScheduler)
             session.setExpectedWritable(isWritable)
