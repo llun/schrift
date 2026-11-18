@@ -1,0 +1,21 @@
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_4fb28ab57323fe::t_9cdb44a1f9be0d 497-498,562-563,611-612
+docs/offline-and-sync.md
+  s_4fb28ab57323fe::t_e30d280449598a 142-143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9cdbfca36ebe9e3ec34427bf0ac8dbf45b5088c4",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
