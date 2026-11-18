@@ -491,6 +491,39 @@ final class TableEditorTests: NativeEditingTestCase {
         XCTAssertEqual(harness.view.selectedRange.location, try location(harness.session, "tail", 0))
     }
 
+    /// A downgrade the document applied but deferred under an IME composition
+    /// (its view is still editable) must not hand a table opened meanwhile live input.
+    func testATableOpenedDuringADeferredDowngradeStaysReadOnly() async throws {
+        let harness = try await makeHarness(state: try fixture("styled"))
+        addTeardownBlock { await harness.close() }
+        XCTAssertTrue(harness.session.canType)
+        setSelection(harness.session, NSRange(location: try location(harness.session, "tail", 0), length: 0))
+        harness.view.setMarkedText("あ", selectedRange: NSRange(location: 1, length: 0))
+        let peer = YDoc(clientID: 78, gc: true)
+        defer { peer.destroy() }
+        try peer.applyUpdate(YUpdateDecoder.decode(try fixture("styled")))
+        _ = try peer.transact(local: true) { tx in
+            let root = try XCTUnwrap(peer.share[BlockNoteYjs.fragmentField])
+            guard case .type(let group)? = YBlockProjection.children(of: root, includeFormats: false).first?.content
+            else { return }
+            let last = YBlockProjection.children(of: group, includeFormats: false).last
+            let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
+            _ = try YWrite.insertAfter(tx, into: group, after: last, [.type(container)])
+            try YWrite.mapSet(tx, on: container, key: "id", .any([.string("future")]))
+            _ = try YWrite.insertAfter(
+                tx, into: container, after: nil, [.type(YType(typeRef: .xmlElement(nodeName: "futureBlock")))])
+        }
+        try await harness.session.integrateServerState(try YStateEncoder.encodeStateAsUpdate(peer))
+        XCTAssertFalse(harness.session.canType, "the peer's unknown block took authoring away")
+        XCTAssertTrue(harness.view.isEditable, "the stop waits for the composition")
+
+        let table = try await unwrapped(await harness.session.openTable("tbl"))
+        addTeardownBlock { await table.close().value }
+        XCTAssertNil(table.input, "the child never gets input")
+        XCTAssertFalse(table.textView.isEditable)
+        harness.view.unmarkText()
+    }
+
     // MARK: - Review fixes (PR #278)
 
     /// T2: a peer's structure change re-reads the grid and re-shows the same
