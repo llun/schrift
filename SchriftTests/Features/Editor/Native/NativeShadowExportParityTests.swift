@@ -457,7 +457,7 @@ final class NativeShadowExportParityTests: NativeEditingTestCase {
     /// A save captured right after typing a trailing space (the debounce after
     /// a pause, or a close) has a shadow, the export's, and the scheduler does
     /// not freeze. Before, `markdownShadow` was nil for "Left " and the capture
-    /// threw `unprojectableShadow`, freezing authoring with "Couldn't save".
+    /// failed, freezing authoring with "Couldn't save".
     func testASaveRightAfterATrailingSpaceDoesNotFreeze() async throws {
         let harness = try await makeHarness([paragraph("p", "Left"), paragraph("q", "Next")])
         addTeardownBlock { await harness.close() }

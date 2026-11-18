@@ -226,9 +226,11 @@ final class NativeEditorSession {
     /// Only a fully modeled document with a total Markdown shadow may be
     /// authored: anything else would be written back lossily. Opaque/rich
     /// documents stay in PR01's read-only view until the total shadow exists.
-    let canType: Bool
+    /// A remote integrate can take it away mid-session (downgrade only): the
+    /// surface then stops taking input and shows the unfamiliar-content reason.
+    private(set) var canType: Bool
     /// First unfamiliar block/prop/root reason when `!canType`, if any.
-    let unfamiliarContent: NativeUnfamiliarBlock?
+    private(set) var unfamiliarContent: NativeUnfamiliarBlock?
     private(set) var input: NativeInputCoordinator?
     private(set) var scope: ReplicaScope?
     private var hasRecoveryStore = false
@@ -727,6 +729,17 @@ final class NativeEditorSession {
             // The bound was reached: ask for the reset (PR08c).
             if let input { input.requestResync() } else { replica?.mailbox.post(.resync(surfaceID: surfaceID)) }
             return
+        }
+        if let typability = delivery.typability {
+            canType = typability.canType
+            unfamiliarContent = typability.unfamiliarContent
+            if !typability.canType {
+                // A peer brought in content this editor cannot author: stop
+                // taking input, with the same reason an open of such a
+                // document shows. What was journaled before still saves. The
+                // input makes the view read-only itself, after any composition.
+                input?.stopForUnfamiliarContent()
+            }
         }
         let wasWritable = state.writable
         state = delivery.state

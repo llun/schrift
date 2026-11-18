@@ -6,8 +6,6 @@ enum ReplicaSaveError: Error, Equatable {
     /// which guard held: another server or account, an unreadable (quarantined) draft store, or a
     /// document still waiting to be created.
     case otherServerOrAccount, quarantinedDrafts, pendingCreate
-    /// The raw revision has no total Markdown shadow yet (opaque/rich blocks).
-    case unprojectableShadow
 }
 
 /// An immutable captured save, constructed only after the raw journal is
@@ -94,16 +92,17 @@ final class ReplicaSaveAdapter {
 
     /// The compatibility shadow of a verified raw revision. Read-only: this
     /// throwaway replica never authors, and the shadow is never a writer.
+    /// Best-effort when the document has no total shadow (an opaque/rich
+    /// block): the draft's markdown is only a fingerprint/display shadow, so
+    /// a capture must never fail for lack of one — the raw bytes are what the
+    /// save sends.
     private static func projectedMarkdown(_ restored: ReplicaRestore, interlinkingOrigin: String?) throws -> String {
         let doc = YDoc(clientID: 0)
         defer { doc.destroy() }
         try doc.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
         for update in restored.updates { try doc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote) }
         guard doc.store.pendingStructs == nil, doc.store.pendingDs == nil else { throw ReplicaStoreError.corrupt }
-        guard let markdown = NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) else {
-            throw ReplicaSaveError.unprojectableShadow
-        }
-        return markdown
+        return NativeBlockProjection.lossyMarkdownShadow(doc, interlinkingOrigin: interlinkingOrigin)
     }
 
     func isCurrent(_ request: ReplicaSaveRequest) -> Bool {

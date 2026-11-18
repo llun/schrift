@@ -774,7 +774,8 @@ final class ReplicaSessionOrderingTests: NativeEditingTestCase {
         addTeardownBlock { await harness.close() }
         try caret(harness, Self.firstID, 5)
         let peer = try peerEdit {
-            try $0.setBlockType(block: Self.thirdID, to: "paragraph", props: [("textAlignment", .string("center"))])
+            // A modeled rebuild: an unmodeled prop (a centered paragraph) would stop typing.
+            try $0.setBlockType(block: Self.thirdID, to: "heading", props: [("level", .int(2))])
         }
         harness.session.replica?.mailbox.post(.integrate(peer, reply: nil))
         let third = try location(harness.session, Self.thirdID, 0)

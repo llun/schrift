@@ -97,8 +97,15 @@ actor DocumentReplicaSession {
     private var journal: Journal?
     private let hooks: Hooks
     private let hasUnsupportedRoot: Bool
-    private let canType: Bool
-    private let unfamiliarContent: NativeUnfamiliarBlock?
+    /// Whether this replica may be authored: fully modeled with a total
+    /// Markdown shadow. Rechecked after every successful remote integrate
+    /// (downgrade only), so a peer's unfamiliar block stops authoring instead
+    /// of letting the user type into a document whose save would fail.
+    private var canType: Bool
+    private var unfamiliarContent: NativeUnfamiliarBlock?
+    /// Set when a remote integrate downgraded authoring: the next delivery
+    /// tells every surface, which stops taking input.
+    private var pendingTypability: ReplicaDelivery.Typability?
     private var surfaces: [UUID: SurfaceState] = [:]
     private var loop: Task<Void, Never>?
     private var isClosed = false
@@ -835,7 +842,27 @@ actor DocumentReplicaSession {
             throw error
         }
         remoteAppends += 1
+        recheckTypability()
         compactIfNeeded()
+    }
+
+    /// A remote integrate can bring in a block the native editor does not
+    /// model, or take the total shadow away: authoring must stop, with the
+    /// same reason an open of such a document shows. Downgrade only — a
+    /// document that was typeable at build stays typeable unless an integrate
+    /// says otherwise, and re-enabling happens on reopen. What was journaled
+    /// before the downgrade still saves (the capture no longer needs a total
+    /// shadow).
+    private func recheckTypability() {
+        guard canType else { return }
+        let projected = NativeBlockProjection.project(doc)
+        guard
+            !(projected.isFullyModeled
+                && NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) != nil)
+        else { return }
+        canType = false
+        unfamiliarContent = NativeBlockProjection.firstUnsupportedReason(doc, interlinkingOrigin: interlinkingOrigin)
+        pendingTypability = ReplicaDelivery.Typability(canType: false, unfamiliarContent: unfamiliarContent)
     }
 
     /// Remote entries are covered as soon as they are journaled, so a live
@@ -875,6 +902,8 @@ actor DocumentReplicaSession {
         doc = graph.doc
         engine = graph.engine
         sink = graph.sink
+        canType = graph.canType
+        unfamiliarContent = graph.unfamiliarContent
         history = journal == nil ? nil : ReplicaHistory(doc: doc, engine: engine)
         // The new engine's index opens the groups, tables and sources surfaces show again.
         for group in openGroups.keys { engine.openColumns(group) }
@@ -1098,6 +1127,8 @@ actor DocumentReplicaSession {
             events[index] = .patch(patch, settled: settled)
         }
         let all = events
+        let typability = pendingTypability
+        pendingTypability = nil
         for id in surfaces.keys {
             let own = id == surfaceID
             var surface = surfaces[id]!
@@ -1117,6 +1148,7 @@ actor DocumentReplicaSession {
             }
             surfaces[id] = surface
             var delivery = ReplicaDelivery(revision: engine.revision, events: events, state: state)
+            delivery.typability = typability
             if own {
                 delivery.result = result
                 delivery.timings = timings
@@ -1167,6 +1199,11 @@ actor DocumentReplicaSession {
             revision: engine.revision, events: [.patch(BlockPatch([.reset(blocks)], origin: .other), settled: [:])],
             state: state)
         reset.resync = .reset(epoch: surface.epoch)
+        // A surface that missed the downgrade's delivery (it was held) learns
+        // it here, with the canonical state it is about to show.
+        if !canType {
+            reset.typability = ReplicaDelivery.Typability(canType: false, unfamiliarContent: unfamiliarContent)
+        }
         if surfaceID == selectionOwner {
             let endpoints = try? engine.currentSelectionEndpoints()
             reset.selection = ReplicaSelection(

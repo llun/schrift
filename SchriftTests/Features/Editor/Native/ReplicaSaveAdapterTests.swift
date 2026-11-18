@@ -19,7 +19,11 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         let update: Data
     }
 
-    private func fixture(isHeld: @escaping @MainActor (UUID) -> Bool = { _ in false }) throws -> Fixture {
+    /// `extraBlocks` follow the paragraph: an unknown node there leaves the
+    /// document with no total Markdown shadow (`markdownShadow` nil).
+    private func fixture(
+        extraBlocks: [BlockNoteBlock] = [], isHeld: @escaping @MainActor (UUID) -> Bool = { _ in false }
+    ) throws -> Fixture {
         let scope = ReplicaScope(
             serverOrigin: "https://docs.example.org", ownerUserID: owner, org: "docs", documentID: documentID)
         let checkpoint = BlockNoteYjs.encode(
@@ -27,7 +31,7 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
                 BlockNoteBlock(
                     node: "paragraph",
                     props: DocumentEngineTestCase.paragraphProps, runs: [InlineRun("One")], id: "one")
-            ], clientID: 1)
+            ] + extraBlocks, clientID: 1)
         let doc = YDoc(clientID: 2)
         defer { doc.destroy() }
         try doc.applyUpdate(YUpdateDecoder.decode(checkpoint), origin: .remote)
@@ -568,5 +572,86 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         defer { doc.destroy() }
         try doc.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
         XCTAssertEqual(YBlockProjection.projectedMarkdown(YBlockProjection.project(doc)), "xOne\n")
+    }
+
+    /// A document with no total shadow (an unknown block) must still capture:
+    /// a replica draft's markdown is only a fingerprint/display shadow, and the
+    /// raw bytes are what the save sends.
+    func testACaptureWithoutATotalShadowSucceedsAndSendsTheOutbox() async throws {
+        let f = try fixture(extraBlocks: [
+            BlockNoteBlock(node: "futureBlock", props: [], runs: [InlineRun("future")], id: "future")
+        ])
+        let restored = try XCTUnwrap(f.store.restore(for: f.scope))
+        let doc = YDoc(clientID: 0)
+        defer { doc.destroy() }
+        try doc.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
+        for update in restored.updates { try doc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote) }
+        XCTAssertNil(
+            NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: f.scope.serverOrigin),
+            "the fixture has no total shadow")
+        XCTAssertEqual(
+            NativeBlockProjection.lossyMarkdownShadow(doc, interlinkingOrigin: f.scope.serverOrigin), "xOne\n",
+            "the lossy shadow keeps what Markdown can spell")
+
+        let log = RequestRecorder()
+        stub(log: log)
+        try enqueue(f)
+        let draft = try XCTUnwrap(f.drafts.draft(for: documentID))
+        XCTAssertEqual(draft.markdown, "xOne\n")
+        XCTAssertEqual(draft.replica?.matches(markdown: draft.markdown), true)
+        await waitUntil { self.isSaved(f.coordinator.state(for: self.documentID)) }
+        XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/"), 1)
+        XCTAssertNil(try f.store.outbox(for: f.scope))
+        XCTAssertNil(f.drafts.draft(for: documentID))
+    }
+
+    /// A replica draft's markdown is a lossy shadow when the document has no
+    /// total one. The sync pass must never read that as "already on the
+    /// server" and drop the draft while its outbox is unsent.
+    func testASyncPassNeverDropsAReplicaDraftWhoseLossyShadowIsUnsent() async throws {
+        let f = try fixture(extraBlocks: [
+            BlockNoteBlock(node: "futureBlock", props: [], runs: [InlineRun("future")], id: "future")
+        ])
+        let log = RequestRecorder()
+        stub(log: log, bodyError: URLError(.notConnectedToInternet))
+        // No baseline: rule 3's clock tolerance is the only body rule left, and
+        // a server that moved on answers `.discardServerWins`.
+        try f.coordinator.enqueueReplica(adapter: f.adapter, title: "Doc")
+        await waitUntil { self.isPendingSync(f.coordinator.state(for: self.documentID)) }
+        let draft = try XCTUnwrap(f.drafts.draft(for: documentID))
+        XCTAssertEqual(draft.markdown, "xOne\n")
+        XCTAssertNil(draft.baseline)
+        XCTAssertEqual(try f.store.outbox(for: f.scope)?.updates, [f.update])
+
+        let ownerID = owner.uuidString
+        let documentIDString = documentID.uuidString
+        let patchesBefore = log.count(ofMethod: "PATCH")  // the offline attempt above
+        MockURLProtocol.stubHandler = { request in
+            log.record(request)
+            let path = request.url?.absoluteString ?? ""  // `URL.path` drops the trailing slash
+            if path.hasSuffix("/config/") {
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+            }
+            if path.hasSuffix("/users/me/") {
+                return .init(statusCode: 200, headers: [:], body: Data("{\"id\":\"\(ownerID)\"}".utf8), error: nil)
+            }
+            if path.contains("formatted-content") {
+                let body = Data(
+                    """
+                    {"id":"\(documentIDString)","title":"Doc","content":"Server moved on",
+                     "created_at":"2026-01-15T10:30:00Z","updated_at":"2030-01-15T10:30:00Z"}
+                    """.utf8)
+                return .init(statusCode: 200, headers: [:], body: body, error: nil)
+            }
+            return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+        }
+        await f.coordinator.syncPendingDrafts()
+        let kept = try XCTUnwrap(f.drafts.draft(for: documentID), "the draft is kept")
+        XCTAssertEqual(kept.markdown, draft.markdown)
+        XCTAssertEqual(kept.replica, draft.replica)
+        XCTAssertNotNil(kept.conflictServerUpdatedAt, "the user is asked, not silently discarded")
+        XCTAssertEqual(try f.store.outbox(for: f.scope)?.updates, [f.update], "its bytes are still unsent")
+        XCTAssertEqual(log.count(ofMethod: "PATCH"), patchesBefore, "the sync pass sends nothing")
     }
 }

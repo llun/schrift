@@ -90,6 +90,8 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
     @ObservationIgnored private var staleAfterDrain: [UUID] = []
     /// A storage failure while a composition owned the view, applied after it.
     @ObservationIgnored private var failsAfterComposition = false
+    /// An unfamiliar-content stop while a composition owned the view, applied after it.
+    @ObservationIgnored private var stopsForUnfamiliarContent = false
     /// Resyncs asked for whose reset has not arrived (PR08c). Until it does,
     /// arriving deliveries lose their patches (the reset shows them), nothing
     /// is applied, and keys are held.
@@ -529,6 +531,11 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         if failsAfterComposition {
             failsAfterComposition = false
             stopAfterStorageFailure()
+            needsSelectionRefresh = true
+        }
+        if stopsForUnfamiliarContent {
+            stopsForUnfamiliarContent = false
+            stopForUnfamiliarContent()
             needsSelectionRefresh = true
         }
         let stale = staleAfterDrain
@@ -3307,6 +3314,38 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
         view?.resignFirstResponder()
         noticeKey = .native_editor_storage_failed
         if first { onFrozen() }
+        dropped?(false)
+    }
+
+    /// A remote integrate brought in content this editor cannot author: the
+    /// surface stops taking input, with the same reason an open of such a
+    /// document shows. Nothing is rolled back — predictions already posted are
+    /// journaled and still save — and keys held behind a barrier, which were
+    /// never posted, are kept as a recovery entry rather than lost.
+    func stopForUnfamiliarContent() {
+        // Under a composition the view is UIKit's: the stop waits for its end.
+        guard !compositionOwnsView else {
+            stopsForUnfamiliarContent = true
+            return
+        }
+        guard !isFrozen else { return }
+        isFrozen = true
+        let dropped = barrier?.onSettled
+        barrier = nil
+        pendingCopies = [:]
+        var held = ""
+        for case .insert(let typed) in intents { held += typed }
+        intents = []
+        if let pending = pendingCompositionCommit {
+            pendingCompositionCommit = nil
+            composition.finish(pending.id)
+            composition.recover(pending.text, blockID: pending.blockID)
+        }
+        if !held.isEmpty, let block = blockSelection()?.start.0 ?? surface.blocks.first?.id {
+            composition.recover(held, blockID: block)
+        }
+        view?.isEditable = false
+        view?.resignFirstResponder()
         dropped?(false)
     }
 
