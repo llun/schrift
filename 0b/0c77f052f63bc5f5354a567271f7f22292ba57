@@ -1,0 +1,24 @@
+SchriftTests/Features/Editor/Native/TableEditorTests.swift
+  s_4fb28ab57323fe::t_b9edf76937071d 502-516
+  s_4fb28ab57323fe::t_49d71cb551f6aa 499-501
+  s_4fb28ab57323fe::t_fef4a3a570bc3e 517-519
+  s_4fb28ab57323fe::t_77e33b840e2dee 494-498,520-526
+docs/offline-and-sync.md
+  s_4fb28ab57323fe::t_e0c73423739390 146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b0c77f052f63bc5f5354a567271f7f22292ba57",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
