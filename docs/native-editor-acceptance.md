@@ -215,10 +215,19 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
   "Go online to open this page" (Retry appears once the device is back online).
 - **Preserved read-only structures:** A leaf block of an unknown BlockNote type is preserved
   byte-for-byte in `YDoc` and renders as a locked preview card. The rest of the document stays
-  typeable and no native edit touches a card. An unknown block with children, an unfamiliar column group,
-  a known block read as opaque (unreadable props, an invalid heading level), a known block with a
-  non-default or unknown prop (e.g. a centered paragraph) and an auxiliary Yjs root still keep the
-  whole surface in preserved read-only mode (`!session.canType`).
+  typeable and no native edit touches a card. `.lossy` blocks do not make the document read-only
+  either, and split into two tiers (`ProjectionFidelity.lossyKind`):
+  - **Styled-only** (every lossy reason is a non-default value of `textColor`, `backgroundColor` or
+    `textAlignment`, e.g. a centered paragraph): keeps full editing (typing, marks, props, split,
+    convert/slash menu, move, indent/outdent, duplicate, delete), except merges into or out of it
+    are refused (joins in either direction and cross-boundary ranges).
+  - **Unknown-prop / locked text** (every other `.lossy` block, e.g. an unknown prop or non-styling
+    prop): shows as normal text and takes typing, marks, same-schema props, inline objects, character
+    delete and copy/duplicate/whole-block delete, while split, convert (slash menu hidden), merge,
+    move, indent/outdent and empty-paragraph replacement refuse it.
+  An unknown block with children, an unfamiliar column group, a known block read as opaque
+  (unreadable props, an invalid heading level) and an auxiliary Yjs root still keep the whole
+  surface in preserved read-only mode (`!session.canType`).
 - **S2 TextKit 2 height-estimate corrections:** As measured in §4B (`jumps=16`, `reversals=0`,
   `maxReversalPt=0.00`, `reachedBottom=1`, `maxBoundsErr=0.00`, `maxRealised=1`, `maxControls=0`,
   `frames=721` in `.review/fix1.log`, after the earlier `jumps=13` failure in `.review/step4c.log`),

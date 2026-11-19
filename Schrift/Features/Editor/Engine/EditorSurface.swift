@@ -287,17 +287,30 @@ struct TextMark: Equatable, Sendable {
 /// list, so `depth` and `parentID` are all a renderer needs to indent and to
 /// number per sibling run. The surface never decides whether a block is
 /// writable. `isOpaque` only distinguishes preserved placeholders from
-/// genuinely empty text blocks.
+/// genuinely empty text blocks; `isLocked` marks a locked-text `.lossy` block
+/// (`ProjectionFidelity.isLockedText` — an unknown prop, non-styling prop or
+/// unknown mark) so the input coordinator hides the slash menu.
 struct BlockSnapshot: Equatable, Sendable {
     var id: String
     var node: String
     var props: [ProjectedProp]
     var runs: [InlineRun]
     var isOpaque: Bool
+    /// A locked-text `.lossy` block (`ProjectionFidelity.isLockedText`):
+    /// typeable, but split, convert, merge and move are refused. Excluded from
+    /// `Equatable` so `.props` patches and direct snapshot construction match
+    /// projected snapshots.
+    var isLocked = false
     var depth = 0
     var parentID: String?
     /// A non-prose block's bounded preview (PR06e). Display only.
     var preview: NativeBlockPreview?
+
+    static func == (lhs: BlockSnapshot, rhs: BlockSnapshot) -> Bool {
+        lhs.id == rhs.id && lhs.node == rhs.node && lhs.props == rhs.props && lhs.runs == rhs.runs
+            && lhs.isOpaque == rhs.isOpaque && lhs.depth == rhs.depth && lhs.parentID == rhs.parentID
+            && lhs.preview == rhs.preview
+    }
     var hasInlineObjects: Bool {
         runs.contains { $0.inlineObject != nil }
     }
@@ -348,6 +361,7 @@ struct BlockSnapshot: Equatable, Sendable {
     init(_ block: ProjectedBlock) {
         self.init(
             id: block.id, node: block.node, props: block.props, runs: block.runs, isOpaque: block.fidelity.isOpaque)
+        isLocked = block.fidelity.isLockedText
     }
 
     init(_ native: NativeBlockSnapshot) {

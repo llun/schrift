@@ -11,12 +11,18 @@ struct NativeUnfamiliarBlock: Equatable, Sendable {
 /// The native editor's one typability rule (PR02): whether a document can be
 /// authored natively, and the first reason it cannot. `canType` is true when
 /// the root shape is canonical, there is no unsupported auxiliary root, every
-/// block id is addressable, no block is `.lossy`, and the blocks Markdown can
-/// spell — every block but the locked cards — have a total shadow. A locked
-/// card is a leaf block of an unknown type: it never makes the document
-/// read-only, and no native edit touches it. Any other opaque block (one with
-/// children, a column group, a known node read as opaque, a block cut at the
-/// depth bound) keeps the whole document read-only.
+/// block id is addressable, no opaque block is anything but a locked card, and
+/// the blocks Markdown can spell — every block but the locked cards — have a
+/// total shadow. A locked card is a leaf block of an unknown type: it never
+/// makes the document read-only, and no native edit touches it. A `.lossy`
+/// block never makes the document read-only either: a styled-only block (known
+/// styling props `textColor`, `backgroundColor`, `textAlignment`) keeps full
+/// editing except merges, while any other `.lossy` block (unknown prop,
+/// non-styling prop or unknown mark) is a locked *text* block that takes text,
+/// marks and its own schema props and refuses split, convert, merge and move.
+/// Any other opaque block (one with children, a column group, a known node
+/// read as opaque, a block cut at the depth bound) keeps the whole document
+/// read-only.
 struct NativeTypability: Equatable, Sendable {
     let canType: Bool
     let unfamiliarContent: NativeUnfamiliarBlock?
@@ -693,9 +699,10 @@ enum NativeBlockProjection {
     /// The native editor's one typability rule (PR02): whether `doc` can be
     /// authored natively, and the first reason it cannot. A leaf block of an
     /// unknown type is a locked card — it never makes the document read-only,
-    /// and no native edit touches it — so only a document-level unknown, an
-    /// unaddressable id, a `.lossy` block, any other opaque block, or a
-    /// missing shadow of the remaining blocks stops authoring.
+    /// and no native edit touches it — and a `.lossy` block (styled-only or
+    /// locked text) never makes the document read-only either, so only a
+    /// document-level unknown, an unaddressable id, any other opaque block, or
+    /// a missing shadow of the remaining blocks stops authoring.
     static func typability(_ doc: YDoc, interlinkingOrigin: String? = nil) -> NativeTypability {
         typability(doc, projected: project(doc), interlinkingOrigin: interlinkingOrigin)
     }
@@ -714,7 +721,8 @@ enum NativeBlockProjection {
     /// Computes the first block type and reason why `doc` cannot be authored
     /// natively (`canType == false`), or `nil` when it can. Never returns
     /// document text. A locked card (a leaf block of an unknown type) is never
-    /// a reason; any other opaque block is.
+    /// a reason, and neither is a `.lossy` block (styled-only or locked text);
+    /// any other opaque block is.
     static func firstUnsupportedReason(_ doc: YDoc, interlinkingOrigin: String? = nil) -> NativeUnfamiliarBlock? {
         firstUnsupportedReason(doc, projected: project(doc), interlinkingOrigin: interlinkingOrigin)
     }
@@ -729,12 +737,6 @@ enum NativeBlockProjection {
         // The engine addresses blocks by id; a missing or repeated one makes
         // every command refuse, so the surface must stay read-only.
         if let unaddressable = firstUnaddressableBlock(projected.blocks) { return unaddressable }
-        // A `.lossy` block is a known node with a prop the editor cannot
-        // preserve through a structural edit: still whole-document read-only.
-        if let lossy = projected.blocks.first(where: { if case .lossy = $0.block.fidelity { true } else { false } }) {
-            guard case .lossy(let reasons) = lossy.block.fidelity else { return nil }
-            return NativeUnfamiliarBlock(node: lossy.block.node, reason: reasons.first ?? "unsupported prop")
-        }
         // Only a leaf block of an unknown type is a locked card.
         if let unlockable = firstUnlockableOpaqueBlock(projected.blocks) { return unlockable }
         let shadow = opaqueAwareShadow(doc, native: projected.blocks, interlinkingOrigin: interlinkingOrigin)
@@ -755,14 +757,19 @@ enum NativeBlockProjection {
         for (index, snapshot) in blocks.enumerated() {
             guard case .opaque(let reason) = snapshot.block.fidelity else { continue }
             let hasChildren = index + 1 < blocks.count && blocks[index + 1].depth > snapshot.depth
-            let isUnknownType =
-                reason.hasPrefix("unknownNode:") && !BlockNoteSubtreePayload.contentNodes.contains(snapshot.block.node)
-                && !["columnList", "column"].contains(snapshot.block.node)
-            if hasChildren || !isUnknownType {
+            if !isLockedCard(node: snapshot.block.node, reason: reason, hasChildren: hasChildren) {
                 return NativeUnfamiliarBlock(node: snapshot.block.node, reason: reason)
             }
         }
         return nil
+    }
+
+    /// Whether an opaque block is a locked card: a leaf block of an unknown
+    /// type, outside the payload's `contentNodes` and never a column. The one
+    /// definition the typability rule and the engine's delete check share.
+    static func isLockedCard(node: String, reason: String, hasChildren: Bool) -> Bool {
+        reason.hasPrefix("unknownNode:") && !BlockNoteSubtreePayload.contentNodes.contains(node)
+            && !["columnList", "column"].contains(node) && !hasChildren
     }
 
     /// The first block the engine cannot address: an empty id, or one that

@@ -815,8 +815,10 @@ final class NativeEditorSession {
     /// `scheduler` is retained so a debounced save outlives the keystroke that
     /// armed it, and is called only once a command is journaled. The
     /// production open route additionally requires `canType`; a document whose
-    /// only non-modeled content is locked preserved cards is typeable, and
-    /// input refuses the cards themselves.
+    /// only non-modeled content is locked preserved cards or `.lossy` blocks
+    /// (styled-only or locked text) is typeable, and input refuses the cards
+    /// themselves, merges into or out of any `.lossy` block, and structural
+    /// edits of a locked text block.
     func enableTyping(
         persist: DocumentReplicaSession.Journal?, scheduler: NativeReplicaSaveScheduler? = nil
     ) {

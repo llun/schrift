@@ -8,7 +8,8 @@ import XCTest
 /// cannot author stops typing (downgrade only, with the reason an open of such
 /// a document shows), and the edits journaled before it still save — the
 /// capture no longer needs a total Markdown shadow. An unknown block is a
-/// locked preserved card, so it does not downgrade; a `.lossy` block does.
+/// locked preserved card and a `.lossy` block is a locked text block, so
+/// neither downgrades.
 @MainActor
 final class ReplicaTypabilityTests: NativeEditingTestCase {
     private var cacheDirectory: URL!
@@ -219,9 +220,10 @@ final class ReplicaTypabilityTests: NativeEditingTestCase {
         try await assertConsistent(harness, localCommands: 1)
     }
 
-    /// A web peer centering a paragraph (an unmodeled prop, not an unknown
-    /// node) takes authoring away the same way, with the prop as the reason.
-    func testAPeerCenteringAParagraphStopsTypingWithThePropReason() async throws {
+    /// A web peer centering a paragraph (a styled-only `.lossy` block, not an
+    /// unknown node) does not take authoring away, stays unlocked, and typing
+    /// elsewhere still journals.
+    func testAPeerCenteringAParagraphKeepsTyping() async throws {
         let harness = try await makeHarness()
         addTeardownBlock { await harness.close() }
         let peer = try makeDoc(clientID: 23)
@@ -232,8 +234,15 @@ final class ReplicaTypabilityTests: NativeEditingTestCase {
         harness.session.replica?.mailbox.post(.integrate(update, reply: nil))
         await harness.settle()
 
-        XCTAssertFalse(harness.session.canType)
-        XCTAssertEqual(harness.session.unfamiliarContent?.reason, "prop:textAlignment")
-        XCTAssertTrue(harness.input.isFrozen)
+        XCTAssertTrue(harness.session.canType, "a styled lossy block is not a downgrade")
+        XCTAssertNil(harness.session.unfamiliarContent)
+        XCTAssertFalse(harness.input.isFrozen, "the surface keeps taking input")
+        XCTAssertEqual(harness.session.surface.blocks.last?.isLocked, false)
+
+        try caret(harness, Self.firstID, 0)
+        harness.view.insertText("x")
+        await harness.settle()
+        XCTAssertEqual(harness.log.commands.count, 1, "typing elsewhere still journals")
+        try await assertConsistent(harness, localCommands: 1)
     }
 }

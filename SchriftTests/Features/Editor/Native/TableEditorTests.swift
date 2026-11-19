@@ -502,11 +502,12 @@ final class TableEditorTests: NativeEditingTestCase {
         let peer = YDoc(clientID: 78, gc: true)
         defer { peer.destroy() }
         try peer.applyUpdate(YUpdateDecoder.decode(try fixture("styled")))
-        // A peer centering a paragraph is a `.lossy` block: authoring stops.
+        // A peer turning a paragraph into a heading with an invalid level is an
+        // opaque block (not a locked card): authoring stops.
         let update = try BlockNoteWriter(doc: peer).setBlockType(
-            block: "tail", to: "paragraph", props: [("textAlignment", .string("center"))])
+            block: "tail", to: "heading", props: [("level", .int(9))])
         try await harness.session.integrateServerState(update)
-        XCTAssertFalse(harness.session.canType, "the peer's centered paragraph took authoring away")
+        XCTAssertFalse(harness.session.canType, "the peer's invalid heading took authoring away")
         XCTAssertTrue(harness.view.isEditable, "the stop waits for the composition")
 
         let table = try await unwrapped(await harness.session.openTable("tbl"))

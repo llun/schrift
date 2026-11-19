@@ -1861,7 +1861,9 @@ final class NativeInputCoordinator: NSObject, UITextViewDelegate {
                 pendingTypingMarks ?? NativeMarkSelection.typing(surface.blocks[caret.position].runs, at: caret.offset)
         }
         if marks != activeMarks { activeMarks = marks }
-        slashToken = sourceKind == nil ? block.flatMap { Self.slashToken(in: $0, caret: caretOffset) } : nil
+        slashToken =
+            sourceKind == nil
+            ? block.flatMap { $0.isLocked ? nil : Self.slashToken(in: $0, caret: caretOffset) } : nil
         let query = block.flatMap { block in
             slashToken.map { String(decoding: Array(text(of: block).utf16)[1..<$0.upperBound], as: UTF16.self) }
         }

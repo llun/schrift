@@ -20,15 +20,19 @@ final class NativeBlockCommandsTests: NativeEditingTestCase {
         setSelection(harness, NSRange(location: try location(harness.session, id, offset), length: length))
     }
 
-    /// A heading with a colour, an unknown prop, a bold run and an unknown
-    /// mark, over three nested levels (a checked task and a paragraph inside).
+    /// A styled heading with non-default styling props and a bold run, over
+    /// three nested levels (a checked task and a paragraph inside).
     private func treeSeed() -> [BlockNoteBlock] {
         var rich = heading("b", "")
-        rich.props = rich.props.map { $0.key == "textColor" ? ($0.key, .string("red")) : $0 }
-        rich.props += [("x-schrift-test", .string("kept"))]
-        rich.runs = [
-            InlineRun("Bold", marks: [("bold", "{}")]), InlineRun(" tail", marks: [("x-unknown", #"{"v":1}"#)]),
-        ]
+        rich.props = rich.props.map {
+            switch $0.key {
+            case "textColor": ($0.key, .string("red"))
+            case "backgroundColor": ($0.key, .string("blue"))
+            case "textAlignment": ($0.key, .string("center"))
+            default: $0
+            }
+        }
+        rich.runs = [InlineRun("Bold", marks: [("bold", "{}")]), InlineRun(" tail")]
         let task = BlockNoteBlock(
             node: "checkListItem", props: Self.paragraphProps + [("checked", .bool(true))],
             runs: [InlineRun("Grandchild")], id: "b11")
