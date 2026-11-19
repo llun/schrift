@@ -258,17 +258,15 @@ actor DocumentReplicaSession {
         }
         // Marks never make the native projection lossy (raw Yjs write-back
         // keeps them all); the Markdown shadow is the one `ReplicaSaveAdapter`
-        // captures, which drops what Markdown cannot spell.
-        let canType =
-            projected.isFullyModeled
-            && NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) != nil
+        // captures, which drops what Markdown cannot spell. An opaque block is
+        // a locked card, not a reason to stop authoring (PR02).
+        let typability = NativeBlockProjection.typability(
+            doc, projected: projected, interlinkingOrigin: interlinkingOrigin)
         return Graph(
             doc: doc, engine: engine, sink: sink,
             hasUnsupportedRoot: projected.blocks.isEmpty && !projected.isFullyRenderable,
-            canType: canType,
-            unfamiliarContent: canType
-                ? nil
-                : NativeBlockProjection.firstUnsupportedReason(doc, interlinkingOrigin: interlinkingOrigin),
+            canType: typability.canType,
+            unfamiliarContent: typability.unfamiliarContent,
             blockCount: projected.blocks.count,
             mediaBlockCount: mediaCount)
     }
@@ -341,15 +339,12 @@ actor DocumentReplicaSession {
         defer { doc.destroy() }
         try doc.applyUpdate(YUpdateDecoder.decode(state), origin: .remote)
         let projected = NativeBlockProjection.project(doc)
-        let canType =
-            projected.isFullyModeled
-            && NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) != nil
+        let typability = NativeBlockProjection.typability(
+            doc, projected: projected, interlinkingOrigin: interlinkingOrigin)
         return (
             projected.blocks.map(BlockSnapshot.init), projected.blocks.isEmpty && !projected.isFullyRenderable,
-            canType,
-            canType
-                ? nil
-                : NativeBlockProjection.firstUnsupportedReason(doc, interlinkingOrigin: interlinkingOrigin),
+            typability.canType,
+            typability.unfamiliarContent,
             TableGrid.tables(in: doc),
             ColumnGroup.groups(in: doc)
         )
@@ -852,18 +847,15 @@ actor DocumentReplicaSession {
     /// document that was typeable at build stays typeable unless an integrate
     /// says otherwise, and re-enabling happens on reopen. What was journaled
     /// before the downgrade still saves (the capture no longer needs a total
-    /// shadow).
+    /// shadow). An opaque block is a locked card, so it does not downgrade.
     private func recheckTypability() {
         // shortcut: a full projection + shadow per remote frame; measure with
         // the nesting cap before live collaboration is on by default (plan PR 13).
         guard canType else { return }
-        let projected = NativeBlockProjection.project(doc)
-        guard
-            !(projected.isFullyModeled
-                && NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) != nil)
-        else { return }
+        let typability = NativeBlockProjection.typability(doc, interlinkingOrigin: interlinkingOrigin)
+        guard !typability.canType else { return }
         canType = false
-        unfamiliarContent = NativeBlockProjection.firstUnsupportedReason(doc, interlinkingOrigin: interlinkingOrigin)
+        unfamiliarContent = typability.unfamiliarContent
         pendingTypability = ReplicaDelivery.Typability(canType: false, unfamiliarContent: unfamiliarContent)
     }
 

@@ -8,6 +8,18 @@ struct NativeUnfamiliarBlock: Equatable, Sendable {
     let reason: String
 }
 
+/// The native editor's one typability rule (PR02): whether a document can be
+/// authored natively, and the first reason it cannot. `canType` is true when
+/// the root shape is canonical, there is no unsupported auxiliary root, every
+/// block id is addressable, no block is `.lossy`, and the blocks Markdown can
+/// spell — every block but the opaque ones — have a total shadow. An opaque
+/// block is a locked preserved card: it never makes the document read-only,
+/// and no native edit touches it.
+struct NativeTypability: Equatable, Sendable {
+    let canType: Bool
+    let unfamiliarContent: NativeUnfamiliarBlock?
+}
+
 /// The native tree projection: every block of the replica's
 /// `blockGroup → blockContainer → blockGroup …` tree in preorder, each with its
 /// depth, parent and handle. Each block reads exactly as the classic
@@ -21,6 +33,10 @@ struct NativeUnfamiliarBlock: Equatable, Sendable {
 /// `BlockIndex` follows the same rules (`nestedGroup(of:)`), so the engine's
 /// incremental patches converge to this projection.
 enum NativeBlockProjection {
+    /// The native tree projection's result: every block in preorder, and the
+    /// two document-level flags the classic projection also reports.
+    typealias Projection = (blocks: [NativeBlockSnapshot], isFullyRenderable: Bool, isFullyModeled: Bool)
+
     /// The deepest block level projected (root blocks are depth 0). A block
     /// at this depth with children is opaque, so a hostile replica cannot
     /// recurse without bound; the writer never nests this deep
@@ -82,7 +98,7 @@ enum NativeBlockProjection {
     static func project(
         _ doc: YDoc, generation: UUID = UUID(), interlinkingOrigin: String? = nil, nativeMarks: Bool = true,
         inlineObjects: Bool = false
-    ) -> (blocks: [NativeBlockSnapshot], isFullyRenderable: Bool, isFullyModeled: Bool) {
+    ) -> Projection {
         let hasBadExtraRoot = hasUnsupportedAuxiliaryRoot(doc)
         guard let root = doc.share[BlockNoteYjs.fragmentField] else {
             return ([], !hasBadExtraRoot, !hasBadExtraRoot)
@@ -217,6 +233,62 @@ enum NativeBlockProjection {
             interlinkingOrigin: interlinkingOrigin)
     }
 
+    /// The save's Markdown shadow with the locked cards left out (PR02): the
+    /// blocks Markdown can spell, in order, and nothing for the opaque ones —
+    /// the blocks a native edit never touches. `nil` only when the remainder
+    /// has no total shadow. `markdownShadow` itself is unchanged: it is `nil`
+    /// for any opaque block, which its golden and oracle tests pin.
+    static func markdownShadowIgnoringOpaque(_ doc: YDoc, interlinkingOrigin: String? = nil) -> String? {
+        guard !hasUnsupportedAuxiliaryRoot(doc) else { return nil }
+        return opaqueAwareShadow(doc, native: project(doc).blocks, interlinkingOrigin: interlinkingOrigin).shadow
+    }
+
+    /// The classic tree with the locked cards flagged, and the shadow of what
+    /// is left. `native` is the native projection's blocks, whose opaque ones
+    /// are the locked cards; the classic tree is projected once here so the
+    /// shadow and the refusal that explains a missing one read the same walk.
+    private static func opaqueAwareShadow(
+        _ doc: YDoc, native: [NativeBlockSnapshot], interlinkingOrigin: String?
+    ) -> (shadow: String?, tree: [NativeBlockSnapshot], locked: [Bool]) {
+        let tree = project(doc, nativeMarks: false, inlineObjects: true)
+        let locked = lockedFlags(native, tree.blocks)
+        guard locked.contains(true) else {
+            return (markdownShadow(doc, interlinkingOrigin: interlinkingOrigin), tree.blocks, locked)
+        }
+        let shadow = spell(
+            droppingLocked(tree.blocks, locked: locked)[...], items: rootItems(doc),
+            containers: allContainerItems(doc), allowsColumns: true, interlinkingOrigin: interlinkingOrigin)
+        return (shadow, tree.blocks, locked)
+    }
+
+    /// Which of `classic` are locked cards: the blocks the native projection
+    /// reads as opaque. Both walks have the same shape (same items, order and
+    /// depths), so the flags line up index for index; a shape mismatch locks
+    /// nothing, which keeps the document read-only rather than guessing.
+    private static func lockedFlags(_ native: [NativeBlockSnapshot], _ classic: [NativeBlockSnapshot]) -> [Bool] {
+        guard native.count == classic.count else { return Array(repeating: false, count: classic.count) }
+        return native.map { $0.block.fidelity.isOpaque }
+    }
+
+    /// `blocks` without the locked cards and their descendants.
+    private static func droppingLocked(_ blocks: [NativeBlockSnapshot], locked: [Bool]) -> [NativeBlockSnapshot] {
+        var kept: [NativeBlockSnapshot] = []
+        kept.reserveCapacity(blocks.count)
+        var skipDeeperThan: Int?
+        for (index, snapshot) in blocks.enumerated() {
+            if let depth = skipDeeperThan {
+                if snapshot.depth > depth { continue }
+                skipDeeperThan = nil
+            }
+            guard index < locked.count, locked[index] else {
+                kept.append(snapshot)
+                continue
+            }
+            skipDeeperThan = snapshot.depth
+        }
+        return kept
+    }
+
     /// The save's Markdown shadow when the document has no total one: the
     /// blocks Markdown can spell, in order, and nothing for the rest (or, when
     /// even that subset cannot be rendered, every block's plain text). Never
@@ -225,7 +297,7 @@ enum NativeBlockProjection {
     /// are what the save sends. Deterministic: the same document always
     /// projects the same string.
     static func lossyMarkdownShadow(_ doc: YDoc, interlinkingOrigin: String? = nil) -> String {
-        if let total = markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) { return total }
+        if let total = markdownShadowIgnoringOpaque(doc, interlinkingOrigin: interlinkingOrigin) { return total }
         let tree = project(doc, nativeMarks: false, inlineObjects: true)
         let spellable = tree.blocks.filter { snapshot in
             !snapshot.block.fidelity.isOpaque
@@ -616,32 +688,83 @@ enum NativeBlockProjection {
         return (blocks, indents)
     }
 
-    /// Computes the first block type and reason why `doc` cannot be authored natively
-    /// (`canType == false`), or `nil` when `doc` is fully modeled and has a total
-    /// Markdown shadow. Never returns document text.
+    /// The native editor's one typability rule (PR02): whether `doc` can be
+    /// authored natively, and the first reason it cannot. An opaque block is a
+    /// locked preserved card — it never makes the document read-only, and no
+    /// native edit touches it — so only a document-level unknown, an
+    /// unaddressable id, a `.lossy` block, or a missing shadow of the
+    /// remaining blocks stops authoring.
+    static func typability(_ doc: YDoc, interlinkingOrigin: String? = nil) -> NativeTypability {
+        typability(doc, projected: project(doc), interlinkingOrigin: interlinkingOrigin)
+    }
+
+    /// `typability` for a caller that already projected `doc`.
+    static func typability(
+        _ doc: YDoc, projected: Projection, interlinkingOrigin: String? = nil
+    ) -> NativeTypability {
+        guard
+            let reason = firstUnsupportedReason(
+                doc, projected: projected, interlinkingOrigin: interlinkingOrigin)
+        else { return NativeTypability(canType: true, unfamiliarContent: nil) }
+        return NativeTypability(canType: false, unfamiliarContent: reason)
+    }
+
+    /// Computes the first block type and reason why `doc` cannot be authored
+    /// natively (`canType == false`), or `nil` when it can. Never returns
+    /// document text. An opaque block is never a reason: it is a locked card.
     static func firstUnsupportedReason(_ doc: YDoc, interlinkingOrigin: String? = nil) -> NativeUnfamiliarBlock? {
-        let projected = project(doc)
+        firstUnsupportedReason(doc, projected: project(doc), interlinkingOrigin: interlinkingOrigin)
+    }
+
+    /// `firstUnsupportedReason` for a caller that already projected `doc`.
+    static func firstUnsupportedReason(
+        _ doc: YDoc, projected: Projection, interlinkingOrigin: String? = nil
+    ) -> NativeUnfamiliarBlock? {
         if (projected.blocks.isEmpty && !projected.isFullyRenderable) || hasUnsupportedAuxiliaryRoot(doc) {
             return NativeUnfamiliarBlock(node: "", reason: "unsupported root")
         }
-        if let first = projected.blocks.first(where: { $0.block.fidelity != .modeled }) {
-            switch first.block.fidelity {
-            case .opaque(let reason):
-                return NativeUnfamiliarBlock(node: first.block.node, reason: reason)
-            case .lossy(let reasons):
-                return NativeUnfamiliarBlock(node: first.block.node, reason: reasons.first ?? "unsupported prop")
-            case .modeled:
-                break
+        // The engine addresses blocks by id; a missing or repeated one makes
+        // every command refuse, so the surface must stay read-only.
+        if let unaddressable = firstUnaddressableBlock(projected.blocks) { return unaddressable }
+        // A `.lossy` block is a known node with a prop the editor cannot
+        // preserve through a structural edit: still whole-document read-only.
+        if let lossy = projected.blocks.first(where: { if case .lossy = $0.block.fidelity { true } else { false } }) {
+            guard case .lossy(let reasons) = lossy.block.fidelity else { return nil }
+            return NativeUnfamiliarBlock(node: lossy.block.node, reason: reasons.first ?? "unsupported prop")
+        }
+        let shadow = opaqueAwareShadow(doc, native: projected.blocks, interlinkingOrigin: interlinkingOrigin)
+        guard shadow.shadow == nil else { return nil }
+        return firstShadowRefusal(
+            shadow.tree, locked: shadow.locked, items: rootItems(doc), containers: allContainerItems(doc),
+            allowsColumns: true, interlinkingOrigin: interlinkingOrigin)
+            ?? NativeUnfamiliarBlock(node: shadow.tree.first?.block.node ?? "", reason: "unsupported markdown")
+    }
+
+    /// The first block the engine cannot address: an empty id, or one that
+    /// repeats. `walk` already reads such a block as opaque and stops
+    /// descending, so this matches `BlockIndex`'s addressable set.
+    private static func firstUnaddressableBlock(_ blocks: [NativeBlockSnapshot]) -> NativeUnfamiliarBlock? {
+        var seen: Set<String> = []
+        for snapshot in blocks {
+            if snapshot.id.isEmpty {
+                return NativeUnfamiliarBlock(node: snapshot.block.node, reason: "missing block id")
+            }
+            if !seen.insert(snapshot.id).inserted {
+                return NativeUnfamiliarBlock(node: snapshot.block.node, reason: "duplicate block id")
             }
         }
-        guard markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) == nil else {
-            return nil
-        }
-        let tree = project(doc, nativeMarks: false, inlineObjects: true)
-        return firstShadowRefusal(
-            tree.blocks[...], items: rootItems(doc), containers: allContainerItems(doc), allowsColumns: true,
-            interlinkingOrigin: interlinkingOrigin)
-            ?? NativeUnfamiliarBlock(node: tree.blocks.first?.block.node ?? "", reason: "unsupported markdown")
+        return nil
+    }
+
+    /// `firstShadowRefusal` with the locked cards left out first: they are
+    /// never a reason, and their subtrees are not spelled.
+    private static func firstShadowRefusal(
+        _ blocks: [NativeBlockSnapshot], locked: [Bool], items: [YID: YItem], containers: [YID: YItem],
+        allowsColumns: Bool, interlinkingOrigin: String?
+    ) -> NativeUnfamiliarBlock? {
+        firstShadowRefusal(
+            droppingLocked(blocks, locked: locked)[...], items: items, containers: containers,
+            allowsColumns: allowsColumns, interlinkingOrigin: interlinkingOrigin)
     }
 
     private static func firstShadowRefusal(

@@ -4,10 +4,11 @@ import XCTest
 
 @testable import Schrift
 
-/// PR01: a remote integrate that brings in content the native editor cannot
-/// author stops typing (downgrade only, with the reason an open of such a
-/// document shows), and the edits journaled before it still save — the capture
-/// no longer needs a total Markdown shadow.
+/// PR01/PR02: a remote integrate that brings in content the native editor
+/// cannot author stops typing (downgrade only, with the reason an open of such
+/// a document shows), and the edits journaled before it still save — the
+/// capture no longer needs a total Markdown shadow. An unknown block is a
+/// locked preserved card, so it does not downgrade; a `.lossy` block does.
 @MainActor
 final class ReplicaTypabilityTests: NativeEditingTestCase {
     private var cacheDirectory: URL!
@@ -97,6 +98,71 @@ final class ReplicaTypabilityTests: NativeEditingTestCase {
         setSelection(harness, NSRange(location: try location(harness.session, blockID, offset), length: 0))
     }
 
+    /// One block's own XML, read from the replica.
+    private func blockXML(_ session: NativeEditorSession, _ id: String) async throws -> String {
+        let xml = await session.replicaDoc { doc in YXMLString.block(doc, id: id) }
+        return try XCTUnwrap(xml ?? nil, "\(id) is in the replica")
+    }
+
+    /// A document whose only non-modeled content is a locked card opens
+    /// typeable on both routes; typing in the paragraphs around it journals and
+    /// saves, and the card's Yjs element is unchanged.
+    func testADocumentWithOnlyALockedCardOpensTypeableAndTypesAroundIt() async throws {
+        let state = BlockNoteYjs.encode(
+            [
+                paragraph("before", "Before"),
+                BlockNoteBlock(
+                    node: "futureBlock", props: [("x-future", .string("kept"))],
+                    runs: [InlineRun("Future content")], id: "future"),
+                paragraph("after", "After"),
+            ], clientID: Self.seedClientID)
+
+        // The read-only route agrees with the replica build.
+        let inspected = try await NativeEditorSession.inspect(state: state)
+        addTeardownBlock { await inspected.close().value }
+        XCTAssertTrue(inspected.canType)
+        XCTAssertNil(inspected.unfamiliarContent)
+        XCTAssertFalse(inspected.hasUnsupportedRoot)
+
+        let harness = try await makeHarness(state: state)
+        addTeardownBlock { await harness.close() }
+        let session = harness.session
+        XCTAssertTrue(session.canType)
+        XCTAssertNil(session.unfamiliarContent)
+        XCTAssertEqual(session.surface.blocks.map(\.id), ["before", "future", "after"])
+        XCTAssertEqual(session.surface.blocks.map(\.isOpaque), [false, true, false])
+        let before = try await blockXML(session, "future")
+
+        try caret(harness, "before", 0)
+        harness.view.insertText("A")
+        await harness.settle()
+        try caret(harness, "after", 5)
+        harness.view.insertText("!")
+        await harness.settle()
+        XCTAssertEqual(text(of: try block(session, "before")), "ABefore")
+        XCTAssertEqual(text(of: try block(session, "after")), "After!")
+        let after = try await blockXML(session, "future")
+        XCTAssertEqual(after, before, "the locked card is untouched")
+        try await assertConsistent(harness, localCommands: 2)
+
+        // The journaled edits save through the full pipeline; the shadow leaves
+        // the card out, so the draft carries only what Markdown can spell.
+        let coordinator = makeCoordinator(harness)
+        let log = RequestRecorder()
+        stub(log, owner: harness.scope.ownerUserID)
+        let adapter = ReplicaSaveAdapter(store: harness.store, scope: harness.scope)
+        try coordinator.enqueueReplica(adapter: adapter, title: "Doc")
+        let draft = try XCTUnwrap(coordinator.storedDraft(documentID: harness.scope.documentID))
+        XCTAssertTrue(draft.markdown.contains("ABefore"))
+        XCTAssertTrue(draft.markdown.contains("After!"))
+        XCTAssertFalse(draft.markdown.contains("Future content"), "the locked card is left out of the shadow")
+        XCTAssertNotNil(draft.replica)
+        await waitUntil { self.isSaved(coordinator.state(for: harness.scope.documentID)) }
+        XCTAssertEqual(
+            log.count(ofMethod: "PATCH", urlContaining: "/collaboration/ydoc/"), 2, "one PATCH per journaled edit")
+        XCTAssertNil(try harness.store.outbox(for: harness.scope), "the journaled edits were sent")
+    }
+
     /// Offline edits are journaled, then a reconnect integrates server state
     /// holding an unknown block: the capture must still succeed and send them.
     func testAnIntegrateThatAddsAnUnknownBlockStillLetsTheJournaledEditSave() async throws {
@@ -110,7 +176,7 @@ final class ReplicaTypabilityTests: NativeEditingTestCase {
 
         harness.session.replica?.mailbox.post(.integrate(try unknownBlockUpdate(clientID: 21), reply: nil))
         await harness.settle()
-        XCTAssertFalse(harness.session.canType, "the peer's unknown block took authoring away")
+        XCTAssertTrue(harness.session.canType, "the peer's unknown block is a locked card, not a downgrade")
 
         let coordinator = makeCoordinator(harness)
         let log = RequestRecorder()
@@ -126,9 +192,9 @@ final class ReplicaTypabilityTests: NativeEditingTestCase {
         XCTAssertNil(coordinator.storedDraft(documentID: harness.scope.documentID))
     }
 
-    /// After such an integrate the session reports the open's reason and stops
-    /// taking input: a further keystroke is refused, not journaled.
-    func testAnIntegrateThatAddsAnUnknownBlockStopsTypingWithTheOpenReason() async throws {
+    /// After such an integrate the surface keeps authoring: the unknown block
+    /// is a locked card, and typing elsewhere still journals.
+    func testAnIntegrateThatAddsAnUnknownBlockKeepsTypingElsewhere() async throws {
         let harness = try await makeHarness()
         addTeardownBlock { await harness.close() }
         XCTAssertTrue(harness.session.canType)
@@ -137,17 +203,20 @@ final class ReplicaTypabilityTests: NativeEditingTestCase {
         harness.session.replica?.mailbox.post(.integrate(try unknownBlockUpdate(clientID: 22), reply: nil))
         await harness.settle()
 
-        XCTAssertFalse(harness.session.canType)
-        XCTAssertEqual(harness.session.unfamiliarContent?.node, "futureBlock")
-        XCTAssertEqual(harness.session.unfamiliarContent?.reason, "unknownNode:futureBlock")
-        XCTAssertTrue(harness.input.isFrozen, "the surface stopped taking input")
-        XCTAssertFalse(harness.view.isEditable)
+        XCTAssertTrue(harness.session.canType, "a locked card does not take authoring away")
+        XCTAssertNil(harness.session.unfamiliarContent)
+        XCTAssertFalse(harness.input.isFrozen, "the surface keeps taking input")
+        XCTAssertTrue(harness.view.isEditable)
+        XCTAssertEqual(
+            harness.session.surface.blocks.map(\.id), [Self.firstID, Self.secondID, Self.thirdID, "future"])
+        XCTAssertEqual(harness.session.surface.blocks.last?.isOpaque, true)
 
         try caret(harness, Self.firstID, 0)
         harness.view.insertText("x")
         await harness.settle()
-        XCTAssertTrue(harness.log.commands.isEmpty, "the keystroke was refused, not journaled")
-        XCTAssertEqual(text(of: try block(harness.session, Self.firstID)), "First paragraph.")
+        XCTAssertEqual(harness.log.commands.count, 1, "the keystroke was journaled")
+        XCTAssertEqual(text(of: try block(harness.session, Self.firstID)), "xFirst paragraph.")
+        try await assertConsistent(harness, localCommands: 1)
     }
 
     /// A web peer centering a paragraph (an unmodeled prop, not an unknown

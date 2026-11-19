@@ -82,7 +82,15 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
             let env = makeEnvironment()
             defer { env.clean() }
             var blocks = Self.seedBlocks()
-            if rich { blocks.insert(BlockNoteBlock(node: "table", props: [], runs: [], id: "table"), at: 1) }
+            // A centered paragraph (a `.lossy` prop) still keeps the whole document
+            // read-only; an unknown block alone no longer does (PR02 locks it).
+            if rich {
+                blocks.insert(
+                    BlockNoteBlock(
+                        node: "paragraph",
+                        props: Self.paragraphProps.map { $0.key == "textAlignment" ? ($0.key, .string("center")) : $0 },
+                        runs: [InlineRun("Centered")], id: "centered"), at: 1)
+            }
             ServerStub(owner: owner, state: BlockNoteYjs.encode(blocks, clientID: Self.seedClientID)).install()
             let open = NativeEditorOpen(preference: { true })
             await open.open(viewModel: env.model, isOffline: false, canUpdate: canUpdate)
