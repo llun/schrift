@@ -199,11 +199,21 @@ struct ReplicaDelivery: Sendable {
         case reset(epoch: UInt64)
     }
 
+    /// A remote integrate changed whether this replica can be authored
+    /// (downgrade only): every surface stops taking input and shows the same
+    /// unfamiliar-content reason an open of such a document shows. What was
+    /// journaled before the downgrade still saves.
+    struct Typability: Sendable, Equatable {
+        let canType: Bool
+        let unfamiliarContent: NativeUnfamiliarBlock?
+    }
+
     var revision: UInt64
     var events: [Event] = []
     var result: ReplicaResult?
     var selection: ReplicaSelection?
     var state: ReplicaState
+    var typability: Typability?
     var availability: (blockID: String, revision: UInt64, actions: [NativeBlockAction])?
     var clipboard: (requestID: UUID, payload: Data?)?
     var inlineClipboard: (requestID: UUID, payload: Data?)?
@@ -219,7 +229,7 @@ struct ReplicaDelivery: Sendable {
         kept.selection = nil
         let answers =
             result != nil || drained != nil || clipboard != nil || inlineClipboard != nil || availability != nil
-            || resync != nil
+            || resync != nil || typability != nil
         return answers ? kept : nil
     }
 }

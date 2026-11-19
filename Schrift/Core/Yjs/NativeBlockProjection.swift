@@ -217,6 +217,29 @@ enum NativeBlockProjection {
             interlinkingOrigin: interlinkingOrigin)
     }
 
+    /// The save's Markdown shadow when the document has no total one: the
+    /// blocks Markdown can spell, in order, and nothing for the rest (or, when
+    /// even that subset cannot be rendered, every block's plain text). Never
+    /// nil, so a capture never fails for lack of a shadow — a replica draft's
+    /// markdown is only a fingerprint/display shadow, and the raw Yjs bytes
+    /// are what the save sends. Deterministic: the same document always
+    /// projects the same string.
+    static func lossyMarkdownShadow(_ doc: YDoc, interlinkingOrigin: String? = nil) -> String {
+        if let total = markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) { return total }
+        let tree = project(doc, nativeMarks: false, inlineObjects: true)
+        let spellable = tree.blocks.filter { snapshot in
+            !snapshot.block.fidelity.isOpaque
+                && YBlockProjection.editorBlock(snapshot.block, escapeAll: false) != nil
+        }
+        let document = ProjectedDocument(
+            blocks: spellable.map(\.block), isFullyRenderable: true, isFullyModeled: false)
+        if let markdown = YBlockProjection.projectedMarkdown(document) { return markdown }
+        // Last resort: every block's text, which Markdown cannot misread into
+        // a different document (a block the classic rendering would trim, or
+        // one it cannot spell at all, still contributes its text).
+        return tree.blocks.map { $0.block.runs.map(\.text).joined() }.joined(separator: "\n\n")
+    }
+
     /// The shadow of a run of root subtrees (the document's, or one column's,
     /// PR12a): classic segments, each table and export-only subtree as the
     /// export's own chunk, joined as the export joins root blocks. `items`

@@ -137,7 +137,17 @@ route, live socket or Markdown diff is used. A raw save never writes its lossy s
 into the classic content cache. Raw drafts are queued, and "Keep mine" rewrites them,
 only for the remembered signed-in owner. The shadow is never caller-supplied: a
 stored draft's verified shadow is re-captured, or a first capture is projected from
-raw. A manual retry (`saveNow`) of a raw draft re-runs the raw capture
+raw. A capture never fails for lack of a total shadow: a document Markdown cannot
+spell whole (an opaque/rich block) gets a deterministic lossy shadow — the blocks
+Markdown can spell, in order, and nothing for the rest (or every block's plain
+text, when even that subset cannot be rendered). That shadow is only a
+fingerprint and a display string: it is never sent as content, never written to the
+classic cache, and never a reason to drop a replica draft (the sync pass keeps such a
+draft and its unsent outbox, asking the user rather than discarding). Because a lossy
+shadow usually differs from the server's export, rule 1 (our own last push) may not recognise a
+later replay of such a document, which may then ask about a conflict with the user's own
+save. A manual retry
+(`saveNow`) of a raw draft re-runs the raw capture
 (`retryReplicaDraft`). A failed raw capture after "Keep mine"
 reports `.failed` instead of a silent no-op.
 
@@ -230,8 +240,9 @@ the request. `EditorView`'s reopen and reconnect tasks belong to `NativeEditorOp
 also checks the open is still current and the document was not discarded before it
 writes the content cache.
 
-Still open: a total shadow for opaque/rich documents (re-stamping refuses an
-unprojectable revision) and old Markdown-draft migration (clean-replica removal on
+Still open: a total shadow for opaque/rich documents (their saves now capture a
+lossy shadow, so journaled edits always send, but such a document still opens
+read-only) and old Markdown-draft migration (clean-replica removal on
 sign-out and offline local-create replica migration shipped in PR15 below). Since PR06c the shadow spells callouts,
 toggles and page breaks as the server's Markdown export does (a callout as an emoji
 paragraph, a toggle list item as a bullet, a toggle heading as a plain heading, a page

@@ -684,11 +684,21 @@ new non-colliding author client and restores the durable revision. Reconnect byt
 can merge into this same owner through a remote journal/delivery barrier. Even an
 idempotent remote update advances the matching journal/engine revision and never
 enters the local outbox. Failed remote persistence freezes writes before publishing
-the changed display. A draft reference older than the journal
+the changed display. A remote integrate that brings in a block the editor cannot
+author (or takes the total shadow away) downgrades `canType` for every surface:
+typing stops with the same unfamiliar-content reason an open of such a document
+shows, and what was journaled before still saves. Re-enabling happens on reopen.
+The document editor leaves editing mode as Done does, committing an in-progress IME
+composition as typed; a source editor's composition defers the stop until it ends.
+A draft reference older than the journal
 is re-stamped from the current raw revision during replay; an incompatible one is
 refused, and a first capture projects its shadow from raw rather than trusting the
-caller. A durable session freezes on any unjournaled transaction (with the
-storage-failed notice) so the engine revision cannot drift from the manifest.
+caller. A capture never fails for lack of a total shadow: a document Markdown cannot
+spell whole gets a deterministic lossy shadow (the blocks Markdown can spell, in
+order), which is only a fingerprint and display string — never content, never a
+reason to drop a replica draft. A durable session freezes on any unjournaled
+transaction (with the storage-failed notice) so the engine revision cannot drift
+from the manifest.
 Backspace at a block start is structural (PR04a, below); at the document end it is
 refused with a notice. Permanent migration/rollback ownership
 and a total shadow for opaque documents remain open; production activation is below.

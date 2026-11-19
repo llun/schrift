@@ -304,27 +304,33 @@ struct NativeDocumentShellView: View {
 
     private var canEditNative: Bool {
         if case .native(let session) = route {
-            return session.input != nil && session.isWritable
+            return session.input != nil && session.isWritable && session.canType
         }
         return false
     }
 
     private func editUnavailableReason(for session: NativeEditorSession) -> NativeEditUnavailableReason? {
         if session.input != nil {
+            // A peer can bring in content this editor cannot author after the
+            // open: the session downgrades `canType` and stops taking input,
+            // and says so with the reason an open of such a document shows.
+            if !session.canType { return unfamiliarReason(for: session) }
             return session.isWritable ? nil : .noEditAccess
         }
         if let reason = nativeOpen.editUnavailableReason {
             return reason
         }
-        if !session.canType {
-            if let unfamiliar = session.unfamiliarContent {
-                return .unfamiliarContent(blockNode: unfamiliar.node, reason: unfamiliar.reason)
-            }
-            return .unfamiliarContent(
-                blockNode: "",
-                reason: session.hasUnsupportedRoot ? "unsupported root" : "unsupported markdown")
-        }
+        if !session.canType { return unfamiliarReason(for: session) }
         return nil
+    }
+
+    private func unfamiliarReason(for session: NativeEditorSession) -> NativeEditUnavailableReason {
+        if let unfamiliar = session.unfamiliarContent {
+            return .unfamiliarContent(blockNode: unfamiliar.node, reason: unfamiliar.reason)
+        }
+        return .unfamiliarContent(
+            blockNode: "",
+            reason: session.hasUnsupportedRoot ? "unsupported root" : "unsupported markdown")
     }
 
     private var effectiveNativeEditing: Bool {
