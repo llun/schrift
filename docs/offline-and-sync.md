@@ -2556,7 +2556,7 @@ is unrecoverable where a delayed retry is not — which is exactly why the block
 scoped to a build rather than made permanent. The in-memory `.failed` rule is exactly wrong there,
 because `init` re-seeds every record to `.pendingSync` — a free retry for a
 validation 400, but for this one, a fresh POST on every launch that abandons the
-document the last one built. This is not hypothetical: [`standards/editor-save.md`](standards/editor-save.md) records
+document the last one built. This is not hypothetical: [`standards/networking.md`](standards/networking.md) records
 `is_favorite`-as-required-`Bool` failing every create after the server had already
 made the document, "quietly littering the server with them". So a decode failure
 stamps `replayBlockedAt` on the record, which the pass skips. The record stays

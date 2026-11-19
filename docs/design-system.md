@@ -1552,7 +1552,8 @@ uncertain piece.
 
 ## 11. Docs to update in this change
 
-- **[`standards/design-system.md`](standards/design-system.md)** — new conventions: adaptive color tokens
+- **[`standards/design-system.md`](standards/design-system.md)** and
+  **[`standards/localization-and-appearance.md`](standards/localization-and-appearance.md)** — new conventions: adaptive color tokens
   (`DocsColorHexDark` + `Color(lightHex:darkHex:)`), the resolver light+dark
   contract, the `AppearanceStore`/`LocalizationStore` injection rule, the in-code
   localization catalog + completeness test, the "language is a local app
@@ -1591,7 +1592,7 @@ uncertain piece.
 
 ## 13. Definition of done
 
-Per [`build-and-test.md`](build-and-test.md): swift-format run; full suite green locally and on CI
+Per [`AGENTS.md`](../AGENTS.md#task-workflow--start-here): swift-format run; full suite green locally and on CI
 (`Build & Test`); new behavior test-covered; docs updated in the same change; PR
 title a Conventional Commit; PR review loop run and threads resolved.
 

@@ -421,7 +421,7 @@ private struct MarkdownBlockCatalog: View {
 
 /// The card reads `AttachmentLoader` from the environment, so every preview that
 /// can render one must inject it — transitively, for any parent that embeds this
-/// view (see the environment-store rule in `docs/standards/design-system.md`).
+/// view (see the environment-store rule in `docs/standards/localization-and-appearance.md`).
 ///
 /// The **cache** is pre-seeded rather than the loader's state table, because
 /// `loadIfNeeded` re-checks the disk even for an already-`.cached` entry (it has

@@ -1027,7 +1027,7 @@ its pending keys become a recovery entry, and a barrier that met such a change i
 retried once. IME begin is posted and commit is a barrier; the history is one per replica
 session with grouping decided on the main actor; block-menu availability and copy payloads
 are asked of the session asynchronously. Multi-window stays off; the per-scope registry,
-the fan-out and the native live socket are described below. [`standards/editor-save.md`](standards/editor-save.md) has the
+the fan-out and the native live socket are described below. [`standards/document-engine.md`](standards/document-engine.md) has the
 operational detail and the bounds.
 
 **PR08c One replica session per scope, fanned out, with bounded delivery.**
