@@ -2220,9 +2220,11 @@ confirmation leaves them); unknown signs in normally. At launch `ServerSupportGa
 from the cached capability — so a known-legacy server is refused before any network call,
 including offline — and refreshes in the background; a confirmed legacy server replaces
 the signed-in shell with `UnsupportedServerView` (message plus Sign out), and a refreshed
-Docs 6 answer clears it. `DocumentSaveCoordinator.noteServerConfig` and the client's
-`onServerConfig` hook write the capability beside `ServerConfigStore`, so the two never
-disagree.
+Docs 6 answer clears it. Sign out from the notice is the tab shell's sign-out (drain,
+close and purge native replicas first). `DocumentSaveCoordinator.noteServerConfig` and the
+client's `onServerConfig` hook also record what a config proves; the gate reads the store
+only at launch and on its own refresh, so a server that changes mid-session is noticed on
+the next launch.
 
 Pin/unpin persists its latest desired state in `PendingDocumentPinStore`, scoped to
 server origin, account and server document. The app-scoped `DocumentPinCoordinator`
