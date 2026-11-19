@@ -83,11 +83,22 @@ final class ServerCapabilityStoreTests: XCTestCase {
             .docs6)
     }
 
-    /// A server with no `config/` route cannot be Docs 6 — the collaboration URL that would
-    /// prove it comes from config — so a 404 of either kind is an answer, not a failure.
-    func testAMissingConfigRouteIsDefinitiveLegacy() {
-        XCTAssertEqual(serverCapability(from: .failure(DocsAPIError.routeNotFound)), .legacy)
-        XCTAssertEqual(serverCapability(from: .failure(DocsAPIError.notFound)), .legacy)
+    /// A 404 for `config/` proves nothing either: a proxy mid-rollout answers one too, and a
+    /// cached legacy would lock a Docs 6 user out. Likewise a decoded config that names neither
+    /// a parsable release nor a yhub URL (`ContentSaveRoute(config:)`'s rule).
+    func testA404OrAConfigThatProvesNothingIsUnknown() {
+        XCTAssertNil(serverCapability(from: .failure(DocsAPIError.routeNotFound)))
+        XCTAssertNil(serverCapability(from: .failure(DocsAPIError.notFound)))
+        XCTAssertNil(serverCapability(from: .success(ServerConfig())))
+        XCTAssertNil(
+            serverCapability(
+                from: .success(
+                    ServerConfig(
+                        releaseVersion: "development",
+                        collaborationWsUrl: "wss://docs.example.org/collaboration/ws/"))))
+        let store = ServerCapabilityStore(userDefaults: userDefaults)
+        store.record(ServerConfig(), forServerOrigin: "https://docs.example.org")
+        XCTAssertNil(store.capability(forServerOrigin: "https://docs.example.org"))
     }
 
     /// Everything else proves nothing: reading a failed fetch as legacy would lock a Docs 6

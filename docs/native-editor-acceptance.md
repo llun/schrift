@@ -204,9 +204,10 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
 
 ## 6. Known limitations & accepted risks
 
-- **Pre-Docs 6 servers:** refused at sign-in and launch ("This server needs Docs 6 or later"), so
-  the app never reaches an editor on one. The `ClassicEditorView` fallback for
-  `usesCollaborationYDocServer == false` is retained but unreachable.
+- **Pre-Docs 6 servers:** a server whose config proves a pre-6 release is refused at sign-in and
+  launch ("This server needs Docs 6 or later"). One whose config proves nothing (hidden version,
+  failed fetch, offline) is never blocked, so the `ClassicEditorView` fallback for
+  `usesCollaborationYDocServer == false` is still reachable for it until stage 5.
 - **Preserved read-only structures:** A leaf block of an unknown BlockNote type is preserved
   byte-for-byte in `YDoc` and renders as a locked preview card. The rest of the document stays
   typeable and no native edit touches a card. An unknown block with children, an unfamiliar column group,

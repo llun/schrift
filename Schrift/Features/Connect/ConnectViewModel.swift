@@ -71,8 +71,14 @@ final class ConnectViewModel {
             // A fetch that proves nothing (offline, 5xx, undecodable) is *unknown*, never
             // legacy — it signs in normally and the launch gate re-checks next time.
             let capability = serverCapability(from: await fetchServerConfig(client))
-            if let capability, let origin = siteOrigin(for: serverURL) {
-                serverCapabilities.record(capability, forServerOrigin: origin)
+            if let origin = siteOrigin(for: serverURL) {
+                // An answer that proves nothing also clears a stale cached legacy: the user just
+                // proved the server answers, so the launch gate must not block them on old news.
+                if let capability {
+                    serverCapabilities.record(capability, forServerOrigin: origin)
+                } else {
+                    serverCapabilities.clear(forServerOrigin: origin)
+                }
             }
             // Refused exactly as a failed confirmation leaves things: no sign-in, the error
             // shown, and the handed-over cookies left unpersisted in the shared storage (only

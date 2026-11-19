@@ -196,10 +196,11 @@ final class ConnectViewModelTests: XCTestCase {
         XCTAssertEqual(capabilities.capability(forServerOrigin: "https://docs.llun.dev"), .legacy)
     }
 
-    /// A server with no `config/` route cannot be Docs 6, so its 404 is an answer rather than a
-    /// failed fetch — the same "definitive" rule the save route uses.
-    func testAConfigRoute404RefusesSignInAsLegacy() async throws {
+    /// A 404 for `config/` proves nothing (a proxy mid-rollout answers one too): the sign-in
+    /// proceeds, and a stale cached legacy for the server is cleared rather than kept.
+    func testAConfigRoute404SignsInAndClearsAStaleLegacy() async throws {
         let capabilities = ServerCapabilityStore(userDefaults: userDefaults)
+        capabilities.record(.legacy, forServerOrigin: "https://docs.llun.dev")
         let viewModel = makeViewModel(serverCapabilities: capabilities) { request in
             request.url?.absoluteString.hasSuffix("/config/") == true
                 ? .init(statusCode: 404, headers: ["Content-Type": "text/html"], body: Data(), error: nil)
@@ -210,9 +211,9 @@ final class ConnectViewModelTests: XCTestCase {
 
         await viewModel.handleLoginComplete()
 
-        XCTAssertFalse(viewModel.sessionStore.isAuthenticated)
-        XCTAssertEqual(viewModel.errorKey, .server_unsupported)
-        XCTAssertEqual(capabilities.capability(forServerOrigin: "https://docs.llun.dev"), .legacy)
+        XCTAssertTrue(viewModel.sessionStore.isAuthenticated)
+        XCTAssertNil(viewModel.errorKey)
+        XCTAssertNil(capabilities.capability(forServerOrigin: "https://docs.llun.dev"))
     }
 
     /// A config fetch that proves nothing is *unknown*, never legacy: the sign-in proceeds and

@@ -2205,12 +2205,13 @@ Mutating requests (`POST`/`PATCH`/`PUT`/`DELETE`) must include Django's CSRF tok
 `content/` route and no collaboration server, so every save path would fail. The
 capability is a per-origin tri-state in `ServerCapabilityStore`
 (`dev.llun.Schrift.serverCapabilities`): `docs6`, `legacy`, or unknown (no entry).
-`serverCapability(from:)` is the one decision — a decoded config proves its side, and a
-404 for the `config/` route itself is also an answer (a server with no config route
-cannot be Docs 6; the same "definitive" rule `fallbackCollaborationOrg` uses), while a
-transport failure, a 5xx, an undecodable body or an expired session proves nothing.
-**A failed or offline fetch is never legacy** — reading it as such would lock a Docs 6
-user out of their own server whenever they launch offline.
+`serverCapability(from:)` is the one decision — only a decoded config that proves a
+route counts (`ContentSaveRoute(config:)`'s rule: release ≥ 6 or a yhub URL is `docs6`, a
+parsable older release is `legacy`). A 404 (a proxy mid-rollout answers one too), a
+transport failure, a 5xx, an undecodable body, an expired session, or a config naming
+neither proves nothing. **A fetch that proves nothing is never legacy** — reading it as
+such would lock a Docs 6 user out of their own server — and a sign-in whose fetch proves
+nothing clears a cached legacy for that origin.
 
 Sign-in (`ConnectViewModel.handleLoginComplete`) confirms the session, then fetches the
 config and records it: a confirmed legacy server is refused with "This server needs Docs

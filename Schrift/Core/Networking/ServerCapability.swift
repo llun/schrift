@@ -13,32 +13,33 @@ enum ServerCapability: String, Codable, Sendable {
 
 /// The capability a `GET config/` outcome proves, or nil when it proves nothing.
 ///
-/// Only two things are answers. A decoded config says which side it is on. A 404 for the
-/// **route** is also an answer — a server with no `config/` route cannot be Docs 6, whose
-/// collaboration URL (the only other proof) comes from config — and it is the same
-/// "definitive" rule `fallbackCollaborationOrg` already uses for the save route
-/// (`CollaborationYDocEndpoints.swift`). Everything else — a transport failure, a 5xx, an
-/// undecodable body, an expired session — proves nothing and must stay unknown: reading a
-/// failed fetch as legacy would lock a Docs 6 user out of their own server whenever they
-/// launch offline.
+/// Only a decoded config that proves a route is an answer — the same rule as
+/// `ContentSaveRoute(config:)`: a release major ≥ 6 or a yhub collaboration URL is Docs 6, a
+/// parsable older release is legacy, and a config that names neither (a hidden or custom
+/// version, a Hocuspocus URL) proves nothing. Every failure — a 404 (a proxy mid-rollout
+/// answers one too), a transport error, a 5xx, an undecodable body, an expired session —
+/// proves nothing and stays unknown: a wrong legacy would lock a Docs 6 user out of their
+/// own server.
 func serverCapability(from result: Result<ServerConfig, any Error>) -> ServerCapability? {
-    switch result {
-    case .success(let config):
-        return config.usesCollaborationYDocServer ? .docs6 : .legacy
-    case .failure(let error):
-        guard let apiError = error as? DocsAPIError, apiError == .notFound || apiError == .routeNotFound
-        else { return nil }
-        return .legacy
+    guard case .success(let config) = result else { return nil }
+    return serverCapability(from: config)
+}
+
+/// The capability a decoded config proves, or nil (`ContentSaveRoute(config:)`'s rule).
+func serverCapability(from config: ServerConfig) -> ServerCapability? {
+    switch ContentSaveRoute(config: config) {
+    case .collaborationYDoc: return .docs6
+    case .legacyContent: return .legacy
+    case nil: return nil
     }
 }
 
 /// The Docs capability last proved for each server, keyed by `siteOrigin` (`https://host[:port]`).
 ///
 /// Deliberately separate from `ServerConfigStore`, which keeps the whole decoded config for the
-/// save route and the yhub org: this store answers one question — *is this server Docs 6?* — and
-/// it can answer it for a server whose config route 404s, where there is no config to keep.
-/// Both are written together wherever a config is learned (`noteServerConfig`, the client's
-/// `onServerConfig` hook, sign-in and the launch refresh), so they never disagree.
+/// save route and the yhub org: this store answers one question — *is this server Docs 6?* It
+/// is written wherever a config is learned (`noteServerConfig`, the client's `onServerConfig`
+/// hook, sign-in and the launch refresh).
 ///
 /// `@unchecked Sendable` for the same reason `ServerConfigStore` is: it is written from the API
 /// client's `@Sendable` `onServerConfig` hook, off the main actor, and `UserDefaults` is
@@ -67,10 +68,10 @@ struct ServerCapabilityStore: @unchecked Sendable {
         persist(capabilities)
     }
 
-    /// Records what a decoded config proves. The 404 case has no config to pass here; callers
-    /// that see one record `.legacy` directly.
+    /// Records what a decoded config proves; a config that proves nothing changes nothing.
     func record(_ config: ServerConfig, forServerOrigin origin: String) {
-        record(config.usesCollaborationYDocServer ? .docs6 : .legacy, forServerOrigin: origin)
+        guard let capability = serverCapability(from: config) else { return }
+        record(capability, forServerOrigin: origin)
     }
 
     func clear(forServerOrigin origin: String) {

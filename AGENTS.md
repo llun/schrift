@@ -6887,14 +6887,15 @@ markdown write endpoint**. Understand this before touching the save path:
   `docs6` / `legacy` per `siteOrigin`; **no entry means unknown**, and unknown never
   blocks. Schrift supports only Docs 6+ servers, so sign-in and launch refuse a confirmed
   legacy one ("This server needs Docs 6 or later") — but only a *definitive* answer may
-  move the gate: `serverCapability(from:)` accepts a decoded config, or a 404 for the
-  `config/` route itself (a server with no config route cannot be Docs 6 — the same rule
-  `fallbackCollaborationOrg` uses), and nothing else. A transport failure, a 5xx, an
-  undecodable body or an expired session proves nothing; treating one as legacy would lock
-  a Docs 6 user out of their own server on an offline launch. It is written beside
-  `ServerConfigStore` wherever a config is learned (`DocumentSaveCoordinator
-  .noteServerConfig`, the client's `onServerConfig` hook, `ConnectViewModel`, and
-  `ServerSupportGate`'s launch refresh), so the two stores never disagree. It is
+  move the gate: `serverCapability(from:)` accepts only a decoded config that proves a
+  route (`ContentSaveRoute(config:)`'s rule: release ≥ 6 or a yhub URL is `docs6`, a
+  parsable older release is `legacy`). A 404 (a proxy mid-rollout answers one too), a
+  transport failure, a 5xx, an undecodable body, an expired session, or a config naming
+  neither proves nothing; treating one as legacy would lock a Docs 6 user out of their own
+  server. A sign-in whose fetch proves nothing clears a cached legacy for that origin. It is
+  written wherever a config is learned (`DocumentSaveCoordinator.noteServerConfig`, the
+  client's `onServerConfig` hook, `ConnectViewModel`, and `ServerSupportGate`'s launch
+  refresh). It is
   `@unchecked Sendable` like `ServerConfigStore` because the hook writes it off the main
   actor, and its reads never write (see the startup-reconstruction rule above).
 - **A one-blob store that is read often memoizes its decode on the blob's bytes

@@ -144,7 +144,7 @@ private struct AuthenticatedHomeContainer: View {
             if supportGate.isBlocked {
                 // A confirmed pre-Docs 6 server: the signed-in shell would only fail request by
                 // request, so it is replaced outright. Sign out is the way back to Connect.
-                UnsupportedServerView(onSignOut: onSignOut)
+                UnsupportedServerView(onSignOut: signOut)
             } else {
                 signedInContent
             }
@@ -164,6 +164,25 @@ private struct AuthenticatedHomeContainer: View {
         }
     }
 
+    /// The one sign-out, from the tabs and from the unsupported-server notice: drain pending
+    /// native saves, close every replica, purge the leaving user's clean ones, then sign out.
+    private func signOut() {
+        guard signOutTask == nil else { return }
+        let expectedGeneration = sessionStore.signInGeneration
+        let leavingUserID = SignedInUserStore().userID
+        signOutTask = Task { @MainActor in
+            defer { signOutTask = nil }
+            // Drain pending native saves, then close every replica before purging clean ones.
+            await nativeSessions.drainAll().value
+            await nativeSessions.closeAll().value
+            guard sessionStore.signInGeneration == expectedGeneration, sessionStore.isAuthenticated else {
+                return
+            }
+            viewModel.saveCoordinator.purgeCleanNativeReplicasOnSignOut(ownerUserID: leavingUserID)
+            onSignOut()
+        }
+    }
+
     private var signedInContent: some View {
         // One shell for both idioms. The size-class split now lives inside the
         // documents tab (list-and-detail on a regular width, push on a compact
@@ -175,22 +194,7 @@ private struct AuthenticatedHomeContainer: View {
             // container is not rebuilt when it does — so the tabs are told, and the ones
             // holding account-scoped state re-read it. See `SessionStore.signInGeneration`.
             signInGeneration: sessionStore.signInGeneration,
-            onSignOut: {
-                guard signOutTask == nil else { return }
-                let expectedGeneration = sessionStore.signInGeneration
-                let leavingUserID = SignedInUserStore().userID
-                signOutTask = Task { @MainActor in
-                    defer { signOutTask = nil }
-                    // Drain pending native saves, then close every replica before purging clean ones.
-                    await nativeSessions.drainAll().value
-                    await nativeSessions.closeAll().value
-                    guard sessionStore.signInGeneration == expectedGeneration, sessionStore.isAuthenticated else {
-                        return
-                    }
-                    viewModel.saveCoordinator.purgeCleanNativeReplicasOnSignOut(ownerUserID: leavingUserID)
-                    onSignOut()
-                }
-            }
+            onSignOut: signOut
         )
         .onChange(of: workOffline) { _, isOffline in
             viewModel.availability.preferencesChanged()
