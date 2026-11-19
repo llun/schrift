@@ -6882,6 +6882,21 @@ markdown write endpoint**. Understand this before touching the save path:
   seconds, making draft-vs-save races and eviction tie-breaks arbitrary
   (`DocumentCacheStore`, which carries no recency data, is the one `.iso8601`
   store).
+- **The server's Docs capability is a per-origin tri-state, and a failed fetch is never
+  "legacy".** `ServerCapabilityStore` (`dev.llun.Schrift.serverCapabilities`) records
+  `docs6` / `legacy` per `siteOrigin`; **no entry means unknown**, and unknown never
+  blocks. Schrift supports only Docs 6+ servers, so sign-in and launch refuse a confirmed
+  legacy one ("This server needs Docs 6 or later") — but only a *definitive* answer may
+  move the gate: `serverCapability(from:)` accepts a decoded config, or a 404 for the
+  `config/` route itself (a server with no config route cannot be Docs 6 — the same rule
+  `fallbackCollaborationOrg` uses), and nothing else. A transport failure, a 5xx, an
+  undecodable body or an expired session proves nothing; treating one as legacy would lock
+  a Docs 6 user out of their own server on an offline launch. It is written beside
+  `ServerConfigStore` wherever a config is learned (`DocumentSaveCoordinator
+  .noteServerConfig`, the client's `onServerConfig` hook, `ConnectViewModel`, and
+  `ServerSupportGate`'s launch refresh), so the two stores never disagree. It is
+  `@unchecked Sendable` like `ServerConfigStore` because the hook writes it off the main
+  actor, and its reads never write (see the startup-reconstruction rule above).
 - **A one-blob store that is read often memoizes its decode on the blob's bytes
   (`DecodedBlobMemo`), never on its own state.** `PendingDraftStore` and
   `DocumentChildrenCacheStore` share one static memo each: every read still fetches

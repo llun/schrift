@@ -9,10 +9,11 @@ sign-off log for the Phase 2 native BlockNote/Yjs editor (`NativeEditorView` / `
 - **Default state:** `NativeEditorPreference.key` (`"schrift.nativeEditor"`, persisted in `UserDefaults`,
   toggled in **Profile → Native editor (experimental)**) **stays `false` (OFF) by default**.
 - **Scope:** When the switch is on, eligible Docs 6 documents (`usesCollaborationYDocServer == true`)
-  open through `NativeDocumentShellView` and `NativeEditorSession`. Pre-Docs 6 legacy servers and
-  unmigrated classic `PendingDraft`s remain on `ClassicEditorView` (`ClassicEditorView`,
-  `BlockEditorView`, `BlockTextView`, `MarkdownBlockView`, and `BlockNoteYjs.applyEdit` are all
-  retained).
+  open through `NativeDocumentShellView` and `NativeEditorSession`. Pre-Docs 6 servers are refused
+  at sign-in and launch (see `docs/architecture.md`, "Docs 6 is required"), so the app never reaches
+  an editor on one; unmigrated classic `PendingDraft`s remain on `ClassicEditorView`
+  (`ClassicEditorView`, `BlockEditorView`, `BlockTextView`, `MarkdownBlockView`, and
+  `BlockNoteYjs.applyEdit` are all retained).
 - **Public default-on promotion** is a separate post-acceptance decision made only after the
   owner completes Release TestFlight verification below.
 
@@ -203,8 +204,9 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
 
 ## 6. Known limitations & accepted risks
 
-- **Pre-Docs 6 servers:** Servers where `usesCollaborationYDocServer == false` remain on
-  `ClassicEditorView` even when the native switch is enabled.
+- **Pre-Docs 6 servers:** refused at sign-in and launch ("This server needs Docs 6 or later"), so
+  the app never reaches an editor on one. The `ClassicEditorView` fallback for
+  `usesCollaborationYDocServer == false` is retained but unreachable.
 - **Preserved read-only structures:** A leaf block of an unknown BlockNote type is preserved
   byte-for-byte in `YDoc` and renders as a locked preview card. The rest of the document stays
   typeable and no native edit touches a card. An unknown block with children, an unfamiliar column group,

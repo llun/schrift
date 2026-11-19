@@ -11,17 +11,20 @@ final class ConnectViewModel {
 
     let sessionStore: SessionStore
     let recentServers: RecentServersStore
+    private let serverCapabilities: ServerCapabilityStore
     private let apiClientFactory: (URL) -> DocsAPIClient
 
     init(
         sessionStore: SessionStore,
         recentServers: RecentServersStore,
+        serverCapabilities: ServerCapabilityStore = ServerCapabilityStore(),
         apiClientFactory: @escaping (URL) -> DocsAPIClient = { serverURL in
             DocsAPIClient(baseURL: serverURL.appendingPathComponent("api/v1.0/"))
         }
     ) {
         self.sessionStore = sessionStore
         self.recentServers = recentServers
+        self.serverCapabilities = serverCapabilities
         self.apiClientFactory = apiClientFactory
     }
 
@@ -63,10 +66,34 @@ final class ConnectViewModel {
         let client = apiClientFactory(serverURL)
         do {
             let userID = try await client.confirmSession()
+            // Schrift supports only Docs 6+ servers, so learn the capability before signing in:
+            // a pre-Docs 6 server is refused here rather than failing request by request later.
+            // A fetch that proves nothing (offline, 5xx, undecodable) is *unknown*, never
+            // legacy — it signs in normally and the launch gate re-checks next time.
+            let capability = serverCapability(from: await fetchServerConfig(client))
+            if let capability, let origin = siteOrigin(for: serverURL) {
+                serverCapabilities.record(capability, forServerOrigin: origin)
+            }
+            // Refused exactly as a failed confirmation leaves things: no sign-in, the error
+            // shown, and the handed-over cookies left unpersisted in the shared storage (only
+            // `signIn` writes them to the Keychain), so a retry can reuse the IdP's session.
+            guard capability != .legacy else {
+                errorKey = .server_unsupported
+                return
+            }
             try sessionStore.signIn(serverURL: serverURL, userID: userID)
             recentServers.addServer(serverURL)
         } catch {
             errorKey = .connect_error_sign_in_failed
+        }
+    }
+
+    /// The config fetch as a value, so a failure is *unknown* rather than a failed sign-in.
+    private func fetchServerConfig(_ client: DocsAPIClient) async -> Result<ServerConfig, any Error> {
+        do {
+            return .success(try await client.serverConfig())
+        } catch {
+            return .failure(error)
         }
     }
 }
