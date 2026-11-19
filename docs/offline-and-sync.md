@@ -190,7 +190,7 @@ create or delete, no live owner holds it, it projects fully (fully modeled with 
 Markdown shadow), and there is no classic draft or queued classic save. A document
 with a classic draft stays classic until that draft syncs. Every fetched Docs 6 document
 that reaches native with an account and scope — readers (`!verified`), non-typeable
-documents (`!session.canType`), and live-held documents (`!mayType`) included — seeds a
+documents (`!session.canType`) included, though never while `mayType` is false (a marker would make the writer that holds the document refuse its own saves) — seeds a
 durable replica with the standard ownership marker and opens it read-only (no journal,
 no typing, no live socket), so it restores offline on the next open and gains typing
 automatically if a reader is later promoted to writer. Only a signed-out open (no

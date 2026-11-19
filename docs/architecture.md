@@ -726,7 +726,7 @@ shadow of the blocks the locked cards leave behind). A locked preserved card is 
 unknown type and is not a reason to stop authoring; any other opaque block is. An owned replica is restored offline-first, then
 the fetched raw state is integrated into the same durable owner; a converted
 response is never installed. Every fetched Docs 6 document that reaches native with an
-account and scope — including readers, non-typeable documents, and live-held documents —
+account and scope — including readers and non-typeable documents, but not while typing is held (pending delete, checkpointed create, classic draft, live owner) —
 is seeded into a new replica from the fetched raw state (`ReplicaStore.create` writes
 the marker first) and restored (with typing and live collaboration enabled only when
 writable; otherwise read-only with no journal and no live socket, so it restores offline
