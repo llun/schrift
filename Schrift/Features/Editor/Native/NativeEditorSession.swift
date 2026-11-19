@@ -1340,6 +1340,13 @@ final class NativeEditorOpen {
             viewModel.setNativeRouteActive(false)
             route = .classic
         case .unavailable(let reason):
+            // A superseded open leaves the route to the newer one; an answer that
+            // arrived after availability moved is settled from the device.
+            guard isCurrent(request: request, viewModel: viewModel, account: account) else { return }
+            guard !availabilityMoved(viewModel, isOffline: isOffline) else {
+                settleWithoutAnswer(request: request, viewModel: viewModel, account: account, isOffline: isOffline)
+                return
+            }
             showUnavailable(reason, viewModel: viewModel)
         }
     }
@@ -2011,10 +2018,12 @@ final class NativeEditorOpen {
 
     /// The native surface owns the route with no document to show.
     private func showUnavailable(_ reason: NativeOpenUnavailable, viewModel: EditorViewModel) {
-        // Claim a local copy only when one is on the device: an open that failed
-        // online may have nothing cached, and a page never opened has nothing.
-        if viewModel.contentCache.content(for: viewModel.documentID) != nil {
-            viewModel.seedNativeMetadataIfNeeded()
+        // Cached subpages still show; a local copy is claimed only when one is on the
+        // device (an open that failed online may have nothing cached).
+        let hadLocalCopy = viewModel.hasLocalCopy
+        viewModel.seedNativeMetadataIfNeeded()
+        if viewModel.contentCache.content(for: viewModel.documentID) == nil {
+            viewModel.hasLocalCopy = hadLocalCopy
         }
         viewModel.setNativeRouteActive(true)
         editUnavailableReason = nil
