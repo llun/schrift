@@ -426,7 +426,7 @@ final class TableEditorTests: NativeEditingTestCase {
         XCTAssertEqual(table.surface.blocks[6].runs.map(\.text).joined(), "Grace\n日本")
     }
 
-    func testAnUnfamiliarTableIsPreservedAndDoesNotOpen() async throws {
+    func testAnUnfamiliarTableIsPreservedAndOpensReadOnly() async throws {
         // Unfamiliar inline element in a cell: a node the editor does not read
         // (`<math>` became modeled in PR14).
         let update = try peerUpdate("styled") { _, tx, table in
@@ -442,7 +442,7 @@ final class TableEditorTests: NativeEditingTestCase {
         doc.destroy()
         let harness = try await makeHarness(state: state)
         addTeardownBlock { await harness.close() }
-        XCTAssertTrue(harness.session.canType, "an unfamiliar table is a locked card: the document types around it")
+        XCTAssertFalse(harness.session.canType, "an unfamiliar table is not a locked card: the document reads only")
         let opened = await harness.session.openTable("tbl")
         XCTAssertNil(opened, "an unfamiliar table is never a text target")
         let grid = await harness.session.tableGrid("tbl")

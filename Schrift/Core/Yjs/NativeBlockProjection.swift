@@ -732,12 +732,34 @@ enum NativeBlockProjection {
             guard case .lossy(let reasons) = lossy.block.fidelity else { return nil }
             return NativeUnfamiliarBlock(node: lossy.block.node, reason: reasons.first ?? "unsupported prop")
         }
+        // Only a leaf block of an unknown type is a locked card.
+        if let unlockable = firstUnlockableOpaqueBlock(projected.blocks) { return unlockable }
         let shadow = opaqueAwareShadow(doc, native: projected.blocks, interlinkingOrigin: interlinkingOrigin)
         guard shadow.shadow == nil else { return nil }
         return firstShadowRefusal(
             shadow.tree, locked: shadow.locked, items: rootItems(doc), containers: allContainerItems(doc),
             allowsColumns: true, interlinkingOrigin: interlinkingOrigin)
             ?? NativeUnfamiliarBlock(node: shadow.tree.first?.block.node ?? "", reason: "unsupported markdown")
+    }
+
+    /// The first opaque block that cannot be a locked card. Only a leaf block
+    /// of an unknown type is one (`unknownNode:`, and outside the payload's
+    /// `contentNodes`): the engine's delete payload check refuses it, and it has no child blocks to move in or
+    /// out. A known node read as opaque (a bad mark, a missing level), a block
+    /// cut at the depth bound (its children unprojected), a container or one with
+    /// children keeps the whole document read-only, as before PR02.
+    private static func firstUnlockableOpaqueBlock(_ blocks: [NativeBlockSnapshot]) -> NativeUnfamiliarBlock? {
+        for (index, snapshot) in blocks.enumerated() {
+            guard case .opaque(let reason) = snapshot.block.fidelity else { continue }
+            let hasChildren = index + 1 < blocks.count && blocks[index + 1].depth > snapshot.depth
+            let isUnknownType =
+                reason.hasPrefix("unknownNode:") && !BlockNoteSubtreePayload.contentNodes.contains(snapshot.block.node)
+                && !["columnList", "column"].contains(snapshot.block.node)
+            if hasChildren || !isUnknownType {
+                return NativeUnfamiliarBlock(node: snapshot.block.node, reason: reason)
+            }
+        }
+        return nil
     }
 
     /// The first block the engine cannot address: an empty id, or one that

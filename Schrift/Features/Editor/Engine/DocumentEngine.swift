@@ -1883,10 +1883,9 @@ final class DocumentEngine {
             // The document keeps one block.
             guard entry.depth > 0 || siblings.count > 1 else { throw DocumentEngineError.unsupportedNativeInput }
             for p in position..<end { try requireEditableBlock(order[p]) }
-            // The payload check is the fidelity guard: it refuses an unknown
-            // node, so a locked card cannot be deleted, while an opaque block
-            // that is plain BlockNote XML (a table) still can — exactly the
-            // availability the block menu offers.
+            // The payload check refuses an unknown node, so a locked card (a leaf
+            // block of an unknown type, `NativeBlockProjection.typability`) can
+            // never be deleted — exactly the availability the block menu offers.
             _ = try BlockNoteSubtreePayload.validate([try writer.snapshot(entry.container, block: id, depth: 0)])
             let next = end < order.count ? order[end] : nil
             let previous = position > 0 ? order[position - 1] : nil

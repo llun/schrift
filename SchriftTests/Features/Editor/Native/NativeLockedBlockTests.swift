@@ -104,6 +104,36 @@ final class NativeLockedBlockTests: NativeEditingTestCase {
         try await assertConsistent(harness, localCommands: 0)
     }
 
+    /// An unknown block with child blocks is not a locked card: its modeled
+    /// children could be lifted out of it, so the whole document stays read-only.
+    func testAnUnknownBlockWithChildrenStillMakesTheDocumentReadOnly() async throws {
+        var future = BlockNoteBlock(node: "futureBlock", props: [], runs: [InlineRun("Future")], id: "future")
+        future.children = [paragraph("child", "Child")]
+        let state = BlockNoteYjs.encode(
+            [paragraph("before", "Before"), future, paragraph("after", "After")], clientID: Self.seedClientID)
+
+        let inspected = try await NativeEditorSession.inspect(state: state)
+        addTeardownBlock { await inspected.close().value }
+        XCTAssertFalse(inspected.canType)
+        XCTAssertEqual(inspected.unfamiliarContent?.node, "futureBlock")
+    }
+
+    /// A known node read as opaque (a heading whose level is not a number) is
+    /// not a locked card — the delete check would accept it — so the whole
+    /// document stays read-only.
+    func testAKnownNodeReadAsOpaqueStillMakesTheDocumentReadOnly() async throws {
+        let broken = BlockNoteBlock(
+            node: "heading", props: Self.paragraphProps + [("level", .string("x")), ("isToggleable", .bool(false))],
+            runs: [InlineRun("Broken")], id: "broken")
+        let state = BlockNoteYjs.encode(
+            [paragraph("before", "Before"), broken, paragraph("after", "After")], clientID: Self.seedClientID)
+
+        let inspected = try await NativeEditorSession.inspect(state: state)
+        addTeardownBlock { await inspected.close().value }
+        XCTAssertFalse(inspected.canType)
+        XCTAssertEqual(inspected.unfamiliarContent?.node, "heading")
+    }
+
     /// A `.lossy` block (a known node with a non-default prop) still makes the
     /// whole document read-only, with the prop as the reason.
     func testALossyBlockStillMakesTheDocumentReadOnly() async throws {

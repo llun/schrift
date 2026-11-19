@@ -416,8 +416,8 @@ final class ColumnEditorTests: NativeEditingTestCase {
     }
 
     /// A group of one column (the transient shape `fixLayoutBlocks` repairs on
-    /// the web) is unfamiliar: preserved, not opened, and the document types
-    /// around it as a locked card.
+    /// the web) is unfamiliar: preserved, not opened, and the document stays
+    /// read-only.
     func testAnUnfamiliarGroupIsPreservedAndDoesNotOpen() async throws {
         let seed = YDoc(clientID: 5, gc: true)
         try seed.applyUpdate(YUpdateDecoder.decode(try fixture("two")))
@@ -433,7 +433,7 @@ final class ColumnEditorTests: NativeEditingTestCase {
         seed.destroy()
         let harness = try await makeHarness(state: state)
         addTeardownBlock { await harness.close() }
-        XCTAssertTrue(harness.session.canType, "an unfamiliar group is a locked card: the document types around it")
+        XCTAssertFalse(harness.session.canType)
         let column = await harness.session.openColumn(group: "cl", column: "c1")
         XCTAssertNil(column)
         let model = ColumnEditorModel(document: harness.session, groupID: "cl")
