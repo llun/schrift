@@ -1,0 +1,21 @@
+docs/architecture.md
+  s_4fb28ab57323fe::t_a8c7cf9b318029 729
+docs/offline-and-sync.md
+  s_4fb28ab57323fe::t_a8c7cf9b318029 193
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b602383307815346008db62c10979a90d55c1589",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
