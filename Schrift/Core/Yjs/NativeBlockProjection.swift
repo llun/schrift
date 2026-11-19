@@ -12,9 +12,11 @@ struct NativeUnfamiliarBlock: Equatable, Sendable {
 /// authored natively, and the first reason it cannot. `canType` is true when
 /// the root shape is canonical, there is no unsupported auxiliary root, every
 /// block id is addressable, no block is `.lossy`, and the blocks Markdown can
-/// spell — every block but the opaque ones — have a total shadow. An opaque
-/// block is a locked preserved card: it never makes the document read-only,
-/// and no native edit touches it.
+/// spell — every block but the locked cards — have a total shadow. A locked
+/// card is a leaf block of an unknown type: it never makes the document
+/// read-only, and no native edit touches it. Any other opaque block (one with
+/// children, a column group, a known node read as opaque, a block cut at the
+/// depth bound) keeps the whole document read-only.
 struct NativeTypability: Equatable, Sendable {
     let canType: Bool
     let unfamiliarContent: NativeUnfamiliarBlock?
@@ -689,11 +691,11 @@ enum NativeBlockProjection {
     }
 
     /// The native editor's one typability rule (PR02): whether `doc` can be
-    /// authored natively, and the first reason it cannot. An opaque block is a
-    /// locked preserved card — it never makes the document read-only, and no
-    /// native edit touches it — so only a document-level unknown, an
-    /// unaddressable id, a `.lossy` block, or a missing shadow of the
-    /// remaining blocks stops authoring.
+    /// authored natively, and the first reason it cannot. A leaf block of an
+    /// unknown type is a locked card — it never makes the document read-only,
+    /// and no native edit touches it — so only a document-level unknown, an
+    /// unaddressable id, a `.lossy` block, any other opaque block, or a
+    /// missing shadow of the remaining blocks stops authoring.
     static func typability(_ doc: YDoc, interlinkingOrigin: String? = nil) -> NativeTypability {
         typability(doc, projected: project(doc), interlinkingOrigin: interlinkingOrigin)
     }
@@ -711,7 +713,8 @@ enum NativeBlockProjection {
 
     /// Computes the first block type and reason why `doc` cannot be authored
     /// natively (`canType == false`), or `nil` when it can. Never returns
-    /// document text. An opaque block is never a reason: it is a locked card.
+    /// document text. A locked card (a leaf block of an unknown type) is never
+    /// a reason; any other opaque block is.
     static func firstUnsupportedReason(_ doc: YDoc, interlinkingOrigin: String? = nil) -> NativeUnfamiliarBlock? {
         firstUnsupportedReason(doc, projected: project(doc), interlinkingOrigin: interlinkingOrigin)
     }

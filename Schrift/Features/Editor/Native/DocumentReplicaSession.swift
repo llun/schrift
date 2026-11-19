@@ -258,8 +258,8 @@ actor DocumentReplicaSession {
         }
         // Marks never make the native projection lossy (raw Yjs write-back
         // keeps them all); the Markdown shadow is the one `ReplicaSaveAdapter`
-        // captures, which drops what Markdown cannot spell. An opaque block is
-        // a locked card, not a reason to stop authoring (PR02).
+        // captures, which drops what Markdown cannot spell. A leaf block of an
+        // unknown type is a locked card, not a reason to stop authoring (PR02).
         let typability = NativeBlockProjection.typability(
             doc, projected: projected, interlinkingOrigin: interlinkingOrigin)
         return Graph(
@@ -847,7 +847,8 @@ actor DocumentReplicaSession {
     /// document that was typeable at build stays typeable unless an integrate
     /// says otherwise, and re-enabling happens on reopen. What was journaled
     /// before the downgrade still saves (the capture no longer needs a total
-    /// shadow). An opaque block is a locked card, so it does not downgrade.
+    /// shadow). A leaf block of an unknown type is a locked card, so it does
+    /// not downgrade; any other opaque block does.
     private func recheckTypability() {
         // shortcut: a full projection + shadow per remote frame; measure with
         // the nesting cap before live collaboration is on by default (plan PR 13).
