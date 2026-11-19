@@ -276,6 +276,54 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         }
     }
 
+    /// A Retry that lands after the page closed (the user navigated back) does nothing:
+    /// it never installs a session for a screen that is gone.
+    func testRetryAfterCloseDoesNotReopen() async {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        stub(version: "6.0.0", state: Data(), status: 500)
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: fixture.model, isOffline: false)
+        guard case .unavailable(.openFailed) = open.route else { return XCTFail("expected the error state") }
+        open.close()
+        let recorder = RequestRecorder()
+        stub(
+            version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID),
+            recorder: recorder)
+        await open.retry(viewModel: fixture.model, isOffline: false)
+        guard case .loading = open.route else { return XCTFail("a late Retry must not reopen: \(open.route)") }
+        XCTAssertTrue(recorder.methods.isEmpty, "a late Retry must not fetch")
+    }
+
+    /// Pending local work that arrives mid-fetch keeps the classic owner even when the
+    /// fetch then fails.
+    func testLocalDraftArrivingBeforeAFailedFetchKeepsTheClassicRoute() async {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        let gate = MockURLProtocol.ResponseGate()
+        stub(version: "6.0.0", state: Data(), status: 500, gate: gate)
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        let loading = Task { await open.open(viewModel: fixture.model, isOffline: false) }
+        await waitUntil { MockURLProtocol.lastRequest?.url?.path.contains("/collaboration/ydoc/") == true }
+        PendingDraftStore(userDefaults: fixture.defaults).save(
+            PendingDraft(
+                documentID: fixture.model.documentID, title: "Local", markdown: "Arrived while loading",
+                updatedAt: Date()))
+        gate.open()
+        await loading.value
+        guard case .classic = open.route else {
+            return XCTFail("a failed fetch must not hide a local draft behind an error: \(open.route)")
+        }
+    }
+
     func testCacheRefreshFailureStillInstallsTheNativeSession() async {
         let fixture = makeFixture()
         defer {

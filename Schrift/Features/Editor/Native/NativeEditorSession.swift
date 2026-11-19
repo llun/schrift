@@ -1299,7 +1299,10 @@ final class NativeEditorOpen {
                 }
                 continuation.yield(.state(state, config: config, ability: answer))
             } catch {
-                continuation.yield(.unavailable(.openFailed))
+                // Pending local work that arrived mid-fetch keeps its classic owner even
+                // when the fetch then fails (stage 2 moves drafts to native).
+                let pending = self.map { !$0.canOpenIgnoringConnectivity(viewModel) } ?? false
+                continuation.yield(pending ? .classic : .unavailable(.openFailed))
             }
         }
         defer {
@@ -2008,15 +2011,21 @@ final class NativeEditorOpen {
 
     /// The native surface owns the route with no document to show.
     private func showUnavailable(_ reason: NativeOpenUnavailable, viewModel: EditorViewModel) {
-        // A page never opened has nothing cached, so it must not claim a local copy.
-        if reason != .offlineNeverOpened { viewModel.seedNativeMetadataIfNeeded() }
+        // Claim a local copy only when one is on the device: an open that failed
+        // online may have nothing cached, and a page never opened has nothing.
+        if viewModel.contentCache.content(for: viewModel.documentID) != nil {
+            viewModel.seedNativeMetadataIfNeeded()
+        }
         viewModel.setNativeRouteActive(true)
         editUnavailableReason = nil
         route = .unavailable(reason)
     }
 
     /// The native error state's Retry: close, then run the open again.
+    /// A no-op once the page was closed (navigating away cancels the retry, so a
+    /// late tap never installs a session for a screen that is gone).
     func retry(viewModel: EditorViewModel, isOffline: Bool, canUpdate: Bool = false, canMention: Bool = false) async {
+        guard isOpen else { return }
         close()
         await open(viewModel: viewModel, isOffline: isOffline, canUpdate: canUpdate, canMention: canMention)
     }
