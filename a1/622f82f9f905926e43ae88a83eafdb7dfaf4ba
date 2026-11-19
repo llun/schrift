@@ -1,0 +1,38 @@
+Schrift/Core/Yjs/NativeBlockProjection.swift
+  h_580a04e334fef4 14-22,699-702,721-722,757,764-771
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  h_580a04e334fef4 413-414,501-502,508,522,605,727,751,836,1403,1733-1734,1817-1818,1934,2008-2018,2062-2067,2070-2072,2124,2171,2178,2184,2186,2188,2210,2576-2580,2589-2609
+Schrift/Features/Editor/Engine/EditorSurface.swift
+  h_580a04e334fef4 290-291,298-299,354
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  h_580a04e334fef4 818-820
+Schrift/Features/Editor/Native/NativeInputCoordinator.swift
+  h_580a04e334fef4 1864-1866
+SchriftTests/Core/Yjs/BlockNoteInlineOracleTests.swift
+  h_580a04e334fef4 337
+SchriftTests/Features/Editor/Native/NativeEditorActivationTests.swift
+  h_580a04e334fef4 85-88,92-94
+SchriftTests/Features/Editor/Native/NativeLockedBlockTests.swift
+  h_580a04e334fef4 8-10,138-141,154-156
+SchriftTests/Features/Editor/Native/NativeLossyBlockTests.swift
+  h_580a04e334fef4 1-470
+SchriftTests/Features/Editor/Native/ReplicaTypabilityTests.swift
+  h_580a04e334fef4 11-12,224-226,237-246
+SchriftTests/Features/Editor/Native/TableEditorTests.swift
+  h_580a04e334fef4 505-506,508,510
+docs/architecture.md
+  h_580a04e334fef4 694-702,723-726
+docs/native-editor-acceptance.md
+  h_580a04e334fef4 218-223
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a1622f82f9f905926e43ae88a83eafdb7dfaf4ba",
+  "prompts": {},
+  "humans": {
+    "h_580a04e334fef4": {
+      "author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
