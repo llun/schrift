@@ -553,6 +553,17 @@ enum Strings_en {
         .native_editor_owned_unavailable_title: "Native document unavailable",
         .native_editor_owned_unavailable_body:
             "This document belongs to the native editor, but its saved copy can't be read. It stays read-only so the classic editor can't overwrite it.",
+        .native_editor_open_failed_title: "Couldn't open this document",
+        .native_editor_open_failed_body: "Check your connection and try again.",
+        .native_editor_unreadable_title: "Couldn't read this document",
+        .native_editor_unreadable_body:
+            "The server's copy can't be read. Nothing on this device was changed.",
+        .native_editor_seed_failed_title: "Couldn't save this document on this device",
+        .native_editor_seed_failed_body:
+            "The device's storage is unavailable. Nothing was changed; try again.",
+        .native_editor_offline_never_opened_title: "Go online to open this page",
+        .native_editor_offline_never_opened_body:
+            "This page hasn't been opened on this device yet, so there's nothing to show offline.",
         .profile_recover_drafts: "Recover unreadable drafts",
         .profile_recover_drafts_footer:
             "Some saved drafts couldn't be read. Try to recover them; nothing is deleted if recovery fails.",

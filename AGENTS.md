@@ -2076,15 +2076,22 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `NativeEditorOpen` reads the preference before starting classic tasks or the live bridge;
   a reappearing mounted classic route keeps running its tasks during the reread. For an online
   Docs 6 document with no pending local content, `NativeEditorOpen` fetches
-  `collaborationYDocState`; legacy servers, offline/unreachable opens, pending
-  deletions, pending creation intents and fetch/decode failures use the classic editor. A three-second
-  deadline bounds the optional prefetch without awaiting cancellation of shared
-  config requests. Never replace a focused editor when the toggle changes.
+  `collaborationYDocState`. With the switch on, the classic editor is selected only for a
+  pre-Docs 6 server, for pending local work (local document, pending deletion, checkpointed
+  create, classic draft, pending save, unsaved classic content), and for an offline or
+  unreachable open that has a cached classic copy. A failed config or raw-state fetch, an
+  unreadable fetched state and a failed replica seed show the native `.unavailable` state with
+  Retry; an offline open with no replica and no cached copy shows "Go online to open this
+  page". There is no prefetch deadline: loading lasts until the fetch answers or fails, and
+  URLSession's own timeouts apply. A superseded open (generation, account or availability
+  moved) leaves the route to the newer open instead of selecting classic. Never replace a
+  focused editor when the toggle changes.
   Before selecting native, `refreshOfflineCacheForNativeReader` fetches the
   server's Markdown export, reuses leaf-nesting recovery and `cacheServerCopy`,
   and preserves its title/server timestamp for the classic offline fallback.
   This refresh covers content only; it does not populate the children cache.
-  It never installs classic display state or changes the classic load route.
+  It never installs classic display state or changes the classic load route, and its
+  failure never blocks the native session.
   Since PR08b the read-only reader is `NativeEditorSession.inspect(state:)`: a one-shot
   projection with no replica session at all. An editable session's replica belongs
   to `DocumentReplicaSession` (PR08b bullet below), which destroys it on close, failed
@@ -2199,7 +2206,13 @@ default; `schrift.nativeEditor` is an experimental, default-off Profile preferen
   `integrateServerState` merges the fetched raw state into the same owner; never install
   a converted response over it. An unowned eligible document is seeded by
   `ReplicaStore.create` (marker first) and restored. Anything else keeps PR01's in-memory
-  read-only session with no marker. Each persisted command calls
+  read-only session with no marker. With the switch on, a failed fetch, an unreadable
+  fetched state or a failed seed shows the native `.unavailable` state with Retry instead
+  of the classic editor; only the switch-off, legacy-server and pending-local-work gates
+  still select classic. Keep-server conflict resolution proves the fetched bytes install
+  (`DocumentReplicaSession.validateInstallable`: decode, apply with no retained structs,
+  project) before it closes the session or discards the replica, draft and conflict; an
+  uninstallable state keeps all three and reports the error. Each persisted command calls
   `NativeReplicaSaveScheduler.schedule()` (classic `autosaveInterval`, 30 s cap), which
   hands the verified outbox to `enqueueReplica` with the content cache's server title
   and baseline. Close and inactive/background flush it; a reopened replica with an
