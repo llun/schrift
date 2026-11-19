@@ -751,7 +751,7 @@ final class DocumentSaveCoordinator {
     {
         guard canSafelyRemoveCleanReplicas else { return [] }
         var keepingScopes = additionalKeepingScopes
-        if let open = nativeSessions?.openScopes {
+        if let open = nativeSessions?.busyScopes {
             keepingScopes.formUnion(open)
         }
         let evicted = replicaStore.evictCleanReplicas(

@@ -562,11 +562,12 @@ final class ReplicaStore: Sendable {
     ) -> [ReplicaScope] {
         Self.io.withLock { _ in
             removeTombstones()
-            var totalBytes = 0
+            // Sizes first: the common case (under the cap) reads no manifest.
+            let folders = replicaFolders().map { (folder: $0, bytes: folderByteCountLocked($0)) }
+            var totalBytes = folders.reduce(0) { $0 + $1.bytes }
+            guard totalBytes > byteLimit else { return [] }
             var candidates: [(scope: ReplicaScope, bytes: Int, openedAt: Date, name: String)] = []
-            for entry in replicaFolders() {
-                let bytes = folderByteCountLocked(entry)
-                totalBytes += bytes
+            for (entry, bytes) in folders {
                 switch read(folder: entry) {
                 case .uncommitted:
                     continue
@@ -585,7 +586,6 @@ final class ReplicaStore: Sendable {
                     candidates.append((manifest.scope, bytes, openedAt, name))
                 }
             }
-            guard totalBytes > byteLimit else { return [] }
             candidates.sort { lhs, rhs in
                 if lhs.openedAt != rhs.openedAt { return lhs.openedAt < rhs.openedAt }
                 return lhs.name < rhs.name

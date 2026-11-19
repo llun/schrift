@@ -1647,7 +1647,7 @@ final class NativeEditorOpen {
         do {
             _ = try coordinator.replicaStore.create(for: scope, checkpoint: state)
             coordinator.recordReplicaOpened(scope: scope)
-            coordinator.evictCleanNativeReplicasIfNeeded(keepingScopes: registry.openScopes.union([scope]))
+            coordinator.evictCleanNativeReplicasIfNeeded(keepingScopes: registry.busyScopes.union([scope]))
             let restored = try await registry.open(store: coordinator.replicaStore, scope: scope, hooks: replicaHooks)
             guard !Task.isCancelled, generation == request, viewModel.signedInUser.userID == account else {
                 restored?.close()
