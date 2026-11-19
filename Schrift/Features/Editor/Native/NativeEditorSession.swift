@@ -493,9 +493,9 @@ final class NativeEditorSession {
         // The table types while the document does (the replica's one journal).
         // A child of a document that opened typeable types only while the replica
         // still says so: a downgrade the parent has not applied (or deferred under
-        // a composition) must not enable it. Isolated hosts that type around
-        // preserved blocks opened non-typeable and keep their behaviour (in
-        // production a non-typeable open never makes the parent's view editable).
+        // a composition) must not enable it. A document whose only non-modeled
+        // content is locked preserved cards opens typeable, so its children type
+        // too; a non-typeable open never makes the parent's view editable.
         if input != nil, textView.isEditable, session.canType || !openedTypeable {
             session.enableTyping(persist: nil, scheduler: saveScheduler)
             session.setExpectedWritable(isWritable)
@@ -558,9 +558,9 @@ final class NativeEditorSession {
         // The column types while the document does (the replica's one journal).
         // A child of a document that opened typeable types only while the replica
         // still says so: a downgrade the parent has not applied (or deferred under
-        // a composition) must not enable it. Isolated hosts that type around
-        // preserved blocks opened non-typeable and keep their behaviour (in
-        // production a non-typeable open never makes the parent's view editable).
+        // a composition) must not enable it. A document whose only non-modeled
+        // content is locked preserved cards opens typeable, so its children type
+        // too; a non-typeable open never makes the parent's view editable.
         if input != nil, textView.isEditable, session.canType || !openedTypeable {
             session.enableTyping(persist: nil, scheduler: saveScheduler)
             session.setExpectedWritable(isWritable)
@@ -607,9 +607,9 @@ final class NativeEditorSession {
         session.consume(attachment.deliveries)
         // A child of a document that opened typeable types only while the replica
         // still says so: a downgrade the parent has not applied (or deferred under
-        // a composition) must not enable it. Isolated hosts that type around
-        // preserved blocks opened non-typeable and keep their behaviour (in
-        // production a non-typeable open never makes the parent's view editable).
+        // a composition) must not enable it. A document whose only non-modeled
+        // content is locked preserved cards opens typeable, so its children type
+        // too; a non-typeable open never makes the parent's view editable.
         if input != nil, textView.isEditable, session.canType || !openedTypeable {
             session.enableTyping(persist: nil, scheduler: saveScheduler)
             session.setExpectedWritable(isWritable)
@@ -814,9 +814,9 @@ final class NativeEditorSession {
     /// (nil when the registry installed it for the replica already);
     /// `scheduler` is retained so a debounced save outlives the keystroke that
     /// armed it, and is called only once a command is journaled. The
-    /// production open route additionally requires `canType`; the isolated
-    /// host and component tests type around preserved blocks, which input
-    /// refuses.
+    /// production open route additionally requires `canType`; a document whose
+    /// only non-modeled content is locked preserved cards is typeable, and
+    /// input refuses the cards themselves.
     func enableTyping(
         persist: DocumentReplicaSession.Journal?, scheduler: NativeReplicaSaveScheduler? = nil
     ) {

@@ -12,6 +12,31 @@ enum YXMLString {
         return children(of: root)
     }
 
+    /// The XML of the element whose `id` attribute is `id`, searched through
+    /// the whole tree: one block's subtree, for a before/after comparison.
+    static func block(_ doc: YDoc, id: String) -> String? {
+        guard let root = doc.share["document-store"] else { return nil }
+        return find(id: id, in: root).map(node)
+    }
+
+    private static func find(id: String, in type: YType) -> YType? {
+        var item = type.start
+        while let current = item {
+            defer { item = current.right }
+            guard !current.deleted, case .type(let child) = current.content else { continue }
+            if case .xmlElement = child.typeRef, attribute(child, "id") == id { return child }
+            if let found = find(id: id, in: child) { return found }
+        }
+        return nil
+    }
+
+    private static func attribute(_ type: YType, _ key: String) -> String? {
+        guard let item = type.map[key], case .any(let values) = item.content, let value = values.last else {
+            return nil
+        }
+        return render(value)
+    }
+
     // YXmlFragment.toString (yjs.cjs @7786): visible children in list order.
     private static func children(of type: YType) -> String {
         var out = ""

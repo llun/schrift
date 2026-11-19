@@ -134,34 +134,24 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         XCTAssertFalse(details.contains(secretChild))
     }
 
-    func testOpaqueBlockAndUnsupportedRootNeverLeakDocumentText() async throws {
-        let (loc, cleanup) = makeLocalizationStore()
+    func testAnUnknownBlockAloneIsTypeableAndAnUnsupportedRootNeverLeaksDocumentText() async throws {
+        let (_, cleanup) = makeLocalizationStore()
         defer { cleanup() }
 
+        // An unknown block is a locked preserved card (PR02): the document is
+        // typeable, so there is no reason to leak anything into.
         let secretOpaque = "SECRET_WIDGET_BODY"
         let exotic = BlockNoteBlock(
             node: "exoticWidget", props: [], runs: [InlineRun(secretOpaque)], id: "exotic-1")
         let exoticState = BlockNoteYjs.encode([exotic], clientID: Self.seedClientID)
         let exoticSession = try await NativeEditorSession.inspect(state: exoticState)
         defer { exoticSession.close() }
-        XCTAssertFalse(exoticSession.canType)
-        XCTAssertEqual(exoticSession.unfamiliarContent?.node, "exoticWidget")
-
-        let exoticReason = try XCTUnwrap(
+        XCTAssertTrue(exoticSession.canType)
+        XCTAssertNil(exoticSession.unfamiliarContent)
+        XCTAssertNil(
             NativeEditorOpen.resolveUnavailableReason(
                 enabled: true, hasEditAccess: true, hasAccount: true, isPendingDelete: false,
                 hasCheckpointedCreate: false, isLiveHeld: false, hasClassicDraft: false, session: exoticSession))
-        let exoticNote = exoticReason.localizedNote(using: loc)
-        XCTAssertFalse(exoticNote.contains(secretOpaque))
-        XCTAssertFalse(exoticNote.contains("exoticWidget"))
-        XCTAssertFalse(exoticNote.contains("unknownNode"))
-        XCTAssertEqual(
-            exoticNote,
-            "Read-only: this document has a block the native editor can't edit yet (a block type the native editor doesn't know: unsupported block type)"
-        )
-        let exoticDetails = try XCTUnwrap(exoticReason.localizedDetailsLine(using: loc))
-        XCTAssertFalse(exoticDetails.contains(secretOpaque))
-        XCTAssertEqual(exoticDetails, "Details: unknownNode:exoticWidget")
 
         let badRootDoc = YDoc(clientID: 2)
         defer { badRootDoc.destroy() }
@@ -416,15 +406,19 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         XCTAssertGreaterThan(craftedNode.count, 10_000)
 
         let secretBody = "CONFIDENTIAL_PEER_DOC_TEXT"
+        // An unknown node is a locked card now (PR02), so the document stays
+        // read-only through the one block-level reason left: an id the engine
+        // cannot address. The crafted node name still reaches the reason.
         let block = BlockNoteBlock(
             node: craftedNode,
             props: [("craftedKey\u{202E}\n" + String(repeating: "k", count: 10_000), .string("val"))],
             runs: [InlineRun(secretBody)],
-            id: "crafted-1")
+            id: "")
         let state = BlockNoteYjs.encode([block], clientID: Self.seedClientID)
         let session = try await NativeEditorSession.inspect(state: state)
         defer { session.close() }
         XCTAssertFalse(session.canType)
+        XCTAssertEqual(session.unfamiliarContent?.reason, "missing block id")
 
         let reason = try XCTUnwrap(
             NativeEditorOpen.resolveUnavailableReason(
@@ -433,7 +427,7 @@ final class NativeEditUnavailableReasonTests: DocumentEngineTestCase {
         let mainLine = reason.localizedNote(using: loc)
         XCTAssertEqual(
             mainLine,
-            "Read-only: this document has a block the native editor can't edit yet (a block type the native editor doesn't know: unsupported block type)"
+            "Read-only: this document has a block the native editor can't edit yet (a block type the native editor doesn't know: other)"
         )
         XCTAssertFalse(mainLine.contains(secretBody))
         XCTAssertFalse(mainLine.contains("evilNode"))

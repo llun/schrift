@@ -1883,6 +1883,9 @@ final class DocumentEngine {
             // The document keeps one block.
             guard entry.depth > 0 || siblings.count > 1 else { throw DocumentEngineError.unsupportedNativeInput }
             for p in position..<end { try requireEditableBlock(order[p]) }
+            // The payload check refuses an unknown node, so a locked card (a leaf
+            // block of an unknown type, `NativeBlockProjection.typability`) can
+            // never be deleted — exactly the availability the block menu offers.
             _ = try BlockNoteSubtreePayload.validate([try writer.snapshot(entry.container, block: id, depth: 0)])
             let next = end < order.count ? order[end] : nil
             let previous = position > 0 ? order[position - 1] : nil
@@ -1915,11 +1918,13 @@ final class DocumentEngine {
             else { throw DocumentEngineError.unsupportedNativeInput }
             var ids = newIDs[...]
             let fresh = try copies.map { try $0.replacingIDs(&ids) }
-            // ProseMirror's paste into an empty textblock replaces it.
+            // ProseMirror's paste into an empty textblock replaces it. A locked
+            // card is never replaced: its content and props must survive.
             let replaces =
                 entry.nestedGroup == nil && entry.isSimpleContainer
                 && entry.element?.typeRef == .xmlElement(nodeName: "paragraph")
                 && (entry.isSimpleText || entry.element?.length == 0) && entry.runs.allSatisfy { $0.text.isEmpty }
+                && !builder.nativeSnapshot(entry).block.fidelity.isOpaque
             return (
                 { try writer.insertBlocks(fresh, into: entry.group, after: item, replacing: replaces ? item : nil) },
                 { EditorPosition(blockID: last, offset: self.textLength(last), assoc: -1) }
@@ -2092,7 +2097,7 @@ final class DocumentEngine {
     /// the replacement carries, or `nil` to inherit the marks at the range.
     @discardableResult
     func replaceText(block: String, range: Range<Int>, with text: String, marks: [TextMark]? = nil) throws -> Data {
-        try requireEditableBlock(block)
+        try requireModeledBlock(block)
         guard builder.index.isCanonical, let entry = builder.index.entries[block] else {
             throw DocumentEngineError.unsupportedNativeInput
         }
@@ -2139,20 +2144,25 @@ final class DocumentEngine {
     /// mark, matching BlockNote's style commands.
     @discardableResult
     func formatRange(block: String, range: Range<Int>, marks: [TextMark]) throws -> Data {
-        try requireEditableBlock(block)
+        try requireModeledBlock(block)
         return try writer.formatRange(
             block: block, range: range, attributes: YTextAttributes(marks.map { ($0.key, $0.valueJSON) }))
     }
 
     @discardableResult
     func splitBlock(block: String, at offset: Int, newID: String) throws -> Data {
-        try requireEditableBlock(block)
+        try requireModeledBlock(block)
         return try writer.splitBlock(block: block, at: offset, newID: newID)
     }
 
     @discardableResult
     func joinBlocks(block: String) throws -> Data {
-        try requireEditableBlock(block)
+        try requireModeledBlock(block)
+        // The join appends to the previous sibling's last descendant and
+        // deletes `block`: neither may be a locked card.
+        if let position = builder.index.listPosition(of: block), position > 0 {
+            try requireModeledBlock(builder.index.list(of: block)[position - 1])
+        }
         if !deferredBlockIDs.isEmpty {
             // A join writes the source and the previous sibling's last
             // descendant, the block before it in preorder; its children move
@@ -2173,7 +2183,7 @@ final class DocumentEngine {
 
     @discardableResult
     func setBlockType(block: String, to node: String, props: [(key: String, value: YAnyValue)] = []) throws -> Data {
-        try requireEditableBlock(block)
+        try requireModeledBlock(block)
         return try writer.setBlockType(block: block, to: node, props: props)
     }
 
@@ -2536,6 +2546,20 @@ final class DocumentEngine {
         guard nativeCommand == nil, !holdingDurableRemote else { throw DocumentEngineError.insideTransaction }
         guard !isWholeListDeferred, !deferredBlockIDs.contains(blockID) else {
             throw DocumentEngineError.composingBlock
+        }
+    }
+
+    /// A block a native edit may write: editable, and modeled. An opaque block
+    /// is a locked preserved card (PR02) — the surface never offers one, and
+    /// no native edit may change its content or props. The structural commands
+    /// already refuse it through `structuralTarget`; this is the same rule for
+    /// the direct writer calls.
+    private func requireModeledBlock(_ blockID: String) throws {
+        try requireEditableBlock(blockID)
+        // Only a block that resolves as opaque is refused: an id the projection
+        // cannot place (a non-canonical root) is the writer's to refuse or reset.
+        if let block = nativeBlock(blockID), block.block.fidelity.isOpaque {
+            throw DocumentEngineError.unsupportedNativeInput
         }
     }
 

@@ -442,7 +442,7 @@ final class TableEditorTests: NativeEditingTestCase {
         doc.destroy()
         let harness = try await makeHarness(state: state)
         addTeardownBlock { await harness.close() }
-        XCTAssertFalse(harness.session.canType, "no shadow for an unfamiliar table: the document reads only")
+        XCTAssertFalse(harness.session.canType, "an unfamiliar table is not a locked card: the document reads only")
         let opened = await harness.session.openTable("tbl")
         XCTAssertNil(opened, "an unfamiliar table is never a text target")
         let grid = await harness.session.tableGrid("tbl")
@@ -502,19 +502,11 @@ final class TableEditorTests: NativeEditingTestCase {
         let peer = YDoc(clientID: 78, gc: true)
         defer { peer.destroy() }
         try peer.applyUpdate(YUpdateDecoder.decode(try fixture("styled")))
-        _ = try peer.transact(local: true) { tx in
-            let root = try XCTUnwrap(peer.share[BlockNoteYjs.fragmentField])
-            guard case .type(let group)? = YBlockProjection.children(of: root, includeFormats: false).first?.content
-            else { return }
-            let last = YBlockProjection.children(of: group, includeFormats: false).last
-            let container = YType(typeRef: .xmlElement(nodeName: "blockContainer"))
-            _ = try YWrite.insertAfter(tx, into: group, after: last, [.type(container)])
-            try YWrite.mapSet(tx, on: container, key: "id", .any([.string("future")]))
-            _ = try YWrite.insertAfter(
-                tx, into: container, after: nil, [.type(YType(typeRef: .xmlElement(nodeName: "futureBlock")))])
-        }
-        try await harness.session.integrateServerState(try YStateEncoder.encodeStateAsUpdate(peer))
-        XCTAssertFalse(harness.session.canType, "the peer's unknown block took authoring away")
+        // A peer centering a paragraph is a `.lossy` block: authoring stops.
+        let update = try BlockNoteWriter(doc: peer).setBlockType(
+            block: "tail", to: "paragraph", props: [("textAlignment", .string("center"))])
+        try await harness.session.integrateServerState(update)
+        XCTAssertFalse(harness.session.canType, "the peer's centered paragraph took authoring away")
         XCTAssertTrue(harness.view.isEditable, "the stop waits for the composition")
 
         let table = try await unwrapped(await harness.session.openTable("tbl"))
