@@ -207,8 +207,8 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
   `ClassicEditorView` even when the native switch is enabled.
 - **Preserved read-only structures:** A leaf block of an unknown BlockNote type is preserved
   byte-for-byte in `YDoc` and renders as a locked preview card. The rest of the document stays
-  typeable and no native edit touches a card. An unknown block with children, a column group, a
-  known block read as opaque (unreadable props, an invalid heading level), a known block with a
+  typeable and no native edit touches a card. An unknown block with children, an unfamiliar column group,
+  a known block read as opaque (unreadable props, an invalid heading level), a known block with a
   non-default or unknown prop (e.g. a centered paragraph) and an auxiliary Yjs root still keep the
   whole surface in preserved read-only mode (`!session.canType`).
 - **S2 TextKit 2 height-estimate corrections:** As measured in §4B (`jumps=16`, `reversals=0`,
