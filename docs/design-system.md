@@ -270,7 +270,7 @@
 > already cached on the device that the signed-in account is known to see, so it works
 > offline. It stays hidden while an input method is composing, and with no matches Up and
 > Down keep moving the caret. Behaviour and rules: the `[[`
-> bullet in `AGENTS.md` and `Schrift/Features/Editor/PageLinkPicker.swift`.
+> bullet in [`standards/editor-save.md`](standards/editor-save.md) and `Schrift/Features/Editor/PageLinkPicker.swift`.
 >
 
 > **Revised: 2026-11-01 — Ledger rows on Home and Search (Direction A).** A document row
@@ -332,7 +332,7 @@
 > both surfaces reserve exactly the same icon width so tapping into edit mode never
 > re-wraps a line. Display only — the saved markdown is unchanged. Implementation and
 > accepted residuals: `Schrift/Features/Editor/DocumentLinkChip.swift` and the
-> page-chip bullet in `AGENTS.md`.
+> page-chip bullet in [`standards/editor-save.md`](standards/editor-save.md).
 
 > **Revised: 2026-10-09 — One text-style button, and a fade where the bar scrolls.**
 > Bold, italic and link share one formatting-bar button on the list/quote terms: a tap
@@ -609,7 +609,7 @@
 > view's unspecified height proposal.
 >
 > Three consequences worth knowing, all documented in full in
-> [`AGENTS.md`](../AGENTS.md): the drag is a **UIKit recognizer** with a
+> [`standards/design-system.md`](standards/design-system.md): the drag is a **UIKit recognizer** with a
 > decided-once axis lock, and it *refuses* non-horizontal drags rather than
 > ignoring them (see the 2026-08-13 revision above); `SubpageRow` and the drawer's title were converted off `Button` to
 > `.contentShape` + `.onTapGesture`, because a `Button` can still fire on touch-up
@@ -634,7 +634,7 @@
 > history · Delete** (matching the handoff exactly), and **Copy as Markdown**
 > and **Duplicate** — plus the `duplicateDocument` endpoint that backed the
 > latter — were removed. The new `SheetHeader` component + the flat-sheet
-> pattern are documented in [`AGENTS.md`](../AGENTS.md); the Share and
+> pattern are documented in [`standards/design-system.md`](standards/design-system.md); the Share and
 > Version-history sheets were flattened onto the same pattern shortly after —
 > see the next amendment.
 
@@ -658,7 +658,7 @@
 > is now a **standing rule**: *every list inside a sheet/dialog is flat* (boxless,
 > dividerless, on `surfacePage` under a `SheetHeader`); grouped `ListSection`
 > cards are reserved for the **tab screens** (Profile, Shared). See
-> [`AGENTS.md`](../AGENTS.md).
+> [`standards/design-system.md`](standards/design-system.md).
 
 > **Revised: 2026-07-31 (iOS 26 minimum + Dynamic Type).** This is the first
 > change of the **native-first / Liquid Glass** refresh, following a revised
@@ -781,7 +781,7 @@
 >   share a `GlassEffectContainer`, so the system supplies the refraction, edge
 >   and shadow and renders both in one pass. This is the standing rule now:
 >   *glass is for surfaces that float over content, never for content itself* —
->   see [`AGENTS.md`](../AGENTS.md).
+>   see [`standards/design-system.md`](standards/design-system.md).
 > - **Subpage rows carry the handoff's one-line summary** under the title
 >   (`Document.excerpt`, dropped when blank). The child-count chip
 >   (`account_tree` + `numchild`) was already there.
@@ -1404,7 +1404,7 @@ padding `0/16/6`, footer padding `6/16/0`) already matches and is preserved (sti
 used by the Shared and Profile tab screens). (The **Options, Share, and
 Version-history sheets** were later flattened to boxless, dividerless menus under
 a `SheetHeader` — see the 2026-07-12 amendments at the top and the flat-sheet
-pattern in [`AGENTS.md`](../AGENTS.md); `ProfileRowDivider` consequently has no
+pattern in [`standards/design-system.md`](standards/design-system.md); `ProfileRowDivider` consequently has no
 remaining call sites.)
 
 ### 8.4 Sheets & scrolling (the "share dialog scroll" fix)
@@ -1552,7 +1552,7 @@ uncertain piece.
 
 ## 11. Docs to update in this change
 
-- **`AGENTS.md`** — new conventions: adaptive color tokens
+- **[`standards/design-system.md`](standards/design-system.md)** — new conventions: adaptive color tokens
   (`DocsColorHexDark` + `Color(lightHex:darkHex:)`), the resolver light+dark
   contract, the `AppearanceStore`/`LocalizationStore` injection rule, the in-code
   localization catalog + completeness test, the "language is a local app
@@ -1591,7 +1591,7 @@ uncertain piece.
 
 ## 13. Definition of done
 
-Per `AGENTS.md`: swift-format run; full suite green locally and on CI
+Per [`build-and-test.md`](build-and-test.md): swift-format run; full suite green locally and on CI
 (`Build & Test`); new behavior test-covered; docs updated in the same change; PR
 title a Conventional Commit; PR review loop run and threads resolved.
 

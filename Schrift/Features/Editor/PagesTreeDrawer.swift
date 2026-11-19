@@ -258,7 +258,7 @@ struct PagesTreeDrawer: View {
                 // scroll axis — so the row resolves to its ideal 44pt instead of
                 // claiming the drawer. Don't "fix" this to match that one; do
                 // reach for the floor in any stack that hands down a concrete
-                // height. See AGENTS.md's tap-target rule.
+                // height. See `docs/standards/design-system.md`'s tap-target rule.
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .onTapGesture { onOpen(row.document) }

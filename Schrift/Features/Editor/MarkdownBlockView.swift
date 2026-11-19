@@ -175,7 +175,7 @@ func unknownRendersAsProse(_ text: String) -> Bool {
 ///
 /// The `.unknown` arm's table grid (`MarkdownTableView`) is the one reading-only
 /// exception: it names `DocsFont`/`DocsSpacing` itself and has no editing twin,
-/// because editing a table edits its markdown in the verbatim panel. AGENTS.md
+/// because editing a table edits its markdown in the verbatim panel. `docs/standards/editor-save.md`
 /// records that its height differs between the two surfaces.
 struct MarkdownBlockView: View {
     @Environment(\.docsTheme) private var theme
@@ -421,7 +421,7 @@ private struct MarkdownBlockCatalog: View {
 
 /// The card reads `AttachmentLoader` from the environment, so every preview that
 /// can render one must inject it — transitively, for any parent that embeds this
-/// view (see the environment-store rule in AGENTS.md).
+/// view (see the environment-store rule in `docs/standards/design-system.md`).
 ///
 /// The **cache** is pre-seeded rather than the loader's state table, because
 /// `loadIfNeeded` re-checks the disk even for an already-`.cached` entry (it has

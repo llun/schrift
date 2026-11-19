@@ -1026,8 +1026,8 @@ and the journal agree; when it cannot be rebased the surface's epoch is invalida
 its pending keys become a recovery entry, and a barrier that met such a change is
 retried once. IME begin is posted and commit is a barrier; the history is one per replica
 session with grouping decided on the main actor; block-menu availability and copy payloads
-are asked of the session asynchronously. Multi-window stays off; the per-scope registry
-and fan-out are PR08c (below), the native live socket PR09a. AGENTS.md has the
+are asked of the session asynchronously. Multi-window stays off; the per-scope registry,
+the fan-out and the native live socket are described below. [`standards/editor-save.md`](standards/editor-save.md) has the
 operational detail and the bounds.
 
 **PR08c One replica session per scope, fanned out, with bounded delivery.**
@@ -1572,7 +1572,7 @@ it succeeds, `EditorViewModel.persistLiveSnapshot` calls `enqueueLiveSnapshot` â
   body** reconciles via rule 1 (or rule 2's body fallback), never a false conflict against
   pre-live state. **Revised 2026-11-04:** markdown-only drafts are today's behaviour, not a rule
   to preserve; persisting the raw replica bytes in the draft is approved and planned. Its
-  constraints live in `AGENTS.md` ("Drafts will carry the replica bytes").
+  constraints live in [`standards/editor-save.md`](standards/editor-save.md) ("Drafts will carry the replica bytes").
 
 ### Editor wiring â€” the write path complete (C2c)
 
@@ -1791,7 +1791,7 @@ that draft then replays through the classic path. A replica fail-safe does not f
 `onHeldReplicaReleased`, so a draft skipped while it was held waits for the next normal sync
 trigger (reconnect, foreground, launch). Until then it waits while the editor holds
 the replica, and classic saves outside `runSyncPass` (retry, autosave after live mode
-disengages) can still race the socket, as on legacy servers. Details live in `AGENTS.md`.
+disengages) can still race the socket, as on legacy servers. Details live in [`standards/editor-save.md`](standards/editor-save.md).
 
 **Switch-on evidence (S4/S5):** on the real yhub server,
 snapshot and live sync for a document filled with every web block were byte-identical.
