@@ -98,9 +98,10 @@ enum ProjectionFidelity: Equatable, Sendable {
         return false
     }
 
-    /// Lossy reasons that represent a non-default value of a known styling prop.
+    /// Lossy reasons that represent a non-default value of a known styling prop
+    /// (a callout's emoji is its icon, so it counts as styling too).
     private static let stylingPropReasons: Set<String> = [
-        "prop:textColor", "prop:backgroundColor", "prop:textAlignment",
+        "prop:textColor", "prop:backgroundColor", "prop:textAlignment", "prop:emoji",
     ]
 
     /// Classifies a `.lossy` block into its editing tier, or `nil` for
@@ -109,7 +110,7 @@ enum ProjectionFidelity: Equatable, Sendable {
         guard case .lossy(let reasons) = self else { return nil }
         // Only a non-default value of a known styling prop is the full-editing kind
         // (owner choice A1). Other `prop:` reasons natively mean an unreadable value
-        // (a valid emoji, start or language is modeled), so they stay text-only.
+        // (a valid list start, code language or toggle flag is modeled): text-only.
         guard !reasons.isEmpty, reasons.allSatisfy(Self.stylingPropReasons.contains) else { return .unknownProp }
         return .styled
     }

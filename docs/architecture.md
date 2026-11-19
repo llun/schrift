@@ -696,10 +696,10 @@ the changed display. A remote integrate that takes the total shadow away downgra
 open of such a document shows, and what was journaled before still saves; so does any
 opaque block that is not a locked card. A `.lossy` block never downgrades either,
 and splits into two tiers (`ProjectionFidelity.lossyKind`): a *styled-only* block
-(every lossy reason is a non-default `textColor`, `backgroundColor` or `textAlignment`)
+(every lossy reason is a non-default `textColor`, `backgroundColor`, `textAlignment` or callout `emoji`)
 keeps full editing except merges (joins in either direction and cross-boundary ranges);
 any other `.lossy` block (a prop from a newer Docs version, or an unreadable value of a
-known prop — natively a valid emoji, start or language is modeled) is a
+known prop — natively a valid list start, code language or toggle flag is modeled) is a
 locked *text* block that takes text, marks, same-schema props, inline objects and
 copy/duplicate/whole-block delete while refusing split, convert (slash menu hidden),
 merge, move/indent and empty-paragraph replacement. A leaf block of an unknown type is
