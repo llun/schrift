@@ -350,6 +350,16 @@ actor DocumentReplicaSession {
         )
     }
 
+    /// Proves fetched server bytes would install as a fresh durable replica:
+    /// decode, apply with no retained structs, and project — the checks `build`
+    /// runs for a fresh restore, on a throwaway graph. Writes nothing.
+    static func validateInstallable(state: Data, interlinkingOrigin: String? = nil) throws {
+        let graph = try build(
+            state: state, updates: [], revision: 0, durable: false, freshClientID: true,
+            interlinkingOrigin: interlinkingOrigin, makeReplica: { YDoc(clientID: 0) })
+        graph.doc.destroy()
+    }
+
     /// The projection now and every delivery after it, in one turn.
     func attach(surfaceID: UUID) -> Attachment {
         attach(surfaceID: surfaceID, table: nil)!

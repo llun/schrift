@@ -173,6 +173,10 @@ create or delete, no live owner holds it, it projects fully (fully modeled with 
 Markdown shadow), and there is no classic draft or queued classic save. A document
 with a classic draft stays classic until that draft syncs. Everything else that
 reaches native opens PR01's in-memory read-only view and never gains a marker.
+With the switch on, a failed config or raw-state fetch, an unreadable fetched state
+and a failed seed show the native error state with Retry; they never mount the
+classic editor. An offline or unreachable open with no replica and no cached copy
+shows "Go online to open this page".
 
 - **Owned replica:** restored offline-first, with no request. Online, the raw server
   state is then fetched and integrated into the same durable owner (journaled before
@@ -182,7 +186,8 @@ reaches native opens PR01's in-memory read-only view and never gains a marker.
 - **Marker without a replica** (a crash between the marker and the first manifest):
   with the switch on, the marker is cleared only when no manifest, quarantine, draft
   or queued/in-flight save exists, and the unowned route then re-seeds it from the
-  server (or opens classic when offline). Otherwise it stays read-only.
+  server (or, offline, shows the cached classic copy or "Go online to open this page").
+  Otherwise it stays read-only.
 - **Corrupt or lost marker data:** Profile's "Recover unreadable drafts" row also
   appears and rebuilds the marker from the scoped manifests on disk and the scopes
   native drafts name (it refuses while the draft store is unreadable). Folders without

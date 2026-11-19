@@ -252,8 +252,8 @@ struct EditorSubpagesSection: View {
 }
 
 /// Hosts the unified document shell (toolbar, banners, conflict resolution, Pages drawer,
-/// Options, Share, header, and subpages) around the `.loading`, `.native`, and
-/// `.preservedUnavailable` routes.
+/// Options, Share, header, and subpages) around the `.loading`, `.native`,
+/// `.preservedUnavailable` and `.unavailable` routes.
 struct NativeDocumentShellView: View {
     @Environment(\.docsTheme) private var theme
     @Environment(LocalizationStore.self) private var loc
@@ -543,6 +543,8 @@ struct NativeDocumentShellView: View {
                 )
             case .preservedUnavailable:
                 preservedUnavailableContent
+            case .unavailable(let reason):
+                unavailableContent(reason)
             case .classic:
                 EmptyView()
             }
@@ -554,6 +556,48 @@ struct NativeDocumentShellView: View {
     }
 
     private var preservedUnavailableContent: some View {
+        unavailableContent(
+            title: loc[.native_editor_owned_unavailable_title],
+            body: loc[.native_editor_owned_unavailable_body],
+            icon: .description,
+            retry: nil)
+    }
+
+    /// The native surface's own error/empty state: a failed fetch, an unreadable
+    /// fetched state, a failed seed, or a page never opened on this device.
+    private func unavailableContent(_ reason: NativeOpenUnavailable) -> some View {
+        let copy: (title: L10nKey, body: L10nKey, icon: MaterialIcon)
+        switch reason {
+        case .openFailed:
+            copy = (.native_editor_open_failed_title, .native_editor_open_failed_body, .error)
+        case .unreadableState:
+            copy = (.native_editor_unreadable_title, .native_editor_unreadable_body, .warning)
+        case .seedFailed:
+            copy = (.native_editor_seed_failed_title, .native_editor_seed_failed_body, .warning)
+        case .offlineNeverOpened:
+            copy = (.native_editor_offline_never_opened_title, .native_editor_offline_never_opened_body, .wifi_off)
+        }
+        // A page never opened has nothing to retry until the device is back online.
+        let offersRetry = reason != .offlineNeverOpened || !showsOfflineStatus
+        return unavailableContent(
+            title: loc[copy.title],
+            body: loc[copy.body],
+            icon: copy.icon,
+            retry: offersRetry
+                ? {
+                    Task {
+                        await nativeOpen.retry(
+                            viewModel: viewModel, isOffline: isOffline,
+                            canUpdate: pinRow?.abilities.update == true,
+                            canMention: pinRow?.abilities.mention == true)
+                    }
+                }
+                : nil)
+    }
+
+    private func unavailableContent(
+        title: String, body: String, icon: MaterialIcon, retry: (() -> Void)?
+    ) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: EditorBlockMetrics.blockSpacing) {
                 EditorDocumentHeader(
@@ -563,9 +607,19 @@ struct NativeDocumentShellView: View {
                 }
                 .padding(.bottom, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)
 
-                ContentUnavailableView(
-                    loc[.native_editor_owned_unavailable_title], systemImage: "doc.richtext",
-                    description: Text(loc[.native_editor_owned_unavailable_body]))
+                ContentUnavailableView {
+                    Label {
+                        Text(title)
+                    } icon: {
+                        MaterialSymbol(icon, size: 44)
+                    }
+                } description: {
+                    Text(body)
+                } actions: {
+                    if let retry {
+                        DocsButton(title: loc[.common_retry], variant: .secondary, action: retry)
+                    }
+                }
 
                 subpagesSection
                     .padding(.top, EditorBlockMetrics.headerToBodySpacing - EditorBlockMetrics.blockSpacing)

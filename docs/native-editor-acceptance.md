@@ -13,6 +13,10 @@ sign-off log for the Phase 2 native BlockNote/Yjs editor (`NativeEditorView` / `
   unmigrated classic `PendingDraft`s remain on `ClassicEditorView` (`ClassicEditorView`,
   `BlockEditorView`, `BlockTextView`, `MarkdownBlockView`, and `BlockNoteYjs.applyEdit` are all
   retained).
+- **Failure states:** With the switch on, a failed config or raw-state fetch, an unreadable fetched
+  state and a failed replica seed show the native error state with Retry; an offline or unreachable
+  open with no replica and no cached copy shows "Go online to open this page". These never mount
+  `ClassicEditorView`.
 - **Public default-on promotion** is a separate post-acceptance decision made only after the
   owner completes Release TestFlight verification below.
 
@@ -205,6 +209,10 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
 
 - **Pre-Docs 6 servers:** Servers where `usesCollaborationYDocServer == false` remain on
   `ClassicEditorView` even when the native switch is enabled.
+- **Native open failures:** A failed fetch, an unreadable fetched state or a failed seed shows the
+  native error state with Retry instead of the classic editor, so the document is not readable until
+  the open succeeds. An offline or unreachable open with no replica and no cached copy shows
+  "Go online to open this page" (Retry appears once the device is back online).
 - **Preserved read-only structures:** A leaf block of an unknown BlockNote type is preserved
   byte-for-byte in `YDoc` and renders as a locked preview card. The rest of the document stays
   typeable and no native edit touches a card. An unknown block with children, an unfamiliar column group,

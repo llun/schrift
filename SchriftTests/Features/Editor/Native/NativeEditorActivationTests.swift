@@ -260,7 +260,9 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         SignedInUserStore(userDefaults: env.defaults).remember(UUID())
         gate.open()
         await opening.value
-        guard case .classic = open.route else { return XCTFail("a fetch for the previous account was applied") }
+        guard case .loading = open.route else {
+            return XCTFail("a fetch for the previous account must leave the route to the newer open")
+        }
         XCTAssertEqual(env.model.saveCoordinator.nativeOwnership(documentID: env.model.documentID), .none)
         XCTAssertFalse(FileManager.default.fileExists(atPath: env.replicaDirectory.path), "no replica was seeded")
     }
@@ -1184,6 +1186,53 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         XCTAssertNotNil(env.model.syncConflict, "failed server fetch must preserve the conflict")
         XCTAssertNotNil(
             env.model.saveCoordinator.storedDraft(documentID: env.documentID), "draft stays intact on failure")
+        XCTAssertEqual(env.model.title, "Local Title")
+    }
+
+    func testNativeConflictKeepServerKeepsTheReplicaWhenTheFetchedStateIsUndecodable() async throws {
+        let env = makeEnvironment(autosaveInterval: .seconds(30))
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.serverTitle = "Base Title"
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        env.model.seedNativeMetadataIfNeeded()
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let session) = open.route else { return XCTFail("expected a native session") }
+
+        server.isOffline = true
+        session.textView.selectedRange = NSRange(location: 0, length: 0)
+        session.input?.textViewDidChangeSelection(session.textView)
+        session.textView.insertText("Local ")
+        await session.settle()
+        open.updateTitle("Local Title", viewModel: env.model)
+        open.flushPendingSave()
+        await waitUntil { self.isPendingSync(env.model.saveCoordinator.state(for: env.documentID)) }
+
+        server.serverUpdatedAt = "2026-11-08T12:00:00Z"
+        server.serverTitle = "Remote Title"
+        server.serverContent = "Remote edit"
+        server.isOffline = false
+        await env.model.saveCoordinator.syncPendingDrafts()
+        XCTAssertNotNil(env.model.syncConflict)
+
+        let scope = try XCTUnwrap(env.model.saveCoordinator.nativeOwnership(documentID: env.documentID).scope)
+        let revision = try XCTUnwrap(try env.replicaStore.manifest(for: scope)?.revision)
+        // A 200 whose bytes cannot be decoded: the fetch succeeds, the install cannot.
+        server.mutableState = Data([0xff])
+        await open.resolveConflictKeepingServer(viewModel: env.model, isOffline: false, canUpdate: true)
+
+        XCTAssertNotNil(env.model.syncConflict, "an uninstallable state must keep the conflict")
+        XCTAssertNotNil(
+            env.model.saveCoordinator.storedDraft(documentID: env.documentID),
+            "an uninstallable state must keep the draft")
+        XCTAssertNotNil(try env.replicaStore.restore(for: scope), "an uninstallable state must keep the replica")
+        XCTAssertEqual(try env.replicaStore.manifest(for: scope)?.revision, revision)
+        XCTAssertEqual(
+            env.model.saveCoordinator.nativeOwnership(documentID: env.documentID), .owned(scope))
+        XCTAssertNotNil(env.model.errorKey, "the editor must report the uninstallable server state")
+        guard case .native = open.route else { return XCTFail("the open session must stay mounted") }
         XCTAssertEqual(env.model.title, "Local Title")
     }
 

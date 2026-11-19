@@ -558,11 +558,17 @@ path; PR01 connects this engine to an opt-in read-only TextKit 2 surface.
 defaults off and is read by `NativeEditorOpen` at each open or reopen. A selected surface
 never changes in response to a preference write. `NativeEditorOpen` fetches the
 existing raw `collaborationYDocState` for eligible online Docs 6 documents.
-Legacy servers, offline/unreachable or local documents, pending deletions/local
-content, pending creation intents and failed raw fetches/decodes stay with the classic editor. A three-second
-prefetch deadline selects classic without waiting for a stalled request to finish
-cancelling; closed/timed-out result streams cannot install late native sessions.
-Its tasks, controls and live bridge
+With the switch on, the classic editor is selected only for a pre-Docs 6 server, for
+pending local work (a local document, a pending deletion, a checkpointed create, a
+classic draft, a pending save, or unsaved classic content), and for an offline or
+unreachable open that has a cached classic copy to read. Every other failure stays on
+the native surface: a failed config or raw-state fetch, an unreadable fetched state and
+a failed replica seed show `.unavailable` with Retry, and an offline open with no
+replica and no cached copy shows "Go online to open this page" (Retry appears once the
+device is back online). There is no prefetch deadline: the loading state stays until
+the fetch answers or fails, and URLSession's own timeouts apply. A superseded open
+(generation, account or availability moved) leaves the route to the newer open rather
+than selecting classic. Its tasks, controls and live bridge
 are not mounted alongside a native session.
 
 Successful native selection also refreshes the existing offline cache before
@@ -571,8 +577,9 @@ leaf-nesting recovery and `cacheServerCopy`; the stored representation remains
 server-exported Markdown plus title, client sync time and server `updated_at`,
 rather than a potentially lossy native projection. It does not install classic
 display state or advance its edit baseline. This read is covered by the same
-prefetch deadline, cancellation/availability checks and save-marker freshness
-guard. The classic load route remains unchanged.
+cancellation/availability checks and save-marker freshness guard, but its failure
+never blocks the native session: the cache only feeds the classic offline reader.
+The classic load route remains unchanged.
 This refresh covers content only, not the children cache.
 
 The native replica is separate from `DocumentCollaborationManager`. Since PR08b the
@@ -1204,8 +1211,8 @@ and `blockID` scroll targets arrive in PR13c2).
 
 **PR15 Native shell integration, Reading↔Editing mode handoff, shortcuts, and diagnostics.**
 `EditorView` keeps `NativeEditorPreference.key` (`"schrift.nativeEditor"`) off by default and routes
-`.loading`, `.native`, and `.preservedUnavailable` through `NativeDocumentShellView` while keeping
-`.classic` on `ClassicEditorView`. `NativeDocumentShellView` unifies the production chrome across
+`.loading`, `.native`, `.preservedUnavailable`, and `.unavailable` through `NativeDocumentShellView`
+while keeping `.classic` on `ClassicEditorView`. `NativeDocumentShellView` unifies the production chrome across
 both surfaces (`EditorLoadingPlaceholder`, `EditorBannerStack`, toolbar leading `PagesTreeDrawer` +
 edge pan, trailing `Edit`/`Done` + `Share` + `OptionsSheetView` + `OutlinePresentationGate` /
 `OutlineHeldNavigation`, `ConflictSheetView`, `pendingDeleteNotice`, and `noteEditorAppeared()`).
