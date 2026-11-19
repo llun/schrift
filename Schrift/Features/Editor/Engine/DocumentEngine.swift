@@ -2657,20 +2657,26 @@ final class DocumentEngine {
         }
     }
 
-    /// Whether a copied block's own content element carries a prop outside its
-    /// node's schema (the unknown-prop kind of `.lossy`), or a node with no schema.
+    /// Whether a copied block, or any block nested in it, has a content element
+    /// carrying a prop outside its node's schema (the unknown-prop kind of
+    /// `.lossy`). Nodes without a prop schema (media, divider) are not judged here.
     private func hasUnknownProp(_ copy: BlockNoteWriter.Copy) -> Bool {
-        guard case .element(_, _, let children) = copy,
-            case .element(let node, let props, _)? = children.first
-        else { return true }
-        guard let schema = writer.schemas[node] else { return true }
-        let known = Set(schema.map(\.key))
-        return props.contains { !known.contains($0.key) }
+        guard case .element(_, _, let children) = copy else { return false }
+        for child in children {
+            guard case .element(let node, let props, let nested) = child else { continue }
+            if node == "blockGroup" {
+                if nested.contains(where: hasUnknownProp) { return true }
+            } else if let schema = writer.schemas[node] {
+                let known = Set(schema.map(\.key))
+                if props.contains(where: { !known.contains($0.key) }) { return true }
+            }
+        }
+        return false
     }
 
     /// Whether the block is a locked-text `.lossy` block (a prop its schema
-    /// does not know, or unreadable data). Known-prop `.lossy` blocks are not
-    /// locked.
+    /// does not know, or an unreadable value). Styled-only `.lossy` blocks are
+    /// not locked.
     private func isLocked(_ blockID: String) -> Bool {
         guard let block = nativeBlock(blockID) else { return false }
         return block.block.fidelity.isLockedText

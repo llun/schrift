@@ -61,12 +61,12 @@ struct ProjectedBlock: Equatable, Sendable {
 
 /// The two editing tiers of a `.lossy` block (PR03 / owner choice A1).
 enum LossyKind: Equatable, Sendable {
-    /// Every lossy reason is a prop the block's schema knows (`prop:<key>`:
-    /// styling such as `textAlignment`, or a callout's `emoji`, a list's
-    /// `start`). Full editing except merges (joins in either direction and
-    /// cross-boundary ranges).
+    /// Every lossy reason is a non-default value of a known styling prop
+    /// (`textColor`, `backgroundColor`, `textAlignment`). Full editing except
+    /// merges (joins in either direction and cross-boundary ranges).
     case styled
-    /// Any other lossy reason (an unknown prop, unreadable data). Text editing only:
+    /// Any other lossy reason (a prop Schrift does not know, or an unreadable
+    /// value of a known one). Text editing only:
     /// split, convert, merge, move, indent and empty-paragraph replacement are
     /// refused.
     case unknownProp
@@ -98,19 +98,24 @@ enum ProjectionFidelity: Equatable, Sendable {
         return false
     }
 
+    /// Lossy reasons that represent a non-default value of a known styling prop.
+    private static let stylingPropReasons: Set<String> = [
+        "prop:textColor", "prop:backgroundColor", "prop:textAlignment",
+    ]
+
     /// Classifies a `.lossy` block into its editing tier, or `nil` for
     /// `.modeled` and `.opaque` blocks.
     var lossyKind: LossyKind? {
         guard case .lossy(let reasons) = self else { return nil }
-        // `prop:<key>` is a prop the block's schema knows (styling, a callout's
-        // emoji, a list's start); anything else (`unknownProp:`, unreadable data)
-        // is a property Schrift does not know (owner choice A1).
-        guard !reasons.isEmpty, reasons.allSatisfy({ $0.hasPrefix("prop:") }) else { return .unknownProp }
+        // Only a non-default value of a known styling prop is the full-editing kind
+        // (owner choice A1). Other `prop:` reasons natively mean an unreadable value
+        // (a valid emoji, start or language is modeled), so they stay text-only.
+        guard !reasons.isEmpty, reasons.allSatisfy(Self.stylingPropReasons.contains) else { return .unknownProp }
         return .styled
     }
 
-    /// True when the block is a `.lossy` block whose every reason is a prop its
-    /// schema knows (styling such as `textAlignment`, or a callout's `emoji`).
+    /// True when the block is a `.lossy` block carrying only known styling
+    /// props (`textColor`, `backgroundColor`, `textAlignment`).
     var isStyledOnly: Bool { lossyKind == .styled }
 
     /// True when the block is a `.lossy` block of the locked-text tier (an

@@ -618,11 +618,13 @@ final class NativeLossyBlockTests: NativeEditingTestCase {
         try await assertConsistent(harness, localCommands: 1)
     }
 
-    /// A1's split: every `prop:<key>` reason (a prop the schema knows, styling or not)
-    /// is the full-editing kind; anything else, or a mix, is text-only.
+    /// A1's split: only non-default styling is the full-editing kind; an unknown prop,
+    /// an unreadable value of a known prop (`prop:emoji` natively), or a mix is text-only.
     func testLossyKindFollowsWhetherSchriftKnowsTheProp() {
         XCTAssertEqual(ProjectionFidelity.lossy(reasons: ["prop:textAlignment"]).lossyKind, .styled)
-        XCTAssertEqual(ProjectionFidelity.lossy(reasons: ["prop:emoji", "prop:textColor"]).lossyKind, .styled)
+        XCTAssertEqual(
+            ProjectionFidelity.lossy(reasons: ["prop:textColor", "prop:backgroundColor"]).lossyKind, .styled)
+        XCTAssertEqual(ProjectionFidelity.lossy(reasons: ["prop:emoji", "prop:textColor"]).lossyKind, .unknownProp)
         XCTAssertEqual(ProjectionFidelity.lossy(reasons: ["unknownProp:futureProp"]).lossyKind, .unknownProp)
         XCTAssertEqual(
             ProjectionFidelity.lossy(reasons: ["prop:textAlignment", "unknownProp:x"]).lossyKind, .unknownProp)
