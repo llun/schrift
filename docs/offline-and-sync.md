@@ -3419,9 +3419,10 @@ XCTest, mirroring the source tree. New/updated:
 ## Docs to update alongside implementation
 
 - [`standards/editor-save.md`](standards/editor-save.md) — note the content cache tier and the load precedence in the Editor
-  section; add `DocumentContentCacheStore` to the persistence-stores list (with
-  the file-based/backup-excluded/sign-out-cleared posture) and the repo-layout
-  map.
+  section; add `DocumentContentCacheStore` to the persistence-stores list in
+  [`standards/persistence.md`](standards/persistence.md) (with
+  the file-based/backup-excluded/sign-out-cleared posture) and the
+  [repo-layout map](repository-layout.md).
 - [`architecture.md`](architecture.md) — the error-handling line "no offline
   queue/cache in v1" is superseded: previously-opened documents are now cached on
   disk and readable offline with background revalidation (see this doc). The
