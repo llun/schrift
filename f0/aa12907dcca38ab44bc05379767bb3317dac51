@@ -1,0 +1,32 @@
+Schrift/Core/Yjs/NativeBlockProjection.swift
+  s_4fb28ab57323fe::t_2975bf6f43b68f 746-747,755-756,758
+  s_4fb28ab57323fe::t_8add588d3eb58a 736,751-754,759-762
+  s_4fb28ab57323fe::t_fc030c3c9e0fd8 735,745,748-750
+  s_4fb28ab57323fe::t_136ce5bb88a412 757
+  s_4fb28ab57323fe::t_2493b76bf6fe3e 763-764
+SchriftTests/Features/Editor/Native/ColumnEditorTests.swift
+  s_4fb28ab57323fe::t_8add588d3eb58a 419-420,436
+SchriftTests/Features/Editor/Native/TableEditorTests.swift
+  s_4fb28ab57323fe::t_8add588d3eb58a 429,445
+Schrift/Features/Editor/Engine/DocumentEngine.swift
+  s_4fb28ab57323fe::t_fc030c3c9e0fd8 1886-1888
+SchriftTests/Features/Editor/Native/NativeLockedBlockTests.swift
+  s_4fb28ab57323fe::t_ec15ff2833d7f4 112,115-117,119,121-136
+  s_4fb28ab57323fe::t_9d4f356a5c43a1 107-111,113-114,118,120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f0aa12907dcca38ab44bc05379767bb3317dac51",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
