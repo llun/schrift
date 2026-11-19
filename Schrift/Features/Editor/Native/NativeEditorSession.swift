@@ -1308,14 +1308,21 @@ final class NativeEditorOpen {
             if generation == request { pendingOpen = nil }
         }
         var iterator = results.makeAsyncIterator()
-        guard let result = await iterator.next(), !Task.isCancelled, generation == request else { return }
+        let next = await iterator.next()
+        guard !Task.isCancelled, generation == request else { return }
+        guard let result = next else {
+            settleWithoutAnswer(request: request, viewModel: viewModel, account: account, isOffline: isOffline)
+            return
+        }
         switch result {
         case .state(let state, let config, let ability):
             // A superseded open (generation, account or availability moved)
             // leaves the route to the newer open; it never selects classic.
-            guard isCurrent(request: request, viewModel: viewModel, account: account),
-                !availabilityMoved(viewModel, isOffline: isOffline)
-            else { return }
+            guard isCurrent(request: request, viewModel: viewModel, account: account) else { return }
+            guard !availabilityMoved(viewModel, isOffline: isOffline) else {
+                settleWithoutAnswer(request: request, viewModel: viewModel, account: account, isOffline: isOffline)
+                return
+            }
             // Pending local work arrived while the fetch was in flight: the classic
             // editor still owns it until stage 2 moves drafts to native.
             guard canOpenIgnoringConnectivity(viewModel) else {
@@ -1949,8 +1956,27 @@ final class NativeEditorOpen {
         generation == request && viewModel.signedInUser.userID == account
     }
 
-    /// Availability moved under an awaited fetch: the reconnect path owns the
-    /// route now, so the result is dropped rather than shown as an error.
+    /// The fetch ended without an answer for a still-current open (connectivity or
+    /// availability moved while it was in flight). There is no deadline to fall back
+    /// on, so decide again from what is on the device rather than leave the spinner up:
+    /// nothing cached → "Go online"; a cached classic copy or pending work → classic;
+    /// otherwise the retryable error.
+    private func settleWithoutAnswer(request: Int, viewModel: EditorViewModel, account: UUID?, isOffline: Bool) {
+        guard isCurrent(request: request, viewModel: viewModel, account: account), case .loading = route else {
+            return
+        }
+        if offlineNeverOpened(viewModel, isOffline: isOffline) {
+            showUnavailable(.offlineNeverOpened, viewModel: viewModel)
+        } else if !canOpen(viewModel, isOffline: isOffline) {
+            viewModel.setNativeRouteActive(false)
+            route = .classic
+        } else {
+            showUnavailable(.openFailed, viewModel: viewModel)
+        }
+    }
+
+    /// Availability moved under an awaited fetch: the fetch yields nothing and the
+    /// opener settles the route from what is on the device (`settleWithoutAnswer`).
     private func availabilityMoved(_ viewModel: EditorViewModel, isOffline: Bool) -> Bool {
         isOffline || viewModel.availability.showsOfflineStatus
     }

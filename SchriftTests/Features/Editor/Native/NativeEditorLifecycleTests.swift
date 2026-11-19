@@ -314,6 +314,41 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         }
     }
 
+    /// Going offline while the fetch is in flight drops its answer; with no deadline
+    /// to fall back on, the route settles from the device instead of spinning: a page
+    /// with nothing cached says "Go online", one with a cached classic copy goes classic.
+    func testGoingOfflineMidFetchSettlesTheRouteInsteadOfSpinning() async {
+        for cached in [false, true] {
+            let fixture = makeFixture()
+            defer {
+                fixture.clean()
+                MockURLProtocol.reset()
+            }
+            if cached {
+                DocumentContentCacheStore(directory: fixture.directory).save(
+                    CachedDocumentContent(
+                        documentID: fixture.model.documentID, title: "Cached", markdown: "Cached body",
+                        syncedAt: Date(timeIntervalSince1970: 1), serverUpdatedAt: Date(timeIntervalSince1970: 2)))
+            }
+            let gate = MockURLProtocol.ResponseGate()
+            stub(
+                version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID), gate: gate
+            )
+            let open = NativeEditorOpen(preference: { true })
+            let loading = Task { await open.open(viewModel: fixture.model, isOffline: false) }
+            await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+            fixture.defaults.set(true, forKey: "schrift.workOffline")
+            fixture.model.availability.preferencesChanged()
+            gate.open()
+            await loading.value
+            switch (cached, open.route) {
+            case (false, .unavailable(.offlineNeverOpened)), (true, .classic): break
+            default: XCTFail("cached \(cached): the route must settle, got \(open.route)")
+            }
+            open.close()
+        }
+    }
+
     func testRawDocs6RouteSeedsProductionSurfaceAndNeverStartsClassicLoad() async throws {
         let fixture = makeFixture()
         defer {
