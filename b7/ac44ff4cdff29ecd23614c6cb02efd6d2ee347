@@ -1,0 +1,21 @@
+SchriftTests/Core/Networking/SiteOriginTests.swift
+  s_4b50532a1fc07c::t_d8ccbc1697acc0 40
+docs/offline-and-sync.md
+  s_4b50532a1fc07c::t_3d988bfb56ded5 3422-3425
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b7ac44ff4cdff29ecd23614c6cb02efd6d2ee347",
+  "prompts": {},
+  "sessions": {
+    "s_4b50532a1fc07c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "af8c6a10-8a11-454f-826b-39f4d582a0a4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
