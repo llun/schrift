@@ -179,6 +179,19 @@ tag object's own SHA is not a commit `uses:` can resolve. Dependabot is
 and Ruby/fastlane are bumped intentionally with `bundle update`, never
 automatically.
 
+## Context budget
+
+`context-budget.yml` runs `node scripts/context-budget.test.mjs` and
+`node scripts/context-budget.mjs` on `ubuntu-latest` for every PR and every push
+to `main`, as the `Context budget` check. It fails when `AGENTS.md` grows past
+its byte ceiling in [`context-budget.json`](../context-budget.json) (a ceiling
+only comes down: when the file shrinks, run the script with `--update`), or when
+a line a PR adds to `AGENTS.md` or a guide it links to carries a PR number, a
+phase number or "since <date>". A line moved from another file in the same PR
+does not count as added. It also prints how much each line of `AGENTS.md` makes
+a reader open; that figure is reported, not enforced. It needs no secrets and
+takes seconds, so it is not part of the `Build & Test` guard.
+
 ## Making the check required (the guard)
 
 Enforcement is repository configuration, not code — a repo **admin** must turn

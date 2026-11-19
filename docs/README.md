@@ -4,10 +4,11 @@ Project documentation for the Schrift iOS app. These are **living documents** â€
 keep them current with the code, in the same change that alters behavior (see the
 "Docs convention" in [`../AGENTS.md`](../AGENTS.md)).
 
-Agent- and contributor-facing conventions, workflow, and safety rules live in
-[`../AGENTS.md`](../AGENTS.md), which is the single source of truth for "how we
-write code here." The documents below capture the architecture and design
-rationale that `AGENTS.md` only summarizes.
+Agent- and contributor-facing workflow and safety rules live in
+[`../AGENTS.md`](../AGENTS.md); the coding standards for each area live in
+[`standards/`](standards/) and the build and test guide in
+[`build-and-test.md`](build-and-test.md), all linked from `AGENTS.md`. The
+documents below capture the architecture and design rationale.
 
 ## Design & architecture
 

@@ -1,0 +1,25 @@
+name: Context budget
+
+# Keeps AGENTS.md from growing and keeps history out of the instruction files
+# (see docs/ci.md, "Context budget"). No secrets, fork-safe trigger.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Context budget
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - run: node --version
+      - run: node --test scripts/context-budget.test.mjs
+      - run: node scripts/context-budget.mjs
