@@ -96,6 +96,8 @@ final class DocumentSaveCoordinator {
     /// even after a successful save removed its draft. The native open route
     /// restores from this same store.
     let replicaStore: ReplicaStore
+    let replicaAccessStore: ReplicaAccessStore
+    let cleanReplicaByteLimit: Int
     /// The remembered signed-in account, available offline. A raw draft is
     /// rewritten or queued only for its own account; nil fails closed.
     private let signedInUser: SignedInUserStore
@@ -441,6 +443,8 @@ final class DocumentSaveCoordinator {
         client: DocsAPIClient,
         draftStore: PendingDraftStore = PendingDraftStore(),
         replicaStore: ReplicaStore? = nil,
+        replicaAccessStore: ReplicaAccessStore? = nil,
+        cleanReplicaByteLimit: Int = ReplicaStore.defaultCleanReplicaByteLimit,
         contentCache: DocumentContentCacheStore = DocumentContentCacheStore(),
         createStore: PendingDocumentCreateStore = PendingDocumentCreateStore(),
         deleteStore: PendingDocumentDeleteStore = PendingDocumentDeleteStore(),
@@ -466,6 +470,8 @@ final class DocumentSaveCoordinator {
         self.draftStore = draftStore
         self.replicaStore =
             replicaStore ?? ReplicaStore(ownershipStore: ReplicaOwnershipStore(userDefaults: listCache.userDefaults))
+        self.replicaAccessStore = replicaAccessStore ?? ReplicaAccessStore(userDefaults: listCache.userDefaults)
+        self.cleanReplicaByteLimit = cleanReplicaByteLimit
         self.signedInUser = SignedInUserStore(userDefaults: listCache.userDefaults)
         self.contentCache = contentCache
         self.createStore = createStore
@@ -705,28 +711,73 @@ final class DocumentSaveCoordinator {
         return config.collaborationOrg
     }
 
-    /// Removes clean, synced replica folders for the leaving account/origin while keeping every
-    /// dirty, provisional, conflicted, active, or unreadable replica untouched.
-    func purgeCleanNativeReplicasOnSignOut(ownerUserID: UUID? = nil) {
-        guard let resolvedOwner = ownerUserID ?? signedInUser.userID,
-            !draftStore.holdsUnreadableData,
-            !createStoreUnreadable,
-            !deleteStoreUnreadable,
-            !attachmentStore.holdsUnreadableData,
-            !replicaStore.needsOwnershipRepair
-        else { return }
+    /// Fail-closed guard shared by sign-out purge and LRU eviction: if any store tracking
+    /// unsynced local work or replica ownership is unreadable (including quarantined drafts),
+    /// no replica may be removed.
+    private var canSafelyRemoveCleanReplicas: Bool {
+        !draftStore.holdsUnreadableData
+            && !createStoreUnreadable
+            && !deleteStoreUnreadable
+            && !attachmentStore.holdsUnreadableData
+            && !replicaStore.needsOwnershipRepair
+    }
+
+    /// Document IDs with unsynced coordinator state (drafts, creates, deletes, in-flight,
+    /// queued, conflicts, or pending attachments) that must never be removed by purge or LRU.
+    private func protectedReplicaDocumentIDs() -> Set<UUID> {
         var keeping = Set(draftStore.allDrafts().map(\.documentID))
         keeping.formUnion(pendingCreates.keys)
         keeping.formUnion(pendingCreates.values.compactMap(\.syncedServerID))
         keeping.formUnion(pendingDeletes.keys)
         keeping.formUnion(inFlight.keys)
+        keeping.formUnion(inFlightContent.keys)
         keeping.formUnion(queued.keys)
         keeping.formUnion(conflicts.keys)
         keeping.formUnion(pendingAttachments.values.map(\.documentID))
-        replicaStore.purgeCleanReplicas(
+        return keeping
+    }
+
+    func recordReplicaOpened(scope: ReplicaScope, at date: Date = Date()) {
+        replicaAccessStore.recordOpened(scope, at: date)
+    }
+
+    /// Evicts least-recently-opened clean replicas when total replica storage exceeds
+    /// `cleanReplicaByteLimit`. Reuses the sign-out purge's fail-closed guards and
+    /// protected-document set, and also protects every scope currently open in `nativeSessions`
+    /// or `additionalKeepingScopes`.
+    @discardableResult
+    func evictCleanNativeReplicasIfNeeded(keepingScopes additionalKeepingScopes: Set<ReplicaScope> = [])
+        -> [ReplicaScope]
+    {
+        guard canSafelyRemoveCleanReplicas else { return [] }
+        var keepingScopes = additionalKeepingScopes
+        if let open = nativeSessions?.openScopes {
+            keepingScopes.formUnion(open)
+        }
+        let evicted = replicaStore.evictCleanReplicas(
+            overByteLimit: cleanReplicaByteLimit,
+            keepingDocumentIDs: protectedReplicaDocumentIDs(),
+            keepingScopes: keepingScopes,
+            lastOpened: replicaAccessStore.snapshot())
+        for scope in evicted {
+            replicaAccessStore.remove(scope)
+        }
+        return evicted
+    }
+
+    /// Removes clean, synced replica folders for the leaving account/origin while keeping every
+    /// dirty, provisional, conflicted, active, or unreadable replica untouched.
+    func purgeCleanNativeReplicasOnSignOut(ownerUserID: UUID? = nil) {
+        guard let resolvedOwner = ownerUserID ?? signedInUser.userID,
+            canSafelyRemoveCleanReplicas
+        else { return }
+        let removed = replicaStore.purgeCleanReplicas(
             serverOrigin: client.serverOrigin,
             ownerUserID: resolvedOwner,
-            keepingDocumentIDs: keeping)
+            keepingDocumentIDs: protectedReplicaDocumentIDs())
+        for scope in removed {
+            replicaAccessStore.remove(scope)
+        }
     }
 
     /// Rebuild the owner marker from the scoped manifests on disk. The only
@@ -1020,6 +1071,10 @@ final class DocumentSaveCoordinator {
         }
         draftStore.save(draft)
         syncBackupExclusion(for: record.localID, scope: createdScope)
+        if let createdScope {
+            recordReplicaOpened(scope: createdScope)
+            evictCleanNativeReplicasIfNeeded(keepingScopes: [createdScope])
+        }
         states[record.localID] = .pendingSync
         return localDocument(from: record)
     }
@@ -4851,6 +4906,10 @@ final class DocumentSaveCoordinator {
         defer {
             if wasReplayedPush, contentLanded { onReplayedPushLanded?() }
         }
+        var shouldEvictCleanReplicas = false
+        defer {
+            if shouldEvictCleanReplicas { evictCleanNativeReplicasIfNeeded() }
+        }
         defer {
             syncBackupExclusion(for: documentID, scope: save.replicaRequest?.reference.scope)
         }
@@ -4934,19 +4993,23 @@ final class DocumentSaveCoordinator {
             // The save PATCHes are void, so there is no server `updated_at` to
             // record: `serverUpdatedAt` is nil (truthfully "unknown after a void
             // save") and `syncedAt` is the client wall-clock of the confirmed save.
-            // A raw save's Markdown is a lossy shadow, never the classic cache's body.
-            if save.replicaRequest == nil {
-                contentCache.save(
-                    CachedDocumentContent(
-                        documentID: documentID,
-                        title: save.title,
-                        markdown: save.markdown,
-                        syncedAt: Date(),
-                        serverUpdatedAt: nil
-                    ))
-            }
-            if let request = save.replicaRequest, !request.adapter.isCurrent(request) {
-                states[documentID] = .pendingSync
+            // For native saves, `save.markdown` is the lossy Markdown shadow; it keeps
+            // offline search and the attachments list current without extra requests,
+            // and `serverUpdatedAt: nil` + native ownership ensure classic never treats
+            // it as an authoritative server baseline.
+            contentCache.save(
+                CachedDocumentContent(
+                    documentID: documentID,
+                    title: save.title,
+                    markdown: save.markdown,
+                    syncedAt: Date(),
+                    serverUpdatedAt: nil
+                ))
+            if let request = save.replicaRequest {
+                shouldEvictCleanReplicas = true
+                if !request.adapter.isCurrent(request) {
+                    states[documentID] = .pendingSync
+                }
             }
         } else if let docsError = error as? DocsAPIError, retryableSaveFailure(docsError) {
             // Transient/transport failure (offline, 5xx, rate limit): the edit is

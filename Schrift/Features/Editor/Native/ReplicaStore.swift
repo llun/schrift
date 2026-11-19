@@ -10,19 +10,23 @@ enum ReplicaStoreError: Error, Equatable {
     case ownershipUnavailable
 }
 
-/// Draft storage, never a re-downloadable cache. There is deliberately no
-/// eviction or sign-out removal API; `remove(for:)` exists only for an explicit
-/// user discard (keep-server-version, discard pending work, document deletion).
+/// Draft and offline-copy storage for native replicas. Dirty, provisional,
+/// conflicted, open, or unreadable replicas are never automatically evicted;
+/// `purgeCleanReplicas` and `evictCleanReplicas` only remove clean, synced
+/// copies, and `remove(for:)` is used for explicit discards (keep-server-version,
+/// discard pending work, document deletion).
 /// One lock (`io`, shared by every instance) serializes each read/modify/switch,
 /// including independently constructed store instances, so the journal entry
 /// points (append, restore, manifest, outbox, acknowledge, compact and the
 /// provisional file) are callable from any isolation domain (PR08a). Operations
-/// that touch the ownership marker (create, remove, repair, set-aside) stay on
-/// the main actor and take the same lock. It is not recursive: only public entry
-/// points lock, and private helpers assume it is held, so a public method never
-/// calls another. Raw files are immutable; an incomplete unreferenced file is
-/// not an edit.
+/// that touch the ownership marker (create, remove, repair, set-aside, purge,
+/// evict) stay on the main actor and take the same lock. It is not recursive:
+/// only public entry points lock, and private helpers assume it is held, so a
+/// public method never calls another. Raw files are immutable; an incomplete
+/// unreferenced file is not an edit.
 final class ReplicaStore: Sendable {
+    // shortcut: fixed 100 MB cap for clean replica LRU eviction rather than a dynamic device-storage budget.
+    static let defaultCleanReplicaByteLimit = 100 * 1024 * 1024
     enum Operation: Equatable { case create, append, acknowledge, compact, remove, provisional }
     enum Boundary: Equatable {
         case payloadWritten, payloadFlushed, payloadDirectoryFlushed
@@ -466,14 +470,61 @@ final class ReplicaStore: Sendable {
         try renameFile(temporary, to: destination)
     }
 
+    /// Total regular-file bytes across all non-tombstone replica folders on disk.
+    func totalByteCount() -> Int {
+        Self.io.withLock { _ in
+            replicaFolders().reduce(0) { $0 + folderByteCountLocked($1) }
+        }
+    }
+
+    /// Regular-file bytes in `scope`'s folder on disk, or 0 if it does not exist.
+    func byteCount(for scope: ReplicaScope) -> Int {
+        Self.io.withLock { _ in
+            guard let folder = try? folder(for: scope), fileManager.fileExists(atPath: folder.path) else { return 0 }
+            return folderByteCountLocked(folder)
+        }
+    }
+
+    private func folderByteCountLocked(_ folder: URL) -> Int {
+        guard
+            let enumerator = fileManager.enumerator(
+                at: folder,
+                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+                options: []
+            )
+        else { return 0 }
+        var total = 0
+        for case let url as URL in enumerator {
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                values.isRegularFile == true,
+                let size = values.fileSize
+            else { continue }
+            total += size
+        }
+        return total
+    }
+
+    private func isCleanLocked(
+        manifest: ReplicaManifest, in folder: URL, keepingDocumentIDs: Set<UUID>,
+        keepingScopes: Set<ReplicaScope> = []
+    ) -> Bool {
+        let committed = Set(manifest.journal.map(\.commandID))
+        return !keepingDocumentIDs.contains(manifest.scope.documentID)
+            && !keepingScopes.contains(manifest.scope)
+            && manifest.outbox.isEmpty
+            && isProvisionalCleanLocked(in: folder, committed: committed)
+    }
+
     /// Removes only clean, valid replicas for the leaving account/origin that have
     /// no unsent outbox, no uncommitted provisional recovery text, and no protected
     /// document ids (`keepingDocumentIDs`). Dirty, provisional, conflicted, or
     /// unreadable replicas stay untouched with backup enabled.
     @MainActor
-    func purgeCleanReplicas(serverOrigin: String, ownerUserID: UUID, keepingDocumentIDs: Set<UUID>) {
+    @discardableResult
+    func purgeCleanReplicas(serverOrigin: String, ownerUserID: UUID, keepingDocumentIDs: Set<UUID>) -> [ReplicaScope] {
         Self.io.withLock { _ in
             removeTombstones()
+            var removed: [ReplicaScope] = []
             for entry in replicaFolders() {
                 switch read(folder: entry) {
                 case .uncommitted:
@@ -484,18 +535,70 @@ final class ReplicaStore: Sendable {
                     guard manifest.scope.serverOrigin == serverOrigin,
                         manifest.scope.ownerUserID == ownerUserID
                     else { continue }
-                    let committed = Set(manifest.journal.map(\.commandID))
-                    let provisionalClean = isProvisionalCleanLocked(in: entry, committed: committed)
-                    guard !keepingDocumentIDs.contains(manifest.scope.documentID),
-                        manifest.outbox.isEmpty,
-                        provisionalClean
-                    else {
+                    guard isCleanLocked(manifest: manifest, in: entry, keepingDocumentIDs: keepingDocumentIDs) else {
                         setBackupExcluded(false, on: entry)
                         continue
                     }
-                    try? removeLocked(for: manifest.scope)
+                    if (try? removeLocked(for: manifest.scope)) != nil {
+                        removed.append(manifest.scope)
+                    }
                 }
             }
+            return removed
+        }
+    }
+
+    /// Evicts least-recently-opened clean replicas until total bytes on disk are at
+    /// or below `byteLimit` (or no evictable clean replicas remain). Unreadable,
+    /// dirty, provisional, protected (`keepingDocumentIDs`), or open (`keepingScopes`)
+    /// replicas are never evicted. Returns the scopes that were removed.
+    @MainActor
+    @discardableResult
+    func evictCleanReplicas(
+        overByteLimit byteLimit: Int,
+        keepingDocumentIDs: Set<UUID>,
+        keepingScopes: Set<ReplicaScope>,
+        lastOpened: [String: Date]
+    ) -> [ReplicaScope] {
+        Self.io.withLock { _ in
+            removeTombstones()
+            var totalBytes = 0
+            var candidates: [(scope: ReplicaScope, bytes: Int, openedAt: Date, name: String)] = []
+            for entry in replicaFolders() {
+                let bytes = folderByteCountLocked(entry)
+                totalBytes += bytes
+                switch read(folder: entry) {
+                case .uncommitted:
+                    continue
+                case .unreadable:
+                    setBackupExcluded(false, on: entry)
+                case .manifest(let manifest):
+                    guard
+                        isCleanLocked(
+                            manifest: manifest, in: entry, keepingDocumentIDs: keepingDocumentIDs,
+                            keepingScopes: keepingScopes)
+                    else {
+                        continue
+                    }
+                    let name = entry.lastPathComponent
+                    let openedAt = lastOpened[name] ?? .distantPast
+                    candidates.append((manifest.scope, bytes, openedAt, name))
+                }
+            }
+            guard totalBytes > byteLimit else { return [] }
+            candidates.sort { lhs, rhs in
+                if lhs.openedAt != rhs.openedAt { return lhs.openedAt < rhs.openedAt }
+                return lhs.name < rhs.name
+            }
+            var evicted: [ReplicaScope] = []
+            for candidate in candidates {
+                guard totalBytes > byteLimit else { break }
+                if (try? removeLocked(for: candidate.scope)) != nil {
+                    totalBytes -= candidate.bytes
+                    evicted.append(candidate.scope)
+                }
+            }
+            return evicted
         }
     }
 

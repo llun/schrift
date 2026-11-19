@@ -630,6 +630,77 @@ final class ReplicaStoreTests: XCTestCase {
         let preserved = try XCTUnwrap(try store.restore(for: nonEmptyDestScope))
         XCTAssertEqual(preserved.checkpoint, nonEmptyCheckpoint)
     }
+
+    @MainActor
+    func testEvictCleanReplicasOverByteLimitEvictsLeastRecentlyOpenedAndProtectsDirtyOpenAndUnreadable() throws {
+        let (store, ownership) = ownedStore()
+        let makeScope: (UUID) -> ReplicaScope = { docID in
+            ReplicaScope(
+                serverOrigin: self.scope.serverOrigin, ownerUserID: self.scope.ownerUserID, org: "docs",
+                documentID: docID)
+        }
+        let oldestClean = makeScope(UUID())
+        let middleClean = makeScope(UUID())
+        let newestClean = makeScope(UUID())
+        let openClean = makeScope(UUID())
+        let dirtyOutbox = makeScope(UUID())
+        let provisional = makeScope(UUID())
+        let protectedDoc = makeScope(UUID())
+        let unreadable = makeScope(UUID())
+
+        let payload = Data(repeating: 0x41, count: 2048)
+        for s in [oldestClean, middleClean, newestClean, openClean, dirtyOutbox, provisional, protectedDoc, unreadable]
+        {
+            _ = try store.create(for: s, checkpoint: payload)
+        }
+        _ = try store.append(journalBytes(1), for: dirtyOutbox, commandID: UUID(), baseRevision: 0, origin: .local)
+        try store.writeProvisionalRecoveries(
+            [ProvisionalRecovery(commandID: UUID(), blockID: "b1", text: "draft", state: .composing)],
+            for: provisional)
+        let unreadableFolder = directory.appendingPathComponent(try unreadable.directoryName(), isDirectory: true)
+        try Data("damaged".utf8).write(to: unreadableFolder.appendingPathComponent("manifest.json"), options: .atomic)
+
+        let totalBefore = store.totalByteCount()
+        let oldestBytes = store.byteCount(for: oldestClean)
+        let middleBytes = store.byteCount(for: middleClean)
+        XCTAssertGreaterThan(oldestBytes, 2048)
+        // Cap leaves room for everything except oldestClean + middleClean.
+        let cap = totalBefore - oldestBytes - middleBytes
+
+        let lastOpened: [String: Date] = [
+            try oldestClean.directoryName(): Date(timeIntervalSince1970: 100),
+            try middleClean.directoryName(): Date(timeIntervalSince1970: 200),
+            try newestClean.directoryName(): Date(timeIntervalSince1970: 300),
+            try openClean.directoryName(): Date(timeIntervalSince1970: 50),
+            try dirtyOutbox.directoryName(): Date(timeIntervalSince1970: 10),
+            try provisional.directoryName(): Date(timeIntervalSince1970: 20),
+            try protectedDoc.directoryName(): Date(timeIntervalSince1970: 30),
+        ]
+
+        let evicted = store.evictCleanReplicas(
+            overByteLimit: cap,
+            keepingDocumentIDs: [protectedDoc.documentID],
+            keepingScopes: [openClean],
+            lastOpened: lastOpened)
+
+        XCTAssertEqual(evicted, [oldestClean, middleClean])
+        XCTAssertLessThanOrEqual(store.totalByteCount(), cap)
+        XCTAssertNil(try store.restore(for: oldestClean))
+        XCTAssertNil(try store.restore(for: middleClean))
+        XCTAssertEqual(
+            ownership.owner(documentID: oldestClean.documentID, serverOrigin: scope.serverOrigin), .none,
+            "eviction must clear the ownership marker")
+        XCTAssertEqual(
+            ownership.owner(documentID: middleClean.documentID, serverOrigin: scope.serverOrigin), .none,
+            "eviction must clear the ownership marker")
+
+        XCTAssertNotNil(try store.restore(for: newestClean))
+        XCTAssertNotNil(try store.restore(for: openClean))
+        XCTAssertNotNil(try store.restore(for: dirtyOutbox))
+        XCTAssertNotNil(try store.restore(for: provisional))
+        XCTAssertNotNil(try store.restore(for: protectedDoc))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unreadableFolder.path))
+    }
 }
 
 /// Two bytes per journal update, so every one is distinct.
