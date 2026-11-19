@@ -1550,6 +1550,26 @@ final class NativeEditorOpen {
             } else {
                 resolvedState = nil
             }
+            // Prove the fetched bytes install before anything is discarded: the
+            // discard clears the marker, checkpoint, journal and outbox, so a
+            // state that cannot be restored would leave the document stuck
+            // read-only with the local version already gone. It runs before the
+            // currency and local-work guards below, so they hold after its await.
+            if let resolvedState {
+                let origin = viewModel.client.serverOrigin
+                do {
+                    // Off the main actor: decode, apply and project are the same
+                    // work a fresh restore does.
+                    try await Task.detached {
+                        try DocumentReplicaSession.validateInstallable(
+                            state: resolvedState.state, interlinkingOrigin: origin)
+                    }.value
+                } catch {
+                    guard !Task.isCancelled, generation == requestGeneration else { return }
+                    viewModel.recordNativeRefreshError(after: diagnosticsMarker)
+                    return
+                }
+            }
             guard !Task.isCancelled, generation == requestGeneration else { return }
             guard !coordinator.mayPredateSave(saveMarker) else {
                 viewModel.recordNativeRefreshError(after: diagnosticsMarker)
@@ -1565,25 +1585,6 @@ final class NativeEditorOpen {
                 coordinator.storedDraft(documentID: documentID) == discardedDraft,
                 currentRevision == revisionAtChoice
             else { return }
-            // Prove the fetched bytes install before anything is discarded: the
-            // discard clears the marker, checkpoint, journal and outbox, so a
-            // state that cannot be restored would leave the document stuck
-            // read-only with the local version already gone.
-            if let resolvedState {
-                let origin = viewModel.client.serverOrigin
-                do {
-                    // Off the main actor: decode, apply and project are the same
-                    // work a fresh restore does.
-                    try await Task.detached {
-                        try DocumentReplicaSession.validateInstallable(
-                            state: resolvedState.state, interlinkingOrigin: origin)
-                    }.value
-                } catch {
-                    guard generation == requestGeneration else { return }
-                    viewModel.recordNativeRefreshError(after: diagnosticsMarker)
-                    return
-                }
-            }
             close()
             if let closing {
                 await closing.value
