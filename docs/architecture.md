@@ -695,10 +695,11 @@ the changed display. A remote integrate that takes the total shadow away downgra
 `canType` for every surface: typing stops with the same unfamiliar-content reason an
 open of such a document shows, and what was journaled before still saves; so does any
 opaque block that is not a locked card. A `.lossy` block never downgrades either,
-and splits into two tiers (`ProjectionFidelity.lossyKind`): a *styled-only* block
-(every lossy reason is a non-default `textColor`, `backgroundColor` or `textAlignment`)
-keeps full editing except merges (joins in either direction and cross-boundary ranges);
-any other `.lossy` block (an unknown prop, non-styling prop or unknown mark) is a
+and splits into two tiers (`ProjectionFidelity.lossyKind`): a *known-prop* block
+(every lossy reason is `prop:<key>`, a non-default value of a prop its schema knows —
+styling such as `textAlignment`, or a callout's `emoji`) keeps full editing except
+merges (joins in either direction and cross-boundary ranges); any other `.lossy`
+block (a prop from a newer Docs version, unreadable data) is a
 locked *text* block that takes text, marks, same-schema props, inline objects and
 copy/duplicate/whole-block delete while refusing split, convert (slash menu hidden),
 merge, move/indent and empty-paragraph replacement. A leaf block of an unknown type is

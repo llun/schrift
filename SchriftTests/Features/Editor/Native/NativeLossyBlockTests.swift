@@ -617,4 +617,16 @@ final class NativeLossyBlockTests: NativeEditingTestCase {
         XCTAssertTrue(xml.contains("futureProp=\"v1\""), "unknown prop survives merge: \(xml)")
         try await assertConsistent(harness, localCommands: 1)
     }
+
+    /// A1's split: every `prop:<key>` reason (a prop the schema knows, styling or not)
+    /// is the full-editing kind; anything else, or a mix, is text-only.
+    func testLossyKindFollowsWhetherSchriftKnowsTheProp() {
+        XCTAssertEqual(ProjectionFidelity.lossy(reasons: ["prop:textAlignment"]).lossyKind, .styled)
+        XCTAssertEqual(ProjectionFidelity.lossy(reasons: ["prop:emoji", "prop:textColor"]).lossyKind, .styled)
+        XCTAssertEqual(ProjectionFidelity.lossy(reasons: ["unknownProp:futureProp"]).lossyKind, .unknownProp)
+        XCTAssertEqual(
+            ProjectionFidelity.lossy(reasons: ["prop:textAlignment", "unknownProp:x"]).lossyKind, .unknownProp)
+        XCTAssertEqual(ProjectionFidelity.lossy(reasons: []).lossyKind, .unknownProp)
+        XCTAssertNil(ProjectionFidelity.modeled.lossyKind)
+    }
 }

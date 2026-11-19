@@ -217,12 +217,12 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
   byte-for-byte in `YDoc` and renders as a locked preview card. The rest of the document stays
   typeable and no native edit touches a card. `.lossy` blocks do not make the document read-only
   either, and split into two tiers (`ProjectionFidelity.lossyKind`):
-  - **Styled-only** (every lossy reason is a non-default value of `textColor`, `backgroundColor` or
-    `textAlignment`, e.g. a centered paragraph): keeps full editing (typing, marks, props, split,
+  - **Known props** (every lossy reason is a non-default value of a prop the block's schema knows:
+    styling such as `textAlignment`, or a callout's `emoji`, e.g. a centered paragraph): keeps full editing (typing, marks, props, split,
     convert/slash menu, move, indent/outdent, duplicate, delete), except merges into or out of it
     are refused (joins in either direction and cross-boundary ranges).
-  - **Unknown-prop / locked text** (every other `.lossy` block, e.g. an unknown prop or non-styling
-    prop): shows as normal text and takes typing, marks, same-schema props, inline objects, character
+  - **Unknown-prop / locked text** (every other `.lossy` block, e.g. a prop from a newer Docs version
+    or unreadable data): shows as normal text and takes typing, marks, same-schema props, inline objects, character
     delete and copy/duplicate/whole-block delete, while split, convert (slash menu hidden), merge,
     move, indent/outdent and empty-paragraph replacement refuse it.
   An unknown block with children, an unfamiliar column group, a known block read as opaque

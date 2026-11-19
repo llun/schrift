@@ -116,6 +116,27 @@ final class BlockNoteColumnStructureOracleTests: XCTestCase {
         try assertWeb("deleteGroup", "cl", .deleteBlock, open: false)
     }
 
+    /// Owner choice A1: a block with a prop Schrift does not know never moves. Delete
+    /// before a closed group would pull its first block out, and a closed group is
+    /// not indexed, so the engine reads the block's props from the copy and refuses.
+    func testDeleteBeforeAGroupNeverPullsABlockWithAnUnknownProp() throws {
+        let capture = try capture("deleteBeforeGroup")
+        let doc = try doc(capture.seed)
+        defer { doc.destroy() }
+        let writer = BlockNoteWriter(doc: doc)
+        let found = try writer.find("a")
+        _ = try writer.transaction { tx in
+            try YWrite.mapSet(tx, on: found.element, key: "futureProp", .any([.string("kept")]))
+        }
+        let engine = DocumentEngine(doc: doc, surface: HeadlessSurface())
+        defer { engine.detach() }
+        let before = YXMLString.fragment(doc)
+        let range = NativeEditCommand.Kind.range(
+            NativeRangeCommand(startOffset: 6, endBlockID: "cl", endOffset: 0, replacement: "", newBlockIDs: []))
+        XCTAssertFalse(engine.canApplyStructural(command(engine, "lead", range)))
+        XCTAssertEqual(YXMLString.fragment(doc), before)
+    }
+
     /// Delete at a column's end pulls the next column's first block in on
     /// the web; the column surface holds only its own column, so natively it
     /// is refused before any write (a known limit).

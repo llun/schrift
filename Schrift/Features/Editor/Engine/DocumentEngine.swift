@@ -815,7 +815,8 @@ final class DocumentEngine {
         if entry.element?.typeRef == .xmlElement(nodeName: "codeBlock"), range.endBlockID == command.blockID,
             range.newBlockIDs.isEmpty
         {
-            let (_, units) = try structuralTarget(command.blockID, allowCode: true)
+            // Single-line inline paste into one code block touches only its text.
+            let (_, units) = try structuralTarget(command.blockID, allowCode: true, allowLossy: .any)
             guard Self.isBoundary(range.startOffset, in: units), Self.isBoundary(range.endOffset, in: units),
                 range.startOffset <= range.endOffset,
                 range.startOffset < range.endOffset || !lines.allSatisfy(\.isEmpty)
@@ -1213,11 +1214,15 @@ final class DocumentEngine {
             ColumnGroup.read(list, id: groupID).isFamiliar,
             case .type(let column)? = writer.children(list).first?.content,
             let first = writer.children(column).first, case .type(let pulled) = first.content,
-            let pulledID = BlockIndex.blockID(of: pulled), !isLocked(pulledID)
+            let pulledID = BlockIndex.blockID(of: pulled)
         else { return nil }
         // Every block it takes along must be readable: a copy that drops nothing.
         let copy = try writer.snapshot(pulled, block: pulledID, depth: 0)
         _ = try BlockNoteSubtreePayload.validate([copy])
+        // A block with a prop the editor does not know never moves (A1). A closed
+        // group is not indexed, so `isLocked` cannot see it: read the copy too.
+        // Refused, not skipped: falling through would take the generic range path.
+        guard !isLocked(pulledID), !hasUnknownProp(copy) else { throw DocumentEngineError.unsupportedNativeInput }
         let left = entry.containerItem
         let pad = newBlockID()
         return { try self.writer.moveAcross(first, id: pulledID, into: entry.group, after: left, padID: pad) }
@@ -2652,9 +2657,20 @@ final class DocumentEngine {
         }
     }
 
-    /// Whether the block is a locked-text `.lossy` block (an unknown prop, a
-    /// non-styling prop or an unknown mark). Styled-only `.lossy` blocks are
-    /// not locked.
+    /// Whether a copied block's own content element carries a prop outside its
+    /// node's schema (the unknown-prop kind of `.lossy`), or a node with no schema.
+    private func hasUnknownProp(_ copy: BlockNoteWriter.Copy) -> Bool {
+        guard case .element(_, _, let children) = copy,
+            case .element(let node, let props, _)? = children.first
+        else { return true }
+        guard let schema = writer.schemas[node] else { return true }
+        let known = Set(schema.map(\.key))
+        return props.contains { !known.contains($0.key) }
+    }
+
+    /// Whether the block is a locked-text `.lossy` block (a prop its schema
+    /// does not know, or unreadable data). Known-prop `.lossy` blocks are not
+    /// locked.
     private func isLocked(_ blockID: String) -> Bool {
         guard let block = nativeBlock(blockID) else { return false }
         return block.block.fidelity.isLockedText
