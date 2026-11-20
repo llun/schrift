@@ -157,10 +157,16 @@ final class NativeIndentTests: NativeEditingTestCase {
     func testAMoveCopiesRawValuesAndRefusesAnUnreadableSubtree() async throws {
         var rich = bullet("b", "")
         rich.runs = [
-            InlineRun("Plain "), InlineRun("custom", marks: [("x-custom", "{\"v\":1}"), ("bold", "{}")]),
+            InlineRun("Plain "), InlineRun("bold", marks: [("bold", "{}")]),
             InlineRun(" link", marks: [("link", "{\"href\":\"https://example.test/\"}")]),
         ]
-        rich.props += [("x-extra", .string("kept"))]
+        rich.props = rich.props.map {
+            switch $0.key {
+            case "textColor": ($0.key, .string("red"))
+            case "textAlignment": ($0.key, .string("center"))
+            default: $0
+            }
+        }
         let harness = try await makeHarness([
             bullet("a", "Alpha"), nested(rich, [bullet("b1", "Child")]), bullet("c", "Gamma"),
             nested(bullet("d", "Delta"), [BlockNoteBlock(node: "table", props: [], runs: [], id: "table")]),

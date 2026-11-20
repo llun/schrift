@@ -82,14 +82,16 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
             let env = makeEnvironment()
             defer { env.clean() }
             var blocks = Self.seedBlocks()
-            // A centered paragraph (a `.lossy` prop) still keeps the whole document
-            // read-only; an unknown block alone no longer does (PR02 locks it).
+            // A heading with an invalid level is an opaque block (not a locked
+            // card), so it keeps the whole document read-only; an unknown block
+            // alone no longer does (PR02 locks it), and neither does a `.lossy`
+            // block (a locked text block).
             if rich {
                 blocks.insert(
                     BlockNoteBlock(
-                        node: "paragraph",
-                        props: Self.paragraphProps.map { $0.key == "textAlignment" ? ($0.key, .string("center")) : $0 },
-                        runs: [InlineRun("Centered")], id: "centered"), at: 1)
+                        node: "heading",
+                        props: Self.paragraphProps + [("level", .int(9)), ("isToggleable", .bool(false))],
+                        runs: [InlineRun("Broken")], id: "broken"), at: 1)
             }
             ServerStub(owner: owner, state: BlockNoteYjs.encode(blocks, clientID: Self.seedClientID)).install()
             let open = NativeEditorOpen(preference: { true })

@@ -410,7 +410,9 @@ final class DocumentEngine {
         }
         // A prop edit (a code block's language) is the one command code accepts.
         let isPropEdit = if case .props = command.kind { true } else { false }
-        let (node, units) = try structuralTarget(command.blockID, allowCode: isPropEdit)
+        let (node, units) = try structuralTarget(
+            command.blockID, allowCode: isPropEdit,
+            allowLossy: Self.lossyAllowance(for: command.kind, blockID: command.blockID))
         let write: () throws -> Data
         // Resolved after the write, against the post-write index.
         let caret: () -> EditorPosition
@@ -466,7 +468,9 @@ final class DocumentEngine {
             let index = builder.index
             let list = index.list(of: command.blockID)
             guard let entry = index.entries[command.blockID], let position = index.listPosition(of: command.blockID),
-                position > 0
+                position > 0,
+                // Merging out of any `.lossy` block (styled or locked text) is refused.
+                builder.nativeSnapshot(entry).block.fidelity == .modeled
             else { throw DocumentEngineError.unsupportedNativeInput }
             let previousID = list[position - 1]
             let firstChild =
@@ -497,13 +501,15 @@ final class DocumentEngine {
         case .indent:
             // `sinkListItem`: under the previous sibling, which must be a
             // readable block of the same group; the moved subtree must stay
-            // within `maxNestingDepth`.
+            // within `maxNestingDepth`. A locked text block never moves.
+            guard !isLocked(command.blockID) else { throw DocumentEngineError.unsupportedNativeInput }
             let index = builder.index
             guard let entry = index.entries[command.blockID],
                 let siblings = index.groupOrder[ObjectIdentifier(entry.group)],
                 let at = siblings.firstIndex(of: command.blockID), at > 0,
                 let previous = index.entries[siblings[at - 1]], previous.isSimpleContainer,
-                !builder.nativeSnapshot(previous).block.fidelity.isOpaque
+                let previousFidelity = Optional(builder.nativeSnapshot(previous).block.fidelity),
+                !previousFidelity.isOpaque, !previousFidelity.isLockedText
             else { throw DocumentEngineError.unsupportedNativeInput }
             // Never under a table, and never a table one level down.
             guard !isTable(previous.id), !movesTable(command.blockID, including: { $0 > entry.depth }) else {
@@ -517,6 +523,7 @@ final class DocumentEngine {
             write = { try self.writer.sinkListItem(in: try self.writer.indexedTarget(item, id: command.blockID)) }
             caret = { EditorPosition(blockID: command.blockID, offset: offset, assoc: -1) }
         case .outdent:
+            guard !isLocked(command.blockID) else { throw DocumentEngineError.unsupportedNativeInput }
             let offset = try caretOffset(in: command.blockID)
             write = try lift(command.blockID)
             caret = { EditorPosition(blockID: command.blockID, offset: offset, assoc: -1) }
@@ -599,7 +606,7 @@ final class DocumentEngine {
                 let id = list[position]
                 if position == upper, position > lower, marks.endOffset == 0 { break }
                 if position > lower { try requireEditableBlock(id) }
-                let blockUnits = position == lower ? units : try structuralTarget(id).units
+                let blockUnits = position == lower ? units : try structuralTarget(id, allowLossy: .any).units
                 let start = position == lower ? marks.startOffset : 0
                 let end = position == upper ? marks.endOffset : blockUnits.count
                 guard Self.isBoundary(start, in: blockUnits), Self.isBoundary(end, in: blockUnits), start <= end,
@@ -721,7 +728,7 @@ final class DocumentEngine {
             guard entry.isProjectable else { throw DocumentEngineError.unsupportedNativeInput }
             units = textUnits(entry)
         } else {
-            units = try structuralTarget(command.blockID).units
+            units = try structuralTarget(command.blockID, allowLossy: .any).units
         }
         guard range.lowerBound <= range.upperBound,
             Self.isBoundary(range.lowerBound, in: units),
@@ -745,7 +752,7 @@ final class DocumentEngine {
             guard entry.isProjectable else { throw DocumentEngineError.unsupportedNativeInput }
             units = textUnits(entry)
         } else {
-            units = try structuralTarget(command.blockID).units
+            units = try structuralTarget(command.blockID, allowLossy: .any).units
         }
         guard range.lowerBound <= range.upperBound,
             Self.isBoundary(range.lowerBound, in: units),
@@ -808,7 +815,8 @@ final class DocumentEngine {
         if entry.element?.typeRef == .xmlElement(nodeName: "codeBlock"), range.endBlockID == command.blockID,
             range.newBlockIDs.isEmpty
         {
-            let (_, units) = try structuralTarget(command.blockID, allowCode: true)
+            // Single-line inline paste into one code block touches only its text.
+            let (_, units) = try structuralTarget(command.blockID, allowCode: true, allowLossy: .any)
             guard Self.isBoundary(range.startOffset, in: units), Self.isBoundary(range.endOffset, in: units),
                 range.startOffset <= range.endOffset,
                 range.startOffset < range.endOffset || !lines.allSatisfy(\.isEmpty)
@@ -830,7 +838,15 @@ final class DocumentEngine {
                 }
             )
         }
-        let (_, startUnits) = try structuralTarget(command.blockID)
+        let startAllowance: LossyAllowance =
+            if range.endBlockID != command.blockID {
+                .none
+            } else if lines.count > 1 {
+                .styled
+            } else {
+                .any
+            }
+        let (_, startUnits) = try structuralTarget(command.blockID, allowLossy: startAllowance)
         let list = index.list(of: command.blockID)
         guard index.sameList(command.blockID, range.endBlockID),
             let lower = index.listPosition(of: command.blockID),
@@ -1203,6 +1219,10 @@ final class DocumentEngine {
         // Every block it takes along must be readable: a copy that drops nothing.
         let copy = try writer.snapshot(pulled, block: pulledID, depth: 0)
         _ = try BlockNoteSubtreePayload.validate([copy])
+        // A block with a prop the editor does not know never moves (A1). A closed
+        // group is not indexed, so `isLocked` cannot see it: read the copy too.
+        // Refused, not skipped: falling through would take the generic range path.
+        guard !isLocked(pulledID), !hasUnknownProp(copy) else { throw DocumentEngineError.unsupportedNativeInput }
         let left = entry.containerItem
         let pad = newBlockID()
         return { try self.writer.moveAcross(first, id: pulledID, into: entry.group, after: left, padID: pad) }
@@ -1269,7 +1289,7 @@ final class DocumentEngine {
         throws -> PreparedCommand
     {
         let index = builder.index
-        let (node, units) = try structuralTarget(command.blockID)
+        let (node, units) = try structuralTarget(command.blockID, allowLossy: .styled)
         guard node == "paragraph", let entry = index.entries[command.blockID], (2...3).contains(count),
             Self.isBoundary(removing.lowerBound, in: units), Self.isBoundary(removing.upperBound, in: units),
             Set(ids).count == ids.count, ids.allSatisfy({ [used = usedIDs()] in isUnused($0, in: used) })
@@ -1322,7 +1342,7 @@ final class DocumentEngine {
         throws -> PreparedCommand
     {
         let index = builder.index
-        let (paragraph, units) = try structuralTarget(command.blockID)
+        let (paragraph, units) = try structuralTarget(command.blockID, allowLossy: .styled)
         guard paragraph == "paragraph", MediaBlock.nodes.contains(node), let entry = index.entries[command.blockID],
             entry.depth == 0, entry.nestedGroup == nil, ids.count == 2, ids[0] != ids[1],
             Self.isBoundary(removing.lowerBound, in: units), Self.isBoundary(removing.upperBound, in: units),
@@ -1391,13 +1411,14 @@ final class DocumentEngine {
             index.position[current.id] != nil || index.columnOf[current.id] != nil
         else { throw DocumentEngineError.unsupportedNativeInput }
 
+        let currentFidelity = builder.nativeSnapshot(current).block.fidelity
         let replacing =
             placement == .replaceOrAfter
             && current.id == command.blockID
             && current.nestedGroup == nil
             && current.isSimpleContainer
             && current.isProjectable
-            && !builder.nativeSnapshot(current).block.fidelity.isOpaque
+            && !currentFidelity.isOpaque && !currentFidelity.isLockedText
             && current.element?.typeRef == .xmlElement(nodeName: "paragraph")
             && !current.hasInlineObjects
             && (current.isSimpleText || current.element?.length == 0)
@@ -1456,7 +1477,7 @@ final class DocumentEngine {
         _ command: NativeEditCommand, node: String, newID: String, removing: Range<Int>
     ) throws -> PreparedCommand {
         let index = builder.index
-        let (paragraph, units) = try structuralTarget(command.blockID)
+        let (paragraph, units) = try structuralTarget(command.blockID, allowLossy: .styled)
         guard paragraph == "paragraph", SourceBlock.isSource(node),
             !newID.isEmpty, !newID.unicodeScalars.contains("\u{1}"), !newID.unicodeScalars.contains("\u{2}"),
             let entry = index.entries[command.blockID],
@@ -1488,7 +1509,7 @@ final class DocumentEngine {
         _ command: NativeEditCommand, ids: [String], removing: Range<Int>
     ) throws -> PreparedCommand {
         let index = builder.index
-        let (paragraph, units) = try structuralTarget(command.blockID)
+        let (paragraph, units) = try structuralTarget(command.blockID, allowLossy: .styled)
         guard paragraph == "paragraph", let entry = index.entries[command.blockID],
             ids.count == 2, ids[0] != ids[1],
             removing.lowerBound <= removing.upperBound,
@@ -1727,6 +1748,8 @@ final class DocumentEngine {
         guard let entry = builder.index.entries[blockID], entry.depth > 0, let parentID = entry.parentID else {
             throw DocumentEngineError.unsupportedNativeInput
         }
+        // A locked text block never moves, in or out.
+        guard !isLocked(blockID) else { throw DocumentEngineError.unsupportedNativeInput }
         try requireEditableBlock(parentID)
         _ = try requireMovable(blockID, including: { $0 >= entry.depth })
         let item = entry.containerItem
@@ -1753,7 +1776,9 @@ final class DocumentEngine {
     /// at the first it does not). Each must be unlocked and not opaque, so its
     /// copy is a proven lossless one. Returns the deepest depth after the move
     /// would add one level (the caller's bound).
-    private func requireMovable(_ blockID: String, including: (Int) -> Bool) throws -> Int {
+    private func requireMovable(
+        _ blockID: String, including: (Int) -> Bool, allowLockedText: Bool = false
+    ) throws -> Int {
         let index = builder.index
         let list = index.list(of: blockID)
         guard let start = index.listPosition(of: blockID), let depth = index.entries[blockID]?.depth else {
@@ -1762,10 +1787,15 @@ final class DocumentEngine {
         var deepest = depth + 1
         var position = start
         repeat {
-            guard let entry = index.entries[list[position]],
+            guard let entry = index.entries[list[position]] else {
+                throw DocumentEngineError.unsupportedNativeInput
+            }
+            let fidelity = builder.nativeSnapshot(entry).block.fidelity
+            guard
                 // A column group moves as a whole only in PR12b.
                 !index.isColumnGroup(entry.id),
-                !builder.nativeSnapshot(entry).block.fidelity.isOpaque
+                !fidelity.isOpaque,
+                allowLockedText || !fidelity.isLockedText
             else { throw DocumentEngineError.unsupportedNativeInput }
             try requireEditableBlock(entry.id)
             deepest = max(deepest, entry.depth + 1)
@@ -1809,6 +1839,8 @@ final class DocumentEngine {
         case .moveUp, .moveDown:
             // BlockNote's `getMovePlacement`: past a sibling with children
             // into its nearest child, past the group's end out beside the parent.
+            // A locked text block never moves.
+            guard !isLocked(id) else { throw DocumentEngineError.unsupportedNativeInput }
             let up = command.kind == .moveUp
             // Next to or out of a column group (PR12b): the web's `getInsertionPos`.
             if let move = try crossing(id, up: up) {
@@ -1863,7 +1895,7 @@ final class DocumentEngine {
                     throw DocumentEngineError.unsupportedNativeInput
                 }
             } else {
-                _ = try requireMovable(id, including: { $0 > entry.depth })
+                _ = try requireMovable(id, including: { $0 > entry.depth }, allowLockedText: true)
             }
             let copy = try writer.snapshot(entry.container, block: id, depth: 0)
             _ = try BlockNoteSubtreePayload.validate([copy])
@@ -1919,12 +1951,14 @@ final class DocumentEngine {
             var ids = newIDs[...]
             let fresh = try copies.map { try $0.replacingIDs(&ids) }
             // ProseMirror's paste into an empty textblock replaces it. A locked
-            // card is never replaced: its content and props must survive.
+            // card or locked-text `.lossy` block is never replaced: its content
+            // and props must survive.
+            let targetFidelity = builder.nativeSnapshot(entry).block.fidelity
             let replaces =
                 entry.nestedGroup == nil && entry.isSimpleContainer
                 && entry.element?.typeRef == .xmlElement(nodeName: "paragraph")
                 && (entry.isSimpleText || entry.element?.length == 0) && entry.runs.allSatisfy { $0.text.isEmpty }
-                && !builder.nativeSnapshot(entry).block.fidelity.isOpaque
+                && !targetFidelity.isOpaque && !targetFidelity.isLockedText
             return (
                 { try writer.insertBlocks(fresh, into: entry.group, after: item, replacing: replaces ? item : nil) },
                 { EditorPosition(blockID: last, offset: self.textLength(last), assoc: -1) }
@@ -1998,6 +2032,45 @@ final class DocumentEngine {
         "toggleListItem",
     ]
 
+    /// Which `.lossy` blocks `structuralTarget` admits (PR03 / owner choice A1).
+    private enum LossyAllowance {
+        /// Modeled blocks only (e.g. merges).
+        case none
+        /// Modeled blocks and styled-only `.lossy` blocks (`textColor`,
+        /// `backgroundColor`, `textAlignment`).
+        case styled
+        /// Any non-opaque block, including locked-text `.lossy` blocks.
+        case any
+    }
+
+    private static func permits(_ fidelity: ProjectionFidelity, allowance: LossyAllowance) -> Bool {
+        switch (fidelity, allowance) {
+        case (.modeled, _): true
+        case (.opaque, _): false
+        case (.lossy, .any): true
+        case (.lossy, .styled): fidelity.isStyledOnly
+        case (.lossy, .none): false
+        }
+    }
+
+    /// The `.lossy` tier a command's target block may occupy (PR03 / A1):
+    /// text/marks/same-schema props/inline objects admit any non-opaque block;
+    /// split, convert, indent/outdent and single-block multi-line range admit
+    /// styled-only `.lossy` blocks; multi-block ranges require modeled blocks.
+    private static func lossyAllowance(for kind: NativeEditCommand.Kind, blockID: String) -> LossyAllowance {
+        switch kind {
+        case .replace, .marks, .props, .insertInlineObject, .insertInlineMath, .pasteInline:
+            return .any
+        case .range(let range):
+            if range.endBlockID != blockID { return .none }
+            return NativeRangeCommand.lines(of: range.replacement).count > 1 ? .styled : .any
+        case .split, .blockType, .indent, .outdent, .join:
+            return .styled
+        default:
+            return .none
+        }
+    }
+
     /// A prop a `.props` command may write on `node`, with BlockNote 0.56's
     /// value type. Anything else (an unknown key, another type's prop, a
     /// malformed value) would make the block lossy, so it is refused.
@@ -2041,11 +2114,13 @@ final class DocumentEngine {
     /// A block a structural command may address: a writable simple text, or an
     /// empty text-capable element the writer gives an XmlText on first insert,
     /// at any depth. Inline nodes, opaque/scrubbed content and code stay refused.
-    private func structuralTarget(_ blockID: String, allowCode: Bool = false) throws -> (node: String, units: [UInt16])
-    {
+    /// `allowLossy` gates `.lossy` blocks by tier (PR03 / A1).
+    private func structuralTarget(
+        _ blockID: String, allowCode: Bool = false, allowLossy: LossyAllowance = .none
+    ) throws -> (node: String, units: [UInt16]) {
         guard builder.index.isCanonical, let entry = builder.index.entries[blockID],
             entry.isProjectable,
-            !builder.nativeSnapshot(entry).block.fidelity.isOpaque,
+            Self.permits(builder.nativeSnapshot(entry).block.fidelity, allowance: allowLossy),
             entry.isSimpleContainer, let element = entry.element,
             case .xmlElement(let node)? = element.typeRef,
             writer.schemas[node] != nil, allowCode || node != "codeBlock",
@@ -2097,7 +2172,7 @@ final class DocumentEngine {
     /// the replacement carries, or `nil` to inherit the marks at the range.
     @discardableResult
     func replaceText(block: String, range: Range<Int>, with text: String, marks: [TextMark]? = nil) throws -> Data {
-        try requireModeledBlock(block)
+        try requireTextBlock(block)
         guard builder.index.isCanonical, let entry = builder.index.entries[block] else {
             throw DocumentEngineError.unsupportedNativeInput
         }
@@ -2144,14 +2219,14 @@ final class DocumentEngine {
     /// mark, matching BlockNote's style commands.
     @discardableResult
     func formatRange(block: String, range: Range<Int>, marks: [TextMark]) throws -> Data {
-        try requireModeledBlock(block)
+        try requireTextBlock(block)
         return try writer.formatRange(
             block: block, range: range, attributes: YTextAttributes(marks.map { ($0.key, $0.valueJSON) }))
     }
 
     @discardableResult
     func splitBlock(block: String, at offset: Int, newID: String) throws -> Data {
-        try requireModeledBlock(block)
+        try requireUnlockedBlock(block)
         return try writer.splitBlock(block: block, at: offset, newID: newID)
     }
 
@@ -2159,7 +2234,7 @@ final class DocumentEngine {
     func joinBlocks(block: String) throws -> Data {
         try requireModeledBlock(block)
         // The join appends to the previous sibling's last descendant and
-        // deletes `block`: neither may be a locked card.
+        // deletes `block`: neither may be opaque or `.lossy` (styled or locked text).
         if let position = builder.index.listPosition(of: block), position > 0 {
             try requireModeledBlock(builder.index.list(of: block)[position - 1])
         }
@@ -2183,7 +2258,7 @@ final class DocumentEngine {
 
     @discardableResult
     func setBlockType(block: String, to node: String, props: [(key: String, value: YAnyValue)] = []) throws -> Data {
-        try requireModeledBlock(block)
+        try requireUnlockedBlock(block)
         return try writer.setBlockType(block: block, to: node, props: props)
     }
 
@@ -2549,18 +2624,62 @@ final class DocumentEngine {
         }
     }
 
-    /// A block a native edit may write: editable, and modeled. An opaque block
-    /// is a locked preserved card (PR02) — the surface never offers one, and
-    /// no native edit may change its content or props. The structural commands
-    /// already refuse it through `structuralTarget`; this is the same rule for
-    /// the direct writer calls.
-    private func requireModeledBlock(_ blockID: String) throws {
+    /// A block a text edit may write: editable, and not opaque. An opaque block
+    /// is a locked preserved card (PR02) — the surface never offers one, and no
+    /// native edit may change its content or props. A `.lossy` block is a
+    /// locked *text* block: it takes text and marks, so this check admits it.
+    private func requireTextBlock(_ blockID: String) throws {
         try requireEditableBlock(blockID)
         // Only a block that resolves as opaque is refused: an id the projection
         // cannot place (a non-canonical root) is the writer's to refuse or reset.
         if let block = nativeBlock(blockID), block.block.fidelity.isOpaque {
             throw DocumentEngineError.unsupportedNativeInput
         }
+    }
+
+    /// A block a split or type change may write: editable, not opaque, and not
+    /// a locked-text `.lossy` block (styled-only `.lossy` blocks are admitted).
+    private func requireUnlockedBlock(_ blockID: String) throws {
+        try requireEditableBlock(blockID)
+        if let block = nativeBlock(blockID),
+            block.block.fidelity.isOpaque || block.block.fidelity.isLockedText
+        {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+    }
+
+    /// A block a merge (`joinBlocks`) may write: editable and fully modeled.
+    /// Both styled-only and locked-text `.lossy` blocks refuse merges.
+    private func requireModeledBlock(_ blockID: String) throws {
+        try requireEditableBlock(blockID)
+        if let block = nativeBlock(blockID), block.block.fidelity != .modeled {
+            throw DocumentEngineError.unsupportedNativeInput
+        }
+    }
+
+    /// Whether a copied block, or any block nested in it, has a content element
+    /// carrying a prop outside its node's schema (the unknown-prop kind of
+    /// `.lossy`). Nodes without a prop schema (media, divider) are not judged here.
+    private func hasUnknownProp(_ copy: BlockNoteWriter.Copy) -> Bool {
+        guard case .element(_, _, let children) = copy else { return false }
+        for child in children {
+            guard case .element(let node, let props, let nested) = child else { continue }
+            if node == "blockGroup" {
+                if nested.contains(where: hasUnknownProp) { return true }
+            } else if let schema = writer.schemas[node] {
+                let known = Set(schema.map(\.key))
+                if props.contains(where: { !known.contains($0.key) }) { return true }
+            }
+        }
+        return false
+    }
+
+    /// Whether the block is a locked-text `.lossy` block (a prop its schema
+    /// does not know, or an unreadable value). Styled-only `.lossy` blocks are
+    /// not locked.
+    private func isLocked(_ blockID: String) -> Bool {
+        guard let block = nativeBlock(blockID) else { return false }
+        return block.block.fidelity.isLockedText
     }
 
     // MARK: - Change signal

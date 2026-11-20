@@ -695,12 +695,20 @@ new non-colliding author client and restores the durable revision. Reconnect byt
 can merge into this same owner through a remote journal/delivery barrier. Even an
 idempotent remote update advances the matching journal/engine revision and never
 enters the local outbox. Failed remote persistence freezes writes before publishing
-the changed display. A remote integrate that brings in a `.lossy` block (a known node with a
-non-default or unknown prop) or takes the total shadow away downgrades `canType` for every
-surface: typing stops with the same unfamiliar-content reason an open of such a document shows,
-and what was journaled before still saves; so does any opaque block that is not a locked card.
-A leaf block of an unknown type is a locked preserved card instead, so it does not downgrade:
-the surface keeps authoring around it. Re-enabling happens on reopen.
+the changed display. A remote integrate that takes the total shadow away downgrades
+`canType` for every surface: typing stops with the same unfamiliar-content reason an
+open of such a document shows, and what was journaled before still saves; so does any
+opaque block that is not a locked card. A `.lossy` block never downgrades either,
+and splits into two tiers (`ProjectionFidelity.lossyKind`): a *styled-only* block
+(every lossy reason is a non-default `textColor`, `backgroundColor`, `textAlignment` or callout `emoji`)
+keeps full editing except merges (joins in either direction and cross-boundary ranges);
+any other `.lossy` block (a prop from a newer Docs version, or an unreadable value of a
+known prop — natively a valid list start, code language or toggle flag is modeled) is a
+locked *text* block that takes text, marks, same-schema props, inline objects and
+copy/duplicate/whole-block delete while refusing split, convert (slash menu hidden),
+merge, move/indent and empty-paragraph replacement. A leaf block of an unknown type is
+a locked preserved card, so it does not downgrade either: the surface keeps authoring
+around it. Re-enabling happens on reopen.
 The document editor leaves editing mode as Done does, committing an in-progress IME
 composition as typed; a source editor's composition defers the stop until it ends.
 A draft reference older than the journal
@@ -721,9 +729,10 @@ enables durable typing only for a signed-in user whose document metadata grants
 `abilities.update`, on a Docs 6 server, for a document that is not a pending create
 or delete, has no classic draft or queued save, has no live owner (A5's
 `isLiveReplicaHeld`) and is typable (`NativeBlockProjection.typability`: a canonical root, no
-unsupported auxiliary root, every block id addressable, no `.lossy` block, and a total Markdown
-shadow of the blocks the locked cards leave behind). A locked preserved card is a leaf block of an
-unknown type and is not a reason to stop authoring; any other opaque block is. An owned replica is restored offline-first, then
+unsupported auxiliary root, every block id addressable, no opaque block that is not a locked card,
+and a total Markdown shadow of the blocks the locked cards leave behind). A locked preserved card is a leaf block of an
+unknown type and is not a reason to stop authoring; a `.lossy` block (styled-only or
+locked text, `ProjectionFidelity.lossyKind`) is not one either. Any other opaque block is. An owned replica is restored offline-first, then
 the fetched raw state is integrated into the same durable owner; a converted
 response is never installed. Every fetched Docs 6 document that reaches native with an
 account and scope — including readers and non-typeable documents, but not while typing is held (pending delete, checkpointed create, classic draft, live owner) —

@@ -334,7 +334,7 @@ final class BlockNoteInlineOracleTests: XCTestCase {
         XCTAssertNotNil(NativeBlockProjection.markdownShadow(doc, interlinkingOrigin: Self.testOrigin))
 
         let inspected = try await NativeEditorSession.inspect(state: data, interlinkingOrigin: Self.testOrigin)
-        XCTAssertFalse(inspected.canType, "lossy callout/list-start blocks still gate whole-document canType")
+        XCTAssertTrue(inspected.canType, "lossy callout/list-start blocks are locked text blocks, not a refusal")
         await inspected.close().value
     }
 

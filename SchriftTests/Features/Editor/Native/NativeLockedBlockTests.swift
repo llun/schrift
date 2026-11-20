@@ -5,8 +5,9 @@ import XCTest
 
 /// PR02: a document whose only non-modeled content is locked preserved cards
 /// (opaque blocks) opens typeable. The cards keep their rendering and no native
-/// edit touches them; a `.lossy` block or a document-level unknown still makes
-/// the whole document read-only, with the same reason as before.
+/// edit touches them; a `.lossy` block (styled-only or locked text) opens
+/// typeable too, and a document-level unknown still makes the whole document
+/// read-only, with the same reason as before.
 @MainActor
 final class NativeLockedBlockTests: NativeEditingTestCase {
     /// A paragraph, an unknown block carrying a prop and text, and a paragraph.
@@ -134,9 +135,10 @@ final class NativeLockedBlockTests: NativeEditingTestCase {
         XCTAssertEqual(inspected.unfamiliarContent?.node, "heading")
     }
 
-    /// A `.lossy` block (a known node with a non-default prop) still makes the
-    /// whole document read-only, with the prop as the reason.
-    func testALossyBlockStillMakesTheDocumentReadOnly() async throws {
+    /// A `.lossy` block (a known node with a non-default styling prop) opens
+    /// typeable rather than making the document read-only, and stays unlocked
+    /// (`isLocked == false`).
+    func testALossyBlockOpensTypeable() async throws {
         let state = BlockNoteYjs.encode(
             [
                 paragraph("before", "Before"),
@@ -149,10 +151,9 @@ final class NativeLockedBlockTests: NativeEditingTestCase {
 
         let inspected = try await NativeEditorSession.inspect(state: state)
         addTeardownBlock { await inspected.close().value }
-        XCTAssertFalse(inspected.canType)
-        XCTAssertEqual(
-            inspected.unfamiliarContent,
-            NativeUnfamiliarBlock(node: "paragraph", reason: "prop:textAlignment"))
+        XCTAssertTrue(inspected.canType)
+        XCTAssertNil(inspected.unfamiliarContent)
+        XCTAssertEqual(inspected.surface.blocks.map(\.isLocked), [false, false, false])
     }
 
     /// A document-level unknown (an unsupported auxiliary root) still makes the

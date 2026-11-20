@@ -59,6 +59,19 @@ struct ProjectedBlock: Equatable, Sendable {
     var fidelity: ProjectionFidelity
 }
 
+/// The two editing tiers of a `.lossy` block (PR03 / owner choice A1).
+enum LossyKind: Equatable, Sendable {
+    /// Every lossy reason is a non-default value of a known styling prop
+    /// (`textColor`, `backgroundColor`, `textAlignment`). Full editing except
+    /// merges (joins in either direction and cross-boundary ranges).
+    case styled
+    /// Any other lossy reason (a prop Schrift does not know, or an unreadable
+    /// value of a known one). Text editing only:
+    /// split, convert, merge, move, indent and empty-paragraph replacement are
+    /// refused.
+    case unknownProp
+}
+
 /// The fidelity of a projected block: whether it can be faithfully rendered,
 /// written back to the server, or neither.
 enum ProjectionFidelity: Equatable, Sendable {
@@ -69,9 +82,8 @@ enum ProjectionFidelity: Equatable, Sendable {
     /// The block can be rendered as markdown with visual fidelity equal to what
     /// the server would export, but writing it back would lose information. This
     /// happens when a block carries properties or structure the app's editor
-    /// does not model (e.g. an unknown property on a heading, or a custom block
-    /// type the app doesn't define). The block is frozen in the UI and cannot be
-    /// edited.
+    /// does not model (e.g. an unknown property on a heading, or a non-default
+    /// styling prop). Splits into `.styled` and `.unknownProp` via `lossyKind`.
     case lossy(reasons: [String])
     /// The block cannot be rendered as markdown at all — it requires server-side
     /// interpretation or carries a type or structure the app cannot display. The
@@ -85,6 +97,31 @@ enum ProjectionFidelity: Equatable, Sendable {
         if case .opaque = self { return true }
         return false
     }
+
+    /// Lossy reasons that represent a non-default value of a known styling prop
+    /// (a callout's emoji is its icon, so it counts as styling too).
+    private static let stylingPropReasons: Set<String> = [
+        "prop:textColor", "prop:backgroundColor", "prop:textAlignment", "prop:emoji",
+    ]
+
+    /// Classifies a `.lossy` block into its editing tier, or `nil` for
+    /// `.modeled` and `.opaque` blocks.
+    var lossyKind: LossyKind? {
+        guard case .lossy(let reasons) = self else { return nil }
+        // Only a non-default value of a known styling prop is the full-editing kind
+        // (owner choice A1). Other `prop:` reasons natively mean an unreadable value
+        // (a valid list start, code language or toggle flag is modeled): text-only.
+        guard !reasons.isEmpty, reasons.allSatisfy(Self.stylingPropReasons.contains) else { return .unknownProp }
+        return .styled
+    }
+
+    /// True when the block is a `.lossy` block carrying only known styling
+    /// props (`textColor`, `backgroundColor`, `textAlignment`).
+    var isStyledOnly: Bool { lossyKind == .styled }
+
+    /// True when the block is a `.lossy` block of the locked-text tier (an
+    /// unknown prop, a non-styling prop or an unknown mark).
+    var isLockedText: Bool { lossyKind == .unknownProp }
 }
 
 /// The projection of a Yjs replica into BlockNote blocks: a sequence of
