@@ -110,6 +110,8 @@ jobs:
           path: ${{ runner.temp }}/products.tar
           if-no-files-found: error
           retention-days: 1
+          # A re-run of the run uploads again under the same name.
+          overwrite: true
 
   test:
     name: Test (${{ matrix.shard }})
@@ -277,6 +279,7 @@ jobs:
           path: TestResults-${{ matrix.shard }}.xcresult
           if-no-files-found: ignore
           retention-days: 7
+          overwrite: true
 
   # "Build & Test" is the merge-guard status check on `main` (see docs/ci.md).
   # Renaming this job breaks the guard until the ruleset is updated. It runs
