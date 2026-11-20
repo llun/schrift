@@ -55,7 +55,9 @@ The steps below run in the Build job (1, 2, 5) or in every shard (3, 4, 6, 7):
    shard's simulator boot (about two minutes on a hosted runner) overlaps its
    own setup instead of queueing behind it.
 6. `xcrun simctl bootstatus <udid> -b`, which blocks until the boot finishes,
-   so no test lands on a half-booted device.
+   so no test lands on a half-booted device. The UI shards then turn the simulator's accessibility on and
+   launch and quit Settings: on a cold simulator the UI test runner can otherwise time out
+   waiting for the accessibility server and fail the whole shard before a test runs.
 7. `xcodebuild test-without-building -xctestrun` on that simulator (by UDID, so it is the
    device step 4 booted) with the step 5 products and the shard's selection — together the
    shards run the same suite as the documented local test command, including
