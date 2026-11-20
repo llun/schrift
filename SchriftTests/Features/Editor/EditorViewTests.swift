@@ -202,7 +202,7 @@ final class EditorViewTests: XCTestCase {
     /// hit-tests the shape its label *draws*: one ~16pt line.
     ///
     /// The row it sits in floors at `rowMinHeight`, and that is exactly the trap
-    /// AGENTS.md names — "a 44pt frame is not a 44pt tap target" — so the floor
+    /// `docs/standards/design-system.md` names — "a 44pt frame is not a 44pt tap target" — so the floor
     /// has to be on the label.
     ///
     /// **What this measures, and what it does not.** Hosting the component reads
@@ -210,7 +210,7 @@ final class EditorViewTests: XCTestCase {
     /// something wrapping it — so this proves the floor *exists* and would catch
     /// its removal, but it cannot see *where* it sits. That placement is the
     /// whole point and is verified by reading the source, not by this test:
-    /// AGENTS.md is explicit that a hit shape is "invisible in a screenshot and
+    /// `docs/standards/design-system.md` is explicit that a hit shape is "invisible in a screenshot and
     /// uncatchable by the suite". Kept because the necessary condition is worth
     /// pinning and the negative control makes it falsifiable; do not read it as
     /// more than that.

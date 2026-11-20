@@ -359,7 +359,7 @@ final class PagesTreeViewModelTests: XCTestCase {
     // MARK: - Duplicate work
 
     /// Gated like the three above, and the last `delay:`-as-ordering in this file — which
-    /// matters because AGENTS.md now holds this file up as the worked example of the rule.
+    /// matters because `docs/standards/testing.md` now holds this file up as the worked example of the rule.
     /// Its bet was much safer than theirs (the `waitUntil` on `loading` already pins the
     /// second call inside the first's flight, leaving only an actor hop before the response
     /// could land), but "safer" is not the standard the rule states.
