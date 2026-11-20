@@ -750,28 +750,34 @@ final class NativeMediaQueueTests: NativeEditingTestCase {
         await editor.close().value
     }
 
-    /// Review X8: a headless surface whose epoch moved (a resync after its
-    /// delivery bound) still commits: it posts with its current epoch.
+    /// Review X8: a headless surface whose epoch moved (a resync) still
+    /// commits: it posts with its current epoch.
     func testAHeadlessCommandPostsWithTheSurfacesEpoch() async throws {
         let app = launch(try makeDevice(), server: Server())
         let surface = try await unwrapped(app.registry.open(store: app.store, scope: app.device.scope))
         app.registry.installJournal(
             ReplicaSaveAdapter(store: app.store, scope: app.device.scope), for: app.device.scope)
         let replica = try XCTUnwrap(surface.replica)
-        // More deliveries than the bound while the main actor is busy: a resync moves the epoch.
-        for _ in 0..<(DocumentReplicaSession.deliveryBound * 2) {
-            replica.mailbox.post(.drain(surfaceID: surface.surfaceID, token: UUID()))
+        // One resync moves the epoch, and its `.reset` is the only delivery that says so. Filling
+        // the mailbox with the bound's worth of drains instead would race the 256-message capacity:
+        // a dropped resync leaves the epoch where it was, and the command then posts with a stale one.
+        var resetEpoch: UInt64?
+        surface.onDelivery = { delivery in
+            if case .reset(let epoch)? = delivery.resync { resetEpoch = epoch }
         }
-        // As the lease does: settle, post, and go again on `.stale` (a resync may still be on its way).
-        var result: ReplicaResult?
-        for _ in 0..<5 {
-            await surface.settle()
-            result = await surface.post(
-                .mediaProps([ProjectedProp(key: "url", value: .string(Self.mediaURL))], expecting: slot), blockID: "mx")
-            if case .stale? = result { continue }
-            break
+        XCTAssertTrue(
+            replica.mailbox.post(.resync(surfaceID: surface.surfaceID)),
+            "the resync must be accepted, or the epoch never moves")
+        await waitUntil { resetEpoch != nil }
+        surface.onDelivery = nil
+        // Posted once, with the epoch the reset moved to: the session answers `.stale` for the old one.
+        let result = await surface.post(
+            .mediaProps([ProjectedProp(key: "url", value: .string(Self.mediaURL))], expecting: slot), blockID: "mx")
+        guard case .applied? = result else {
+            return XCTFail(
+                "the command must post with the epoch the reset moved to (\(resetEpoch.map { String($0) } ?? "none")); "
+                    + "got \(String(describing: result))")
         }
-        guard case .applied? = result else { return XCTFail("\(String(describing: result))") }
         await surface.close().value
     }
 

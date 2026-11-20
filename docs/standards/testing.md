@@ -147,7 +147,7 @@
   When the switch does not turn on, the filter-enable step attaches the switch frame,
   hittability, a screenshot and the hierarchy so a failure is diagnosable from the `.xcresult`.
   Every hosted failure of that press was the UI bundle's first test (the first app
-  launch after the unit tests). The simulator system log (`xcrun xcresulttool export
+  launch on a freshly booted simulator). The simulator system log (`xcrun xcresulttool export
   diagnostics`, `system.logarchive`) shows `apsd` stuck reconnecting and starving the
   simulator, which makes three things late: (a) `backboardd` attaches the session's first
   XCUITest virtual digitizer 210-440ms late, flushing a 200ms press as a 10-49ms burst,
