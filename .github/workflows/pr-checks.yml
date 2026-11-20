@@ -217,6 +217,22 @@ jobs:
           SIM_UDID: ${{ steps.sim.outputs.udid }}
         run: xcrun simctl spawn "$SIM_UDID" launchctl bootout system/com.apple.apsd || true
 
+      # A UI shard starts on a freshly booted simulator, and the UI test runner can then time
+      # out while it waits for the simulator's accessibility server ("The test runner failed to
+      # initialize for UI testing … Timed out while loading Accessibility"), failing the whole
+      # shard before any test runs. Turn accessibility on and let SpringBoard launch and quit an
+      # app first, so the server is up before the runner asks for it. Best-effort.
+      - name: Warm the simulator for UI tests
+        if: matrix.shard != 'unit'
+        env:
+          SIM_UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          xcrun simctl spawn "$SIM_UDID" defaults write com.apple.Accessibility AccessibilityEnabled -bool true || true
+          xcrun simctl spawn "$SIM_UDID" defaults write com.apple.Accessibility ApplicationAccessibilityEnabled -bool true || true
+          xcrun simctl launch "$SIM_UDID" com.apple.Preferences >/dev/null || true
+          sleep 10
+          xcrun simctl terminate "$SIM_UDID" com.apple.Preferences || true
+
       # UI shards get a second chance: a UI test fails on a starved hosted
       # simulator for reasons the app does not control, and a unit test that fails
       # once is a real bug. -retry-tests-on-failure reruns just the tests that
