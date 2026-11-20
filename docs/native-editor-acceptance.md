@@ -195,7 +195,8 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
      subpage hierarchy and uploaded photo URL survive, and no duplicate/empty docs appear.
    - Trigger a remote conflict, verify the conflict pill and `ConflictSheetView`, and test both
      **Keep my version** and **Keep the server version**.
-   - Test a read-only / downgraded permission document, an unmigrated Docs 6 cached document while
+   - Test a read-only / downgraded permission document (verifying it gets a read-only durable
+     replica and restores offline read-only), an unmigrated Docs 6 cached document while
      offline (must stay read-only), and sign-out / account switch (clean replicas purged, unsynced
      dirty work preserved).
 7. **Rollback check & diagnostics capture:**
@@ -218,7 +219,12 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
   typeable and no native edit touches a card. An unknown block with children, an unfamiliar column group,
   a known block read as opaque (unreadable props, an invalid heading level), a known block with a
   non-default or unknown prop (e.g. a centered paragraph) and an auxiliary Yjs root still keep the
-  whole surface in preserved read-only mode (`!session.canType`).
+  whole surface in preserved read-only mode (`!session.canType`), now backed by a read-only durable
+  replica (subject to the 100 MB clean-replica LRU cap) so it restores offline read-only.
+- **Native saves and content cache:** Confirmed native saves write their saved title and Markdown
+  shadow (`serverUpdatedAt: nil`) into `DocumentContentCacheStore` so offline Search and
+  Attachments stay current without an extra fetch; native ownership and `serverUpdatedAt: nil`
+  prevent classic from treating that entry as an authoritative server baseline.
 - **S2 TextKit 2 height-estimate corrections:** As measured in §4B (`jumps=16`, `reversals=0`,
   `maxReversalPt=0.00`, `reachedBottom=1`, `maxBoundsErr=0.00`, `maxRealised=1`, `maxControls=0`,
   `frames=721` in `.review/fix1.log`, after the earlier `jumps=13` failure in `.review/step4c.log`),

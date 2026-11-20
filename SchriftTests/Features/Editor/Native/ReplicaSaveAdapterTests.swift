@@ -486,13 +486,16 @@ final class ReplicaSaveAdapterTests: DocumentSaveCoordinatorTestCase {
         XCTAssertEqual(log.count(ofMethod: "PATCH", urlContaining: "/content/"), 0)
     }
 
-    func testRawSaveNeverWritesItsShadowIntoTheClassicContentCache() async throws {
+    func testRawSaveWritesItsTitleAndShadowIntoTheContentCache() async throws {
         let f = try fixture()
         let log = RequestRecorder()
         stub(log: log)
-        try enqueue(f)
+        try enqueue(f, title: "Updated Native Doc")
         await waitUntil { self.isSaved(f.coordinator.state(for: self.documentID)) }
-        XCTAssertNil(f.contentCache.content(for: documentID))
+        let cached = try XCTUnwrap(f.contentCache.content(for: documentID))
+        XCTAssertEqual(cached.title, "Updated Native Doc")
+        XCTAssertTrue(cached.markdown.contains("xOne"), "expected saved Markdown shadow in content cache")
+        XCTAssertNil(cached.serverUpdatedAt, "void native save must leave serverUpdatedAt nil")
     }
 
     func testKeepMineUnderAnotherAccountLeavesTheNativeDraftAndConflictUntouched() async throws {
