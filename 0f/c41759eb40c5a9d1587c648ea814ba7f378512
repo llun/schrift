@@ -1,0 +1,154 @@
+Schrift/Features/Editor/DocumentSaveCoordinator.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 99-100,446-447,473-474,714-727,733,737-774,777-780,1074-1077,4909-4912,4996-5012
+docs/standards/persistence.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-263
+Schrift/Core/Collaboration/DocumentCollaborationManager.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 355
+context-budget.json
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-7
+Schrift/Features/Editor/EditorViewModel.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 439
+Schrift/Features/Editor/PendingDocumentCreateStore.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 93
+docs/standards/document-engine.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-2258
+docs/design-system.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 273,335,612,637,661,784,1407,1555-1556,1595
+Schrift/Core/Yjs/BlockNoteWriter.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 11
+Schrift/Features/Editor/ConflictSheetView.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 31
+docs/native-editor-acceptance.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 198-199,231-236
+Schrift/Core/Yjs/BlockNotePreservation.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 59
+Schrift/Features/Editor/MarkdownBlockView.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 178,424
+Schrift/Features/Editor/Native/NativeSessionRegistry.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 40-43,47-50,285-292
+scripts/context-budget.mjs
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-221
+docs/build-and-test.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-213
+Schrift/Core/Yjs/BlockNoteWrite.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 28,550
+SchriftTests/Core/Yjs/BlockNoteWriteOracleTests.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 15
+SchriftTests/Features/Editor/DocumentSaveCoordinatorReplicaOwnershipTests.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 567-763
+SchriftTests/Features/Editor/EditorViewTests.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 205,213
+scripts/context-budget.test.mjs
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-107
+docs/standards/yjs-core.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-487
+SchriftTests/Core/Yjs/YIntegrationMapAndMergeTests.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 39
+Schrift/Features/Editor/Native/ReplicaStore.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 13-17,22-26,28-29,473-517,523-524,527,538,542-598,601
+SchriftTests/Features/Editor/Engine/DocumentEngineBoundaryTests.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 5
+.github/workflows/context-budget.yml
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-25
+docs/offline-and-sync.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 75-98,149-154,161-162,191-198,204-205,209-210,1352,1790,2212,2584,2693,3446-3450
+docs/repository-layout.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-189
+Schrift/Core/Yjs/TextSpanDiff.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 27
+Schrift/Core/Yjs/YTextOps.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 132
+Schrift/Core/Yjs/InlineMarkdown.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 15
+docs/standards/views-and-view-models.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-123
+Schrift/Features/Editor/PagesTreeDrawer.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 261
+SchriftTests/Core/Yjs/YStateEncoderTests.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 130
+Schrift/Core/Yjs/YContent.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 50
+Schrift/Core/Yjs/YTransaction.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 187
+docs/standards/design-system.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-466
+Schrift/Core/Yjs/YWrite.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 30
+Schrift/Features/Editor/Native/NativeEditorSession.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 1203,1371-1375,1388,1398,1401-1402,1407-1413,1420,1422-1424,1641-1643,1645-1646,1651-1652,1659-1661
+SchriftTests/DesignSystem/Tokens/DocsColorTokenInvariantTests.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 124
+docs/standards/testing.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-169
+SchriftTests/Features/Editor/PagesTreeViewModelTests.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 362
+docs/ci.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 182-195
+SchriftTests/Core/Yjs/InlineMarkdownUnderscoreTests.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 13
+SchriftTests/Features/Editor/Native/NativeSessionRegistryTests.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 306-320
+SchriftTests/DesignSystem/Components/SwipeRevealRowGeometryTests.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 109
+SchriftTests/Features/Editor/Native/NativeEditorActivationTests.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 80,99-102,104-106,108-123,127-168,872-874,876-878,1935,2010-2013,2038-2039
+SchriftTests/Features/Editor/Native/ReplicaSaveAdapterTests.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 489,493,495-498
+SchriftTests/Features/Editor/Native/ReplicaStoreTests.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 633-703
+AGENTS.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 26-108,118,132,135,145,169,171-190,221,235-255,257-259,263
+docs/standards/style-and-comments.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-9
+docs/standards/networking.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-301
+Schrift/Features/Editor/Native/ReplicaAccessStore.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-46
+SchriftTests/Core/Yjs/BlockNoteIncrementalSaveTests.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 9
+SchriftTests/DesignSystem/Components/SwipeActionStyleResolverTests.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 25
+SchriftTests/Core/Networking/SiteOriginTests.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 40
+Schrift/Features/Editor/VersionHistorySheetView.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 15
+Schrift/Core/Yjs/BlockNoteAlignment.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 43
+docs/standards/dependency-injection.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-16
+docs/standards/editor-save.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-2548
+docs/standards/localization-and-appearance.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-73
+Schrift/Features/Home/HomeViewModel.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 647
+docs/README.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 7-11
+docs/standards/concurrency.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 1-61
+docs/architecture.md
+  s_4fb28ab57323fe::t_93478ee395ab3f 625-630,737-746,1048-1049,1594,1813,2901
+Schrift/Core/Networking/DocumentSave.swift
+  s_4fb28ab57323fe::t_93478ee395ab3f 76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0fc41759eb40c5a9d1587c648ea814ba7f378512",
+  "prompts": {},
+  "humans": {
+    "h_580a04e334fef4": {
+      "author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  },
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
