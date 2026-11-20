@@ -1,0 +1,27 @@
+.github/workflows/context-budget.yml
+  s_4fb28ab57323fe::t_968553c1a411e9 20
+.github/workflows/pr-checks.yml
+  s_4fb28ab57323fe::t_d54c90f77d85f3 179,187-197,241-243
+SchriftUITests/Native/NativeEditorUITests.swift
+  s_4fb28ab57323fe::t_522e4264ef615b 1710
+docs/ci.md
+  s_4fb28ab57323fe::t_bead03af772ade 84-85
+docs/standards/testing.md
+  s_4fb28ab57323fe::t_ed0c82f1fc09d4 150
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6550495ecbbcfc155952a6887bf1ce584527cefc",
+  "prompts": {},
+  "sessions": {
+    "s_4fb28ab57323fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "143ac5cb-61e1-4174-a644-dcb4b80dc66b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Maythee Anegboonlap <contact@llun.dev>"
+    }
+  }
+}
