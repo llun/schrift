@@ -6,7 +6,7 @@ import XCTest
 /// server's own state read exactly like the editor's markdown when the server applies it
 /// incrementally — leaving untouched blocks alone and sending nothing at all when nothing
 /// changed. Verified at the document level, by applying the update to a replica of the
-/// served state and projecting it (see `AGENTS.md`, "The Yjs CRDT core").
+/// served state and projecting it (see `docs/standards/yjs-core.md`, "The Yjs CRDT core").
 final class BlockNoteIncrementalSaveTests: XCTestCase {
     private let origin = "https://docs.example.test"
 

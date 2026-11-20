@@ -2,7 +2,7 @@ import XCTest
 
 @testable import Schrift
 
-/// The engine speaks `Range<Int>` and replica types only (AGENTS.md, document
+/// The engine speaks `Range<Int>` and replica types only (`docs/standards/document-engine.md`, document
 /// engine layers): no UIKit or TextKit vocabulary in `Features/Editor/Engine`.
 /// Reads the sources beside this file's checkout, which the simulator shares.
 final class DocumentEngineBoundaryTests: XCTestCase {

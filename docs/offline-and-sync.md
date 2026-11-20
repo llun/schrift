@@ -1349,7 +1349,7 @@ server is about to hold.
   document is never overwritten from a half-synced or lossy replica. **Revised 2026-11-04:**
   a failed live snapshot replaying as a classic markdown save is today's behaviour, no longer a
   rule to preserve; persisting the raw replica bytes in the draft is approved and planned. Its
-  constraints live in `AGENTS.md` ("Drafts will carry the replica bytes").
+  constraints live in [`standards/editor-save.md`](standards/editor-save.md) ("Drafts will carry the replica bytes").
   On reconnect, `runSyncPass` skips a draft while its live replica is held (the entry can
   write and the replica has not fail-safed; re-checked after the GET), so it cannot replay
   the same markdown as new Yjs items. Once the session completes its initial step2 exchange,
@@ -1787,7 +1787,7 @@ means a session that knows who it is pays nothing.
 
 It carries a **second** guard on `schrift.workOffline`. That one is not redundant with
 `load()`'s: this runs *ahead* of `load()`, so the early return cannot cover it, and
-`HomeViewModel` is one of the three view models AGENTS.md names as honouring the
+`HomeViewModel` is one of the three view models [`standards/persistence.md`](standards/persistence.md) names as honouring the
 preference — the same reason `createDocument` withholds its POST. Unguarded, every
 pull-to-refresh in the mode would park the spinner on a `/users/me/` carrying cookies the
 user asked not to send.
@@ -2209,7 +2209,7 @@ already-recorded ghost residual below, not a new one.
   reads "no longer available". Nothing is lost (the teardown flushes first, the draft
   survives, and `releaseHeldSave` refuses on `isPendingCreate`), but the create UI gates that fetch via `EditorViewModel.isLocalDocument`, without which a
   locally-created document would be unusable the moment it is opened.
-  Recorded in `isPendingCreate`'s docstring and AGENTS.md; it belongs in this list too.
+  Recorded in `isPendingCreate`'s docstring and [`standards/editor-save.md`](standards/editor-save.md); it belongs in this list too.
 - **`discardPendingWork(localID)` is less thorough than its server-id twin.** On a
   checkpointed record it takes the `isPendingCreate` branch and removes only the local
   draft, leaving a `serverID` draft and its id-keyed maps behind — where the
@@ -2581,7 +2581,7 @@ is unrecoverable where a delayed retry is not — which is exactly why the block
 scoped to a build rather than made permanent. The in-memory `.failed` rule is exactly wrong there,
 because `init` re-seeds every record to `.pendingSync` — a free retry for a
 validation 400, but for this one, a fresh POST on every launch that abandons the
-document the last one built. This is not hypothetical: `AGENTS.md` records
+document the last one built. This is not hypothetical: [`standards/networking.md`](standards/networking.md) records
 `is_favorite`-as-required-`Bool` failing every create after the server had already
 made the document, "quietly littering the server with them". So a decode failure
 stamps `replayBlockedAt` on the record, which the pass skips. The record stays
@@ -2690,7 +2690,7 @@ stranded draft is separately reaped by `runSyncPass`, which GETs it and takes th
 
 **And it starts over only when nothing is left under that id.** The premise of the whole
 branch is "the checkpointed document is gone", and a bare `.notFound` does not establish
-that — a proxy hiccup maps to it too (`AGENTS.md` invariant 0c). Two effects hang off that
+that — a proxy hiccup maps to it too ([`standards/editor-save.md`](standards/editor-save.md) invariant 0c). Two effects hang off that
 premise, and both are destructive: discharging the conflict drops the held keystrokes, and
 clearing `syncedServerID` disarms the server-id suppression above — after which
 `runSyncPass`, next in the *same* pass and on the *same* 404, deletes the draft. So one
@@ -3443,10 +3443,11 @@ XCTest, mirroring the source tree. New/updated:
 
 ## Docs to update alongside implementation
 
-- `AGENTS.md` — note the content cache tier and the load precedence in the Editor
-  section; add `DocumentContentCacheStore` to the persistence-stores list (with
-  the file-based/backup-excluded/sign-out-cleared posture) and the repo-layout
-  map.
+- [`standards/editor-save.md`](standards/editor-save.md) — note the content cache tier and the load precedence in the Editor
+  section; add `DocumentContentCacheStore` to the persistence-stores list in
+  [`standards/persistence.md`](standards/persistence.md) (with
+  the file-based/backup-excluded/sign-out-cleared posture) and the
+  [repo-layout map](repository-layout.md).
 - [`architecture.md`](architecture.md) — the error-handling line "no offline
   queue/cache in v1" is superseded: previously-opened documents are now cached on
   disk and readable offline with background revalidation (see this doc). The

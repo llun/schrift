@@ -121,7 +121,7 @@ final class DocsColorTokenInvariantTests: XCTestCase {
     }
 
     /// White media overlays keep their independent role, so `textOnBrand` is the same in both modes;
-    /// `textOnFill` is the contrasting solid-control ink (AGENTS.md, "Personal themes" bullet).
+    /// `textOnFill` is the contrasting solid-control ink (`docs/standards/design-system.md`, "Personal themes" bullet).
     func testMediaOverlayInkIsModeIndependent() {
         XCTAssertEqual(DocsColorHexDark.textOnBrand, DocsColorHex.textOnBrand)
     }
