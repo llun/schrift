@@ -646,7 +646,10 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
         let vc = UIHostingController(rootView: screen)
         _ = hostInWindow(vc.view)
 
-        await waitForCondition { model.isLoaded && model.columns.count == 2 }
+        // As in the over-ten test below: wait for the update pass that hands the column its uploads.
+        await waitForCondition {
+            model.isLoaded && model.columns.count == 2 && model.columns[1].input?.mediaUploads != nil
+        }
         XCTAssertTrue(model.activeSession === model.columns[0])
 
         let col2 = model.columns[1]
@@ -692,7 +695,11 @@ final class NativeMediaDropPasteTests: NativeEditingTestCase {
         let vc = UIHostingController(rootView: screen)
         _ = hostInWindow(vc.view)
 
-        await waitForCondition { model.isLoaded && model.columns.count == 2 }
+        // The screen hands each column its uploads in SwiftUI's next update pass, after the
+        // model loads; a drop before that is refused silently, so wait for the real precondition.
+        await waitForCondition {
+            model.isLoaded && model.columns.count == 2 && model.columns[1].input?.mediaUploads != nil
+        }
         XCTAssertTrue(model.activeSession === model.columns[0])
 
         let col2 = model.columns[1]
