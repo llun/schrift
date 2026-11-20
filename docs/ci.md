@@ -16,13 +16,27 @@ by construction). See the Safety section in [`AGENTS.md`](../AGENTS.md).
 
 ## What runs on every PR and every push to `main`
 
-`pr-checks.yml` runs one job on `macos-latest`. It runs on every PR targeting
+`pr-checks.yml` builds once and tests in parallel on `macos-latest`. It runs on every PR targeting
 `main` **and on every push to `main`**: PRs are squash-merged with no "branch
 up to date" requirement, so when `main` has moved since the PR's last CI run,
 the squash commit's tree was never built (a `pull_request` run builds the
 branch merged into `main` *as of run time*, which can be stale by merge) —
 the push run is the post-merge verification of the real `main` history
-(`testflight.yml` builds Release but runs no tests). The job is:
+(`testflight.yml` builds Release but runs no tests). Three jobs:
+
+- **Build** (one runner): the formatting gate, `xcodegen generate`, and one
+  `build-for-testing` for a generic simulator. The products directory (the app, both test
+  hosts, the test bundles and the `.xctestrun` file) is packed into a tar — an artifact
+  upload on its own drops the executable bits — and uploaded as `test-products`.
+- **Test (shard)** (four runners in parallel, `fail-fast: false`): each downloads the
+  products, boots its own simulator and runs `xcodebuild test-without-building -xctestrun`.
+  `unit` runs `SchriftTests`; `native-even` and `native-odd` split `NativeEditorUITests` by
+  method in source order (it is one class of about 21 minutes; `native-odd` also takes any
+  other class in `SchriftNativeUITests`); `features` runs `SchriftChecklistUITests`.
+- **Build & Test** (Ubuntu, seconds): passes only when Build and every shard passed. It runs
+  even when a needed job failed or was cancelled, so the merge guard always reports.
+
+The steps below run in the Build job (1, 2, 5) or in every shard (3, 4, 6, 7):
 
 1. Formatting gate — runs Apple's `swift-format` (bundled with the Xcode
    toolchain; config in [`.swift-format`](../.swift-format)) over `Schrift/`,
@@ -37,14 +51,14 @@ the push run is the post-merge verification of the real `main` history
 5. `xcodebuild build-for-testing` into `$RUNNER_TEMP/DerivedData`, with
    `-enableCodeCoverage NO` and `COMPILER_INDEX_STORE_ENABLE=NO`. Nothing in
    CI reads coverage or the index, and both slow the build; coverage also
-   slows the run. The scheme keeps `gatherCoverageData` for local runs. The
-   simulator boot (about two minutes on a hosted runner) overlaps this build
-   instead of preceding it.
+   slows the run. The scheme keeps `gatherCoverageData` for local runs. Each
+   shard's simulator boot (about two minutes on a hosted runner) overlaps its
+   own setup instead of queueing behind it.
 6. `xcrun simctl bootstatus <udid> -b`, which blocks until the boot finishes,
    so no test lands on a half-booted device.
-7. `xcodebuild test-without-building -project Schrift.xcodeproj -scheme Schrift`
-   on that simulator (by UDID, so it is the device step 4 booted) with the
-   step 5 products — the same suite as the documented local test command, including
+7. `xcodebuild test-without-building -xctestrun` on that simulator (by UDID, so it is the
+   device step 4 booted) with the step 5 products and the shard's selection — together the
+   shards run the same suite as the documented local test command, including
    unit/rendering tests and `SchriftChecklistUITests`. The UI bundle launches
    `SchriftChecklistTestHost`, a test-only app compiling the actual production
    rows with a separate entry point and isolated stores; no login, network
@@ -94,18 +108,17 @@ the push run is the post-merge verification of the real `main` history
    ad-hoc entitlements and fail with `errSecMissingEntitlement (-34018)` in a
    fully unsigned host.
 
-The Test step is two `xcodebuild test-without-building` runs sharing one simulator and one
-build: the unit bundle (`-skip-testing` of both UI bundles), then the two UI bundles with
-`-retry-tests-on-failure -test-iterations 2`. Only UI tests are retried: they fail on a starved
+The UI shards run with `-retry-tests-on-failure -test-iterations 2`; the unit shard does not.
+Only UI tests are retried: they fail on a starved
 hosted simulator for reasons the app does not control (a late touch digitizer, a keyboard that
 rises late, an accessibility audit that runs out of time), while a unit test that fails once is a
 real bug. xcodebuild reruns just the tests that failed; one that passes on the second attempt does
-not fail the job, and one that fails both attempts does. Both runs always execute, so a unit
-failure never hides UI results. A retried test is still visible in the result bundle, so a test
-that keeps needing its retry is a flake to fix, not a pass to ignore.
+not fail the shard, and one that fails both attempts does. Every shard runs to the end, so a
+unit failure never hides UI results. A retried test is still visible in the result bundle, so a
+test that keeps needing its retry is a flake to fix, not a pass to ignore.
 
-On a test failure the `TestResults-unit.xcresult` and `TestResults-ui.xcresult` bundles are
-uploaded as one run artifact (7-day retention) for debugging.
+On a test failure the shard's `TestResults-<shard>.xcresult` bundle is uploaded as the
+`test-results-<shard>` artifact (7-day retention) for debugging.
 
 Runs are per-PR concurrency-cancelled: a new push cancels the in-flight run
 for that PR, so a "cancelled" Build & Test run right after a push is normal —
@@ -114,24 +127,19 @@ the same way: two quick merges cancel the first squash commit's run, so only
 the newest `main` state gets verified — the post-merge check is cumulative,
 not per-commit. It is also observe-only: a red push run does **not** gate
 `testflight.yml`, which ships the same commit independently (coupling the two
-would tie the secret-free workflow to the secret-bearing one). The job also
-has a 90-minute timeout to convert hangs into failures. A healthy run took
-about 25 minutes, so the earlier 30-minute cap cancelled green runs whenever a
-runner was slow or post-job cleanup dragged (a PR #182 run was cancelled this
-way in cleanup). With the native editor's UI tests a healthy run now takes
-37-45 minutes, so the 45-minute cap cancelled a green run too (PR #280). By
-2026-11-19 the UI step (each UI test runs twice, `-test-iterations 2`, plus a
-retry) had grown past the 60-minute cap: green runs took about 57 minutes and
-slower runners were cancelled with every test passing, on `main` and on PRs alike.
+would tie the secret-free workflow to the secret-bearing one). Build and each
+shard have a 45-minute timeout to convert hangs into failures; a healthy run
+takes the build (12-20 minutes) plus the slowest shard (about 13), and a
+hang in one shard no longer eats the others' time.
 
 ### Where the time goes
 
-Measured on hosted `macos-latest` runners (2026-10-09): checkout to a booted,
-built state is about 7 minutes (the build, about 5, compiles the production
-sources twice, for the app and for the UI test host); the ~2,900 unit tests
-take about 3.5 minutes; the 21 UI tests take about 10.5, most of it in
-`ThemeFlowTests` and `ChecklistFilterTests` (each relaunches the host app per
-appearance or text size). Runner speed varies by a factor of two between runs.
+Measured on hosted `macos-latest` runners: the build takes 12-20 minutes (it compiles the
+production sources for the app and for both UI test hosts); the ~5,100 unit tests take about
+7-9 minutes; the UI tests take about 34 minutes in a row — `NativeEditorUITests` about 21
+(several relaunch or scroll a large document), `ChecklistFilterTests` 5, `ThemeFlowTests` 4,
+`OfflineControlsTests` 3. Runner speed varies by a factor of two between runs. When a shard
+grows past the others, rebalance the matrix rather than raising the timeout.
 Xcode's compilation cache (`COMPILATION_CACHE_ENABLE_CACHING`, persisted with
 `actions/cache`) was tried and dropped: a warm restore made the build slower,
 not faster. Unit tests are not worth trimming for speed; the UI suite is where
