@@ -252,6 +252,12 @@ enum NativeBlockProjection {
     private static func opaqueAwareShadow(
         _ doc: YDoc, native: [NativeBlockSnapshot], interlinkingOrigin: String?
     ) -> (shadow: String?, tree: [NativeBlockSnapshot], locked: [Bool]) {
+        // No locked card: the plain shadow, without a second tree walk (open and
+        // save of a large document pay for every walk). The tree is built later
+        // only if a refusal needs explaining.
+        guard native.contains(where: { $0.block.fidelity.isOpaque }) else {
+            return (markdownShadow(doc, interlinkingOrigin: interlinkingOrigin), [], [])
+        }
         let tree = project(doc, nativeMarks: false, inlineObjects: true)
         let locked = lockedFlags(native, tree.blocks)
         guard locked.contains(true) else {
@@ -299,6 +305,9 @@ enum NativeBlockProjection {
     /// are what the save sends. Deterministic: the same document always
     /// projects the same string.
     static func lossyMarkdownShadow(_ doc: YDoc, interlinkingOrigin: String? = nil) -> String {
+        // The plain shadow first: a document without locked cards (the common case)
+        // never pays for the card-aware walk on every save.
+        if let total = markdownShadow(doc, interlinkingOrigin: interlinkingOrigin) { return total }
         if let total = markdownShadowIgnoringOpaque(doc, interlinkingOrigin: interlinkingOrigin) { return total }
         let tree = project(doc, nativeMarks: false, inlineObjects: true)
         let spellable = tree.blocks.filter { snapshot in
@@ -739,10 +748,12 @@ enum NativeBlockProjection {
         if let unlockable = firstUnlockableOpaqueBlock(projected.blocks) { return unlockable }
         let shadow = opaqueAwareShadow(doc, native: projected.blocks, interlinkingOrigin: interlinkingOrigin)
         guard shadow.shadow == nil else { return nil }
+        let tree = shadow.tree.isEmpty ? project(doc, nativeMarks: false, inlineObjects: true).blocks : shadow.tree
+        let locked = shadow.locked.isEmpty ? Array(repeating: false, count: tree.count) : shadow.locked
         return firstShadowRefusal(
-            shadow.tree, locked: shadow.locked, items: rootItems(doc), containers: allContainerItems(doc),
+            tree, locked: locked, items: rootItems(doc), containers: allContainerItems(doc),
             allowsColumns: true, interlinkingOrigin: interlinkingOrigin)
-            ?? NativeUnfamiliarBlock(node: shadow.tree.first?.block.node ?? "", reason: "unsupported markdown")
+            ?? NativeUnfamiliarBlock(node: tree.first?.block.node ?? "", reason: "unsupported markdown")
     }
 
     /// The first opaque block that cannot be a locked card. Only a leaf block
