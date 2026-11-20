@@ -303,6 +303,21 @@ final class NativeSessionRegistryTests: NativeEditingTestCase {
         XCTAssertEqual(try replayed(fixture), session.surface.blocks)
     }
 
+    /// A replica that is closing may still be writing its last edits: it stays in
+    /// `busyScopes` (which eviction protects) until its close finishes.
+    func testAClosingScopeStaysBusyUntilItsCloseFinishes() async throws {
+        let registry = NativeSessionRegistry()
+        let fixture = try makeFixture(registry: registry)
+        let session = try await open(fixture)
+        XCTAssertEqual(registry.busyScopes, [fixture.scope])
+        let closing = session.close()
+        XCTAssertTrue(registry.openScopes.isEmpty, "a closed scope is no longer open")
+        XCTAssertEqual(registry.busyScopes, [fixture.scope], "but still busy while it closes")
+        await closing.value
+        await waitUntil { registry.busyScopes.isEmpty }
+        XCTAssertTrue(registry.busyScopes.isEmpty)
+    }
+
     // 8
     func testCloseAllClosesMatchingScopesAndAnOpenInFlightReturnsNil() async throws {
         let registry = NativeSessionRegistry()

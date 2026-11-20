@@ -77,7 +77,7 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
         XCTAssertEqual(manifest.outbox, [1], "a remote integration never enters the local outbox")
     }
 
-    func testRichDocumentAndReaderStayInTheReadOnlyViewWithoutAReplica() async throws {
+    func testRichDocumentAndReaderGetReadOnlyDurableReplicaAndRestoreOffline() async throws {
         for (rich, canUpdate) in [(true, true), (false, false)] {
             let env = makeEnvironment()
             defer { env.clean() }
@@ -94,12 +94,74 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
             ServerStub(owner: owner, state: BlockNoteYjs.encode(blocks, clientID: Self.seedClientID)).install()
             let open = NativeEditorOpen(preference: { true })
             await open.open(viewModel: env.model, isOffline: false, canUpdate: canUpdate)
-            guard case .native(let session) = open.route else { return XCTFail("expected the PR01 reader") }
+            guard case .native(let session) = open.route else { return XCTFail("expected a native read-only session") }
+            let scope = ReplicaScope(
+                serverOrigin: env.model.client.serverOrigin, ownerUserID: owner, org: "docs",
+                documentID: env.model.documentID)
             XCTAssertNil(session.input)
-            XCTAssertNil(session.scope)
-            XCTAssertEqual(env.model.saveCoordinator.nativeOwnership(documentID: env.model.documentID), .none)
+            XCTAssertFalse(open.registry.isWritable(scope), "read-only replica must have no journal")
+            XCTAssertEqual(session.scope, scope)
+            XCTAssertEqual(env.model.saveCoordinator.nativeOwnership(documentID: env.model.documentID), .owned(scope))
             open.close()
+
+            // Reopening offline restores the same durable replica in read-only mode with no network.
+            MockURLProtocol.lastRequest = nil
+            MockURLProtocol.stubHandler = { _ in
+                .init(statusCode: 0, headers: [:], body: Data(), error: URLError(.notConnectedToInternet))
+            }
+            let offlineOpen = NativeEditorOpen(preference: { true })
+            defer { offlineOpen.close() }
+            await offlineOpen.open(viewModel: env.model, isOffline: true, canUpdate: canUpdate)
+            guard case .native(let restored) = offlineOpen.route else {
+                return XCTFail("expected offline restore from durable replica")
+            }
+            XCTAssertNil(restored.input)
+            XCTAssertFalse(offlineOpen.registry.isWritable(scope))
+            XCTAssertEqual(restored.scope, scope)
+            XCTAssertNil(MockURLProtocol.lastRequest)
         }
+    }
+
+    func testReaderPromotedToWriterGetsTypingOnOwnedReopen() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.canUpdate = false
+        server.install()
+        let readerOpen = NativeEditorOpen(preference: { true })
+        await readerOpen.open(viewModel: env.model, isOffline: false, canUpdate: false)
+        guard case .native(let readerSession) = readerOpen.route, let scope = readerSession.scope else {
+            return XCTFail("expected a read-only durable replica for the reader")
+        }
+        XCTAssertNil(readerSession.input)
+        XCTAssertFalse(readerOpen.registry.isWritable(scope))
+        readerOpen.close()
+
+        // Later promoted to writer: reopening the owned replica installs typing.
+        server.canUpdate = true
+        let writerOpen = NativeEditorOpen(preference: { true })
+        defer { writerOpen.close() }
+        await writerOpen.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .native(let writerSession) = writerOpen.route else {
+            return XCTFail("expected owned replica to reopen")
+        }
+        XCTAssertNotNil(writerSession.input, "promoted writer must get typing via the owned path")
+        XCTAssertTrue(writerOpen.registry.isWritable(scope))
+        XCTAssertNil(writerOpen.editUnavailableReason)
+    }
+
+    func testLegacyServerGetsNoReplica() async throws {
+        let env = makeEnvironment()
+        defer { env.clean() }
+        let server = ServerStub(owner: owner, state: seedState())
+        server.releaseVersion = "5.0.0"
+        server.install()
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: env.model, isOffline: false, canUpdate: true)
+        guard case .classic = open.route else { return XCTFail("legacy server must stay classic") }
+        XCTAssertEqual(env.model.saveCoordinator.nativeOwnership(documentID: env.model.documentID), .none)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: env.replicaDirectory.path))
     }
 
     func testSwitchOffLeavesTheClassicRouteUnchanged() async throws {
@@ -805,8 +867,13 @@ final class NativeEditorActivationTests: DocumentEngineTestCase {
                 await session.settle()
                 XCTAssertFalse(session.state.writable, "the server says reader: the replica is read-only")
             } else {
+                let scope = ReplicaScope(
+                    serverOrigin: env.model.client.serverOrigin, ownerUserID: owner, org: "docs",
+                    documentID: env.model.documentID)
                 XCTAssertNil(session.input, "the server says reader: no typing")
-                XCTAssertEqual(env.model.saveCoordinator.nativeOwnership(documentID: env.model.documentID), .none)
+                XCTAssertFalse(open.registry.isWritable(scope), "the server says reader: no journal")
+                XCTAssertEqual(
+                    env.model.saveCoordinator.nativeOwnership(documentID: env.model.documentID), .owned(scope))
             }
             await waitAndConfirmNever { !spy.sockets.isEmpty }
             open.close()
@@ -1863,6 +1930,7 @@ private final class ServerStub: @unchecked Sendable {
     private var _serverUpdatedAt = "2026-11-07T10:00:00Z"
     private var _children: [[String: Any]] = []
     private var _isOffline = false
+    private var _releaseVersion = "6.0.0"
     private var _collaborationWsUrl: String?
     private var _canUpdate = true
     private var _detailFails = false
@@ -1937,6 +2005,10 @@ private final class ServerStub: @unchecked Sendable {
         get { locked { _detailFailure } }
         set { locked { _detailFailure = newValue } }
     }
+    var releaseVersion: String {
+        get { locked { _releaseVersion } }
+        set { locked { _releaseVersion = newValue } }
+    }
     var collaborationWsUrl: String? {
         get { locked { _collaborationWsUrl } }
         set { locked { _collaborationWsUrl = newValue } }
@@ -1961,7 +2033,8 @@ private final class ServerStub: @unchecked Sendable {
             if url.hasSuffix("/config/") {
                 let socket = collaborationWsUrl.map { #"","COLLABORATION_WS_URL":"\#($0)"# } ?? ""
                 return .init(
-                    statusCode: 200, headers: json, body: Data(#"{"RELEASE_VERSION":"6.0.0\#(socket)"}"#.utf8),
+                    statusCode: 200, headers: json,
+                    body: Data(#"{"RELEASE_VERSION":"\#(releaseVersion)\#(socket)"}"#.utf8),
                     error: nil)
             }
             if url.hasSuffix("/users/me/") {

@@ -622,8 +622,12 @@ checkpoint plus ordered updates; their Yjs client IDs remain intact.
 The HTTP outbox is independent of the replay checkpoint and of state vectors.
 Compaction retains pending local update bytes even when the new checkpoint already
 contains their effect. Acknowledging a captured prefix leaves later edits queued;
-delete-only updates require the same HTTP confirmation. There is no eviction or
-sign-out removal; `remove(for:)` is an explicit discard through a tombstone rename,
+delete-only updates require the same HTTP confirmation. Sign-out purges clean replicas
+(`purgeCleanReplicas`), and an LRU pass (`evictCleanReplicas`, backed by
+`ReplicaAccessStore` last-opened timestamps) caps total replica storage at 100 MB by
+evicting least-recently-opened clean copies (clearing their ownership markers) while
+never touching open, dirty, provisional, drafted, conflicted, or unreadable replicas;
+`remove(for:)` is an explicit discard through a tombstone rename,
 and only of the signed-in owner's replica (another account's replica and native draft
 survive a discard or deletion made in another session).
 A durable owner marker (`ReplicaOwnershipStore`), written before any replica file,
@@ -721,10 +725,16 @@ unsupported auxiliary root, every block id addressable, no `.lossy` block, and a
 shadow of the blocks the locked cards leave behind). A locked preserved card is a leaf block of an
 unknown type and is not a reason to stop authoring; any other opaque block is. An owned replica is restored offline-first, then
 the fetched raw state is integrated into the same durable owner; a converted
-response is never installed. An unowned eligible document is seeded into a new
-replica from the fetched raw state (`ReplicaStore.create` writes the marker first)
-and restored. Everything else keeps PR01's in-memory read-only view and never gains a
-marker. Each persisted command schedules `NativeReplicaSaveScheduler`, which uses the
+response is never installed. Every fetched Docs 6 document that reaches native with an
+account and scope — including readers and non-typeable documents, but not while typing is held (pending delete, checkpointed create, classic draft, live owner) —
+is seeded into a new replica from the fetched raw state (`ReplicaStore.create` writes
+the marker first) and restored (with typing and live collaboration enabled only when
+writable; otherwise read-only with no journal and no live socket, so it restores offline
+next time and gains typing if later promoted to writer). Only a signed-out open (no
+account/scope) keeps PR01's in-memory read-only view without a marker; switch-off,
+legacy servers, pending local work, and local documents are unchanged. Confirmed native
+saves also write their title and Markdown shadow (`save.markdown`, `serverUpdatedAt: nil`)
+into `DocumentContentCacheStore` so offline Search and Attachments stay current. Each persisted command schedules `NativeReplicaSaveScheduler`, which uses the
 classic autosave cadence (trailing interval, 30 s cap) and hands the verified outbox
 to `enqueueReplica` with the cached server title/baseline. Close and backgrounding
 flush it; reopening a replica whose outbox has no draft (a process that ended inside
