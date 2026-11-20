@@ -81,8 +81,8 @@ The steps below run in the Build job (1, 2, 5) or in every shard (3, 4, 6, 7):
    hittability, a screenshot and the hierarchy so a failure is diagnosable from the `.xcresult`.
    **Known pattern, mechanism confirmed:** every hosted failure of that press (runs 37349646189,
    37733961599, 37806233826) was in `testAllCompletedHasAccessibleRevealAtAccessibilitySize`,
-   alphabetically the first test of the UI bundle and so the first app launch after the
-   unit tests. The CI simulator's system logs (exported from the xcresult with `xcrun
+   alphabetically the first test of the UI bundle and so the first app launch on the
+   shard's freshly booted simulator. The CI simulator's system logs (exported from the xcresult with `xcrun
    xcresulttool export diagnostics`, `system.logarchive`) show `apsd` stuck reconnecting
    and starving the simulator. That delays three things: (a) `backboardd` attaches the
    session's first XCUITest virtual digitizer 210-440ms late, flushing a 200ms press as a

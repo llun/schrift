@@ -1707,7 +1707,7 @@ final class NativeEditorUITests: XCTestCase {
         for _ in 0..<3 {
             word.doubleTap()
             let selected = XCTNSPredicateExpectation(
-                predicate: NSPredicate(format: "value != %@ AND value != %@", "caret", "none"), object: selection)
+                predicate: NSPredicate(format: "value != nil AND value != %@ AND value != %@", "caret", "none"), object: selection)
             if XCTWaiter.wait(for: [selected], timeout: 3) == .completed { break }
         }
         let selected = selection.value as? String ?? ""

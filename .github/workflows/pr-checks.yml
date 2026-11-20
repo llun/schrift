@@ -138,17 +138,6 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: test-products
-          path: ${{ runner.temp }}
-
-      - name: Unpack test products
-        run: |
-          tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/products.tar"
-          xctestrun="$(ls "$RUNNER_TEMP"/Products/*.xctestrun | head -n 1)"
-          echo "XCTESTRUN=$xctestrun" >> "$GITHUB_ENV"
-
       # Runner images change their simulator lineup over time. Prefer the
       # documented "iPhone 17", fall back to any available iPhone simulator.
       # JSON + jq (preinstalled) so device names containing parentheses
@@ -187,13 +176,24 @@ jobs:
 
       # Start the simulator booting now and only wait for it after the build:
       # a cold boot takes about two minutes on a hosted runner, so it runs while
-      # the rest of the shard's setup does instead of queueing.
+      # the products download and unpack instead of queueing behind them.
       # `simctl boot` returns once the boot has been started (and fails if the
       # device is already booted, which is fine here).
       - name: Start booting simulator
         env:
           SIM_UDID: ${{ steps.sim.outputs.udid }}
         run: xcrun simctl boot "$SIM_UDID" || true
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: test-products
+          path: ${{ runner.temp }}
+
+      - name: Unpack test products
+        run: |
+          tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/products.tar"
+          xctestrun="$(ls "$RUNNER_TEMP"/Products/*.xctestrun | head -n 1)"
+          echo "XCTESTRUN=$xctestrun" >> "$GITHUB_ENV"
 
       # Wait until the simulator has finished booting before any test runs.
       # `bootstatus -b` boots the device if needed and blocks until boot
@@ -238,6 +238,9 @@ jobs:
             if [ $((i % 2)) -eq 0 ]; then even+=("SchriftNativeUITests/NativeEditorUITests/$name"); fi
             i=$((i + 1))
           done < <(grep -oE 'func test[A-Za-z0-9_]+\(' SchriftUITests/Native/NativeEditorUITests.swift | sed -E 's/func (test[A-Za-z0-9_]+)\(/\1/')
+          # An empty list (the file moved or was renamed) would make native-even run every
+          # test: fail loudly so the split is fixed instead.
+          if [ "${#even[@]}" -eq 0 ]; then echo "::error::no NativeEditorUITests methods found to shard" >&2; exit 1; fi
           selection=()
           retry=()
           case "$SHARD" in
