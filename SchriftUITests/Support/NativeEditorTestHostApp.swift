@@ -174,6 +174,7 @@ private struct NativeOpenFixture: View {
             if ProcessInfo.processInfo.arguments.contains("--native-slow-disk") || mode == .inlineObjects {
                 InFlightReadout()
             }
+            if ProcessInfo.processInfo.arguments.contains("--native-selection") { SelectionReadout() }
         }
         .overlay(alignment: .bottomLeading) {
             if ProcessInfo.processInfo.arguments.contains("--native-diagnostics") { DiagnosticsReadoutOverlay() }
@@ -730,6 +731,29 @@ private struct InFlightReadout: View {
                 .accessibilityIdentifier("replica.inFlight")
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// `--native-selection`: the mounted editor's selection, polled, so a UI test can tell a selected
+/// word from the caret a slow double tap leaves behind (at a caret Bold only arms typing marks, so
+/// nothing is saved). The value is the selected text, `caret` when the selection is collapsed and
+/// `none` when no editor is mounted.
+private struct SelectionReadout: View {
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.2)) { _ in
+            Text(verbatim: "selection")
+                .font(.caption2)
+                .accessibilityIdentifier("nativeEditor.selection")
+                .accessibilityValue(Self.selection())
+        }
+        .allowsHitTesting(false)
+    }
+
+    @MainActor private static func selection() -> String {
+        guard let view = mountedTextView() else { return "none" }
+        let range = view.selectedRange
+        guard range.length > 0, range.location + range.length <= view.textStorage.length else { return "caret" }
+        return (view.textStorage.string as NSString).substring(with: range)
     }
 }
 

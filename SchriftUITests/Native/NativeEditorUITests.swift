@@ -132,13 +132,11 @@ final class NativeEditorUITests: XCTestCase {
     /// word is still bold (the button reads as selected) after a relaunch.
     func testBoldOnASelectedWordSurvivesRelaunch() {
         let app = XCUIApplication()
-        app.launchArguments = ["--native-open", "--reset"]
+        app.launchArguments = ["--native-open", "--reset", "--native-selection"]
         app.launch()
         let editor = app.textViews["nativeEditor.text"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        XCTAssertTrue(editor.waitForStableFrame())
-        let word = firstParagraphCoordinate(of: editor, in: app)
-        word.doubleTap()
+        focusFirstParagraph(of: editor, in: app)
+        selectWord(of: editor, in: app)
         let bold = app.buttons["nativeEditor.format.bold"]
         XCTAssertTrue(bold.waitForExistence(timeout: 5))
         XCTAssertFalse(bold.isSelected)
@@ -149,11 +147,12 @@ final class NativeEditorUITests: XCTestCase {
         let before = text(of: editor)
         app.terminate()
 
-        app.launchArguments = ["--native-open"]
+        app.launchArguments = ["--native-open", "--native-selection"]
         app.launch()
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
         XCTAssertEqual(text(of: editor), before, "a mark never changes the text")
-        word.doubleTap()
+        focusFirstParagraph(of: editor, in: app)
+        selectWord(of: editor, in: app)
         XCTAssertTrue(bold.waitForExistence(timeout: 5))
         XCTAssertTrue(bold.isSelected, "the journal restores the mark")
     }
@@ -1693,6 +1692,30 @@ final class NativeEditorUITests: XCTestCase {
             add(screen)
             return XCTFail("The tap must focus the editor and raise a settled keyboard before typing")
         }
+    }
+
+    /// Selects the word under the first paragraph's coordinate through the real double tap, retried
+    /// until the test host's selection readout reports it. A slow runner can deliver the two taps far
+    /// enough apart that UIKit reads them as two carets, and at a caret Bold only arms pending typing
+    /// marks — no command, so nothing is saved and the relaunch assertion would blame the journal.
+    /// The readout is what tells a selected word from that caret, so the retry is a precondition, not
+    /// a second chance at the assertions.
+    private func selectWord(of editor: XCUIElement, in app: XCUIApplication) {
+        let selection = app.staticTexts["nativeEditor.selection"]
+        XCTAssertTrue(selection.waitForExistence(timeout: 5), "the test host must report the editor's selection")
+        let word = firstParagraphCoordinate(of: editor, in: app)
+        for _ in 0..<3 {
+            word.doubleTap()
+            let selected = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value != nil AND value != %@ AND value != %@", "caret", "none"),
+                object: selection)
+            if XCTWaiter.wait(for: [selected], timeout: 3) == .completed { break }
+        }
+        let selected = selection.value as? String ?? ""
+        XCTAssertFalse(
+            ["", "caret", "none"].contains(selected),
+            "the double tap must select a word; the readout says \"\(selected)\"")
+        XCTAssertFalse(selected.contains(" "), "a double tap selects one word, not \"\(selected)\"")
     }
 
     /// Typed text is read back through the accessibility tree, which can trail the keystrokes; wait for the
