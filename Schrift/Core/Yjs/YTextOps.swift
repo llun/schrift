@@ -129,7 +129,7 @@ enum YTextInsertValue {
 ///
 /// Pure value code with no concurrency annotations, but it **mutates** the live
 /// replica graph, so it must run inside an open transaction owned by the replica's
-/// single owner (`YDoc.transact`). See `AGENTS.md`, "The Yjs CRDT core".
+/// single owner (`YDoc.transact`). See `docs/standards/yjs-core.md`, "The Yjs CRDT core".
 enum YTextOps {
 
     // MARK: - Position

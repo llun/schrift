@@ -1200,6 +1200,7 @@ final class NativeEditorOpen {
                 return
             }
             if let session = restored {
+                coordinator.recordReplicaOpened(scope: scope)
                 if enabled, canUpdate, session.canType, mayType(viewModel) {
                     // Typing starts from the row at once; an online open's
                     // integration asks the server and downgrades a reader.
@@ -1367,8 +1368,11 @@ final class NativeEditorOpen {
             return
         }
         guard !Task.isCancelled, generation == request, viewModel.signedInUser.userID == account else { return }
-        // A document that is not fully projectable, or a reader, stays in PR01's
-        // in-memory read-only view and never gains a replica or marker.
+        // Every fetched native open with an account and scope gets a durable
+        // replica (read-only when the user is a reader or the document cannot be
+        // typed) so it restores offline next time. Not while `mayType` is false: a
+        // marker would make the live or classic writer that holds the document
+        // refuse its own saves.
         let scope = account.map {
             ReplicaScope(
                 serverOrigin: viewModel.client.serverOrigin, ownerUserID: $0, org: config.collaborationOrg,
@@ -1381,7 +1385,7 @@ final class NativeEditorOpen {
         let denied = scope.map { viewModel.saveCoordinator.isNativeReader($0) } ?? false
         let verified = canUpdate && ability?.writer != false && !denied
         self.canUpdate = verified
-        guard enabled, verified, session.canType, let account, let scope, mayType(viewModel) else {
+        guard enabled, let account, let scope, mayType(viewModel) else {
             self.canMention = false
             editUnavailableReason = unavailableReason(
                 for: session, viewModel: viewModel, hasEditAccess: verified, hasAccount: account != nil)
@@ -1391,25 +1395,33 @@ final class NativeEditorOpen {
             route = .native(session)
             return
         }
+        let writable = verified && session.canType
         session.close()
         let seeded = await seedReplica(
-            state: state, scope: scope, viewModel: viewModel, request: request, account: account)
+            state: state, scope: scope, viewModel: viewModel, request: request, account: account,
+            writable: writable)
         guard let seeded else { return }
         viewModel.seedNativeMetadataIfNeeded()
         viewModel.setNativeRouteActive(seeded.isNativeActive)
         switch seeded {
-        case .native(let session):
-            if let openStart = pendingOpenStartNs { session.markOpenStarted(openStart) }
-            editUnavailableReason = nil
+        case .native(let restoredSession):
+            if let openStart = pendingOpenStartNs { restoredSession.markOpenStarted(openStart) }
+            editUnavailableReason =
+                writable
+                ? nil
+                : unavailableReason(
+                    for: restoredSession, viewModel: viewModel, hasEditAccess: verified, hasAccount: true)
         case .preservedUnavailable:
             editUnavailableReason = .preservedUnavailable
         case .loading, .classic, .unavailable:
             editUnavailableReason = nil
         }
         route = seeded
-        if case .native(let session) = seeded {
+        if case .native(let restoredSession) = seeded, writable {
             self.canMention = (ability?.mention ?? rowCanMention) && !viewModel.isLocalDocument
-            startLive(session, scope: scope, config: config, viewModel: viewModel)
+            startLive(restoredSession, scope: scope, config: config, viewModel: viewModel)
+        } else {
+            self.canMention = false
         }
     }
 
@@ -1626,21 +1638,27 @@ final class NativeEditorOpen {
     }
 
     /// Creates the replica (marker first, so a crash leaves a marker without a
-    /// replica that the next open re-seeds), then restores and types into it.
-    /// Nil when the open went away during the restore.
+    /// replica that the next open re-seeds), records its access time, runs clean
+    /// LRU eviction if over the cap, restores it, and installs typing only when
+    /// `writable` is true. Nil when the open went away during the restore.
     private func seedReplica(
-        state: Data, scope: ReplicaScope, viewModel: EditorViewModel, request: Int, account: UUID
+        state: Data, scope: ReplicaScope, viewModel: EditorViewModel, request: Int, account: UUID,
+        writable: Bool
     ) async -> Route? {
         let coordinator = viewModel.saveCoordinator
         do {
             _ = try coordinator.replicaStore.create(for: scope, checkpoint: state)
+            coordinator.recordReplicaOpened(scope: scope)
+            coordinator.evictCleanNativeReplicasIfNeeded(keepingScopes: registry.busyScopes.union([scope]))
             let restored = try await registry.open(store: coordinator.replicaStore, scope: scope, hooks: replicaHooks)
             guard !Task.isCancelled, generation == request, viewModel.signedInUser.userID == account else {
                 restored?.close()
                 return nil
             }
             guard let session = restored else { return .preservedUnavailable }
-            installTyping(session, scope: scope, viewModel: viewModel)
+            if writable {
+                installTyping(session, scope: scope, viewModel: viewModel)
+            }
             return .native(session)
         } catch ReplicaStoreError.alreadyExists, ReplicaStoreError.corrupt, ReplicaStoreError.quarantined,
             ReplicaStoreError.unsupportedFormat

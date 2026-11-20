@@ -56,7 +56,7 @@ import Foundation
 /// structure, so re-indenting one keeps every word and must still be written. Rebuilding an
 /// untouched one on every save instead deleted the subtree a co-author might be typing in.
 ///
-/// Pure value code over a replica the caller owns; see `AGENTS.md`, "The Yjs CRDT core".
+/// Pure value code over a replica the caller owns; see `docs/standards/yjs-core.md`, "The Yjs CRDT core".
 enum BlockNotePreservation {
     /// How a server block's shadow is recognised among the new blocks.
     enum Rule: Equatable {

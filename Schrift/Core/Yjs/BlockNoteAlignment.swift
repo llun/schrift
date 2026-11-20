@@ -40,7 +40,7 @@ import Foundation
 /// block is removed. Pairing is order-preserving by construction, so `applyEdit` never has to
 /// move a survivor.
 ///
-/// Pure value code; see `AGENTS.md`, "The Yjs CRDT core".
+/// Pure value code; see `docs/standards/yjs-core.md`, "The Yjs CRDT core".
 enum BlockNoteAlignment {
     /// Above this many cells the LCS table is skipped and the whole middle is treated as one
     /// gap. The common prefix and suffix are trimmed first, so only a document rewritten

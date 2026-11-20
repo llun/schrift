@@ -8,7 +8,7 @@ import Foundation
 /// Owns no replica lifetime: its caller must destroy `doc` when finished, and on
 /// any throw. A throw out of transaction cleanup leaves `transactionCleanups`
 /// non-empty, after which no later edit is cleaned up or encoded, exactly the
-/// hazard AGENTS.md documents for `applyReplicaUpdate`.
+/// hazard `docs/standards/yjs-core.md` documents for `applyReplicaUpdate`.
 /// Each intent opens a local-user transaction and returns its incremental update.
 /// `transaction` groups intents; nested intents return the empty update and the
 /// outer call returns the combined update. **A group is not atomic**: each
