@@ -37,8 +37,16 @@ final class NativeSessionRegistry {
     /// Each scope's last replica close, awaited by its next restore.
     @ObservationIgnored private var closing: [ReplicaScope: Task<Void, Never>] = [:]
 
+    /// Closes posted but not yet finished, per scope: their queued edits may
+    /// still be on the way to disk.
+    @ObservationIgnored private var unfinishedCloses: [ReplicaScope: Int] = [:]
+
     /// The scopes with a replica open or opening.
     var openScopes: Set<ReplicaScope> { Set(entries.keys) }
+
+    /// `openScopes` plus the scopes still closing: eviction must not remove a
+    /// replica whose last edits have not reached the journal.
+    var busyScopes: Set<ReplicaScope> { openScopes.union(unfinishedCloses.keys) }
 
     /// A new surface on `scope`'s replica, restored off the main actor when
     /// none is open. Nil when there is no replica, or when the scope was
@@ -274,7 +282,14 @@ final class NativeSessionRegistry {
         if let closed = entry.closed { return closed }
         if entries[scope] === entry { entries[scope] = nil }
         entry.live?.stop()
-        let task = Task {
+        unfinishedCloses[scope, default: 0] += 1
+        let task = Task { [weak self] in
+            defer {
+                if let self {
+                    let left = (self.unfinishedCloses[scope] ?? 1) - 1
+                    self.unfinishedCloses[scope] = left > 0 ? left : nil
+                }
+            }
             guard let replica = try? await entry.replica.value else { return }
             replica.mailbox.post(.close)
             await replica.waitUntilClosed()

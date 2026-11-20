@@ -112,7 +112,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         XCTAssertTrue(unsupported.hasUnsupportedRoot)
     }
 
-    func testSwitchOffAndOfflineKeepClassicWithoutFetching() async {
+    func testSwitchOffKeepsClassicWithoutFetching() async {
         let fixture = makeFixture()
         defer {
             fixture.clean()
@@ -122,9 +122,43 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         await off.open(viewModel: fixture.model, isOffline: false)
         guard case .classic = off.route else { return XCTFail("off route changed") }
         XCTAssertNil(MockURLProtocol.lastRequest)
-        let offline = NativeEditorOpen(preference: { true })
-        await offline.open(viewModel: fixture.model, isOffline: true)
-        guard case .classic = offline.route else { return XCTFail("offline must fall back") }
+    }
+
+    func testOfflineNeverOpenedShowsGoOnlineAndRetriesOnReconnect() async {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: fixture.model, isOffline: true)
+        guard case .unavailable(.offlineNeverOpened) = open.route else {
+            return XCTFail("offline with nothing cached must show the go-online state")
+        }
+        XCTAssertTrue(fixture.model.isNativeRouteActive)
+        XCTAssertNil(MockURLProtocol.lastRequest, "nothing cached means nothing to fetch")
+
+        stub(version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID))
+        await open.retry(viewModel: fixture.model, isOffline: false)
+        guard case .native = open.route else { return XCTFail("Retry must open natively once online") }
+    }
+
+    func testOfflineWithCachedClassicCopyStaysClassic() async {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        DocumentContentCacheStore(directory: fixture.directory).save(
+            CachedDocumentContent(
+                documentID: fixture.model.documentID, title: "Cached", markdown: "Cached body",
+                syncedAt: Date()))
+        let open = NativeEditorOpen(preference: { true })
+        await open.open(viewModel: fixture.model, isOffline: true)
+        guard case .classic = open.route else {
+            return XCTFail("a cached classic copy keeps the classic reader")
+        }
         XCTAssertNil(MockURLProtocol.lastRequest)
     }
 
@@ -158,10 +192,12 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         fixture.model.saveCoordinator.recordPendingDelete(documentID: fixture.model.documentID, ownerUserID: UUID())
         response.open()
         await loading.value
-        guard case .classic = open.route else { return XCTFail("an in-flight response showed a tombstoned document") }
+        guard case .classic = open.route else {
+            return XCTFail("an in-flight response must not install a tombstoned document")
+        }
     }
 
-    func testUnreachableServerKeepsClassicWithoutPrefetching() async {
+    func testUnreachableServerShowsGoOnlineWithoutPrefetching() async {
         let connectivity = ConnectivityMonitor(monitoring: NetworkPathMonitoring { _ in {} })
         let fixture = makeFixture(connectivity: connectivity)
         defer {
@@ -172,68 +208,192 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         await waitUntil { connectivity.serverUnreachable }
         XCTAssertFalse(fixture.model.availability.isOffline, "this is transport evidence on a satisfied path")
         let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
         await open.open(viewModel: fixture.model, isOffline: false)
-        guard case .classic = open.route else { return XCTFail("unreachable native prefetch must not hold up cache") }
+        guard case .unavailable(.offlineNeverOpened) = open.route else {
+            return XCTFail("an unreachable server with nothing cached must show the go-online state")
+        }
         XCTAssertNil(MockURLProtocol.lastRequest)
     }
 
-    func testDeadlineBoundsStalledConfigAndRawFetchWithoutWaitingForResponse() async {
-        for stallsConfig in [true, false] {
-            let fixture = makeFixture()
-            defer {
-                fixture.clean()
-                MockURLProtocol.reset()
-            }
-            let response = MockURLProtocol.ResponseGate()
-            let deadline = NativeOpenTestDeadline()
-            let completionCount = Counter()
-            let completed = expectation(
-                description: stallsConfig ? "late config response completed" : "late raw response completed")
-            completed.assertForOverFulfill = true
-            stub(
-                version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID),
-                gate: stallsConfig ? nil : response, configGate: stallsConfig ? response : nil,
-                onGatedCompletion: {
-                    _ = completionCount.next()
-                    completed.fulfill()
-                })
-            let open = NativeEditorOpen(preference: { true }, waitForTimeout: { await deadline.wait() })
-            let loading = Task { await open.open(viewModel: fixture.model, isOffline: false) }
-            await waitUntil {
-                deadline.isWaiting && MockURLProtocol.deferredDeliveryCount == 1
-                    && (stallsConfig
-                        ? MockURLProtocol.lastRequest?.url?.path.contains("/config") == true
-                        : MockURLProtocol.lastRequest?.url?.path.contains("/collaboration/ydoc/") == true)
-            }
-            // The network gate stays shut: fallback cannot depend on URLSession
-            // or a shared config task cooperating with cancellation.
-            deadline.fire()
-            await loading.value
-            guard case .classic = open.route else { return XCTFail("deadline did not select classic") }
-            XCTAssertEqual(completionCount.current, 0, "the late response must still be held after fallback")
-            response.open()
-            await fulfillment(of: [completed], timeout: 3)
-            XCTAssertEqual(completionCount.current, 1)
-            let installedSession: NativeEditorSession?
-            if case .native(let session) = open.route { installedSession = session } else { installedSession = nil }
-            XCTAssertNil(installedSession, "late prefetch completion must not install a native replica")
-            guard case .classic = open.route else { return XCTFail("a late response replaced the selected fallback") }
+    func testSlowFetchStaysLoadingPastTheOldDeadlineAndOpensNative() async {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
         }
+        let gate = MockURLProtocol.ResponseGate()
+        stub(version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID), gate: gate)
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        let loading = Task { await open.open(viewModel: fixture.model, isOffline: false) }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+        // The old three-second deadline selected classic here. Real time is the
+        // only way to prove a deadline is gone; the fetch is held, not slow.
+        try? await Task.sleep(for: .seconds(3.2))
+        guard case .loading = open.route else { return XCTFail("a held fetch must stay loading") }
+        gate.open()
+        await loading.value
+        guard case .native = open.route else { return XCTFail("the late answer must open natively") }
     }
 
-    func testLegacyAndFailedRawFetchFallBackToClassic() async {
-        for (version, status, body) in [
-            ("5.0.0", 200, Data()), ("6.0.0", 500, Data()), ("6.0.0", 200, Data("invalid".utf8)),
+    func testLegacyServerKeepsClassic() async {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        stub(version: "5.0.0", state: Data())
+        let open = NativeEditorOpen(preference: { true })
+        await open.open(viewModel: fixture.model, isOffline: false)
+        guard case .classic = open.route else { return XCTFail("a legacy server has no native path") }
+    }
+
+    func testFetchFailureShowsRetryableNativeErrorAndRetryOpens() async {
+        for (configStatus, status, body) in [
+            (500, 200, Data()), (200, 500, Data()), (200, 200, Data("invalid".utf8)),
         ] {
             let fixture = makeFixture()
             defer {
                 fixture.clean()
                 MockURLProtocol.reset()
             }
-            stub(version: version, state: body, status: status)
+            stub(version: "6.0.0", state: body, status: status, configStatus: configStatus)
             let open = NativeEditorOpen(preference: { true })
+            defer { open.close() }
             await open.open(viewModel: fixture.model, isOffline: false)
-            guard case .classic = open.route else { return XCTFail("legacy or failed raw fetch must fall back") }
+            let expected: NativeOpenUnavailable =
+                configStatus == 500 || status == 500 ? .openFailed : .unreadableState
+            guard case .unavailable(let reason) = open.route else {
+                return XCTFail("a failed fetch must show the native error state, never classic")
+            }
+            XCTAssertEqual(reason, expected)
+            XCTAssertTrue(fixture.model.isNativeRouteActive)
+
+            stub(version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID))
+            await open.retry(viewModel: fixture.model, isOffline: false)
+            guard case .native = open.route else { return XCTFail("Retry must open once the server recovers") }
+        }
+    }
+
+    /// A Retry that lands after the page closed (the user navigated back) does nothing:
+    /// it never installs a session for a screen that is gone.
+    func testRetryAfterCloseDoesNotReopen() async {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        stub(version: "6.0.0", state: Data(), status: 500)
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: fixture.model, isOffline: false)
+        guard case .unavailable(.openFailed) = open.route else { return XCTFail("expected the error state") }
+        open.close()
+        let recorder = RequestRecorder()
+        stub(
+            version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID),
+            recorder: recorder)
+        await open.retry(viewModel: fixture.model, isOffline: false)
+        guard case .loading = open.route else { return XCTFail("a late Retry must not reopen: \(open.route)") }
+        XCTAssertTrue(recorder.methods.isEmpty, "a late Retry must not fetch")
+    }
+
+    /// Pending local work that arrives mid-fetch keeps the classic owner even when the
+    /// fetch then fails.
+    func testLocalDraftArrivingBeforeAFailedFetchKeepsTheClassicRoute() async {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        let gate = MockURLProtocol.ResponseGate()
+        stub(version: "6.0.0", state: Data(), status: 500, gate: gate)
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        let loading = Task { await open.open(viewModel: fixture.model, isOffline: false) }
+        await waitUntil { MockURLProtocol.lastRequest?.url?.path.contains("/collaboration/ydoc/") == true }
+        PendingDraftStore(userDefaults: fixture.defaults).save(
+            PendingDraft(
+                documentID: fixture.model.documentID, title: "Local", markdown: "Arrived while loading",
+                updatedAt: Date()))
+        gate.open()
+        await loading.value
+        guard case .classic = open.route else {
+            return XCTFail("a failed fetch must not hide a local draft behind an error: \(open.route)")
+        }
+    }
+
+    func testCacheRefreshFailureStillInstallsTheNativeSession() async {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        stub(
+            version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID),
+            formattedStatus: 500)
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        await open.open(viewModel: fixture.model, isOffline: false)
+        guard case .native = open.route else {
+            return XCTFail("the classic cache refresh must not block the native session")
+        }
+    }
+
+    func testSupersededOpenDoesNotFlipToClassic() async {
+        let fixture = makeFixture()
+        defer {
+            fixture.clean()
+            MockURLProtocol.reset()
+        }
+        let gate = MockURLProtocol.ResponseGate()
+        stub(version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID), gate: gate)
+        let open = NativeEditorOpen(preference: { true })
+        defer { open.close() }
+        let loading = Task { await open.open(viewModel: fixture.model, isOffline: false) }
+        await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+        // Another account signs in while the fetch is in flight.
+        SignedInUserStore(userDefaults: fixture.defaults).remember(UUID())
+        gate.open()
+        await loading.value
+        guard case .loading = open.route else {
+            return XCTFail("a superseded open must leave the route to the newer open, never classic")
+        }
+    }
+
+    /// Going offline while the fetch is in flight drops its answer; with no deadline
+    /// to fall back on, the route settles from the device instead of spinning: a page
+    /// with nothing cached says "Go online", one with a cached classic copy goes classic.
+    func testGoingOfflineMidFetchSettlesTheRouteInsteadOfSpinning() async {
+        for cached in [false, true] {
+            let fixture = makeFixture()
+            defer {
+                fixture.clean()
+                MockURLProtocol.reset()
+            }
+            if cached {
+                DocumentContentCacheStore(directory: fixture.directory).save(
+                    CachedDocumentContent(
+                        documentID: fixture.model.documentID, title: "Cached", markdown: "Cached body",
+                        syncedAt: Date(timeIntervalSince1970: 1), serverUpdatedAt: Date(timeIntervalSince1970: 2)))
+            }
+            let gate = MockURLProtocol.ResponseGate()
+            stub(
+                version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID), gate: gate
+            )
+            let open = NativeEditorOpen(preference: { true })
+            let loading = Task { await open.open(viewModel: fixture.model, isOffline: false) }
+            await waitUntil { MockURLProtocol.deferredDeliveryCount == 1 }
+            fixture.defaults.set(true, forKey: "schrift.workOffline")
+            fixture.model.availability.preferencesChanged()
+            gate.open()
+            await loading.value
+            switch (cached, open.route) {
+            case (false, .unavailable(.offlineNeverOpened)), (true, .classic): break
+            default: XCTFail("cached \(cached): the route must settle, got \(open.route)")
+            }
+            open.close()
         }
     }
 
@@ -323,8 +483,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         stub(
             version: "6.0.0", state: BlockNoteYjs.encode(Self.seedBlocks(), clientID: Self.seedClientID),
             markdown: "New server body that must not replace the cache", formattedGate: response)
-        let open = NativeEditorOpen(
-            preference: { true }, waitForTimeout: { try await Task.sleep(for: .seconds(30)) })
+        let open = NativeEditorOpen(preference: { true })
         defer { open.close() }
         let loading = Task { await open.open(viewModel: fixture.model, isOffline: false) }
         await waitUntil {
@@ -339,7 +498,9 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         XCTAssertEqual(
             cache.content(for: fixture.model.documentID), original,
             "the refresh method's post-fetch guards must prevent this late cache write")
-        guard case .classic = open.route else { return XCTFail("a tombstoned refresh must select classic") }
+        guard case .classic = open.route else {
+            return XCTFail("a delete queued mid-fetch keeps the classic owner until stage 2")
+        }
     }
 
     func testClassicReopenStaysMountedWhileServerConfigIsRechecked() async {
@@ -348,8 +509,7 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             fixture.clean()
             MockURLProtocol.reset()
         }
-        let open = NativeEditorOpen(
-            preference: { true }, waitForTimeout: { try await Task.sleep(for: .seconds(30)) })
+        let open = NativeEditorOpen(preference: { true })
         defer { open.close() }
         stub(version: "5.0.0", state: Data())
         await open.open(viewModel: fixture.model, isOffline: false)
@@ -447,7 +607,9 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
                 updatedAt: Date()))
         gate.open()
         await loading.value
-        guard case .classic = open.route else { return XCTFail("an in-flight baseline hid a local draft") }
+        guard case .classic = open.route else {
+            return XCTFail("an in-flight baseline must not install over a local draft: \(open.route)")
+        }
     }
 
     func testOwnedDocumentWithSwitchOffRestoresReadOnlyWithoutNetwork() async throws {
@@ -739,11 +901,15 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
         version: String, state: Data, status: Int = 200, gate: MockURLProtocol.ResponseGate? = nil,
         configGate: MockURLProtocol.ResponseGate? = nil, onGatedCompletion: (@Sendable () -> Void)? = nil,
         markdown: String = "Exported offline content", recorder: RequestRecorder? = nil,
-        formattedGate: MockURLProtocol.ResponseGate? = nil
+        formattedGate: MockURLProtocol.ResponseGate? = nil, configStatus: Int = 200,
+        formattedStatus: Int = 200
     ) {
         MockURLProtocol.stubHandler = { request in
             recorder?.record(request)
             if request.url?.path.contains("formatted-content") == true {
+                guard formattedStatus == 200 else {
+                    return .init(statusCode: formattedStatus, headers: [:], body: Data(), error: nil)
+                }
                 let id = request.url!.path.split(separator: "/").first { UUID(uuidString: String($0)) != nil }!
                 let object: [String: Any] = [
                     "id": String(id), "title": "Fresh server title", "content": markdown,
@@ -759,6 +925,9 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             }
             let isConfig =
                 request.url?.path.hasSuffix("config") == true || request.url?.path.hasSuffix("config/") == true
+            if isConfig, configStatus != 200 {
+                return .init(statusCode: configStatus, headers: [:], body: Data(), error: nil)
+            }
             let object = isConfig ? ["RELEASE_VERSION": version] : ["doc": state.base64EncodedString()]
             let responseGate = isConfig ? configGate : gate
             return .init(
@@ -837,18 +1006,5 @@ final class NativeEditorLifecycleTests: DocumentEngineTestCase {
             NativeEditCommand(id: UUID(), baseRevision: 0, blockID: Self.firstID, range: 0..<0, replacement: "x"),
             update: update)
         return scope
-    }
-}
-
-@MainActor
-private final class NativeOpenTestDeadline {
-    private var continuation: CheckedContinuation<Void, Never>?
-    var isWaiting: Bool { continuation != nil }
-    func wait() async {
-        await withCheckedContinuation { continuation = $0 }
-    }
-    func fire() {
-        continuation?.resume()
-        continuation = nil
     }
 }

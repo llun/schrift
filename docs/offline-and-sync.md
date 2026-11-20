@@ -72,17 +72,30 @@ capture, it compacts once 64 journal segments are covered (acknowledged local or
 integrated remote). Unsent outbox segments never count, and it never re-encodes the
 document after every save. A failed compaction leaves the journal and the save intact.
 
-`ReplicaStore.remove(for:)` is the only delete: keep-server-version,
-`discardPendingWork` and therefore document deletion call it. It renames the whole
-scope folder to a `.removed` tombstone, flushes the parent, clears the owner marker,
-then deletes the tombstone. An interruption leaves the intact replica or an
-unreachable tombstone, never a half-deleted replica; a crash before the marker is
-cleared leaves the document read-only. Quarantined replicas can be removed too. Sign-out
-never removes a replica. Only the signed-in owner's replica is removed: when another
-account (or an unknown one) is signed in, a discard or a landed deletion leaves that
-owner's replica, marker and native draft in place and completes the rest of the delete
-for the current session. On a shared device B's DELETE of A's document 404s as "already
-gone", and that must not destroy A's unsynced work.
+`ReplicaStore.remove(for:)` is used for explicit discards (keep-server-version,
+`discardPendingWork` and therefore document deletion), while `purgeCleanReplicas`
+(sign-out) and `evictCleanReplicas` (LRU cap) remove only clean, synced copies.
+Removal renames the whole scope folder to a `.removed` tombstone, flushes the parent,
+clears the owner marker, then deletes the tombstone. An interruption leaves the intact
+replica or an unreachable tombstone, never a half-deleted replica; a crash before the
+marker is cleared leaves the document read-only. Quarantined replicas can be removed
+explicitly via `remove(for:)`, never by purge or LRU. Sign-out purges only clean
+replicas for the leaving account and never removes dirty, provisional, conflicted,
+protected, or unreadable replicas. Only the signed-in owner's replica is removed on
+explicit discard: when another account (or an unknown one) is signed in, a discard or
+a landed deletion leaves that owner's replica, marker and native draft in place and
+completes the rest of the delete for the current session. On a shared device B's DELETE
+of A's document 404s as "already gone", and that must not destroy A's unsynced work.
+
+**Clean-replica LRU cap.** `ReplicaAccessStore` (a small `UserDefaults` dictionary keyed
+by `scope.directoryName()`, with no `ReplicaManifest` format change) records the
+last-opened timestamp on every replica create and restore. After a replica is created or
+a native save finishes, if total bytes across replica folders exceed 100 MB
+(`ReplicaStore.defaultCleanReplicaByteLimit`), `DocumentSaveCoordinator.evictCleanNativeReplicasIfNeeded`
+evicts least-recently-opened clean replicas until under the cap, clearing their ownership
+markers and access timestamps. It reuses `purgeCleanNativeReplicasOnSignOut`'s exact
+clean predicate and fail-closed guards (unreadable/quarantined stores → evict nothing)
+and additionally protects every scope currently open in `NativeSessionRegistry`.
 
 **Provisional IME text (PR03).** UIKit marked text that is not yet committed lives in
 `provisional.json` inside the same scope folder, beside the manifest and outside it.
@@ -133,16 +146,20 @@ equality alone never proves a rich revision saved. The next replay re-stamps suc
 draft from the current raw revision (same scope, format and generation, a matching
 shadow, a revision not ahead of the journal) and sends the newer bytes; anything else
 is refused. Partial batches retain every sequence for idempotent retry. No legacy
-route, live socket or Markdown diff is used. A raw save never writes its lossy shadow
-into the classic content cache. Raw drafts are queued, and "Keep mine" rewrites them,
+route, live socket or Markdown diff is used. When a native save confirms cleanly,
+`DocumentSaveCoordinator.finish` writes its title and Markdown shadow (`save.markdown`,
+with `serverUpdatedAt: nil`) into `DocumentContentCacheStore` so offline Search and the
+Attachments list stay up to date without an extra fetch; native ownership and
+`serverUpdatedAt: nil` ensure classic never treats that entry as a newer server
+baseline. Raw drafts are queued, and "Keep mine" rewrites them,
 only for the remembered signed-in owner. The shadow is never caller-supplied: a
 stored draft's verified shadow is re-captured, or a first capture is projected from
 raw. A capture never fails for lack of a total shadow: a document Markdown cannot
 spell whole (an opaque/rich block) gets a deterministic lossy shadow — the blocks
 Markdown can spell, in order, and nothing for the rest (or every block's plain
 text, when even that subset cannot be rendered). That shadow is only a
-fingerprint and a display string: it is never sent as content, never written to the
-classic cache, and never a reason to drop a replica draft (the sync pass keeps such a
+fingerprint, a display/search string for confirmed saves, and never sent as content or
+used as a reason to drop a replica draft (the sync pass keeps such a
 draft and its unsent outbox, asking the user rather than discarding). Because a lossy
 shadow usually differs from the server's export, rule 1 (our own last push) may not recognise a
 later replay of such a document, which may then ask about a conflict with the user's own
@@ -171,18 +188,31 @@ Typing turns on at open only when all of these hold: the switch is on, the serve
 Docs 6, the signed-in user has `abilities.update`, the document is not a pending
 create or delete, no live owner holds it, it projects fully (fully modeled with a
 Markdown shadow), and there is no classic draft or queued classic save. A document
-with a classic draft stays classic until that draft syncs. Everything else that
-reaches native opens PR01's in-memory read-only view and never gains a marker.
+with a classic draft stays classic until that draft syncs. Every fetched Docs 6 document
+that reaches native with an account and scope — readers (`!verified`), non-typeable
+documents (`!session.canType`) included, though never while `mayType` is false (a marker would make the writer that holds the document refuse its own saves) — seeds a
+durable replica with the standard ownership marker and opens it read-only (no journal,
+no typing, no live socket), so it restores offline on the next open and gains typing
+automatically if a reader is later promoted to writer. Only a signed-out open (no
+account/scope) stays in the in-memory read-only view without a replica; switch-off,
+legacy servers, pending local work, and local documents are unchanged.
+With the switch on, a failed config or raw-state fetch, an unreadable fetched state
+and a failed seed show the native error state with Retry; they never mount the
+classic editor. An offline or unreachable open with no replica and no cached copy
+shows "Go online to open this page".
 
-- **Owned replica:** restored offline-first, with no request. Online, the raw server
+- **Owned replica:** restored offline-first, with no request (read-only when the user
+  cannot edit, the document is not typeable, or the switch is off). Online, the raw server
   state is then fetched and integrated into the same durable owner (journaled before
   display). A converted Markdown response is never installed over native state.
 - **No replica:** the raw state is fetched, `ReplicaStore.create` writes the marker
-  and the checkpoint, and the replica is restored with typing on.
+  and the checkpoint, and the replica is restored (with typing on only when writable,
+  otherwise read-only with no journal or live socket).
 - **Marker without a replica** (a crash between the marker and the first manifest):
   with the switch on, the marker is cleared only when no manifest, quarantine, draft
   or queued/in-flight save exists, and the unowned route then re-seeds it from the
-  server (or opens classic when offline). Otherwise it stays read-only.
+  server (or, offline, shows the cached classic copy or "Go online to open this page").
+  Otherwise it stays read-only.
 - **Corrupt or lost marker data:** Profile's "Recover unreadable drafts" row also
   appears and rebuilds the marker from the scoped manifests on disk and the scopes
   native drafts name (it refuses while the draft store is unreadable). Folders without
@@ -1319,7 +1349,7 @@ server is about to hold.
   document is never overwritten from a half-synced or lossy replica. **Revised 2026-11-04:**
   a failed live snapshot replaying as a classic markdown save is today's behaviour, no longer a
   rule to preserve; persisting the raw replica bytes in the draft is approved and planned. Its
-  constraints live in `AGENTS.md` ("Drafts will carry the replica bytes").
+  constraints live in [`standards/editor-save.md`](standards/editor-save.md) ("Drafts will carry the replica bytes").
   On reconnect, `runSyncPass` skips a draft while its live replica is held (the entry can
   write and the replica has not fail-safed; re-checked after the GET), so it cannot replay
   the same markdown as new Yjs items. Once the session completes its initial step2 exchange,
@@ -1757,7 +1787,7 @@ means a session that knows who it is pays nothing.
 
 It carries a **second** guard on `schrift.workOffline`. That one is not redundant with
 `load()`'s: this runs *ahead* of `load()`, so the early return cannot cover it, and
-`HomeViewModel` is one of the three view models AGENTS.md names as honouring the
+`HomeViewModel` is one of the three view models [`standards/persistence.md`](standards/persistence.md) names as honouring the
 preference — the same reason `createDocument` withholds its POST. Unguarded, every
 pull-to-refresh in the mode would park the spinner on a `/users/me/` carrying cookies the
 user asked not to send.
@@ -2179,7 +2209,7 @@ already-recorded ghost residual below, not a new one.
   reads "no longer available". Nothing is lost (the teardown flushes first, the draft
   survives, and `releaseHeldSave` refuses on `isPendingCreate`), but the create UI gates that fetch via `EditorViewModel.isLocalDocument`, without which a
   locally-created document would be unusable the moment it is opened.
-  Recorded in `isPendingCreate`'s docstring and AGENTS.md; it belongs in this list too.
+  Recorded in `isPendingCreate`'s docstring and [`standards/editor-save.md`](standards/editor-save.md); it belongs in this list too.
 - **`discardPendingWork(localID)` is less thorough than its server-id twin.** On a
   checkpointed record it takes the `isPendingCreate` branch and removes only the local
   draft, leaving a `serverID` draft and its id-keyed maps behind — where the
@@ -2551,7 +2581,7 @@ is unrecoverable where a delayed retry is not — which is exactly why the block
 scoped to a build rather than made permanent. The in-memory `.failed` rule is exactly wrong there,
 because `init` re-seeds every record to `.pendingSync` — a free retry for a
 validation 400, but for this one, a fresh POST on every launch that abandons the
-document the last one built. This is not hypothetical: `AGENTS.md` records
+document the last one built. This is not hypothetical: [`standards/networking.md`](standards/networking.md) records
 `is_favorite`-as-required-`Bool` failing every create after the server had already
 made the document, "quietly littering the server with them". So a decode failure
 stamps `replayBlockedAt` on the record, which the pass skips. The record stays
@@ -2660,7 +2690,7 @@ stranded draft is separately reaped by `runSyncPass`, which GETs it and takes th
 
 **And it starts over only when nothing is left under that id.** The premise of the whole
 branch is "the checkpointed document is gone", and a bare `.notFound` does not establish
-that — a proxy hiccup maps to it too (`AGENTS.md` invariant 0c). Two effects hang off that
+that — a proxy hiccup maps to it too ([`standards/editor-save.md`](standards/editor-save.md) invariant 0c). Two effects hang off that
 premise, and both are destructive: discharging the conflict drops the held keystrokes, and
 clearing `syncedServerID` disarms the server-id suppression above — after which
 `runSyncPass`, next in the *same* pass and on the *same* 404, deletes the draft. So one
@@ -3413,10 +3443,11 @@ XCTest, mirroring the source tree. New/updated:
 
 ## Docs to update alongside implementation
 
-- `AGENTS.md` — note the content cache tier and the load precedence in the Editor
-  section; add `DocumentContentCacheStore` to the persistence-stores list (with
-  the file-based/backup-excluded/sign-out-cleared posture) and the repo-layout
-  map.
+- [`standards/editor-save.md`](standards/editor-save.md) — note the content cache tier and the load precedence in the Editor
+  section; add `DocumentContentCacheStore` to the persistence-stores list in
+  [`standards/persistence.md`](standards/persistence.md) (with
+  the file-based/backup-excluded/sign-out-cleared posture) and the
+  [repo-layout map](repository-layout.md).
 - [`architecture.md`](architecture.md) — the error-handling line "no offline
   queue/cache in v1" is superseded: previously-opened documents are now cached on
   disk and readable offline with background revalidation (see this doc). The

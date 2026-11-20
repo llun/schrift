@@ -564,4 +564,201 @@ final class DocumentSaveCoordinatorReplicaOwnershipTests: DocumentSaveCoordinato
             try isExcluded(halfFolder), true,
             "replica must exclude from backup only after both outbox and coordinator metadata are clean")
     }
+
+    func testEvictCleanNativeReplicasRespectsCapProtectsOpenDirtyAndDraftedAndClearsMarkers() async throws {
+        let suite = "LRUEvictionCoordinator.\(UUID().uuidString)"
+        draftSuiteNames.append(suite)
+        let defaults = UserDefaults(suiteName: suite)!
+        SignedInUserStore(userDefaults: defaults).remember(owner)
+        let replicaDir = cacheDirectory.appendingPathComponent("ReplicaDrafts.\(UUID().uuidString)", isDirectory: true)
+        let ownership = ReplicaOwnershipStore(userDefaults: defaults)
+        let store = ReplicaStore(directory: replicaDir, ownershipStore: ownership)
+        let drafts = PendingDraftStore(userDefaults: defaults)
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+        let registry = NativeSessionRegistry()
+
+        let makeScope: (UUID) -> ReplicaScope = { docID in
+            ReplicaScope(serverOrigin: client.serverOrigin, ownerUserID: self.owner, org: "docs", documentID: docID)
+        }
+        let oldestClean = makeScope(UUID())
+        let newestClean = makeScope(UUID())
+        let openClean = makeScope(UUID())
+        let dirtyOutbox = makeScope(UUID())
+        let draftedClean = makeScope(UUID())
+
+        let payload = BlockNoteYjs.encode(
+            [
+                BlockNoteBlock(
+                    node: "paragraph", props: [], runs: [InlineRun(String(repeating: "a", count: 512))], id: "b1")
+            ],
+            clientID: 1)
+        for s in [oldestClean, newestClean, openClean, dirtyOutbox, draftedClean] {
+            _ = try store.create(for: s, checkpoint: payload)
+        }
+        let ydoc = YDoc(clientID: 2)
+        defer { ydoc.destroy() }
+        try ydoc.applyUpdate(YUpdateDecoder.decode(payload), origin: .remote)
+        let editUpdate = try BlockNoteWriter(doc: ydoc).replaceText(block: "b1", range: 0..<0, with: "Dirty ")
+        _ = try store.append(editUpdate, for: dirtyOutbox, commandID: UUID(), baseRevision: 0, origin: .local)
+        drafts.save(
+            PendingDraft(
+                documentID: draftedClean.documentID, title: "Drafted", markdown: "Drafted", updatedAt: Date()))
+
+        let opened = try await registry.open(store: store, scope: openClean)
+        let openSession = try XCTUnwrap(opened)
+        defer { openSession.close() }
+
+        let cap = store.totalByteCount() - store.byteCount(for: oldestClean)
+        let coordinator = DocumentSaveCoordinator(
+            client: client,
+            draftStore: drafts,
+            replicaStore: store,
+            cleanReplicaByteLimit: cap,
+            contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            attachmentStore: PendingAttachmentStore(
+                userDefaults: defaults, directory: cacheDirectory.appendingPathComponent(UUID().uuidString)),
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            backgroundTasks: .noop,
+            isLiveReplicaHeld: { _ in false })
+        coordinator.nativeSessions = registry
+
+        coordinator.recordReplicaOpened(scope: openClean, at: Date(timeIntervalSince1970: 10))
+        coordinator.recordReplicaOpened(scope: dirtyOutbox, at: Date(timeIntervalSince1970: 20))
+        coordinator.recordReplicaOpened(scope: draftedClean, at: Date(timeIntervalSince1970: 30))
+        coordinator.recordReplicaOpened(scope: oldestClean, at: Date(timeIntervalSince1970: 100))
+        coordinator.recordReplicaOpened(scope: newestClean, at: Date(timeIntervalSince1970: 200))
+
+        let evicted = coordinator.evictCleanNativeReplicasIfNeeded()
+        XCTAssertEqual(evicted, [oldestClean])
+        XCTAssertNil(try store.restore(for: oldestClean))
+        XCTAssertEqual(coordinator.nativeOwnership(documentID: oldestClean.documentID), .none)
+        XCTAssertEqual(coordinator.replicaAccessStore.lastOpened(oldestClean), .distantPast)
+        XCTAssertNotNil(try store.restore(for: newestClean))
+        XCTAssertNotNil(try store.restore(for: openClean))
+        XCTAssertNotNil(try store.restore(for: dirtyOutbox))
+        XCTAssertNotNil(try store.restore(for: draftedClean))
+    }
+
+    func testEvictCleanNativeReplicasFailsClosedWhenAnyMetadataOrOwnershipStoreIsUnreadable() throws {
+        let corruptKeys = [
+            "dev.llun.Schrift.pendingDrafts",
+            "dev.llun.Schrift.pendingDrafts.unreadable",
+            "dev.llun.Schrift.pendingCreates",
+            "dev.llun.Schrift.pendingDeletes",
+            "dev.llun.Schrift.pendingAttachments",
+        ]
+        for corruptKey in corruptKeys {
+            let suite = "LRUFailClosed.\(UUID().uuidString)"
+            draftSuiteNames.append(suite)
+            let defaults = UserDefaults(suiteName: suite)!
+            defaults.set(Data([0xff]), forKey: corruptKey)
+            SignedInUserStore(userDefaults: defaults).remember(owner)
+            let ownership = ReplicaOwnershipStore(userDefaults: ownershipDefaults)
+            let store = ReplicaStore(
+                directory: cacheDirectory.appendingPathComponent("ReplicaDrafts.\(UUID().uuidString)"),
+                ownershipStore: ownership)
+            let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+            let coordinator = DocumentSaveCoordinator(
+                client: client,
+                draftStore: PendingDraftStore(userDefaults: defaults),
+                replicaStore: store,
+                cleanReplicaByteLimit: 1,
+                contentCache: DocumentContentCacheStore(directory: cacheDirectory),
+                createStore: PendingDocumentCreateStore(userDefaults: defaults),
+                deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+                attachmentStore: PendingAttachmentStore(
+                    userDefaults: defaults, directory: cacheDirectory.appendingPathComponent(UUID().uuidString)),
+                listCache: DocumentCacheStore(userDefaults: defaults),
+                backgroundTasks: .noop,
+                isLiveReplicaHeld: { _ in false })
+            let scope = ReplicaScope(
+                serverOrigin: client.serverOrigin, ownerUserID: owner, org: "docs", documentID: UUID())
+            _ = try store.create(for: scope, checkpoint: Data([0, 0]))
+            XCTAssertTrue(coordinator.evictCleanNativeReplicasIfNeeded().isEmpty)
+            XCTAssertNotNil(
+                try store.restore(for: scope),
+                "must fail closed and evict nothing when \(corruptKey) is unreadable")
+        }
+    }
+
+    func testNativeSaveFinishWritesContentCacheAndTriggersCleanReplicaEviction() async throws {
+        let suite = "NativeSaveCacheAndEvict.\(UUID().uuidString)"
+        draftSuiteNames.append(suite)
+        let defaults = UserDefaults(suiteName: suite)!
+        SignedInUserStore(userDefaults: defaults).remember(owner)
+        let replicaDir = cacheDirectory.appendingPathComponent("ReplicaDrafts.\(UUID().uuidString)", isDirectory: true)
+        let ownership = ReplicaOwnershipStore(userDefaults: defaults)
+        let store = ReplicaStore(directory: replicaDir, ownershipStore: ownership)
+        let drafts = PendingDraftStore(userDefaults: defaults)
+        let contentCache = DocumentContentCacheStore(
+            directory: cacheDirectory.appendingPathComponent("ContentCache.\(UUID().uuidString)", isDirectory: true))
+        let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
+
+        let olderClean = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: owner, org: "docs", documentID: UUID())
+        let savedScope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: owner, org: "docs", documentID: UUID())
+        let checkpoint = BlockNoteYjs.encode(
+            [BlockNoteBlock(node: "paragraph", props: [], runs: [InlineRun("Hello")], id: "b1")], clientID: 1)
+        _ = try store.create(for: olderClean, checkpoint: checkpoint)
+        _ = try store.create(for: savedScope, checkpoint: checkpoint)
+
+        let ydoc = YDoc(clientID: 2)
+        defer { ydoc.destroy() }
+        try ydoc.applyUpdate(YUpdateDecoder.decode(checkpoint), origin: .remote)
+        let editUpdate = try BlockNoteWriter(doc: ydoc).replaceText(block: "b1", range: 5..<5, with: " world")
+        let adapter = ReplicaSaveAdapter(store: store, scope: savedScope)
+        try adapter.record(
+            NativeEditCommand(id: UUID(), baseRevision: 0, blockID: "b1", range: 5..<5, replacement: " world"),
+            update: editUpdate)
+
+        let cap = store.byteCount(for: savedScope)
+        let coordinator = DocumentSaveCoordinator(
+            client: client,
+            draftStore: drafts,
+            replicaStore: store,
+            cleanReplicaByteLimit: cap,
+            contentCache: contentCache,
+            createStore: PendingDocumentCreateStore(userDefaults: defaults),
+            deleteStore: PendingDocumentDeleteStore(userDefaults: defaults),
+            attachmentStore: PendingAttachmentStore(
+                userDefaults: defaults, directory: cacheDirectory.appendingPathComponent(UUID().uuidString)),
+            listCache: DocumentCacheStore(userDefaults: defaults),
+            backgroundTasks: .noop,
+            isLiveReplicaHeld: { _ in false })
+        coordinator.recordReplicaOpened(scope: olderClean, at: Date(timeIntervalSince1970: 100))
+        coordinator.recordReplicaOpened(scope: savedScope, at: Date(timeIntervalSince1970: 200))
+
+        let ownerID = owner.uuidString.lowercased()
+        MockURLProtocol.stubHandler = { request in
+            let url = request.url?.absoluteString ?? ""
+            if url.hasSuffix("/users/me/") {
+                return .init(statusCode: 200, headers: [:], body: Data(#"{"id":"\#(ownerID)"}"#.utf8), error: nil)
+            }
+            if url.hasSuffix("/config/") {
+                return .init(
+                    statusCode: 200, headers: [:], body: Data(#"{"RELEASE_VERSION":"6.0.0"}"#.utf8), error: nil)
+            }
+            if url.contains("/collaboration/ydoc/") {
+                return .init(statusCode: 204, headers: [:], body: Data(), error: nil)
+            }
+            return .init(statusCode: 200, headers: [:], body: Data("{}".utf8), error: nil)
+        }
+
+        try coordinator.enqueueReplica(adapter: adapter, title: "Saved Native Title")
+        await waitUntil {
+            if case .saved = coordinator.state(for: savedScope.documentID) { return true }
+            return false
+        }
+
+        let cached = try XCTUnwrap(contentCache.content(for: savedScope.documentID))
+        XCTAssertEqual(cached.title, "Saved Native Title")
+        XCTAssertTrue(cached.markdown.contains("Hello world"))
+        XCTAssertNil(cached.serverUpdatedAt)
+        XCTAssertNil(try store.restore(for: olderClean), "older clean replica over cap must be evicted on save finish")
+        XCTAssertEqual(coordinator.nativeOwnership(documentID: olderClean.documentID), .none)
+        XCTAssertNotNil(try store.restore(for: savedScope), "recently opened saved replica must remain")
+    }
 }

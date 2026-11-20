@@ -320,7 +320,7 @@ struct EditorView: View {
                     childrenCache: childrenCache, linkRole: linkRole, initialIsFavorite: initialIsFavorite,
                     pinRow: pinRow, isOffline: isOffline, onDeleted: onDeleted,
                     onOpenDocument: onOpenDocument, onCreatedDocument: onCreatedDocument)
-            case .loading, .native, .preservedUnavailable:
+            case .loading, .native, .preservedUnavailable, .unavailable:
                 NativeDocumentShellView(
                     route: nativeOpen.route,
                     nativeOpen: nativeOpen,
@@ -365,7 +365,8 @@ struct EditorView: View {
             }
             guard !offline else { return }
             nativeOpen.refreshInBackground(viewModel: viewModel, isOffline: showsOffline)
-            if case .classic = nativeOpen.route {
+            switch nativeOpen.route {
+            case .classic:
                 if viewModel.isNativeBaselineRequiredOffline, !viewModel.isEditing,
                     !viewModel.hasUnsavedLocalContent
                 {
@@ -373,7 +374,12 @@ struct EditorView: View {
                     reconnectOpenTask?.cancel()
                     reconnectOpenTask = Task { await openNative() }
                 }
-            } else {
+            case .unavailable:
+                // Back online: the native error/empty state retries the open.
+                nativeOpen.close()
+                reconnectOpenTask?.cancel()
+                reconnectOpenTask = Task { await openNative() }
+            case .loading, .native, .preservedUnavailable:
                 childrenLoadTask?.cancel()
                 childrenLoadTask = Task { await viewModel.loadChildren() }
             }

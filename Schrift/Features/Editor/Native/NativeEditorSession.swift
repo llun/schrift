@@ -1000,8 +1000,23 @@ final class NativeEditorSession {
     }
 }
 
-/// Reads the flag at each open. Failed/legacy/offline opens go to the classic
-/// editor; a selected route never changes in response to a preference write.
+/// Why the native surface has no document to show. The native route owns the
+/// screen for these: there is no classic fallback once the switch is on.
+enum NativeOpenUnavailable: Equatable, Sendable {
+    /// The config or raw-state fetch failed: a network error, a 4xx/5xx, or a
+    /// throw anywhere in the fetch task.
+    case openFailed
+    /// The fetched bytes do not decode, apply without retained structs, or project.
+    case unreadableState
+    /// The replica could not be created or restored on this device.
+    case seedFailed
+    /// Offline or unreachable, with no replica and no cached copy on this device.
+    case offlineNeverOpened
+}
+
+/// Reads the flag at each open. With the switch off, and on a pre-Docs 6
+/// server, the classic editor is the surface; a selected route never changes in
+/// response to a preference write.
 ///
 /// A document named by the durable owner marker is different: it is restored
 /// from its replica regardless of the switch or connectivity, and it never
@@ -1013,6 +1028,11 @@ final class NativeEditorSession {
 /// fetched server state is integrated into it; an unowned, fully projectable
 /// document with no local classic work is seeded into a new replica (which
 /// writes the marker). Anything else keeps PR01's read-only view.
+///
+/// A failed fetch, an unreadable fetched state or a failed seed shows
+/// `.unavailable` with Retry on the native surface; it never mounts the classic
+/// editor. Only the switch-off, legacy-server and pending-local-work gates
+/// still select `.classic`.
 @MainActor @Observable
 final class NativeEditorOpen {
     enum Route {
@@ -1022,10 +1042,14 @@ final class NativeEditorOpen {
         /// missing or unreadable. Show the preserved read-only explanation;
         /// never open the classic writer over it.
         case preservedUnavailable
+        /// The native surface owns the route but has no document to show: a
+        /// failed fetch, an unreadable fetched state, a failed seed, or a page
+        /// never opened on this device. Shows a native error/empty state.
+        case unavailable(NativeOpenUnavailable)
 
         var isNativeActive: Bool {
             switch self {
-            case .loading, .native, .preservedUnavailable:
+            case .loading, .native, .preservedUnavailable, .unavailable:
                 return true
             case .classic:
                 return false
@@ -1056,7 +1080,10 @@ final class NativeEditorOpen {
         let mention: Bool?
     }
     private enum OpenResult: Sendable {
+        /// A pre-Docs 6 server, or pending local work that arrived mid-fetch: the classic
+        /// editor owns the document until stages 2 and 5.
         case classic
+        case unavailable(NativeOpenUnavailable)
         /// `ability`: the server's `abilities.update` and `abilities.mention` (nil: not asked, or no answer).
         case state(Data, config: ServerConfig, ability: ServerAbilityAnswer?)
     }
@@ -1068,7 +1095,6 @@ final class NativeEditorOpen {
     /// The last native session's close: the next open waits for it (the
     /// registry also serializes each scope's replica lifecycle, PR08c).
     private var closing: Task<Void, Never>?
-    private let waitForTimeout: @MainActor () async throws -> Void
     /// Tests: the replica sessions this route restores run these hooks.
     private let replicaHooks: DocumentReplicaSession.Hooks
     /// Where replicas are opened (PR08c): `EditorView` hands in the app's
@@ -1083,7 +1109,6 @@ final class NativeEditorOpen {
     init(
         preference: @escaping @MainActor () -> Bool = { NativeEditorPreference.isEnabled() },
         livePreference: @escaping @MainActor () -> Bool = { LiveCollaborationPreference.isEnabled() },
-        waitForTimeout: @escaping @MainActor () async throws -> Void = { try await Task.sleep(for: .seconds(3)) },
         replicaHooks: DocumentReplicaSession.Hooks = .init()
     ) {
         self.preference = preference
@@ -1094,7 +1119,6 @@ final class NativeEditorOpen {
         let initialPreference = preference()
         self.enabled = initialPreference
         self.route = initialPreference ? .loading : .classic
-        self.waitForTimeout = waitForTimeout
     }
 
     /// `canUpdate` is the document's `abilities.update`; missing metadata
@@ -1118,7 +1142,7 @@ final class NativeEditorOpen {
         // A reappearing classic editor keeps its SwiftUI identity and local
         // view state while the optional native eligibility read is in flight.
         switch route {
-        case .loading, .native, .preservedUnavailable:
+        case .loading, .native, .preservedUnavailable, .unavailable:
             route = .loading
             viewModel.setNativeRouteActive(true)
         case .classic:
@@ -1174,6 +1198,7 @@ final class NativeEditorOpen {
                 return
             }
             if let session = restored {
+                coordinator.recordReplicaOpened(scope: scope)
                 if enabled, canUpdate, session.canType, mayType(viewModel) {
                     // Typing starts from the row at once; an online open's
                     // integration asks the server and downgrades a reader.
@@ -1207,8 +1232,15 @@ final class NativeEditorOpen {
             break
         }
         guard canOpen(viewModel, isOffline: isOffline) else {
-            viewModel.setNativeRouteActive(false)
-            route = .classic
+            // Offline or unreachable with nothing on this device is the one
+            // pending-work gate the native surface answers itself: there is no
+            // cached copy to read, so it says so and offers Retry.
+            if offlineNeverOpened(viewModel, isOffline: isOffline) {
+                showUnavailable(.offlineNeverOpened, viewModel: viewModel)
+            } else {
+                viewModel.setNativeRouteActive(false)
+                route = .classic
+            }
             return
         }
         // A task-group race waits for cancelled children before returning. A
@@ -1222,73 +1254,107 @@ final class NativeEditorOpen {
                 guard !Task.isCancelled else { return }
                 let config = try await viewModel.client.serverConfig()
                 viewModel.saveCoordinator.noteServerConfig(config)
-                guard !Task.isCancelled,
-                    self?.canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account)
-                        == true,
-                    config.usesCollaborationYDocServer
-                else {
+                guard let self, !Task.isCancelled,
+                    self.isCurrent(request: request, viewModel: viewModel, account: account)
+                else { return }
+                guard config.usesCollaborationYDocServer else {
                     continuation.yield(.classic)
                     return
                 }
-                // Asked beside the state, inside the same deadline.
+                guard !self.availabilityMoved(viewModel, isOffline: isOffline) else { return }
+                // Pending local work arrived while the fetch was in flight: the classic
+                // editor still owns it until stage 2 moves drafts to native.
+                guard self.canOpen(viewModel, isOffline: isOffline) else {
+                    continuation.yield(.classic)
+                    return
+                }
+                // Asked beside the state, inside the same fetch.
                 async let ability = Self.serverAbility(viewModel, asking: canUpdate)
                 let state = try await viewModel.client.collaborationYDocState(
                     documentID: viewModel.documentID, org: config.collaborationOrg)
                 let answer = await ability
-                guard !Task.isCancelled else { return }
-                guard
-                    self?.canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account)
-                        == true,
-                    try await viewModel.refreshOfflineCacheForNativeReader(isCurrent: {
-                        self?.canContinue(
-                            request: request, viewModel: viewModel, isOffline: isOffline, account: account)
-                            == true
-                    })
-                else {
+                guard !Task.isCancelled,
+                    self.isCurrent(request: request, viewModel: viewModel, account: account)
+                else { return }
+                guard !self.availabilityMoved(viewModel, isOffline: isOffline) else { return }
+                // Pending local work arrived while the fetch was in flight: the classic
+                // editor still owns it until stage 2 moves drafts to native.
+                guard self.canOpen(viewModel, isOffline: isOffline) else {
+                    continuation.yield(.classic)
+                    return
+                }
+                // The cache refresh only feeds the classic offline fallback: its
+                // failure or refusal never blocks the native session.
+                _ = try? await viewModel.refreshOfflineCacheForNativeReader(isCurrent: {
+                    self.isCurrent(request: request, viewModel: viewModel, account: account)
+                })
+                guard !Task.isCancelled,
+                    self.isCurrent(request: request, viewModel: viewModel, account: account)
+                else { return }
+                guard !self.availabilityMoved(viewModel, isOffline: isOffline) else { return }
+                // Pending local work arrived while the fetch was in flight: the classic
+                // editor still owns it until stage 2 moves drafts to native.
+                guard self.canOpen(viewModel, isOffline: isOffline) else {
                     continuation.yield(.classic)
                     return
                 }
                 continuation.yield(.state(state, config: config, ability: answer))
             } catch {
-                continuation.yield(.classic)
-            }
-        }
-        let waitForTimeout = self.waitForTimeout
-        let timeout = Task { @MainActor in
-            do {
-                guard !Task.isCancelled else { return }
-                try await waitForTimeout()
-                guard !Task.isCancelled else { return }
-                continuation.yield(.classic)
-                continuation.finish()
-            } catch {
-                // Cancellation after fetch/close is not another result.
+                // Pending local work that arrived mid-fetch keeps its classic owner even
+                // when the fetch then fails (stage 2 moves drafts to native).
+                let pending = self.map { !$0.canOpenIgnoringConnectivity(viewModel) } ?? false
+                continuation.yield(pending ? .classic : .unavailable(.openFailed))
             }
         }
         defer {
             fetch.cancel()
-            timeout.cancel()
             continuation.finish()
             if generation == request { pendingOpen = nil }
         }
         var iterator = results.makeAsyncIterator()
-        guard let result = await iterator.next(), !Task.isCancelled, generation == request else { return }
-        guard canContinue(request: request, viewModel: viewModel, isOffline: isOffline, account: account),
-            case .state(let state, let config, let ability) = result
-        else {
-            viewModel.setNativeRouteActive(false)
-            route = .classic
+        let next = await iterator.next()
+        guard !Task.isCancelled, generation == request else { return }
+        guard let result = next else {
+            settleWithoutAnswer(request: request, viewModel: viewModel, account: account, isOffline: isOffline)
             return
         }
-        await activateFetchedState(
-            state: state, config: config, ability: ability, viewModel: viewModel, request: request,
-            account: account, canUpdate: canUpdate, fallbackToClassicOnInspectError: true)
+        switch result {
+        case .state(let state, let config, let ability):
+            // A superseded open (generation, account or availability moved)
+            // leaves the route to the newer open; it never selects classic.
+            guard isCurrent(request: request, viewModel: viewModel, account: account) else { return }
+            guard !availabilityMoved(viewModel, isOffline: isOffline) else {
+                settleWithoutAnswer(request: request, viewModel: viewModel, account: account, isOffline: isOffline)
+                return
+            }
+            // Pending local work arrived while the fetch was in flight: the classic
+            // editor still owns it until stage 2 moves drafts to native.
+            guard canOpenIgnoringConnectivity(viewModel) else {
+                viewModel.setNativeRouteActive(false)
+                route = .classic
+                return
+            }
+            await activateFetchedState(
+                state: state, config: config, ability: ability, viewModel: viewModel, request: request,
+                account: account, canUpdate: canUpdate)
+        case .classic:
+            viewModel.setNativeRouteActive(false)
+            route = .classic
+        case .unavailable(let reason):
+            // A superseded open leaves the route to the newer one; an answer that
+            // arrived after availability moved is settled from the device.
+            guard isCurrent(request: request, viewModel: viewModel, account: account) else { return }
+            guard !availabilityMoved(viewModel, isOffline: isOffline) else {
+                settleWithoutAnswer(request: request, viewModel: viewModel, account: account, isOffline: isOffline)
+                return
+            }
+            showUnavailable(reason, viewModel: viewModel)
+        }
     }
 
     private func activateFetchedState(
         state: Data, config: ServerConfig, ability: ServerAbilityAnswer?,
-        viewModel: EditorViewModel, request: Int, account: UUID?, canUpdate: Bool,
-        fallbackToClassicOnInspectError: Bool
+        viewModel: EditorViewModel, request: Int, account: UUID?, canUpdate: Bool
     ) async {
         let session: NativeEditorSession
         do {
@@ -1296,21 +1362,15 @@ final class NativeEditorOpen {
                 state: state, interlinkingOrigin: viewModel.client.serverOrigin)
         } catch {
             guard generation == request else { return }
-            if fallbackToClassicOnInspectError {
-                viewModel.setNativeRouteActive(false)
-                editUnavailableReason = nil
-                route = .classic
-            } else {
-                viewModel.seedNativeMetadataIfNeeded()
-                viewModel.setNativeRouteActive(true)
-                editUnavailableReason = .preservedUnavailable
-                route = .preservedUnavailable
-            }
+            showUnavailable(.unreadableState, viewModel: viewModel)
             return
         }
         guard !Task.isCancelled, generation == request, viewModel.signedInUser.userID == account else { return }
-        // A document that is not fully projectable, or a reader, stays in PR01's
-        // in-memory read-only view and never gains a replica or marker.
+        // Every fetched native open with an account and scope gets a durable
+        // replica (read-only when the user is a reader or the document cannot be
+        // typed) so it restores offline next time. Not while `mayType` is false: a
+        // marker would make the live or classic writer that holds the document
+        // refuse its own saves.
         let scope = account.map {
             ReplicaScope(
                 serverOrigin: viewModel.client.serverOrigin, ownerUserID: $0, org: config.collaborationOrg,
@@ -1323,7 +1383,7 @@ final class NativeEditorOpen {
         let denied = scope.map { viewModel.saveCoordinator.isNativeReader($0) } ?? false
         let verified = canUpdate && ability?.writer != false && !denied
         self.canUpdate = verified
-        guard enabled, verified, session.canType, let account, let scope, mayType(viewModel) else {
+        guard enabled, let account, let scope, mayType(viewModel) else {
             self.canMention = false
             editUnavailableReason = unavailableReason(
                 for: session, viewModel: viewModel, hasEditAccess: verified, hasAccount: account != nil)
@@ -1333,25 +1393,33 @@ final class NativeEditorOpen {
             route = .native(session)
             return
         }
+        let writable = verified && session.canType
         session.close()
         let seeded = await seedReplica(
-            state: state, scope: scope, viewModel: viewModel, request: request, account: account)
+            state: state, scope: scope, viewModel: viewModel, request: request, account: account,
+            writable: writable)
         guard let seeded else { return }
         viewModel.seedNativeMetadataIfNeeded()
         viewModel.setNativeRouteActive(seeded.isNativeActive)
         switch seeded {
-        case .native(let session):
-            if let openStart = pendingOpenStartNs { session.markOpenStarted(openStart) }
-            editUnavailableReason = nil
+        case .native(let restoredSession):
+            if let openStart = pendingOpenStartNs { restoredSession.markOpenStarted(openStart) }
+            editUnavailableReason =
+                writable
+                ? nil
+                : unavailableReason(
+                    for: restoredSession, viewModel: viewModel, hasEditAccess: verified, hasAccount: true)
         case .preservedUnavailable:
             editUnavailableReason = .preservedUnavailable
-        case .loading, .classic:
+        case .loading, .classic, .unavailable:
             editUnavailableReason = nil
         }
         route = seeded
-        if case .native(let session) = seeded {
+        if case .native(let restoredSession) = seeded, writable {
             self.canMention = (ability?.mention ?? rowCanMention) && !viewModel.isLocalDocument
-            startLive(session, scope: scope, config: config, viewModel: viewModel)
+            startLive(restoredSession, scope: scope, config: config, viewModel: viewModel)
+        } else {
+            self.canMention = false
         }
     }
 
@@ -1494,6 +1562,26 @@ final class NativeEditorOpen {
             } else {
                 resolvedState = nil
             }
+            // Prove the fetched bytes install before anything is discarded: the
+            // discard clears the marker, checkpoint, journal and outbox, so a
+            // state that cannot be restored would leave the document stuck
+            // read-only with the local version already gone. It runs before the
+            // currency and local-work guards below, so they hold after its await.
+            if let resolvedState {
+                let origin = viewModel.client.serverOrigin
+                do {
+                    // Off the main actor: decode, apply and project are the same
+                    // work a fresh restore does.
+                    try await Task.detached {
+                        try DocumentReplicaSession.validateInstallable(
+                            state: resolvedState.state, interlinkingOrigin: origin)
+                    }.value
+                } catch {
+                    guard !Task.isCancelled, generation == requestGeneration else { return }
+                    viewModel.recordNativeRefreshError(after: diagnosticsMarker)
+                    return
+                }
+            }
             guard !Task.isCancelled, generation == requestGeneration else { return }
             guard !coordinator.mayPredateSave(saveMarker) else {
                 viewModel.recordNativeRefreshError(after: diagnosticsMarker)
@@ -1528,8 +1616,7 @@ final class NativeEditorOpen {
                 self.rowCanMention = canMention
                 await activateFetchedState(
                     state: resolvedState.state, config: config, ability: resolvedState.ability,
-                    viewModel: viewModel, request: generation, account: account, canUpdate: canUpdate,
-                    fallbackToClassicOnInspectError: false)
+                    viewModel: viewModel, request: generation, account: account, canUpdate: canUpdate)
                 await viewModel.loadChildren()
             } else {
                 viewModel.applyResolvedServerMetadataForNative(
@@ -1549,21 +1636,27 @@ final class NativeEditorOpen {
     }
 
     /// Creates the replica (marker first, so a crash leaves a marker without a
-    /// replica that the next open re-seeds), then restores and types into it.
-    /// Nil when the open went away during the restore.
+    /// replica that the next open re-seeds), records its access time, runs clean
+    /// LRU eviction if over the cap, restores it, and installs typing only when
+    /// `writable` is true. Nil when the open went away during the restore.
     private func seedReplica(
-        state: Data, scope: ReplicaScope, viewModel: EditorViewModel, request: Int, account: UUID
+        state: Data, scope: ReplicaScope, viewModel: EditorViewModel, request: Int, account: UUID,
+        writable: Bool
     ) async -> Route? {
         let coordinator = viewModel.saveCoordinator
         do {
             _ = try coordinator.replicaStore.create(for: scope, checkpoint: state)
+            coordinator.recordReplicaOpened(scope: scope)
+            coordinator.evictCleanNativeReplicasIfNeeded(keepingScopes: registry.busyScopes.union([scope]))
             let restored = try await registry.open(store: coordinator.replicaStore, scope: scope, hooks: replicaHooks)
             guard !Task.isCancelled, generation == request, viewModel.signedInUser.userID == account else {
                 restored?.close()
                 return nil
             }
             guard let session = restored else { return .preservedUnavailable }
-            installTyping(session, scope: scope, viewModel: viewModel)
+            if writable {
+                installTyping(session, scope: scope, viewModel: viewModel)
+            }
             return .native(session)
         } catch ReplicaStoreError.alreadyExists, ReplicaStoreError.corrupt, ReplicaStoreError.quarantined,
             ReplicaStoreError.unsupportedFormat
@@ -1572,9 +1665,10 @@ final class NativeEditorOpen {
             // says: never open the classic writer over it.
             return .preservedUnavailable
         } catch {
-            // Without a marker the classic editor is still the safe owner.
+            // Without a marker there is no classic owner to fall back to: the
+            // native surface reports the failure and offers Retry.
             return coordinator.nativeOwnership(documentID: scope.documentID) == .none
-                ? .classic : .preservedUnavailable
+                ? .unavailable(.seedFailed) : .preservedUnavailable
         }
     }
 
@@ -1886,19 +1980,82 @@ final class NativeEditorOpen {
             && (coordinator.storedDraft(documentID: documentID).map { $0.replica != nil } ?? true)
     }
 
-    private func canContinue(request: Int, viewModel: EditorViewModel, isOffline: Bool, account: UUID?) -> Bool {
-        generation == request && viewModel.signedInUser.userID == account && canOpen(viewModel, isOffline: isOffline)
+    /// The open that asked for an awaited result is still the one on screen.
+    private func isCurrent(request: Int, viewModel: EditorViewModel, account: UUID?) -> Bool {
+        generation == request && viewModel.signedInUser.userID == account
+    }
+
+    /// The fetch ended without an answer for a still-current open (connectivity or
+    /// availability moved while it was in flight). There is no deadline to fall back
+    /// on, so decide again from what is on the device rather than leave the spinner up:
+    /// nothing cached → "Go online"; a cached classic copy or pending work → classic;
+    /// otherwise the retryable error.
+    private func settleWithoutAnswer(request: Int, viewModel: EditorViewModel, account: UUID?, isOffline: Bool) {
+        guard isCurrent(request: request, viewModel: viewModel, account: account), case .loading = route else {
+            return
+        }
+        if offlineNeverOpened(viewModel, isOffline: isOffline) {
+            showUnavailable(.offlineNeverOpened, viewModel: viewModel)
+        } else if !canOpen(viewModel, isOffline: isOffline) {
+            viewModel.setNativeRouteActive(false)
+            route = .classic
+        } else {
+            showUnavailable(.openFailed, viewModel: viewModel)
+        }
+    }
+
+    /// Availability moved under an awaited fetch: the fetch yields nothing and the
+    /// opener settles the route from what is on the device (`settleWithoutAnswer`).
+    private func availabilityMoved(_ viewModel: EditorViewModel, isOffline: Bool) -> Bool {
+        isOffline || viewModel.availability.showsOfflineStatus
     }
 
     private func canOpen(_ viewModel: EditorViewModel, isOffline: Bool) -> Bool {
         // Transport evidence only skips this optional prefetch. The classic
         // route keeps its existing cache/retry controls so it can recover.
-        enabled && !isOffline && !viewModel.availability.showsOfflineStatus && !viewModel.isLocalDocument
+        canOpenIgnoringConnectivity(viewModel)
+            && !isOffline && !viewModel.availability.showsOfflineStatus
+    }
+
+    /// The pending-work gates, without the connectivity ones.
+    private func canOpenIgnoringConnectivity(_ viewModel: EditorViewModel) -> Bool {
+        enabled && !viewModel.isLocalDocument
             && !viewModel.isDocumentPendingDelete
             && !viewModel.saveCoordinator.hasCheckpointedCreate(forServerID: viewModel.documentID)
             && !viewModel.isEditing && !viewModel.hasUnsavedLocalContent
             && viewModel.saveCoordinator.storedDraft(documentID: viewModel.documentID) == nil
             && viewModel.saveCoordinator.pendingSave(documentID: viewModel.documentID) == nil
+    }
+
+    /// Offline or unreachable, with no replica and no cached copy: the one
+    /// pending-work gate the native surface answers itself.
+    private func offlineNeverOpened(_ viewModel: EditorViewModel, isOffline: Bool) -> Bool {
+        canOpenIgnoringConnectivity(viewModel)
+            && (isOffline || viewModel.availability.showsOfflineStatus)
+            && viewModel.contentCache.content(for: viewModel.documentID) == nil
+    }
+
+    /// The native surface owns the route with no document to show.
+    private func showUnavailable(_ reason: NativeOpenUnavailable, viewModel: EditorViewModel) {
+        // Cached subpages still show; a local copy is claimed only when one is on the
+        // device (an open that failed online may have nothing cached).
+        let hadLocalCopy = viewModel.hasLocalCopy
+        viewModel.seedNativeMetadataIfNeeded()
+        if viewModel.contentCache.content(for: viewModel.documentID) == nil {
+            viewModel.hasLocalCopy = hadLocalCopy
+        }
+        viewModel.setNativeRouteActive(true)
+        editUnavailableReason = nil
+        route = .unavailable(reason)
+    }
+
+    /// The native error state's Retry: close, then run the open again.
+    /// A no-op once the page was closed (navigating away cancels the retry, so a
+    /// late tap never installs a session for a screen that is gone).
+    func retry(viewModel: EditorViewModel, isOffline: Bool, canUpdate: Bool = false, canMention: Bool = false) async {
+        guard isOpen else { return }
+        close()
+        await open(viewModel: viewModel, isOffline: isOffline, canUpdate: canUpdate, canMention: canMention)
     }
 
     /// Closing flushes a debounced save before the replica goes away.
@@ -1922,7 +2079,7 @@ final class NativeEditorOpen {
         case .native(let session):
             closing = session.close()
             route = .loading
-        case .preservedUnavailable:
+        case .preservedUnavailable, .unavailable:
             route = .loading
         case .loading, .classic:
             break

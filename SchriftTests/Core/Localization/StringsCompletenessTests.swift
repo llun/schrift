@@ -18,6 +18,10 @@ final class StringsCompletenessTests: XCTestCase {
         .profile_native_editor_diagnostics,
         .toast_diagnostics_copied,
         .server_unsupported,
+        .native_editor_open_failed_title, .native_editor_open_failed_body,
+        .native_editor_unreadable_title, .native_editor_unreadable_body,
+        .native_editor_seed_failed_title, .native_editor_seed_failed_body,
+        .native_editor_offline_never_opened_title, .native_editor_offline_never_opened_body,
     ]
 
     private static let extendedPluralKeys: Set<L10nKey> = [

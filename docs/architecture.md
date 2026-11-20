@@ -558,11 +558,17 @@ path; PR01 connects this engine to an opt-in read-only TextKit 2 surface.
 defaults off and is read by `NativeEditorOpen` at each open or reopen. A selected surface
 never changes in response to a preference write. `NativeEditorOpen` fetches the
 existing raw `collaborationYDocState` for eligible online Docs 6 documents.
-Legacy servers, offline/unreachable or local documents, pending deletions/local
-content, pending creation intents and failed raw fetches/decodes stay with the classic editor. A three-second
-prefetch deadline selects classic without waiting for a stalled request to finish
-cancelling; closed/timed-out result streams cannot install late native sessions.
-Its tasks, controls and live bridge
+With the switch on, the classic editor is selected only for a pre-Docs 6 server, for
+pending local work (a local document, a pending deletion, a checkpointed create, a
+classic draft, a pending save, or unsaved classic content), and for an offline or
+unreachable open that has a cached classic copy to read. Every other failure stays on
+the native surface: a failed config or raw-state fetch, an unreadable fetched state and
+a failed replica seed show `.unavailable` with Retry, and an offline open with no
+replica and no cached copy shows "Go online to open this page" (Retry appears once the
+device is back online). There is no prefetch deadline: the loading state stays until
+the fetch answers or fails, and URLSession's own timeouts apply. A superseded open
+(generation, account or availability moved) leaves the route to the newer open rather
+than selecting classic. Its tasks, controls and live bridge
 are not mounted alongside a native session.
 
 Successful native selection also refreshes the existing offline cache before
@@ -571,8 +577,9 @@ leaf-nesting recovery and `cacheServerCopy`; the stored representation remains
 server-exported Markdown plus title, client sync time and server `updated_at`,
 rather than a potentially lossy native projection. It does not install classic
 display state or advance its edit baseline. This read is covered by the same
-prefetch deadline, cancellation/availability checks and save-marker freshness
-guard. The classic load route remains unchanged.
+cancellation/availability checks and save-marker freshness guard, but its failure
+never blocks the native session: the cache only feeds the classic offline reader.
+The classic load route remains unchanged.
 This refresh covers content only, not the children cache.
 
 The native replica is separate from `DocumentCollaborationManager`. Since PR08b the
@@ -615,8 +622,12 @@ checkpoint plus ordered updates; their Yjs client IDs remain intact.
 The HTTP outbox is independent of the replay checkpoint and of state vectors.
 Compaction retains pending local update bytes even when the new checkpoint already
 contains their effect. Acknowledging a captured prefix leaves later edits queued;
-delete-only updates require the same HTTP confirmation. There is no eviction or
-sign-out removal; `remove(for:)` is an explicit discard through a tombstone rename,
+delete-only updates require the same HTTP confirmation. Sign-out purges clean replicas
+(`purgeCleanReplicas`), and an LRU pass (`evictCleanReplicas`, backed by
+`ReplicaAccessStore` last-opened timestamps) caps total replica storage at 100 MB by
+evicting least-recently-opened clean copies (clearing their ownership markers) while
+never touching open, dirty, provisional, drafted, conflicted, or unreadable replicas;
+`remove(for:)` is an explicit discard through a tombstone rename,
 and only of the signed-in owner's replica (another account's replica and native draft
 survive a discard or deletion made in another session).
 A durable owner marker (`ReplicaOwnershipStore`), written before any replica file,
@@ -714,10 +725,16 @@ unsupported auxiliary root, every block id addressable, no `.lossy` block, and a
 shadow of the blocks the locked cards leave behind). A locked preserved card is a leaf block of an
 unknown type and is not a reason to stop authoring; any other opaque block is. An owned replica is restored offline-first, then
 the fetched raw state is integrated into the same durable owner; a converted
-response is never installed. An unowned eligible document is seeded into a new
-replica from the fetched raw state (`ReplicaStore.create` writes the marker first)
-and restored. Everything else keeps PR01's in-memory read-only view and never gains a
-marker. Each persisted command schedules `NativeReplicaSaveScheduler`, which uses the
+response is never installed. Every fetched Docs 6 document that reaches native with an
+account and scope — including readers and non-typeable documents, but not while typing is held (pending delete, checkpointed create, classic draft, live owner) —
+is seeded into a new replica from the fetched raw state (`ReplicaStore.create` writes
+the marker first) and restored (with typing and live collaboration enabled only when
+writable; otherwise read-only with no journal and no live socket, so it restores offline
+next time and gains typing if later promoted to writer). Only a signed-out open (no
+account/scope) keeps PR01's in-memory read-only view without a marker; switch-off,
+legacy servers, pending local work, and local documents are unchanged. Confirmed native
+saves also write their title and Markdown shadow (`save.markdown`, `serverUpdatedAt: nil`)
+into `DocumentContentCacheStore` so offline Search and Attachments stay current. Each persisted command schedules `NativeReplicaSaveScheduler`, which uses the
 classic autosave cadence (trailing interval, 30 s cap) and hands the verified outbox
 to `enqueueReplica` with the cached server title/baseline. Close and backgrounding
 flush it; reopening a replica whose outbox has no draft (a process that ended inside
@@ -1019,8 +1036,8 @@ and the journal agree; when it cannot be rebased the surface's epoch is invalida
 its pending keys become a recovery entry, and a barrier that met such a change is
 retried once. IME begin is posted and commit is a barrier; the history is one per replica
 session with grouping decided on the main actor; block-menu availability and copy payloads
-are asked of the session asynchronously. Multi-window stays off; the per-scope registry
-and fan-out are PR08c (below), the native live socket PR09a. AGENTS.md has the
+are asked of the session asynchronously. Multi-window stays off; the per-scope registry,
+the fan-out and the native live socket are described below. [`standards/document-engine.md`](standards/document-engine.md) has the
 operational detail and the bounds.
 
 **PR08c One replica session per scope, fanned out, with bounded delivery.**
@@ -1204,8 +1221,8 @@ and `blockID` scroll targets arrive in PR13c2).
 
 **PR15 Native shell integration, Reading↔Editing mode handoff, shortcuts, and diagnostics.**
 `EditorView` keeps `NativeEditorPreference.key` (`"schrift.nativeEditor"`) off by default and routes
-`.loading`, `.native`, and `.preservedUnavailable` through `NativeDocumentShellView` while keeping
-`.classic` on `ClassicEditorView`. `NativeDocumentShellView` unifies the production chrome across
+`.loading`, `.native`, `.preservedUnavailable`, and `.unavailable` through `NativeDocumentShellView`
+while keeping `.classic` on `ClassicEditorView`. `NativeDocumentShellView` unifies the production chrome across
 both surfaces (`EditorLoadingPlaceholder`, `EditorBannerStack`, toolbar leading `PagesTreeDrawer` +
 edge pan, trailing `Edit`/`Done` + `Share` + `OptionsSheetView` + `OutlinePresentationGate` /
 `OutlineHeldNavigation`, `ConflictSheetView`, `pendingDeleteNotice`, and `noteEditorAppeared()`).
@@ -1565,7 +1582,7 @@ it succeeds, `EditorViewModel.persistLiveSnapshot` calls `enqueueLiveSnapshot` �
   body** reconciles via rule 1 (or rule 2's body fallback), never a false conflict against
   pre-live state. **Revised 2026-11-04:** markdown-only drafts are today's behaviour, not a rule
   to preserve; persisting the raw replica bytes in the draft is approved and planned. Its
-  constraints live in `AGENTS.md` ("Drafts will carry the replica bytes").
+  constraints live in [`standards/editor-save.md`](standards/editor-save.md) ("Drafts will carry the replica bytes").
 
 ### Editor wiring — the write path complete (C2c)
 
@@ -1784,7 +1801,7 @@ that draft then replays through the classic path. A replica fail-safe does not f
 `onHeldReplicaReleased`, so a draft skipped while it was held waits for the next normal sync
 trigger (reconnect, foreground, launch). Until then it waits while the editor holds
 the replica, and classic saves outside `runSyncPass` (retry, autosave after live mode
-disengages) can still race the socket, as on legacy servers. Details live in `AGENTS.md`.
+disengages) can still race the socket, as on legacy servers. Details live in [`standards/editor-save.md`](standards/editor-save.md).
 
 **Switch-on evidence (S4/S5):** on the real yhub server,
 snapshot and live sync for a document filled with every web block were byte-identical.
@@ -2898,7 +2915,7 @@ belongs anyway — the read side already refuses to engage on one.
 From the design handoff (`ui_kits/docs-ios/`), implemented as SwiftUI views using the DesignSystem components, not copied HTML/JS:
 
 - **Connect** — logo, "Welcome to Docs", server URL `TextField`, recent servers list, "Sign in to {host}" button → WebView login.
-- **Home** — a system large-title navigation bar (subtitle = server host, new-doc toolbar action), `SearchField`, a horizontal Pinned carousel of `PinnedCard`s (emoji, title, excerpt on a tinted card) over a Recent section of Ledger `DocRow`s (tile, title + date, excerpt, page count) — **each document renders in exactly one of the two**: the recents feed is fetched unfiltered, so `recentsExcludingPinned` subtracts whatever the Pinned section is already drawing (pinned wins, Recent is the residue; keyed on membership of the rendered pinned list, never on the `isFavorite` flag, which paginated favorites responses make disagree — see `AGENTS.md`) — the system `TabView` (Schrift/Shared/Profile, with Profile last). Pinned is ordered most-recently-edited first (`stablePinnedOrder`, id tie-break), applied to the server answer before the pin overlay, so revalidations don't reshuffle it; list changes animate with `.snappy`, off under Reduce Motion. Compact Home pushes Search on its own navigation stack; regular-width Home searches inline in its split sidebar. Search hits `GET /documents/search/?q=` with recent-search history, Shared lists documents shared *with* the user (`GET /documents/?is_creator_me=false`) with an offline metadata cache, each row enriched best-effort with its members' avatars and the sharer's name from that document's `accesses/` (the "shared by me" scope was removed — the list API has no distinct by-me shared query), Profile shows the current user via `GET /users/me/` in a row that pushes the **Account screen** (`AccountScreen`, trimmed to the fields `/users/me/` actually returns; it renders an explicit unavailable state rather than a placeholder name when the user hasn't loaded), with the independent appearance/theme/language pickers, server + server-version rows, sign-out, and the Work Offline toggle.
+- **Home** — a system large-title navigation bar (subtitle = server host, new-doc toolbar action), `SearchField`, a horizontal Pinned carousel of `PinnedCard`s (emoji, title, excerpt on a tinted card) over a Recent section of Ledger `DocRow`s (tile, title + date, excerpt, page count) — **each document renders in exactly one of the two**: the recents feed is fetched unfiltered, so `recentsExcludingPinned` subtracts whatever the Pinned section is already drawing (pinned wins, Recent is the residue; keyed on membership of the rendered pinned list, never on the `isFavorite` flag, which paginated favorites responses make disagree — see [`standards/editor-save.md`](standards/editor-save.md)) — the system `TabView` (Schrift/Shared/Profile, with Profile last). Pinned is ordered most-recently-edited first (`stablePinnedOrder`, id tie-break), applied to the server answer before the pin overlay, so revalidations don't reshuffle it; list changes animate with `.snappy`, off under Reduce Motion. Compact Home pushes Search on its own navigation stack; regular-width Home searches inline in its split sidebar. Search hits `GET /documents/search/?q=` with recent-search history, Shared lists documents shared *with* the user (`GET /documents/?is_creator_me=false`) with an offline metadata cache, each row enriched best-effort with its members' avatars and the sharer's name from that document's `accesses/` (the "shared by me" scope was removed — the list API has no distinct by-me shared query), Profile shows the current user via `GET /users/me/` in a row that pushes the **Account screen** (`AccountScreen`, trimmed to the fields `/users/me/` actually returns; it renders an explicit unavailable state rather than a placeholder name when the user hasn't loaded), with the independent appearance/theme/language pickers, server + server-version rows, sign-out, and the Work Offline toggle.
   - On a compact stack every editor is pushed with the system's standard slide: the stacks push a `DocumentEditorRoute` and register `navigationDestination(for: DocumentEditorRoute.self)` in `MainTabView`. Documents used to zoom open from their row (`.navigationTransition(.zoom)`), but popping the zoom on iOS 26 intermittently left the navigation bar in its collapsed large-title state, so Home's title went missing on return; the zoom was removed rather than worked around (2026-11-03). The iPad split view selects rather than pushes.
   - Search results push the same `DocumentEditorRoute` as Home rows. The editor hides the native tab bar; Back restores Search (with its retained query), then Home. Shared and Profile retain their own stacks, including Profile → Account. Search's system field is always exposed in the navigation bar, with its localized prompt; Home's shortcut is one VoiceOver button.
   - The shell retains `SearchViewModel` across pop/re-entry and tab switches (query, in-memory results, recent terms). Search remains server-backed. Shared `OnlineAvailability` reads Work Offline and the live network path: Home's compact shortcut, pushed Search field and iPad inline field disable with a localized explanation while offline. Home shows cached rows instead of treating retained search results as an offline index. Search and Quick Access suppress requests in their view models too; availability/request generations reject late results and errors across reconnect. Query state and the PR #148 navigation structure survive these transitions.
