@@ -9,10 +9,11 @@ sign-off log for the Phase 2 native BlockNote/Yjs editor (`NativeEditorView` / `
 - **Default state:** `NativeEditorPreference.key` (`"schrift.nativeEditor"`, persisted in `UserDefaults`,
   toggled in **Profile → Native editor (experimental)**) **stays `false` (OFF) by default**.
 - **Scope:** When the switch is on, eligible Docs 6 documents (`usesCollaborationYDocServer == true`)
-  open through `NativeDocumentShellView` and `NativeEditorSession`. Pre-Docs 6 legacy servers and
-  unmigrated classic `PendingDraft`s remain on `ClassicEditorView` (`ClassicEditorView`,
-  `BlockEditorView`, `BlockTextView`, `MarkdownBlockView`, and `BlockNoteYjs.applyEdit` are all
-  retained).
+  open through `NativeDocumentShellView` and `NativeEditorSession`. Pre-Docs 6 servers are refused
+  at sign-in and launch (see `docs/architecture.md`, "Docs 6 is required"), so the app never reaches
+  an editor on one; unmigrated classic `PendingDraft`s remain on `ClassicEditorView`
+  (`ClassicEditorView`, `BlockEditorView`, `BlockTextView`, `MarkdownBlockView`, and
+  `BlockNoteYjs.applyEdit` are all retained).
 - **Failure states:** With the switch on, a failed config or raw-state fetch, an unreadable fetched
   state and a failed replica seed show the native error state with Retry; an offline or unreachable
   open with no replica and no cached copy shows "Go online to open this page". These never mount
@@ -208,8 +209,10 @@ iPhone/iPad) using a Release/TestFlight build before considering any rollout cha
 
 ## 6. Known limitations & accepted risks
 
-- **Pre-Docs 6 servers:** Servers where `usesCollaborationYDocServer == false` remain on
-  `ClassicEditorView` even when the native switch is enabled.
+- **Pre-Docs 6 servers:** a server whose config proves a pre-6 release is refused at sign-in and
+  launch ("This server needs Docs 6 or later"). One whose config proves nothing (hidden version,
+  failed fetch, offline) is never blocked, so the `ClassicEditorView` fallback for
+  `usesCollaborationYDocServer == false` is still reachable for it until the classic editor is removed.
 - **Native open failures:** A failed fetch, an unreadable fetched state or a failed seed shows the
   native error state with Retry instead of the classic editor, so the document is not readable until
   the open succeeds. An offline or unreachable open with no replica and no cached copy shows

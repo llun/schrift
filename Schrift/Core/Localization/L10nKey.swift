@@ -122,6 +122,9 @@ enum L10nKey: String, CaseIterable, Sendable {
     case connect_error_sign_in_failed = "connect.error.sign_in_failed"
     // "Sign-in could not be confirmed. Please try again."
 
+    // Server support (Schrift requires Docs 6+)
+    case server_unsupported = "server.unsupported"  // "This server needs Docs 6 or later"
+
     // Reauthentication
     case reauth_title = "reauth.title"  // "Session expired"
     case reauth_error_sign_in_failed = "reauth.error.sign_in_failed"

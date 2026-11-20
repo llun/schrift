@@ -115,6 +115,9 @@ final class DocumentSaveCoordinator {
     private let listCache: DocumentCacheStore
     private let childrenCache: DocumentChildrenCacheStore
     let serverConfigStore: ServerConfigStore
+    /// The Docs capability proved for this server, written beside `serverConfigStore` so the
+    /// launch gate and the save path read one answer rather than two that can drift.
+    private let serverCapabilityStore: ServerCapabilityStore
     /// The server this session is signed in to (`siteOrigin`). Create records carry the
     /// origin they were minted against; it decides what may be **listed and sent**, never
     /// what is protected — see `isPendingCreate` vs `isReplayable`.
@@ -481,6 +484,7 @@ final class DocumentSaveCoordinator {
         self.listCache = listCache
         self.childrenCache = childrenCache
         self.serverConfigStore = ServerConfigStore(userDefaults: listCache.userDefaults)
+        self.serverCapabilityStore = ServerCapabilityStore(userDefaults: listCache.userDefaults)
         self.serverOrigin = serverOrigin
         self.appBuild = appBuild
         self.mediaCheckMaxAttempts = mediaCheckMaxAttempts
@@ -696,6 +700,7 @@ final class DocumentSaveCoordinator {
 
     func noteServerConfig(_ config: ServerConfig) {
         serverConfigStore.remember(config, forServerOrigin: client.serverOrigin)
+        serverCapabilityStore.record(config, forServerOrigin: client.serverOrigin)
     }
 
     func cachedServerConfig() -> ServerConfig? {

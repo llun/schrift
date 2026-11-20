@@ -4,6 +4,11 @@
 
 Schrift is a native iOS/iPadOS client for [La Suite Numérique Docs](https://github.com/suitenumerique/docs), built against a self-hosted instance.
 
+**Schrift requires a Docs 6+ server.** Sign-in and launch read `GET /api/v1.0/config/` and
+refuse a pre-Docs 6 deployment ("This server needs Docs 6 or later") instead of failing
+request by request; a server whose capability is unknown — never fetched, or the last fetch
+failed — is never refused, so an offline launch keeps working.
+
 Browse, search, and edit documents; share and manage permissions; and read a
 document's version history (browsing is native, restoring a version currently
 hands off to the web app). Real-time **live collaboration** (Yjs over a WebSocket)

@@ -2194,7 +2194,7 @@ Mutating requests (`POST`/`PATCH`/`PUT`/`DELETE`) must include Django's CSRF tok
 
 | Purpose | Endpoint |
 |---|---|
-| Bootstrap config | `GET /config/` *(the app still bootstraps from `GET /users/me/` alone — but as of 2026-07-11 this endpoint **is** called, best-effort, for the Profile server-version row (`RELEASE_VERSION`) — see `ServerConfig`/`serverConfig()`; it is not part of app bootstrap)* |
+| Bootstrap config | `GET /config/` — read at sign-in and at launch to decide whether the server is Docs 6+ (see "Docs 6 is required" below), and best-effort for the Profile server-version row (`RELEASE_VERSION`). See `ServerConfig`/`serverConfig()` |
 | Current user | `GET /users/me/` |
 | Document list | `GET /documents/?is_favorite=&is_creator_me=&title=&ordering=&page=&page_size=` |
 | Document detail | `GET /documents/{id}/` |
@@ -2216,6 +2216,32 @@ Mutating requests (`POST`/`PATCH`/`PUT`/`DELETE`) must include Django's CSRF tok
 | Accesses (members) | `GET/POST/PATCH/DELETE /documents/{id}/accesses/` |
 | Invitations | `GET/POST/PATCH/DELETE /documents/{id}/invitations/` |
 | User search (for invite) | `GET /users/?q=&document_id=` |
+
+**Docs 6 is required.** Schrift supports only Docs 6+ servers
+(`ServerConfig.usesCollaborationYDocServer`): a pre-Docs 6 deployment has no
+`content/` route and no collaboration server, so every save path would fail. The
+capability is a per-origin tri-state in `ServerCapabilityStore`
+(`dev.llun.Schrift.serverCapabilities`): `docs6`, `legacy`, or unknown (no entry).
+`serverCapability(from:)` is the one decision — only a decoded config that proves a
+route counts (`ContentSaveRoute(config:)`'s rule: release ≥ 6 or a yhub URL is `docs6`, a
+parsable older release is `legacy`). A 404 (a proxy mid-rollout answers one too), a
+transport failure, a 5xx, an undecodable body, an expired session, or a config naming
+neither proves nothing. **A fetch that proves nothing is never legacy** — reading it as
+such would lock a Docs 6 user out of their own server — and a sign-in whose fetch proves
+nothing clears a cached legacy for that origin.
+
+Sign-in (`ConnectViewModel.handleLoginComplete`) confirms the session, then fetches the
+config and records it: a confirmed legacy server is refused with "This server needs Docs
+6 or later" and no sign-in (the handed-over cookies stay unpersisted, exactly as a failed
+confirmation leaves them); unknown signs in normally. At launch `ServerSupportGate` seeds
+from the cached capability — so a known-legacy server is refused before any network call,
+including offline — and refreshes in the background; a confirmed legacy server replaces
+the signed-in shell with `UnsupportedServerView` (message plus Sign out), and a refreshed
+Docs 6 answer clears it. Sign out from the notice is the tab shell's sign-out (drain,
+close and purge native replicas first). `DocumentSaveCoordinator.noteServerConfig` and the
+client's `onServerConfig` hook also record what a config proves; the gate reads the store
+only at launch and on its own refresh, so a server that changes mid-session is noticed on
+the next launch.
 
 Pin/unpin persists its latest desired state in `PendingDocumentPinStore`, scoped to
 server origin, account and server document. The app-scoped `DocumentPinCoordinator`

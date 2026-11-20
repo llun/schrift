@@ -131,6 +131,9 @@ enum Strings_en {
         .connect_error_invalid_server: "Enter a valid server address.",
         .connect_error_sign_in_failed: "Sign-in could not be confirmed. Please try again.",
 
+        // Server support (Schrift requires Docs 6+)
+        .server_unsupported: "This server needs Docs 6 or later",
+
         // Reauthentication
         .reauth_title: "Session expired",
         .reauth_error_sign_in_failed: "Sign-in could not be confirmed. Please try again.",

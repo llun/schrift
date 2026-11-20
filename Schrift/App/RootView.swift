@@ -37,6 +37,9 @@ private struct AuthenticatedHomeContainer: View {
     /// Every native replica open in this server session, one per scope (PR08c).
     @State private var nativeSessions: NativeSessionRegistry
     @State private var signOutTask: Task<Void, Never>?
+    /// Whether this server is Docs 6+ — seeded from the cached capability, refreshed in `.task`.
+    /// A confirmed pre-Docs 6 server replaces the whole signed-in shell with `UnsupportedServerView`.
+    @State private var supportGate: ServerSupportGate
     let serverURL: URL
     let serverHost: String
     /// `siteOrigin(for: serverURL)` — the origin document images are gated
@@ -44,6 +47,8 @@ private struct AuthenticatedHomeContainer: View {
     let serverOrigin: String
     let sessionStore: SessionStore
     let onSignOut: () -> Void
+    /// The shared client, kept so the launch task can re-ask `/config/` for the capability gate.
+    private let client: DocsAPIClient
 
     @Environment(ConnectivityMonitor.self) private var connectivity
     @Environment(\.scenePhase) private var scenePhase
@@ -65,7 +70,12 @@ private struct AuthenticatedHomeContainer: View {
             },
             onRequestFailure: { failure in diagnostics.record(failure) },
             onTransportOutcome: { outcome, startedAt in connectivity.report(outcome, startedAt: startedAt) },
-            onServerConfig: { config in ServerConfigStore().remember(config, forServerOrigin: origin) }
+            onServerConfig: { config in
+                ServerConfigStore().remember(config, forServerOrigin: origin)
+                // Every successful config fetch anywhere in the app also settles the
+                // capability, so the two stores never disagree.
+                ServerCapabilityStore().record(config, forServerOrigin: origin)
+            }
         )
         // The save replay must leave a draft alone while a healthy, writable live replica owns it.
         let collaborationManager = DocumentCollaborationManager(
@@ -118,6 +128,10 @@ private struct AuthenticatedHomeContainer: View {
         _attachments = State(initialValue: AttachmentLoader(client: client, serverOrigin: origin))
         _images = State(initialValue: ImageLoader(scopeProvider: scopeProvider))
         _posters = State(initialValue: VideoPosterLoader(scopeProvider: scopeProvider))
+        // Reads the cached capability only — no write, so a re-evaluated `@State` initializer
+        // cannot invalidate `@AppStorage` and loop the first scene.
+        _supportGate = State(initialValue: ServerSupportGate(serverOrigin: origin))
+        self.client = client
         self.serverURL = serverURL
         serverHost = serverURL.host ?? ""
         serverOrigin = origin
@@ -126,6 +140,50 @@ private struct AuthenticatedHomeContainer: View {
     }
 
     var body: some View {
+        Group {
+            if supportGate.isBlocked {
+                // A confirmed pre-Docs 6 server: the signed-in shell would only fail request by
+                // request, so it is replaced outright. Sign out is the way back to Connect.
+                UnsupportedServerView(onSignOut: signOut)
+            } else {
+                signedInContent
+            }
+        }
+        .task {
+            // Schrift supports only Docs 6+ servers. The cached capability already decided
+            // whether the notice is up; re-ask in the background so a server upgraded (or
+            // downgraded) since the last launch is noticed without a reinstall. A failed or
+            // offline refresh proves nothing and leaves the cached answer alone.
+            await supportGate.refresh {
+                do {
+                    return .success(try await client.serverConfig())
+                } catch {
+                    return .failure(error)
+                }
+            }
+        }
+    }
+
+    /// The one sign-out, from the tabs and from the unsupported-server notice: drain pending
+    /// native saves, close every replica, purge the leaving user's clean ones, then sign out.
+    private func signOut() {
+        guard signOutTask == nil else { return }
+        let expectedGeneration = sessionStore.signInGeneration
+        let leavingUserID = SignedInUserStore().userID
+        signOutTask = Task { @MainActor in
+            defer { signOutTask = nil }
+            // Drain pending native saves, then close every replica before purging clean ones.
+            await nativeSessions.drainAll().value
+            await nativeSessions.closeAll().value
+            guard sessionStore.signInGeneration == expectedGeneration, sessionStore.isAuthenticated else {
+                return
+            }
+            viewModel.saveCoordinator.purgeCleanNativeReplicasOnSignOut(ownerUserID: leavingUserID)
+            onSignOut()
+        }
+    }
+
+    private var signedInContent: some View {
         // One shell for both idioms. The size-class split now lives inside the
         // documents tab (list-and-detail on a regular width, push on a compact
         // one), so iPad keeps the tab bar it used to have no way to show — and
@@ -136,22 +194,7 @@ private struct AuthenticatedHomeContainer: View {
             // container is not rebuilt when it does — so the tabs are told, and the ones
             // holding account-scoped state re-read it. See `SessionStore.signInGeneration`.
             signInGeneration: sessionStore.signInGeneration,
-            onSignOut: {
-                guard signOutTask == nil else { return }
-                let expectedGeneration = sessionStore.signInGeneration
-                let leavingUserID = SignedInUserStore().userID
-                signOutTask = Task { @MainActor in
-                    defer { signOutTask = nil }
-                    // Drain pending native saves, then close every replica before purging clean ones.
-                    await nativeSessions.drainAll().value
-                    await nativeSessions.closeAll().value
-                    guard sessionStore.signInGeneration == expectedGeneration, sessionStore.isAuthenticated else {
-                        return
-                    }
-                    viewModel.saveCoordinator.purgeCleanNativeReplicasOnSignOut(ownerUserID: leavingUserID)
-                    onSignOut()
-                }
-            }
+            onSignOut: signOut
         )
         .onChange(of: workOffline) { _, isOffline in
             viewModel.availability.preferencesChanged()
