@@ -116,7 +116,11 @@ final class EditorViewModelLinkTests: XCTestCase {
         let document = await viewModel.openLinkedDocument(linkedID)
 
         XCTAssertEqual(document?.title, "Cached child")
-        XCTAssertEqual(recorder.methods.count, 0, "a listed sub-page must not cost a round-trip")
+        // Scoped to the linked document: `load()`'s cancelled children GET (its content fetch
+        // failed) can still reach the mock after the recorder is installed on a slow runner.
+        XCTAssertEqual(
+            recorder.count(ofMethod: "GET", urlContaining: linkedID.uuidString.lowercased()), 0,
+            "a listed sub-page must not cost a round-trip")
         XCTAssertNil(viewModel.errorKey)
     }
 
