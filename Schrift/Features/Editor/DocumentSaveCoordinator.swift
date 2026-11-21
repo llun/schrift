@@ -2013,8 +2013,15 @@ final class DocumentSaveCoordinator {
     /// Moves queued photos back onto the id their page now lives under (a take-back of a create
     /// the server lost). Left on the dead server id, a native one's commit would find no replica,
     /// answer `.gone` and delete the bytes; a classic one would upload to a document that is gone.
-    private func rekeyAttachments(from oldID: UUID, to newID: UUID) {
-        for var attachment in pendingAttachments.values.filter({ $0.documentID == oldID }) {
+    /// Only the page owner's records on this server: another account may have queued a photo on
+    /// the same shared server id, and moving it would strand it under a page it cannot see. Called
+    /// before the server-id draft is removed, so a death between the two leaves both on disk.
+    private func rekeyAttachments(from oldID: UUID, to newID: UUID, ownerUserID: UUID?) {
+        guard let ownerUserID else { return }
+        let owned = pendingAttachments.values.filter {
+            $0.documentID == oldID && $0.ownerUserID == ownerUserID && $0.serverOrigin == client.serverOrigin
+        }
+        for var attachment in owned {
             attachment.documentID = newID
             updatePendingAttachment(attachment)
         }
@@ -2473,9 +2480,9 @@ final class DocumentSaveCoordinator {
                                 documentID: record.localID, title: orphan.title, markdown: body,
                                 updatedAt: orphan.updatedAt, baseline: nil,
                                 replica: localRef))
+                        rekeyAttachments(from: serverID, to: record.localID, ownerUserID: record.ownerUserID)
                         draftStore.remove(documentID: serverID)
                         try? replicaStore.remove(for: serverScope)
-                        rekeyAttachments(from: serverID, to: record.localID)
                         syncBackupExclusion(for: record.localID, scope: localScope)
                         syncBackupExclusion(for: serverID)
                     }
@@ -2484,8 +2491,8 @@ final class DocumentSaveCoordinator {
                         PendingDraft(
                             documentID: record.localID, title: orphan.title, markdown: orphan.markdown,
                             updatedAt: orphan.updatedAt, baseline: nil))
+                    rekeyAttachments(from: serverID, to: record.localID, ownerUserID: record.ownerUserID)
                     draftStore.remove(documentID: serverID)
-                    rekeyAttachments(from: serverID, to: record.localID)
                     syncBackupExclusion(for: record.localID)
                     syncBackupExclusion(for: serverID)
                 }

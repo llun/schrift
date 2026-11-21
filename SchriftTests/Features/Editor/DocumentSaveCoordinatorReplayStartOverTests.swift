@@ -660,6 +660,14 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
                     org: "docs", blockID: blockID, slot: MediaBlock.Slot(node: "image", url: ""),
                     fileName: "photo.jpg", contentType: "image/jpeg")))
 
+        // Another account's photo on the same shared server id is not this page's to move.
+        let otherPhotoID = UUID(uuidString: "99999999-9999-4999-8999-999999999999")!
+        attachments.saveData(bytes, for: otherPhotoID)
+        attachments.save(
+            PendingAttachment(
+                localID: otherPhotoID, documentID: serverID, createdAt: Date(), serverOrigin: origin,
+                ownerUserID: UUID(uuidString: "33333333-3333-4333-8333-333333333333")!))
+
         stubUsersMeThen(log: log) { _ in .init(statusCode: 404, headers: [:], body: Data(), error: nil) }
 
         let client = DocsAPIClient(baseURL: baseURL, session: MockURLProtocol.makeSession(), cookieProvider: { [] })
@@ -690,5 +698,8 @@ final class DocumentSaveCoordinatorReplayStartOverTests: DocumentSaveCoordinator
         XCTAssertNil(creates.create(for: localID)?.syncedServerID, "the checkpoint cleared")
         XCTAssertNotNil(try replicaStore.manifest(for: localScope), "the replica moved back to the local scope")
         XCTAssertNil(try replicaStore.manifest(for: serverScope), "the dead server scope replica is gone")
+        XCTAssertEqual(
+            attachments.attachment(for: otherPhotoID)?.documentID, serverID, "another account's photo stays put")
+        XCTAssertEqual(attachments.data(for: otherPhotoID), bytes)
     }
 }
