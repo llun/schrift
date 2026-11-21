@@ -393,6 +393,22 @@ final class DocumentSaveCoordinatorClassicConversionTests: XCTestCase {
 
     /// `MarkdownYjs` spells an `.unknown` block as plain paragraphs, which loses its structure —
     /// a table would come back as prose. Such a page stays classic.
+    /// A photo nested in a list encodes to an empty-url child image the native editor can only
+    /// show read-only, so the page stays classic rather than becoming an uneditable replica.
+    func testSkipsAPageWithANestedPhoto() {
+        let defaults = makeDefaults()
+        let photo = seedPhoto(defaults)
+        seedClassicCreate(defaults, markdown: "- Task\n  ![](\(photo.placeholder))")
+        cacheDocs6(defaults)
+        let env = makeEnvironment(sharing: defaults)
+
+        env.coordinator.convertUnsentClassicCreates()
+
+        XCTAssertEqual(env.coordinator.nativeOwnership(documentID: documentID), .none)
+        XCTAssertNil(env.drafts.draft(for: documentID)?.replica)
+        XCTAssertNil(env.attachments.attachment(for: photo.localID)?.native, "the record stays classic")
+    }
+
     func testSkipsAPageWithAnUnknownBlock() {
         let defaults = makeDefaults()
         let markdown = "| a | b |\n| - | - |"

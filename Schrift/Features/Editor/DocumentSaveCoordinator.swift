@@ -1154,14 +1154,18 @@ final class DocumentSaveCoordinator {
             else { return }
             rekeyPhotos(photos, org: org)
         } else {
+            let checkpoint = MarkdownYjs.encode(
+                markdown: draft.markdown, serverOrigin: client.serverOrigin,
+                pendingImages: Dictionary(uniqueKeysWithValues: photos.map { ($0.placeholderURL, $0.blockID) }))
+            // A page the native editor could only show read-only (a photo nested in a list, for
+            // one: its empty-url block has no typeable spelling) stays classic. Converting it
+            // would lock it read-only and leave its photo with nothing to commit into.
+            guard isTypeable(checkpoint: checkpoint) else { return }
             // Step 1: re-key before the replica exists, so a death here leaves records the
             // classic collector skips rather than a replica whose photos it would collect. A
             // classic migration that later finds them native turns them back (see
             // `migrateCreatedDocument`).
             rekeyPhotos(photos, org: org)
-            let checkpoint = MarkdownYjs.encode(
-                markdown: draft.markdown, serverOrigin: client.serverOrigin,
-                pendingImages: Dictionary(uniqueKeysWithValues: photos.map { ($0.placeholderURL, $0.blockID) }))
             do {
                 _ = try replicaStore.create(for: scope, checkpoint: checkpoint)
             } catch {
@@ -1263,6 +1267,14 @@ final class DocumentSaveCoordinator {
                 ClassicPhotoConversion(localID: localID, blockID: blockID, placeholderURL: url, record: record))
         }
         return photos
+    }
+
+    /// Whether a freshly encoded checkpoint opens typeable in the native editor.
+    private func isTypeable(checkpoint: Data) -> Bool {
+        let doc = YDoc(clientID: 0)
+        defer { doc.destroy() }
+        guard (try? doc.applyUpdate(YUpdateDecoder.decode(checkpoint), origin: .remote)) != nil else { return false }
+        return NativeBlockProjection.typability(doc, interlinkingOrigin: client.serverOrigin).canType
     }
 
     /// Whether the replica already holds an image block for every expected photo — the resume
