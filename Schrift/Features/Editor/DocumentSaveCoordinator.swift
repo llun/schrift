@@ -1045,10 +1045,10 @@ final class DocumentSaveCoordinator {
         // which is the whole point of creating offline. Rule 3 would answer
         // `.discardServerWins`, raising a false conflict against the empty document the POST
         // just made. Migration must stamp one before the draft is replayed, saying what the
-        // body **descends from** — the create response on an undiverged fresh POST, a `formattedContent` fetch on an undiverged resume, and a
-        // nil clock with an empty body when the two have **diverged**, where claiming the
-        // observed state would prove the very push the conflict is holding. See
-        // `migrateCreatedDocument`.
+        // body **descends from** — the create response on an undiverged fresh POST, a
+        // `formattedContent` fetch on an undiverged resume, and a nil clock with an empty body
+        // when the two have **diverged**, where claiming the observed state would prove the
+        // very push the conflict is holding. See `migrateCreatedDocument`.
         var draft = PendingDraft(
             documentID: record.localID, title: title, markdown: seedMarkdown,
             updatedAt: record.createdAt)
