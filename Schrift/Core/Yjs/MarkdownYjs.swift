@@ -20,10 +20,37 @@ enum MarkdownYjs {
     /// carrying a link, and that changes the bytes this produces. A boundary
     /// that moves saved bytes should be impossible to cross by forgetting an
     /// argument.
+    ///
+    /// `pendingImages` maps a queued photo's placeholder URL to the block id its
+    /// native conversion gives it. Such a block keeps its alt text but carries no
+    /// url, exactly as a native upload leaves it before the commit, so a resume can
+    /// find it again by that id. Empty (the default) leaves every block as
+    /// `blockNoteBlocks` spells it, so the classic path's bytes are unchanged.
     static func encode(
-        markdown: String, serverOrigin: String, clientID: UInt32 = UInt32.random(in: 1...UInt32.max)
+        markdown: String, serverOrigin: String, clientID: UInt32 = UInt32.random(in: 1...UInt32.max),
+        pendingImages: [String: String] = [:]
     ) -> Data {
-        BlockNoteYjs.encode(blockNoteBlocks(from: markdown, serverOrigin: serverOrigin), clientID: clientID)
+        var blocks = blockNoteBlocks(from: markdown, serverOrigin: serverOrigin)
+        if !pendingImages.isEmpty { rewritePendingImages(&blocks, ids: pendingImages) }
+        return BlockNoteYjs.encode(blocks, clientID: clientID)
+    }
+
+    /// Gives each queued photo's image block the id its attachment record derives and clears
+    /// the placeholder url, so the block reads as a native upload in progress.
+    private static func rewritePendingImages(_ blocks: inout [BlockNoteBlock], ids: [String: String]) {
+        for index in blocks.indices {
+            let url = blocks[index].props.last { $0.key == "url" }.flatMap { prop -> String? in
+                if case .string(let value) = prop.value { return value }
+                return nil
+            }
+            if blocks[index].node == "image", let url, let id = ids[url] {
+                blocks[index].id = id
+                blocks[index].props = blocks[index].props.map { prop in
+                    prop.key == "url" ? (key: "url", value: .string("")) : prop
+                }
+            }
+            rewritePendingImages(&blocks[index].children, ids: ids)
+        }
     }
 
     /// Base64 for the `content` field of `PATCH documents/{id}/content/`.

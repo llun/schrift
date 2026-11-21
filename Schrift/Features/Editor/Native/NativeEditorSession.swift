@@ -1166,6 +1166,14 @@ final class NativeEditorOpen {
         // shown read-only when that replica cannot be read. The coordinator's
         // store is the one its classic/live refusal reads.
         let coordinator = viewModel.saveCoordinator
+        // A page created on this device before the switch was on is still a classic draft.
+        // Converting it here, synchronously, is what makes an immediate offline open land on
+        // the native route below rather than the classic editor. Never under a classic editor
+        // holding text the draft does not have yet (`isDirty`): converting the stored draft would
+        // drop it. Not `hasUnsavedLocalContent`, which every unsent page answers true for.
+        if !viewModel.isEditing, !viewModel.isDirty {
+            coordinator.convertUnsentClassicCreate(documentID: viewModel.documentID)
+        }
         switch coordinator.nativeOwnership(documentID: viewModel.documentID) {
         case .unreadable:
             viewModel.seedNativeMetadataIfNeeded(includeLocalDrafts: false)

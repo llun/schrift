@@ -1088,6 +1088,193 @@ final class DocumentSaveCoordinator {
         return localDocument(from: record)
     }
 
+    // MARK: - Classic local-create conversion (PR07b)
+
+    /// Converts every eligible classic local create to a native replica, so a page created on
+    /// this device before the native editor was switched on opens natively instead of waiting
+    /// for its classic draft to sync. Runs at the start of each replay pass, before
+    /// `runCreatePass`.
+    ///
+    /// A page whose editor is on screen is skipped: its in-memory blocks still name the classic
+    /// draft, and converting under it would make its next flush a refused classic save. The
+    /// single form is called by the open route itself, which is about to replace that screen's
+    /// content with the replica.
+    func convertUnsentClassicCreates() {
+        guard nativeEditorEnabled(), cachedDocs6Org() != nil else { return }
+        for documentID in Array(pendingCreates.keys) where !hasOpenEditor(documentID: documentID) {
+            convertUnsentClassicCreate(documentID: documentID)
+        }
+    }
+
+    /// Converts one classic local create to a native replica, or leaves it classic when anything
+    /// about it cannot carry over safely.
+    ///
+    /// **Synchronous on the main actor, and that is the safety argument.** The classic replay and
+    /// the attachment collector are async passes, so neither can run against the page between the
+    /// steps below; a suspension point would let one rewrite the draft or collect a photo the
+    /// conversion is mid-way through re-keying.
+    ///
+    /// Crash safety without a journal: the replica is created first (step 2), then the photo
+    /// records are re-keyed (step 3), then the draft is rewritten (step 4). A death after step 2
+    /// leaves a manifest with a classic draft, which the resume path finishes from the existing
+    /// replica rather than re-encoding it — a replica with journal entries beyond its checkpoint
+    /// is never overwritten.
+    func convertUnsentClassicCreate(documentID: UUID) {
+        guard nativeEditorEnabled(), let org = cachedDocs6Org() else { return }
+        guard let record = pendingCreates[documentID], record.syncedServerID == nil,
+            record.serverOrigin == client.serverOrigin,
+            let ownerUserID = record.ownerUserID, ownerUserID == signedInUser.userID,
+            !isPendingDelete(documentID: documentID),
+            !createPostsInFlight.contains(documentID),
+            !draftStore.holdsUnreadableData, !attachmentStore.holdsUnreadableData
+        else { return }
+        guard let draft = draftStore.draft(for: documentID), draft.replica == nil else { return }
+        let scope = ReplicaScope(
+            serverOrigin: client.serverOrigin, ownerUserID: ownerUserID, org: org, documentID: documentID)
+        guard scope.isValid else { return }
+        guard
+            let photos = classicPhotosForConversion(
+                markdown: draft.markdown, documentID: documentID, ownerUserID: ownerUserID, org: org)
+        else { return }
+
+        let existing: ReplicaManifest?
+        do {
+            existing = try replicaStore.manifest(for: scope)
+        } catch {
+            return
+        }
+        if let existing {
+            // Resume after a death past step 2: the replica is the authority, so it is never
+            // re-encoded. Every expected photo block must already be there, or nothing is
+            // touched — the classic draft and the replica both stay.
+            guard existing.formatVersion == ReplicaManifest.currentFormat,
+                replicaHoldsPhotoBlocks(photos, scope: scope)
+            else { return }
+        } else {
+            let checkpoint = MarkdownYjs.encode(
+                markdown: draft.markdown, serverOrigin: client.serverOrigin,
+                pendingImages: Dictionary(uniqueKeysWithValues: photos.map { ($0.placeholderURL, $0.blockID) }))
+            do {
+                _ = try replicaStore.create(for: scope, checkpoint: checkpoint)
+            } catch {
+                // Only a partial create that left no manifest falls back to classic; preserve an
+                // intact replica if a manifest landed despite the thrown error.
+                if (try? replicaStore.manifest(for: scope)) == nil {
+                    try? replicaStore.remove(for: scope)
+                    _ = replicaStore.clearOwnership(for: scope)
+                }
+                return
+            }
+        }
+
+        // The projection is read before any record is re-keyed, so a replica that cannot be
+        // projected leaves the page wholly classic rather than half-converted.
+        let adapter = ReplicaSaveAdapter(store: replicaStore, scope: scope)
+        guard let prepared = try? adapter.prepare() else { return }
+
+        // Step 3: re-key each classic record onto its block, keeping the localID (the bytes are
+        // keyed by it) and every replay field.
+        for photo in photos where photo.record.native == nil {
+            updatePendingAttachment(
+                PendingAttachment(
+                    localID: photo.record.localID, documentID: photo.record.documentID,
+                    createdAt: photo.record.createdAt, serverOrigin: photo.record.serverOrigin,
+                    ownerUserID: photo.record.ownerUserID,
+                    native: NativeMediaTarget(
+                        org: org, blockID: photo.blockID,
+                        slot: MediaBlock.Slot(node: "image", url: ""),
+                        fileName: "photo.jpg", contentType: "image/jpeg")))
+        }
+
+        // Step 4: the draft takes the replica reference and the replica's own projection as its
+        // shadow, so `ReplicaDraftReference.matches` holds and no placeholder reaches a save.
+        draftStore.save(
+            PendingDraft(
+                documentID: documentID, title: draft.title, markdown: prepared.markdown,
+                updatedAt: draft.updatedAt, baseline: draft.baseline,
+                lastPushedMarkdown: draft.lastPushedMarkdown,
+                conflictServerUpdatedAt: draft.conflictServerUpdatedAt,
+                replica: prepared.request.reference))
+        syncBackupExclusion(for: documentID, scope: scope)
+        recordReplicaOpened(scope: scope)
+        evictCleanNativeReplicasIfNeeded(keepingScopes: [scope])
+    }
+
+    /// A queued photo a classic draft names, validated for a native conversion.
+    private struct ClassicPhotoConversion {
+        let localID: UUID
+        let blockID: String
+        let placeholderURL: String
+        let record: PendingAttachment
+    }
+
+    /// The photos a classic draft names, or nil when any of them cannot carry over safely — the
+    /// page then stays classic and syncs through the classic replay as before.
+    ///
+    /// Every placeholder must be exactly one image block's url: one that appears twice, or
+    /// anywhere else (alt text, a paragraph), cannot be mapped to one block. A record must be
+    /// this document's, this server's and this account's, unuploaded, unfailed, with its bytes
+    /// still on disk. A record already re-keyed by a resume must target the block this
+    /// conversion derives. And MarkdownYjs spells an `.unknown` block as plain paragraphs, which
+    /// loses its structure, so a page holding one is not converted.
+    private func classicPhotosForConversion(
+        markdown: String, documentID: UUID, ownerUserID: UUID, org: String
+    ) -> [ClassicPhotoConversion]? {
+        let blocks = parseEditorBlocks(markdown, serverOrigin: client.serverOrigin)
+        guard !blocks.contains(where: { $0.kind == .unknown }) else { return nil }
+        let placeholders = blocks.compactMap { block -> String? in
+            guard case .image(_, let url) = block.kind, pendingAttachmentID(fromPlaceholderURL: url) != nil
+            else { return nil }
+            return url
+        }
+        let occurrences = markdown.components(separatedBy: pendingAttachmentURLPrefix).count - 1
+        guard occurrences == placeholders.count else { return nil }
+        var seen = Set<UUID>()
+        var photos: [ClassicPhotoConversion] = []
+        for url in placeholders {
+            guard let localID = pendingAttachmentID(fromPlaceholderURL: url), seen.insert(localID).inserted,
+                let record = pendingAttachments[localID],
+                record.documentID == documentID, record.serverOrigin == client.serverOrigin,
+                record.ownerUserID == ownerUserID, record.uploadedURLString == nil, record.failedAt == nil,
+                attachmentStore.data(for: localID) != nil
+            else { return nil }
+            let blockID = localID.uuidString.lowercased()
+            if let native = record.native {
+                guard native.org == org, native.blockID == blockID,
+                    native.slot == MediaBlock.Slot(node: "image", url: "")
+                else { return nil }
+            }
+            photos.append(
+                ClassicPhotoConversion(localID: localID, blockID: blockID, placeholderURL: url, record: record))
+        }
+        return photos
+    }
+
+    /// Whether the replica already holds an image block for every expected photo — the resume
+    /// path's precondition for finishing from it.
+    private func replicaHoldsPhotoBlocks(_ photos: [ClassicPhotoConversion], scope: ReplicaScope) -> Bool {
+        let restored: ReplicaRestore?
+        do {
+            restored = try replicaStore.restore(for: scope)
+        } catch {
+            return false
+        }
+        guard let restored else { return false }
+        let doc = YDoc(clientID: 0)
+        defer { doc.destroy() }
+        do {
+            try doc.applyUpdate(YUpdateDecoder.decode(restored.checkpoint), origin: .remote)
+            for update in restored.updates { try doc.applyUpdate(YUpdateDecoder.decode(update), origin: .remote) }
+        } catch {
+            return false
+        }
+        guard doc.store.pendingStructs == nil, doc.store.pendingDs == nil else { return false }
+        let ids = Set(
+            NativeBlockProjection.project(doc, nativeMarks: false, inlineObjects: true).blocks
+                .filter { $0.block.node == "image" }.map(\.id))
+        return photos.allSatisfy { ids.contains($0.blockID) }
+    }
+
     /// Documents created on this device under `parentID` (nil = root), newest first — what
     /// a list merges in at read time via `mergedWithLocalDocuments`.
     ///
@@ -3566,6 +3753,9 @@ final class DocumentSaveCoordinator {
             // 404 to the second, which is indistinguishable from a co-author's delete.
             await runDeletePass()
             await syncPendingPins()
+            // Before the create pass, so a page this device has not POSTed yet is already a
+            // replica when the POST lands and `migrateCreatedDocument` re-keys it natively.
+            convertUnsentClassicCreates()
             await runCreatePass()
             // Between the two: a queued photo's upload is what *releases* the attachment hold,
             // so running it here lets the same pass upload, rewrite, and push. It also has to
